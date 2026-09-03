@@ -75,7 +75,9 @@
     });
 
     terminal.onData((data) => {
-      if (session.ptyId !== null) core().write(session.ptyId, data);
+      // A write that fails is a process that has gone; the exit event is what
+      // reports that, not every keystroke after it.
+      if (session.ptyId !== null) core().write(session.ptyId, data).catch(() => {});
     });
 
     observer = new ResizeObserver(() => measure());
@@ -117,13 +119,13 @@
     const { cols, rows } = terminal;
     if (cols === sent.cols && rows === sent.rows) return;
     sent = { cols, rows };
-    if (session.ptyId !== null) core().resize(session.ptyId, cols, rows);
+    if (session.ptyId !== null) core().resize(session.ptyId, cols, rows).catch(() => {});
   }
 
   async function start() {
     if (!terminal) return;
     try {
-      const id = await core().spawn(
+      const { ptyId, sessionId } = await core().spawn(
         {
           agent: "claude-code",
           project: session.project,
@@ -133,7 +135,15 @@
         },
         (bytes) => queue?.push(bytes),
       );
-      started(session.key, id);
+      if (!started(session.key, ptyId, sessionId)) {
+        // The row was closed while the process was coming up. Nothing owns
+        // it now, so it must not be left running.
+        core()
+          .kill(ptyId)
+          .catch(() => {});
+        return;
+      }
+      if (!terminal) return;
       sent = { cols: terminal.cols, rows: terminal.rows };
       if (active) terminal.focus();
     } catch (error) {

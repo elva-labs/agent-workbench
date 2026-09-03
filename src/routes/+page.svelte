@@ -6,7 +6,7 @@
   import ChangesPane from "$lib/panes/ChangesPane.svelte";
   import { BINDINGS, resolveAction } from "$lib/keymap";
   import { cycleTheme, theme } from "$lib/theme.svelte";
-  import { files, toggleScope, toggleView } from "$lib/files.svelte";
+  import { files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
   import {
     DEFAULT,
     MIN,
@@ -85,7 +85,12 @@
       case "toggleReview":
         if (reviewing) exitReview();
         else {
-          if (files.selected === null) files.selected = "src/cache/mod.rs";
+          // Opening the viewer with nothing chosen shows the first file rather
+          // than an empty pane; with nothing listed, the empty pane is honest.
+          if (files.selected === null) {
+            const first = listed()[0];
+            if (first !== undefined) select(first.path);
+          }
           enterReview();
         }
         break;

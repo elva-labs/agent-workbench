@@ -23,19 +23,24 @@
   let blocked = $derived(unavailableReason());
 
   onMount(() => {
-    const backend = core();
+    detect();
+    core()
+      .onSessionEnded(ended)
+      .then((off) => (unlisten = off));
 
-    backend
+    return () => unlisten?.();
+  });
+
+  /** Asks the machine whether there is an agent to run. Asked once on open,
+      and again on request: installing claude should not need a restart. */
+  function detect() {
+    core()
       .detect("claude-code")
       .then((report) =>
         applyDetect(report, Boolean(window.__WORKBENCH_CORE__ || window.__TAURI_INTERNALS__)),
       )
       .catch((error) => detectFailed(String(error)));
-
-    backend.onSessionEnded(ended).then((off) => (unlisten = off));
-
-    return () => unlisten?.();
-  });
+  }
 
   // Opening a project starts a session in it when it has none. A workbench
   // whose purpose is running an agent should not open onto a button. What it
@@ -67,6 +72,9 @@
     {#if blocked !== null}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{blocked}</p>
+        {#if agent.availability === "missing"}
+          <button onclick={detect} data-testid="retry-detect">Look again</button>
+        {/if}
       </div>
     {:else if workspace.active === null}
       <div class="overlay" data-testid="agent-status">

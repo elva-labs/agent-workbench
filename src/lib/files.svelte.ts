@@ -69,9 +69,19 @@ function fromChanged(file: ChangedFile): FileEntry {
   };
 }
 
+/**
+ * Which read of the tree is the current one. The watcher fires in bursts and
+ * the project can change mid-read, so every answer is checked against the
+ * question that is still being asked before it lands; an answer to an older
+ * question is dropped rather than painted over a newer one.
+ */
+let treeRead = 0;
+let fileRead = 0;
+
 /** Re-reads the working tree. Called on open and whenever the watcher fires. */
 export async function refresh() {
   const root = watchRoot();
+  const read = ++treeRead;
   if (root === null) {
     files.changed = [];
     files.everything = [];
@@ -80,26 +90,30 @@ export async function refresh() {
   }
 
   try {
-    files.changed = (await core().gitStatus(root)).map(fromChanged);
+    const changed = (await core().gitStatus(root)).map(fromChanged);
+    if (read !== treeRead) return;
+    files.changed = changed;
     files.error = null;
   } catch (error) {
+    if (read !== treeRead) return;
     files.changed = [];
     files.error = String(error);
     return;
   }
 
-  if (files.everythingLoaded || files.scope === "all") await loadEverything();
+  if (files.everythingLoaded || files.scope === "all") await loadEverything(read);
   // The open file may have been changed by the agent, so its diff is stale.
-  if (files.selected !== null) await loadSelected();
+  if (read === treeRead && files.selected !== null) await loadSelected();
 }
 
-async function loadEverything() {
+async function loadEverything(read = treeRead) {
   const root = watchRoot();
   if (root === null) return;
 
   try {
-    const changedByPath = new Map(files.changed.map((file) => [file.path, file]));
     const paths = await core().gitFiles(root);
+    if (read !== treeRead) return;
+    const changedByPath = new Map(files.changed.map((file) => [file.path, file]));
 
     // The changed ones keep their status and counts; the rest are plain.
     files.everything = paths.map(
@@ -113,7 +127,7 @@ async function loadEverything() {
     files.everything.sort((a, b) => a.path.localeCompare(b.path));
     files.everythingLoaded = true;
   } catch (error) {
-    files.error = String(error);
+    if (read === treeRead) files.error = String(error);
   }
 }
 
@@ -146,27 +160,27 @@ export function effectiveView(): View {
 async function loadSelected() {
   const root = watchRoot();
   const entry = selectedEntry();
+  const read = ++fileRead;
   if (root === null || entry === null) {
     files.diff = null;
     files.content = null;
+    files.loading = false;
     return;
   }
 
   files.loading = true;
   try {
-    if (canDiff(entry)) {
-      files.diff = await core().gitDiff(root, entry.path);
-    } else {
-      files.diff = null;
-    }
-
+    const diff = canDiff(entry) ? await core().gitDiff(root, entry.path) : null;
     // A deleted file has a diff but nothing left to read.
-    files.content = entry.status === "D" ? null : await core().gitContent(root, entry.path);
+    const content = entry.status === "D" ? null : await core().gitContent(root, entry.path);
+    if (read !== fileRead) return;
+    files.diff = diff;
+    files.content = content;
     files.error = null;
   } catch (error) {
-    files.error = String(error);
+    if (read === fileRead) files.error = String(error);
   } finally {
-    files.loading = false;
+    if (read === fileRead) files.loading = false;
   }
 }
 
@@ -185,6 +199,7 @@ export async function setScope(scope: Scope) {
     files.selected = null;
     files.diff = null;
     files.content = null;
+    fileRead += 1;
   }
 }
 
@@ -237,6 +252,8 @@ export function basename(path: string) {
 
 /** Called when the project changes: none of the old tree applies. */
 export function clear() {
+  treeRead += 1;
+  fileRead += 1;
   files.changed = [];
   files.everything = [];
   files.everythingLoaded = false;
@@ -244,6 +261,7 @@ export function clear() {
   files.diff = null;
   files.content = null;
   files.error = null;
+  files.loading = false;
   files.scope = "changed";
   files.expanded.clear();
   files.collapsed.clear();

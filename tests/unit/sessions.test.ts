@@ -22,17 +22,21 @@ import {
   started,
   statusLabel,
   statusMessage,
-  stopProject,
 } from "$lib/sessions.svelte";
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
 
 const killed: string[] = [];
+let historyReads = 0;
 vi.mock("$lib/core", () => ({
   core: () => ({
     kill: async (id: string) => {
       killed.push(id);
+    },
+    transcripts: async () => {
+      historyReads += 1;
+      return [];
     },
   }),
 }));
@@ -40,13 +44,14 @@ vi.mock("$lib/core", () => ({
 beforeEach(() => {
   reset();
   killed.length = 0;
+  historyReads = 0;
   agent.availability = "ready";
 });
 
 /** A session that has actually come up, as one does in practice. */
 function live(project: string, ptyId: string) {
   const session = create(project);
-  started(session.key, ptyId);
+  started(session.key, ptyId, `session-${ptyId}`);
   return session;
 }
 
@@ -82,6 +87,28 @@ describe("creating sessions", () => {
     live(B, "pty-2");
     expect(forProject(A)).toHaveLength(1);
     expect(forProject(B)).toHaveLength(1);
+  });
+
+  // The workbench hands the agent its session id, so a fresh session knows
+  // which transcript is its own from the moment it is up.
+  it("learns its session id when it starts", () => {
+    const session = create(A);
+    expect(session.id).toBeNull();
+    expect(started(session.key, "pty-1", "fresh-id")).toBe(true);
+    expect(session.id).toBe("fresh-id");
+  });
+
+  it("knows its id from the start when resuming", () => {
+    const session = create(A, "old-id");
+    expect(session.id).toBe("old-id");
+  });
+
+  // The row can be closed while the process is still coming up. The caller
+  // has to know, because nothing owns the pty it was just handed.
+  it("reports a start for a row that is already gone", () => {
+    const session = create(A);
+    close(session.key);
+    expect(started(session.key, "pty-1", "fresh-id")).toBe(false);
   });
 });
 
@@ -140,6 +167,28 @@ describe("the exit policy", () => {
     const session = live(A, "pty-1");
     ended({ id: "pty-99", code: 1, clean: false });
     expect(session.status).toBe("running");
+  });
+
+  // A process that dies at once can report its exit before the spawn call
+  // has even returned. The exit must not be lost to the order of arrival.
+  it("applies an exit that arrived before the start", () => {
+    const session = create(A);
+    ended({ id: "pty-1", code: 127, clean: false });
+    expect(session.status).toBe("starting");
+
+    started(session.key, "pty-1", "fresh-id");
+    expect(session.status).toBe("crashed");
+    expect(session.exitCode).toBe(127);
+    expect(session.ptyId).toBeNull();
+  });
+
+  // The transcript is complete once the process is gone, so the history it
+  // belongs in has moved.
+  it("re-reads the project history when a session ends", () => {
+    live(A, "pty-1");
+    expect(historyReads).toBe(0);
+    ended({ id: "pty-1", code: 0, clean: true });
+    expect(historyReads).toBe(1);
   });
 
   it("records a failure to start", () => {
@@ -208,11 +257,16 @@ describe("closing", () => {
     expect(killed).toEqual(["pty-1", "pty-2"]);
   });
 
-  it("stops a project's sessions without removing their rows", () => {
-    live(A, "pty-1");
-    stopProject(A);
-    expect(killed).toEqual(["pty-1"]);
-    expect(forProject(A)).toHaveLength(1);
+  it("re-reads the project history when a row with a transcript goes", () => {
+    const session = live(A, "pty-1");
+    close(session.key);
+    expect(historyReads).toBe(1);
+  });
+
+  it("does not bother for a row that never started", () => {
+    const session = create(A);
+    close(session.key);
+    expect(historyReads).toBe(0);
   });
 });
 
@@ -263,6 +317,21 @@ describe("labels", () => {
     expect(label(second)).toBe("session 2");
   });
 
+  // Closing session 1 must not turn session 2 into session 1: a label that
+  // shifts under you is worse than a gap.
+  it("keeps a number once given", () => {
+    const first = create(A);
+    const second = create(A);
+    close(first.key);
+    expect(label(second)).toBe("session 2");
+    expect(label(create(A))).toBe("session 3");
+  });
+
+  it("numbers each project on its own", () => {
+    create(A);
+    expect(label(create(B))).toBe("session 1");
+  });
+
   it("names a resumed session by its transcript id", () => {
     const session = create(A, "9604da0e-c207-4138-974b-8e1ef8cffd07");
     expect(label(session)).toBe("9604da0e");
@@ -280,7 +349,7 @@ describe("labels", () => {
 
     const session = create(A);
     expect(statusLabel(session)).toBe("starting");
-    started(session.key, "pty-1");
+    started(session.key, "pty-1", "session-1");
     expect(statusLabel(session)).toBe("running");
     ended({ id: "pty-1", code: 0, clean: true });
     expect(statusLabel(session)).toBe("ended");
@@ -332,6 +401,15 @@ describe("history", () => {
   it("hides a transcript that is already resumed", () => {
     sessions.history[A] = [transcript("abc", "one", 1000), transcript("def", "two", 900)];
     create(A, "abc");
+    expect(historyFor(A).map((t) => t.id)).toEqual(["def"]);
+  });
+
+  // A fresh session writes a transcript as it goes. That transcript is the
+  // live row, not a past session offering to open itself again.
+  it("hides the transcript a live session is writing", () => {
+    sessions.history[A] = [transcript("fresh", "one", 1000), transcript("def", "two", 900)];
+    const session = create(A);
+    started(session.key, "pty-1", "fresh");
     expect(historyFor(A).map((t) => t.id)).toEqual(["def"]);
   });
 

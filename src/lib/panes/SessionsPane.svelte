@@ -125,6 +125,9 @@
         >
           {isInstalled(project.path) ? "live updates: hook" : "live updates: filesystem"}
         </button>
+        {#if hook.error}
+          <p class="error" data-testid="hook-error">{hook.error}</p>
+        {/if}
       {/if}
     {/each}
   </div>

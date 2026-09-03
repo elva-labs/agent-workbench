@@ -78,7 +78,10 @@ export async function installFakeCore(
           isGit: true,
         }),
         setWindowTitle: async () => {},
-        spawn: async () => `pty-${++ptyCount}`,
+        spawn: async (spawnOptions: { session?: string }) => ({
+          ptyId: `pty-${++ptyCount}`,
+          sessionId: spawnOptions.session ?? `session-${ptyCount}`,
+        }),
         write: async () => {},
         resize: async () => {},
         kill: async () => {},

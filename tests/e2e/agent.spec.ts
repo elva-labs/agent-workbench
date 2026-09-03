@@ -121,7 +121,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           const id = `pty-${++ptyCount}`;
           fake.spawns.push(spawnOptions);
           fake.outputs[id] = onOutput;
-          return id;
+          return { ptyId: id, sessionId: spawnOptions.session ?? `session-${ptyCount}` };
         },
         write: async (_id: string, data: string) => {
           fake.writes.push(data);

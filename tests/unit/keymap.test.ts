@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { BINDINGS, resolveAction, type KeyContext, type KeyState } from "$lib/keymap";
+import {
+  BINDINGS,
+  bindingsFor,
+  isMac,
+  resolveAction as resolve,
+  type KeyContext,
+  type KeyState,
+} from "$lib/keymap";
 
 const mod = (key: string, extra: Partial<KeyState> = {}): KeyState => ({
   key,
   metaKey: true,
   ...extra,
 });
+
+/** The tests run on macOS unless they say otherwise: Cmd is the modifier. */
+const resolveAction = (e: KeyState, ctx: Partial<KeyContext> = {}) =>
+  resolve(e, { focus: "agent", reviewing: false, mac: true, ...ctx });
 
 const reviewing: KeyContext = { focus: "changes", reviewing: true };
 
@@ -29,10 +40,30 @@ describe("resolveAction", () => {
   });
 
   it("treats ctrl as the modifier for Windows and Linux", () => {
-    expect(resolveAction({ key: "1", ctrlKey: true })).toEqual({
+    expect(resolveAction({ key: "1", ctrlKey: true }, { mac: false })).toEqual({
       type: "focus",
       pane: "sessions",
     });
+  });
+
+  // One modifier per platform. On macOS every Ctrl chord is the agent's:
+  // Ctrl+B and Ctrl+E are readline inside the TUI, and Ctrl+D is EOT.
+  it("leaves every ctrl chord to the agent on macOS", () => {
+    for (const key of ["1", "b", "d", "e", "\\"]) {
+      expect(resolveAction({ key, ctrlKey: true }, { mac: true })).toBeNull();
+    }
+  });
+
+  it("does not answer to cmd where there is no cmd", () => {
+    expect(resolveAction({ key: "d", metaKey: true }, { mac: false })).toBeNull();
+  });
+
+  it("tells the platforms apart by what the browser reports", () => {
+    expect(isMac({ platform: "MacIntel" })).toBe(true);
+    expect(isMac({ platform: "Linux x86_64" })).toBe(false);
+    expect(isMac({ platform: "Win32" })).toBe(false);
+    expect(isMac({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" })).toBe(true);
+    expect(isMac(undefined)).toBe(false);
   });
 
   it("cycles the theme on shift+mod+T", () => {
@@ -64,6 +95,13 @@ describe("resolveAction", () => {
       expect(binding.keys).not.toBe("");
       expect(binding.does).not.toBe("");
     }
+  });
+
+  // The status bar shows the keys you actually have.
+  it("spells the bindings in the platform's own keys", () => {
+    expect(bindingsFor(true).map((b) => b.keys)).toContain("⌘D");
+    expect(bindingsFor(false).map((b) => b.keys)).toContain("Ctrl+D");
+    expect(bindingsFor(false).every((b) => !b.keys.includes("⌘"))).toBe(true);
   });
 });
 

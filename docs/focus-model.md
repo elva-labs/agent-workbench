@@ -35,10 +35,12 @@ future binding is additive and a typo is not silently absorbed.
 - **<kbd>Tab</kbd> does not move focus between panes.** It is completion inside
   the TUI, and <kbd>Shift</kbd><kbd>Tab</kbd> is Claude Code's mode switch. Pane
   focus moves on <kbd>Cmd</kbd><kbd>1/2/3</kbd> or a click, and nothing else.
-- **<kbd>Ctrl</kbd> chords belong to the agent** on macOS. On Windows and Linux
-  <kbd>Ctrl</kbd> is the app modifier, which collides with <kbd>Ctrl+C</kbd> —
-  that collision is a phase 2 problem, and the note here is the reminder that it
-  is known rather than missed.
+- **<kbd>Ctrl</kbd> chords belong to the agent** on macOS, where the app
+  modifier is <kbd>Cmd</kbd>. On Windows and Linux the modifier is
+  <kbd>Ctrl</kbd>, so the handful of bound chords (<kbd>Ctrl</kbd><kbd>1/2/3</kbd>,
+  <kbd>B</kbd>, <kbd>D</kbd>, <kbd>E</kbd>, <kbd>\</kbd>) are taken from the
+  terminal there. <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never bound, so
+  interrupting and history search always reach the agent.
 - **<kbd>Esc</kbd> is the agent's whenever the agent has focus.** A pane that
   owns focus may use it, which is how the file viewer closes without a chord.
   This is the one key whose meaning depends on context, which is why

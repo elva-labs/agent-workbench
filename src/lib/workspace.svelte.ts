@@ -32,10 +32,12 @@ export function projectName(): string {
 }
 
 /** The directory the changes pane watches: the whole repository, not the
-    subdirectory you happened to open. */
+    subdirectory you happened to open. Null for a folder git knows nothing
+    about, which has no changes to show. */
 export function watchRoot(): string | null {
   const project = activeProject();
-  return project?.repository ?? project?.path ?? null;
+  if (project === null || !project.isGit) return null;
+  return project.repository ?? project.path;
 }
 
 export function isOpen(path: string): boolean {
@@ -64,6 +66,9 @@ export async function openPath(path: string): Promise<boolean> {
     activate(info.path);
     return true;
   } catch (error) {
+    // A folder that cannot be described is not one worth offering again.
+    workspace.recent = workspace.recent.filter((recent) => recent !== path);
+    save();
     workspace.error = String(error);
     return false;
   }
@@ -79,7 +84,11 @@ export function activate(path: string) {
 
   save();
   const project = workspace.open.find((candidate) => candidate.path === path);
-  if (project !== undefined) core().setWindowTitle(`${project.name} — Agent Workbench`);
+  if (project !== undefined) {
+    core()
+      .setWindowTitle(`${project.name} — Agent Workbench`)
+      .catch(() => {});
+  }
 }
 
 /** Opens the native picker. Returns false when the user cancels. */

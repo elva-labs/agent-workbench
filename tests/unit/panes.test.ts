@@ -131,7 +131,7 @@ describe("SessionsPane", () => {
     workspace.open.push(repo("/home/ada/dev/one", "one"));
     workspace.active = "/home/ada/dev/one";
     const session = create("/home/ada/dev/one");
-    started(session.key, "pty-1");
+    started(session.key, "pty-1", "session-1");
 
     render(SessionsPane);
     expect(screen.getByText("one")).toBeInTheDocument();
@@ -153,9 +153,9 @@ describe("SessionsPane", () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     const first = create("/repo");
-    started(first.key, "pty-1");
+    started(first.key, "pty-1", "session-1");
     const second = create("/repo");
-    started(second.key, "pty-2");
+    started(second.key, "pty-2", "session-2");
 
     render(SessionsPane);
     await fireEvent.click(screen.getAllByTestId("session-row")[0]);
@@ -415,6 +415,26 @@ describe("tree keyboard navigation", () => {
     await renderChanges();
     await fireEvent.keyDown(tree(), { key: "a" });
     expect(cursorName()).toBe("src");
+  });
+});
+
+describe("ChangesPane without git", () => {
+  // The pane is entirely git-based, so it says so rather than reporting
+  // "not a git repository" as an error on every refresh.
+  it("says a folder is not a repository rather than failing to read it", async () => {
+    workspace.open.push(repo("/tmp/notes", "notes", false));
+    workspace.active = "/tmp/notes";
+
+    render(ChangesPane);
+    expect(await screen.findByTestId("not-git")).toBeInTheDocument();
+    expect(screen.queryByTestId("changes-error")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing of the sort for a repository", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    await renderChanges();
+    expect(screen.queryByTestId("not-git")).not.toBeInTheDocument();
   });
 });
 

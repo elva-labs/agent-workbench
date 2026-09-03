@@ -31,6 +31,13 @@ export interface SpawnOptions {
   rows: number;
 }
 
+/** What starting a session hands back: the pty to talk to, and the session id
+    the agent was told to use, which is what `--resume` takes later. */
+export interface Spawned {
+  ptyId: string;
+  sessionId: string;
+}
+
 export interface ProjectInfo {
   path: string;
   name: string;
@@ -93,7 +100,7 @@ export interface Core {
   pickProject(): Promise<string | null>;
   projectInfo(path: string): Promise<ProjectInfo>;
   setWindowTitle(title: string): Promise<void>;
-  spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
+  spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<Spawned>;
   write(id: string, data: string): Promise<void>;
   resize(id: string, cols: number, rows: number): Promise<void>;
   kill(id: string): Promise<void>;
@@ -152,7 +159,7 @@ const tauriCore: Core = {
   async spawn(options, onOutput) {
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => onOutput(toBytes(message));
-    return invoke<string>("pty_spawn", { ...options, onOutput: channel });
+    return invoke<Spawned>("pty_spawn", { ...options, onOutput: channel });
   },
 
   write: (id, data) => invoke("pty_write", { id, data }),

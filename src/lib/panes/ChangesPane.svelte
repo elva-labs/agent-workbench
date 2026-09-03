@@ -16,13 +16,15 @@
     setView,
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
-  import { watchRoot, workspace } from "$lib/workspace.svelte";
+  import { isInstalled } from "$lib/hook.svelte";
+  import { activeProject, watchRoot, workspace } from "$lib/workspace.svelte";
   import { DEFAULT, MIN, applyLayout, enterReview, exitReview, layout, saveLayout } from "$lib/layout.svelte";
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
   let diffable = $derived(canDiff(selectedEntry()));
   let root = $derived(watchRoot());
+  let notGit = $derived(activeProject() !== null && root === null);
 
   onMount(() => {
     let off: (() => void) | null = null;
@@ -42,10 +44,28 @@
     untrack(() => {
       clear();
       if (watching === null) return;
-      core().gitWatch(watching);
+      watch(watching);
       refresh();
     });
   });
+
+  // Installing the hook creates the file it writes to, and the watcher only
+  // attaches to a file that exists, so it is asked again once that is true.
+  $effect(() => {
+    const watching = root;
+    const hooked = isInstalled(workspace.active);
+    untrack(() => {
+      if (hooked && watching !== null) watch(watching);
+    });
+  });
+
+  // A watch that could not start is worth saying: the tree still loads, but it
+  // will not follow the agent.
+  function watch(watching: string) {
+    core()
+      .gitWatch(watching)
+      .catch((error) => (files.error = `Not watching for changes: ${String(error)}`));
+  }
 
   function open(path: string) {
     select(path);
@@ -97,6 +117,16 @@
       <button class="close" onclick={exitReview} aria-label="Close the viewer">Esc</button>
     {/if}
   </div>
+
+  {#if files.error}
+    <p class="notice error" data-testid="changes-error">{files.error}</p>
+  {/if}
+
+  {#if notGit}
+    <p class="notice" data-testid="not-git">
+      This folder is not a git repository, so there are no changes to show. Sessions still run in it.
+    </p>
+  {/if}
 
   <!-- The tree is the same component in both shapes. Working, it has the pane
        to itself; reviewing, it becomes the left column and keeps its scroll
@@ -157,6 +187,20 @@
   .close:hover {
     border-color: var(--rule-strong);
     color: var(--ink-2);
+  }
+
+  .notice {
+    margin: 0;
+    padding: 10px var(--pane-pad);
+    border-bottom: 1px solid var(--rule);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-3);
+    flex: none;
+  }
+
+  .notice.error {
+    color: var(--del);
   }
 
   .split {
