@@ -117,3 +117,30 @@ The tree is one tab stop, not one per row. Arrow keys move a cursor within it
 parent and the first child), and <kbd>Enter</kbd> opens the file under the
 cursor. The cursor is drawn separately from the open file, so you can walk the
 tree without changing what the viewer is showing.
+
+## Sessions
+
+A project holds as many sessions as you start, and switching between them kills
+nothing. Each keeps its own PTY, its own terminal and its own scrollback, and
+the ones you are not looking at are hidden rather than unmounted.
+
+Hidden here means `visibility: hidden`, not `display: none`. A display-none
+element measures zero, and xterm would compute a nonsense grid from it; keeping
+the box in layout means a background session's PTY is never resized and never
+reflows. The same reasoning as the agent pane hiding rather than unmounting,
+one level down.
+
+Several projects can be open at once, each with its own sessions, and all of
+them stay alive. Switching project is a change of view, not a teardown, so
+there is nothing to confirm. The left pane is where the projects you are not
+looking at live; closing one there is what stops its sessions.
+
+**The kill lives in exactly one place.** `close()` stops the PTY and clears the
+id; the terminal's own teardown deliberately does not, because a row only
+unmounts when it was closed and a second signal would land on an id that may
+since have been reused. On shutdown the PTY master closes with the process and
+the child sees SIGHUP.
+
+Auto-start is narrowed to match: opening a project starts a session when it has
+**none**. A project you return to keeps what it had, and a session that stopped
+stays stopped until you ask for another.

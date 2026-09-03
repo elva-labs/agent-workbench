@@ -1,23 +1,24 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
-  import { agent } from "$lib/agent.svelte";
-  import { openPath, pick, project, projectName } from "$lib/project.svelte";
+  import { isReady } from "$lib/agent.svelte";
+  import {
+    close as closeSession,
+    create,
+    forProject,
+    isLive,
+    label,
+    select,
+    sessions,
+    statusLabel,
+  } from "$lib/sessions.svelte";
+  import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
 
-  // Phase 3 fills the space below the header with the real session index read
-  // from ~/.claude/projects. Until then the recent list is what there is.
-  let confirming = $state(false);
+  // Phase 3 adds the transcripts already on disk beneath the live sessions, so
+  // a past conversation can be resumed as another one of these rows.
+  let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
 
-  function requestOpen() {
-    // Switching project leaves the agent in the wrong directory, so the
-    // running session has to go. That is worth asking about: you may be
-    // halfway through something.
-    if (agent.status === "running" || agent.status === "starting") confirming = true;
-    else pick();
-  }
-
-  function confirmed() {
-    confirming = false;
-    pick();
+  function isOpen(path: string) {
+    return workspace.open.some((project) => project.path === path);
   }
 
   function shorten(path: string) {
@@ -26,48 +27,72 @@
   }
 </script>
 
-<Pane id="sessions" title="Projects &amp; sessions" meta={project.current?.isGit ? "git" : ""}>
+<Pane id="sessions" title="Projects &amp; sessions" meta="">
   <div class="head">
-    <span class="name" title={project.current?.path ?? ""}>{projectName()}</span>
-    <button onclick={requestOpen} disabled={project.opening} data-testid="open-project">Open</button>
+    <button onclick={pick} disabled={workspace.opening} data-testid="open-project">
+      Open project
+    </button>
   </div>
 
-  {#if confirming}
-    <div class="confirm" data-testid="switch-confirm">
-      <p>Opening another project stops the running agent.</p>
-      <div class="actions">
-        <button onclick={confirmed} data-testid="confirm-switch">Switch</button>
-        <button class="quiet" onclick={() => (confirming = false)}>Cancel</button>
-      </div>
-    </div>
+  {#if workspace.error}
+    <p class="error" data-testid="project-error">{workspace.error}</p>
   {/if}
 
-  {#if project.error}
-    <p class="error" data-testid="project-error">{project.error}</p>
-  {/if}
-
-  {#if project.current === null}
+  {#if workspace.open.length === 0}
     <div class="empty" data-testid="no-project">
-      <p>Open a folder to work in. The agent starts there and the changes pane watches it.</p>
+      <p>Open a folder to work in. A session starts there, and the changes pane watches it.</p>
     </div>
-  {:else if !project.current.isGit}
-    <p class="note" data-testid="not-a-repo">
-      Not a git repository, so there are no changes to show on the right.
-    </p>
   {/if}
 
-  {#if project.recent.length > 0}
-    <p class="label">Recent</p>
-    <ul class="recent">
-      {#each project.recent as path (path)}
-        <li>
-          <button
-            class:on={project.current?.path === path}
-            onclick={() => openPath(path)}
-            title={path}
-          >
-            {shorten(path)}
+  <div class="tree">
+    {#each workspace.open as project (project.path)}
+      {@const own = forProject(project.path)}
+      <div class="project" class:on={workspace.active === project.path}>
+        <button class="row project-row" onclick={() => activate(project.path)} title={project.path}>
+          <span class="name">{project.name}</span>
+          {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
+        </button>
+        <button
+          class="icon"
+          onclick={() => closeProject(project.path)}
+          aria-label="Close {project.name}"
+          data-testid="close-project">×</button
+        >
+      </div>
+
+      {#each own as session (session.key)}
+        <div class="session" class:on={sessions.active === session.key}>
+          <button class="row" onclick={() => select(session.key)} data-testid="session-row">
+            <span class="dot" class:live={isLive(session)}></span>
+            <span class="label">{label(session)}</span>
+            <span class="state">{statusLabel(session)}</span>
           </button>
+          <button
+            class="icon"
+            onclick={() => closeSession(session.key)}
+            aria-label="Close {label(session)}"
+            data-testid="close-session">×</button
+          >
+        </div>
+      {/each}
+
+      {#if workspace.active === project.path}
+        <button
+          class="new"
+          onclick={() => create(project.path)}
+          disabled={!isReady()}
+          data-testid="new-session">+ New session</button
+        >
+      {/if}
+    {/each}
+  </div>
+
+  {#if notOpen.length > 0}
+    <p class="section">Recent</p>
+    <ul class="recent">
+      {#each notOpen as path (path)}
+        <li>
+          <button onclick={() => openPath(path)} title={path}>{shorten(path)}</button>
         </li>
       {/each}
     </ul>
@@ -77,70 +102,155 @@
 <style>
   .head {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
     padding: 8px var(--pane-pad);
     border-bottom: 1px solid var(--rule);
     flex: none;
   }
 
-  .name {
-    font-family: var(--mono);
-    font-size: 12px;
-    color: var(--ink);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .head button {
-    margin-left: auto;
-    flex: none;
-  }
-
-  button {
+    width: 100%;
     font-family: var(--mono);
     font-size: 10.5px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    padding: 3px 9px;
+    padding: 4px 9px;
     border: 1px solid var(--accent);
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;
   }
 
-  button:disabled {
+  .head button:disabled {
     opacity: 0.5;
     cursor: default;
   }
 
-  .quiet {
-    border-color: var(--rule);
-    background: var(--surface);
-    color: var(--ink-3);
+  .tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+    min-height: 0;
   }
 
-  .confirm {
-    padding: 10px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
-    background: var(--surface-2);
+  .project,
+  .session {
+    display: flex;
+    align-items: center;
+  }
+
+  .row {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    text-align: left;
+    padding: 4px var(--pane-pad);
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .project-row .name {
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project.on .project-row .name {
+    color: var(--accent);
+  }
+
+  .flag {
+    font-size: 10px;
+    color: var(--ink-3);
     flex: none;
   }
 
-  .confirm p {
-    margin: 0 0 8px;
-    font-size: 12px;
-    color: var(--ink-2);
+  .session .row {
+    padding-left: 26px;
   }
 
-  .actions {
-    display: flex;
-    gap: 6px;
+  .session.on {
+    background: var(--accent-soft);
+  }
+
+  .session.on .label {
+    color: var(--accent);
+  }
+
+  .label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .state {
+    font-size: 10px;
+    color: var(--ink-3);
+    flex: none;
+  }
+
+  /* A filled dot is a live process; hollow is a row you can still read but
+     nothing is running behind. */
+  .dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border: 1px solid var(--ink-3);
+    border-radius: 50%;
+  }
+
+  .dot.live {
+    background: var(--add);
+    border-color: var(--add);
+  }
+
+  .icon {
+    flex: none;
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 8px;
+    cursor: pointer;
+    opacity: 0;
+  }
+
+  .project:hover .icon,
+  .session:hover .icon,
+  .icon:focus-visible {
+    opacity: 1;
+  }
+
+  .new {
+    display: block;
+    margin: 2px 0 10px 26px;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 0;
+  }
+
+  .new:hover:not(:disabled) {
+    color: var(--accent);
+  }
+
+  .new:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .empty p,
-  .note,
   .error {
     margin: 0;
     padding: 12px var(--pane-pad);
@@ -153,35 +263,38 @@
     color: var(--del);
   }
 
-  .label {
+  .section {
     margin: 0;
-    padding: 12px var(--pane-pad) 4px;
+    padding: 8px var(--pane-pad) 4px;
+    border-top: 1px solid var(--rule);
     font-family: var(--mono);
     font-size: 10px;
     letter-spacing: 0.11em;
     text-transform: uppercase;
     color: var(--ink-3);
+    flex: none;
   }
 
   .recent {
-    flex: 1;
-    overflow-y: auto;
     list-style: none;
     margin: 0;
     padding: 0 0 8px;
+    flex: none;
+    max-height: 30%;
+    overflow-y: auto;
   }
 
   .recent button {
     display: block;
     width: 100%;
     text-align: left;
-    text-transform: none;
-    letter-spacing: 0;
+    font-family: var(--mono);
     font-size: 11.5px;
     padding: 4px var(--pane-pad);
     border: 0;
     background: none;
     color: var(--ink-2);
+    cursor: pointer;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -189,10 +302,5 @@
 
   .recent button:hover {
     background: var(--surface-2);
-  }
-
-  .recent button.on {
-    color: var(--accent);
-    background: var(--accent-soft);
   }
 </style>

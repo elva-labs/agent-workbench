@@ -7,9 +7,9 @@ right. Claude Code first, with an adapter seam defined from the start.
 Rust and Tauri v2, Svelte frontend. macOS is the target; Windows and Linux come
 later, so nothing in the core is allowed to be macOS-only.
 
-**Status: phase 1, plus project selection.** Open a folder and the agent starts
-in it. The file tree and the session list are still sample data; those are
-phases 2 and 3.
+**Status: phase 1, plus projects and sessions.** Open folders and each gets its
+own live sessions, switchable without stopping anything. The file tree is still
+sample data; that is phase 2.
 
 ## The rule that keeps it coherent
 
@@ -49,11 +49,12 @@ src/lib/keymap.ts          the focus model as a pure function
 src/lib/theme.svelte.ts    light / dark / system
 src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
 src/lib/core.ts            the one seam to Rust: commands, channel, events
-src/lib/project.svelte.ts  the open project, its recent list, and the picker
+src/lib/workspace.svelte.ts the open projects, the recent list, the picker
+src/lib/sessions.svelte.ts every session this window has, live or finished
 src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
 src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
-src/lib/components/        Pane shell, Splitter, FileTree, FileViewer
+src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView
 src/lib/panes/             the three panes
 src-tauri/src/project.rs   what a folder is: name, repository root, is it git
 src-tauri/src/env.rs       the login shell environment, and PATH lookup

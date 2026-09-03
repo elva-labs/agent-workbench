@@ -11,7 +11,7 @@
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
   import { loadLayout } from "$lib/layout.svelte";
-  import { restore } from "$lib/project.svelte";
+  import { restore } from "$lib/workspace.svelte";
 
   let { children } = $props();
 

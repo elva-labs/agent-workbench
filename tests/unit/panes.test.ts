@@ -4,8 +4,9 @@ import SessionsPane from "$lib/panes/SessionsPane.svelte";
 import ChangesPane from "$lib/panes/ChangesPane.svelte";
 import { DEFAULT, layout, togglePane } from "$lib/layout.svelte";
 import { files } from "$lib/files.svelte";
-import { project } from "$lib/project.svelte";
+import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { agent } from "$lib/agent.svelte";
+import { reset as resetSessions, create, started, sessions } from "$lib/sessions.svelte";
 
 beforeEach(() => {
   layout.sessions = DEFAULT.sessions;
@@ -28,13 +29,18 @@ beforeEach(() => {
   files.expanded.clear();
   files.collapsed.clear();
 
-  project.current = null;
-  project.recent = [];
-  project.error = null;
-  project.opening = false;
-  agent.status = "unknown";
-  agent.id = null;
-  agent.startedFor = null;
+  resetWorkspace();
+  resetSessions();
+  agent.availability = "ready";
+  agent.path = "/usr/local/bin/claude";
+  agent.error = null;
+});
+
+const repo = (path: string, name: string, isGit = true) => ({
+  path,
+  name,
+  repository: isGit ? path : null,
+  isGit,
 });
 
 const tree = () => screen.getByRole("tree");
@@ -63,40 +69,76 @@ describe("SessionsPane", () => {
     expect(screen.getByTestId("open-project")).toBeInTheDocument();
   });
 
-  it("names the open project", () => {
-    project.current = { path: "/home/ada/dev/thing", name: "thing", repository: "/home/ada/dev/thing", isGit: true };
+  it("lists open projects with their sessions", () => {
+    workspace.open.push(repo("/home/ada/dev/one", "one"));
+    workspace.active = "/home/ada/dev/one";
+    const session = create("/home/ada/dev/one");
+    started(session.key, "pty-1");
+
     render(SessionsPane);
-    expect(screen.getByText("thing")).toBeInTheDocument();
-    expect(screen.queryByTestId("no-project")).not.toBeInTheDocument();
+    expect(screen.getByText("one")).toBeInTheDocument();
+    expect(screen.getByText("session 1")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
   });
 
   // The right pane is entirely git-based, so say so rather than sit there empty.
-  it("says when the folder is not a repository", () => {
-    project.current = { path: "/tmp/notes", name: "notes", repository: null, isGit: false };
+  it("flags a folder that is not a repository", () => {
+    workspace.open.push(repo("/tmp/notes", "notes", false));
+    workspace.active = "/tmp/notes";
+
     render(SessionsPane);
-    expect(screen.getByTestId("not-a-repo")).toBeInTheDocument();
+    expect(screen.getByText("no git")).toBeInTheDocument();
   });
 
-  it("lists recent projects, shortened at the home directory", () => {
-    project.recent = ["/home/ada/dev/thing", "/home/ada/dev/other"];
+  // The whole point of the model: looking at another session kills nothing.
+  it("switches session on click without stopping the other", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const first = create("/repo");
+    started(first.key, "pty-1");
+    const second = create("/repo");
+    started(second.key, "pty-2");
+
     render(SessionsPane);
-    expect(screen.getByText("~/dev/thing")).toBeInTheDocument();
-    expect(screen.getByText("~/dev/other")).toBeInTheDocument();
+    await fireEvent.click(screen.getAllByTestId("session-row")[0]);
+
+    expect(sessions.active).toBe(first.key);
+    expect(second.status).toBe("running");
   });
 
-  // Switching leaves the PTY in the wrong directory, and you may be mid-task.
-  it("asks before discarding a running agent", async () => {
-    agent.status = "running";
+  it("adds another session on request", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+
     render(SessionsPane);
-    await fireEvent.click(screen.getByTestId("open-project"));
-    expect(screen.getByTestId("switch-confirm")).toBeInTheDocument();
+    await fireEvent.click(screen.getByTestId("new-session"));
+    expect(sessions.all).toHaveLength(1);
   });
 
-  it("does not ask when nothing is running", async () => {
-    agent.status = "idle";
+  it("offers no new session while there is no agent to run", () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    agent.availability = "missing";
+
     render(SessionsPane);
-    await fireEvent.click(screen.getByTestId("open-project"));
-    expect(screen.queryByTestId("switch-confirm")).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-session")).toBeDisabled();
+  });
+
+  it("only offers a new session in the project you are looking at", () => {
+    workspace.open.push(repo("/one", "one"), repo("/two", "two"));
+    workspace.active = "/one";
+
+    render(SessionsPane);
+    expect(screen.getAllByTestId("new-session")).toHaveLength(1);
+  });
+
+  it("lists recent projects that are not open", () => {
+    workspace.recent = ["/home/ada/dev/one", "/home/ada/dev/two"];
+    workspace.open.push(repo("/home/ada/dev/one", "one"));
+
+    render(SessionsPane);
+    expect(screen.getByText("~/dev/two")).toBeInTheDocument();
+    expect(screen.queryByText("~/dev/one")).not.toBeInTheDocument();
   });
 });
 
