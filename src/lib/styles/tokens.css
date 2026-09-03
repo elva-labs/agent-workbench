@@ -1,0 +1,162 @@
+/*
+ * Design tokens for Agent Workbench.
+ *
+ * Three layers, in order:
+ *   1. semantic  — surfaces, ink, rules, accent. What the UI is built from.
+ *   2. ansi      — the sixteen terminal slots, mapped onto the same palette.
+ *   3. terminal  — the four xterm.js properties that are not ANSI slots.
+ *
+ * The ANSI layer exists here rather than next to the terminal because it is the
+ * same palette: cyan IS the accent, so agent output carries the app's colour
+ * without touching the agent's rendering. Read by the xterm ITheme builder.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* semantic */
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --surface-2: #edf1f0;
+  --ink: #14181a;
+  --ink-2: #4e5a59;
+  --ink-3: #7d8988;
+  --rule: #dce3e1;
+  --rule-strong: #c3cdcb;
+  --accent: #16706a;
+  --accent-soft: #e2efed;
+  --add: #2e6b3f;
+  --del: #9b3a47;
+
+  /* ansi */
+  --ansi-black: #14181a;
+  --ansi-red: #9b3a47;
+  --ansi-green: #2e6b3f;
+  --ansi-yellow: #8a6a1f;
+  --ansi-blue: #2f5aa8;
+  --ansi-magenta: #7a4a8c;
+  --ansi-cyan: #16706a;
+  --ansi-white: #4e5a59;
+  --ansi-bright-black: #3a4244;
+  --ansi-bright-red: #be5766;
+  --ansi-bright-green: #43895a;
+  --ansi-bright-yellow: #a9853a;
+  --ansi-bright-blue: #4c76c4;
+  --ansi-bright-magenta: #9765a8;
+  --ansi-bright-cyan: #2a8c85;
+  --ansi-bright-white: #7d8988;
+
+  /* type */
+  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --display: "Archivo", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* rhythm */
+  --line-ui: 1.5;
+  --line-term: 1.35;
+  --pane-pad: 12px;
+  --splitter-w: 6px;
+}
+
+/* System preference wins when the user has made no explicit choice. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #0e1112;
+    --surface: #171b1c;
+    --surface-2: #1e2425;
+    --ink: #e6eae9;
+    --ink-2: #a3aeac;
+    --ink-3: #788483;
+    --rule: #262d2e;
+    --rule-strong: #394243;
+    --accent: #58c0b4;
+    --accent-soft: #15302e;
+    --add: #7fbf8c;
+    --del: #e08894;
+
+    --ansi-black: #3a4244;
+    --ansi-red: #e08894;
+    --ansi-green: #7fbf8c;
+    --ansi-yellow: #d8b45e;
+    --ansi-blue: #86a9e8;
+    --ansi-magenta: #c39ad4;
+    --ansi-cyan: #58c0b4;
+    --ansi-white: #e6eae9;
+    --ansi-bright-black: #55605f;
+    --ansi-bright-red: #eda4ad;
+    --ansi-bright-green: #9bd3a5;
+    --ansi-bright-yellow: #e8cb86;
+    --ansi-bright-blue: #a4c0f0;
+    --ansi-bright-magenta: #d5b4e2;
+    --ansi-bright-cyan: #7bd3c8;
+    --ansi-bright-white: #f4f7f6;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e1112;
+  --surface: #171b1c;
+  --surface-2: #1e2425;
+  --ink: #e6eae9;
+  --ink-2: #a3aeac;
+  --ink-3: #788483;
+  --rule: #262d2e;
+  --rule-strong: #394243;
+  --accent: #58c0b4;
+  --accent-soft: #15302e;
+  --add: #7fbf8c;
+  --del: #e08894;
+
+  --ansi-black: #3a4244;
+  --ansi-red: #e08894;
+  --ansi-green: #7fbf8c;
+  --ansi-yellow: #d8b45e;
+  --ansi-blue: #86a9e8;
+  --ansi-magenta: #c39ad4;
+  --ansi-cyan: #58c0b4;
+  --ansi-white: #e6eae9;
+  --ansi-bright-black: #55605f;
+  --ansi-bright-red: #eda4ad;
+  --ansi-bright-green: #9bd3a5;
+  --ansi-bright-yellow: #e8cb86;
+  --ansi-bright-blue: #a4c0f0;
+  --ansi-bright-magenta: #d5b4e2;
+  --ansi-bright-cyan: #7bd3c8;
+  --ansi-bright-white: #f4f7f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: var(--line-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The webview is chrome, not a document: no text selection or drag outside
+   the panes that own real content. */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
