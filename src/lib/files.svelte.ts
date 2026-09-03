@@ -17,6 +17,10 @@
  * content. The shape here is what those will fill.
  */
 
+// A plain Set inside $state is not deeply reactive: Svelte proxies objects and
+// arrays, not Map and Set. SvelteSet is the reactive one.
+import { SvelteSet } from "svelte/reactivity";
+
 export type Status = "M" | "A" | "D" | "R";
 export type Scope = "changed" | "all";
 export type View = "diff" | "content";
@@ -105,45 +109,108 @@ const CHANGED: FileEntry[] = [
   },
 ];
 
+const plain = (path: string, content: string[]): FileEntry => ({
+  path,
+  status: null,
+  content,
+});
+
+const stub = (path: string): FileEntry => ({
+  path,
+  status: null,
+  content: [`// ${path}`, "", "// Sample content. Phase 2 reads the real file."],
+});
+
 const UNCHANGED: FileEntry[] = [
-  {
-    path: "Cargo.toml",
-    status: null,
-    content: [
-      "[package]",
-      'name = "agent-workbench"',
-      'version = "0.1.0"',
-      'edition = "2021"',
-      "",
-      "[dependencies]",
-      'tauri = { version = "2", features = [] }',
-      'portable-pty = "0.8"',
-    ],
-  },
-  {
-    path: "src/main.rs",
-    status: null,
-    content: [
-      '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]',
-      "",
-      "fn main() {",
-      "    agent_workbench_lib::run()",
-      "}",
-    ],
-  },
-  {
-    path: "src/cache/store.rs",
-    status: null,
-    content: ["pub(crate) struct Entry {", "    value: String,", "    seen: Instant,", "}"],
-  },
+  plain("Cargo.toml", [
+    "[package]",
+    'name = "agent-workbench"',
+    'version = "0.1.0"',
+    'edition = "2021"',
+    "",
+    "[dependencies]",
+    'tauri = { version = "2", features = [] }',
+    'portable-pty = "0.8"',
+  ]),
+  plain("README.md", ["# Agent Workbench", "", "A desktop workbench for coding agent CLIs."]),
+  plain("src/main.rs", [
+    '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]',
+    "",
+    "fn main() {",
+    "    agent_workbench_lib::run()",
+    "}",
+  ]),
+  plain("src/cache/store.rs", [
+    "pub(crate) struct Entry {",
+    "    value: String,",
+    "    seen: Instant,",
+    "}",
+  ]),
+  stub("src/cache/eviction.rs"),
+  stub("src/adapter/mod.rs"),
+  stub("src/adapter/claude_code.rs"),
+  stub("src/adapter/acp.rs"),
+  stub("src/pty/mod.rs"),
+  stub("src/pty/env.rs"),
+  stub("src/pty/reader.rs"),
+  stub("src/git/status.rs"),
+  stub("src/git/diff.rs"),
+  stub("src/git/watcher.rs"),
+  stub("src/sessions/index.rs"),
+  stub("src/sessions/transcript.rs"),
+  stub("tests/pty_spawn.rs"),
+  stub("tests/git_status.rs"),
+  stub("docs/architecture.md"),
+  stub("docs/adapters.md"),
   { path: "assets/icon.png", status: null, binary: true },
+  { path: "assets/tray/idle.png", status: null, binary: true },
 ];
 
 export const files = $state({
   scope: "changed" as Scope,
   view: "diff" as View,
   selected: null as string | null,
+  /**
+   * Folders you opened and folders you closed, as overrides. A folder with no
+   * entry in either falls back to the default: open when something beneath it
+   * changed. That way widening the scope to hundreds of files does not bury
+   * the handful the agent touched, and no state has to be rebuilt when the
+   * scope changes.
+   */
+  expanded: new SvelteSet<string>(),
+  collapsed: new SvelteSet<string>(),
 });
+
+export function isOpen(node: { path: string; hasChange: boolean }): boolean {
+  if (files.collapsed.has(node.path)) return false;
+  if (files.expanded.has(node.path)) return true;
+  return node.hasChange;
+}
+
+export function toggleDir(node: { path: string; hasChange: boolean }) {
+  const next = !isOpen(node);
+  files.expanded.delete(node.path);
+  files.collapsed.delete(node.path);
+  // Only record an override where it differs from the default. The sets then
+  // stay proportional to what you actually changed rather than to what you
+  // clicked, which matters once a repository has a few hundred folders.
+  if (next !== node.hasChange) {
+    if (next) files.expanded.add(node.path);
+    else files.collapsed.add(node.path);
+  }
+}
+
+/** Opens every folder on the way to a path, so a selection is never hidden. */
+export function reveal(path: string) {
+  const segments = path.split("/");
+  segments.pop();
+  let prefix = "";
+  for (const segment of segments) {
+    prefix = prefix === "" ? segment : `${prefix}/${segment}`;
+    files.collapsed.delete(prefix);
+    files.expanded.add(prefix);
+  }
+}
 
 export function listed(): FileEntry[] {
   return files.scope === "changed" ? CHANGED : [...CHANGED, ...UNCHANGED];
@@ -173,6 +240,7 @@ export function effectiveView(): View {
 
 export function select(path: string) {
   files.selected = path;
+  reveal(path);
 }
 
 export function setScope(scope: Scope) {

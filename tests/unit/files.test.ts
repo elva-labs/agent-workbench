@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   basename,
+  isOpen,
+  reveal,
+  toggleDir,
   canDiff,
   changedCount,
   effectiveView,
@@ -18,6 +21,8 @@ beforeEach(() => {
   files.scope = "changed";
   files.view = "diff";
   files.selected = null;
+  files.expanded.clear();
+  files.collapsed.clear();
 });
 
 describe("scope", () => {
@@ -151,5 +156,65 @@ describe("basename", () => {
 
   it("leaves a bare filename alone", () => {
     expect(basename("Cargo.toml")).toBe("Cargo.toml");
+  });
+});
+
+describe("folder state", () => {
+  const dir = (path: string, hasChange: boolean) => ({ path, hasChange });
+
+  // The default that makes the all-files scope usable: a few hundred folders
+  // stay shut, and the handful holding the agent's work are already open.
+  it("opens a folder that holds a change and shuts one that does not", () => {
+    expect(isOpen(dir("src", true))).toBe(true);
+    expect(isOpen(dir("docs", false))).toBe(false);
+  });
+
+  it("lets you shut a folder the default opened", () => {
+    toggleDir(dir("src", true));
+    expect(isOpen(dir("src", true))).toBe(false);
+  });
+
+  it("lets you open a folder the default shut", () => {
+    toggleDir(dir("docs", false));
+    expect(isOpen(dir("docs", false))).toBe(true);
+  });
+
+  it("returns to the default when toggled back", () => {
+    toggleDir(dir("docs", false));
+    toggleDir(dir("docs", false));
+    expect(isOpen(dir("docs", false))).toBe(false);
+    expect(files.expanded.has("docs")).toBe(false);
+    expect(files.collapsed.has("docs")).toBe(false);
+  });
+
+  it("survives a scope change, because it is stored as overrides", () => {
+    toggleDir(dir("docs", false));
+    setScope("all");
+    expect(isOpen(dir("docs", false))).toBe(true);
+  });
+});
+
+describe("reveal", () => {
+  it("opens every folder on the way to a file", () => {
+    reveal("src/cache/mod.rs");
+    expect(files.expanded.has("src")).toBe(true);
+    expect(files.expanded.has("src/cache")).toBe(true);
+  });
+
+  it("reopens a folder you had shut, so a selection is never hidden", () => {
+    toggleDir({ path: "src", hasChange: true });
+    expect(isOpen({ path: "src", hasChange: true })).toBe(false);
+    reveal("src/cache/mod.rs");
+    expect(isOpen({ path: "src", hasChange: true })).toBe(true);
+  });
+
+  it("does nothing for a file at the top level", () => {
+    reveal("Cargo.toml");
+    expect(files.expanded.size).toBe(0);
+  });
+
+  it("runs on select, so picking a file keeps its folders open", () => {
+    select("src/lib.rs");
+    expect(isOpen({ path: "src", hasChange: true })).toBe(true);
   });
 });

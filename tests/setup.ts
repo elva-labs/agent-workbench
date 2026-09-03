@@ -26,6 +26,12 @@ if (!Element.prototype.setPointerCapture) {
   Element.prototype.hasPointerCapture = vi.fn(() => false);
 }
 
+// jsdom implements no layout, so it has no scrollIntoView. The tree calls it
+// to keep the keyboard cursor on screen.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = vi.fn();
+}
+
 beforeEach(() => {
   localStorage.clear();
   delete document.documentElement.dataset.theme;

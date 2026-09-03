@@ -10,6 +10,7 @@
   import {
     DEFAULT,
     MIN,
+    MIN_REVIEW,
     agentVisible,
     applyLayout,
     changesVisible,
@@ -48,7 +49,7 @@
 
   function resizeChanges(dx: number) {
     if (reviewing) {
-      layout.review = Math.max(MIN.review, layout.review - dx);
+      layout.review = Math.max(MIN_REVIEW, layout.review - dx);
       layout.reviewTouched = true;
     } else {
       layout.changes = Math.max(MIN.changes, layout.changes - dx);

@@ -26,14 +26,20 @@ export const MIN = {
   sessions: 180,
   agent: 360,
   changes: 260,
-  /** The viewer below this is too narrow to read a diff in. */
-  review: 420,
+  /** Narrower than this and the tree shows indentation rather than names. */
+  tree: 160,
+  /** The content below this is too narrow to read a diff in. */
+  viewer: 400,
 } as const;
+
+/** The review pane holds a tree and the content side by side. */
+export const MIN_REVIEW = MIN.tree + SPLITTER + MIN.viewer;
 
 export const DEFAULT = {
   sessions: 232,
   changes: 340,
-  review: 640,
+  tree: 220,
+  review: 700,
 } as const;
 
 /** Content width below which the sessions pane cannot fit alongside the rest. */
@@ -45,7 +51,7 @@ export const NEEDS_CHANGES = MIN.changes + SPLITTER + MIN.agent;
  * Hiding costs nothing: the pane keeps its width, so the PTY is never resized
  * and the terminal comes back exactly as it was. Squeezing costs a reflow.
  */
-export const NEEDS_AGENT_WHILE_REVIEWING = MIN.agent + SPLITTER + MIN.review;
+export const NEEDS_AGENT_WHILE_REVIEWING = MIN.agent + SPLITTER + MIN_REVIEW;
 
 const KEY = "workbench.layout";
 
@@ -53,6 +59,7 @@ export const layout = $state({
   sessions: DEFAULT.sessions as number,
   changes: DEFAULT.changes as number,
   review: DEFAULT.review as number,
+  tree: DEFAULT.tree as number,
   sessionsChosen: true,
   changesChosen: true,
   sessionsForced: false,
@@ -95,7 +102,11 @@ export function applyLayout(width: number) {
     layout.agentHidden = width < NEEDS_AGENT_WHILE_REVIEWING;
 
     const room = layout.agentHidden ? width : width - SPLITTER - MIN.agent;
-    layout.review = Math.min(Math.max(layout.review, MIN.review), Math.max(MIN.review, room));
+    layout.review = Math.min(Math.max(layout.review, MIN_REVIEW), Math.max(MIN_REVIEW, room));
+
+    // Inside the pane, the content keeps its minimum and the tree gives way.
+    const treeRoom = layout.review - SPLITTER - MIN.viewer;
+    layout.tree = Math.min(Math.max(layout.tree, MIN.tree), Math.max(MIN.tree, treeRoom));
     return;
   }
 
@@ -131,11 +142,14 @@ export function applyLayout(width: number) {
 export function enterReview() {
   if (layout.mode === "reviewing") return;
 
-  // Take exactly what the sessions pane vacates, so opening a file does not
-  // move the agent pane at all. Only the floor can force it to give any up.
+  // The pane now holds a tree beside the content, so what the sessions pane
+  // vacates is no longer enough on its own: at default widths that is 578px,
+  // which would leave the tree at its minimum. Opening the viewer therefore
+  // costs the agent one resize, on a deliberate mode change rather than on
+  // every file, and it gets the width straight back on exit.
   if (!layout.reviewTouched) {
     const freed = sessionsVisible() ? layout.sessions + SPLITTER : 0;
-    layout.review = Math.max(MIN.review, layout.changes + freed);
+    layout.review = Math.max(DEFAULT.review, layout.changes + freed);
   }
 
   layout.mode = "reviewing";
@@ -185,6 +199,7 @@ export function loadLayout() {
     if (typeof v.sessions === "number") layout.sessions = v.sessions;
     if (typeof v.changes === "number") layout.changes = v.changes;
     if (typeof v.review === "number") layout.review = v.review;
+    if (typeof v.tree === "number") layout.tree = v.tree;
     if (typeof v.reviewTouched === "boolean") layout.reviewTouched = v.reviewTouched;
     if (typeof v.sessionsChosen === "boolean") layout.sessionsChosen = v.sessionsChosen;
     if (typeof v.changesChosen === "boolean") layout.changesChosen = v.changesChosen;
@@ -206,6 +221,7 @@ export function saveLayout() {
         sessions: layout.sessions,
         changes: layout.changes,
         review: layout.review,
+        tree: layout.tree,
         reviewTouched: layout.reviewTouched,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,

@@ -1,17 +1,10 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
+  import FileTree from "$lib/components/FileTree.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
-  import {
-    basename,
-    canDiff,
-    files,
-    listed,
-    select,
-    selectedEntry,
-    setScope,
-    setView,
-  } from "$lib/files.svelte";
-  import { enterReview, exitReview, layout } from "$lib/layout.svelte";
+  import Splitter from "$lib/components/Splitter.svelte";
+  import { canDiff, files, listed, select, selectedEntry, setScope, setView } from "$lib/files.svelte";
+  import { DEFAULT, MIN, applyLayout, enterReview, exitReview, layout, saveLayout } from "$lib/layout.svelte";
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
@@ -20,6 +13,17 @@
   function open(path: string) {
     select(path);
     enterReview();
+  }
+
+  function resizeTree(dx: number) {
+    layout.tree = Math.max(MIN.tree, layout.tree + dx);
+    applyLayout(layout.width);
+  }
+
+  function resetTree() {
+    layout.tree = DEFAULT.tree;
+    applyLayout(layout.width);
+    saveLayout();
   }
 </script>
 
@@ -57,38 +61,16 @@
     {/if}
   </div>
 
-  {#if reviewing}
-    <div class="strip" role="tablist" aria-label="Open a file">
-      {#each entries as file (file.path)}
-        <button
-          class="chip"
-          role="tab"
-          aria-selected={files.selected === file.path}
-          class:on={files.selected === file.path}
-          onclick={() => select(file.path)}
-        >
-          <span class="status" data-status={file.status ?? "-"}>{file.status ?? "·"}</span>
-          {basename(file.path)}
-        </button>
-      {/each}
-    </div>
-    <FileViewer />
-  {:else}
-    <ul class="files">
-      {#each entries as file (file.path)}
-        <li>
-          <button onclick={() => open(file.path)}>
-            <span class="status" data-status={file.status ?? "-"}>{file.status ?? "·"}</span>
-            <span class="path">{file.path}</span>
-            <span class="stat">
-              {#if file.add}<span class="add">+{file.add}</span>{/if}
-              {#if file.del}<span class="del">−{file.del}</span>{/if}
-            </span>
-          </button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+  <!-- The tree is the same component in both shapes. Working, it has the pane
+       to itself; reviewing, it becomes the left column and keeps its scroll
+       position, its open folders and its selection. -->
+  <div class="split" class:reviewing style:--tree-w="{layout.tree}px">
+    <FileTree onOpen={open} />
+    {#if reviewing}
+      <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
+      <FileViewer />
+    {/if}
+  </div>
 </Pane>
 
 <style>
@@ -140,100 +122,14 @@
     color: var(--ink-2);
   }
 
-  /* The list becomes a strip once the viewer has the pane: same files, same
-     order, still one click away, but no longer the reason the pane exists. */
-  .strip {
-    display: flex;
-    gap: 1px;
-    overflow-x: auto;
-    padding: 6px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
-    flex: none;
-    scrollbar-width: thin;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 6px;
-    flex: none;
-    font-family: var(--mono);
-    font-size: 11px;
-    padding: 3px 9px;
-    border: 1px solid transparent;
-    background: transparent;
-    color: var(--ink-3);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .chip:hover {
-    color: var(--ink-2);
-  }
-
-  .chip.on {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .files {
+  .split {
     flex: 1;
-    overflow-y: auto;
-    list-style: none;
-    margin: 0;
-    padding: 6px 0;
-  }
-
-  .files button {
+    min-height: 0;
     display: grid;
-    grid-template-columns: 16px 1fr auto;
-    gap: 8px;
-    align-items: baseline;
-    width: 100%;
-    padding: 4px var(--pane-pad);
-    border: 0;
-    background: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    color: var(--ink-2);
-    text-align: left;
-    cursor: pointer;
+    grid-template-columns: 1fr;
   }
 
-  .files button:hover {
-    background: var(--surface-2);
-  }
-
-  .status[data-status="M"],
-  .status[data-status="A"] {
-    color: var(--add);
-  }
-
-  .status[data-status="D"] {
-    color: var(--del);
-  }
-
-  .status[data-status="R"],
-  .status[data-status="-"] {
-    color: var(--ink-3);
-  }
-
-  .path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .stat {
-    color: var(--ink-3);
-  }
-
-  .add {
-    color: var(--add);
-  }
-
-  .del {
-    color: var(--del);
+  .split.reviewing {
+    grid-template-columns: var(--tree-w) var(--splitter-w) 1fr;
   }
 </style>

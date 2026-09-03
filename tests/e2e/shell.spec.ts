@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
 const CHANGES = "section[data-pane='changes']";
+const TREE = "[data-testid='file-tree']";
 
 async function widthOf(page: Page, selector: string) {
   const box = await page.locator(selector).boundingBox();
@@ -13,9 +14,13 @@ async function widthOf(page: Page, selector: string) {
 /** Cmd on macOS, Ctrl elsewhere. */
 const MOD = "ControlOrMeta";
 
-/** Scoped to the changes pane: the agent placeholder prints paths too. */
-function fileRow(page: Page, path: string) {
-  return page.locator(CHANGES).getByText(path, { exact: true });
+/** Tree rows carry the basename, and only the changes pane has a tree. */
+function row(page: Page, name: string) {
+  return page.locator(TREE).getByText(name, { exact: true });
+}
+
+function rowNames(page: Page) {
+  return page.locator(`${TREE} [role='treeitem'] .name`).allTextContents();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -184,36 +189,92 @@ test.describe("responsive collapse", () => {
   });
 });
 
+test.describe("the file tree", () => {
+  test("nests changed files under their folders", async ({ page }) => {
+    expect(await rowNames(page)).toEqual(["src", "cache", "mod.rs", "lib.rs", "token_cache.rs"]);
+  });
+
+  // Why the tree scales: widening the scope adds folders, not hundreds of rows.
+  test("leaves folders with nothing changed shut", async ({ page }) => {
+    await page.getByRole("button", { name: "All files" }).click();
+    const names = await rowNames(page);
+
+    expect(names).toContain("docs");
+    expect(names).not.toContain("architecture.md");
+    expect(names).toContain("store.rs");
+  });
+
+  test("opens and shuts a folder on click", async ({ page }) => {
+    await page.getByRole("button", { name: "All files" }).click();
+
+    await row(page, "docs").click();
+    expect(await rowNames(page)).toContain("architecture.md");
+
+    await row(page, "docs").click();
+    expect(await rowNames(page)).not.toContain("architecture.md");
+  });
+
+  test("walks with the keyboard and opens with Enter", async ({ page }) => {
+    await page.locator(TREE).focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@")).toBeVisible();
+  });
+
+  test("shuts a folder with the left arrow", async ({ page }) => {
+    await page.locator(TREE).focus();
+    await page.keyboard.press("ArrowLeft");
+    expect(await rowNames(page)).toEqual(["src"]);
+  });
+
+  test("does not scroll the pane sideways on a deep path", async ({ page }) => {
+    await page.getByRole("button", { name: "All files" }).click();
+    const overflow = await page
+      .locator(TREE)
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(overflow).toBe(false);
+  });
+});
+
 test.describe("the file viewer", () => {
   test("opens by clicking a file, and the changes pane grows", async ({ page }) => {
     const before = await widthOf(page, CHANGES);
-    await fileRow(page, "src/cache/mod.rs").click();
+    await row(page, "mod.rs").click();
 
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
     await expect(page.getByTestId("viewer")).toBeVisible();
     expect(await widthOf(page, CHANGES)).toBeGreaterThan(before);
   });
 
-  // The move that makes this not a modal: the room comes from the sessions
-  // pane, and the agent stays exactly where it was.
-  test("takes the room from the sessions pane, not the agent", async ({ page }) => {
-    const agentBefore = await widthOf(page, AGENT);
-    await fileRow(page, "src/cache/mod.rs").click();
+  // The tree keeps the pane's left column; the content takes the rest.
+  test("puts the tree beside the content, not above it", async ({ page }) => {
+    await row(page, "mod.rs").click();
 
+    const tree = (await page.locator(TREE).boundingBox())!;
+    const viewer = (await page.getByTestId("viewer").boundingBox())!;
+    expect(viewer.x).toBeGreaterThanOrEqual(tree.x + tree.width);
+    expect(Math.abs(viewer.y - tree.y)).toBeLessThan(2);
+  });
+
+  test("folds the sessions pane away and keeps the agent visible", async ({ page }) => {
+    await row(page, "mod.rs").click();
     await expect(page.locator(SESSIONS)).toBeHidden();
     await expect(page.locator(AGENT)).toBeVisible();
-    expect(await widthOf(page, AGENT)).toBeCloseTo(agentBefore, 0);
+    expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
   test("shows the diff first", async ({ page }) => {
-    await fileRow(page, "src/cache/mod.rs").click();
+    await row(page, "mod.rs").click();
     const viewer = page.getByTestId("viewer");
     await expect(viewer).toHaveAttribute("data-view", "diff");
     await expect(viewer.getByText("@@ -1,9 +1,12 @@")).toBeVisible();
   });
 
   test("switches to the whole file and back", async ({ page }) => {
-    await fileRow(page, "src/cache/mod.rs").click();
+    await row(page, "mod.rs").click();
     const viewer = page.getByTestId("viewer");
 
     await page.getByRole("button", { name: "Content" }).click();
@@ -225,44 +286,68 @@ test.describe("the file viewer", () => {
   });
 
   test("switches view from the keyboard", async ({ page }) => {
-    await fileRow(page, "src/cache/mod.rs").click();
+    await row(page, "mod.rs").click();
     await page.keyboard.press(`${MOD}+e`);
     await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
   });
 
-  test("keeps every file one click away in the strip", async ({ page }) => {
-    await fileRow(page, "src/cache/mod.rs").click();
-    await page.getByRole("tab", { name: /lib\.rs/ }).click();
-
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
-    await expect(page.getByTestId("viewer").getByText("mod cache;")).toBeVisible();
-  });
-
-  test("does not move the layout when switching files", async ({ page }) => {
-    await fileRow(page, "src/cache/mod.rs").click();
+  test("switches files from the tree without moving the layout", async ({ page }) => {
+    await row(page, "mod.rs").click();
     const agentWidth = await widthOf(page, AGENT);
+    const treeWidth = await widthOf(page, TREE);
 
-    await page.getByRole("tab", { name: /lib\.rs/ }).click();
-    await page.getByRole("tab", { name: /token_cache\.rs/ }).click();
+    await row(page, "lib.rs").click();
+    await expect(page.getByTestId("viewer").getByText("mod cache;")).toBeVisible();
 
     expect(await widthOf(page, AGENT)).toBeCloseTo(agentWidth, 0);
+    expect(await widthOf(page, TREE)).toBeCloseTo(treeWidth, 0);
+  });
+
+  test("resizes the tree against the content", async ({ page }) => {
+    await row(page, "mod.rs").click();
+    const before = await widthOf(page, TREE);
+
+    const handle = page.getByRole("separator", { name: "Resize the file tree" });
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 6 });
+    await page.mouse.up();
+
+    expect(await widthOf(page, TREE)).toBeGreaterThan(before + 40);
+  });
+
+  test("resizes the whole pane against the agent", async ({ page }) => {
+    await row(page, "mod.rs").click();
+    const before = await widthOf(page, CHANGES);
+
+    const handle = page.getByRole("separator", { name: "Resize the viewer" });
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 80, box.y + box.height / 2, { steps: 8 });
+    await page.mouse.up();
+
+    expect(await widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
+    expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
   test("widens the scope and falls back to content for an unchanged file", async ({ page }) => {
     await page.getByRole("button", { name: "All files" }).click();
-    await fileRow(page, "Cargo.toml").click();
+    await row(page, "Cargo.toml").click();
 
     await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
     await expect(page.getByRole("button", { name: "Diff" })).toBeDisabled();
   });
 
   test("closes on Escape and restores the sessions pane", async ({ page }) => {
-    await fileRow(page, "src/cache/mod.rs").click();
+    await row(page, "mod.rs").click();
     await expect(page.locator(SESSIONS)).toBeHidden();
 
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await expect(page.locator(SESSIONS)).toBeVisible();
+    await expect(page.locator(TREE)).toBeVisible();
   });
 
   test("opens and closes on the keyboard too", async ({ page }) => {
@@ -294,7 +379,7 @@ test.describe("the file viewer", () => {
 
   test("remembers the working and reviewing widths separately", async ({ page }) => {
     const working = await widthOf(page, CHANGES);
-    await fileRow(page, "src/cache/mod.rs").click();
+    await row(page, "mod.rs").click();
     const reviewing = await widthOf(page, CHANGES);
     expect(reviewing).toBeGreaterThan(working);
 

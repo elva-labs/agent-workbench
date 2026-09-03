@@ -48,7 +48,8 @@ src/lib/files.svelte.ts    file list, scope, and what the viewer shows
 src/lib/keymap.ts          the focus model as a pure function
 src/lib/theme.svelte.ts    light / dark / system
 src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
-src/lib/components/        Pane shell, Splitter, FileViewer
+src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
+src/lib/components/        Pane shell, Splitter, FileTree, FileViewer
 src/lib/panes/             the three panes
 src-tauri/src/lib.rs       the core; empty until phase 1
 ```

@@ -4,6 +4,7 @@ import {
   MIN,
   NEEDS_AGENT_WHILE_REVIEWING,
   NEEDS_CHANGES,
+  MIN_REVIEW,
   NEEDS_SESSIONS,
   SPLITTER,
   agentVisible,
@@ -23,6 +24,7 @@ function reset() {
   layout.sessions = DEFAULT.sessions;
   layout.changes = DEFAULT.changes;
   layout.review = DEFAULT.review;
+  layout.tree = DEFAULT.tree;
   layout.sessionsChosen = true;
   layout.changesChosen = true;
   layout.sessionsForced = false;
@@ -149,7 +151,7 @@ describe("review mode", () => {
     layout.mode = "reviewing";
     applyLayout(NEEDS_AGENT_WHILE_REVIEWING);
     expect(agentVisible()).toBe(true);
-    expect(layout.review).toBeGreaterThanOrEqual(MIN.review);
+    expect(layout.review).toBeGreaterThanOrEqual(MIN_REVIEW);
   });
 
   // Hiding costs nothing; squeezing costs a PTY resize and a redraw.
@@ -177,16 +179,23 @@ describe("review mode", () => {
   it("keeps the viewer readable even in a narrow window", () => {
     layout.mode = "reviewing";
     applyLayout(600);
-    expect(layout.review).toBeGreaterThanOrEqual(MIN.review);
+    expect(layout.review).toBeGreaterThanOrEqual(MIN_REVIEW);
   });
 
-  // Opening a file must not move the agent: the viewer takes exactly what the
-  // sessions pane vacated, and no more.
-  it("sizes itself from the room the sessions pane frees", () => {
+  // The pane holds a tree beside the content now, so it opens at a width that
+  // fits both rather than at whatever the sessions pane happened to free.
+  it("opens wide enough for a tree and a diff side by side", () => {
     applyLayout(1600);
-    const agentBefore = 1600 - layout.sessions - SPLITTER - layout.changes - SPLITTER;
     enterReview();
-    expect(1600 - layout.review - SPLITTER).toBe(agentBefore);
+    expect(layout.review).toBe(DEFAULT.review);
+    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(MIN.viewer);
+  });
+
+  it("takes more than that when the changes pane was already wide", () => {
+    applyLayout(1600);
+    layout.changes = 900;
+    enterReview();
+    expect(layout.review).toBeGreaterThan(DEFAULT.review);
   });
 
   it("stops sizing itself once you have dragged the splitter", () => {
@@ -197,13 +206,12 @@ describe("review mode", () => {
     expect(layout.review).toBe(800);
   });
 
-  it("still respects the viewer floor when little is freed", () => {
-    applyLayout(1600);
-    layout.sessionsChosen = false;
-    layout.changes = MIN.changes;
-    applyLayout(1600);
-    enterReview();
-    expect(layout.review).toBe(MIN.review);
+  it("is squeezed to its own minimum when the window cannot give more", () => {
+    layout.mode = "reviewing";
+    layout.review = DEFAULT.review;
+    applyLayout(MIN_REVIEW + SPLITTER + MIN.agent);
+    expect(layout.review).toBe(MIN_REVIEW);
+    expect(layout.tree).toBe(MIN.tree);
   });
 
   it("remembers the two widths separately", () => {
@@ -305,5 +313,38 @@ describe("persistence", () => {
     });
     expect(() => saveLayout()).not.toThrow();
     expect(() => loadLayout()).not.toThrow();
+  });
+});
+
+describe("the tree column", () => {
+  it("opens at its default beside the content", () => {
+    applyLayout(1600);
+    enterReview();
+    expect(layout.tree).toBe(DEFAULT.tree);
+  });
+
+  // Inside the pane the content is what has to stay readable.
+  it("gives way before the content does", () => {
+    applyLayout(1600);
+    enterReview();
+    layout.tree = 900;
+    applyLayout(1600);
+    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(MIN.viewer);
+  });
+
+  it("never drops below its own minimum", () => {
+    layout.mode = "reviewing";
+    layout.review = MIN_REVIEW;
+    layout.tree = 10;
+    applyLayout(1600);
+    expect(layout.tree).toBe(MIN.tree);
+  });
+
+  it("is persisted with the other widths", () => {
+    applyLayout(1600);
+    enterReview();
+    layout.tree = 260;
+    saveLayout();
+    expect(JSON.parse(localStorage.getItem("workbench.layout")!).tree).toBe(260);
   });
 });
