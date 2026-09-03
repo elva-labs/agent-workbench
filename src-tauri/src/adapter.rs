@@ -47,7 +47,10 @@ pub trait AgentAdapter: Send + Sync {
     /// PATH rather than on this process's own.
     fn detect(&self, vars: &HashMap<String, String>) -> Option<PathBuf>;
 
-    fn launch(&self, ctx: &LaunchCtx) -> Result<Surface, String>;
+    /// Starts a fresh conversation under an id the workbench chose. Owning the
+    /// id from the start is what lets the pane tell a running session's
+    /// transcript apart from the history it can offer to resume.
+    fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String>;
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String>;
 
@@ -129,8 +132,8 @@ impl AgentAdapter for ClaudeCode {
         find_on_path(vars, "claude")
     }
 
-    fn launch(&self, ctx: &LaunchCtx) -> Result<Surface, String> {
-        self.command(ctx, &[])
+    fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
+        self.command(ctx, &["--session-id", session])
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
@@ -210,7 +213,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
         };
-        let error = ClaudeCode.launch(&ctx).unwrap_err();
+        let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
         assert!(error.contains("PATH"), "names the cause: {error}");
     }
@@ -224,8 +227,13 @@ mod tests {
             env: &vars,
         };
 
-        let Surface::Pty(command) = ClaudeCode.launch(&ctx).unwrap();
-        assert_eq!(command.get_argv().len(), 1, "no arguments for a fresh start");
+        let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
+        let argv: Vec<String> = command
+            .get_argv()
+            .iter()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(&argv[1..], ["--session-id", "fresh-id"], "{argv:?}");
         assert_eq!(command.get_env("TERM"), Some("xterm-256color".as_ref()));
     }
 
@@ -260,7 +268,7 @@ mod tests {
             env: &vars,
         };
 
-        let Surface::Pty(command) = ClaudeCode.launch(&ctx).unwrap();
+        let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
         for marker in SESSION_SCOPED {
             assert_eq!(command.get_env(marker), None, "{marker} should not be inherited");
         }
@@ -278,7 +286,7 @@ mod tests {
             env: &vars,
         };
 
-        let Surface::Pty(command) = ClaudeCode.launch(&ctx).unwrap();
+        let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
         assert_eq!(command.get_env("CLAUDE_CODE_USE_BEDROCK"), Some("1".as_ref()));
     }
 
@@ -292,7 +300,7 @@ mod tests {
             env: &vars,
         };
 
-        let Surface::Pty(command) = ClaudeCode.launch(&ctx).unwrap();
+        let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
         assert_eq!(command.get_env("NVM_BIN"), Some("/home/ada/.nvm/bin".as_ref()));
     }
 }

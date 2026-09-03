@@ -175,10 +175,11 @@ under each project says which.
 agent, your editor, a script, a rebase.
 
 **Hook**, opt-in. A `PostToolUse` hook appended to the project's
-`.claude/settings.local.json`, which appends what the agent did to a file under
-`~/.agent-workbench` that the same watcher also watches. What it buys is
-immediacy and provenance: the pane hears the moment a tool finishes, and it
-hears what the agent actually did rather than inferring it from mtimes.
+`.claude/settings.local.json`, which writes what the agent just did to
+`~/.agent-workbench/last-tool-use.json`, a file the same watcher also watches.
+It holds the latest event only, so it never grows. What it buys is immediacy
+and provenance: the pane hears the moment a tool finishes, and it hears what
+the agent actually did rather than inferring it from mtimes.
 
 It is off by default and stays off until asked, because it writes into your
 configuration, and nothing should edit that because you opened a folder. It

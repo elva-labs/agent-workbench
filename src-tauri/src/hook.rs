@@ -9,6 +9,10 @@
 //! It writes to the workbench's own file, never into the project, and it goes
 //! in `.claude/settings.local.json` because that is the untracked one. Nobody
 //! should find this in a diff they did not ask for.
+//!
+//! The file holds the latest event only, overwritten each time. Nothing reads
+//! it back yet beyond the watcher noticing it moved, so a growing log would be
+//! a growing log of nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -28,21 +32,34 @@ pub struct HookStatus {
 }
 
 pub fn events_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("events.jsonl")
+    home.join(".agent-workbench").join("last-tool-use.json")
 }
 
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
 }
 
-/// The command the hook runs: append what the agent just did to our file.
+/// The command the hook runs: replace our file with what the agent just did.
 fn command(home: &Path) -> String {
     let events = events_path(home);
     format!(
-        "mkdir -p {parent} && cat >> {file}",
+        "mkdir -p {parent} && cat > {file}",
         parent = shell_quote(&events.parent().unwrap_or(home).to_string_lossy()),
         file = shell_quote(&events.to_string_lossy()),
     )
+}
+
+/// Makes sure the file exists, so the watcher has something to attach to
+/// before the hook has ever fired.
+fn touch_events(home: &Path) -> Result<(), String> {
+    let events = events_path(home);
+    if let Some(parent) = events.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
+    }
+    if !events.exists() {
+        std::fs::write(&events, "").map_err(|e| format!("could not create {events:?}: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Single quotes, with the one escape that needs: a path can contain anything.
@@ -102,16 +119,15 @@ pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
         .as_array_mut()
         .ok_or("the PostToolUse setting is not a list")?;
 
-    if entries.iter().any(|entry| is_ours(entry, home)) {
-        return Ok(status(home, project));
+    if !entries.iter().any(|entry| is_ours(entry, home)) {
+        entries.push(json!({
+            "matcher": MATCHER,
+            "hooks": [{ "type": "command", "command": command(home) }],
+        }));
+        write_settings(&path, &settings)?;
     }
 
-    entries.push(json!({
-        "matcher": MATCHER,
-        "hooks": [{ "type": "command", "command": command(home) }],
-    }));
-
-    write_settings(&path, &settings)?;
+    touch_events(home)?;
     Ok(status(home, project))
 }
 
@@ -305,6 +321,22 @@ mod tests {
     #[test]
     fn the_events_file_lives_under_the_home_directory() {
         let path = events_path(Path::new("/home/ada"));
-        assert_eq!(path, Path::new("/home/ada/.agent-workbench/events.jsonl"));
+        assert_eq!(path, Path::new("/home/ada/.agent-workbench/last-tool-use.json"));
+    }
+
+    // The watcher can only attach to a file that exists.
+    #[test]
+    fn installing_creates_the_events_file() {
+        let (home, project) = fixture("touch");
+        install(&home, &project).unwrap();
+        assert!(events_path(&home).exists());
+    }
+
+    // Latest event only: nothing reads the history, so nothing should grow.
+    #[test]
+    fn the_hook_overwrites_rather_than_appends() {
+        let command = command(Path::new("/home/ada"));
+        assert!(command.contains("cat > "), "{command}");
+        assert!(!command.contains(">>"), "{command}");
     }
 }

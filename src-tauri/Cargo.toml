@@ -26,4 +26,5 @@ portable-pty = "0.9"
 tauri-plugin-dialog = "2"
 git2 = { version = "0.20", default-features = false }
 notify = "8"
+uuid = { version = "1", features = ["v4"] }
 

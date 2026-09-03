@@ -11,6 +11,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use git2::Repository;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as _};
 use tauri::{AppHandle, Emitter};
 
@@ -18,10 +19,23 @@ use tauri::{AppHandle, Emitter};
 /// Waiting for the noise to stop turns a burst into one refresh.
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
+/// A burst that never stops (a build writing into an unignored target
+/// directory, say) still has to reach the pane. After this long the refresh
+/// goes out whether or not the tree has gone quiet.
+const MAX_WAIT: Duration = Duration::from_secs(1);
+
 pub const GIT_CHANGED: &str = "git_changed";
 
 pub struct Watchers {
-    current: Mutex<Option<(PathBuf, RecommendedWatcher, Arc<Stop>)>>,
+    current: Mutex<Option<Active>>,
+}
+
+struct Active {
+    root: PathBuf,
+    /// The hook's file, once it has joined the watch.
+    extra: Option<PathBuf>,
+    watcher: RecommendedWatcher,
+    stop: Arc<Stop>,
 }
 
 impl Default for Watchers {
@@ -68,8 +82,8 @@ pub fn is_interesting(path: &Path) -> bool {
 }
 
 /// Watches a worktree, and optionally one more path: the file the PostToolUse
-/// hook appends to. Both mean the same thing to the pane, which is that the
-/// tree may have moved.
+/// hook writes. Both mean the same thing to the pane, which is that the tree
+/// may have moved.
 pub fn watch(
     app: AppHandle,
     watchers: &Watchers,
@@ -78,15 +92,18 @@ pub fn watch(
 ) -> Result<(), String> {
     let mut current = watchers.current.lock().expect("watchers lock");
 
-    if let Some((existing, _, _)) = current.as_ref() {
-        if *existing == root {
+    if let Some(active) = current.as_mut() {
+        if active.root == root {
+            // Same tree, so keep the watcher; the only thing that can be new
+            // is the hook's file, which exists now if it was just installed.
+            attach_extra(active, also);
             return Ok(());
         }
     }
     // Dropping the old watcher stops the notifications; the flag stops the
     // thread that was debouncing them.
-    if let Some((_, _, stop)) = current.take() {
-        stop.stop();
+    if let Some(active) = current.take() {
+        active.stop.stop();
     }
 
     let (sender, receiver) = channel::<notify::Result<Event>>();
@@ -100,14 +117,6 @@ pub fn watch(
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| format!("could not watch {}: {e}", root.display()))?;
 
-    // Absent until the hook has fired once, which is not an error: the
-    // filesystem watch above already covers everything on its own.
-    if let Some(extra) = also {
-        if extra.exists() {
-            let _ = watcher.watch(&extra, RecursiveMode::NonRecursive);
-        }
-    }
-
     let stop = Arc::new(Stop::default());
     std::thread::spawn({
         let stop = Arc::clone(&stop);
@@ -115,18 +124,38 @@ pub fn watch(
         move || debounce(app, receiver, root, stop)
     });
 
-    *current = Some((root, watcher, stop));
+    let mut active = Active {
+        root,
+        extra: None,
+        watcher,
+        stop,
+    };
+    attach_extra(&mut active, also);
+    *current = Some(active);
     Ok(())
+}
+
+/// Absent until the hook has been installed, which is not an error: the
+/// filesystem watch already covers everything on its own.
+fn attach_extra(active: &mut Active, also: Option<PathBuf>) {
+    let Some(extra) = also else { return };
+    if active.extra.as_ref() == Some(&extra) || !extra.exists() {
+        return;
+    }
+    if active.watcher.watch(&extra, RecursiveMode::NonRecursive).is_ok() {
+        active.extra = Some(extra);
+    }
 }
 
 pub fn unwatch(watchers: &Watchers) {
     let mut current = watchers.current.lock().expect("watchers lock");
-    if let Some((_, _, stop)) = current.take() {
-        stop.stop();
+    if let Some(active) = current.take() {
+        active.stop.stop();
     }
 }
 
 fn debounce(app: AppHandle, receiver: Receiver<notify::Result<Event>>, root: PathBuf, stop: Arc<Stop>) {
+    let ignored = Ignored::for_root(&root);
     loop {
         // Block until something happens, then wait for the burst to finish.
         let Ok(first) = receiver.recv() else { return };
@@ -134,10 +163,14 @@ fn debounce(app: AppHandle, receiver: Receiver<notify::Result<Event>>, root: Pat
             return;
         }
 
-        let mut worth_it = interesting(&first);
+        let started = std::time::Instant::now();
+        let mut worth_it = interesting(&first) && !ignored.covers(&first);
         loop {
+            if started.elapsed() >= MAX_WAIT {
+                break;
+            }
             match receiver.recv_timeout(DEBOUNCE) {
-                Ok(event) => worth_it |= interesting(&event),
+                Ok(event) => worth_it |= interesting(&event) && !ignored.covers(&event),
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -149,6 +182,38 @@ fn debounce(app: AppHandle, receiver: Receiver<notify::Result<Event>>, root: Pat
         if worth_it {
             let _ = app.emit(GIT_CHANGED, root.to_string_lossy().to_string());
         }
+    }
+}
+
+/// Asks git whether a path is ignored, so a build writing into `target/` does
+/// not refresh a pane that would show nothing new. Opening the repository
+/// once per watch rather than per event, because the answer for a path does
+/// not change often and the events come in bursts.
+struct Ignored {
+    root: PathBuf,
+    repo: Option<Repository>,
+}
+
+impl Ignored {
+    fn for_root(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            repo: Repository::open(root).ok(),
+        }
+    }
+
+    /// True only when every path in the event is ignored. Unsure means not
+    /// ignored: a spurious refresh is cheap and a missed one is not.
+    fn covers(&self, event: &notify::Result<Event>) -> bool {
+        let Ok(event) = event else { return false };
+        let Some(repo) = self.repo.as_ref() else { return false };
+        !event.paths.is_empty()
+            && event.paths.iter().all(|path| {
+                path.strip_prefix(&self.root)
+                    .ok()
+                    .and_then(|relative| repo.status_should_ignore(relative).ok())
+                    .unwrap_or(false)
+            })
     }
 }
 
@@ -196,6 +261,47 @@ mod tests {
         // ".gitignore" is not ".git", and neither is "src/git".
         assert!(is_interesting(Path::new("/repo/.gitignore")));
         assert!(is_interesting(Path::new("/repo/src/git/status.rs")));
+    }
+
+    fn event(paths: &[PathBuf]) -> notify::Result<Event> {
+        let mut event = Event::new(notify::EventKind::Any);
+        for path in paths {
+            event = event.add_path(path.clone());
+        }
+        Ok(event)
+    }
+
+    fn repo_with_ignore(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("workbench-watch-{name}"));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        Repository::init(&dir).unwrap();
+        std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+        dir
+    }
+
+    // A build writing into target/ must not refresh a pane that would show
+    // nothing new.
+    #[test]
+    fn a_burst_entirely_inside_ignored_paths_is_covered() {
+        let dir = repo_with_ignore("ignored");
+        let ignored = Ignored::for_root(&dir);
+        assert!(ignored.covers(&event(&[dir.join("target/debug/app")])));
+        assert!(!ignored.covers(&event(&[dir.join("src/main.rs")])));
+        assert!(!ignored.covers(&event(&[dir.join("target/x"), dir.join("src/main.rs")])));
+    }
+
+    // Unsure means not ignored: a spurious refresh is cheap, a missed one is not.
+    #[test]
+    fn without_a_repository_nothing_is_covered() {
+        let dir = std::env::temp_dir().join("workbench-watch-norepo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ignored = Ignored {
+            root: dir.clone(),
+            repo: None,
+        };
+        assert!(!ignored.covers(&event(&[dir.join("target/debug/app")])));
+        assert!(!ignored.covers(&event(&[])));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! against a path, with no state of its own, so the watcher can call it again
 //! whenever the tree moves and the pane simply re-renders.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use git2::{DiffFormat, DiffOptions, Repository, Status, StatusOptions};
@@ -89,60 +90,82 @@ pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
         .statuses(Some(&mut options))
         .map_err(|e| format!("could not read status: {}", e.message()))?;
 
-    let mut files = Vec::new();
-    for entry in statuses.iter() {
-        let Some(path) = entry.path() else { continue };
-        if entry.status() == Status::CURRENT {
-            continue;
-        }
+    let changed: Vec<(String, Status)> = statuses
+        .iter()
+        .filter(|entry| entry.status() != Status::CURRENT)
+        .filter_map(|entry| entry.path().map(|path| (path.to_string(), entry.status())))
+        .collect();
 
-        let (add, del, binary) = line_counts(&repo, Path::new(path));
-        files.push(ChangedFile {
-            path: path.to_string(),
-            status: letter(entry.status()).to_string(),
-            add,
-            del,
-            binary,
-        });
-    }
+    let counts = line_counts(&repo, changed.iter().map(|(path, _)| path.as_str()));
+
+    let mut files: Vec<ChangedFile> = changed
+        .into_iter()
+        .map(|(path, status)| {
+            let (add, del, binary) = counts.get(&path).copied().unwrap_or_default();
+            ChangedFile {
+                path,
+                status: letter(status).to_string(),
+                add,
+                del,
+                binary,
+            }
+        })
+        .collect();
 
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
 }
 
-/// Additions and deletions for one path, and whether git considers it binary.
-fn line_counts(repo: &Repository, path: &Path) -> (u32, u32, bool) {
+/// Additions, deletions and binary-ness per path, from one diff over all of
+/// them at once. Diffing the tree once per changed file is quadratic in
+/// practice, and an agent mid-refactor touches a lot of files.
+fn line_counts<'a>(
+    repo: &Repository,
+    paths: impl Iterator<Item = &'a str>,
+) -> HashMap<String, (u32, u32, bool)> {
     let mut options = DiffOptions::new();
     // include_untracked lists a new file; show_untracked_content is what makes
     // its lines appear. Without the second, a file the agent just created shows
     // up with an empty diff, which is the common case rather than an edge one.
     options
-        .pathspec(path)
         .include_untracked(true)
         .recurse_untracked_dirs(true)
         .show_untracked_content(true);
+    let mut any = false;
+    for path in paths {
+        options.pathspec(path);
+        any = true;
+    }
+
+    let mut counts = HashMap::new();
+    if !any {
+        return counts;
+    }
 
     let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
     let Ok(diff) = repo.diff_tree_to_workdir_with_index(head.as_ref(), Some(&mut options)) else {
-        return (0, 0, false);
+        return counts;
     };
 
-    let mut add = 0;
-    let mut del = 0;
-    let mut binary = false;
     let _ = diff.print(DiffFormat::Patch, |delta, _, line| {
+        let Some(path) = delta.new_file().path().or(delta.old_file().path()) else {
+            return true;
+        };
+        let entry: &mut (u32, u32, bool) = counts
+            .entry(path.to_string_lossy().to_string())
+            .or_default();
         if delta.flags().is_binary() {
-            binary = true;
+            entry.2 = true;
         }
         match line.origin() {
-            '+' => add += 1,
-            '-' => del += 1,
+            '+' => entry.0 += 1,
+            '-' => entry.1 += 1,
             _ => {}
         }
         true
     });
 
-    (add, del, binary)
+    counts
 }
 
 pub fn diff(root: &Path, file: &str) -> Result<FileDiff, String> {
@@ -204,12 +227,27 @@ pub fn diff(root: &Path, file: &str) -> Result<FileDiff, String> {
     })
 }
 
+/// A path inside the worktree, and nothing else: the frontend only ever asks
+/// for paths git listed, but the core is the one that has to make that true.
+fn inside_worktree(file: &str) -> Result<&Path, String> {
+    use std::path::Component;
+
+    let path = Path::new(file);
+    let escapes = path
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir));
+    if file.is_empty() || escapes {
+        return Err(format!("{file} is not a path inside the working tree"));
+    }
+    Ok(path)
+}
+
 pub fn content(root: &Path, file: &str) -> Result<FileContent, String> {
     let repo = open(root)?;
     let workdir = repo
         .workdir()
         .ok_or("a bare repository has no working tree")?;
-    let path = workdir.join(file);
+    let path = workdir.join(inside_worktree(file)?);
 
     let bytes = std::fs::read(&path).map_err(|e| format!("could not read {file}: {e}"))?;
 
@@ -448,6 +486,36 @@ mod tests {
         std::fs::write(dir.join("blob.bin"), [0u8, 1, 2, 0, 3]).unwrap();
 
         assert!(content(&dir, "blob.bin").unwrap().binary);
+    }
+
+    #[test]
+    fn refuses_to_read_outside_the_worktree() {
+        let dir = repo("escape");
+        write(&dir, "a.txt", "x\n");
+        commit(&dir);
+
+        assert!(content(&dir, "../etc/passwd").is_err());
+        assert!(content(&dir, "/etc/passwd").is_err());
+        assert!(content(&dir, "src/../../a.txt").is_err());
+        assert!(content(&dir, "").is_err());
+        assert!(content(&dir, "./a.txt").is_ok());
+    }
+
+    #[test]
+    fn counts_lines_for_several_files_at_once() {
+        let dir = repo("several");
+        write(&dir, "a.txt", "one\n");
+        write(&dir, "b.txt", "one\ntwo\n");
+        commit(&dir);
+        write(&dir, "a.txt", "one\ntwo\nthree\n");
+        write(&dir, "b.txt", "one\n");
+        write(&dir, "c.txt", "fresh\n");
+
+        let files = status(&dir).unwrap();
+        let find = |name: &str| files.iter().find(|f| f.path == name).unwrap();
+        assert_eq!((find("a.txt").add, find("a.txt").del), (2, 0));
+        assert_eq!((find("b.txt").add, find("b.txt").del), (0, 1));
+        assert_eq!((find("c.txt").add, find("c.txt").del), (1, 0));
     }
 
     #[test]

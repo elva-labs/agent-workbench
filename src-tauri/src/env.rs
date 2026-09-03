@@ -6,13 +6,19 @@
 //! terminal. The fix is to ask the user's own shell what its environment looks
 //! like, once, and spawn everything with that.
 //!
-//! Known sharp edge: a `.zshrc` that blocks forever blocks this call. It runs
-//! lazily on the first spawn rather than at startup, so a hang shows up as an
-//! agent that will not start rather than as a window that never opens.
+//! Known sharp edge: a `.zshrc` that blocks forever. The capture is given a
+//! deadline, after which the shell is killed and this process's own
+//! environment stands in, and the report says so. It runs off the main thread,
+//! so even a slow shell costs a late detection rather than a frozen window.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+/// Generous, because nvm and friends take a second or two on a cold cache, and
+/// a shell that takes longer than this is not going to finish.
+const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct Environment {
@@ -50,21 +56,59 @@ fn from_login_shell() -> Option<HashMap<String, String>> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL").ok()?;
-    let output = Command::new(&shell)
+    let child = Command::new(&shell)
         .args(["-lic", "env -0"])
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
 
-    if !output.status.success() {
-        return None;
-    }
-
-    let vars = parse_env0(&output.stdout);
+    let stdout = wait_with_deadline(child, CAPTURE_DEADLINE)?;
+    let vars = parse_env0(&stdout);
     // A capture with no PATH is a capture that went wrong, whatever the exit
     // status said.
     vars.contains_key("PATH").then_some(vars)
+}
+
+/// Reads the child's stdout to the end, but gives up on a child that does not
+/// exit in time. The pipe is drained on its own thread so a chatty shell can
+/// never fill it and deadlock against the wait, and the same deadline covers
+/// the drain: a background job the shell left behind can keep the pipe open
+/// after the shell itself is gone.
+#[cfg(unix)]
+fn wait_with_deadline(mut child: std::process::Child, deadline: Duration) -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::sync::mpsc::channel;
+
+    let mut stdout = child.stdout.take()?;
+    let (sender, receiver) = channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        let _ = sender.send(bytes);
+    });
+
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+
+    let remaining = deadline.saturating_sub(started.elapsed());
+    receiver.recv_timeout(remaining).ok()
 }
 
 #[cfg(not(unix))]
@@ -215,6 +259,45 @@ mod tests {
     fn copes_with_empty_input() {
         assert!(parse_env0(b"").is_empty());
         assert!(parse_env0(b"\0\0\0").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_that_finishes_in_time_is_read() {
+        let child = std::process::Command::new("sh")
+            .args(["-c", "printf 'A=1\\0B=2\\0'"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let bytes = wait_with_deadline(child, Duration::from_secs(5)).unwrap();
+        let vars = parse_env0(&bytes);
+        assert_eq!(vars.get("A").map(String::as_str), Some("1"));
+        assert_eq!(vars.get("B").map(String::as_str), Some("2"));
+    }
+
+    // A .zshrc that never returns must not take the app with it.
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_that_hangs_is_given_up_on() {
+        let child = std::process::Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        assert!(wait_with_deadline(child, Duration::from_millis(200)).is_none());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_that_fails_is_not_trusted() {
+        let child = std::process::Command::new("sh")
+            .args(["-c", "printf 'PATH=/x\\0'; exit 3"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        assert!(wait_with_deadline(child, Duration::from_secs(5)).is_none());
     }
 
     #[test]

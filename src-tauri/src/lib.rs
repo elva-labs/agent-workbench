@@ -2,6 +2,12 @@
 //!
 //! Rust owns state, the webview owns pixels. Every PTY, git query, filesystem
 //! watch and session index lives here; the frontend renders and dispatches.
+//!
+//! Every command is `async`. A synchronous Tauri command runs on the main
+//! thread, which is the thread that paints the window, so a `git status` on a
+//! large tree or a slow `.zshrc` would freeze the UI for as long as it took.
+//! The work that can take a while goes through `blocking`, onto the runtime's
+//! blocking pool, and the window stays responsive whatever the shell does.
 
 mod adapter;
 mod env;
@@ -24,6 +30,17 @@ use adapter::{LaunchCtx, Surface, adapter_for};
 use pty::Sessions;
 use watch::Watchers;
 
+/// Runs a closure on the blocking pool and waits for it.
+async fn blocking<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("the task failed: {e}"))?
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DetectReport {
@@ -36,9 +53,8 @@ struct DetectReport {
     from_login_shell: bool,
 }
 
-#[tauri::command]
-fn agent_detect(id: String) -> Result<DetectReport, String> {
-    let adapter = adapter_for(&id).ok_or_else(|| format!("no adapter for {id}"))?;
+fn detect(id: &str) -> Result<DetectReport, String> {
+    let adapter = adapter_for(id).ok_or_else(|| format!("no adapter for {id}"))?;
     let environment = env::environment();
 
     Ok(DetectReport {
@@ -51,9 +67,24 @@ fn agent_detect(id: String) -> Result<DetectReport, String> {
     })
 }
 
+#[tauri::command]
+async fn agent_detect(id: String) -> Result<DetectReport, String> {
+    blocking(move || detect(&id)).await
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Spawned {
+    /// Handle for `pty_write`, `pty_resize` and `pty_kill`.
+    pty_id: String,
+    /// The agent's own id for the conversation, chosen here so the workbench
+    /// knows it from the first byte rather than after the transcript lands.
+    session_id: String,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-fn pty_spawn(
+async fn pty_spawn(
     app: AppHandle,
     sessions: State<'_, Arc<Sessions>>,
     agent: String,
@@ -62,63 +93,69 @@ fn pty_spawn(
     cols: u16,
     rows: u16,
     on_output: Channel,
-) -> Result<String, String> {
-    let adapter = adapter_for(&agent).ok_or_else(|| format!("no adapter for {agent}"))?;
-    let environment = env::environment();
+) -> Result<Spawned, String> {
+    let sessions = Arc::clone(&sessions);
+    blocking(move || {
+        let adapter = adapter_for(&agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        let environment = env::environment();
 
-    let ctx = LaunchCtx {
-        project: &project,
-        env: &environment.vars,
-    };
+        let ctx = LaunchCtx {
+            project: &project,
+            env: &environment.vars,
+        };
 
-    let surface = match session {
-        Some(id) => adapter.resume(&ctx, &id)?,
-        None => adapter.launch(&ctx)?,
-    };
+        let (surface, session_id) = match session {
+            Some(id) => (adapter.resume(&ctx, &id)?, id),
+            None => {
+                let id = new_session_id();
+                (adapter.launch(&ctx, &id)?, id)
+            }
+        };
+        let Surface::Pty(command) = surface;
 
-    let Surface::Pty(command) = surface;
+        let pty_id = pty::spawn(app, sessions, command, size(cols, rows), on_output)?;
+        Ok(Spawned { pty_id, session_id })
+    })
+    .await
+}
 
-    pty::spawn(
-        app,
-        Arc::clone(&sessions),
-        command,
-        size(cols, rows),
-        on_output,
-    )
+/// A version 4 UUID, which is what `claude --session-id` accepts.
+fn new_session_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// Describes a folder the user picked. The dialog itself is the frontend's
 /// job; what a folder *is* to the workbench is the core's.
 #[tauri::command]
-fn project_info(path: PathBuf) -> Result<project::ProjectInfo, String> {
-    project::describe(&path)
+async fn project_info(path: PathBuf) -> Result<project::ProjectInfo, String> {
+    blocking(move || project::describe(&path)).await
 }
 
 #[tauri::command]
-fn hook_status(project: PathBuf) -> Result<hook::HookStatus, String> {
+async fn hook_status(project: PathBuf) -> Result<hook::HookStatus, String> {
     let home = home_directory().ok_or("no home directory")?;
-    Ok(hook::status(&home, &project))
+    blocking(move || Ok(hook::status(&home, &project))).await
 }
 
 #[tauri::command]
-fn hook_install(project: PathBuf) -> Result<hook::HookStatus, String> {
+async fn hook_install(project: PathBuf) -> Result<hook::HookStatus, String> {
     let home = home_directory().ok_or("no home directory")?;
-    hook::install(&home, &project)
+    blocking(move || hook::install(&home, &project)).await
 }
 
 #[tauri::command]
-fn hook_uninstall(project: PathBuf) -> Result<hook::HookStatus, String> {
+async fn hook_uninstall(project: PathBuf) -> Result<hook::HookStatus, String> {
     let home = home_directory().ok_or("no home directory")?;
-    hook::uninstall(&home, &project)
+    blocking(move || hook::uninstall(&home, &project)).await
 }
 
 /// Sessions Claude Code has already had in this project, newest first.
 #[tauri::command]
-fn sessions_list(project: PathBuf) -> Vec<transcripts::Transcript> {
+async fn sessions_list(project: PathBuf) -> Result<Vec<transcripts::Transcript>, String> {
     let Some(home) = home_directory() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    transcripts::list(&home, &project)
+    blocking(move || Ok(transcripts::list(&home, &project))).await
 }
 
 fn home_directory() -> Option<PathBuf> {
@@ -128,50 +165,60 @@ fn home_directory() -> Option<PathBuf> {
 }
 
 #[tauri::command]
-fn git_status(root: PathBuf) -> Result<Vec<git::ChangedFile>, String> {
-    git::status(&root)
+async fn git_status(root: PathBuf) -> Result<Vec<git::ChangedFile>, String> {
+    blocking(move || git::status(&root)).await
 }
 
 #[tauri::command]
-fn git_files(root: PathBuf) -> Result<Vec<String>, String> {
-    git::list_files(&root)
+async fn git_files(root: PathBuf) -> Result<Vec<String>, String> {
+    blocking(move || git::list_files(&root)).await
 }
 
 #[tauri::command]
-fn git_diff(root: PathBuf, file: String) -> Result<git::FileDiff, String> {
-    git::diff(&root, &file)
+async fn git_diff(root: PathBuf, file: String) -> Result<git::FileDiff, String> {
+    blocking(move || git::diff(&root, &file)).await
 }
 
 #[tauri::command]
-fn git_content(root: PathBuf, file: String) -> Result<git::FileContent, String> {
-    git::content(&root, &file)
+async fn git_content(root: PathBuf, file: String) -> Result<git::FileContent, String> {
+    blocking(move || git::content(&root, &file)).await
 }
 
 /// Starts watching a worktree, replacing whatever was being watched before.
-/// One window looks at one project's changes at a time.
+/// One window looks at one project's changes at a time. Calling it again for
+/// the same root is how the hook's file joins the watch once it exists.
 #[tauri::command]
-fn git_watch(
+async fn git_watch(
     app: AppHandle,
-    watchers: State<'_, Watchers>,
+    watchers: State<'_, Arc<Watchers>>,
     root: PathBuf,
 ) -> Result<(), String> {
-    let worktree = git::workdir(&root)?;
-    let events = home_directory().map(|home| hook::events_path(&home));
-    watch::watch(app, &watchers, worktree, events)
+    let watchers = Arc::clone(&watchers);
+    blocking(move || {
+        let worktree = git::workdir(&root)?;
+        let events = home_directory().map(|home| hook::events_path(&home));
+        watch::watch(app, &watchers, worktree, events)
+    })
+    .await
 }
 
 #[tauri::command]
-fn git_unwatch(watchers: State<'_, Watchers>) {
+async fn git_unwatch(watchers: State<'_, Arc<Watchers>>) -> Result<(), String> {
     watch::unwatch(&watchers);
+    Ok(())
 }
 
 #[tauri::command]
-fn pty_write(sessions: State<'_, Arc<Sessions>>, id: String, data: String) -> Result<(), String> {
+async fn pty_write(
+    sessions: State<'_, Arc<Sessions>>,
+    id: String,
+    data: String,
+) -> Result<(), String> {
     pty::write(&sessions, &id, data.as_bytes())
 }
 
 #[tauri::command]
-fn pty_resize(
+async fn pty_resize(
     sessions: State<'_, Arc<Sessions>>,
     id: String,
     cols: u16,
@@ -181,7 +228,7 @@ fn pty_resize(
 }
 
 #[tauri::command]
-fn pty_kill(sessions: State<'_, Arc<Sessions>>, id: String) -> Result<(), String> {
+async fn pty_kill(sessions: State<'_, Arc<Sessions>>, id: String) -> Result<(), String> {
     pty::kill(&sessions, &id)
 }
 
@@ -202,7 +249,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(Sessions::default()))
-        .manage(Watchers::default())
+        .manage(Arc::new(Watchers::default()))
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             project_info,
@@ -246,13 +293,22 @@ mod tests {
 
     #[test]
     fn detect_rejects_an_unknown_agent() {
-        assert!(agent_detect("not-an-agent".into()).is_err());
+        assert!(detect("not-an-agent").is_err());
     }
 
     #[test]
     fn detect_reports_capabilities_for_a_known_agent() {
-        let report = agent_detect("claude-code".into()).unwrap();
+        let report = detect("claude-code").unwrap();
         assert_eq!(report.id, "claude-code");
         assert!(report.caps.is_some());
+    }
+
+    #[test]
+    fn session_ids_are_uuids_and_unique() {
+        let a = new_session_id();
+        let b = new_session_id();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36, "{a}");
+        assert_eq!(a.matches('-').count(), 4, "{a}");
     }
 }
