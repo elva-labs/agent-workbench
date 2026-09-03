@@ -6,10 +6,12 @@
     id: PaneId;
     title: string;
     meta?: string;
+    /** Controls that live in the header, after the title. */
+    head?: Snippet;
     children: Snippet;
   }
 
-  let { id, title, meta, children }: Props = $props();
+  let { id, title, meta, head, children }: Props = $props();
 
   let focused = $derived(layout.focus === id);
 </script>
@@ -24,6 +26,7 @@
 >
   <header>
     <span class="title">{title}</span>
+    {#if head}<div class="head">{@render head()}</div>{/if}
     {#if meta}<span class="meta">{meta}</span>{/if}
   </header>
   <div class="body">
@@ -70,6 +73,14 @@
 
   .pane.focused .title {
     color: var(--accent);
+  }
+
+  .head {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .body {

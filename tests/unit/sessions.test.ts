@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agent } from "$lib/agent.svelte";
+import { stash } from "$lib/exits";
 import {
   activeSession,
   ago,
@@ -165,15 +166,22 @@ describe("the exit policy", () => {
 
   it("ignores an exit for a session it does not know", () => {
     const session = live(A, "pty-1");
-    ended({ id: "pty-99", code: 1, clean: false });
+    expect(ended({ id: "pty-99", code: 1, clean: false })).toBe(false);
     expect(session.status).toBe("running");
   });
 
+  it("claims an exit that belongs to one of its rows", () => {
+    live(A, "pty-1");
+    expect(ended({ id: "pty-1", code: 0, clean: true })).toBe(true);
+  });
+
   // A process that dies at once can report its exit before the spawn call
-  // has even returned. The exit must not be lost to the order of arrival.
+  // has even returned. The page stashes what no row claims; the exit must not
+  // be lost to the order of arrival.
   it("applies an exit that arrived before the start", () => {
     const session = create(A);
-    ended({ id: "pty-1", code: 127, clean: false });
+    expect(ended({ id: "pty-1", code: 127, clean: false })).toBe(false);
+    stash({ id: "pty-1", code: 127, clean: false });
     expect(session.status).toBe("starting");
 
     started(session.key, "pty-1", "fresh-id");

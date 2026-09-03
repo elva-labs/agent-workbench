@@ -6,6 +6,7 @@ import {
   NEEDS_CHANGES,
   MIN_REVIEW,
   NEEDS_SESSIONS,
+  NEEDS_TERMINAL,
   SPLITTER,
   agentVisible,
   applyLayout,
@@ -13,11 +14,14 @@ import {
   enterReview,
   exitReview,
   focusPane,
+  hideTerminal,
   layout,
   loadLayout,
   saveLayout,
   sessionsVisible,
+  terminalVisible,
   togglePane,
+  toggleTerminal,
 } from "$lib/layout.svelte";
 
 function reset() {
@@ -25,15 +29,19 @@ function reset() {
   layout.changes = DEFAULT.changes;
   layout.review = DEFAULT.review;
   layout.tree = DEFAULT.tree;
+  layout.terminal = DEFAULT.terminal;
   layout.sessionsChosen = true;
   layout.changesChosen = true;
+  layout.terminalChosen = false;
   layout.sessionsForced = false;
   layout.changesForced = false;
+  layout.terminalForced = false;
   layout.agentHidden = false;
   layout.reviewTouched = false;
   layout.mode = "working";
   layout.focus = "agent";
   layout.width = 1200;
+  layout.height = 800;
 }
 
 beforeEach(reset);
@@ -346,5 +354,109 @@ describe("the tree column", () => {
     layout.tree = 260;
     saveLayout();
     expect(JSON.parse(localStorage.getItem("workbench.layout")!).tree).toBe(260);
+  });
+});
+
+describe("the terminal panel", () => {
+  it("is closed until asked for", () => {
+    applyLayout(1600, 900);
+    expect(terminalVisible()).toBe(false);
+  });
+
+  it("opens at its default height and takes focus", () => {
+    applyLayout(1600, 900);
+    toggleTerminal();
+    expect(terminalVisible()).toBe(true);
+    expect(layout.terminal).toBe(DEFAULT.terminal);
+    expect(layout.focus).toBe("terminal");
+  });
+
+  it("hands focus back to the agent when it closes", () => {
+    applyLayout(1600, 900);
+    toggleTerminal();
+    toggleTerminal();
+    expect(terminalVisible()).toBe(false);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("leaves focus alone when closed from another pane", () => {
+    applyLayout(1600, 900);
+    toggleTerminal();
+    layout.focus = "changes";
+    toggleTerminal();
+    expect(layout.focus).toBe("changes");
+  });
+
+  it("never squeezes the panes above below what they keep", () => {
+    layout.terminalChosen = true;
+    layout.terminal = 2000;
+    applyLayout(1600, 700);
+    expect(700 - SPLITTER - layout.terminal).toBeGreaterThanOrEqual(MIN.panes);
+  });
+
+  it("never drops below its own minimum", () => {
+    layout.terminalChosen = true;
+    layout.terminal = 10;
+    applyLayout(1600, 900);
+    expect(layout.terminal).toBe(MIN.terminal);
+  });
+
+  // The same rule as the side panes: fold rather than squeeze, and come back
+  // as it was once there is room again.
+  it("folds away when the window is too short, keeping the intent", () => {
+    layout.terminalChosen = true;
+    layout.terminal = 300;
+    applyLayout(1600, NEEDS_TERMINAL - 1);
+    expect(terminalVisible()).toBe(false);
+    expect(layout.terminalChosen).toBe(true);
+
+    applyLayout(1600, 900);
+    expect(terminalVisible()).toBe(true);
+    expect(layout.terminal).toBe(300);
+  });
+
+  it("moves focus off a panel the window folded away", () => {
+    layout.terminalChosen = true;
+    applyLayout(1600, 900);
+    layout.focus = "terminal";
+    applyLayout(1600, NEEDS_TERMINAL - 1);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("is independent of the review shape", () => {
+    applyLayout(1600, 900);
+    toggleTerminal();
+    enterReview();
+    expect(terminalVisible()).toBe(true);
+    exitReview();
+    expect(terminalVisible()).toBe(true);
+  });
+
+  it("can be hidden without toggling twice", () => {
+    applyLayout(1600, 900);
+    hideTerminal();
+    expect(terminalVisible()).toBe(false);
+    toggleTerminal();
+    hideTerminal();
+    expect(terminalVisible()).toBe(false);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("refuses focus while it is closed", () => {
+    focusPane("terminal");
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("remembers its height and whether it was open", () => {
+    applyLayout(1600, 900);
+    toggleTerminal();
+    layout.terminal = 333;
+    saveLayout();
+
+    reset();
+    loadLayout();
+
+    expect(layout.terminal).toBe(333);
+    expect(layout.terminalChosen).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ mod git;
 mod hook;
 mod project;
 mod pty;
+mod shell;
 mod transcripts;
 mod watch;
 
@@ -122,6 +123,26 @@ async fn pty_spawn(
 /// A version 4 UUID, which is what `claude --session-id` accepts.
 fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// The user's shell in a pty, for the terminal panel. Hands back the pty id
+/// alone: a shell has no session to speak of.
+#[tauri::command]
+async fn pty_shell(
+    app: AppHandle,
+    sessions: State<'_, Arc<Sessions>>,
+    project: PathBuf,
+    cols: u16,
+    rows: u16,
+    on_output: Channel,
+) -> Result<String, String> {
+    let sessions = Arc::clone(&sessions);
+    blocking(move || {
+        let environment = env::environment();
+        let command = shell::command(&project, &environment.vars);
+        pty::spawn(app, sessions, command, size(cols, rows), on_output)
+    })
+    .await
 }
 
 /// Describes a folder the user picked. The dialog itself is the frontend's
@@ -264,6 +285,7 @@ pub fn run() {
             git_watch,
             git_unwatch,
             pty_spawn,
+            pty_shell,
             pty_write,
             pty_resize,
             pty_kill

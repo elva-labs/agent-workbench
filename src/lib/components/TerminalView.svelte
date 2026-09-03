@@ -9,16 +9,27 @@
   import { layout } from "$lib/layout.svelte";
   import { WriteQueue, buildTheme, tokenReader } from "$lib/terminal";
   import { theme } from "$lib/theme.svelte";
-  import { failed, started, type Session } from "$lib/sessions.svelte";
 
+  /**
+   * One xterm over one pty. What the pty runs is the caller's business: the
+   * agent pane and the terminal panel both mount this and hand it a `start`
+   * that spawns their kind of process against the grid the terminal measured.
+   */
   interface Props {
-    session: Session;
+    /** The row's key: stable, and what the end-to-end tests look up. */
+    id: string;
+    /** Null until the process is up, and again once it has gone. */
+    ptyId: string | null;
     /** Hidden rather than unmounted: the PTY keeps its size, so a background
         session is never resized and never reflows. */
     active: boolean;
+    /** Whether the pane holding this terminal is on screen at all. */
+    shown?: boolean;
+    /** Spawns the process. True once it is up and the row owns it. */
+    start: (cols: number, rows: number, onOutput: (bytes: Uint8Array) => void) => Promise<boolean>;
   }
 
-  let { session, active }: Props = $props();
+  let { id, ptyId, active, shown = true, start }: Props = $props();
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -77,7 +88,7 @@
     terminal.onData((data) => {
       // A write that fails is a process that has gone; the exit event is what
       // reports that, not every keystroke after it.
-      if (session.ptyId !== null) core().write(session.ptyId, data).catch(() => {});
+      if (ptyId !== null) core().write(ptyId, data).catch(() => {});
     });
 
     observer = new ResizeObserver(() => measure());
@@ -89,10 +100,10 @@
     if (window.__WORKBENCH_CORE__) {
       const registry = window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, Terminal> };
       registry.__WORKBENCH_TERMINALS__ ??= {};
-      registry.__WORKBENCH_TERMINALS__[session.key] = terminal;
+      registry.__WORKBENCH_TERMINALS__[id] = terminal;
     }
 
-    start();
+    spawn();
 
     return () => {
       observer?.disconnect();
@@ -119,36 +130,15 @@
     const { cols, rows } = terminal;
     if (cols === sent.cols && rows === sent.rows) return;
     sent = { cols, rows };
-    if (session.ptyId !== null) core().resize(session.ptyId, cols, rows).catch(() => {});
+    if (ptyId !== null) core().resize(ptyId, cols, rows).catch(() => {});
   }
 
-  async function start() {
+  async function spawn() {
     if (!terminal) return;
-    try {
-      const { ptyId, sessionId } = await core().spawn(
-        {
-          agent: "claude-code",
-          project: session.project,
-          session: session.resumedFrom ?? undefined,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        },
-        (bytes) => queue?.push(bytes),
-      );
-      if (!started(session.key, ptyId, sessionId)) {
-        // The row was closed while the process was coming up. Nothing owns
-        // it now, so it must not be left running.
-        core()
-          .kill(ptyId)
-          .catch(() => {});
-        return;
-      }
-      if (!terminal) return;
-      sent = { cols: terminal.cols, rows: terminal.rows };
-      if (active) terminal.focus();
-    } catch (error) {
-      failed(session.key, String(error));
-    }
+    const up = await start(terminal.cols, terminal.rows, (bytes) => queue?.push(bytes));
+    if (!up || !terminal) return;
+    sent = { cols: terminal.cols, rows: terminal.rows };
+    if (active) terminal.focus();
   }
 
   // Live setter: the TUI recolours without a respawn.
@@ -164,22 +154,18 @@
   // a fresh measurement rather than a stale fit.
   $effect(() => {
     active;
-    layout.agentHidden;
+    shown;
     layout.width;
+    layout.height;
     layout.tree;
-    if (active && !layout.agentHidden) {
+    layout.terminal;
+    if (active && shown) {
       untrack(() => queueMicrotask(() => measure()));
     }
   });
 </script>
 
-<div
-  class="term"
-  class:hidden={!active}
-  bind:this={host}
-  data-testid="terminal"
-  data-session={session.key}
-></div>
+<div class="term" class:hidden={!active} bind:this={host} data-testid="terminal" data-session={id}></div>
 
 <style>
   .term {

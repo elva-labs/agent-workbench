@@ -6,10 +6,11 @@
   import TerminalView from "$lib/components/TerminalView.svelte";
   import { core } from "$lib/core";
   import { agent, applyDetect, detectFailed, unavailableReason } from "$lib/agent.svelte";
+  import { agentVisible } from "$lib/layout.svelte";
   import {
     activeSession,
     create,
-    ended,
+    launch,
     sessions,
     shouldAutoStart,
     statusLabel,
@@ -17,19 +18,10 @@
   } from "$lib/sessions.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
-  let unlisten: (() => void) | null = null;
-
   let current = $derived(activeSession());
   let blocked = $derived(unavailableReason());
 
-  onMount(() => {
-    detect();
-    core()
-      .onSessionEnded(ended)
-      .then((off) => (unlisten = off));
-
-    return () => unlisten?.();
-  });
+  onMount(detect);
 
   /** Asks the machine whether there is an agent to run. Asked once on open,
       and again on request: installing claude should not need a restart. */
@@ -66,7 +58,13 @@
     <!-- Every session stays mounted. Only the active one is visible, so its
          PTY keeps its size and coming back to it costs no reflow. -->
     {#each sessions.all as session (session.key)}
-      <TerminalView {session} active={session.key === sessions.active} />
+      <TerminalView
+        id={session.key}
+        ptyId={session.ptyId}
+        active={session.key === sessions.active}
+        shown={agentVisible()}
+        start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
+      />
     {/each}
 
     {#if blocked !== null}

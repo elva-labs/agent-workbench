@@ -38,6 +38,14 @@ export interface Spawned {
   sessionId: string;
 }
 
+/** A plain shell for the terminal panel: the user's own, started in the
+    project directory with the same environment the agent gets. */
+export interface ShellOptions {
+  project: string;
+  cols: number;
+  rows: number;
+}
+
 export interface ProjectInfo {
   path: string;
   name: string;
@@ -101,6 +109,8 @@ export interface Core {
   projectInfo(path: string): Promise<ProjectInfo>;
   setWindowTitle(title: string): Promise<void>;
   spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<Spawned>;
+  /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
+  spawnShell(options: ShellOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
   write(id: string, data: string): Promise<void>;
   resize(id: string, cols: number, rows: number): Promise<void>;
   kill(id: string): Promise<void>;
@@ -162,6 +172,12 @@ const tauriCore: Core = {
     return invoke<Spawned>("pty_spawn", { ...options, onOutput: channel });
   },
 
+  async spawnShell(options, onOutput) {
+    const channel = new Channel<unknown>();
+    channel.onmessage = (message) => onOutput(toBytes(message));
+    return invoke<string>("pty_shell", { ...options, onOutput: channel });
+  },
+
   write: (id, data) => invoke("pty_write", { id, data }),
   resize: (id, cols, rows) => invoke("pty_resize", { id, cols, rows }),
   kill: (id) => invoke("pty_kill", { id }),
@@ -200,6 +216,9 @@ const detachedCore: Core = {
   },
   async setWindowTitle() {},
   async spawn() {
+    throw new Error("not connected to the workbench core");
+  },
+  async spawnShell() {
     throw new Error("not connected to the workbench core");
   },
   async write() {},

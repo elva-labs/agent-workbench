@@ -82,6 +82,7 @@ export async function installFakeCore(
           ptyId: `pty-${++ptyCount}`,
           sessionId: spawnOptions.session ?? `session-${ptyCount}`,
         }),
+        spawnShell: async () => `pty-${++ptyCount}`,
         write: async () => {},
         resize: async () => {},
         kill: async () => {},

@@ -25,6 +25,12 @@ describe("resolveAction", () => {
     expect(resolveAction(mod("1"))).toEqual({ type: "focus", pane: "sessions" });
     expect(resolveAction(mod("2"))).toEqual({ type: "focus", pane: "agent" });
     expect(resolveAction(mod("3"))).toEqual({ type: "focus", pane: "changes" });
+    expect(resolveAction(mod("4"))).toEqual({ type: "focus", pane: "terminal" });
+  });
+
+  it("maps the terminal toggle", () => {
+    expect(resolveAction(mod("j"))).toEqual({ type: "toggleTerminal" });
+    expect(resolveAction(mod("J"))).toEqual({ type: "toggleTerminal" });
   });
 
   it("maps the pane toggles", () => {
@@ -49,7 +55,7 @@ describe("resolveAction", () => {
   // One modifier per platform. On macOS every Ctrl chord is the agent's:
   // Ctrl+B and Ctrl+E are readline inside the TUI, and Ctrl+D is EOT.
   it("leaves every ctrl chord to the agent on macOS", () => {
-    for (const key of ["1", "b", "d", "e", "\\"]) {
+    for (const key of ["1", "4", "b", "d", "e", "j", "\\"]) {
       expect(resolveAction({ key, ctrlKey: true }, { mac: true })).toBeNull();
     }
   });
@@ -100,6 +106,7 @@ describe("resolveAction", () => {
   // The status bar shows the keys you actually have.
   it("spells the bindings in the platform's own keys", () => {
     expect(bindingsFor(true).map((b) => b.keys)).toContain("⌘D");
+    expect(bindingsFor(true).map((b) => b.keys)).toContain("⌘J");
     expect(bindingsFor(false).map((b) => b.keys)).toContain("Ctrl+D");
     expect(bindingsFor(false).every((b) => !b.keys.includes("⌘"))).toBe(true);
   });
@@ -113,6 +120,11 @@ describe("Escape", () => {
   // Claude Code needs Escape. It is only ours when the agent is not listening.
   it("is the agent's whenever the agent has focus", () => {
     expect(resolveAction({ key: "Escape" }, { focus: "agent", reviewing: true })).toBeNull();
+  });
+
+  // A shell in the panel is a terminal too: vi and less want Escape.
+  it("belongs to the terminal panel when that has focus", () => {
+    expect(resolveAction({ key: "Escape" }, { focus: "terminal", reviewing: true })).toBeNull();
   });
 
   it("does nothing when there is no viewer open", () => {

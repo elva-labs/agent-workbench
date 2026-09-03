@@ -52,11 +52,13 @@ src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
 src/lib/core.ts            the one seam to Rust: commands, channel, events
 src/lib/workspace.svelte.ts the open projects, the recent list, the picker
 src/lib/sessions.svelte.ts every session this window has, live or finished
+src/lib/terminals.svelte.ts the shells in the terminal panel, per project
+src/lib/exits.ts           exits that arrived before the spawn that owns them
 src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
 src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
 src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView
-src/lib/panes/             the three panes
+src/lib/panes/             the three panes and the terminal panel
 src-tauri/src/project.rs   what a folder is: name, repository root, is it git
 src-tauri/src/git.rs       status, diffs, content and the file listing
 src-tauri/src/transcripts.rs  past sessions, from filenames and stat data
@@ -64,6 +66,7 @@ src-tauri/src/watch.rs     noticing the worktree moved, debounced
 src-tauri/src/hook.rs      the optional PostToolUse hook, off by default
 src-tauri/src/env.rs       the login shell environment, and PATH lookup
 src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
+src-tauri/src/shell.rs     the user's shell, started the way the agent is
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event
 src-tauri/src/lib.rs       the commands the webview can call
 ```

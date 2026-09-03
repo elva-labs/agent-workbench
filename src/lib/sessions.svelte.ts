@@ -1,5 +1,6 @@
 import { core, type SessionEnded, type Transcript } from "$lib/core";
 import { isReady } from "$lib/agent.svelte";
+import { claim, resetExits } from "$lib/exits";
 
 /**
  * Every session this window has, live or finished.
@@ -93,12 +94,6 @@ export function ago(epochSeconds: number, now = Date.now()): string {
 let counter = 0;
 /** Next ordinal per project. Never reused, so labels never shift. */
 let ordinals: Record<string, number> = {};
-/**
- * Exits reported before the row learned its pty id. The end event and the
- * spawn result race when a process dies at once, and the exit must not be
- * lost to the order they happened to arrive in.
- */
-let endedEarly = new Map<string, SessionEnded>();
 
 export function forProject(project: string): Session[] {
   return sessions.all.filter((session) => session.project === project);
@@ -159,6 +154,42 @@ export function create(project: string, resumedFrom: string | null = null): Sess
 }
 
 /**
+ * Starts the process behind a row. The terminal supplies its grid and takes
+ * the bytes; everything about what the process is lives here.
+ */
+export async function launch(
+  key: string,
+  cols: number,
+  rows: number,
+  onOutput: (bytes: Uint8Array) => void,
+): Promise<boolean> {
+  const session = byKey(key);
+  if (session === null) return false;
+  try {
+    const { ptyId, sessionId } = await core().spawn(
+      {
+        agent: "claude-code",
+        project: session.project,
+        session: session.resumedFrom ?? undefined,
+        cols,
+        rows,
+      },
+      onOutput,
+    );
+    if (started(key, ptyId, sessionId)) return true;
+    // The row was closed while the process was coming up. Nothing owns it
+    // now, so it must not be left running.
+    core()
+      .kill(ptyId)
+      .catch(() => {});
+    return false;
+  } catch (error) {
+    failed(key, String(error));
+    return false;
+  }
+}
+
+/**
  * The process is up. False when the row is already gone, which is the caller's
  * cue that nothing owns the pty it was just handed.
  */
@@ -169,11 +200,8 @@ export function started(key: string, ptyId: string, sessionId: string): boolean 
   session.id = sessionId;
   session.status = "running";
 
-  const early = endedEarly.get(ptyId);
-  if (early !== undefined) {
-    endedEarly.delete(ptyId);
-    ended(early);
-  }
+  const early = claim(ptyId);
+  if (early !== undefined) ended(early);
   return true;
 }
 
@@ -189,18 +217,19 @@ export function failed(key: string, error: string) {
  * A session ended on its own. Anything but a clean zero reads as a crash, and
  * nothing restarts by itself: a broken install would otherwise become a loop
  * that burns CPU and hides the actual error.
+ *
+ * False when no row here has that pty: the exit is someone else's, or the
+ * spawn result has not landed yet.
  */
-export function ended(event: SessionEnded) {
+export function ended(event: SessionEnded): boolean {
   const session = sessions.all.find((candidate) => candidate.ptyId === event.id);
-  if (session === undefined) {
-    endedEarly.set(event.id, event);
-    return;
-  }
+  if (session === undefined) return false;
   session.ptyId = null;
   session.exitCode = event.code;
   session.status = event.clean ? "exited" : "crashed";
   // The transcript is complete now, so the history it belongs in has moved.
   loadHistory(session.project);
+  return true;
 }
 
 /** Closes a row for good, stopping it first if it is still going. */
@@ -286,5 +315,5 @@ export function reset() {
   sessions.history = {};
   counter = 0;
   ordinals = {};
-  endedEarly = new Map();
+  resetExits();
 }

@@ -19,9 +19,10 @@ Only <kbd>Cmd</kbd> chords (<kbd>Ctrl</kbd> on Windows and Linux). Nothing else.
 
 | Keys | Does |
 | --- | --- |
-| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> | Focus sessions / agent / changes |
+| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal |
 | <kbd>Cmd</kbd><kbd>B</kbd> | Toggle the sessions pane |
 | <kbd>Cmd</kbd><kbd>\\</kbd> | Toggle the changes pane |
+| <kbd>Cmd</kbd><kbd>J</kbd> | Show or hide the terminal panel |
 | <kbd>Cmd</kbd><kbd>D</kbd> | Open or close the file viewer |
 | <kbd>Cmd</kbd><kbd>E</kbd> | Diff or whole file |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd> | Changed files or all files |
@@ -34,18 +35,19 @@ future binding is additive and a typo is not silently absorbed.
 
 - **<kbd>Tab</kbd> does not move focus between panes.** It is completion inside
   the TUI, and <kbd>Shift</kbd><kbd>Tab</kbd> is Claude Code's mode switch. Pane
-  focus moves on <kbd>Cmd</kbd><kbd>1/2/3</kbd> or a click, and nothing else.
+  focus moves on <kbd>Cmd</kbd><kbd>1/2/3/4</kbd> or a click, and nothing else.
 - **<kbd>Ctrl</kbd> chords belong to the agent** on macOS, where the app
   modifier is <kbd>Cmd</kbd>. On Windows and Linux the modifier is
-  <kbd>Ctrl</kbd>, so the handful of bound chords (<kbd>Ctrl</kbd><kbd>1/2/3</kbd>,
-  <kbd>B</kbd>, <kbd>D</kbd>, <kbd>E</kbd>, <kbd>\</kbd>) are taken from the
-  terminal there. <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never bound, so
-  interrupting and history search always reach the agent.
-- **<kbd>Esc</kbd> is the agent's whenever the agent has focus.** A pane that
-  owns focus may use it, which is how the file viewer closes without a chord.
-  This is the one key whose meaning depends on context, which is why
-  `resolveAction` takes the focus state rather than leaving each caller to
-  decide: the model stays in one testable place.
+  <kbd>Ctrl</kbd>, so the handful of bound chords (<kbd>Ctrl</kbd><kbd>1/2/3/4</kbd>,
+  <kbd>B</kbd>, <kbd>D</kbd>, <kbd>E</kbd>, <kbd>J</kbd>, <kbd>\</kbd>) are
+  taken from the terminal there. <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are
+  never bound, so interrupting and history search always reach the agent.
+- **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
+  it, and so does a shell in the terminal panel: `vi` and `less` are waiting for
+  it there. A pane that owns focus may use it, which is how the file viewer
+  closes without a chord. This is the one key whose meaning depends on context,
+  which is why `resolveAction` takes the focus state rather than leaving each
+  caller to decide: the model stays in one testable place.
 
 ## Focus follows the pointer down, not the hover
 

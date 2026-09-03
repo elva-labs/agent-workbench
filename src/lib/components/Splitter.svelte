@@ -1,32 +1,40 @@
 <script lang="ts">
   interface Props {
     label: string;
-    /** Called with the horizontal delta in pixels since the last move. */
-    onDelta: (dx: number) => void;
-    /** Double-click or Home: restore the pane to its default width. */
+    /** Which way the bar runs. A vertical bar moves left and right and
+        reports dx; a horizontal one moves up and down and reports dy. */
+    orientation?: "vertical" | "horizontal";
+    /** Called with the delta in pixels since the last move. */
+    onDelta: (delta: number) => void;
+    /** Double-click or Home: restore the pane to its default size. */
     onReset: () => void;
     onCommit?: () => void;
   }
 
-  let { label, onDelta, onReset, onCommit }: Props = $props();
+  let { label, orientation = "vertical", onDelta, onReset, onCommit }: Props = $props();
 
+  let vertical = $derived(orientation === "vertical");
   let dragging = $state(false);
-  let lastX = 0;
+  let last = 0;
+
+  function position(e: PointerEvent) {
+    return vertical ? e.clientX : e.clientY;
+  }
 
   function down(e: PointerEvent) {
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     dragging = true;
-    lastX = e.clientX;
+    last = position(e);
     e.preventDefault();
   }
 
   function move(e: PointerEvent) {
     if (!dragging) return;
-    const dx = e.clientX - lastX;
-    if (dx === 0) return;
-    lastX = e.clientX;
-    onDelta(dx);
+    const delta = position(e) - last;
+    if (delta === 0) return;
+    last = position(e);
+    onDelta(delta);
   }
 
   function up(e: PointerEvent) {
@@ -38,8 +46,10 @@
 
   function key(e: KeyboardEvent) {
     const step = e.shiftKey ? 24 : 8;
-    if (e.key === "ArrowLeft") onDelta(-step);
-    else if (e.key === "ArrowRight") onDelta(step);
+    const back = vertical ? "ArrowLeft" : "ArrowUp";
+    const forward = vertical ? "ArrowRight" : "ArrowDown";
+    if (e.key === back) onDelta(-step);
+    else if (e.key === forward) onDelta(step);
     else if (e.key === "Home") onReset();
     else return;
     e.preventDefault();
@@ -55,8 +65,9 @@
 <div
   class="splitter"
   class:dragging
+  class:horizontal={!vertical}
   role="separator"
-  aria-orientation="vertical"
+  aria-orientation={orientation}
   aria-label={label}
   tabindex="0"
   onpointerdown={down}
@@ -77,6 +88,12 @@
     flex: none;
   }
 
+  .splitter.horizontal {
+    width: auto;
+    height: var(--splitter-w);
+    cursor: row-resize;
+  }
+
   /* The hairline sits inside a wider hit target: 1px to look at, 6px to grab. */
   .splitter::after {
     content: "";
@@ -84,6 +101,10 @@
     inset: 0 calc(50% - 0.5px);
     background: var(--rule);
     transition: background 90ms ease;
+  }
+
+  .splitter.horizontal::after {
+    inset: calc(50% - 0.5px) 0;
   }
 
   .splitter:hover::after,

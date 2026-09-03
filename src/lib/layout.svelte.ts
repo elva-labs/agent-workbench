@@ -7,6 +7,11 @@
  * diff. One deliberate transition between them, and the agent resizes once on
  * the way in rather than once per file opened.
  *
+ * Below either shape sits the terminal panel: a strip along the bottom of the
+ * window holding the project's shells, hidden until asked for. It takes its
+ * height from the three panes above, which is one resize for the agent on a
+ * deliberate toggle, the same bargain review mode strikes.
+ *
  * Two kinds of collapse, and they must not be confused:
  *
  *   chosen  — you pressed the toggle. Persisted.
@@ -16,7 +21,7 @@
  * forgetting that you like the sessions pane open.
  */
 
-export type PaneId = "sessions" | "agent" | "changes";
+export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing";
 
 export const SPLITTER = 6;
@@ -30,6 +35,10 @@ export const MIN = {
   tree: 160,
   /** The content below this is too narrow to read a diff in. */
   viewer: 400,
+  /** Shorter than this and a shell shows a prompt and little else. */
+  terminal: 120,
+  /** What the three panes keep between them when the terminal is open. */
+  panes: 240,
 } as const;
 
 /** The review pane holds a tree and the content side by side. */
@@ -40,6 +49,7 @@ export const DEFAULT = {
   changes: 340,
   tree: 220,
   review: 700,
+  terminal: 260,
 } as const;
 
 /** Content width below which the sessions pane cannot fit alongside the rest. */
@@ -52,6 +62,8 @@ export const NEEDS_CHANGES = MIN.changes + SPLITTER + MIN.agent;
  * and the terminal comes back exactly as it was. Squeezing costs a reflow.
  */
 export const NEEDS_AGENT_WHILE_REVIEWING = MIN.agent + SPLITTER + MIN_REVIEW;
+/** Content height below which the terminal panel cannot fit under the panes. */
+export const NEEDS_TERMINAL = MIN.panes + SPLITTER + MIN.terminal;
 
 const KEY = "workbench.layout";
 
@@ -60,16 +72,20 @@ export const layout = $state({
   changes: DEFAULT.changes as number,
   review: DEFAULT.review as number,
   tree: DEFAULT.tree as number,
+  terminal: DEFAULT.terminal as number,
   sessionsChosen: true,
   changesChosen: true,
+  terminalChosen: false,
   sessionsForced: false,
   changesForced: false,
+  terminalForced: false,
   agentHidden: false,
   /** Set once you drag the viewer's splitter, so we stop sizing it for you. */
   reviewTouched: false,
   mode: "working" as Mode,
   focus: "agent" as PaneId,
   width: 1200,
+  height: 800,
 });
 
 export function sessionsVisible() {
@@ -84,17 +100,32 @@ export function agentVisible() {
   return !layout.agentHidden;
 }
 
+export function terminalVisible() {
+  return layout.terminalChosen && !layout.terminalForced;
+}
+
 /** The width the changes pane is currently asking for. */
 export function changesWidth() {
   return layout.mode === "reviewing" ? layout.review : layout.changes;
 }
 
 /**
- * Resolves the layout for a given content width. Called on every resize and on
+ * Resolves the layout for a given content size. Called on every resize and on
  * every mode change, and is the only place that decides what is visible.
  */
-export function applyLayout(width: number) {
+export function applyLayout(width: number, height: number = layout.height) {
   layout.width = width;
+  layout.height = height;
+
+  // The terminal is independent of the shape: it sits under whichever one is
+  // showing, and only the height decides whether it fits.
+  layout.terminalForced = height < NEEDS_TERMINAL;
+  if (layout.terminalForced) {
+    if (layout.focus === "terminal") layout.focus = "agent";
+  } else {
+    const room = height - SPLITTER - MIN.panes;
+    layout.terminal = Math.min(Math.max(layout.terminal, MIN.terminal), room);
+  }
 
   if (layout.mode === "reviewing") {
     layout.sessionsForced = true;
@@ -179,10 +210,28 @@ export function togglePane(pane: "sessions" | "changes") {
   saveLayout();
 }
 
+/**
+ * Shows or hides the terminal. Showing it is asking for it, so focus goes
+ * there; hiding it hands focus back to the agent, which is where a chord
+ * pressed from inside the panel most likely wants to land.
+ */
+export function toggleTerminal() {
+  layout.terminalChosen = !layout.terminalChosen;
+  applyLayout(layout.width, layout.height);
+  if (terminalVisible()) layout.focus = "terminal";
+  else if (layout.focus === "terminal") layout.focus = "agent";
+  saveLayout();
+}
+
+export function hideTerminal() {
+  if (layout.terminalChosen) toggleTerminal();
+}
+
 export function focusPane(id: PaneId) {
   if (id === "sessions" && !sessionsVisible()) return;
   if (id === "changes" && !changesVisible()) return;
   if (id === "agent" && !agentVisible()) return;
+  if (id === "terminal" && !terminalVisible()) return;
   layout.focus = id;
 }
 
@@ -200,9 +249,11 @@ export function loadLayout() {
     if (typeof v.changes === "number") layout.changes = v.changes;
     if (typeof v.review === "number") layout.review = v.review;
     if (typeof v.tree === "number") layout.tree = v.tree;
+    if (typeof v.terminal === "number") layout.terminal = v.terminal;
     if (typeof v.reviewTouched === "boolean") layout.reviewTouched = v.reviewTouched;
     if (typeof v.sessionsChosen === "boolean") layout.sessionsChosen = v.sessionsChosen;
     if (typeof v.changesChosen === "boolean") layout.changesChosen = v.changesChosen;
+    if (typeof v.terminalChosen === "boolean") layout.terminalChosen = v.terminalChosen;
   } catch {
     // A corrupt entry is not worth a broken window. Defaults stand.
   }
@@ -222,9 +273,11 @@ export function saveLayout() {
         changes: layout.changes,
         review: layout.review,
         tree: layout.tree,
+        terminal: layout.terminal,
         reviewTouched: layout.reviewTouched,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,
+        terminalChosen: layout.terminalChosen,
       }),
     );
   } catch {

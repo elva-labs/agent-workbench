@@ -15,7 +15,8 @@ import type { PaneId } from "$lib/layout.svelte";
  *
  * Escape is the one key whose meaning depends on where focus is, which is why
  * this function takes the context rather than leaving the caller to decide:
- * the whole model stays testable without a DOM.
+ * the whole model stays testable without a DOM. It belongs to whichever
+ * terminal has focus, the agent's or a shell's, and to the chrome otherwise.
  */
 
 export type Action =
@@ -25,6 +26,7 @@ export type Action =
   | { type: "toggleReview" }
   | { type: "toggleView" }
   | { type: "toggleScope" }
+  | { type: "toggleTerminal" }
   | { type: "exitReview" };
 
 export interface KeyState {
@@ -50,6 +52,11 @@ export function isMac(nav: { platform?: string; userAgent?: string } | undefined
 
 const DEFAULT_CONTEXT: KeyContext = { focus: "agent", reviewing: false };
 
+/** Panes that hold a pty, whose keys are the process's rather than the app's. */
+function isTerminal(pane: PaneId): boolean {
+  return pane === "agent" || pane === "terminal";
+}
+
 /** Returns the chrome action for a key event, or null to pass it to the pane. */
 export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): Action | null {
   const mac = ctx.mac ?? isMac();
@@ -58,7 +65,7 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   if (!mod) {
     // Escape belongs to the agent whenever the agent has it. A pane that owns
     // focus may use it, which is how the viewer closes without a chord.
-    if (e.key === "Escape" && ctx.reviewing && ctx.focus !== "agent") {
+    if (e.key === "Escape" && ctx.reviewing && !isTerminal(ctx.focus)) {
       return { type: "exitReview" };
     }
     return null;
@@ -82,6 +89,10 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
       return { type: "focus", pane: "agent" };
     case "3":
       return { type: "focus", pane: "changes" };
+    case "4":
+      return { type: "focus", pane: "terminal" };
+    case "j":
+      return { type: "toggleTerminal" };
     case "b":
       return { type: "toggle", pane: "sessions" };
     case "\\":
@@ -110,9 +121,10 @@ export function bindingsFor(mac: boolean): Binding[] {
   const m = mac ? "⌘" : "Ctrl+";
   const shift = mac ? "⇧⌘" : "Ctrl+Shift+";
   return [
-    { keys: `${m}1 ${m}2 ${m}3`, does: "focus", minor: true },
+    { keys: `${m}1 ${m}2 ${m}3 ${m}4`, does: "focus", minor: true },
     { keys: `${m}B`, does: "sessions", minor: true },
     { keys: `${m}\\`, does: "changes", minor: true },
+    { keys: `${m}J`, does: "terminal" },
     { keys: `${m}D`, does: "review" },
     { keys: `${m}E`, does: "diff/content" },
     { keys: `${shift}A`, does: "scope", minor: true },

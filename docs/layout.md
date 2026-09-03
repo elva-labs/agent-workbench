@@ -85,6 +85,33 @@ comes back exactly as it was, with no redraw and no rewrapped scrollback.
 For the same reason the agent pane is hidden with `display: none` rather than
 unmounted. Unmounting would destroy the terminal; hiding costs nothing.
 
+## The terminal panel
+
+Under either shape sits a strip for plain shells, the way an editor keeps a
+terminal below the editors. <kbd>Cmd</kbd><kbd>J</kbd> shows and hides it;
+<kbd>Cmd</kbd><kbd>4</kbd> focuses it. Opening it is asking for it, so focus
+goes there. It is independent of the shape: review mode neither opens nor
+closes it, and it keeps its height across both.
+
+The panel takes its height from the three panes above it, which is one PTY
+resize for the agent when it opens and one when it closes. Between those it
+follows the same rules as the side panes:
+
+- **Chosen is remembered, forced is not.** Below 366px of content height it
+  folds away and comes back, at the same height, when there is room again.
+- **Hidden, not unmounted.** The shells in it keep running with the panel
+  closed. Showing it again is a fit, not a spawn.
+- **It never squeezes the panes below 240px**, and never drops below 120px
+  itself. The bar between takes the rest.
+
+Each shell belongs to the project it was opened in and starts there, with the
+same environment the agent gets. The panel shows the active project's shells as
+tabs, so switching project switches tabs and kills nothing, and opening the
+panel on a project with no shell starts one. Typing `exit` closes the tab, and
+the last tab of the project you are looking at takes the panel with it. A shell
+that dies any other way keeps its tab, with the exit code, because a tab that
+vanishes on a crash hides the crash.
+
 ## On window resize
 
 Resizing the window does resize the PTY, and that is fine: you did it, and the

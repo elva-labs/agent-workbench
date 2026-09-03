@@ -73,7 +73,7 @@ pub fn spawn(
     let mut child = pair
         .slave
         .spawn_command(command)
-        .map_err(|e| format!("could not start the agent: {e}"))?;
+        .map_err(|e| format!("could not start the process: {e}"))?;
 
     // The slave is the child's end. Holding it open here would keep the pty
     // alive after the agent exits, and the reader below would never see EOF.

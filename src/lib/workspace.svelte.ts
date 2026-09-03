@@ -1,5 +1,6 @@
 import { core, type ProjectInfo } from "$lib/core";
 import { closeProject, forProject, sessions } from "$lib/sessions.svelte";
+import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
 
 /**
  * The projects this window has open.
@@ -81,6 +82,7 @@ export function activate(path: string) {
   const own = forProject(path);
   if (own.length > 0) sessions.active = own[own.length - 1].key;
   else sessions.active = null;
+  follow(path);
 
   save();
   const project = workspace.open.find((candidate) => candidate.path === path);
@@ -106,6 +108,7 @@ export async function pick(): Promise<boolean> {
 /** Removes a project from the window, stopping everything running in it. */
 export function close(path: string) {
   closeProject(path);
+  closeShells(path);
   workspace.open = workspace.open.filter((project) => project.path !== path);
 
   if (workspace.active !== path) {

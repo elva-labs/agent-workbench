@@ -1,12 +1,17 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import SessionsPane from "$lib/panes/SessionsPane.svelte";
   import AgentPane from "$lib/panes/AgentPane.svelte";
   import ChangesPane from "$lib/panes/ChangesPane.svelte";
+  import TerminalPanel from "$lib/panes/TerminalPanel.svelte";
+  import { core } from "$lib/core";
+  import { stash } from "$lib/exits";
   import { BINDINGS, resolveAction } from "$lib/keymap";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import { files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
+  import { ended as sessionEnded } from "$lib/sessions.svelte";
+  import { ended as shellEnded } from "$lib/terminals.svelte";
   import {
     DEFAULT,
     MIN,
@@ -20,10 +25,25 @@
     layout,
     saveLayout,
     sessionsVisible,
+    terminalVisible,
     togglePane,
+    toggleTerminal,
   } from "$lib/layout.svelte";
 
   let viewport = $state(1200);
+  let stack = $state(800);
+
+  // Every pty ends through one event, agent or shell. Whichever store has the
+  // row takes it; an exit that beat its own spawn result waits to be claimed.
+  onMount(() => {
+    let off: (() => void) | null = null;
+    core()
+      .onSessionEnded((event) => {
+        if (!sessionEnded(event) && !shellEnded(event)) stash(event);
+      })
+      .then((unlisten) => (off = unlisten));
+    return () => off?.();
+  });
 
   let reviewing = $derived(layout.mode === "reviewing");
 
@@ -68,6 +88,18 @@
     saveLayout();
   }
 
+  // The bar sits above the panel, so dragging it down makes the panel shorter.
+  function resizeTerminal(dy: number) {
+    layout.terminal = Math.max(MIN.terminal, layout.terminal - dy);
+    applyLayout(viewport, stack);
+  }
+
+  function resetTerminal() {
+    layout.terminal = DEFAULT.terminal;
+    applyLayout(viewport, stack);
+    saveLayout();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     const action = resolveAction(e, { focus: layout.focus, reviewing });
     if (!action) return;
@@ -100,6 +132,9 @@
       case "toggleScope":
         toggleScope();
         break;
+      case "toggleTerminal":
+        toggleTerminal();
+        break;
       case "exitReview":
         exitReview();
         break;
@@ -108,16 +143,19 @@
 
   // Clamp against the grid's own content box rather than the window: the frame
   // has padding, and counting it as usable width is how the agent pane ends up
-  // below its minimum on a small display.
+  // below its minimum on a small display. The height is the stack's, which
+  // the panes and the terminal divide between them.
   $effect(() => {
     const width = viewport;
-    untrack(() => applyLayout(width));
+    const height = stack;
+    untrack(() => applyLayout(width, height));
   });
 </script>
 
 <svelte:window on:keydown={onKeydown} />
 
 <div class="frame">
+  <div class="stack" bind:clientHeight={stack}>
   <main
     class="shell"
     style:grid-template-columns={columns}
@@ -158,6 +196,27 @@
       <ChangesPane />
     {/if}
   </main>
+
+  <!-- Hidden rather than unmounted, for the same reason as the agent: the
+       shells in it stay mounted, so hiding is free and showing is a fit. -->
+  {#if terminalVisible()}
+    <Splitter
+      label="Resize the terminal"
+      orientation="horizontal"
+      onDelta={resizeTerminal}
+      onReset={resetTerminal}
+      onCommit={saveLayout}
+    />
+  {/if}
+  <div
+    class="terminal-slot"
+    class:hidden={!terminalVisible()}
+    style:height="{layout.terminal}px"
+    data-testid="terminal-slot"
+  >
+    <TerminalPanel />
+  </div>
+  </div>
 </div>
 
 <footer class="status no-select">
@@ -179,12 +238,34 @@
     background: var(--bg);
   }
 
+  .stack {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
   /* No padding here: clientWidth is then exactly the width the panes divide up. */
   .shell {
     display: grid;
     gap: 0;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     align-items: stretch;
+  }
+
+  .terminal-slot {
+    display: flex;
+    flex: none;
+    min-height: 0;
+  }
+
+  .terminal-slot.hidden {
+    display: none;
+  }
+
+  .terminal-slot :global(.pane) {
+    flex: 1;
+    min-width: 0;
   }
 
   .agent-slot {

@@ -82,6 +82,35 @@ const SESSION_SCOPED: &[&str] = &[
     "CLAUDE_CODE_EXECPATH",
 ];
 
+/// Gives a command the project directory and the captured environment.
+///
+/// Shared by the agent and by the plain shell in the terminal panel, so that
+/// `claude` typed into that shell behaves exactly like the agent pane's own.
+pub fn prepare(command: &mut CommandBuilder, project: &Path, vars: &HashMap<String, String>) {
+    command.cwd(project);
+
+    // Start from nothing rather than from this process's environment. The
+    // captured login-shell environment is meant to be the whole story, and
+    // a merge would quietly reintroduce whatever the app happened to
+    // inherit, including the markers dropped just below.
+    command.env_clear();
+
+    for (key, value) in vars {
+        if SESSION_SCOPED.contains(&key.as_str()) {
+            continue;
+        }
+        command.env(key, value);
+    }
+
+    // Without TERM the TUI falls back to something without colour or cursor
+    // addressing, which looks like a rendering bug rather than a missing
+    // variable. xterm.js speaks xterm-256color.
+    command.env("TERM", "xterm-256color");
+    // Claude Code reads this to decide how wide to draw before the first
+    // SIGWINCH arrives.
+    command.env("COLORTERM", "truecolor");
+}
+
 pub struct ClaudeCode;
 
 impl ClaudeCode {
@@ -96,28 +125,7 @@ impl ClaudeCode {
         for arg in args {
             command.arg(arg);
         }
-        command.cwd(ctx.project);
-
-        // Start from nothing rather than from this process's environment. The
-        // captured login-shell environment is meant to be the whole story, and
-        // a merge would quietly reintroduce whatever the app happened to
-        // inherit, including the markers dropped just below.
-        command.env_clear();
-
-        for (key, value) in ctx.env {
-            if SESSION_SCOPED.contains(&key.as_str()) {
-                continue;
-            }
-            command.env(key, value);
-        }
-
-        // Without TERM the TUI falls back to something without colour or cursor
-        // addressing, which looks like a rendering bug rather than a missing
-        // variable. xterm.js speaks xterm-256color.
-        command.env("TERM", "xterm-256color");
-        // Claude Code reads this to decide how wide to draw before the first
-        // SIGWINCH arrives.
-        command.env("COLORTERM", "truecolor");
+        prepare(&mut command, ctx.project, ctx.env);
 
         Ok(Surface::Pty(command))
     }
