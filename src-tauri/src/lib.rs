@@ -6,6 +6,7 @@
 mod adapter;
 mod env;
 mod git;
+mod hook;
 mod project;
 mod pty;
 mod transcripts;
@@ -93,6 +94,24 @@ fn project_info(path: PathBuf) -> Result<project::ProjectInfo, String> {
     project::describe(&path)
 }
 
+#[tauri::command]
+fn hook_status(project: PathBuf) -> Result<hook::HookStatus, String> {
+    let home = home_directory().ok_or("no home directory")?;
+    Ok(hook::status(&home, &project))
+}
+
+#[tauri::command]
+fn hook_install(project: PathBuf) -> Result<hook::HookStatus, String> {
+    let home = home_directory().ok_or("no home directory")?;
+    hook::install(&home, &project)
+}
+
+#[tauri::command]
+fn hook_uninstall(project: PathBuf) -> Result<hook::HookStatus, String> {
+    let home = home_directory().ok_or("no home directory")?;
+    hook::uninstall(&home, &project)
+}
+
 /// Sessions Claude Code has already had in this project, newest first.
 #[tauri::command]
 fn sessions_list(project: PathBuf) -> Vec<transcripts::Transcript> {
@@ -137,7 +156,8 @@ fn git_watch(
     root: PathBuf,
 ) -> Result<(), String> {
     let worktree = git::workdir(&root)?;
-    watch::watch(app, &watchers, worktree)
+    let events = home_directory().map(|home| hook::events_path(&home));
+    watch::watch(app, &watchers, worktree, events)
 }
 
 #[tauri::command]
@@ -187,6 +207,9 @@ pub fn run() {
             agent_detect,
             project_info,
             sessions_list,
+            hook_status,
+            hook_install,
+            hook_uninstall,
             git_status,
             git_files,
             git_diff,

@@ -16,6 +16,7 @@
     statusLabel,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
+  import { check, hook, isInstalled, isKnown, toggle } from "$lib/hook.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
 
@@ -24,6 +25,7 @@
   $effect(() => {
     for (const project of workspace.open) {
       if (sessions.history[project.path] === undefined) loadHistory(project.path);
+      if (!isKnown(project.path)) check(project.path);
     }
   });
 
@@ -107,6 +109,22 @@
           disabled={!isReady()}
           data-testid="new-session">+ New session</button
         >
+
+        <!-- Off by default: it writes into the project's settings.local.json,
+             and the watcher already covers the same ground. What it adds is
+             hearing from the agent the moment a tool finishes. -->
+        <button
+          class="hook"
+          class:on={isInstalled(project.path)}
+          onclick={() => toggle(project.path)}
+          disabled={hook.busy}
+          title={isInstalled(project.path)
+            ? "The agent reports edits directly. Click to remove the hook."
+            : "Add a PostToolUse hook so edits are reported the moment a tool finishes."}
+          data-testid="hook-toggle"
+        >
+          {isInstalled(project.path) ? "live updates: hook" : "live updates: filesystem"}
+        </button>
       {/if}
     {/each}
   </div>
@@ -297,6 +315,28 @@
   }
 
   .new:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .hook {
+    display: block;
+    margin: 0 0 10px 26px;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 0;
+  }
+
+  .hook.on {
+    color: var(--accent);
+  }
+
+  .hook:disabled {
     opacity: 0.5;
     cursor: default;
   }

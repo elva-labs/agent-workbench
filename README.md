@@ -7,9 +7,10 @@ right. Claude Code first, with an adapter seam defined from the start.
 Rust and Tauri v2, Svelte frontend. macOS is the target; Windows and Linux come
 later, so nothing in the core is allowed to be macOS-only.
 
-**Status: through phase 3.** Open a folder, a session starts in it, the right
-pane shows the real changed files and diffs as the agent edits them, and past
-sessions are listed from Claude Code's own transcripts and can be resumed.
+**Status: the plan is done.** Open a folder, a session starts in it, the right
+pane shows the real changed files and diffs as the agent edits them, past
+sessions are listed from Claude Code's own transcripts and can be resumed, and
+several projects and sessions run side by side.
 
 ## The rule that keeps it coherent
 
@@ -60,6 +61,7 @@ src-tauri/src/project.rs   what a folder is: name, repository root, is it git
 src-tauri/src/git.rs       status, diffs, content and the file listing
 src-tauri/src/transcripts.rs  past sessions, from filenames and stat data
 src-tauri/src/watch.rs     noticing the worktree moved, debounced
+src-tauri/src/hook.rs      the optional PostToolUse hook, off by default
 src-tauri/src/env.rs       the login shell environment, and PATH lookup
 src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event
@@ -80,4 +82,4 @@ src-tauri/src/lib.rs       the commands the webview can call
 1. **The agent pane** — login-shell PATH, portable-pty, xterm.js over a Tauri Channel. Done.
 2. **Changes and diffs** — git2 status, a debounced notify watcher, real diffs. Done.
 3. **Projects and sessions** — the transcript index, built on filenames and stat data. Done.
-4. **Making it feel like one app** — ANSI theming from the tokens, keyboard resolution.
+4. **Making it feel like one app** — ANSI theming from the tokens, keyboard resolution. Done.

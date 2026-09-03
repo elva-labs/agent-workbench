@@ -67,7 +67,15 @@ pub fn is_interesting(path: &Path) -> bool {
     matches!(name.as_str(), "index" | "HEAD" | "MERGE_HEAD" | "ORIG_HEAD")
 }
 
-pub fn watch(app: AppHandle, watchers: &Watchers, root: PathBuf) -> Result<(), String> {
+/// Watches a worktree, and optionally one more path: the file the PostToolUse
+/// hook appends to. Both mean the same thing to the pane, which is that the
+/// tree may have moved.
+pub fn watch(
+    app: AppHandle,
+    watchers: &Watchers,
+    root: PathBuf,
+    also: Option<PathBuf>,
+) -> Result<(), String> {
     let mut current = watchers.current.lock().expect("watchers lock");
 
     if let Some((existing, _, _)) = current.as_ref() {
@@ -91,6 +99,14 @@ pub fn watch(app: AppHandle, watchers: &Watchers, root: PathBuf) -> Result<(), S
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| format!("could not watch {}: {e}", root.display()))?;
+
+    // Absent until the hook has fired once, which is not an error: the
+    // filesystem watch above already covers everything on its own.
+    if let Some(extra) = also {
+        if extra.exists() {
+            let _ = watcher.watch(&extra, RecursiveMode::NonRecursive);
+        }
+    }
 
     let stop = Arc::new(Stop::default());
     std::thread::spawn({

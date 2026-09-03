@@ -164,3 +164,24 @@ The directory name is the project path with every non-alphanumeric character
 replaced by a dash, which is lossy: `/a/b-c` and `/a/b_c` mangle the same. So
 the workbench keys its own state by the real path and only ever mangles
 forwards, never back.
+
+## Live updates
+
+The changes pane learns that the tree moved in one of two ways, and the toggle
+under each project says which.
+
+**Filesystem**, the default. A `notify` watcher on the worktree, debounced at
+150ms. It costs nothing, needs no permission, and catches every writer: the
+agent, your editor, a script, a rebase.
+
+**Hook**, opt-in. A `PostToolUse` hook appended to the project's
+`.claude/settings.local.json`, which appends what the agent did to a file under
+`~/.agent-workbench` that the same watcher also watches. What it buys is
+immediacy and provenance: the pane hears the moment a tool finishes, and it
+hears what the agent actually did rather than inferring it from mtimes.
+
+It is off by default and stays off until asked, because it writes into your
+configuration, and nothing should edit that because you opened a folder. It
+goes in `settings.local.json` rather than `settings.json` so it never turns up
+in a diff. Turning it off removes only that entry and leaves no empty
+scaffolding behind.

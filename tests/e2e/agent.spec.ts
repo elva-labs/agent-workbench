@@ -140,6 +140,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         // These tests are about sessions, so the repository is empty. The
         // changes pane still asks, and would break the page if it threw.
         transcripts: async () => [],
+        hookStatus: async () => ({ installed: false, settings: "", events: "" }),
+        hookInstall: async () => ({ installed: true, settings: "", events: "" }),
+        hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
         gitStatus: async () => [],
         gitFiles: async () => [],
         gitDiff: async () => ({ lines: [], binary: false, truncated: false }),

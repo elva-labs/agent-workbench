@@ -75,6 +75,12 @@ export interface Transcript {
   title: string | null;
 }
 
+export interface HookStatus {
+  installed: boolean;
+  settings: string;
+  events: string;
+}
+
 export interface SessionEnded {
   id: string;
   code: number | null;
@@ -95,6 +101,10 @@ export interface Core {
 
   /** Sessions already on disk for this project, newest first. */
   transcripts(project: string): Promise<Transcript[]>;
+
+  hookStatus(project: string): Promise<HookStatus>;
+  hookInstall(project: string): Promise<HookStatus>;
+  hookUninstall(project: string): Promise<HookStatus>;
 
   gitStatus(root: string): Promise<ChangedFile[]>;
   gitFiles(root: string): Promise<string[]>;
@@ -155,6 +165,10 @@ const tauriCore: Core = {
 
   transcripts: (project) => invoke<Transcript[]>("sessions_list", { project }),
 
+  hookStatus: (project) => invoke<HookStatus>("hook_status", { project }),
+  hookInstall: (project) => invoke<HookStatus>("hook_install", { project }),
+  hookUninstall: (project) => invoke<HookStatus>("hook_uninstall", { project }),
+
   gitStatus: (root) => invoke<ChangedFile[]>("git_status", { root }),
   gitFiles: (root) => invoke<string[]>("git_files", { root }),
   gitDiff: (root, file) => invoke<FileDiff>("git_diff", { root, file }),
@@ -189,6 +203,15 @@ const detachedCore: Core = {
   },
   async transcripts() {
     return [];
+  },
+  async hookStatus(project) {
+    return { installed: false, settings: project, events: "" };
+  },
+  async hookInstall(project) {
+    return { installed: false, settings: project, events: "" };
+  },
+  async hookUninstall(project) {
+    return { installed: false, settings: project, events: "" };
   },
   async gitStatus() {
     return [];

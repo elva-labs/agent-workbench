@@ -10,6 +10,7 @@ const fake = {
   status: [] as { path: string; status: string; add: number; del: number; binary: boolean }[],
   fileList: [] as string[],
   transcripts: [] as { id: string; title: string | null; modified: number; size: number }[],
+  hookInstalled: false,
 };
 
 vi.mock("$lib/core", () => ({
@@ -26,6 +27,9 @@ vi.mock("$lib/core", () => ({
     onGitChanged: async () => () => {},
     kill: async () => {},
     transcripts: async () => fake.transcripts,
+    hookStatus: async () => ({ installed: fake.hookInstalled, settings: "", events: "" }),
+    hookInstall: async () => ({ installed: true, settings: "", events: "" }),
+    hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
     setWindowTitle: async () => {},
     projectInfo: async (path: string) => ({ path, name: path, repository: path, isGit: true }),
   }),
@@ -33,6 +37,7 @@ vi.mock("$lib/core", () => ({
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { agent } from "$lib/agent.svelte";
 import { reset as resetSessions, create, started, sessions } from "$lib/sessions.svelte";
+import { reset as resetHook } from "$lib/hook.svelte";
 
 beforeEach(() => {
   layout.sessions = DEFAULT.sessions;
@@ -65,6 +70,8 @@ beforeEach(() => {
     { path: "src/token_cache.rs", status: "D", add: 0, del: 41, binary: false },
   ];
   fake.transcripts = [];
+  fake.hookInstalled = false;
+  resetHook();
   fake.fileList = [
     "Cargo.toml",
     "docs/architecture.md",
@@ -194,6 +201,20 @@ describe("SessionsPane", () => {
     await fireEvent.click(screen.getByTestId("past-session"));
 
     await waitFor(() => expect(screen.queryByTestId("past-session")).not.toBeInTheDocument());
+  });
+
+  // Off by default: it edits the project's settings, so nobody gets it for
+  // merely opening a folder.
+  it("offers the hook, off, and turns it on when asked", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+
+    render(SessionsPane);
+    const toggle = await screen.findByTestId("hook-toggle");
+    expect(toggle).toHaveTextContent("filesystem");
+
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(screen.getByTestId("hook-toggle")).toHaveTextContent("hook"));
   });
 
   it("adds another session on request", async () => {
