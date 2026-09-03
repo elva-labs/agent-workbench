@@ -8,6 +8,7 @@ mod env;
 mod git;
 mod project;
 mod pty;
+mod transcripts;
 mod watch;
 
 use std::path::PathBuf;
@@ -92,6 +93,21 @@ fn project_info(path: PathBuf) -> Result<project::ProjectInfo, String> {
     project::describe(&path)
 }
 
+/// Sessions Claude Code has already had in this project, newest first.
+#[tauri::command]
+fn sessions_list(project: PathBuf) -> Vec<transcripts::Transcript> {
+    let Some(home) = home_directory() else {
+        return Vec::new();
+    };
+    transcripts::list(&home, &project)
+}
+
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
 #[tauri::command]
 fn git_status(root: PathBuf) -> Result<Vec<git::ChangedFile>, String> {
     git::status(&root)
@@ -170,6 +186,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             project_info,
+            sessions_list,
             git_status,
             git_files,
             git_diff,

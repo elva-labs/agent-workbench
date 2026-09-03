@@ -65,6 +65,16 @@ export interface FileContent {
   truncated: boolean;
 }
 
+export interface Transcript {
+  /** The Claude Code session id, which is what `claude --resume` takes. */
+  id: string;
+  /** Seconds since the epoch. */
+  modified: number;
+  size: number;
+  /** Absent when the transcript format moved: a missing title, not an error. */
+  title: string | null;
+}
+
 export interface SessionEnded {
   id: string;
   code: number | null;
@@ -82,6 +92,9 @@ export interface Core {
   resize(id: string, cols: number, rows: number): Promise<void>;
   kill(id: string): Promise<void>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
+
+  /** Sessions already on disk for this project, newest first. */
+  transcripts(project: string): Promise<Transcript[]>;
 
   gitStatus(root: string): Promise<ChangedFile[]>;
   gitFiles(root: string): Promise<string[]>;
@@ -140,6 +153,8 @@ const tauriCore: Core = {
     return listen<SessionEnded>("session_ended", (event) => handler(event.payload));
   },
 
+  transcripts: (project) => invoke<Transcript[]>("sessions_list", { project }),
+
   gitStatus: (root) => invoke<ChangedFile[]>("git_status", { root }),
   gitFiles: (root) => invoke<string[]>("git_files", { root }),
   gitDiff: (root, file) => invoke<FileDiff>("git_diff", { root, file }),
@@ -171,6 +186,9 @@ const detachedCore: Core = {
   async kill() {},
   async onSessionEnded() {
     return () => {};
+  },
+  async transcripts() {
+    return [];
   },
   async gitStatus() {
     return [];

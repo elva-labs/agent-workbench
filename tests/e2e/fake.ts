@@ -84,6 +84,7 @@ export async function installFakeCore(
         kill: async () => {},
         onSessionEnded: async () => () => {},
 
+        transcripts: async () => [],
         gitStatus: async () => state.fixture.status,
         gitFiles: async () => state.fixture.files,
         gitDiff: async (_root: string, file: string) => ({

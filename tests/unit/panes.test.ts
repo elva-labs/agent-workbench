@@ -9,6 +9,7 @@ import { files, refresh, clear as clearFiles } from "$lib/files.svelte";
 const fake = {
   status: [] as { path: string; status: string; add: number; del: number; binary: boolean }[],
   fileList: [] as string[],
+  transcripts: [] as { id: string; title: string | null; modified: number; size: number }[],
 };
 
 vi.mock("$lib/core", () => ({
@@ -24,6 +25,7 @@ vi.mock("$lib/core", () => ({
     gitWatch: async () => {},
     onGitChanged: async () => () => {},
     kill: async () => {},
+    transcripts: async () => fake.transcripts,
     setWindowTitle: async () => {},
     projectInfo: async (path: string) => ({ path, name: path, repository: path, isGit: true }),
   }),
@@ -62,6 +64,7 @@ beforeEach(() => {
     { path: "src/lib.rs", status: "M", add: 2, del: 2, binary: false },
     { path: "src/token_cache.rs", status: "D", add: 0, del: 41, binary: false },
   ];
+  fake.transcripts = [];
   fake.fileList = [
     "Cargo.toml",
     "docs/architecture.md",
@@ -152,6 +155,45 @@ describe("SessionsPane", () => {
 
     expect(sessions.active).toBe(first.key);
     expect(second.status).toBe("running");
+  });
+
+  // Phase 3: what Claude Code has already done here, read off disk.
+  it("lists past sessions under the project you are looking at", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.transcripts = [
+      { id: "abc-123", title: "rename the token cache", modified: 1000, size: 400 },
+    ];
+
+    render(SessionsPane);
+    await waitFor(() =>
+      expect(screen.getByText("rename the token cache")).toBeInTheDocument(),
+    );
+  });
+
+  it("opens a past session as a live one, resumed by id", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.transcripts = [{ id: "abc-123", title: "earlier work", modified: 1000, size: 400 }];
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("past-session")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("past-session"));
+
+    expect(sessions.all).toHaveLength(1);
+    expect(sessions.all[0].resumedFrom).toBe("abc-123");
+  });
+
+  it("stops offering a past session once it is open", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.transcripts = [{ id: "abc-123", title: "earlier work", modified: 1000, size: 400 }];
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("past-session")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("past-session"));
+
+    await waitFor(() => expect(screen.queryByTestId("past-session")).not.toBeInTheDocument());
   });
 
   it("adds another session on request", async () => {

@@ -1,4 +1,4 @@
-import { core, type SessionEnded } from "$lib/core";
+import { core, type SessionEnded, type Transcript } from "$lib/core";
 import { isReady } from "$lib/agent.svelte";
 
 /**
@@ -35,7 +35,52 @@ export interface Session {
 export const sessions = $state({
   all: [] as Session[],
   active: null as string | null,
+  /**
+   * Sessions already on disk, by project path. Read from Claude Code's own
+   * transcripts, so this is history rather than anything the window owns.
+   */
+  history: {} as Record<string, Transcript[]>,
 });
+
+export async function loadHistory(project: string) {
+  try {
+    sessions.history[project] = await core().transcripts(project);
+  } catch {
+    // No history is a shorter list, never an error.
+    sessions.history[project] = [];
+  }
+}
+
+export function historyFor(project: string): Transcript[] {
+  const known = sessions.history[project] ?? [];
+  // A transcript already open as a live session is that session, not a
+  // separate row to resume.
+  const resumed = new Set(
+    forProject(project)
+      .map((session) => session.resumedFrom)
+      .filter((id): id is string => id !== null),
+  );
+  return known.filter((transcript) => !resumed.has(transcript.id));
+}
+
+/**
+ * What a past session is called. The title comes from a format documented as
+ * internal and version-unstable, so a missing one falls back to when it last
+ * moved rather than to an error.
+ */
+export function historyLabel(transcript: Transcript): string {
+  if (transcript.title !== null && transcript.title !== "") return transcript.title;
+  return `session from ${ago(transcript.modified)}`;
+}
+
+/** Coarse on purpose: the pane wants recency, not a timestamp. */
+export function ago(epochSeconds: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.floor(now / 1000) - epochSeconds);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86_400)}d ago`;
+}
 
 let counter = 0;
 
@@ -205,5 +250,6 @@ export function statusLabel(session: Session | null): string {
 export function reset() {
   sessions.all = [];
   sessions.active = null;
+  sessions.history = {};
   counter = 0;
 }

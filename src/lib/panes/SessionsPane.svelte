@@ -2,20 +2,30 @@
   import Pane from "$lib/components/Pane.svelte";
   import { isReady } from "$lib/agent.svelte";
   import {
+    ago,
     close as closeSession,
     create,
     forProject,
+    historyFor,
+    historyLabel,
     isLive,
     label,
+    loadHistory,
     select,
     sessions,
     statusLabel,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
 
-  // Phase 3 adds the transcripts already on disk beneath the live sessions, so
-  // a past conversation can be resumed as another one of these rows.
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
+
+  // Read once per project as it opens. The index is history on disk, so it
+  // changes when Claude Code writes, not when this window does.
+  $effect(() => {
+    for (const project of workspace.open) {
+      if (sessions.history[project.path] === undefined) loadHistory(project.path);
+    }
+  });
 
   function isOpen(path: string) {
     return workspace.open.some((project) => project.path === path);
@@ -77,6 +87,20 @@
       {/each}
 
       {#if workspace.active === project.path}
+        {#each historyFor(project.path) as transcript (transcript.id)}
+          <button
+            class="row past"
+            onclick={() => create(project.path, transcript.id)}
+            disabled={!isReady()}
+            title={transcript.title ?? transcript.id}
+            data-testid="past-session"
+          >
+            <span class="dot"></span>
+            <span class="label">{historyLabel(transcript)}</span>
+            <span class="state">{ago(transcript.modified)}</span>
+          </button>
+        {/each}
+
         <button
           class="new"
           onclick={() => create(project.path)}
@@ -171,8 +195,35 @@
     flex: none;
   }
 
-  .session .row {
+  .session .row,
+  .past {
     padding-left: 26px;
+  }
+
+  /* Past sessions are history until you open one, so they sit back from the
+     live rows rather than competing with them. */
+  .past {
+    width: 100%;
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    cursor: pointer;
+    text-align: left;
+    padding-right: var(--pane-pad);
+  }
+
+  .past:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+
+  .past:disabled {
+    cursor: default;
   }
 
   .session.on {

@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agent } from "$lib/agent.svelte";
 import {
   activeSession,
+  ago,
+  historyFor,
+  historyLabel,
   byKey,
   close,
   closeProject,
@@ -304,5 +307,64 @@ describe("closing does not double-kill", () => {
     live(A, "pty-2");
     closeProject(A);
     expect(killed).toEqual(["pty-1", "pty-2"]);
+  });
+});
+
+describe("history", () => {
+  const transcript = (id: string, title: string | null, modified: number) => ({
+    id,
+    title,
+    modified,
+    size: 100,
+  });
+
+  it("lists what the core reported for the project", () => {
+    sessions.history[A] = [transcript("abc", "rename the cache", 1000)];
+    expect(historyFor(A)).toHaveLength(1);
+  });
+
+  it("has nothing for a project it has not read", () => {
+    expect(historyFor("/unread")).toEqual([]);
+  });
+
+  // A transcript already open as a live session is that session, not a
+  // separate row offering to open it again.
+  it("hides a transcript that is already resumed", () => {
+    sessions.history[A] = [transcript("abc", "one", 1000), transcript("def", "two", 900)];
+    create(A, "abc");
+    expect(historyFor(A).map((t) => t.id)).toEqual(["def"]);
+  });
+
+  it("uses the title when there is one", () => {
+    expect(historyLabel(transcript("abc", "rename the cache", 1000))).toBe("rename the cache");
+  });
+
+  // The format is documented as internal and version-unstable, so a title that
+  // could not be read falls back rather than showing an error.
+  it("falls back to recency when the title could not be read", () => {
+    const now = Date.now();
+    const label = historyLabel(transcript("abc", null, Math.floor(now / 1000) - 7200));
+    expect(label).toContain("session from");
+    expect(label).toContain("2h ago");
+  });
+
+  it("treats an empty title as no title", () => {
+    expect(historyLabel(transcript("abc", "", 1000))).toContain("session from");
+  });
+});
+
+describe("ago", () => {
+  const now = 1_000_000_000_000;
+  const at = (secondsAgo: number) => ago(Math.floor(now / 1000) - secondsAgo, now);
+
+  it("is coarse on purpose: the pane wants recency, not a timestamp", () => {
+    expect(at(5)).toBe("just now");
+    expect(at(120)).toBe("2m ago");
+    expect(at(7200)).toBe("2h ago");
+    expect(at(172_800)).toBe("2d ago");
+  });
+
+  it("never reads as the future when a clock disagrees", () => {
+    expect(ago(Math.floor(now / 1000) + 500, now)).toBe("just now");
   });
 });

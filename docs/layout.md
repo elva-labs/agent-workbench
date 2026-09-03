@@ -144,3 +144,23 @@ the child sees SIGHUP.
 Auto-start is narrowed to match: opening a project starts a session when it has
 **none**. A project you return to keeps what it had, and a session that stopped
 stays stopped until you ask for another.
+
+## Past sessions
+
+Under the live sessions sit the ones Claude Code has already had in this
+project, read from `~/.claude/projects/<mangled path>/<session id>.jsonl`.
+Clicking one opens it as another live session through `claude --resume`, so a
+past conversation becomes a row like any other and the one you were in keeps
+running.
+
+**Built on filenames and stat data, not contents.** The filename is the session
+id, mtime is recency, size is a rough length: all stable, all cheap. Titles are
+the exception, and every line that parses a transcript is quarantined in
+`transcripts.rs` for one reason: the entry format is documented as internal to
+Claude Code and changing between versions. A title that cannot be read is a
+missing title, never an error, and the row falls back to when it last moved.
+
+The directory name is the project path with every non-alphanumeric character
+replaced by a dash, which is lossy: `/a/b-c` and `/a/b_c` mangle the same. So
+the workbench keys its own state by the real path and only ever mangles
+forwards, never back.
