@@ -5,7 +5,7 @@ Three tiers, cheapest first. `npm run verify` runs all of them.
 | Tier | Command | Covers |
 | --- | --- | --- |
 | Unit and component | `npm run test:unit` | Everything in `src/lib` — layout arithmetic, keymap, theme, and the components, mounted in jsdom |
-| Rust | `npm run test:rust` | The core crate. Empty of logic in phase 0; grows with the PTY, git and session modules |
+| Rust | `npm run test:rust` | The core crate: login-shell environment parsing, PATH lookup, the adapter seam, and the session registry |
 | End-to-end | `npm run test:e2e` | The real app in a real browser: drag, collapse, focus, theme, persistence across reload |
 
 `npm run test:coverage` reports on `src/lib` and fails below 80% lines.
@@ -35,19 +35,38 @@ and this is what keeps them honest.
 
 ## The Tauri boundary
 
-The E2E tier drives the SvelteKit frontend and stops at the IPC boundary, which
-has nothing behind it in phase 0.
+The end-to-end tier drives the SvelteKit frontend against a **fake core**.
+`src/lib/core.ts` is the one module that talks to Rust, and it checks
+`window.__WORKBENCH_CORE__` before reaching for Tauri. The tests install a fake
+there in `addInitScript`, which means they exercise the real terminal, the real
+write queue and the real exit policy without emulating Tauri's IPC internals.
 
-When phase 1 adds the PTY, the interesting failures move to that boundary, and a
-fourth tier joins: WebdriverIO on `tauri-driver`, driving the packaged binary
-with a real Rust core behind it. Two things to know before that lands:
+That seam also exposes the live `Terminal` to the page, but only when a fake
+core is already installed. The WebGL renderer draws glyphs to a canvas rather
+than to the DOM, so reading the buffer is the only way to assert that bytes
+arriving on the channel actually land on screen.
+
+What this tier does not cover is Rust itself. The two halves meeting is checked
+by `cargo test` on one side, the fake on the other, and by running the app.
+
+A fourth tier is still worth adding: WebdriverIO on `tauri-driver`, driving the
+packaged binary with a real Rust core behind it. Two things to know before that
+lands:
 
 - `tauri-driver` supports **Linux and Windows only**. There is no WebDriver for
   macOS WKWebView, so the target platform is the one platform that tier cannot
   run on. It runs in CI on Linux and is a regression net, not a substitute for
   opening the app on a Mac.
-- Frontend E2E stays on Playwright. It is faster, it runs everywhere, and mocking
-  IPC with `@tauri-apps/api/mocks` covers most pane behaviour without a binary.
+- Frontend end-to-end stays on Playwright. It is faster, it runs everywhere, and
+  the fake core covers pane behaviour without a binary.
+
+## What is not unit tested, and why
+
+`AgentPane` mounts xterm.js, which needs real layout to measure a character
+cell. jsdom has none, so the component is covered end to end in a real browser
+and the logic behind it is unit tested on its own: the status machine in
+`agent.svelte.ts`, the theme and write queue in `terminal.ts`, and the channel
+payload normalisation in `core.ts`.
 
 ## Running one thing
 

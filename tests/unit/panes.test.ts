@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/svelte";
 import SessionsPane from "$lib/panes/SessionsPane.svelte";
-import AgentPane from "$lib/panes/AgentPane.svelte";
 import ChangesPane from "$lib/panes/ChangesPane.svelte";
 import { DEFAULT, layout, togglePane } from "$lib/layout.svelte";
 import { files } from "$lib/files.svelte";
@@ -52,13 +51,6 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     expect(screen.getByText("coretura-platform")).toBeInTheDocument();
     expect(screen.getByText("auth-refactor")).toBeInTheDocument();
-  });
-});
-
-describe("AgentPane", () => {
-  it("says plainly that no agent is running yet", () => {
-    render(AgentPane);
-    expect(screen.getByText("not running")).toBeInTheDocument();
   });
 });
 

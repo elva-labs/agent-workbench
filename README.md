@@ -7,9 +7,8 @@ right. Claude Code first, with an adapter seam defined from the start.
 Rust and Tauri v2, Svelte frontend. macOS is the target; Windows and Linux come
 later, so nothing in the core is allowed to be macOS-only.
 
-**Status: phase 0.** The window opens, the panes resize, and the file viewer
-works against sample data. Nothing is wired to a real agent or a real repository
-yet, which is the whole point of the phase.
+**Status: phase 1.** The middle pane runs Claude Code in a real PTY. The
+sessions list and the file tree are still sample data; those are phases 3 and 2.
 
 ## The rule that keeps it coherent
 
@@ -48,10 +47,16 @@ src/lib/files.svelte.ts    file list, scope, and what the viewer shows
 src/lib/keymap.ts          the focus model as a pure function
 src/lib/theme.svelte.ts    light / dark / system
 src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
+src/lib/core.ts            the one seam to Rust: commands, channel, events
+src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
+src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
 src/lib/components/        Pane shell, Splitter, FileTree, FileViewer
 src/lib/panes/             the three panes
-src-tauri/src/lib.rs       the core; empty until phase 1
+src-tauri/src/env.rs       the login shell environment, and PATH lookup
+src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
+src-tauri/src/pty.rs       sessions, the output channel, and the exit event
+src-tauri/src/lib.rs       the commands the webview can call
 ```
 
 ## Reading
@@ -65,7 +70,7 @@ src-tauri/src/lib.rs       the core; empty until phase 1
 ## Phases
 
 0. **Skeleton and tokens** — layout, splitters, two themes, focus model. Done.
-1. **The agent pane** — login-shell PATH, portable-pty, xterm.js over a Tauri Channel.
+1. **The agent pane** — login-shell PATH, portable-pty, xterm.js over a Tauri Channel. Done.
 2. **Changes and diffs** — git2 status, a debounced notify watcher, CodeMirror merge view.
 3. **Projects and sessions** — the transcript index, built on filenames and stat data.
 4. **Making it feel like one app** — ANSI theming from the tokens, keyboard resolution.
