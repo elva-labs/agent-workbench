@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { installFakeCore } from "./fake";
 
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
@@ -24,6 +25,8 @@ function rowNames(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // A repository to look at, so the tree and the viewer have real shapes.
+  await installFakeCore(page);
   await page.goto("/");
   await expect(page.locator(AGENT)).toBeVisible();
 });
@@ -191,15 +194,17 @@ test.describe("responsive collapse", () => {
 
 test.describe("the file tree", () => {
   test("nests changed files under their folders", async ({ page }) => {
-    expect(await rowNames(page)).toEqual(["src", "cache", "mod.rs", "lib.rs", "token_cache.rs"]);
+    await expect
+      .poll(() => rowNames(page))
+      .toEqual(["src", "cache", "mod.rs", "lib.rs", "token_cache.rs"]);
   });
 
   // Why the tree scales: widening the scope adds folders, not hundreds of rows.
   test("leaves folders with nothing changed shut", async ({ page }) => {
     await page.getByRole("button", { name: "All files" }).click();
+    await expect.poll(() => rowNames(page)).toContain("docs");
     const names = await rowNames(page);
 
-    expect(names).toContain("docs");
     expect(names).not.toContain("architecture.md");
     expect(names).toContain("store.rs");
   });
@@ -297,7 +302,7 @@ test.describe("the file viewer", () => {
     const treeWidth = await widthOf(page, TREE);
 
     await row(page, "lib.rs").click();
-    await expect(page.getByTestId("viewer").getByText("mod cache;")).toBeVisible();
+    await expect(page.getByTestId("viewer").getByText("// src/lib.rs")).toBeVisible();
 
     expect(await widthOf(page, AGENT)).toBeCloseTo(agentWidth, 0);
     expect(await widthOf(page, TREE)).toBeCloseTo(treeWidth, 0);

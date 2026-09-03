@@ -7,9 +7,10 @@ right. Claude Code first, with an adapter seam defined from the start.
 Rust and Tauri v2, Svelte frontend. macOS is the target; Windows and Linux come
 later, so nothing in the core is allowed to be macOS-only.
 
-**Status: phase 1, plus projects and sessions.** Open folders and each gets its
-own live sessions, switchable without stopping anything. The file tree is still
-sample data; that is phase 2.
+**Status: through phase 2.** Open a folder, a session starts in it, and the
+right pane shows the real changed files and diffs, updating as the agent edits
+them. The session list is still only what this window started; reading past
+sessions off disk is phase 3.
 
 ## The rule that keeps it coherent
 
@@ -57,6 +58,8 @@ src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
 src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView
 src/lib/panes/             the three panes
 src-tauri/src/project.rs   what a folder is: name, repository root, is it git
+src-tauri/src/git.rs       status, diffs, content and the file listing
+src-tauri/src/watch.rs     noticing the worktree moved, debounced
 src-tauri/src/env.rs       the login shell environment, and PATH lookup
 src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event
@@ -75,6 +78,6 @@ src-tauri/src/lib.rs       the commands the webview can call
 
 0. **Skeleton and tokens** — layout, splitters, two themes, focus model. Done.
 1. **The agent pane** — login-shell PATH, portable-pty, xterm.js over a Tauri Channel. Done.
-2. **Changes and diffs** — git2 status, a debounced notify watcher, CodeMirror merge view.
+2. **Changes and diffs** — git2 status, a debounced notify watcher, real diffs. Done.
 3. **Projects and sessions** — the transcript index, built on filenames and stat data.
 4. **Making it feel like one app** — ANSI theming from the tokens, keyboard resolution.

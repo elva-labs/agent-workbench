@@ -5,8 +5,10 @@
 
 mod adapter;
 mod env;
+mod git;
 mod project;
 mod pty;
+mod watch;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,6 +20,7 @@ use tauri::{AppHandle, State};
 
 use adapter::{LaunchCtx, Surface, adapter_for};
 use pty::Sessions;
+use watch::Watchers;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +93,43 @@ fn project_info(path: PathBuf) -> Result<project::ProjectInfo, String> {
 }
 
 #[tauri::command]
+fn git_status(root: PathBuf) -> Result<Vec<git::ChangedFile>, String> {
+    git::status(&root)
+}
+
+#[tauri::command]
+fn git_files(root: PathBuf) -> Result<Vec<String>, String> {
+    git::list_files(&root)
+}
+
+#[tauri::command]
+fn git_diff(root: PathBuf, file: String) -> Result<git::FileDiff, String> {
+    git::diff(&root, &file)
+}
+
+#[tauri::command]
+fn git_content(root: PathBuf, file: String) -> Result<git::FileContent, String> {
+    git::content(&root, &file)
+}
+
+/// Starts watching a worktree, replacing whatever was being watched before.
+/// One window looks at one project's changes at a time.
+#[tauri::command]
+fn git_watch(
+    app: AppHandle,
+    watchers: State<'_, Watchers>,
+    root: PathBuf,
+) -> Result<(), String> {
+    let worktree = git::workdir(&root)?;
+    watch::watch(app, &watchers, worktree)
+}
+
+#[tauri::command]
+fn git_unwatch(watchers: State<'_, Watchers>) {
+    watch::unwatch(&watchers);
+}
+
+#[tauri::command]
 fn pty_write(sessions: State<'_, Arc<Sessions>>, id: String, data: String) -> Result<(), String> {
     pty::write(&sessions, &id, data.as_bytes())
 }
@@ -126,9 +166,16 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(Sessions::default()))
+        .manage(Watchers::default())
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             project_info,
+            git_status,
+            git_files,
+            git_diff,
+            git_content,
+            git_watch,
+            git_unwatch,
             pty_spawn,
             pty_write,
             pty_resize,

@@ -5,7 +5,7 @@ Three tiers, cheapest first. `npm run verify` runs all of them.
 | Tier | Command | Covers |
 | --- | --- | --- |
 | Unit and component | `npm run test:unit` | Everything in `src/lib` — layout arithmetic, keymap, theme, and the components, mounted in jsdom |
-| Rust | `npm run test:rust` | The core crate: login-shell environment parsing, PATH lookup, the adapter seam, and the session registry |
+| Rust | `npm run test:rust` | The core crate: environment parsing, PATH lookup, the adapter seam, the session registry, and git status/diff against real repositories built on the fly |
 | End-to-end | `npm run test:e2e` | The real app in a real browser: drag, collapse, focus, theme, persistence across reload |
 
 `npm run test:coverage` reports on `src/lib` and fails below 80% lines.

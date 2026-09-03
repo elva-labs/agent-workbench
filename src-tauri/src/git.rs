@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use git2::{Delta, DiffFormat, DiffOptions, Repository, Status, StatusOptions};
+use git2::{DiffFormat, DiffOptions, Repository, Status, StatusOptions};
 use serde::Serialize;
 
 /// Above this a diff stops being something you read and starts being something
@@ -113,7 +113,14 @@ pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
 /// Additions and deletions for one path, and whether git considers it binary.
 fn line_counts(repo: &Repository, path: &Path) -> (u32, u32, bool) {
     let mut options = DiffOptions::new();
-    options.pathspec(path).include_untracked(true);
+    // include_untracked lists a new file; show_untracked_content is what makes
+    // its lines appear. Without the second, a file the agent just created shows
+    // up with an empty diff, which is the common case rather than an edge one.
+    options
+        .pathspec(path)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true);
 
     let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
     let Ok(diff) = repo.diff_tree_to_workdir_with_index(head.as_ref(), Some(&mut options)) else {
@@ -142,7 +149,12 @@ pub fn diff(root: &Path, file: &str) -> Result<FileDiff, String> {
     let repo = open(root)?;
 
     let mut options = DiffOptions::new();
-    options.pathspec(file).include_untracked(true).context_lines(3);
+    options
+        .pathspec(file)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .show_untracked_content(true)
+        .context_lines(3);
 
     let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
     let diff = repo
@@ -268,15 +280,6 @@ pub fn workdir(root: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| "a bare repository has no working tree".to_string())
 }
 
-/// Deleted files are the ones the status list and the disk disagree about.
-pub fn is_deleted(root: &Path, file: &str) -> bool {
-    let Ok(repo) = open(root) else { return false };
-    let Some(workdir) = repo.workdir() else {
-        return false;
-    };
-    !workdir.join(file).exists()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,7 +368,6 @@ mod tests {
 
         let files = status(&dir).unwrap();
         assert_eq!(files[0].status, "D");
-        assert!(is_deleted(&dir, "gone.txt"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { effectiveView, selectedEntry } from "$lib/files.svelte";
+  import { effectiveView, files, selectedEntry } from "$lib/files.svelte";
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
   // read-only EditorView on content, which is also where side-by-side comes
@@ -7,6 +7,8 @@
   // would be thrown away. The chrome around it is what matters now.
   let entry = $derived(selectedEntry());
   let view = $derived(effectiveView());
+  let diff = $derived(files.diff);
+  let content = $derived(files.content);
 </script>
 
 <div class="viewer" data-testid="viewer" data-view={view}>
@@ -14,10 +16,10 @@
     <p class="empty">Pick a file to read it.</p>
   {:else if entry.binary}
     <p class="empty">Binary file, not shown.</p>
-  {:else if view === "diff" && entry.diff}
+  {:else if view === "diff" && diff !== null && diff.lines.length > 0}
     <table class="lines diff">
       <tbody>
-        {#each entry.diff as line, i (i)}
+        {#each diff!.lines as line, i (i)}
           <tr class={line.kind}>
             <td class="num">{line.old ?? ""}</td>
             <td class="num">{line.new ?? ""}</td>
@@ -27,10 +29,10 @@
         {/each}
       </tbody>
     </table>
-  {:else if entry.content}
+  {:else if content !== null && content.lines.length > 0}
     <table class="lines">
       <tbody>
-        {#each entry.content as line, i (i)}
+        {#each content!.lines as line, i (i)}
           <tr>
             <td class="num">{i + 1}</td>
             <td class="text">{line}</td>
@@ -38,10 +40,18 @@
         {/each}
       </tbody>
     </table>
+  {:else if files.loading}
+    <p class="empty">Reading…</p>
+  {:else if content?.binary || diff?.binary}
+    <p class="empty">Binary file, not shown.</p>
   {:else}
     <p class="empty">
-      {entry.status === "D" ? "This file was deleted." : "No content loaded."}
+      {entry.status === "D" ? "This file was deleted." : "Nothing to show."}
     </p>
+  {/if}
+
+  {#if diff?.truncated || content?.truncated}
+    <p class="empty">Cut short: this file is too long to render in full.</p>
   {/if}
 </div>
 

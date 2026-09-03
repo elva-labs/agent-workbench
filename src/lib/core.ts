@@ -38,6 +38,33 @@ export interface ProjectInfo {
   isGit: boolean;
 }
 
+export interface ChangedFile {
+  path: string;
+  status: string;
+  add: number;
+  del: number;
+  binary: boolean;
+}
+
+export interface DiffLine {
+  kind: "hunk" | "add" | "del" | "ctx";
+  text: string;
+  old: number | null;
+  new: number | null;
+}
+
+export interface FileDiff {
+  lines: DiffLine[];
+  binary: boolean;
+  truncated: boolean;
+}
+
+export interface FileContent {
+  lines: string[];
+  binary: boolean;
+  truncated: boolean;
+}
+
 export interface SessionEnded {
   id: string;
   code: number | null;
@@ -55,6 +82,14 @@ export interface Core {
   resize(id: string, cols: number, rows: number): Promise<void>;
   kill(id: string): Promise<void>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
+
+  gitStatus(root: string): Promise<ChangedFile[]>;
+  gitFiles(root: string): Promise<string[]>;
+  gitDiff(root: string, file: string): Promise<FileDiff>;
+  gitContent(root: string, file: string): Promise<FileContent>;
+  /** Starts watching a worktree, replacing whatever was watched before. */
+  gitWatch(root: string): Promise<void>;
+  onGitChanged(handler: (root: string) => void): Promise<() => void>;
 }
 
 /**
@@ -104,6 +139,16 @@ const tauriCore: Core = {
   async onSessionEnded(handler) {
     return listen<SessionEnded>("session_ended", (event) => handler(event.payload));
   },
+
+  gitStatus: (root) => invoke<ChangedFile[]>("git_status", { root }),
+  gitFiles: (root) => invoke<string[]>("git_files", { root }),
+  gitDiff: (root, file) => invoke<FileDiff>("git_diff", { root, file }),
+  gitContent: (root, file) => invoke<FileContent>("git_content", { root, file }),
+  gitWatch: (root) => invoke("git_watch", { root }),
+
+  async onGitChanged(handler) {
+    return listen<string>("git_changed", (event) => handler(event.payload));
+  },
 };
 
 /** What the app does when there is no core behind it: say so, do nothing. */
@@ -125,6 +170,22 @@ const detachedCore: Core = {
   async resize() {},
   async kill() {},
   async onSessionEnded() {
+    return () => {};
+  },
+  async gitStatus() {
+    return [];
+  },
+  async gitFiles() {
+    return [];
+  },
+  async gitDiff() {
+    return { lines: [], binary: false, truncated: false };
+  },
+  async gitContent() {
+    return { lines: [], binary: false, truncated: false };
+  },
+  async gitWatch() {},
+  async onGitChanged() {
     return () => {};
   },
 };

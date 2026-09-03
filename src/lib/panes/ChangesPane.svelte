@@ -3,12 +3,49 @@
   import FileTree from "$lib/components/FileTree.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
-  import { canDiff, files, listed, select, selectedEntry, setScope, setView } from "$lib/files.svelte";
+  import { onMount, untrack } from "svelte";
+  import {
+    canDiff,
+    clear,
+    files,
+    listed,
+    refresh,
+    select,
+    selectedEntry,
+    setScope,
+    setView,
+  } from "$lib/files.svelte";
+  import { core } from "$lib/core";
+  import { watchRoot, workspace } from "$lib/workspace.svelte";
   import { DEFAULT, MIN, applyLayout, enterReview, exitReview, layout, saveLayout } from "$lib/layout.svelte";
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
   let diffable = $derived(canDiff(selectedEntry()));
+  let root = $derived(watchRoot());
+
+  onMount(() => {
+    let off: (() => void) | null = null;
+    // The agent edits a file and the pane reacts without being asked. The core
+    // does not say what changed, only that something did: re-reading status is
+    // cheap, and being right beats diffing two states.
+    core()
+      .onGitChanged(() => refresh())
+      .then((unlisten) => (off = unlisten));
+    return () => off?.();
+  });
+
+  // A new project means a different worktree to watch and a tree that shares
+  // nothing with the old one.
+  $effect(() => {
+    const watching = root;
+    untrack(() => {
+      clear();
+      if (watching === null) return;
+      core().gitWatch(watching);
+      refresh();
+    });
+  });
 
   function open(path: string) {
     select(path);

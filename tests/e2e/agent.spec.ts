@@ -136,6 +136,15 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           fake.enders.push(handler);
           return () => {};
         },
+
+        // These tests are about sessions, so the repository is empty. The
+        // changes pane still asks, and would break the page if it threw.
+        gitStatus: async () => [],
+        gitFiles: async () => [],
+        gitDiff: async () => ({ lines: [], binary: false, truncated: false }),
+        gitContent: async () => ({ lines: [], binary: false, truncated: false }),
+        gitWatch: async () => {},
+        onGitChanged: async () => () => {},
       };
     },
     { open: options.open ?? [], binary: options.binary, failSpawn: options.failSpawn },
