@@ -7,8 +7,9 @@ right. Claude Code first, with an adapter seam defined from the start.
 Rust and Tauri v2, Svelte frontend. macOS is the target; Windows and Linux come
 later, so nothing in the core is allowed to be macOS-only.
 
-**Status: phase 1.** The middle pane runs Claude Code in a real PTY. The
-sessions list and the file tree are still sample data; those are phases 3 and 2.
+**Status: phase 1, plus project selection.** Open a folder and the agent starts
+in it. The file tree and the session list are still sample data; those are
+phases 2 and 3.
 
 ## The rule that keeps it coherent
 
@@ -48,11 +49,13 @@ src/lib/keymap.ts          the focus model as a pure function
 src/lib/theme.svelte.ts    light / dark / system
 src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
 src/lib/core.ts            the one seam to Rust: commands, channel, events
+src/lib/project.svelte.ts  the open project, its recent list, and the picker
 src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
 src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
 src/lib/components/        Pane shell, Splitter, FileTree, FileViewer
 src/lib/panes/             the three panes
+src-tauri/src/project.rs   what a folder is: name, repository root, is it git
 src-tauri/src/env.rs       the login shell environment, and PATH lookup
 src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event

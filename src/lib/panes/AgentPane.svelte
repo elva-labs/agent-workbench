@@ -11,9 +11,13 @@
   import { theme } from "$lib/theme.svelte";
   import { layout } from "$lib/layout.svelte";
   import { resolveAction } from "$lib/keymap";
+  import { project } from "$lib/project.svelte";
   import {
+    abandon,
     agent,
     applyDetect,
+    projectChanged,
+    shouldAutoStart,
     canStart,
     ended,
     failed,
@@ -22,9 +26,6 @@
     statusLabel,
     statusMessage,
   } from "$lib/agent.svelte";
-
-  // Phase 3 replaces this with the project the sessions pane has selected.
-  const PROJECT = ".";
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -100,8 +101,17 @@
 
     backend
       .detect("claude-code")
-      .then((report) => applyDetect(report, Boolean(window.__WORKBENCH_CORE__ || window.__TAURI_INTERNALS__)))
-      .catch((error) => failed(String(error)));
+      .then((report) =>
+        applyDetect(
+          report,
+          Boolean(window.__WORKBENCH_CORE__ || window.__TAURI_INTERNALS__),
+          project.current !== null,
+        ),
+      )
+      .catch((error) => failed(String(error)))
+      .finally(() => {
+        if (shouldAutoStart(project.current?.path ?? null)) start();
+      });
 
     backend.onSessionEnded(ended).then((off) => (unlisten = off));
 
@@ -132,7 +142,8 @@
   }
 
   async function start() {
-    if (!terminal) return;
+    const root = project.current?.path;
+    if (!terminal || !root) return;
     starting();
     terminal.reset();
 
@@ -140,19 +151,37 @@
       const id = await core().spawn(
         {
           agent: "claude-code",
-          project: PROJECT,
+          project: root,
           cols: terminal.cols,
           rows: terminal.rows,
         },
         (bytes) => queue?.push(bytes),
       );
-      running(id);
+      running(id, root);
       sent = { cols: terminal.cols, rows: terminal.rows };
       terminal.focus();
     } catch (error) {
       failed(String(error));
     }
   }
+
+  // Opening a project starts an agent in it, once. A workbench whose purpose
+  // is running an agent should not open onto a button. What it must never do is
+  // restart one that stopped: that is the respawn loop the exit policy forbids.
+  $effect(() => {
+    const root = project.current?.path ?? null;
+    untrack(() => {
+      const previousId = agent.id;
+      const previousRoot = agent.startedFor;
+      projectChanged(root);
+
+      if (previousId !== null && previousRoot !== root) {
+        core().kill(previousId);
+        abandon(root);
+      }
+      if (shouldAutoStart(root)) start();
+    });
+  });
 
   // Live setter: the TUI recolours without a respawn.
   $effect(() => {

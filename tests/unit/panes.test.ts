@@ -4,6 +4,8 @@ import SessionsPane from "$lib/panes/SessionsPane.svelte";
 import ChangesPane from "$lib/panes/ChangesPane.svelte";
 import { DEFAULT, layout, togglePane } from "$lib/layout.svelte";
 import { files } from "$lib/files.svelte";
+import { project } from "$lib/project.svelte";
+import { agent } from "$lib/agent.svelte";
 
 beforeEach(() => {
   layout.sessions = DEFAULT.sessions;
@@ -25,6 +27,14 @@ beforeEach(() => {
   files.selected = null;
   files.expanded.clear();
   files.collapsed.clear();
+
+  project.current = null;
+  project.recent = [];
+  project.error = null;
+  project.opening = false;
+  agent.status = "unknown";
+  agent.id = null;
+  agent.startedFor = null;
 });
 
 const tree = () => screen.getByRole("tree");
@@ -47,10 +57,46 @@ describe("Pane shell", () => {
 });
 
 describe("SessionsPane", () => {
-  it("lists projects and their sessions", () => {
+  it("asks for a project when none is open", () => {
     render(SessionsPane);
-    expect(screen.getByText("coretura-platform")).toBeInTheDocument();
-    expect(screen.getByText("auth-refactor")).toBeInTheDocument();
+    expect(screen.getByTestId("no-project")).toBeInTheDocument();
+    expect(screen.getByTestId("open-project")).toBeInTheDocument();
+  });
+
+  it("names the open project", () => {
+    project.current = { path: "/home/ada/dev/thing", name: "thing", repository: "/home/ada/dev/thing", isGit: true };
+    render(SessionsPane);
+    expect(screen.getByText("thing")).toBeInTheDocument();
+    expect(screen.queryByTestId("no-project")).not.toBeInTheDocument();
+  });
+
+  // The right pane is entirely git-based, so say so rather than sit there empty.
+  it("says when the folder is not a repository", () => {
+    project.current = { path: "/tmp/notes", name: "notes", repository: null, isGit: false };
+    render(SessionsPane);
+    expect(screen.getByTestId("not-a-repo")).toBeInTheDocument();
+  });
+
+  it("lists recent projects, shortened at the home directory", () => {
+    project.recent = ["/home/ada/dev/thing", "/home/ada/dev/other"];
+    render(SessionsPane);
+    expect(screen.getByText("~/dev/thing")).toBeInTheDocument();
+    expect(screen.getByText("~/dev/other")).toBeInTheDocument();
+  });
+
+  // Switching leaves the PTY in the wrong directory, and you may be mid-task.
+  it("asks before discarding a running agent", async () => {
+    agent.status = "running";
+    render(SessionsPane);
+    await fireEvent.click(screen.getByTestId("open-project"));
+    expect(screen.getByTestId("switch-confirm")).toBeInTheDocument();
+  });
+
+  it("does not ask when nothing is running", async () => {
+    agent.status = "idle";
+    render(SessionsPane);
+    await fireEvent.click(screen.getByTestId("open-project"));
+    expect(screen.queryByTestId("switch-confirm")).not.toBeInTheDocument();
   });
 });
 

@@ -1,5 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 /**
  * The one place the frontend talks to the Rust core.
@@ -29,6 +31,13 @@ export interface SpawnOptions {
   rows: number;
 }
 
+export interface ProjectInfo {
+  path: string;
+  name: string;
+  repository: string | null;
+  isGit: boolean;
+}
+
 export interface SessionEnded {
   id: string;
   code: number | null;
@@ -37,6 +46,10 @@ export interface SessionEnded {
 
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
+  /** Opens the native folder picker. Null when the user cancels. */
+  pickProject(): Promise<string | null>;
+  projectInfo(path: string): Promise<ProjectInfo>;
+  setWindowTitle(title: string): Promise<void>;
   spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
   write(id: string, data: string): Promise<void>;
   resize(id: string, cols: number, rows: number): Promise<void>;
@@ -67,6 +80,17 @@ export function toBytes(payload: unknown): Uint8Array {
 const tauriCore: Core = {
   detect: (agent) => invoke<DetectReport>("agent_detect", { id: agent }),
 
+  async pickProject() {
+    const chosen = await openDialog({ directory: true, multiple: false, title: "Open project" });
+    return typeof chosen === "string" ? chosen : null;
+  },
+
+  projectInfo: (path) => invoke<ProjectInfo>("project_info", { path }),
+
+  async setWindowTitle(title) {
+    await getCurrentWindow().setTitle(title);
+  },
+
   async spawn(options, onOutput) {
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => onOutput(toBytes(message));
@@ -87,6 +111,13 @@ const detachedCore: Core = {
   async detect(agent) {
     return { id: agent, path: null, caps: null, fromLoginShell: false };
   },
+  async pickProject() {
+    return null;
+  },
+  async projectInfo(path) {
+    return { path, name: path, repository: null, isGit: false };
+  },
+  async setWindowTitle() {},
   async spawn() {
     throw new Error("not connected to the workbench core");
   },

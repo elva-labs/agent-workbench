@@ -11,12 +11,14 @@
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
   import { loadLayout } from "$lib/layout.svelte";
+  import { restore } from "$lib/project.svelte";
 
   let { children } = $props();
 
   onMount(() => {
     loadTheme();
     loadLayout();
+    restore();
   });
 </script>
 

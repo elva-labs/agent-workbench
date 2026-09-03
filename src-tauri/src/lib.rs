@@ -5,6 +5,7 @@
 
 mod adapter;
 mod env;
+mod project;
 mod pty;
 
 use std::path::PathBuf;
@@ -81,6 +82,13 @@ fn pty_spawn(
     )
 }
 
+/// Describes a folder the user picked. The dialog itself is the frontend's
+/// job; what a folder *is* to the workbench is the core's.
+#[tauri::command]
+fn project_info(path: PathBuf) -> Result<project::ProjectInfo, String> {
+    project::describe(&path)
+}
+
 #[tauri::command]
 fn pty_write(sessions: State<'_, Arc<Sessions>>, id: String, data: String) -> Result<(), String> {
     pty::write(&sessions, &id, data.as_bytes())
@@ -116,9 +124,11 @@ fn size(cols: u16, rows: u16) -> PtySize {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(Sessions::default()))
         .invoke_handler(tauri::generate_handler![
             agent_detect,
+            project_info,
             pty_spawn,
             pty_write,
             pty_resize,
