@@ -15,6 +15,7 @@
     shouldAutoStart,
     statusLabel,
     statusMessage,
+    titled,
   } from "$lib/sessions.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
@@ -65,6 +66,7 @@
         shown={agentVisible()}
         focused={layout.focus === "agent"}
         start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
+        onTitle={(title) => titled(session.key, title)}
       />
     {/each}
 

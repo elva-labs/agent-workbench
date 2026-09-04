@@ -8,7 +8,11 @@ import {
   historyLabel,
   isMine,
   loadMine,
+  located,
   outsideFor,
+  followCwd,
+  sessionTitle,
+  titled,
   byKey,
   close,
   closeProject,
@@ -33,10 +37,23 @@ const B = "/home/ada/dev/two";
 
 const killed: string[] = [];
 let historyReads = 0;
+let cwdAnswer: string | null = null;
+let cwdAsks = 0;
 vi.mock("$lib/core", () => ({
   core: () => ({
     kill: async (id: string) => {
       killed.push(id);
+    },
+    ptyCwd: async () => {
+      cwdAsks += 1;
+      return cwdAnswer;
+    },
+    // The repository of a path is its nearest worktree: the directory itself
+    // here, or the parent for anything ending in "/inside".
+    projectInfo: async (path: string) => {
+      if (path === "/broken") throw new Error("gone");
+      const repository = path.endsWith("/inside") ? path.slice(0, -"/inside".length) : path;
+      return { path, name: path, repository, isGit: true };
     },
     transcripts: async () => {
       historyReads += 1;
@@ -49,6 +66,8 @@ beforeEach(() => {
   reset();
   killed.length = 0;
   historyReads = 0;
+  cwdAnswer = null;
+  cwdAsks = 0;
   agent.availability = "ready";
 });
 
@@ -494,5 +513,88 @@ describe("ago", () => {
 
   it("never reads as the future when a clock disagrees", () => {
     expect(ago(Math.floor(now / 1000) + 500, now)).toBe("just now");
+  });
+});
+
+describe("titles", () => {
+  it.each([
+    ["✳ fix-activity-tracking-bugs", "fix-activity-tracking-bugs"],
+    ["✻ fix-activity-tracking-bugs · Claude Code", "fix-activity-tracking-bugs"],
+    ["fix-activity-tracking-bugs - Claude Code", "fix-activity-tracking-bugs"],
+    ["Claude Code · rename the cache", "rename the cache"],
+    ["  rename the cache  ", "rename the cache"],
+  ])("reads the session's name out of %j", (raw, expected) => {
+    expect(sessionTitle(raw)).toBe(expected);
+  });
+
+  // The agent names itself before it names the session. That is not a title.
+  it.each(["Claude Code", "✳ Claude Code", "claude", "", "✳ "])("takes %j as no title", (raw) => {
+    expect(sessionTitle(raw)).toBeNull();
+  });
+
+  it("labels the row with the title once the agent sets one", () => {
+    const session = live(A, "pty-1");
+    expect(label(session)).toBe("session 1");
+    titled(session.key, "✳ fix-activity-tracking-bugs");
+    expect(label(session)).toBe("fix-activity-tracking-bugs");
+    titled(session.key, "Claude Code");
+    expect(label(session)).toBe("session 1");
+  });
+
+  it("prefers the title over the resumed id", () => {
+    const session = create(A, "0520dd94-aaaa");
+    titled(session.key, "earlier work");
+    expect(label(session)).toBe("earlier work");
+  });
+});
+
+describe("where the session works", () => {
+  it("resolves a new directory to its repository", async () => {
+    const session = live(A, "pty-1");
+    await located(session.key, `${A}/.claude/worktrees/feature/inside`);
+    expect(session.cwd).toBe(`${A}/.claude/worktrees/feature/inside`);
+    expect(session.worktree).toBe(`${A}/.claude/worktrees/feature`);
+  });
+
+  it("ignores an answer it already has, and no answer at all", async () => {
+    const session = live(A, "pty-1");
+    await located(session.key, A);
+    session.worktree = "marker";
+    await located(session.key, A);
+    expect(session.worktree).toBe("marker");
+    await located(session.key, null);
+    expect(session.cwd).toBe(A);
+  });
+
+  it("has no worktree for a directory the core cannot describe", async () => {
+    const session = live(A, "pty-1");
+    await located(session.key, "/broken");
+    expect(session.worktree).toBeNull();
+  });
+
+  it("asks the core for the active running session, and only that", async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = followCwd();
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(cwdAsks).toBe(0);
+
+      const session = live(A, "pty-1");
+      cwdAnswer = `${A}/inside`;
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(cwdAsks).toBe(1);
+      expect(session.worktree).toBe(A);
+
+      ended({ id: "pty-1", code: 0, clean: true });
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(cwdAsks).toBe(1);
+
+      stop();
+      live(A, "pty-2");
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(cwdAsks).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

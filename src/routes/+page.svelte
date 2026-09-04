@@ -9,8 +9,8 @@
   import { stash } from "$lib/exits";
   import { BINDINGS, resolveAction } from "$lib/keymap";
   import { cycleTheme, theme } from "$lib/theme.svelte";
-  import { files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
-  import { ended as sessionEnded } from "$lib/sessions.svelte";
+  import { closeViewer, files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
+  import { ended as sessionEnded, followCwd } from "$lib/sessions.svelte";
   import { ended as shellEnded } from "$lib/terminals.svelte";
   import {
     CONTROLS_INSET,
@@ -43,7 +43,11 @@
         if (!sessionEnded(event) && !shellEnded(event)) stash(event);
       })
       .then((unlisten) => (off = unlisten));
-    return () => off?.();
+    const stop = followCwd();
+    return () => {
+      off?.();
+      stop();
+    };
   });
 
   let reviewing = $derived(layout.mode === "reviewing");
@@ -116,7 +120,7 @@
         cycleTheme();
         break;
       case "toggleReview":
-        if (reviewing) exitReview();
+        if (reviewing) closeViewer();
         else {
           // Opening the viewer with nothing chosen shows the first file rather
           // than an empty pane; with nothing listed, the empty pane is honest.
@@ -137,7 +141,7 @@
         toggleTerminal();
         break;
       case "exitReview":
-        exitReview();
+        closeViewer();
         break;
     }
   }

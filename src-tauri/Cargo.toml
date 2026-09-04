@@ -28,3 +28,6 @@ git2 = { version = "0.20", default-features = false }
 notify = "8"
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+

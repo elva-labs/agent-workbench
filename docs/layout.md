@@ -198,6 +198,24 @@ Auto-start is narrowed to match: opening a project starts a session when it has
 **none**. A project you return to keeps what it had, and a session that stopped
 stays stopped until you ask for another.
 
+## What a session is called, and where it works
+
+A row is `session N` until the agent says otherwise. Claude Code writes the
+session's name into the terminal title, with a status glyph in front and its
+own name around it; the title handler strips both and a title that was only
+ever "Claude Code" is no title. Naming a session inside Claude Code renames
+the row at once.
+
+The changes pane follows the session, not just the project. Every couple of
+seconds the core is asked where the active session's process is working
+(procfs on Linux, `proc_pidinfo` on macOS), and a directory it has not seen
+before is resolved to its repository root. When that is not the project's own
+worktree, the pane watches it instead and says so in its header: the agent
+has moved into a worktree, and the changes there are the ones to review.
+Switching to another session switches back. This leans on the agent changing
+its process directory when it enters a worktree; an agent that only tracks
+the directory internally would not be followed.
+
 ## Past sessions
 
 Under the live sessions sit the ones Claude Code has already had in this
@@ -215,6 +233,11 @@ counts them, and unfold on click. Resuming one from there adopts it: it is a
 session of this workbench from then on. Nothing is deleted or moved, and the
 split does not survive a wiped `localStorage`, which only means everything
 shows as from outside until it is resumed again.
+
+**Done reading is done choosing.** Escape, the Esc button, or a click on the
+empty part of the tree closes the viewer and clears the selection together.
+A highlighted file with no viewer open would be a question the pane cannot
+answer.
 
 **Built on filenames and stat data, not contents.** The filename is the session
 id, mtime is recency, size is a rough length: all stable, all cheap. Titles are

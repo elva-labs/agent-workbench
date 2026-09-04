@@ -15,6 +15,7 @@ mod git;
 mod hook;
 mod project;
 mod pty;
+mod cwd;
 mod shell;
 mod transcripts;
 mod watch;
@@ -253,6 +254,11 @@ async fn pty_kill(sessions: State<'_, Arc<Sessions>>, id: String) -> Result<(), 
     pty::kill(&sessions, &id)
 }
 
+#[tauri::command]
+async fn pty_cwd(sessions: State<'_, Arc<Sessions>>, id: String) -> Result<Option<String>, String> {
+    pty::cwd(&sessions, &id)
+}
+
 /// A terminal is a character grid, so a pty is sized in cells. The pixel fields
 /// matter only to programs drawing sixels, and xterm.js reports none.
 fn size(cols: u16, rows: u16) -> PtySize {
@@ -288,7 +294,8 @@ pub fn run() {
             pty_shell,
             pty_write,
             pty_resize,
-            pty_kill
+            pty_kill,
+            pty_cwd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

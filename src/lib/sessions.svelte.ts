@@ -34,6 +34,14 @@ export interface Session {
   /** Position among the project's sessions at creation. Stable, unlike the
       index in a list that closing another row would renumber. */
   ordinal: number;
+  /** What the agent calls the session, from the terminal title it sets.
+      Null until it says, and when what it says is just its own name. */
+  title: string | null;
+  /** The directory the process was last seen working in. */
+  cwd: string | null;
+  /** The repository root of `cwd`: the worktree the session is in, which
+      is the project's own unless the agent has moved. */
+  worktree: string | null;
   exitCode: number | null;
   error: string | null;
   /** Set once the terminal has been created, so it is only built once. */
@@ -167,8 +175,68 @@ export function liveCount(project: string): number {
 
 /** A short label for the row: the resumed id, or its number in the project. */
 export function label(session: Session): string {
+  if (session.title !== null) return session.title;
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
+}
+
+/**
+ * What a terminal title from the agent means as a session name.
+ *
+ * Claude Code writes its own name and a status glyph around the session's
+ * name, and both change with versions. The glyph is stripped, the name is
+ * dropped, and a title that was only ever the agent's name is no title.
+ */
+export function sessionTitle(raw: string): string | null {
+  let title = raw.trim();
+  // Leading status marks: anything before the first letter or digit.
+  title = title.replace(/^[^\p{L}\p{N}]+/u, "");
+  title = title.replace(/\s*[-·|:]\s*claude(\s+code)?\s*$/iu, "");
+  title = title.replace(/^claude(\s+code)?\s*[-·|:]\s*/iu, "");
+  title = title.trim();
+  if (title === "" || /^claude(\s+code)?$/iu.test(title)) return null;
+  return title;
+}
+
+/** The agent set the terminal title: that is what the session is called. */
+export function titled(key: string, raw: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  session.title = sessionTitle(raw);
+}
+
+/**
+ * The OS says where the process is working. A new directory is resolved to
+ * its repository, so the changes pane can follow the agent into a worktree.
+ */
+export async function located(key: string, cwd: string | null) {
+  const session = byKey(key);
+  if (session === null || cwd === null || session.cwd === cwd) return;
+  session.cwd = cwd;
+  try {
+    const info = await core().projectInfo(cwd);
+    // Only the latest answer counts: the agent may have moved again.
+    if (session.cwd === cwd) session.worktree = info.repository;
+  } catch {
+    if (session.cwd === cwd) session.worktree = null;
+  }
+}
+
+const CWD_POLL = 2000;
+
+/** Asks, every couple of seconds, where the active session is working. Cheap:
+    one syscall on the core's side. Returns a stop function. */
+export function followCwd(): () => void {
+  const timer = setInterval(() => {
+    const session = activeSession();
+    if (session === null || session.ptyId === null || session.status !== "running") return;
+    const { key, ptyId } = session;
+    core()
+      .ptyCwd(ptyId)
+      .then((cwd) => located(key, cwd))
+      .catch(() => {});
+  }, CWD_POLL);
+  return () => clearInterval(timer);
 }
 
 export function select(key: string) {
@@ -190,6 +258,9 @@ export function create(project: string, resumedFrom: string | null = null): Sess
     id: resumedFrom,
     resumedFrom,
     ordinal: ordinals[project],
+    title: null,
+    cwd: null,
+    worktree: null,
     exitCode: null,
     error: null,
     mounted: false,

@@ -1,5 +1,6 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine } from "$lib/core";
+import { exitReview } from "$lib/layout.svelte";
 import { watchRoot } from "$lib/workspace.svelte";
 
 /**
@@ -188,6 +189,21 @@ export async function select(path: string) {
   files.selected = path;
   reveal(path);
   await loadSelected();
+}
+
+/** Nothing chosen: the tree shows no highlight and the viewer has nothing. */
+export function deselect() {
+  if (files.selected === null) return;
+  files.selected = null;
+  files.diff = null;
+  files.content = null;
+  fileRead += 1;
+}
+
+/** Done reading: the file is let go and the viewer closes, if it was open. */
+export function closeViewer() {
+  deselect();
+  exitReview();
 }
 
 export async function setScope(scope: Scope) {

@@ -7,6 +7,7 @@
   import {
     canDiff,
     clear,
+    closeViewer,
     files,
     listed,
     refresh,
@@ -17,13 +18,14 @@
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
   import { isInstalled } from "$lib/hook.svelte";
-  import { activeProject, watchRoot, workspace } from "$lib/workspace.svelte";
-  import { DEFAULT, MIN, applyLayout, enterReview, exitReview, layout, saveLayout } from "$lib/layout.svelte";
+  import { activeProject, followedWorktree, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { DEFAULT, MIN, applyLayout, enterReview, layout, saveLayout } from "$lib/layout.svelte";
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
   let diffable = $derived(canDiff(selectedEntry()));
   let root = $derived(watchRoot());
+  let worktree = $derived(followedWorktree());
   let notGit = $derived(activeProject() !== null && root === null);
 
   onMount(() => {
@@ -84,7 +86,11 @@
   }
 </script>
 
-<Pane id="changes" title="Changes" meta="{entries.length} files">
+<Pane
+  id="changes"
+  title="Changes"
+  meta={worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`}
+>
   <!-- Scope and view are one control surface: widening the scope is what puts
        files in the list that have no diff, so the two belong side by side. -->
   <div class="head">
@@ -114,7 +120,7 @@
     </div>
 
     {#if reviewing}
-      <button class="close" onclick={exitReview} aria-label="Close the viewer">Esc</button>
+      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
     {/if}
   </div>
 
@@ -132,7 +138,7 @@
        to itself; reviewing, it becomes the left column and keeps its scroll
        position, its open folders and its selection. -->
   <div class="split" class:reviewing style:--tree-w="{layout.tree}px">
-    <FileTree onOpen={open} />
+    <FileTree onOpen={open} onBlank={closeViewer} />
     {#if reviewing}
       <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
       <FileViewer />

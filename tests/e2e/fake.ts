@@ -86,6 +86,7 @@ export async function installFakeCore(
         write: async () => {},
         resize: async () => {},
         kill: async () => {},
+        ptyCwd: async () => null,
         onSessionEnded: async () => () => {},
 
         transcripts: async () => [],

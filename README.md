@@ -68,6 +68,7 @@ src-tauri/src/env.rs       the login shell environment, and PATH lookup
 src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
 src-tauri/src/shell.rs     the user's shell, started the way the agent is
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event
+src-tauri/src/cwd.rs       where a process is working, per platform
 src-tauri/src/lib.rs       the commands the webview can call
 ```
 

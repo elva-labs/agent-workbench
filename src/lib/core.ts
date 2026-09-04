@@ -114,6 +114,8 @@ export interface Core {
   write(id: string, data: string): Promise<void>;
   resize(id: string, cols: number, rows: number): Promise<void>;
   kill(id: string): Promise<void>;
+  /** Where the process is working now. Null when the OS will not say. */
+  ptyCwd(id: string): Promise<string | null>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
 
   /** Sessions already on disk for this project, newest first. */
@@ -181,6 +183,7 @@ const tauriCore: Core = {
   write: (id, data) => invoke("pty_write", { id, data }),
   resize: (id, cols, rows) => invoke("pty_resize", { id, cols, rows }),
   kill: (id) => invoke("pty_kill", { id }),
+  ptyCwd: (id) => invoke<string | null>("pty_cwd", { id }),
 
   async onSessionEnded(handler) {
     return listen<SessionEnded>("session_ended", (event) => handler(event.payload));
@@ -224,6 +227,9 @@ const detachedCore: Core = {
   async write() {},
   async resize() {},
   async kill() {},
+  async ptyCwd() {
+    return null;
+  },
   async onSessionEnded() {
     return () => {};
   },

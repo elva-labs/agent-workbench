@@ -39,6 +39,8 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// The child's pid, for asking the OS where it is working.
+    pid: Option<u32>,
 }
 
 #[derive(Default)]
@@ -88,6 +90,7 @@ pub fn spawn(
         .take_writer()
         .map_err(|e| format!("could not write to the pty: {e}"))?;
     let killer = child.clone_killer();
+    let pid = child.process_id();
 
     let id = next_id();
 
@@ -97,6 +100,7 @@ pub fn spawn(
             master: pair.master,
             writer,
             killer,
+            pid,
         },
     );
 
@@ -167,6 +171,17 @@ pub fn resize(sessions: &Sessions, id: &str, size: PtySize) -> Result<(), String
         .map_err(|e| format!("could not resize the agent: {e}"))
 }
 
+/// The directory the process is working in, or None when the OS will not say.
+/// A session that has ended is an error, like any other unknown id.
+pub fn cwd(sessions: &Sessions, id: &str) -> Result<Option<String>, String> {
+    let guard = sessions.inner.lock().expect("sessions lock");
+    let session = guard.get(id).ok_or("no such session")?;
+    Ok(session
+        .pid
+        .and_then(crate::cwd::of_process)
+        .map(|path| path.to_string_lossy().to_string()))
+}
+
 pub fn kill(sessions: &Sessions, id: &str) -> Result<(), String> {
     let mut guard = sessions.inner.lock().expect("sessions lock");
     let session = guard.get_mut(id).ok_or("no such session")?;
@@ -211,6 +226,12 @@ mod tests {
             pixel_height: 0,
         };
         assert!(resize(&sessions, "pty-nope", size).is_err());
+    }
+
+    #[test]
+    fn asking_where_an_unknown_session_is_is_an_error_not_a_panic() {
+        let sessions = Sessions::default();
+        assert!(cwd(&sessions, "pty-nope").is_err());
     }
 
     #[test]

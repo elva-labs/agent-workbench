@@ -36,6 +36,8 @@ declare global {
       enders: ((ended: unknown) => void)[];
       failSpawn: string | null;
       binary: string | null;
+      /** What the core says the agent's working directory is. */
+      cwd: string | null;
       emit: (ptyId: string, text: string) => void;
       end: (ptyId: string, code: number | null, clean: boolean) => void;
       buffer: () => string;
@@ -71,6 +73,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         enders: [],
         failSpawn: failSpawn ?? null,
         binary: binary === undefined ? "/usr/local/bin/claude" : binary,
+        cwd: null,
         emit(ptyId, text) {
           fake.outputs[ptyId]?.(new TextEncoder().encode(text));
         },
@@ -132,6 +135,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         kill: async (id: string) => {
           fake.killed.push(id);
         },
+        ptyCwd: async () => fake.cwd,
         onSessionEnded: async (handler: (ended: unknown) => void) => {
           fake.enders.push(handler);
           return () => {};
@@ -199,6 +203,29 @@ test.describe("one project", () => {
   test("names the project in the pane and the window title", async ({ page }) => {
     await expect(page.locator(SESSIONS)).toContainText("one");
     expect((await page.evaluate(() => window.__fake.titles)).at(-1)).toContain("one");
+  });
+
+  // Claude Code names the session in the terminal title, glyph and all.
+  test("calls the session what the agent calls it", async ({ page }) => {
+    await running(page);
+    await expect(rows(page).first()).toContainText("session 1");
+    await page.evaluate(() =>
+      window.__fake.emit("pty-1", "\x1b]0;\u2733 fix-activity-tracking-bugs\x07"),
+    );
+    await expect(rows(page).first()).toContainText("fix-activity-tracking-bugs");
+    await expect(rows(page).first()).not.toContainText("session 1");
+  });
+
+  // The agent moves into a worktree; the changes pane follows, and says so.
+  test("follows the session into a worktree", async ({ page }) => {
+    await running(page);
+    const changes = page.locator("section[data-pane='changes']");
+    await expect(changes).not.toContainText("worktree");
+
+    await page.evaluate(() => {
+      window.__fake.cwd = "/home/ada/dev/one/.claude/worktrees/feature";
+    });
+    await expect(changes).toContainText("worktree feature", { timeout: 6000 });
   });
 
   test("writes output into the terminal", async ({ page }) => {

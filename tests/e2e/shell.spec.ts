@@ -353,6 +353,24 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await expect(page.locator(SESSIONS)).toBeVisible();
     await expect(page.locator(TREE)).toBeVisible();
+    // Done with the file: nothing stays highlighted.
+    await expect(page.locator(`${TREE} [aria-selected='true']`)).toHaveCount(0);
+  });
+
+  test("lets the file go on a click below the tree, and closes the viewer", async ({ page }) => {
+    await row(page, "mod.rs").click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+
+    const tree = await page.locator(TREE).boundingBox();
+    if (!tree) throw new Error("no tree");
+    await page.mouse.click(tree.x + tree.width / 2, tree.y + tree.height - 10);
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.locator(`${TREE} [aria-selected='true']`)).toHaveCount(0);
+
+    // Without the viewer open it just clears the highlight.
+    await row(page, "mod.rs").click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(`${TREE} [aria-selected='true']`)).toHaveCount(0);
   });
 
   test("opens and closes on the keyboard too", async ({ page }) => {

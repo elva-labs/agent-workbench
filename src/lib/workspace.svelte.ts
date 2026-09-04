@@ -1,5 +1,5 @@
 import { core, type ProjectInfo } from "$lib/core";
-import { closeProject, forProject, sessions } from "$lib/sessions.svelte";
+import { activeSession, closeProject, forProject, sessions } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
 
 /**
@@ -34,11 +34,26 @@ export function projectName(): string {
 
 /** The directory the changes pane watches: the whole repository, not the
     subdirectory you happened to open. Null for a folder git knows nothing
-    about, which has no changes to show. */
+    about, which has no changes to show. A session that has moved into a
+    worktree is followed there: its changes are the ones to review. */
 export function watchRoot(): string | null {
   const project = activeProject();
-  if (project === null || !project.isGit) return null;
+  if (project === null) return null;
+  const worktree = activeSession()?.worktree ?? null;
+  if (worktree !== null) return worktree;
+  if (!project.isGit) return null;
   return project.repository ?? project.path;
+}
+
+/** The worktree the changes pane is following instead of the project's own,
+    as a name to show, or null while it is the project's own. */
+export function followedWorktree(): string | null {
+  const project = activeProject();
+  const worktree = activeSession()?.worktree ?? null;
+  if (project === null || worktree === null) return null;
+  const own = project.repository ?? project.path;
+  if (worktree === own) return null;
+  return worktree.slice(worktree.lastIndexOf("/") + 1);
 }
 
 export function isOpen(path: string): boolean {

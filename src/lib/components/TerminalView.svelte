@@ -30,9 +30,11 @@
     focused?: boolean;
     /** Spawns the process. True once it is up and the row owns it. */
     start: (cols: number, rows: number, onOutput: (bytes: Uint8Array) => void) => Promise<boolean>;
+    /** The process set the terminal's title. */
+    onTitle?: (title: string) => void;
   }
 
-  let { id, ptyId, active, shown = true, focused = false, start }: Props = $props();
+  let { id, ptyId, active, shown = true, focused = false, start, onTitle }: Props = $props();
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -93,6 +95,8 @@
       // reports that, not every keystroke after it.
       if (ptyId !== null) core().write(ptyId, data).catch(() => {});
     });
+
+    terminal.onTitleChange((title) => onTitle?.(title));
 
     observer = new ResizeObserver(() => measure());
     observer.observe(host);

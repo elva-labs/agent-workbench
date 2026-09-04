@@ -4,6 +4,8 @@ import {
   canDiff,
   changedCount,
   clear,
+  closeViewer,
+  deselect,
   effectiveView,
   files,
   isOpen,
@@ -19,6 +21,7 @@ import {
   toggleView,
 } from "$lib/files.svelte";
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
+import { enterReview, layout } from "$lib/layout.svelte";
 
 const ROOT = "/repo";
 
@@ -186,6 +189,36 @@ describe("scope", () => {
     await select("src/lib.rs");
     await setScope("changed");
     expect(files.selected).toBe("src/lib.rs");
+  });
+});
+
+describe("letting go", () => {
+  it("clears the selection and what was loaded for it", async () => {
+    await refresh();
+    await select("src/lib.rs");
+    deselect();
+    expect(files.selected).toBeNull();
+    expect(files.diff).toBeNull();
+    expect(files.content).toBeNull();
+    expect(selectedEntry()).toBeNull();
+  });
+
+  // Escape and a click on the empty part of the tree both mean "done with
+  // that file": the highlight goes with the viewer.
+  it("closes the viewer and lets the file go together", async () => {
+    await refresh();
+    await select("src/lib.rs");
+    layout.width = 1600;
+    enterReview();
+    expect(layout.mode).toBe("reviewing");
+    closeViewer();
+    expect(layout.mode).toBe("working");
+    expect(files.selected).toBeNull();
+  });
+
+  it("is harmless with nothing selected and no viewer open", () => {
+    expect(() => closeViewer()).not.toThrow();
+    expect(files.selected).toBeNull();
   });
 });
 

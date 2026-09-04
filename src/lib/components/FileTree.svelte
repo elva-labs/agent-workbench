@@ -5,9 +5,11 @@
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
     onOpen: (path: string) => void;
+    /** A click on the tree itself, below the last row. */
+    onBlank?: () => void;
   }
 
-  let { onOpen }: Props = $props();
+  let { onOpen, onBlank }: Props = $props();
 
   let rows = $derived(flatten(buildTree(listed()), isOpen));
 
@@ -92,6 +94,9 @@
   aria-activedescendant={active ? rowId(active) : undefined}
   tabindex="0"
   onkeydown={onKeydown}
+  onclick={(e) => {
+    if (e.target === e.currentTarget) onBlank?.();
+  }}
   data-testid="file-tree"
 >
   {#each rows as row (row.node.path)}
