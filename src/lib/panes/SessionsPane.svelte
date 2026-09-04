@@ -534,14 +534,13 @@
     width: 100%;
     text-align: left;
     margin: 2px 0 10px;
-    padding-left: 26px;
     border: 0;
     background: none;
     font-family: var(--mono);
     font-size: 11px;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 2px 0;
+    padding: 2px var(--pane-pad) 2px 26px;
   }
 
   .new:hover:not(:disabled) {
@@ -559,14 +558,13 @@
     gap: 5px;
     width: 100%;
     margin: 0 0 4px;
-    padding-left: 26px;
     border: 0;
     background: none;
     font-family: var(--mono);
     font-size: 11px;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 2px 0;
+    padding: 2px var(--pane-pad) 2px 26px;
   }
 
   .fold:hover {
@@ -596,7 +594,6 @@
     width: 100%;
     text-align: left;
     margin: 0 0 10px;
-    padding-left: 26px;
     border: 0;
     background: none;
     font-family: var(--mono);
@@ -604,7 +601,7 @@
     letter-spacing: 0.05em;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 2px 0;
+    padding: 2px var(--pane-pad) 2px 26px;
   }
 
   .hook.on {
