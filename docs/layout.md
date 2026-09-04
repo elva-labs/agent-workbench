@@ -135,11 +135,12 @@ too. That pane's header takes a left inset (`CONTROLS_INSET`) so its title
 clears them. The pane headers, and the top of the terminal list, are
 `data-tauri-drag-region`: grab one to move the window, double-click to zoom.
 
-The lights stay where macOS puts them. Tauri's `trafficLightPosition` is
+The lights are lowered to the header's centre by giving the window an empty,
+transparent unified toolbar (`chrome.rs`). Tauri's `trafficLightPosition` is
 applied once, at creation, and macOS lays the title bar out again on its own
-schedule, so a moved position does not hold; the header is aligned to the
-default instead, by trimming the frame's top padding on macOS
-(`MAC_FRAME_TOP`) until the header's centre is level with the buttons.
+schedule, so a moved position does not hold; a toolbar makes the title bar
+taller and AppKit centres the buttons in it on every layout, which is the
+same device Electron's inset title bar style uses.
 
 Windows and Linux keep the native title bar and their own controls. The overlay
 style and traffic-light fields are ignored there.

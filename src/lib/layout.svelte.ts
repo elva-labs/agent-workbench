@@ -119,14 +119,11 @@ export function leftmost(): PaneId {
 }
 
 /** Room the macOS window controls take at the top left, in pixels from the
-    window edge. They sit where macOS puts them, which the app does not try
-    to move: about 12px in, three buttons 20px apart, and the pane's own
+    window edge. The window carries a unified toolbar (see `chrome.rs`), and
+    in one of those AppKit puts the buttons about 20px in, 20px apart, and
+    level with a header at the frame's normal padding; then the pane's own
     padding again before the title. */
-export const CONTROLS_INSET = 80;
-
-/** The frame's top padding on macOS: what puts the leftmost header's centre
-    level with the window controls, which sit about 20px from the top. */
-export const MAC_FRAME_TOP = 2;
+export const CONTROLS_INSET = 88;
 
 /** The width the changes pane is currently asking for. */
 export function changesWidth() {

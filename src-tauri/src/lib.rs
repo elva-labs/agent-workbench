@@ -15,6 +15,7 @@ mod git;
 mod hook;
 mod project;
 mod pty;
+mod chrome;
 mod cwd;
 mod shell;
 mod transcripts;
@@ -26,7 +27,7 @@ use std::sync::Arc;
 use portable_pty::PtySize;
 use serde::Serialize;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use adapter::{LaunchCtx, Surface, adapter_for};
 use pty::Sessions;
@@ -277,6 +278,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(Sessions::default()))
         .manage(Arc::new(Watchers::default()))
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                chrome::inset_window_controls(&window);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             project_info,
