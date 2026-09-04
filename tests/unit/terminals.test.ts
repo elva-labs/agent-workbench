@@ -8,6 +8,7 @@ import {
   close,
   closeProject,
   create,
+  cycle,
   ended,
   equalize,
   failed,
@@ -115,6 +116,21 @@ describe("shells", () => {
     expect(activeShell()).toBe(byKey(first.key));
     select("nope");
     expect(terminals.active).toBe(first.key);
+  });
+
+  it("steps through the project's shells in list order, wrapping around", () => {
+    const first = create(A);
+    const beside = split(first.key)!;
+    const other = create(A);
+    create(B);
+    expect(cycle(A, 1)).toBe(true);
+    expect(terminals.active).toBe(first.key);
+    expect(cycle(A, 1)).toBe(true);
+    expect(terminals.active).toBe(beside.key);
+    expect(cycle(A, -1)).toBe(true);
+    expect(cycle(A, -1)).toBe(true);
+    expect(terminals.active).toBe(other.key);
+    expect(cycle(B, 1)).toBe(false);
   });
 
   it("follows a project to its most recent shell, or to nothing", () => {

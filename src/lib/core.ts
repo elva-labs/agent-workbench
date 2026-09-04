@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl as openWithSystem } from "@tauri-apps/plugin-opener";
 
 /**
  * The one place the frontend talks to the Rust core.
@@ -115,6 +116,8 @@ export interface Core {
   pickProject(): Promise<string | null>;
   projectInfo(path: string): Promise<ProjectInfo>;
   setWindowTitle(title: string): Promise<void>;
+  /** Opens a link in the system browser. */
+  openUrl(url: string): Promise<void>;
   spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<Spawned>;
   /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
   spawnShell(options: ShellOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
@@ -177,6 +180,8 @@ const tauriCore: Core = {
   async setWindowTitle(title) {
     await getCurrentWindow().setTitle(title);
   },
+
+  openUrl: (url) => openWithSystem(url),
 
   async spawn(options, onOutput) {
     const channel = new Channel<unknown>();
@@ -244,6 +249,7 @@ const detachedCore: Core = {
     return { path, name: path, repository: null, isGit: false };
   },
   async setWindowTitle() {},
+  async openUrl() {},
   async spawn() {
     throw new Error("not connected to the workbench core");
   },

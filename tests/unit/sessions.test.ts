@@ -17,6 +17,7 @@ import {
   close,
   closeProject,
   create,
+  cycle,
   ended,
   failed,
   forProject,
@@ -152,6 +153,24 @@ describe("switching", () => {
     const session = live(A, "pty-1");
     select("nope");
     expect(sessions.active).toBe(session.key);
+  });
+
+  it("steps through the project's sessions and wraps around", () => {
+    const first = live(A, "pty-1");
+    const second = live(A, "pty-2");
+    live(B, "pty-3");
+    select(first.key);
+    expect(cycle(A, 1)).toBe(true);
+    expect(sessions.active).toBe(second.key);
+    expect(cycle(A, 1)).toBe(true);
+    expect(sessions.active).toBe(first.key);
+    expect(cycle(A, -1)).toBe(true);
+    expect(sessions.active).toBe(second.key);
+  });
+
+  it("has nowhere to step with one session", () => {
+    live(A, "pty-1");
+    expect(cycle(A, 1)).toBe(false);
   });
 });
 

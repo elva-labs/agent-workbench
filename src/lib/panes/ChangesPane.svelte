@@ -138,7 +138,7 @@
        to itself; reviewing, it becomes the left column and keeps its scroll
        position, its open folders and its selection. -->
   <div class="split" class:reviewing style:--tree-w="{layout.tree}px">
-    <FileTree onOpen={open} onBlank={closeViewer} />
+    <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} />
     {#if reviewing}
       <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
       <FileViewer />

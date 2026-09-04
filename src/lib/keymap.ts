@@ -27,7 +27,9 @@ export type Action =
   | { type: "toggleView" }
   | { type: "toggleScope" }
   | { type: "toggleTerminal" }
-  | { type: "exitReview" };
+  | { type: "exitReview" }
+  /** Next or previous session, or shell when the terminal panel has focus. */
+  | { type: "cycle"; direction: 1 | -1 };
 
 export interface KeyState {
   key: string;
@@ -64,9 +66,11 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
 
   if (!mod) {
     // Escape belongs to the agent whenever the agent has it. A pane that owns
-    // focus may use it, which is how the viewer closes without a chord.
-    if (e.key === "Escape" && ctx.reviewing && !isTerminal(ctx.focus)) {
-      return { type: "exitReview" };
+    // focus may use it: the viewer closes on it, and a list pane hands the
+    // keyboard back to the agent, so a look at the side panes ends where
+    // typing resumes.
+    if (e.key === "Escape" && !isTerminal(ctx.focus)) {
+      return ctx.reviewing ? { type: "exitReview" } : { type: "focus", pane: "agent" };
     }
     return null;
   }
@@ -77,6 +81,10 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
         return { type: "cycleTheme" };
       case "a":
         return { type: "toggleScope" };
+      case "arrowdown":
+        return { type: "cycle", direction: 1 };
+      case "arrowup":
+        return { type: "cycle", direction: -1 };
       default:
         return null;
     }
@@ -125,6 +133,7 @@ export function bindingsFor(mac: boolean): Binding[] {
     { keys: `${m}B`, does: "sessions", minor: true },
     { keys: `${m}\\`, does: "changes", minor: true },
     { keys: `${m}J`, does: "terminal" },
+    { keys: `${shift}↑↓`, does: "switch session" },
     { keys: `${m}D`, does: "review" },
     { keys: `${m}E`, does: "diff/content" },
     { keys: `${shift}A`, does: "scope", minor: true },

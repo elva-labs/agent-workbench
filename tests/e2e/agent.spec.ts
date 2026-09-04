@@ -31,6 +31,8 @@ declare global {
       spawns: { agent: string; project: string; session?: string }[];
       killed: string[];
       titles: string[];
+      /** Links handed to the system browser. */
+      opened: string[];
       picked: string | null;
       outputs: Record<string, (bytes: Uint8Array) => void>;
       enders: ((ended: unknown) => void)[];
@@ -70,6 +72,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         spawns: [],
         killed: [],
         titles: [],
+        opened: [],
         picked: null,
         outputs: {},
         enders: [],
@@ -121,6 +124,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         }),
         setWindowTitle: async (title: string) => {
           fake.titles.push(title);
+        },
+        openUrl: async (url: string) => {
+          fake.opened.push(url);
         },
         spawn: async (spawnOptions: any, onOutput: (bytes: Uint8Array) => void) => {
           if (fake.failSpawn) throw new Error(fake.failSpawn);
@@ -221,6 +227,76 @@ test.describe("one project", () => {
     );
     await expect(rows(page).first()).toContainText("fix-activity-tracking-bugs");
     await expect(rows(page).first()).not.toContainText("session 1");
+  });
+
+  // Cmd+click on a link is the terminal convention; a plain click stays
+  // the program's, which may be using the mouse itself.
+  test("opens a link on mod+click, and not on a plain click", async ({ page }) => {
+    await running(page);
+    await page.evaluate(() =>
+      window.__fake.emit("pty-1", "Created: https://example.com/issues/6932 \r\n"),
+    );
+    await expect.poll(() => buffer(page)).toContain("example.com");
+
+    const term = page.locator(`${AGENT} [data-testid='terminal']`);
+    const box = await term.boundingBox();
+    if (!box) throw new Error("no terminal");
+    // Row 0, a few cells into the URL. Cells are measured from the padding
+    // edge: xterm's element carries the 8px inset.
+    const cell = await page.evaluate(() => {
+      const t = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
+        .__WORKBENCH_TERMINALS__?.["s1"];
+      const size = t?._core._renderService.dimensions.css.cell;
+      return size ? { w: size.width, h: size.height } : null;
+    });
+    if (!cell) throw new Error("no cell size");
+    const x = box.x + 12 + cell.w * 20;
+    const y = box.y + 8 + cell.h / 2;
+
+    await page.mouse.click(x, y);
+    expect(await page.evaluate(() => window.__fake.opened)).toEqual([]);
+
+    await page.keyboard.down(MOD);
+    await page.mouse.click(x, y);
+    await page.keyboard.up(MOD);
+    await expect
+      .poll(() => page.evaluate(() => window.__fake.opened))
+      .toEqual(["https://example.com/issues/6932"]);
+  });
+
+  test("switches session from the keyboard and lands in the agent", async ({ page }) => {
+    await running(page);
+    await page.getByTestId("new-session").click();
+    await expect(rows(page)).toHaveCount(2);
+
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    await expect(page.locator("[data-testid='session-row']").first()).toContainText("session 1");
+    await expect(page.locator(".session.on")).toContainText("session 1");
+    // Typing goes into the terminal without a click.
+    await page.keyboard.type("x");
+    await expect.poll(() => typed(page)).toContain("x");
+  });
+
+  test("steps between sessions with a chord, from anywhere", async ({ page }) => {
+    await running(page);
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(".session.on")).toContainText("session 2");
+    await page.keyboard.press(`${MOD}+Shift+ArrowDown`);
+    await expect(page.locator(".session.on")).toContainText("session 1");
+    await page.keyboard.press(`${MOD}+Shift+ArrowUp`);
+    await expect(page.locator(".session.on")).toContainText("session 2");
+  });
+
+  test("hands the keyboard back to the agent on Escape from a list pane", async ({ page }) => {
+    await running(page);
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   });
 
   // A dropped file is its path, typed where the pointer is. Claude Code reads

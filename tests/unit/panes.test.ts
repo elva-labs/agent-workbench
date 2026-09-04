@@ -148,6 +148,41 @@ describe("SessionsPane", () => {
     expect(screen.getByText("no git")).toBeInTheDocument();
   });
 
+  // Cmd+1, Down, Enter, type: the pane is one tab stop with a cursor in it.
+  it("walks the rows with the keyboard and confirms with Enter", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const first = create("/repo");
+    started(first.key, "pty-1", "session-1");
+    const second = create("/repo");
+    started(second.key, "pty-2", "session-2");
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    await waitFor(() => expect(document.activeElement).toBe(nav));
+
+    // The cursor starts on the session you are in.
+    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(sessions.active).toBe(first.key);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("starts a new session from the keyboard", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    await fireEvent.keyDown(nav, { key: "End" });
+    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(sessions.all).toHaveLength(1);
+    expect(layout.focus).toBe("agent");
+  });
+
   // The whole point of the model: looking at another session kills nothing.
   it("switches session on click without stopping the other", async () => {
     workspace.open.push(repo("/repo", "repo"));

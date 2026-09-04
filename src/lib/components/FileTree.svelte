@@ -7,9 +7,20 @@
     onOpen: (path: string) => void;
     /** A click on the tree itself, below the last row. */
     onBlank?: () => void;
+    /** The pane has focus: the keyboard belongs on the tree, so the arrows
+        work without a click first. */
+    focused?: boolean;
   }
 
-  let { onOpen, onBlank }: Props = $props();
+  let { onOpen, onBlank, focused = false }: Props = $props();
+
+  let root: HTMLDivElement;
+
+  $effect(() => {
+    if (focused && root && document.activeElement !== root && !root.contains(document.activeElement)) {
+      root.focus();
+    }
+  });
 
   let rows = $derived(flatten(buildTree(listed()), isOpen));
 
@@ -93,6 +104,7 @@
   aria-label="Files"
   aria-activedescendant={active ? rowId(active) : undefined}
   tabindex="0"
+  bind:this={root}
   onkeydown={onKeydown}
   onclick={(e) => {
     if (e.target === e.currentTarget) onBlank?.();

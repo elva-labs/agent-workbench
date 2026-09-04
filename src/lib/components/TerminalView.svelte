@@ -2,11 +2,12 @@
   import { onMount, untrack } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
 
   import { core } from "$lib/core";
   import { drops, register, unregister } from "$lib/drops.svelte";
-  import { resolveAction } from "$lib/keymap";
+  import { isMac, resolveAction } from "$lib/keymap";
   import { layout } from "$lib/layout.svelte";
   import { WriteQueue, buildTheme, tokenReader } from "$lib/terminal";
   import { theme } from "$lib/theme.svelte";
@@ -47,6 +48,16 @@
       changes cross no character boundary and need no round trip. */
   let sent = { cols: 0, rows: 0 };
 
+  /** A link opens on Cmd+click (Ctrl elsewhere), as in a terminal app. A
+      plain click stays the program's: the TUI may be using the mouse. */
+  function follow(event: MouseEvent, uri: string) {
+    const mod = isMac() ? event.metaKey : event.ctrlKey;
+    if (!mod) return;
+    core()
+      .openUrl(uri)
+      .catch(() => {});
+  }
+
   onMount(() => {
     terminal = new Terminal({
       allowProposedApi: true,
@@ -57,10 +68,14 @@
       lineHeight: 1.35,
       scrollback: 10_000,
       theme: buildTheme(tokenReader(document.documentElement)),
+      // Links the program marked up itself (OSC 8), as Claude Code does.
+      linkHandler: { activate: follow },
     });
 
     fit = new FitAddon();
     terminal.loadAddon(fit);
+    // Bare URLs in the output, found by the addon.
+    terminal.loadAddon(new WebLinksAddon(follow));
     terminal.open(host);
 
     // The GPU renderer where there is one. Software rendering and headless X

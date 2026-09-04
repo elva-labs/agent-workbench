@@ -23,6 +23,7 @@ Only <kbd>Cmd</kbd> chords (<kbd>Ctrl</kbd> on Windows and Linux). Nothing else.
 | <kbd>Cmd</kbd><kbd>B</kbd> | Toggle the sessions pane |
 | <kbd>Cmd</kbd><kbd>\\</kbd> | Toggle the changes pane |
 | <kbd>Cmd</kbd><kbd>J</kbd> | Show or hide the terminal panel |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd> | Next or previous session, or shell when the panel has focus |
 | <kbd>Cmd</kbd><kbd>D</kbd> | Open or close the file viewer |
 | <kbd>Cmd</kbd><kbd>E</kbd> | Diff or whole file |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd> | Changed files or all files |
@@ -44,10 +45,15 @@ future binding is additive and a typo is not silently absorbed.
   never bound, so interrupting and history search always reach the agent.
 - **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
   it, and so does a shell in the terminal panel: `vi` and `less` are waiting for
-  it there. A pane that owns focus may use it, which is how the file viewer
-  closes without a chord. This is the one key whose meaning depends on context,
-  which is why `resolveAction` takes the focus state rather than leaving each
-  caller to decide: the model stays in one testable place.
+  it there. A pane that owns focus may use it: the file viewer closes on it,
+  and a list pane hands the keyboard back to the agent, so a look at the side
+  panes ends where typing resumes. This is the one key whose meaning depends
+  on context, which is why `resolveAction` takes the focus state rather than
+  leaving each caller to decide: the model stays in one testable place.
+- **A click in a terminal is the program's.** Links open on
+  <kbd>Cmd</kbd>+click (<kbd>Ctrl</kbd> elsewhere), both bare URLs in the
+  output and links the program marked up with OSC 8. A plain click is left to
+  the TUI, which may be using the mouse.
 
 ## Focus follows the pointer down, not the hover
 
@@ -55,10 +61,26 @@ A pane takes focus on `pointerdown` and on `focusin`, never on hover. Hover focu
 in a three-pane layout means typing into whichever pane the mouse drifted over,
 which is how a keystroke ends up in the wrong process.
 
-Focusing a terminal pane by key puts the keyboard in the terminal itself, not
-just the pane: <kbd>Cmd</kbd><kbd>2</kbd> lands in the agent, and
-<kbd>Cmd</kbd><kbd>4</kbd> in whichever shell of the panel was last used. With
-a split on screen, clicking a half or its row in the list is what picks it.
+Focusing a pane by key puts the keyboard where that pane takes it, not just
+on the pane: <kbd>Cmd</kbd><kbd>2</kbd> lands in the agent's terminal,
+<kbd>Cmd</kbd><kbd>4</kbd> in whichever shell of the panel was last used, and
+<kbd>Cmd</kbd><kbd>1</kbd> and <kbd>Cmd</kbd><kbd>3</kbd> on the list panes'
+own cursors. With a split on screen, clicking a half or its row in the list is
+what picks it.
+
+## The list panes are one tab stop each
+
+The sessions pane and the file tree follow the same pattern: the pane is a
+single tab stop with a cursor inside it. <kbd>↑</kbd> and <kbd>↓</kbd> move the
+cursor, <kbd>Home</kbd> and <kbd>End</kbd> jump, <kbd>Enter</kbd> does what a
+click on the row does, and the cursor only shows while the keyboard is in the
+pane. A click puts the cursor on what was clicked; focusing the pane by key
+starts it over from the session you are in, or the selected file.
+
+Confirming a session, a past session or a new one moves the keyboard into the
+agent, so <kbd>Cmd</kbd><kbd>1</kbd>, <kbd>↓</kbd>, <kbd>Enter</kbd>, type is
+the whole flow. The tree opens the file in the viewer and keeps the keyboard,
+because the next thing is usually another file.
 
 ## What focus looks like
 

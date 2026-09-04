@@ -98,6 +98,17 @@ export function select(key: string) {
   if (byKey(key) !== null) terminals.active = key;
 }
 
+/** Steps to the next or previous shell of the project, in list order and
+    wrapping around. False when there is nothing to step to. */
+export function cycle(project: string, direction: 1 | -1): boolean {
+  const own = forProject(project);
+  if (own.length < 2) return false;
+  const at = own.findIndex((shell) => shell.key === terminals.active);
+  const next = at === -1 ? 0 : (at + direction + own.length) % own.length;
+  terminals.active = own[next].key;
+  return true;
+}
+
 /** Points the panel at a project's most recent shell, or at nothing. */
 export function follow(project: string | null) {
   const own = project === null ? [] : forProject(project);

@@ -72,6 +72,12 @@ describe("resolveAction", () => {
     expect(isMac(undefined)).toBe(false);
   });
 
+  it("steps between sessions on shift+mod+arrows", () => {
+    expect(resolveAction(mod("ArrowDown", { shiftKey: true }))).toEqual({ type: "cycle", direction: 1 });
+    expect(resolveAction(mod("ArrowUp", { shiftKey: true }))).toEqual({ type: "cycle", direction: -1 });
+    expect(resolveAction(mod("ArrowDown"))).toBeNull();
+  });
+
   it("cycles the theme on shift+mod+T", () => {
     expect(resolveAction(mod("t", { shiftKey: true }))).toEqual({ type: "cycleTheme" });
     expect(resolveAction(mod("T", { shiftKey: true }))).toEqual({ type: "cycleTheme" });
@@ -127,8 +133,20 @@ describe("Escape", () => {
     expect(resolveAction({ key: "Escape" }, { focus: "terminal", reviewing: true })).toBeNull();
   });
 
-  it("does nothing when there is no viewer open", () => {
-    expect(resolveAction({ key: "Escape" }, { focus: "changes", reviewing: false })).toBeNull();
+  // A look at a side pane ends where typing resumes.
+  it("hands the keyboard back to the agent from a list pane", () => {
+    expect(resolveAction({ key: "Escape" }, { focus: "changes", reviewing: false })).toEqual({
+      type: "focus",
+      pane: "agent",
+    });
+    expect(resolveAction({ key: "Escape" }, { focus: "sessions", reviewing: false })).toEqual({
+      type: "focus",
+      pane: "agent",
+    });
+  });
+
+  it("is the shell's in the terminal panel", () => {
+    expect(resolveAction({ key: "Escape" }, { focus: "terminal", reviewing: false })).toBeNull();
   });
 
   it("is the agent's by default", () => {

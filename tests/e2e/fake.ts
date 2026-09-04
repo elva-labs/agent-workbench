@@ -78,6 +78,7 @@ export async function installFakeCore(
           isGit: true,
         }),
         setWindowTitle: async () => {},
+        openUrl: async () => {},
         spawn: async (spawnOptions: { session?: string }) => ({
           ptyId: `pty-${++ptyCount}`,
           sessionId: spawnOptions.session ?? `session-${ptyCount}`,

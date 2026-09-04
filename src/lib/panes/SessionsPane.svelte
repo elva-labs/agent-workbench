@@ -18,11 +18,129 @@
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
   import { check, hook, isInstalled, isKnown, toggle } from "$lib/hook.svelte";
+  import { focusPane, layout } from "$lib/layout.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
 
   /** Projects whose sessions from outside the app are unfolded. */
   let unfolded = $state<Record<string, boolean>>({});
+
+  /**
+   * Every row the keyboard can land on, in the order the pane shows them.
+   * The pane is one tab stop with a cursor inside it, like the file tree:
+   * Up and Down move the cursor, Enter does what a click on the row does.
+   */
+  interface Row {
+    id: string;
+    run: () => void;
+  }
+
+  let rows = $derived.by(() => {
+    const out: Row[] = [];
+    for (const project of workspace.open) {
+      const path = project.path;
+      out.push({ id: `project:${path}`, run: () => activate(path) });
+      for (const session of forProject(path)) {
+        out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
+      }
+      if (workspace.active !== path) continue;
+      for (const transcript of historyFor(path)) {
+        out.push({ id: `past:${transcript.id}`, run: () => resume(path, transcript.id) });
+      }
+      if (outsideFor(path).length > 0) {
+        out.push({ id: `fold:${path}`, run: () => (unfolded[path] = !unfolded[path]) });
+        if (unfolded[path]) {
+          for (const transcript of outsideFor(path)) {
+            out.push({ id: `outside:${transcript.id}`, run: () => resume(path, transcript.id) });
+          }
+        }
+      }
+      if (isReady()) out.push({ id: `new:${path}`, run: () => start(path) });
+      if (!hook.busy) out.push({ id: `hook:${path}`, run: () => toggle(path) });
+    }
+    for (const path of notOpen) out.push({ id: `recent:${path}`, run: () => openPath(path) });
+    return out;
+  });
+
+  let cursor = $state<string | null>(null);
+  let nav: HTMLDivElement;
+
+  /** The cursor, or where it starts: the session you are in, else the top. */
+  let current = $derived.by(() => {
+    if (cursor !== null && rows.some((row) => row.id === cursor)) return cursor;
+    const active = sessions.active === null ? null : `session:${sessions.active}`;
+    if (active !== null && rows.some((row) => row.id === active)) return active;
+    return rows[0]?.id ?? null;
+  });
+
+  // Focusing the pane by key puts the keyboard here, so the arrows work at
+  // once, and starts the cursor over from the session you are in rather than
+  // from whatever a click left it on. A click inside already has the keyboard.
+  $effect(() => {
+    if (layout.focus === "sessions" && nav && !nav.contains(document.activeElement)) {
+      cursor = null;
+      nav.focus();
+    }
+  });
+
+  /** Picking a session is wanting to type into it. */
+  function choose(key: string) {
+    select(key);
+    focusPane("agent");
+  }
+
+  function resume(path: string, id: string) {
+    create(path, id);
+    focusPane("agent");
+  }
+
+  function start(path: string) {
+    create(path);
+    focusPane("agent");
+  }
+
+  function moveTo(index: number) {
+    if (rows.length === 0) return;
+    const at = Math.max(0, Math.min(index, rows.length - 1));
+    cursor = rows[at].id;
+    nav.querySelector(`[data-row="${CSS.escape(cursor)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    const at = rows.findIndex((row) => row.id === current);
+    switch (e.key) {
+      case "ArrowDown":
+        moveTo(at + 1);
+        break;
+      case "ArrowUp":
+        moveTo(at - 1);
+        break;
+      case "Home":
+        moveTo(0);
+        break;
+      case "End":
+        moveTo(rows.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        if (at === -1) return;
+        rows[at].run();
+        break;
+      default:
+        return;
+    }
+    // The arrows put the keyboard back on the pane, so Enter is the row
+    // under the cursor and not a button a click left focused.
+    nav.focus();
+    e.preventDefault();
+  }
+
+  /** A click puts the cursor on what was clicked, so the keyboard carries on
+      from there. */
+  function onPointerdown(e: PointerEvent) {
+    const row = (e.target as HTMLElement).closest<HTMLElement>("[data-row]");
+    if (row?.dataset.row !== undefined) cursor = row.dataset.row;
+  }
 
   // Read once per project as it opens. The index is history on disk, so it
   // changes when Claude Code writes, not when this window does.
@@ -60,16 +178,35 @@
     </div>
   {/if}
 
+  <!-- One tab stop with a cursor inside, the tree's pattern. The rows stay
+       buttons for the mouse; the keyboard goes through here. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="nav"
+    tabindex="0"
+    aria-label="Projects and sessions"
+    bind:this={nav}
+    onkeydown={onKeydown}
+    onpointerdown={onPointerdown}
+    data-testid="sessions-nav"
+  >
   <div class="tree">
     {#each workspace.open as project (project.path)}
       {@const own = forProject(project.path)}
-      <div class="project" class:on={workspace.active === project.path}>
-        <button class="row project-row" onclick={() => activate(project.path)} title={project.path}>
+      <div
+        class="project"
+        class:on={workspace.active === project.path}
+        class:cursor={current === `project:${project.path}`}
+        data-row="project:{project.path}"
+      >
+        <button class="row project-row" tabindex="-1" onclick={() => activate(project.path)} title={project.path}>
           <span class="name">{project.name}</span>
           {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
         </button>
         <button
           class="icon"
+          tabindex="-1"
           onclick={() => closeProject(project.path)}
           aria-label="Close {project.name}"
           data-testid="close-project">×</button
@@ -77,14 +214,20 @@
       </div>
 
       {#each own as session (session.key)}
-        <div class="session" class:on={sessions.active === session.key}>
-          <button class="row" onclick={() => select(session.key)} data-testid="session-row">
+        <div
+          class="session"
+          class:on={sessions.active === session.key}
+          class:cursor={current === `session:${session.key}`}
+          data-row="session:{session.key}"
+        >
+          <button class="row" tabindex="-1" onclick={() => choose(session.key)} data-testid="session-row">
             <span class="dot" class:live={isLive(session)}></span>
             <span class="label">{label(session)}</span>
             <span class="state">{statusLabel(session)}</span>
           </button>
           <button
             class="icon"
+            tabindex="-1"
             onclick={() => closeSession(session.key)}
             aria-label="Close {label(session)}"
             data-testid="close-session">×</button
@@ -96,9 +239,12 @@
         {#each historyFor(project.path) as transcript (transcript.id)}
           <button
             class="row past"
-            onclick={() => create(project.path, transcript.id)}
+            class:cursor={current === `past:${transcript.id}`}
+            tabindex="-1"
+            onclick={() => resume(project.path, transcript.id)}
             disabled={!isReady()}
             title={transcript.title ?? transcript.id}
+            data-row="past:{transcript.id}"
             data-testid="past-session"
           >
             <span class="dot"></span>
@@ -109,8 +255,11 @@
 
         <button
           class="new"
-          onclick={() => create(project.path)}
+          class:cursor={current === `new:${project.path}`}
+          tabindex="-1"
+          onclick={() => start(project.path)}
           disabled={!isReady()}
+          data-row="new:{project.path}"
           data-testid="new-session">+ New session</button
         >
 
@@ -121,8 +270,11 @@
           {@const outside = outsideFor(project.path)}
           <button
             class="fold"
+            class:cursor={current === `fold:${project.path}`}
+            tabindex="-1"
             onclick={() => (unfolded[project.path] = !unfolded[project.path])}
             aria-expanded={Boolean(unfolded[project.path])}
+            data-row="fold:{project.path}"
             data-testid="outside-fold"
           >
             <span class="chevron" class:open={unfolded[project.path]}>▸</span>
@@ -132,9 +284,12 @@
             {#each outside as transcript (transcript.id)}
               <button
                 class="row past outside"
-                onclick={() => create(project.path, transcript.id)}
+                class:cursor={current === `outside:${transcript.id}`}
+                tabindex="-1"
+                onclick={() => resume(project.path, transcript.id)}
                 disabled={!isReady()}
                 title={transcript.title ?? transcript.id}
+                data-row="outside:{transcript.id}"
                 data-testid="outside-session"
               >
                 <span class="dot"></span>
@@ -151,8 +306,11 @@
         <button
           class="hook"
           class:on={isInstalled(project.path)}
+          class:cursor={current === `hook:${project.path}`}
+          tabindex="-1"
           onclick={() => toggle(project.path)}
           disabled={hook.busy}
+          data-row="hook:{project.path}"
           title={isInstalled(project.path)
             ? "The agent reports edits directly. Click to remove the hook."
             : "Add a PostToolUse hook so edits are reported the moment a tool finishes."}
@@ -172,11 +330,18 @@
     <ul class="recent">
       {#each notOpen as path (path)}
         <li>
-          <button onclick={() => openPath(path)} title={path}>{shorten(path)}</button>
+          <button
+            class:cursor={current === `recent:${path}`}
+            tabindex="-1"
+            onclick={() => openPath(path)}
+            title={path}
+            data-row="recent:{path}">{shorten(path)}</button
+          >
         </li>
       {/each}
     </ul>
   {/if}
+  </div>
 </Pane>
 
 <style>
@@ -205,11 +370,25 @@
     cursor: default;
   }
 
+  .nav {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    outline: none;
+  }
+
   .tree {
     flex: 1;
     overflow-y: auto;
     padding: 6px 0;
     min-height: 0;
+  }
+
+  /* The cursor shows while the keyboard is in the pane, and only then: a
+     highlight that outlives the keyboard would look like a second selection. */
+  .nav:focus-within .cursor {
+    box-shadow: inset 2px 0 0 var(--accent);
   }
 
   .project,

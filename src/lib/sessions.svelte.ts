@@ -243,6 +243,17 @@ export function select(key: string) {
   if (byKey(key) !== null) sessions.active = key;
 }
 
+/** Steps to the next or previous session of the project, wrapping around.
+    False when there is nothing to step to. */
+export function cycle(project: string, direction: 1 | -1): boolean {
+  const own = forProject(project);
+  if (own.length < 2) return false;
+  const at = own.findIndex((session) => session.key === sessions.active);
+  const next = at === -1 ? 0 : (at + direction + own.length) % own.length;
+  sessions.active = own[next].key;
+  return true;
+}
+
 /**
  * Adds a session row and starts it. The row exists before the process does so
  * the pane has something to render while it comes up, and so a failure to

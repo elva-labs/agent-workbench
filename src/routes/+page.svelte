@@ -11,8 +11,9 @@
   import { BINDINGS, resolveAction } from "$lib/keymap";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import { closeViewer, files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
-  import { ended as sessionEnded, followCwd } from "$lib/sessions.svelte";
-  import { ended as shellEnded } from "$lib/terminals.svelte";
+  import { cycle as cycleSession, ended as sessionEnded, followCwd } from "$lib/sessions.svelte";
+  import { cycle as cycleShell, ended as shellEnded } from "$lib/terminals.svelte";
+  import { workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
     DEFAULT,
@@ -140,6 +141,13 @@
         break;
       case "toggleTerminal":
         toggleTerminal();
+        break;
+      case "cycle":
+        // Shells when the keyboard is in the panel, sessions anywhere else,
+        // and the keyboard lands in what was switched to.
+        if (workspace.active === null) break;
+        if (layout.focus === "terminal") cycleShell(workspace.active, action.direction);
+        else if (cycleSession(workspace.active, action.direction)) focusPane("agent");
         break;
       case "exitReview":
         closeViewer();

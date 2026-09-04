@@ -219,6 +219,15 @@ test.describe("the file tree", () => {
     expect(await rowNames(page)).not.toContain("architecture.md");
   });
 
+  test("takes the keyboard on Cmd+3, so the arrows work at once", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+3`);
+    await expect(page.locator(TREE)).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  });
+
   test("walks with the keyboard and opens with Enter", async ({ page }) => {
     await page.locator(TREE).focus();
     await page.keyboard.press("ArrowDown");
