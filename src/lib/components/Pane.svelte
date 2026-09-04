@@ -8,10 +8,13 @@
     meta?: string;
     /** Controls that live in the header, after the title. */
     head?: Snippet;
+    /** No header of its own: the pane names itself somewhere in its body,
+        and the row the header would take goes to the content. */
+    bare?: boolean;
     children: Snippet;
   }
 
-  let { id, title, meta, head, children }: Props = $props();
+  let { id, title, meta, head, bare = false, children }: Props = $props();
 
   let focused = $derived(layout.focus === id);
 </script>
@@ -24,11 +27,13 @@
   onpointerdown={() => focusPane(id)}
   onfocusin={() => focusPane(id)}
 >
-  <header>
-    <span class="title">{title}</span>
-    {#if head}<div class="head">{@render head()}</div>{/if}
-    {#if meta}<span class="meta">{meta}</span>{/if}
-  </header>
+  {#if !bare}
+    <header>
+      <span class="title">{title}</span>
+      {#if head}<div class="head">{@render head()}</div>{/if}
+      {#if meta}<span class="meta">{meta}</span>{/if}
+    </header>
+  {/if}
   <div class="body">
     {@render children()}
   </div>

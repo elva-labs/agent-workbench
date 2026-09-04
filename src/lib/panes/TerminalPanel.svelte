@@ -37,6 +37,7 @@
 
   let current = $derived(activeShell());
   let shown = $derived(shownGroup());
+  let focused = $derived(layout.focus === "terminal");
   let groups = $derived(workspace.active === null ? [] : groupsFor(workspace.active));
 
   /** What the shown group divides between its shells. */
@@ -82,21 +83,9 @@
   }
 </script>
 
-<Pane id="terminal" title="Terminal">
-  {#snippet head()}
-    <span class="grow"></span>
-    <button
-      class="tool"
-      onclick={another}
-      disabled={workspace.active === null}
-      data-testid="new-terminal">+ new</button
-    >
-    <button class="tool" onclick={beside} disabled={current === null} data-testid="split-terminal"
-      >split</button
-    >
-    <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
-  {/snippet}
-
+<!-- Bare: the header row goes to the shells, and the title sits over the
+     list, where the tools are anyway. -->
+<Pane id="terminal" title="Terminal" bare>
   <div class="wrap">
     <div class="shells" bind:clientWidth={shellsWidth}>
       <!-- Every shell stays mounted. The shown group's sit side by side in
@@ -155,9 +144,30 @@
       onCommit={saveLayout}
     />
 
-    <!-- One row per shell, grouped: the rows under the first of a group are
-         the shells beside it. -->
     <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
+      <div class="top">
+        <span class="title" class:on={focused}>Terminal</span>
+        <button
+          class="tool"
+          onclick={another}
+          disabled={workspace.active === null}
+          aria-label="New terminal"
+          title="New terminal"
+          data-testid="new-terminal">+</button
+        >
+        <button
+          class="tool"
+          onclick={beside}
+          disabled={current === null}
+          aria-label="Split the current shell"
+          title="Split"
+          data-testid="split-terminal">⫿</button
+        >
+        <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
+      </div>
+
+      <!-- One row per shell, grouped: the rows under the first of a group are
+           the shells beside it. -->
       {#each groups as group (group[0].group)}
         <div class="group" class:on={group[0].group === shown} data-testid="terminal-group">
           {#each group as shell, i (shell.key)}
@@ -194,8 +204,30 @@
 </Pane>
 
 <style>
-  .grow {
+  .top {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    padding: 9px var(--pane-pad) 8px;
+    border-bottom: 1px solid var(--rule);
+    flex: none;
+  }
+
+  .title {
     flex: 1;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .title.on {
+    color: var(--accent);
   }
 
   .tool {
@@ -208,7 +240,7 @@
     text-transform: uppercase;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 0 5px;
   }
 
   .tool:hover:not(:disabled) {
@@ -255,9 +287,15 @@
 
   .list {
     flex: none;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
-    padding: 6px 0;
+    padding-bottom: 6px;
     border-left: 1px solid var(--rule);
+  }
+
+  .top + .group {
+    margin-top: 6px;
   }
 
   .group {
