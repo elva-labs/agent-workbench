@@ -6,6 +6,9 @@ import {
   ago,
   historyFor,
   historyLabel,
+  isMine,
+  loadMine,
+  outsideFor,
   byKey,
   close,
   closeProject,
@@ -395,9 +398,47 @@ describe("history", () => {
     size: 100,
   });
 
-  it("lists what the core reported for the project", () => {
+  it("lists what the core reported for the project, once it is ours", () => {
     sessions.history[A] = [transcript("abc", "rename the cache", 1000)];
+    expect(historyFor(A)).toHaveLength(0);
+    expect(outsideFor(A)).toHaveLength(1);
+
+    const session = create(A);
+    started(session.key, "pty-1", "abc");
+    close(session.key);
     expect(historyFor(A)).toHaveLength(1);
+    expect(outsideFor(A)).toHaveLength(0);
+  });
+
+  // Claude Code run in a terminal in the same directory leaves transcripts in
+  // the same place. They are not this window's work until it takes one up.
+  it("keeps sessions from outside apart, and adopts one when resumed", () => {
+    sessions.history[A] = [transcript("theirs", "from a terminal", 1000)];
+    expect(isMine(A, "theirs")).toBe(false);
+
+    const session = create(A, "theirs");
+    started(session.key, "pty-1", "theirs");
+    expect(isMine(A, "theirs")).toBe(true);
+    close(session.key);
+    expect(historyFor(A).map((t) => t.id)).toEqual(["theirs"]);
+    expect(outsideFor(A)).toEqual([]);
+  });
+
+  it("remembers which sessions are ours across a restart", () => {
+    const session = create(A);
+    started(session.key, "pty-1", "kept");
+    reset();
+    expect(isMine(A, "kept")).toBe(false);
+    loadMine();
+    expect(isMine(A, "kept")).toBe(true);
+  });
+
+  it("survives a corrupt record of what is ours", () => {
+    localStorage.setItem("workbench.mine", "{not json");
+    expect(() => loadMine()).not.toThrow();
+    localStorage.setItem("workbench.mine", JSON.stringify({ [A]: ["ok", 7] }));
+    loadMine();
+    expect(isMine(A, "ok")).toBe(true);
   });
 
   it("has nothing for a project it has not read", () => {
@@ -409,7 +450,7 @@ describe("history", () => {
   it("hides a transcript that is already resumed", () => {
     sessions.history[A] = [transcript("abc", "one", 1000), transcript("def", "two", 900)];
     create(A, "abc");
-    expect(historyFor(A).map((t) => t.id)).toEqual(["def"]);
+    expect(outsideFor(A).map((t) => t.id)).toEqual(["def"]);
   });
 
   // A fresh session writes a transcript as it goes. That transcript is the
@@ -418,7 +459,8 @@ describe("history", () => {
     sessions.history[A] = [transcript("fresh", "one", 1000), transcript("def", "two", 900)];
     const session = create(A);
     started(session.key, "pty-1", "fresh");
-    expect(historyFor(A).map((t) => t.id)).toEqual(["def"]);
+    expect(historyFor(A)).toEqual([]);
+    expect(outsideFor(A).map((t) => t.id)).toEqual(["def"]);
   });
 
   it("uses the title when there is one", () => {

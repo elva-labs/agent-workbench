@@ -145,8 +145,8 @@
     />
 
     <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
-      <div class="top">
-        <span class="title" class:on={focused}>Terminal</span>
+      <div class="top" data-tauri-drag-region>
+        <span class="title" class:on={focused} data-tauri-drag-region>Terminal</span>
         <button
           class="tool"
           onclick={another}

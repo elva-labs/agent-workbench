@@ -125,6 +125,19 @@ The list itself has a bar too, and its width is remembered with the other
 widths. It gives way before the shells do: below 140px it stops, and the
 shells keep 320px between them.
 
+## The window's own chrome
+
+On macOS the window has no title bar. The frame extends to the top edge
+(`titleBarStyle: Overlay`, `hiddenTitle`), and the traffic lights are placed
+over the header row of whichever pane is at the left edge: sessions normally,
+the agent once that pane is closed or folded, the viewer when reviewing hides
+the agent too. That pane's header takes a left inset (`CONTROLS_INSET`) so its
+title clears them. The pane headers, and the top of the terminal list, are
+`data-tauri-drag-region`: grab one to move the window, double-click to zoom.
+
+Windows and Linux keep the native title bar and their own controls. The overlay
+style and traffic-light fields are ignored there.
+
 ## On window resize
 
 Resizing the window does resize the PTY, and that is fine: you did it, and the
@@ -192,6 +205,16 @@ project, read from `~/.claude/projects/<mangled path>/<session id>.jsonl`.
 Clicking one opens it as another live session through `claude --resume`, so a
 past conversation becomes a row like any other and the one you were in keeps
 running.
+
+**Ours first, the rest behind a fold.** That directory holds every session run
+in the project, including Claude Code started from a plain terminal, and a
+project with months of those would bury the workbench's own history. The
+sessions this app has run are remembered by id in `localStorage` under
+`workbench.mine` and listed outright; the others sit behind a single row that
+counts them, and unfold on click. Resuming one from there adopts it: it is a
+session of this workbench from then on. Nothing is deleted or moved, and the
+split does not survive a wiped `localStorage`, which only means everything
+shows as from outside until it is resumed again.
 
 **Built on filenames and stat data, not contents.** The filename is the session
 id, mtime is recency, size is a rough length: all stable, all cheap. Titles are

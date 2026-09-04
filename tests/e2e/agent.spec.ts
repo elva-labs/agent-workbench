@@ -240,6 +240,22 @@ test.describe("one project", () => {
     await expect.poll(() => page.evaluate(() => window.__fake.resizes.length)).toBeGreaterThan(0);
   });
 
+  // The last row is the one the prompt lives on. It has to be inside the
+  // pane at every height, not just the ones that happen to divide evenly.
+  test("keeps the last row inside the pane at any height", async ({ page }) => {
+    await running(page);
+    for (const height of [900, 811, 723, 677]) {
+      await page.setViewportSize({ width: 1200, height });
+      await page.waitForTimeout(100);
+      const host = await page.locator(`${AGENT} [data-testid='terminal']`).boundingBox();
+      const screen = await page.locator(`${AGENT} .xterm-screen`).boundingBox();
+      expect(host).not.toBeNull();
+      expect(screen).not.toBeNull();
+      expect(screen!.y + screen!.height).toBeLessThanOrEqual(host!.y + host!.height - 8);
+      expect(screen!.y).toBeGreaterThanOrEqual(host!.y + 8);
+    }
+  });
+
   test("says a session ended and offers another", async ({ page }) => {
     await running(page);
     await page.evaluate(() => window.__fake.end("pty-1", 0, true));

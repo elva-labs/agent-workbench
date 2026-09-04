@@ -16,6 +16,7 @@ import {
   focusPane,
   hideTerminal,
   layout,
+  leftmost,
   loadLayout,
   saveLayout,
   sessionsVisible,
@@ -486,5 +487,26 @@ describe("the terminal list", () => {
     reset();
     loadLayout();
     expect(layout.terminalList).toBe(260);
+  });
+});
+
+describe("the leftmost pane", () => {
+  it("is the sessions pane while that is showing", () => {
+    applyLayout(1600, 900);
+    expect(leftmost()).toBe("sessions");
+  });
+
+  it("is the agent once the sessions pane is gone", () => {
+    togglePane("sessions");
+    expect(leftmost()).toBe("agent");
+    layout.sessionsChosen = true;
+    applyLayout(500);
+    expect(leftmost()).toBe("agent");
+  });
+
+  it("is the viewer when reviewing hides the agent too", () => {
+    layout.mode = "reviewing";
+    applyLayout(500);
+    expect(leftmost()).toBe("changes");
   });
 });

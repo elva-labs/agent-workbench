@@ -40,6 +40,8 @@ export interface Session {
   mounted: boolean;
 }
 
+const MINE_KEY = "workbench.mine";
+
 export const sessions = $state({
   all: [] as Session[],
   active: null as string | null,
@@ -48,6 +50,12 @@ export const sessions = $state({
    * transcripts, so this is history rather than anything the window owns.
    */
   history: {} as Record<string, Transcript[]>,
+  /**
+   * Session ids this app has run, by project path. Claude Code keeps every
+   * transcript for a directory in one place, whichever terminal it came from;
+   * these are the ones that are ours to list first.
+   */
+  mine: {} as Record<string, string[]>,
 });
 
 export async function loadHistory(project: string) {
@@ -59,17 +67,59 @@ export async function loadHistory(project: string) {
   }
 }
 
-export function historyFor(project: string): Transcript[] {
+export function isMine(project: string, id: string): boolean {
+  return (sessions.mine[project] ?? []).includes(id);
+}
+
+/** Records a session as ours. Resuming one from outside counts: from then on
+    it is a session of this workbench. */
+function adopt(project: string, id: string) {
+  if (isMine(project, id)) return;
+  sessions.mine[project] = [...(sessions.mine[project] ?? []), id];
+  try {
+    localStorage.setItem(MINE_KEY, JSON.stringify(sessions.mine));
+  } catch {
+    // Non-fatal: the split into ours and outside does not survive a restart.
+  }
+}
+
+export function loadMine() {
+  try {
+    const raw = localStorage.getItem(MINE_KEY);
+    if (raw === null) return;
+    const stored: unknown = JSON.parse(raw);
+    if (typeof stored !== "object" || stored === null) return;
+    const mine: Record<string, string[]> = {};
+    for (const [project, ids] of Object.entries(stored)) {
+      if (Array.isArray(ids)) mine[project] = ids.filter((id): id is string => typeof id === "string");
+    }
+    sessions.mine = mine;
+  } catch {
+    // A corrupt entry is not worth a broken pane. Nothing is ours, then.
+  }
+}
+
+/** Transcripts not already open as a row: the one a row was resumed from, or
+    the one it has been writing since it started, is that row. */
+function closed(project: string): Transcript[] {
   const known = sessions.history[project] ?? [];
-  // A transcript that belongs to a row already in the window is that row, not
-  // a separate one to resume: the one it was resumed from, or the one it has
-  // been writing since it started.
   const open = new Set(
     forProject(project)
       .map((session) => session.id)
       .filter((id): id is string => id !== null),
   );
   return known.filter((transcript) => !open.has(transcript.id));
+}
+
+/** Past sessions this app ran, ready to resume. */
+export function historyFor(project: string): Transcript[] {
+  return closed(project).filter((transcript) => isMine(project, transcript.id));
+}
+
+/** Past sessions from outside the app: Claude Code run in a terminal in the
+    same directory. Just as resumable, but not the first thing to show. */
+export function outsideFor(project: string): Transcript[] {
+  return closed(project).filter((transcript) => !isMine(project, transcript.id));
 }
 
 /**
@@ -199,6 +249,7 @@ export function started(key: string, ptyId: string, sessionId: string): boolean 
   session.ptyId = ptyId;
   session.id = sessionId;
   session.status = "running";
+  adopt(session.project, sessionId);
 
   const early = claim(ptyId);
   if (early !== undefined) ended(early);
@@ -313,6 +364,7 @@ export function reset() {
   sessions.all = [];
   sessions.active = null;
   sessions.history = {};
+  sessions.mine = {};
   counter = 0;
   ordinals = {};
   resetExits();

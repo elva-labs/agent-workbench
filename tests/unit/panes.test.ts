@@ -36,7 +36,7 @@ vi.mock("$lib/core", () => ({
 }));
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { agent } from "$lib/agent.svelte";
-import { reset as resetSessions, create, started, sessions } from "$lib/sessions.svelte";
+import { reset as resetSessions, create, loadMine, started, sessions } from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
 
 beforeEach(() => {
@@ -165,17 +165,41 @@ describe("SessionsPane", () => {
   });
 
   // Phase 3: what Claude Code has already done here, read off disk.
-  it("lists past sessions under the project you are looking at", async () => {
+  it("lists past sessions of its own under the project you are looking at", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     fake.transcripts = [
       { id: "abc-123", title: "rename the token cache", modified: 1000, size: 400 },
     ];
+    localStorage.setItem("workbench.mine", JSON.stringify({ "/repo": ["abc-123"] }));
+    loadMine();
 
     render(SessionsPane);
     await waitFor(() =>
       expect(screen.getByText("rename the token cache")).toBeInTheDocument(),
     );
+    expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
+  });
+
+  // Transcripts from Claude Code run in a plain terminal share the directory.
+  // They are there to resume, behind a fold, not mixed in with our own.
+  it("folds away sessions that came from outside the app", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.transcripts = [
+      { id: "abc-123", title: "from a terminal", modified: 1000, size: 400 },
+      { id: "def-456", title: "another terminal", modified: 900, size: 400 },
+    ];
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+    expect(screen.getByTestId("outside-fold")).toHaveTextContent("2 from outside");
+    expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByTestId("outside-fold"));
+    expect(screen.getAllByTestId("outside-session")).toHaveLength(2);
+    expect(screen.getByText("from a terminal")).toBeInTheDocument();
   });
 
   it("opens a past session as a live one, resumed by id", async () => {
@@ -184,8 +208,9 @@ describe("SessionsPane", () => {
     fake.transcripts = [{ id: "abc-123", title: "earlier work", modified: 1000, size: 400 }];
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("past-session")).toBeInTheDocument());
-    await fireEvent.click(screen.getByTestId("past-session"));
+    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("outside-session"));
 
     expect(sessions.all).toHaveLength(1);
     expect(sessions.all[0].resumedFrom).toBe("abc-123");
@@ -197,10 +222,12 @@ describe("SessionsPane", () => {
     fake.transcripts = [{ id: "abc-123", title: "earlier work", modified: 1000, size: 400 }];
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("past-session")).toBeInTheDocument());
-    await fireEvent.click(screen.getByTestId("past-session"));
+    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("outside-session"));
 
-    await waitFor(() => expect(screen.queryByTestId("past-session")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
   });
 
   // Off by default: it edits the project's settings, so nobody gets it for

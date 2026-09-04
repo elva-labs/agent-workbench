@@ -11,6 +11,7 @@
     isLive,
     label,
     loadHistory,
+    outsideFor,
     select,
     sessions,
     statusLabel,
@@ -19,6 +20,9 @@
   import { check, hook, isInstalled, isKnown, toggle } from "$lib/hook.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
+
+  /** Projects whose sessions from outside the app are unfolded. */
+  let unfolded = $state<Record<string, boolean>>({});
 
   // Read once per project as it opens. The index is history on disk, so it
   // changes when Claude Code writes, not when this window does.
@@ -109,6 +113,37 @@
           disabled={!isReady()}
           data-testid="new-session">+ New session</button
         >
+
+        <!-- Claude Code run in a plain terminal here leaves transcripts in
+             the same place. They are resumable, so they are here, folded,
+             rather than mixed in with what this window started. -->
+        {#if outsideFor(project.path).length > 0}
+          {@const outside = outsideFor(project.path)}
+          <button
+            class="fold"
+            onclick={() => (unfolded[project.path] = !unfolded[project.path])}
+            aria-expanded={Boolean(unfolded[project.path])}
+            data-testid="outside-fold"
+          >
+            <span class="chevron" class:open={unfolded[project.path]}>▸</span>
+            {outside.length} from outside the workbench
+          </button>
+          {#if unfolded[project.path]}
+            {#each outside as transcript (transcript.id)}
+              <button
+                class="row past outside"
+                onclick={() => create(project.path, transcript.id)}
+                disabled={!isReady()}
+                title={transcript.title ?? transcript.id}
+                data-testid="outside-session"
+              >
+                <span class="dot"></span>
+                <span class="label">{historyLabel(transcript)}</span>
+                <span class="state">{ago(transcript.modified)}</span>
+              </button>
+            {/each}
+          {/if}
+        {/if}
 
         <!-- Off by default: it writes into the project's settings.local.json,
              and the watcher already covers the same ground. What it adds is
@@ -320,6 +355,42 @@
   .new:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  .fold {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0 0 4px 26px;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 0;
+  }
+
+  .fold:hover {
+    color: var(--ink-2);
+  }
+
+  .chevron {
+    display: inline-block;
+    font-size: 9px;
+    transition: transform 90ms ease;
+  }
+
+  .chevron.open {
+    transform: rotate(90deg);
+  }
+
+  .past.outside {
+    margin-bottom: 2px;
+  }
+
+  .past.outside:last-of-type {
+    margin-bottom: 10px;
   }
 
   .hook {

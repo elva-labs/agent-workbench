@@ -180,11 +180,18 @@
   .term {
     position: absolute;
     inset: 0;
-    padding: 8px var(--pane-pad);
     /* xterm gives its canvas layers explicit z-indexes. Without a stacking
        context of its own they join the wrapper's, and paint over the status
        overlay: the button is visible and unclickable. */
     isolation: isolate;
+  }
+
+  /* The inset lives on xterm's own element, which is the one the fit addon
+     subtracts padding from. The app sizes boxes border-box, so padding on
+     the host would be counted as room for rows and the last row would be
+     drawn past the bottom edge. */
+  .term :global(.xterm) {
+    padding: 8px var(--pane-pad);
   }
 
   .term.hidden {

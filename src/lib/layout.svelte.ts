@@ -110,6 +110,18 @@ export function terminalVisible() {
   return layout.terminalChosen && !layout.terminalForced;
 }
 
+/** The pane at the left edge of the window, whose header the macOS window
+    controls sit over. */
+export function leftmost(): PaneId {
+  if (sessionsVisible()) return "sessions";
+  if (agentVisible()) return "agent";
+  return "changes";
+}
+
+/** Room the macOS window controls take at the top left, in pixels from the
+    window edge. The frame's own padding and the pane border are inside it. */
+export const CONTROLS_INSET = 78;
+
 /** The width the changes pane is currently asking for. */
 export function changesWidth() {
   return layout.mode === "reviewing" ? layout.review : layout.changes;

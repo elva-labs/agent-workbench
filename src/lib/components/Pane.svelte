@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { layout, focusPane, type PaneId } from "$lib/layout.svelte";
+  import { isMac } from "$lib/keymap";
+  import { CONTROLS_INSET, layout, focusPane, leftmost, type PaneId } from "$lib/layout.svelte";
 
   interface Props {
     id: PaneId;
@@ -17,6 +18,12 @@
   let { id, title, meta, head, bare = false, children }: Props = $props();
 
   let focused = $derived(layout.focus === id);
+
+  // On macOS the window has no title bar of its own: the traffic lights sit
+  // over the header of whichever pane is at the left edge, and the headers
+  // are what you grab to move the window.
+  const mac = isMac();
+  let inset = $derived(mac && leftmost() === id);
 </script>
 
 <section
@@ -28,10 +35,10 @@
   onfocusin={() => focusPane(id)}
 >
   {#if !bare}
-    <header>
-      <span class="title">{title}</span>
+    <header class:inset data-tauri-drag-region>
+      <span class="title" data-tauri-drag-region>{title}</span>
       {#if head}<div class="head">{@render head()}</div>{/if}
-      {#if meta}<span class="meta">{meta}</span>{/if}
+      {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
     </header>
   {/if}
   <div class="body">
@@ -62,6 +69,11 @@
     padding: 9px var(--pane-pad);
     border-bottom: 1px solid var(--rule);
     flex: none;
+  }
+
+  /* The frame's padding and the pane's border are already part of the inset. */
+  header.inset {
+    padding-left: calc(var(--controls-inset) - var(--frame-pad) - 1px);
   }
 
   .title,

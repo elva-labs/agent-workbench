@@ -13,6 +13,7 @@
   import { ended as sessionEnded } from "$lib/sessions.svelte";
   import { ended as shellEnded } from "$lib/terminals.svelte";
   import {
+    CONTROLS_INSET,
     DEFAULT,
     MIN,
     MIN_REVIEW,
@@ -154,7 +155,7 @@
 
 <svelte:window on:keydown={onKeydown} />
 
-<div class="frame">
+<div class="frame" style:--controls-inset="{CONTROLS_INSET}px">
   <div class="stack" bind:clientHeight={stack}>
   <main
     class="shell"
@@ -233,8 +234,9 @@
 
 <style>
   .frame {
+    --frame-pad: 8px;
     height: calc(100vh - 26px);
-    padding: 8px;
+    padding: var(--frame-pad);
     background: var(--bg);
   }
 

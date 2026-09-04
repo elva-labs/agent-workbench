@@ -11,6 +11,7 @@
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
   import { loadLayout } from "$lib/layout.svelte";
+  import { loadMine } from "$lib/sessions.svelte";
   import { restore } from "$lib/workspace.svelte";
 
   let { children } = $props();
@@ -18,6 +19,7 @@
   onMount(() => {
     loadTheme();
     loadLayout();
+    loadMine();
     restore();
   });
 </script>
