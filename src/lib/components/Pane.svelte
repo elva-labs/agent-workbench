@@ -54,7 +54,6 @@
     flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--rule);
-    border-radius: var(--pane-radius);
     overflow: hidden;
   }
 

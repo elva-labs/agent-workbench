@@ -15,7 +15,7 @@
         "title": "Agent Workbench",
         "width": 1440,
         "height": 900,
-        "minWidth": 642,
+        "minWidth": 646,
         "minHeight": 560,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true

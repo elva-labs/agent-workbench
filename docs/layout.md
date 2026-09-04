@@ -57,7 +57,7 @@ and the only pane that can never be closed.
 | 626 to 812 | Sessions folds away |
 | < 626 | Changes folds away too, agent alone |
 
-The window's `minWidth` is 642, which is the 626 above plus the frame's padding.
+The window's `minWidth` is 646, which is the 626 above plus the frame's padding.
 That number is not arbitrary: half of a 1440-wide laptop display is 720, and a
 minimum above that would make macOS split-screen simply refuse. A unit test
 reads `tauri.conf.json` and fails if the two ever drift apart.

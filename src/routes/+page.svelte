@@ -246,8 +246,10 @@
 </footer>
 
 <style>
+  /* Wide enough that a pane's sharp corner stays clear of the window's
+     rounded one on macOS. */
   .frame {
-    --frame-pad: 8px;
+    --frame-pad: 10px;
     height: calc(100vh - 26px);
     padding: var(--frame-pad);
     background: var(--bg);

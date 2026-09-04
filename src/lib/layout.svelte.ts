@@ -25,7 +25,7 @@ export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing";
 
 export const SPLITTER = 6;
-export const FRAME_PADDING = 16;
+export const FRAME_PADDING = 20;
 
 export const MIN = {
   sessions: 180,
