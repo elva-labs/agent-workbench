@@ -15,8 +15,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-/// Only the head of a transcript is read looking for a title. A long session is
-/// megabytes, and the first exchange is where the subject is.
+/// Only the head and the tail of a transcript are read looking for a title. A
+/// long session is megabytes; the first exchange is where the subject is, and
+/// the names Claude Code gives a session are appended as it goes, so the
+/// latest is near the end.
 const TITLE_SCAN_BYTES: usize = 64 * 1024;
 /// A title is a row in a narrow pane, not a paragraph.
 const TITLE_MAX_CHARS: usize = 80;
@@ -87,18 +89,37 @@ pub fn list(home: &Path, project: &Path) -> Vec<Transcript> {
 }
 
 /// Everything below here is the part that can break on any release.
+///
+/// What Claude Code's own picker shows, in its order: a name the user gave
+/// the session (`custom-title`, last one wins), then the name Claude Code
+/// gave it (`ai-title`, last one wins), then an older `summary`, then the
+/// first thing the user actually said.
 fn read_title(path: &Path) -> Option<String> {
-    let head = read_head(path)?;
+    let tail = read_tail(path)?;
+    if let Some(title) = latest(&tail, "custom-title", "customTitle") {
+        return Some(tidy(&title));
+    }
+    if let Some(title) = latest(&tail, "ai-title", "aiTitle") {
+        return Some(tidy(&title));
+    }
 
+    let head = read_head(path)?;
     for line in head.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if value.get("type").and_then(serde_json::Value::as_str) != Some("user") {
-            continue;
-        }
-        if let Some(text) = first_text(&value) {
-            return Some(tidy(&text));
+        match value.get("type").and_then(serde_json::Value::as_str) {
+            Some("summary") => {
+                if let Some(summary) = value.get("summary").and_then(serde_json::Value::as_str) {
+                    return Some(tidy(summary));
+                }
+            }
+            Some("user") => {
+                if let Some(text) = prompt_text(&value) {
+                    return Some(tidy(&text));
+                }
+            }
+            _ => {}
         }
     }
     None
@@ -113,8 +134,73 @@ fn read_head(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&buffer).to_string())
 }
 
+/// The last stretch of the file, whole lines only: the first line of the
+/// buffer is cut off unless the buffer holds the whole file.
+fn read_tail(path: &Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(TITLE_SCAN_BYTES as u64);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buffer = Vec::with_capacity((len - start) as usize);
+    file.read_to_end(&mut buffer).ok()?;
+    let text = String::from_utf8_lossy(&buffer).to_string();
+    if start == 0 {
+        return Some(text);
+    }
+    Some(text.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default())
+}
+
+/// The newest entry of a kind in the tail, and the field it carries. The
+/// kind is checked as text before any parsing: most lines are not it.
+fn latest(tail: &str, kind: &str, field: &str) -> Option<String> {
+    let marker = format!("\"type\":\"{kind}\"");
+    tail.lines().rev().find_map(|line| {
+        if !line.contains(&marker) {
+            return None;
+        }
+        let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        if value.get("type").and_then(serde_json::Value::as_str) != Some(kind) {
+            return None;
+        }
+        let title = value.get(field).and_then(serde_json::Value::as_str)?.trim();
+        if title.is_empty() {
+            None
+        } else {
+            Some(title.to_string())
+        }
+    })
+}
+
+/// What the user said in a user entry, as the picker would show it: not the
+/// caveats Claude Code writes around slash commands, not a command's output,
+/// and a slash command itself by its name. Meta and sidechain entries are
+/// not the user's.
+fn prompt_text(entry: &serde_json::Value) -> Option<String> {
+    let flagged = |key: &str| entry.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+    if flagged("isMeta") || flagged("isSidechain") {
+        return None;
+    }
+    let text = first_text(entry)?;
+    let text = text.trim();
+    if text.starts_with("<local-command-caveat>") || text.starts_with("<local-command-stdout>") {
+        return None;
+    }
+    if let Some(name) = between(text, "<command-name>", "</command-name>") {
+        return Some(name.to_string());
+    }
+    Some(text.to_string())
+}
+
+fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = text.find(open)? + open.len();
+    let end = text[start..].find(close)? + start;
+    Some(text[start..end].trim())
+}
+
 /// Content has been both a bare string and a list of typed blocks. Accept
-/// either, and anything else is simply not a title.
+/// either, and anything else is simply not a title. A block that is a system
+/// reminder is not what the user said.
 fn first_text(entry: &serde_json::Value) -> Option<String> {
     let content = entry.get("message")?.get("content")?;
 
@@ -123,15 +209,16 @@ fn first_text(entry: &serde_json::Value) -> Option<String> {
     }
 
     content.as_array()?.iter().find_map(|block| {
-        block
-            .get("text")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
+        let text = block.get("text").and_then(serde_json::Value::as_str)?;
+        if text.trim_start().starts_with("<system-reminder>") {
+            return None;
+        }
+        Some(text.to_string())
     })
 }
 
 /// One line, trimmed, short enough for a narrow pane.
-fn tidy(text: &str) -> String {
+pub fn tidy(text: &str) -> String {
     let single: String = text
         .lines()
         .map(str::trim)
@@ -238,8 +325,7 @@ mod tests {
             &home,
             project,
             "s",
-            r#"{"type":"summary","summary":"ignored"}
-{"type":"user","message":{"content":"rename the token cache module"}}
+            r#"{"type":"user","message":{"content":"rename the token cache module"}}
 {"type":"user","message":{"content":"and the tests"}}
 "#,
         );
@@ -248,6 +334,100 @@ mod tests {
             list(&home, project)[0].title.as_deref(),
             Some("rename the token cache module")
         );
+    }
+
+    // What the picker shows: the user's own name for the session first, then
+    // the one Claude Code gave it, then an older summary, then the prompt.
+    #[test]
+    fn prefers_a_given_name_then_the_ai_title_then_a_summary() {
+        let home = home("precedence");
+        let project = Path::new("/home/ada/dev/demo");
+        write_transcript(
+            &home,
+            project,
+            "s",
+            r#"{"type":"summary","summary":"the summary"}
+{"type":"user","message":{"content":"the prompt"}}
+{"type":"ai-title","aiTitle":"first ai title","sessionId":"s"}
+{"type":"ai-title","aiTitle":"websocket-auth-lifetime-bug","sessionId":"s"}
+"#,
+        );
+        assert_eq!(
+            list(&home, project)[0].title.as_deref(),
+            Some("websocket-auth-lifetime-bug")
+        );
+
+        write_transcript(
+            &home,
+            project,
+            "named",
+            r#"{"type":"user","message":{"content":"the prompt"}}
+{"type":"custom-title","customTitle":"my name","sessionId":"named"}
+{"type":"ai-title","aiTitle":"an ai title","sessionId":"named"}
+"#,
+        );
+        let named = list(&home, project).into_iter().find(|t| t.id == "named").unwrap();
+        assert_eq!(named.title.as_deref(), Some("my name"));
+
+        write_transcript(
+            &home,
+            project,
+            "summarised",
+            r#"{"type":"summary","summary":"the summary"}
+{"type":"user","message":{"content":"the prompt"}}
+"#,
+        );
+        let summarised = list(&home, project).into_iter().find(|t| t.id == "summarised").unwrap();
+        assert_eq!(summarised.title.as_deref(), Some("the summary"));
+    }
+
+    // The name lands near the end of a long file, so the tail is what is read.
+    #[test]
+    fn finds_the_latest_name_at_the_end_of_a_long_transcript() {
+        let home = home("longtail");
+        let project = Path::new("/home/ada/dev/demo");
+        let filler = format!("{{\"type\":\"assistant\",\"pad\":\"{}\"}}\n", "x".repeat(1000));
+        let body = format!(
+            "{{\"type\":\"user\",\"message\":{{\"content\":\"the prompt\"}}}}\n{}{{\"type\":\"ai-title\",\"aiTitle\":\"late name\"}}\n",
+            filler.repeat(200)
+        );
+        write_transcript(&home, project, "s", &body);
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("late name"));
+    }
+
+    // Running a slash command first writes a caveat and the command around
+    // it. The picker shows the command, never the caveat.
+    #[test]
+    fn shows_a_slash_command_by_name_and_never_the_caveat() {
+        let home = home("caveat");
+        let project = Path::new("/home/ada/dev/demo");
+        write_transcript(
+            &home,
+            project,
+            "s",
+            r#"{"type":"user","message":{"content":"<local-command-caveat>Caveat: The messages below were generated by the user while running local commands.</local-command-caveat>"}}
+{"type":"user","message":{"content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}}
+{"type":"user","message":{"content":"<local-command-stdout>(no content)</local-command-stdout>"}}
+{"type":"user","message":{"content":"Review #715"}}
+"#,
+        );
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("/clear"));
+    }
+
+    #[test]
+    fn skips_meta_and_sidechain_entries_and_system_reminders() {
+        let home = home("meta");
+        let project = Path::new("/home/ada/dev/demo");
+        write_transcript(
+            &home,
+            project,
+            "s",
+            r#"{"type":"user","isMeta":true,"message":{"content":"injected context"}}
+{"type":"user","isSidechain":true,"message":{"content":"a subagent's prompt"}}
+{"type":"user","message":{"content":[{"type":"text","text":"<system-reminder>ignored</system-reminder>"},{"type":"text","text":"Can you review #717?"}]}}
+"#,
+        );
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("Can you review #717?"));
     }
 
     // Content has been both a bare string and a list of typed blocks.
