@@ -2,19 +2,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetExits, stash } from "$lib/exits";
 import { DEFAULT, applyLayout, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
 import {
+  MIN_SPLIT,
   activeShell,
   byKey,
   close,
   closeProject,
   create,
   ended,
+  equalize,
   failed,
   follow,
   forProject,
+  groupOf,
+  groupsFor,
   label,
   launch,
   reset,
+  resizeSplit,
   select,
+  share,
+  shownGroup,
+  split,
   started,
   statusMessage,
   terminals,
@@ -65,7 +73,7 @@ beforeEach(() => {
   open();
 });
 
-describe("tabs", () => {
+describe("shells", () => {
   it("numbers shells within their project and never reuses a number", () => {
     const first = create(A);
     const second = create(A);
@@ -78,10 +86,18 @@ describe("tabs", () => {
     expect(label(create(A))).toBe("shell 3");
   });
 
-  it("shows the newest tab", () => {
+  it("shows the newest shell", () => {
     create(A);
     const second = create(A);
     expect(terminals.active).toBe(second.key);
+  });
+
+  it("opens each new shell in a group of its own", () => {
+    const first = create(A);
+    const second = create(A);
+    expect(first.group).not.toBe(second.group);
+    expect(groupsFor(A)).toHaveLength(2);
+    expect(shownGroup()).toBe(second.group);
   });
 
   it("keeps each project's shells apart", () => {
@@ -111,6 +127,95 @@ describe("tabs", () => {
     expect(terminals.active).toBeNull();
     follow(null);
     expect(terminals.active).toBeNull();
+  });
+});
+
+describe("splitting", () => {
+  it("puts the new shell beside the source, in its group, and shows it", () => {
+    const first = create(A);
+    const other = create(A);
+    const beside = split(first.key)!;
+    expect(beside.group).toBe(first.group);
+    expect(groupOf(first.key).map((shell) => shell.key)).toEqual([first.key, beside.key]);
+    expect(groupsFor(A)).toHaveLength(2);
+    expect(terminals.active).toBe(beside.key);
+    expect(shownGroup()).toBe(first.group);
+    expect(groupOf(other.key)).toHaveLength(1);
+  });
+
+  it("splits the source's own width, not the group's", () => {
+    const first = create(A);
+    const second = split(first.key)!;
+    expect(first.weight).toBe(0.5);
+    expect(second.weight).toBe(0.5);
+
+    const third = split(second.key)!;
+    expect(first.weight).toBe(0.5);
+    expect(second.weight).toBe(0.25);
+    expect(third.weight).toBe(0.25);
+  });
+
+  it("keeps a split beside its source, ahead of later siblings", () => {
+    const first = create(A);
+    const second = split(first.key)!;
+    const between = split(first.key)!;
+    expect(groupOf(first.key).map((shell) => shell.key)).toEqual([
+      first.key,
+      between.key,
+      second.key,
+    ]);
+  });
+
+  it("numbers a split like any other shell", () => {
+    const first = create(A);
+    expect(label(split(first.key)!)).toBe("shell 2");
+  });
+
+  it("refuses to split a key that is not there", () => {
+    expect(split("nope")).toBeNull();
+    expect(terminals.all).toHaveLength(0);
+  });
+
+  it("moves the boundary between two shells by pixels", () => {
+    const left = create(A);
+    const right = split(left.key)!;
+    // 1000px across, so a weight of 0.5 is 500px each.
+    resizeSplit(right.key, 100, 1000);
+    expect(left.weight).toBeCloseTo(0.6);
+    expect(right.weight).toBeCloseTo(0.4);
+  });
+
+  it("stops either shell at its minimum width", () => {
+    const left = create(A);
+    const right = split(left.key)!;
+    resizeSplit(right.key, 900, 1000);
+    expect(right.weight * 1000).toBeCloseTo(MIN_SPLIT);
+    resizeSplit(right.key, -900, 1000);
+    expect(left.weight * 1000).toBeCloseTo(MIN_SPLIT);
+  });
+
+  it("does not move the first shell's left edge", () => {
+    const left = create(A);
+    split(left.key);
+    resizeSplit(left.key, 100, 1000);
+    expect(left.weight).toBe(0.5);
+  });
+
+  it("shares the row out in full, whatever the weights add up to", () => {
+    const left = create(A);
+    const right = split(left.key)!;
+    expect(share(left)).toBe(0.5);
+    close(right.key);
+    expect(share(left)).toBe(1);
+  });
+
+  it("makes the group even again", () => {
+    const left = create(A);
+    const right = split(left.key)!;
+    resizeSplit(right.key, 100, 1000);
+    equalize(left.key);
+    expect(left.weight).toBe(1);
+    expect(right.weight).toBe(1);
   });
 });
 
@@ -200,12 +305,40 @@ describe("the exit policy", () => {
     expect(terminals.active).toBeNull();
   });
 
-  it("shows the next tab over when there is one", () => {
+  it("shows the next group over when there is one", () => {
     const first = live(A, "pty-1");
     live(A, "pty-2");
     ended({ id: "pty-2", code: 0, clean: true });
     expect(terminals.active).toBe(first.key);
     expect(terminalVisible()).toBe(true);
+  });
+
+  // Closing one half of a split leaves you in the other half, not in some
+  // other group.
+  it("stays in the group when a split shell goes", () => {
+    const left = live(A, "pty-1");
+    const right = split(left.key)!;
+    started(right.key, "pty-2");
+    live(A, "pty-3");
+    select(right.key);
+    ended({ id: "pty-2", code: 0, clean: true });
+    expect(terminals.active).toBe(left.key);
+    expect(groupOf(left.key)).toHaveLength(1);
+  });
+
+  it("prefers the shell on the left, then the one on the right", () => {
+    const left = live(A, "pty-1");
+    const middle = split(left.key)!;
+    started(middle.key, "pty-2");
+    const right = split(middle.key)!;
+    started(right.key, "pty-3");
+
+    select(middle.key);
+    close(middle.key);
+    expect(terminals.active).toBe(left.key);
+
+    close(left.key);
+    expect(terminals.active).toBe(right.key);
   });
 
   it("leaves the panel alone when the shell was not the one shown", () => {

@@ -30,6 +30,7 @@ function reset() {
   layout.review = DEFAULT.review;
   layout.tree = DEFAULT.tree;
   layout.terminal = DEFAULT.terminal;
+  layout.terminalList = DEFAULT.terminalList;
   layout.sessionsChosen = true;
   layout.changesChosen = true;
   layout.terminalChosen = false;
@@ -458,5 +459,32 @@ describe("the terminal panel", () => {
 
     expect(layout.terminal).toBe(333);
     expect(layout.terminalChosen).toBe(true);
+  });
+});
+
+describe("the terminal list", () => {
+  it("opens at its default beside the shells", () => {
+    applyLayout(1600, 900);
+    expect(layout.terminalList).toBe(DEFAULT.terminalList);
+  });
+
+  it("gives way before the shells do", () => {
+    layout.terminalList = 900;
+    applyLayout(1000, 900);
+    expect(1000 - SPLITTER - layout.terminalList).toBeGreaterThanOrEqual(MIN.shells);
+  });
+
+  it("never drops below its own minimum", () => {
+    layout.terminalList = 10;
+    applyLayout(1600, 900);
+    expect(layout.terminalList).toBe(MIN.terminalList);
+  });
+
+  it("is persisted with the other widths", () => {
+    layout.terminalList = 260;
+    saveLayout();
+    reset();
+    loadLayout();
+    expect(layout.terminalList).toBe(260);
   });
 });

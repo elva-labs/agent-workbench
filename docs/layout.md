@@ -105,12 +105,25 @@ follows the same rules as the side panes:
   itself. The bar between takes the rest.
 
 Each shell belongs to the project it was opened in and starts there, with the
-same environment the agent gets. The panel shows the active project's shells as
-tabs, so switching project switches tabs and kills nothing, and opening the
-panel on a project with no shell starts one. Typing `exit` closes the tab, and
-the last tab of the project you are looking at takes the panel with it. A shell
-that dies any other way keeps its tab, with the exit code, because a tab that
-vanishes on a crash hides the crash.
+same environment the agent gets. A list down the right of the panel names the
+active project's shells, so switching project switches the list and kills
+nothing, and opening the panel on a project with no shell starts one. Typing
+`exit` closes the shell, and the last shell of the project you are looking at
+takes the panel with it. A shell that dies any other way keeps its place, with
+the exit code, because a shell that vanishes on a crash hides the crash.
+
+Shells come in groups, and the panel shows one group at a time. A new shell is
+a group of its own; `split` opens one beside the current shell, in its group,
+taking half of that shell's width and none of its neighbours'. The list shows
+a group as its first shell with the rest indented under it. The bar between
+two halves moves the boundary, never below 200px on either side, and Home
+makes the group even again. Closing one half leaves you in the one beside it.
+Split widths are not persisted: shells do not survive a restart, so neither
+does how they were arranged.
+
+The list itself has a bar too, and its width is remembered with the other
+widths. It gives way before the shells do: below 140px it stops, and the
+shells keep 320px between them.
 
 ## On window resize
 

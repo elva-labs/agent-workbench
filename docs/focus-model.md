@@ -55,6 +55,11 @@ A pane takes focus on `pointerdown` and on `focusin`, never on hover. Hover focu
 in a three-pane layout means typing into whichever pane the mouse drifted over,
 which is how a keystroke ends up in the wrong process.
 
+Focusing a terminal pane by key puts the keyboard in the terminal itself, not
+just the pane: <kbd>Cmd</kbd><kbd>2</kbd> lands in the agent, and
+<kbd>Cmd</kbd><kbd>4</kbd> in whichever shell of the panel was last used. With
+a split on screen, clicking a half or its row in the list is what picks it.
+
 ## What focus looks like
 
 The focused pane draws its border and its title in `--accent`. The status bar

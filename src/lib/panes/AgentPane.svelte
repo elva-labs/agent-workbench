@@ -6,7 +6,7 @@
   import TerminalView from "$lib/components/TerminalView.svelte";
   import { core } from "$lib/core";
   import { agent, applyDetect, detectFailed, unavailableReason } from "$lib/agent.svelte";
-  import { agentVisible } from "$lib/layout.svelte";
+  import { agentVisible, layout } from "$lib/layout.svelte";
   import {
     activeSession,
     create,
@@ -63,6 +63,7 @@
         ptyId={session.ptyId}
         active={session.key === sessions.active}
         shown={agentVisible()}
+        focused={layout.focus === "agent"}
         start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
       />
     {/each}

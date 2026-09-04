@@ -25,11 +25,14 @@
     active: boolean;
     /** Whether the pane holding this terminal is on screen at all. */
     shown?: boolean;
+    /** Whether the keyboard should be here: the pane has focus and this is
+        the terminal it means. */
+    focused?: boolean;
     /** Spawns the process. True once it is up and the row owns it. */
     start: (cols: number, rows: number, onOutput: (bytes: Uint8Array) => void) => Promise<boolean>;
   }
 
-  let { id, ptyId, active, shown = true, start }: Props = $props();
+  let { id, ptyId, active, shown = true, focused = false, start }: Props = $props();
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -138,8 +141,14 @@
     const up = await start(terminal.cols, terminal.rows, (bytes) => queue?.push(bytes));
     if (!up || !terminal) return;
     sent = { cols: terminal.cols, rows: terminal.rows };
-    if (active) terminal.focus();
+    if (focused && active && shown) terminal.focus();
   }
+
+  // Focus by key or by click on the list lands in the terminal itself, so
+  // typing goes where the status bar says it does.
+  $effect(() => {
+    if (focused && active && shown && terminal) untrack(() => terminal!.focus());
+  });
 
   // Live setter: the TUI recolours without a respawn.
   $effect(() => {

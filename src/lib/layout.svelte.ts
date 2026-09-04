@@ -39,6 +39,10 @@ export const MIN = {
   terminal: 120,
   /** What the three panes keep between them when the terminal is open. */
   panes: 240,
+  /** Narrower than this and the terminal list shows dots rather than names. */
+  terminalList: 140,
+  /** What the shells keep beside the list: one usable shell at least. */
+  shells: 320,
 } as const;
 
 /** The review pane holds a tree and the content side by side. */
@@ -50,6 +54,7 @@ export const DEFAULT = {
   tree: 220,
   review: 700,
   terminal: 260,
+  terminalList: 200,
 } as const;
 
 /** Content width below which the sessions pane cannot fit alongside the rest. */
@@ -73,6 +78,7 @@ export const layout = $state({
   review: DEFAULT.review as number,
   tree: DEFAULT.tree as number,
   terminal: DEFAULT.terminal as number,
+  terminalList: DEFAULT.terminalList as number,
   sessionsChosen: true,
   changesChosen: true,
   terminalChosen: false,
@@ -126,6 +132,12 @@ export function applyLayout(width: number, height: number = layout.height) {
     const room = height - SPLITTER - MIN.panes;
     layout.terminal = Math.min(Math.max(layout.terminal, MIN.terminal), room);
   }
+  // Inside the panel, the shells keep their minimum and the list gives way.
+  const listRoom = width - SPLITTER - MIN.shells;
+  layout.terminalList = Math.min(
+    Math.max(layout.terminalList, MIN.terminalList),
+    Math.max(MIN.terminalList, listRoom),
+  );
 
   if (layout.mode === "reviewing") {
     layout.sessionsForced = true;
@@ -250,6 +262,7 @@ export function loadLayout() {
     if (typeof v.review === "number") layout.review = v.review;
     if (typeof v.tree === "number") layout.tree = v.tree;
     if (typeof v.terminal === "number") layout.terminal = v.terminal;
+    if (typeof v.terminalList === "number") layout.terminalList = v.terminalList;
     if (typeof v.reviewTouched === "boolean") layout.reviewTouched = v.reviewTouched;
     if (typeof v.sessionsChosen === "boolean") layout.sessionsChosen = v.sessionsChosen;
     if (typeof v.changesChosen === "boolean") layout.changesChosen = v.changesChosen;
@@ -274,6 +287,7 @@ export function saveLayout() {
         review: layout.review,
         tree: layout.tree,
         terminal: layout.terminal,
+        terminalList: layout.terminalList,
         reviewTouched: layout.reviewTouched,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,
