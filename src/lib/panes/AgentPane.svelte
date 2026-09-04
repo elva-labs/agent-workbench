@@ -67,6 +67,7 @@
         focused={layout.focus === "agent"}
         start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
         onTitle={(title) => titled(session.key, title)}
+        newlineOnShiftEnter
       />
     {/each}
 

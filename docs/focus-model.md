@@ -50,6 +50,11 @@ future binding is additive and a typo is not silently absorbed.
   panes ends where typing resumes. This is the one key whose meaning depends
   on context, which is why `resolveAction` takes the focus state rather than
   leaving each caller to decide: the model stays in one testable place.
+- **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** xterm
+  would send the same carriage return for it as for <kbd>Enter</kbd>, which
+  is a send. The app sends Meta+Enter instead, which Claude Code takes as a
+  newline without any terminal setup on its side. A shell in the panel gets
+  the plain return.
 - **A click in a terminal is the program's.** Links open on
   <kbd>Cmd</kbd>+click (<kbd>Ctrl</kbd> elsewhere), both bare URLs in the
   output and links the program marked up with OSC 8. A plain click is left to

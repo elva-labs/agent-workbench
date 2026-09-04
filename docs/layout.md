@@ -152,6 +152,10 @@ redraw is the obvious consequence of your own action. Two things keep it cheap:
 What cannot be avoided is that scrollback wrapped at the old width stays wrapped
 that way. Every terminal has this.
 
+The process is told one column fewer than the grid has. A glyph can overhang
+its cell to the right, an italic *d* most of all, and the renderer clips at the
+last column; with that column never written to, the overhang always has room.
+
 ## Inside the tree
 
 Folders come before files, then alphabetical. A chain of folders that holds

@@ -47,6 +47,7 @@
       for (const transcript of historyFor(path)) {
         out.push({ id: `past:${transcript.id}`, run: () => resume(path, transcript.id) });
       }
+      if (isReady()) out.push({ id: `new:${path}`, run: () => start(path) });
       if (outsideFor(path).length > 0) {
         out.push({ id: `fold:${path}`, run: () => (unfolded[path] = !unfolded[path]) });
         if (unfolded[path]) {
@@ -55,7 +56,6 @@
           }
         }
       }
-      if (isReady()) out.push({ id: `new:${path}`, run: () => start(path) });
       if (!hook.busy) out.push({ id: `hook:${path}`, run: () => toggle(path) });
     }
     for (const path of notOpen) out.push({ id: `recent:${path}`, run: () => openPath(path) });
@@ -385,10 +385,24 @@
     min-height: 0;
   }
 
-  /* The cursor shows while the keyboard is in the pane, and only then: a
-     highlight that outlives the keyboard would look like a second selection. */
-  .nav:focus-within .cursor {
-    box-shadow: inset 2px 0 0 var(--accent);
+  /* The cursor is a bar at the pane's left edge, clear of any text: every
+     row spans the pane's width, so the bar sits in the same place whatever
+     the row's own indent. It shows while the keyboard is in the pane, and
+     only then: a highlight that outlives the keyboard would look like a
+     second selection. */
+  .cursor {
+    position: relative;
+  }
+
+  .nav:focus-within .cursor::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    bottom: 3px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--accent);
   }
 
   .project,
@@ -517,7 +531,10 @@
 
   .new {
     display: block;
-    margin: 2px 0 10px 26px;
+    width: 100%;
+    text-align: left;
+    margin: 2px 0 10px;
+    padding-left: 26px;
     border: 0;
     background: none;
     font-family: var(--mono);
@@ -540,7 +557,9 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    margin: 0 0 4px 26px;
+    width: 100%;
+    margin: 0 0 4px;
+    padding-left: 26px;
     border: 0;
     background: none;
     font-family: var(--mono);
@@ -574,7 +593,10 @@
 
   .hook {
     display: block;
-    margin: 0 0 10px 26px;
+    width: 100%;
+    text-align: left;
+    margin: 0 0 10px;
+    padding-left: 26px;
     border: 0;
     background: none;
     font-family: var(--mono);

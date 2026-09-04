@@ -169,6 +169,29 @@ describe("SessionsPane", () => {
     expect(layout.focus).toBe("agent");
   });
 
+  // Down goes through the rows in the order the pane shows them: the new
+  // session row sits between the sessions and the fold.
+  it("walks the rows in the order they are shown", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const only = create("/repo");
+    started(only.key, "pty-1", "session-1");
+    fake.transcripts = [{ id: "abc-123", title: "from a terminal", modified: 1000, size: 400 }];
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("new-session")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("outside-session")).toHaveClass("cursor");
+  });
+
   it("starts a new session from the keyboard", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";

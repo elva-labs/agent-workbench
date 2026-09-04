@@ -119,8 +119,10 @@ export function leftmost(): PaneId {
 }
 
 /** Room the macOS window controls take at the top left, in pixels from the
-    window edge. The frame's own padding and the pane border are inside it. */
-export const CONTROLS_INSET = 78;
+    window edge: they start at the header's own padding (frame, border and
+    pane padding: 21), span three 12px buttons 20px apart, and leave the
+    pane's padding again before the title. */
+export const CONTROLS_INSET = 85;
 
 /** The width the changes pane is currently asking for. */
 export function changesWidth() {

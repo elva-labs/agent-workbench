@@ -28,7 +28,7 @@ declare global {
     __fake: {
       writes: string[];
       resizes: { cols: number; rows: number }[];
-      spawns: { agent: string; project: string; session?: string }[];
+      spawns: { agent: string; project: string; session?: string; cols?: number }[];
       killed: string[];
       titles: string[];
       /** Links handed to the system browser. */
@@ -227,6 +227,28 @@ test.describe("one project", () => {
     );
     await expect(rows(page).first()).toContainText("fix-activity-tracking-bugs");
     await expect(rows(page).first()).not.toContainText("session 1");
+  });
+
+  // Enter sends; Shift+Enter is a new line. xterm would send the same bare
+  // carriage return for both, so the app sends Meta+Enter instead.
+  test("sends Shift+Enter as a newline, not a send", async ({ page }) => {
+    await running(page);
+    await page.keyboard.press("Shift+Enter");
+    await expect.poll(() => typed(page)).toContain("\x1b\r");
+    expect(await typed(page)).not.toMatch(/(^|[^\x1b])\r/);
+  });
+
+  // The process is told one column fewer than the grid, so a glyph in the
+  // last written column has room to overhang.
+  test("keeps one column of slack at the right edge", async ({ page }) => {
+    await running(page);
+    const cols = await page.evaluate(
+      () =>
+        (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
+          .__WORKBENCH_TERMINALS__?.["s1"]?.cols,
+    );
+    const spawned = await spawns(page);
+    expect(spawned[0].cols).toBe(cols - 1);
   });
 
   // Cmd+click on a link is the terminal convention; a plain click stays

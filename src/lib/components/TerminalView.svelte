@@ -34,9 +34,31 @@
     start: (cols: number, rows: number, onOutput: (bytes: Uint8Array) => void) => Promise<boolean>;
     /** The process set the terminal's title. */
     onTitle?: (title: string) => void;
+    /** Send Shift+Enter as Meta+Enter, which the agent takes as a newline
+        rather than a send. A shell gets a plain Enter either way. */
+    newlineOnShiftEnter?: boolean;
   }
 
-  let { id, ptyId, active, shown = true, focused = false, start, onTitle }: Props = $props();
+  let {
+    id,
+    ptyId,
+    active,
+    shown = true,
+    focused = false,
+    start,
+    onTitle,
+    newlineOnShiftEnter = false,
+  }: Props = $props();
+
+  /**
+   * The size the process is told, one column short of the grid. A glyph can
+   * overhang its cell to the right, an italic d most of all, and the renderer
+   * clips at the last column; with the last column never written to, there
+   * is always room for the overhang.
+   */
+  function reported(cols: number) {
+    return Math.max(1, cols - 1);
+  }
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -97,6 +119,22 @@
     // model first: anything it claims is refused here and left to bubble to
     // the window handler, and everything else is the agent's, untouched.
     terminal.attachCustomKeyEventHandler((event) => {
+      const shiftEnter =
+        newlineOnShiftEnter &&
+        event.key === "Enter" &&
+        event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey;
+      if (shiftEnter) {
+        // xterm would send a bare carriage return, which is a send. ESC CR is
+        // Meta+Enter to the agent, and Meta+Enter is a newline. Refused on
+        // every phase: the keypress would otherwise send the return itself.
+        if (event.type === "keydown" && ptyId !== null) {
+          core().write(ptyId, "\x1b\r").catch(() => {});
+        }
+        return false;
+      }
       if (event.type !== "keydown") return true;
       return (
         resolveAction(event, {
@@ -152,7 +190,8 @@
       return;
     }
 
-    const { cols, rows } = terminal;
+    const cols = reported(terminal.cols);
+    const rows = terminal.rows;
     if (cols === sent.cols && rows === sent.rows) return;
     sent = { cols, rows };
     if (ptyId !== null) core().resize(ptyId, cols, rows).catch(() => {});
@@ -160,9 +199,9 @@
 
   async function spawn() {
     if (!terminal) return;
-    const up = await start(terminal.cols, terminal.rows, (bytes) => queue?.push(bytes));
+    const up = await start(reported(terminal.cols), terminal.rows, (bytes) => queue?.push(bytes));
     if (!up || !terminal) return;
-    sent = { cols: terminal.cols, rows: terminal.rows };
+    sent = { cols: reported(terminal.cols), rows: terminal.rows };
     if (focused && active && shown) terminal.focus();
   }
 
