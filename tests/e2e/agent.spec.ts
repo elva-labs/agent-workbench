@@ -38,6 +38,8 @@ declare global {
       binary: string | null;
       /** What the core says the agent's working directory is. */
       cwd: string | null;
+      /** The app's handler for files dragged over the window. */
+      drag: ((drag: unknown) => void) | null;
       emit: (ptyId: string, text: string) => void;
       end: (ptyId: string, code: number | null, clean: boolean) => void;
       buffer: () => string;
@@ -74,6 +76,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         failSpawn: failSpawn ?? null,
         binary: binary === undefined ? "/usr/local/bin/claude" : binary,
         cwd: null,
+        drag: null,
         emit(ptyId, text) {
           fake.outputs[ptyId]?.(new TextEncoder().encode(text));
         },
@@ -138,6 +141,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         ptyCwd: async () => fake.cwd,
         onSessionEnded: async (handler: (ended: unknown) => void) => {
           fake.enders.push(handler);
+          return () => {};
+        },
+        onFileDrag: async (handler: (drag: unknown) => void) => {
+          fake.drag = handler;
           return () => {};
         },
 
@@ -214,6 +221,43 @@ test.describe("one project", () => {
     );
     await expect(rows(page).first()).toContainText("fix-activity-tracking-bugs");
     await expect(rows(page).first()).not.toContainText("session 1");
+  });
+
+  // A dropped file is its path, typed where the pointer is. Claude Code reads
+  // a pasted path, and shows an image file as an attachment.
+  test("types the paths of files dropped on it", async ({ page }) => {
+    await running(page);
+    const term = page.locator(`${AGENT} [data-testid='terminal']`);
+    const box = await term.boundingBox();
+    if (!box) throw new Error("no terminal");
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+
+    await page.evaluate(([x, y]) => window.__fake.drag?.({ type: "over", x, y }), [x, y]);
+    await expect(term).toHaveClass(/target/);
+
+    await page.evaluate(
+      ([x, y]) =>
+        window.__fake.drag?.({
+          type: "drop",
+          paths: ["/Users/ada/Screen Shot.png", "/Users/ada/notes.md"],
+          x,
+          y,
+        }),
+      [x, y],
+    );
+    await expect(term).not.toHaveClass(/target/);
+    await expect
+      .poll(() => typed(page))
+      .toContain("/Users/ada/Screen\\ Shot.png /Users/ada/notes.md ");
+  });
+
+  test("takes a drop on the pane's chrome as a drop on the agent", async ({ page }) => {
+    await running(page);
+    await page.evaluate(() =>
+      window.__fake.drag?.({ type: "drop", paths: ["/tmp/x.txt"], x: 2, y: 2 }),
+    );
+    await expect.poll(() => typed(page)).toContain("/tmp/x.txt ");
   });
 
   // The agent moves into a worktree; the changes pane follows, and says so.

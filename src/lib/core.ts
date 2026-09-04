@@ -1,5 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
@@ -102,6 +103,12 @@ export interface SessionEnded {
   clean: boolean;
 }
 
+/** A file drag over the window, in CSS pixels from the webview's top left. */
+export type FileDrag =
+  | { type: "over"; x: number; y: number }
+  | { type: "drop"; paths: string[]; x: number; y: number }
+  | { type: "leave" };
+
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
@@ -117,6 +124,9 @@ export interface Core {
   /** Where the process is working now. Null when the OS will not say. */
   ptyCwd(id: string): Promise<string | null>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
+  /** Files dragged over and dropped on the window. The webview never gets
+      the DOM events for these; the window takes them and reports paths. */
+  onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
 
   /** Sessions already on disk for this project, newest first. */
   transcripts(project: string): Promise<Transcript[]>;
@@ -189,6 +199,22 @@ const tauriCore: Core = {
     return listen<SessionEnded>("session_ended", (event) => handler(event.payload));
   },
 
+  async onFileDrag(handler) {
+    return getCurrentWebview().onDragDropEvent((event) => {
+      const drag = event.payload;
+      if (drag.type === "leave") {
+        handler({ type: "leave" });
+        return;
+      }
+      // Tauri reports physical pixels; the DOM thinks in CSS pixels.
+      const scale = window.devicePixelRatio || 1;
+      const x = drag.position.x / scale;
+      const y = drag.position.y / scale;
+      if (drag.type === "drop") handler({ type: "drop", paths: drag.paths, x, y });
+      else handler({ type: "over", x, y });
+    });
+  },
+
   transcripts: (project) => invoke<Transcript[]>("sessions_list", { project }),
 
   hookStatus: (project) => invoke<HookStatus>("hook_status", { project }),
@@ -231,6 +257,9 @@ const detachedCore: Core = {
     return null;
   },
   async onSessionEnded() {
+    return () => {};
+  },
+  async onFileDrag() {
     return () => {};
   },
   async transcripts() {

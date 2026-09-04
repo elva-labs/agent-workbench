@@ -6,6 +6,7 @@
   import ChangesPane from "$lib/panes/ChangesPane.svelte";
   import TerminalPanel from "$lib/panes/TerminalPanel.svelte";
   import { core } from "$lib/core";
+  import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { BINDINGS, resolveAction } from "$lib/keymap";
   import { cycleTheme, theme } from "$lib/theme.svelte";
@@ -37,17 +38,17 @@
   // Every pty ends through one event, agent or shell. Whichever store has the
   // row takes it; an exit that beat its own spawn result waits to be claimed.
   onMount(() => {
-    let off: (() => void) | null = null;
+    const offs: (() => void)[] = [];
     core()
       .onSessionEnded((event) => {
         if (!sessionEnded(event) && !shellEnded(event)) stash(event);
       })
-      .then((unlisten) => (off = unlisten));
-    const stop = followCwd();
-    return () => {
-      off?.();
-      stop();
-    };
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onFileDrag(handleDrag)
+      .then((unlisten) => offs.push(unlisten));
+    offs.push(followCwd());
+    return () => offs.forEach((off) => off());
   });
 
   let reviewing = $derived(layout.mode === "reviewing");

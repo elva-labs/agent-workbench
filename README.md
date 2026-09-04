@@ -54,6 +54,7 @@ src/lib/workspace.svelte.ts the open projects, the recent list, the picker
 src/lib/sessions.svelte.ts every session this window has, live or finished
 src/lib/terminals.svelte.ts the shells in the terminal panel, per project
 src/lib/exits.ts           exits that arrived before the spawn that owns them
+src/lib/drops.svelte.ts    files dropped on the window, typed into a terminal
 src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
 src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression

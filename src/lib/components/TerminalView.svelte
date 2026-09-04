@@ -5,6 +5,7 @@
   import { WebglAddon } from "@xterm/addon-webgl";
 
   import { core } from "$lib/core";
+  import { drops, register, unregister } from "$lib/drops.svelte";
   import { resolveAction } from "$lib/keymap";
   import { layout } from "$lib/layout.svelte";
   import { WriteQueue, buildTheme, tokenReader } from "$lib/terminal";
@@ -97,6 +98,7 @@
     });
 
     terminal.onTitleChange((title) => onTitle?.(title));
+    register(id, host, terminal);
 
     observer = new ResizeObserver(() => measure());
     observer.observe(host);
@@ -113,6 +115,7 @@
     spawn();
 
     return () => {
+      unregister(id);
       observer?.disconnect();
       queue?.dispose();
       terminal?.dispose();
@@ -178,7 +181,15 @@
   });
 </script>
 
-<div class="term" class:hidden={!active} bind:this={host} data-testid="terminal" data-session={id}></div>
+<div
+  class="term"
+  class:hidden={!active}
+  class:target={drops.over === id}
+  bind:this={host}
+  data-testid="terminal"
+  data-session={id}
+  data-terminal={id}
+></div>
 
 <style>
   .term {
@@ -201,6 +212,11 @@
   .term.hidden {
     visibility: hidden;
     pointer-events: none;
+  }
+
+  /* A file is being dragged over this terminal: the drop will paste here. */
+  .term.target {
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 
   /* xterm sizes its own rows; keep its scrollbar out of the app's chrome. */

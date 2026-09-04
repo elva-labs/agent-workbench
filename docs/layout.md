@@ -216,6 +216,19 @@ Switching to another session switches back. This leans on the agent changing
 its process directory when it enters a worktree; an agent that only tracks
 the directory internally would not be followed.
 
+## Dropping files
+
+A file dropped on the window is its path, typed into the terminal under the
+pointer, spaces and shell characters escaped the way a terminal app does it.
+Dropped anywhere else on the window, it goes to the terminal the keyboard is
+in. Claude Code reads a pasted path and shows an image file as an attachment,
+so a screenshot dragged in arrives the same way it would in a plain terminal.
+
+The webview never sees the drag: Tauri takes it at the window and reports the
+paths with a position, and `src/lib/drops.svelte.ts` finds the terminal at
+that point. The paste is xterm's own, bracketed when the program asked for
+that mode. The terminal under a drag shows an accent inset while it lasts.
+
 ## Past sessions
 
 Under the live sessions sit the ones Claude Code has already had in this

@@ -88,6 +88,10 @@ export async function installFakeCore(
         kill: async () => {},
         ptyCwd: async () => null,
         onSessionEnded: async () => () => {},
+        onFileDrag: async (handler: (drag: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__fileDrag = handler;
+          return () => {};
+        },
 
         transcripts: async () => [],
         hookStatus: async () => ({ installed: false, settings: "", events: "" }),
