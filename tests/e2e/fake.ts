@@ -64,9 +64,9 @@ export async function installFakeCore(
 
       let ptyCount = 0;
       (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
-        detect: async () => ({
-          id: "claude-code",
-          path: "/usr/local/bin/claude",
+        detect: async (agent: string) => ({
+          id: agent,
+          path: agent === "claude-code" ? "/usr/local/bin/claude" : null,
           caps: null,
           fromLoginShell: true,
         }),
@@ -89,12 +89,14 @@ export async function installFakeCore(
         kill: async () => {},
         ptyCwd: async () => null,
         onSessionEnded: async () => () => {},
+        onSessionIdentified: async () => () => {},
         onFileDrag: async (handler: (drag: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__fileDrag = handler;
           return () => {};
         },
 
         transcripts: async () => [],
+        sessionTitle: async () => null,
         hookStatus: async () => ({ installed: false, settings: "", events: "" }),
         hookInstall: async () => ({ installed: true, settings: "", events: "" }),
         hookUninstall: async () => ({ installed: false, settings: "", events: "" }),

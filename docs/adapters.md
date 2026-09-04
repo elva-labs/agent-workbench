@@ -1,0 +1,43 @@
+# Agents
+
+The workbench drives two agents, both full-screen TUIs in a pty: Claude Code and
+Codex CLI. The seam is `src-tauri/src/adapter.rs`, and the differences between
+the two live behind it. Everything above the seam sees a session with an agent
+id, a project, and an id to resume by.
+
+| | Claude Code | Codex CLI |
+| --- | --- | --- |
+| Binary | `claude`, on the login shell's PATH | `codex`, likewise |
+| Start | `claude --session-id <uuid>` | `codex` |
+| Resume | `claude --resume <id>` | `codex resume <id>` |
+| Session id | Chosen by the workbench, known from the first byte | Minted by Codex; the core watches for it |
+| Past sessions | `~/.claude/projects/<mangled path>/*.jsonl`, read in `transcripts.rs` | `~/.codex/state_<n>.sqlite`, the `threads` table, read in `codex.rs` |
+| Session name | The terminal title, stripped of the glyph and the agent's own name | The thread's `name`, else its `title`, else the first prompt, polled from the index |
+
+## Detection
+
+Each agent is looked for once, on the login shell's PATH. A machine with one of
+them shows no sign of the other: one chip fewer, no tags. With both, every
+session row carries a `claude` or `codex` tag and the new-session row carries
+a chip per agent. The lit chip is what Enter starts; it is the agent last
+started in the project, remembered under `workbench.agents`, else the first
+installed. Left and Right move it; a click on a chip starts that agent.
+
+## Ids that the agent mints
+
+Claude Code takes the id it is given, so a running session and the transcript
+it writes are the same thing from the start. Codex mints its own. After
+spawning it the core watches Codex's index for a thread started in the project
+since the spawn, for up to thirty seconds, and reports it with
+`session_identified`. Until then the row has no id: it cannot be resumed and
+is not yet "ours", which only matters if it dies in that window. A Codex row
+also polls the index every couple of seconds for its name, since the name
+lives there rather than in a terminal title.
+
+## What is quarantined
+
+Both indexes are the agents' own and move with their versions. Every line that
+reads one lives in `transcripts.rs` or `codex.rs`, and every failure there is
+an empty answer: a project with no history, never a pane that will not open.
+Codex leaves an old `state_<n>.sqlite` behind when its schema moves; the newest
+is read.

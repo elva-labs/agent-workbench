@@ -56,9 +56,11 @@ pub trait AgentAdapter: Send + Sync {
 
     fn caps(&self) -> Caps;
 
-    // `sessions()` joins the trait in phase 3, when there is a transcript index
-    // to read. A method that can only return an empty list would say less than
-    // its absence does.
+    /// Whether the workbench chooses a fresh session's id. When it does not,
+    /// the agent mints one and the workbench has to find it afterwards.
+    fn mints_id(&self) -> bool {
+        true
+    }
 }
 
 /// Variables that identify the *parent* Claude Code session rather than the
@@ -157,11 +159,68 @@ impl AgentAdapter for ClaudeCode {
     }
 }
 
+/// Codex CLI: a full-screen TUI like Claude Code, run the same way. It
+/// mints its own session ids and resumes by `codex resume <id>`.
+pub struct Codex;
+
+impl Codex {
+    fn command(&self, ctx: &LaunchCtx, args: &[&str]) -> Result<Surface, String> {
+        let binary = self.detect(ctx.env).ok_or_else(|| {
+            "codex was not found on your PATH. Install Codex CLI, or check that it is on \
+             the PATH your login shell sets up."
+                .to_string()
+        })?;
+
+        let mut command = CommandBuilder::new(binary);
+        for arg in args {
+            command.arg(arg);
+        }
+        prepare(&mut command, ctx.project, ctx.env);
+
+        Ok(Surface::Pty(command))
+    }
+}
+
+impl AgentAdapter for Codex {
+    fn id(&self) -> &'static str {
+        "codex"
+    }
+
+    fn detect(&self, vars: &HashMap<String, String>) -> Option<PathBuf> {
+        find_on_path(vars, "codex")
+    }
+
+    fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
+        self.command(ctx, &[])
+    }
+
+    fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
+        self.command(ctx, &["resume", session])
+    }
+
+    fn caps(&self) -> Caps {
+        Caps {
+            resumable: true,
+            titles: true,
+            acp: false,
+        }
+    }
+
+    fn mints_id(&self) -> bool {
+        false
+    }
+}
+
 static CLAUDE_CODE: ClaudeCode = ClaudeCode;
+static CODEX: Codex = Codex;
+
+/// Every agent the workbench knows how to drive, in the order they are offered.
+pub const AGENT_IDS: &[&str] = &["claude-code", "codex"];
 
 pub fn adapter_for(id: &str) -> Option<&'static dyn AgentAdapter> {
     match id {
         "claude-code" => Some(&CLAUDE_CODE),
+        "codex" => Some(&CODEX),
         _ => None,
     }
 }
@@ -190,7 +249,37 @@ mod tests {
     #[test]
     fn resolves_by_id() {
         assert!(adapter_for("claude-code").is_some());
+        assert!(adapter_for("codex").is_some());
         assert!(adapter_for("some-other-agent").is_none());
+        for id in AGENT_IDS {
+            assert_eq!(adapter_for(id).unwrap().id(), *id);
+        }
+    }
+
+    #[test]
+    fn codex_mints_its_own_ids_and_resumes_by_subcommand() {
+        assert!(ClaudeCode.mints_id());
+        assert!(!Codex.mints_id());
+
+        let dir = std::env::temp_dir().join("workbench-adapter-codex");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("codex");
+        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let vars = vars_with_path(&dir);
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+        };
+        let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
+        let argv: Vec<String> = resumed.get_argv().iter().map(|a| a.to_string_lossy().to_string()).collect();
+        assert_eq!(&argv[1..], ["resume", "abc"]);
+        let Surface::Pty(fresh) = Codex.launch(&ctx, "ignored").unwrap();
+        assert_eq!(fresh.get_argv().len(), 1, "no id is handed to codex");
     }
 
     #[test]

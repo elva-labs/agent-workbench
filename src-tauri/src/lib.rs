@@ -16,6 +16,7 @@ mod hook;
 mod project;
 mod pty;
 mod chrome;
+mod codex;
 mod cwd;
 mod shell;
 mod transcripts;
@@ -82,7 +83,20 @@ struct Spawned {
     pty_id: String,
     /// The agent's own id for the conversation, chosen here so the workbench
     /// knows it from the first byte rather than after the transcript lands.
+    /// None for an agent that mints its own: `session_identified` follows
+    /// once the agent has written it down.
+    session_id: Option<String>,
+}
+
+pub const SESSION_IDENTIFIED: &str = "session_identified";
+
+/// An agent that mints its own ids has written one down.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionIdentified {
+    pty_id: String,
     session_id: String,
+    title: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -108,18 +122,61 @@ async fn pty_spawn(
         };
 
         let (surface, session_id) = match session {
-            Some(id) => (adapter.resume(&ctx, &id)?, id),
-            None => {
+            Some(id) => (adapter.resume(&ctx, &id)?, Some(id)),
+            None if adapter.mints_id() => {
                 let id = new_session_id();
-                (adapter.launch(&ctx, &id)?, id)
+                (adapter.launch(&ctx, &id)?, Some(id))
             }
+            None => (adapter.launch(&ctx, "")?, None),
         };
         let Surface::Pty(command) = surface;
 
-        let pty_id = pty::spawn(app, sessions, command, size(cols, rows), on_output)?;
+        let started = now_secs();
+        let pty_id = pty::spawn(app.clone(), sessions, command, size(cols, rows), on_output)?;
+        if session_id.is_none() {
+            identify_later(app, agent, project, started, pty_id.clone());
+        }
         Ok(Spawned { pty_id, session_id })
     })
     .await
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Watches for the id an agent mints for the session just spawned, and says
+/// so once it appears. Codex writes its thread to its index as it starts;
+/// a spawn that never gets that far is simply never identified.
+fn identify_later(app: AppHandle, agent: String, project: PathBuf, started: u64, pty_id: String) {
+    use tauri::Emitter;
+    std::thread::spawn(move || {
+        let Some(home) = home_directory() else { return };
+        let codex_home = codex::home(&home);
+        for _ in 0..60 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if agent != "codex" {
+                return;
+            }
+            // A second of slack: the index's clock and this one need not agree.
+            if let Some((session_id, title)) =
+                codex::started_since(&codex_home, &project, started.saturating_sub(1))
+            {
+                let _ = app.emit(
+                    SESSION_IDENTIFIED,
+                    SessionIdentified {
+                        pty_id,
+                        session_id,
+                        title,
+                    },
+                );
+                return;
+            }
+        }
+    });
 }
 
 /// A version 4 UUID, which is what `claude --session-id` accepts.
@@ -174,11 +231,37 @@ async fn hook_uninstall(project: PathBuf) -> Result<hook::HookStatus, String> {
 
 /// Sessions Claude Code has already had in this project, newest first.
 #[tauri::command]
-async fn sessions_list(project: PathBuf) -> Result<Vec<transcripts::Transcript>, String> {
+async fn sessions_list(
+    project: PathBuf,
+    agent: String,
+) -> Result<Vec<transcripts::Transcript>, String> {
     let Some(home) = home_directory() else {
         return Ok(Vec::new());
     };
-    blocking(move || Ok(transcripts::list(&home, &project))).await
+    blocking(move || {
+        Ok(match agent.as_str() {
+            "claude-code" => transcripts::list(&home, &project),
+            "codex" => codex::list(&codex::home(&home), &project),
+            _ => Vec::new(),
+        })
+    })
+    .await
+}
+
+/// What an agent calls a session now, for agents that keep that in an index
+/// of their own rather than in the terminal title.
+#[tauri::command]
+async fn session_title(agent: String, id: String) -> Result<Option<String>, String> {
+    let Some(home) = home_directory() else {
+        return Ok(None);
+    };
+    blocking(move || {
+        Ok(match agent.as_str() {
+            "codex" => codex::title_of(&codex::home(&home), &id),
+            _ => None,
+        })
+    })
+    .await
 }
 
 fn home_directory() -> Option<PathBuf> {
@@ -288,6 +371,7 @@ pub fn run() {
             agent_detect,
             project_info,
             sessions_list,
+            session_title,
             hook_status,
             hook_install,
             hook_uninstall,

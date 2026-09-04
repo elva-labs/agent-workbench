@@ -1,4 +1,5 @@
-import { core, type SessionEnded, type Transcript } from "$lib/core";
+import { core, type AgentId, type SessionEnded, type Transcript } from "$lib/core";
+import { AGENTS, installed } from "$lib/agent.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 
@@ -23,6 +24,8 @@ export interface Session {
   key: string;
   /** The project this session belongs to, as an absolute path. */
   project: string;
+  /** Which agent is running in it. */
+  agent: AgentId;
   ptyId: string | null;
   status: SessionStatus;
   /** The Claude Code session id. Known from the start when resuming, and from
@@ -50,15 +53,22 @@ export interface Session {
 
 const MINE_KEY = "workbench.mine";
 const NAMES_KEY = "workbench.names";
+const PREFERRED_KEY = "workbench.agents";
+
+/** A past session, and whose it is. */
+export type HistoryEntry = Transcript & { agent: AgentId };
 
 export const sessions = $state({
   all: [] as Session[],
   active: null as string | null,
   /**
-   * Sessions already on disk, by project path. Read from Claude Code's own
-   * transcripts, so this is history rather than anything the window owns.
+   * Sessions already on disk, by project path, from every agent's own index
+   * of them: history rather than anything the window owns.
    */
-  history: {} as Record<string, Transcript[]>,
+  history: {} as Record<string, HistoryEntry[]>,
+  /** The agent last started in each project: what the new-session row
+      offers first. */
+  preferred: {} as Record<string, AgentId>,
   /**
    * Session ids this app has run, by project path. Claude Code keeps every
    * transcript for a directory in one place, whichever terminal it came from;
@@ -74,11 +84,33 @@ export const sessions = $state({
 });
 
 export async function loadHistory(project: string) {
+  const lists = await Promise.all(
+    AGENTS.map((agent) =>
+      core()
+        .transcripts(project, agent)
+        .then((list) => list.map((transcript) => ({ ...transcript, agent })))
+        // No history is a shorter list, never an error.
+        .catch(() => [] as HistoryEntry[]),
+    ),
+  );
+  sessions.history[project] = lists.flat().sort((a, b) => b.modified - a.modified);
+}
+
+/** The agent a new session in the project starts with: the one last started
+    there, else the first one installed. */
+export function defaultAgent(project: string): AgentId {
+  const preferred = sessions.preferred[project];
+  if (preferred !== undefined && installed().includes(preferred)) return preferred;
+  return installed()[0] ?? "claude-code";
+}
+
+function prefer(project: string, agent: AgentId) {
+  if (sessions.preferred[project] === agent) return;
+  sessions.preferred[project] = agent;
   try {
-    sessions.history[project] = await core().transcripts(project);
+    localStorage.setItem(PREFERRED_KEY, JSON.stringify(sessions.preferred));
   } catch {
-    // No history is a shorter list, never an error.
-    sessions.history[project] = [];
+    // Non-fatal: the choice does not survive a restart.
   }
 }
 
@@ -134,6 +166,21 @@ export function loadRemembered() {
   } catch {
     // Nothing is named, then.
   }
+  try {
+    const raw = localStorage.getItem(PREFERRED_KEY);
+    if (raw !== null) {
+      const stored: unknown = JSON.parse(raw);
+      if (typeof stored === "object" && stored !== null) {
+        const preferred: Record<string, AgentId> = {};
+        for (const [project, agent] of Object.entries(stored)) {
+          if (agent === "claude-code" || agent === "codex") preferred[project] = agent;
+        }
+        sessions.preferred = preferred;
+      }
+    }
+  } catch {
+    // No preference, then.
+  }
 }
 
 function rememberName(id: string, name: string) {
@@ -148,7 +195,7 @@ function rememberName(id: string, name: string) {
 
 /** Transcripts not already open as a row: the one a row was resumed from, or
     the one it has been writing since it started, is that row. */
-function closed(project: string): Transcript[] {
+function closed(project: string): HistoryEntry[] {
   const known = sessions.history[project] ?? [];
   const open = new Set(
     forProject(project)
@@ -159,14 +206,18 @@ function closed(project: string): Transcript[] {
 }
 
 /** Past sessions this app ran, ready to resume. */
-export function historyFor(project: string): Transcript[] {
+export function historyFor(project: string): HistoryEntry[] {
   return closed(project).filter((transcript) => isMine(project, transcript.id));
 }
 
-/** Past sessions from outside the app: Claude Code run in a terminal in the
-    same directory. Just as resumable, but not the first thing to show. */
-export function outsideFor(project: string): Transcript[] {
-  return closed(project).filter((transcript) => !isMine(project, transcript.id));
+/** Past sessions from outside the app: an agent run in a terminal in the
+    same directory. Just as resumable, but not the first thing to show. One
+    agent's, or every agent's. */
+export function outsideFor(project: string, agent: AgentId | null = null): HistoryEntry[] {
+  return closed(project).filter(
+    (transcript) =>
+      !isMine(project, transcript.id) && (agent === null || transcript.agent === agent),
+  );
 }
 
 /**
@@ -239,6 +290,28 @@ export function sessionTitle(raw: string): string | null {
   return title;
 }
 
+/**
+ * An agent that mints its own ids has written one down. The row is found
+ * by its pty, since that is all the two sides share until now. The id makes
+ * the session ours, and the name that came with it names the row.
+ */
+export function identified(ptyId: string, sessionId: string, title: string | null) {
+  const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
+  if (session === undefined) return;
+  session.id = sessionId;
+  adopt(session.project, sessionId);
+  if (title !== null) named(session.key, title);
+}
+
+/** The agent's index calls the session this. Taken as it is, unlike a
+    terminal title, which carries the agent's own name around it. */
+export function named(key: string, title: string) {
+  const session = byKey(key);
+  if (session === null || title === "") return;
+  session.title = title;
+  if (session.id !== null) rememberName(session.id, title);
+}
+
 /** The agent set the terminal title: that is what the session is called,
     now and when it is listed as a past session later. */
 export function titled(key: string, raw: string) {
@@ -267,17 +340,29 @@ export async function located(key: string, cwd: string | null) {
 
 const CWD_POLL = 2000;
 
-/** Asks, every couple of seconds, where the active session is working. Cheap:
-    one syscall on the core's side. Returns a stop function. */
+/**
+ * Asks, every couple of seconds, where the active session is working, and
+ * what an agent that names sessions in its own index calls it now. Cheap:
+ * one syscall and at most one small query on the core's side. Returns a
+ * stop function.
+ */
 export function followCwd(): () => void {
   const timer = setInterval(() => {
     const session = activeSession();
     if (session === null || session.ptyId === null || session.status !== "running") return;
-    const { key, ptyId } = session;
+    const { key, ptyId, agent, id } = session;
     core()
       .ptyCwd(ptyId)
       .then((cwd) => located(key, cwd))
       .catch(() => {});
+    if (agent === "codex" && id !== null) {
+      core()
+        .sessionTitle(agent, id)
+        .then((title) => {
+          if (title !== null) named(key, title);
+        })
+        .catch(() => {});
+    }
   }, CWD_POLL);
   return () => clearInterval(timer);
 }
@@ -302,11 +387,17 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * the pane has something to render while it comes up, and so a failure to
  * start has somewhere to be reported.
  */
-export function create(project: string, resumedFrom: string | null = null): Session {
+export function create(
+  project: string,
+  resumedFrom: string | null = null,
+  agent: AgentId = defaultAgent(project),
+): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
+  prefer(project, agent);
   const session: Session = {
     key: `s${++counter}`,
     project,
+    agent,
     ptyId: null,
     status: "starting",
     id: resumedFrom,
@@ -344,7 +435,7 @@ export async function launch(
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
-        agent: "claude-code",
+        agent: session.agent,
         project: session.project,
         session: session.resumedFrom ?? undefined,
         cols,
@@ -369,13 +460,15 @@ export async function launch(
  * The process is up. False when the row is already gone, which is the caller's
  * cue that nothing owns the pty it was just handed.
  */
-export function started(key: string, ptyId: string, sessionId: string): boolean {
+export function started(key: string, ptyId: string, sessionId: string | null): boolean {
   const session = byKey(key);
   if (session === null) return false;
   session.ptyId = ptyId;
-  session.id = sessionId;
   session.status = "running";
-  adopt(session.project, sessionId);
+  if (sessionId !== null) {
+    session.id = sessionId;
+    adopt(session.project, sessionId);
+  }
 
   const early = claim(ptyId);
   if (early !== undefined) ended(early);
@@ -487,6 +580,7 @@ export function reset() {
   sessions.history = {};
   sessions.mine = {};
   sessions.names = {};
+  sessions.preferred = {};
   counter = 0;
   ordinals = {};
   resetExits();

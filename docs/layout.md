@@ -210,6 +210,9 @@ project has: live sessions if any, past ones to resume, and a new-session row.
 What runs is what you asked for. Starting one on every open would pile up
 fresh sessions on every restart, when the one you wanted was in the list.
 
+Which agent a session runs is the row's business: see
+[docs/adapters.md](adapters.md) for the two and how they differ.
+
 ## What a session is called, and where it works
 
 A row is `session N` until the agent says otherwise. Claude Code writes the

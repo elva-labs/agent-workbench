@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agent } from "$lib/agent.svelte";
+import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { stash } from "$lib/exits";
 import {
   activeSession,
@@ -18,7 +18,9 @@ import {
   closeProject,
   create,
   cycle,
+  defaultAgent,
   ended,
+  identified,
   failed,
   forProject,
   isLive,
@@ -55,8 +57,9 @@ vi.mock("$lib/core", () => ({
       const repository = path.endsWith("/inside") ? path.slice(0, -"/inside".length) : path;
       return { path, name: path, repository, isGit: true };
     },
-    transcripts: async () => {
-      historyReads += 1;
+    // Every agent is asked; the count follows one of them.
+    transcripts: async (_project: string, agent: string) => {
+      if (agent === "claude-code") historyReads += 1;
       return [];
     },
   }),
@@ -68,7 +71,8 @@ beforeEach(() => {
   historyReads = 0;
   cwdAnswer = null;
   cwdAsks = 0;
-  agent.availability = "ready";
+  resetAgent();
+  applyDetect({ id: "claude-code", path: "/usr/local/bin/claude", caps: null, fromLoginShell: true }, true);
 });
 
 /** A session that has actually come up, as one does in practice. */
@@ -394,6 +398,7 @@ describe("history", () => {
     title,
     modified,
     size: 100,
+    agent: "claude-code" as const,
   });
 
   it("lists what the core reported for the project, once it is ours", () => {
@@ -495,6 +500,42 @@ describe("ago", () => {
   });
 });
 
+describe("an agent that mints its own id", () => {
+  it("has no id until the core says, then owns it and its name", () => {
+    const session = create(A, null, "codex");
+    expect(started(session.key, "pty-1", null)).toBe(true);
+    expect(session.id).toBeNull();
+    expect(isMine(A, "cx-1")).toBe(false);
+
+    identified("pty-1", "cx-1", "Refactor billing");
+    expect(session.id).toBe("cx-1");
+    expect(isMine(A, "cx-1")).toBe(true);
+    expect(label(session)).toBe("Refactor billing");
+    expect(sessions.names["cx-1"]).toBe("Refactor billing");
+  });
+
+  it("ignores an identification for a pty it does not have", () => {
+    expect(() => identified("pty-9", "cx", null)).not.toThrow();
+  });
+
+  it("starts with the agent last started in the project", () => {
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    expect(defaultAgent(A)).toBe("claude-code");
+    create(A, null, "codex");
+    expect(defaultAgent(A)).toBe("codex");
+    expect(defaultAgent(B)).toBe("claude-code");
+    reset();
+    expect(defaultAgent(A)).toBe("claude-code");
+    loadRemembered();
+    expect(defaultAgent(A)).toBe("codex");
+  });
+
+  it("falls back to an installed agent when the preferred one is gone", () => {
+    create(A, null, "codex");
+    expect(defaultAgent(A)).toBe("claude-code");
+  });
+});
+
 describe("titles", () => {
   it.each([
     ["✳ fix-activity-tracking-bugs", "fix-activity-tracking-bugs"],
@@ -532,7 +573,9 @@ describe("titles", () => {
     const session = live(A, "pty-1");
     titled(session.key, "✳ fix-activity-tracking-bugs");
     close(session.key);
-    sessions.history[A] = [{ id: "session-pty-1", title: "a summary", modified: 1000, size: 1 }];
+    sessions.history[A] = [
+      { id: "session-pty-1", title: "a summary", modified: 1000, size: 1, agent: "claude-code" },
+    ];
     expect(historyLabel(sessions.history[A][0])).toBe("fix-activity-tracking-bugs");
 
     const again = create(A, "session-pty-1");

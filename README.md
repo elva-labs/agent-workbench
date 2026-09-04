@@ -62,11 +62,12 @@ src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalV
 src/lib/panes/             the three panes and the terminal panel
 src-tauri/src/project.rs   what a folder is: name, repository root, is it git
 src-tauri/src/git.rs       status, diffs, content and the file listing
-src-tauri/src/transcripts.rs  past sessions, from filenames and stat data
+src-tauri/src/transcripts.rs  Claude Code's past sessions, from its transcripts
+src-tauri/src/codex.rs     Codex's past sessions, from its SQLite index
 src-tauri/src/watch.rs     noticing the worktree moved, debounced
 src-tauri/src/hook.rs      the optional PostToolUse hook, off by default
 src-tauri/src/env.rs       the login shell environment, and PATH lookup
-src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode
+src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode, Codex
 src-tauri/src/shell.rs     the user's shell, started the way the agent is
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event
 src-tauri/src/cwd.rs       where a process is working, per platform

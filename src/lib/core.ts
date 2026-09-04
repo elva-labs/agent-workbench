@@ -15,6 +15,9 @@ import { openUrl as openWithSystem } from "@tauri-apps/plugin-opener";
  * without emulating Tauri's internals.
  */
 
+/** The agents the core knows how to drive. */
+export type AgentId = "claude-code" | "codex";
+
 export interface DetectReport {
   id: string;
   path: string | null;
@@ -25,7 +28,7 @@ export interface DetectReport {
 }
 
 export interface SpawnOptions {
-  agent: string;
+  agent: AgentId;
   project: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
@@ -34,10 +37,18 @@ export interface SpawnOptions {
 }
 
 /** What starting a session hands back: the pty to talk to, and the session id
-    the agent was told to use, which is what `--resume` takes later. */
+    the agent was told to use, which is what resuming takes later. Null for an
+    agent that mints its own id; `onSessionIdentified` reports it once the
+    agent has written it down. */
 export interface Spawned {
   ptyId: string;
+  sessionId: string | null;
+}
+
+export interface SessionIdentified {
+  ptyId: string;
   sessionId: string;
+  title: string | null;
 }
 
 /** A plain shell for the terminal panel: the user's own, started in the
@@ -127,12 +138,17 @@ export interface Core {
   /** Where the process is working now. Null when the OS will not say. */
   ptyCwd(id: string): Promise<string | null>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
+  /** An agent that mints its own ids has written one down for a session. */
+  onSessionIdentified(handler: (identified: SessionIdentified) => void): Promise<() => void>;
   /** Files dragged over and dropped on the window. The webview never gets
       the DOM events for these; the window takes them and reports paths. */
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
 
-  /** Sessions already on disk for this project, newest first. */
-  transcripts(project: string): Promise<Transcript[]>;
+  /** Sessions the agent already has on disk for this project, newest first. */
+  transcripts(project: string, agent: AgentId): Promise<Transcript[]>;
+  /** What the agent calls a session now, for agents that keep that in an
+      index of their own rather than in the terminal title. */
+  sessionTitle(agent: AgentId, id: string): Promise<string | null>;
 
   hookStatus(project: string): Promise<HookStatus>;
   hookInstall(project: string): Promise<HookStatus>;
@@ -204,6 +220,10 @@ const tauriCore: Core = {
     return listen<SessionEnded>("session_ended", (event) => handler(event.payload));
   },
 
+  async onSessionIdentified(handler) {
+    return listen<SessionIdentified>("session_identified", (event) => handler(event.payload));
+  },
+
   async onFileDrag(handler) {
     return getCurrentWebview().onDragDropEvent((event) => {
       const drag = event.payload;
@@ -220,7 +240,8 @@ const tauriCore: Core = {
     });
   },
 
-  transcripts: (project) => invoke<Transcript[]>("sessions_list", { project }),
+  transcripts: (project, agent) => invoke<Transcript[]>("sessions_list", { project, agent }),
+  sessionTitle: (agent, id) => invoke<string | null>("session_title", { agent, id }),
 
   hookStatus: (project) => invoke<HookStatus>("hook_status", { project }),
   hookInstall: (project) => invoke<HookStatus>("hook_install", { project }),
@@ -265,11 +286,17 @@ const detachedCore: Core = {
   async onSessionEnded() {
     return () => {};
   },
+  async onSessionIdentified() {
+    return () => {};
+  },
   async onFileDrag() {
     return () => {};
   },
   async transcripts() {
     return [];
+  },
+  async sessionTitle() {
+    return null;
   },
   async hookStatus(project) {
     return { installed: false, settings: project, events: "" };

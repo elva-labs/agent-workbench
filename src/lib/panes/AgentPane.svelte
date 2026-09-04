@@ -5,7 +5,14 @@
   import Pane from "$lib/components/Pane.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
   import { core } from "$lib/core";
-  import { agent, applyDetect, detectFailed, unavailableReason } from "$lib/agent.svelte";
+  import {
+    AGENTS,
+    agent,
+    agentLabel,
+    applyDetect,
+    detectFailed,
+    unavailableReason,
+  } from "$lib/agent.svelte";
   import { agentVisible, layout } from "$lib/layout.svelte";
   import {
     activeSession,
@@ -23,16 +30,19 @@
 
   onMount(detect);
 
-  /** Asks the machine whether there is an agent to run. Asked once on open,
-      and again on request: installing claude should not need a restart. */
+  /** Asks the machine which agents there are to run. Asked once on open,
+      and again on request: installing one should not need a restart. */
   function detect() {
-    core()
-      .detect("claude-code")
-      .then((report) =>
-        applyDetect(report, Boolean(window.__WORKBENCH_CORE__ || window.__TAURI_INTERNALS__)),
-      )
-      .catch((error) => detectFailed(String(error)));
+    const hasCore = Boolean(window.__WORKBENCH_CORE__ || window.__TAURI_INTERNALS__);
+    for (const id of AGENTS) {
+      core()
+        .detect(id)
+        .then((report) => applyDetect(report, hasCore))
+        .catch((error) => detectFailed(String(error)));
+    }
   }
+
+  let title = $derived(current === null ? "Agent" : `Agent · ${agentLabel(current.agent)}`);
 
 
   function startAnother() {
@@ -40,7 +50,7 @@
   }
 </script>
 
-<Pane id="agent" title="Agent · Claude Code" meta={statusLabel(current)}>
+<Pane id="agent" {title} meta={statusLabel(current)}>
   <div class="wrap">
     <!-- Every session stays mounted. Only the active one is visible, so its
          PTY keeps its size and coming back to it costs no reflow. -->
@@ -52,7 +62,7 @@
         shown={agentVisible()}
         focused={layout.focus === "agent"}
         start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
-        onTitle={(title) => titled(session.key, title)}
+        onTitle={session.agent === "claude-code" ? (raw) => titled(session.key, raw) : undefined}
         newlineOnShiftEnter
       />
     {/each}

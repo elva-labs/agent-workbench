@@ -20,6 +20,10 @@ interface FakeOptions {
   /** Projects the window opens with. Empty is a first run. */
   open?: string[];
   binary?: string | null;
+  /** Where codex is installed. Absent for a machine without it. */
+  codex?: string | null;
+  /** Past codex sessions the core reports from the start. */
+  codexTranscripts?: { id: string; title: string | null; modified: number; size: number }[];
   failSpawn?: string | null;
 }
 
@@ -38,6 +42,14 @@ declare global {
       enders: ((ended: unknown) => void)[];
       failSpawn: string | null;
       binary: string | null;
+      /** Where codex was found, or null for not installed. */
+      codex: string | null;
+      /** Past codex sessions the core reports for any project. */
+      codexTranscripts: { id: string; title: string | null; modified: number; size: number }[];
+      /** What codex's index calls a session, by id. */
+      codexTitles: Record<string, string>;
+      /** The app's handler for an agent writing down its own session id. */
+      identify: ((identified: unknown) => void) | null;
       /** What the core says the agent's working directory is. */
       cwd: string | null;
       /** The app's handler for files dragged over the window. */
@@ -52,7 +64,7 @@ declare global {
 
 async function installFakeCore(page: Page, options: FakeOptions = {}) {
   await page.addInitScript(
-    ({ open, binary, failSpawn }) => {
+    ({ open, binary, failSpawn, codex, codexTranscripts }) => {
       const read = (term: any) => {
         if (!term) return "";
         const active = term.buffer.active;
@@ -78,6 +90,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         enders: [],
         failSpawn: failSpawn ?? null,
         binary: binary === undefined ? "/usr/local/bin/claude" : binary,
+        codex: codex ?? null,
+        codexTranscripts: codexTranscripts ?? [],
+        codexTitles: {},
+        identify: null,
         cwd: null,
         drag: null,
         emit(ptyId, text) {
@@ -109,9 +125,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
 
       let ptyCount = 0;
       (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
-        detect: async () => ({
-          id: "claude-code",
-          path: fake.binary,
+        detect: async (agent: string) => ({
+          id: agent,
+          path: agent === "codex" ? fake.codex : fake.binary,
           caps: null,
           fromLoginShell: true,
         }),
@@ -133,6 +149,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           const id = `pty-${++ptyCount}`;
           fake.spawns.push(spawnOptions);
           fake.outputs[id] = onOutput;
+          // Codex mints its own id; the app hears it through identify.
+          if (spawnOptions.agent === "codex") {
+            return { ptyId: id, sessionId: spawnOptions.session ?? null };
+          }
           return { ptyId: id, sessionId: spawnOptions.session ?? `session-${ptyCount}` };
         },
         write: async (_id: string, data: string) => {
@@ -149,6 +169,11 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           fake.enders.push(handler);
           return () => {};
         },
+        onSessionIdentified: async (handler: (identified: unknown) => void) => {
+          fake.identify = handler;
+          return () => {};
+        },
+        sessionTitle: async (_agent: string, id: string) => fake.codexTitles[id] ?? null,
         onFileDrag: async (handler: (drag: unknown) => void) => {
           fake.drag = handler;
           return () => {};
@@ -156,7 +181,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
 
         // These tests are about sessions, so the repository is empty. The
         // changes pane still asks, and would break the page if it threw.
-        transcripts: async () => [],
+        transcripts: async (_project: string, agent: string) =>
+          agent === "codex" ? fake.codexTranscripts : [],
         hookStatus: async () => ({ installed: false, settings: "", events: "" }),
         hookInstall: async () => ({ installed: true, settings: "", events: "" }),
         hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
@@ -168,7 +194,13 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         onGitChanged: async () => () => {},
       };
     },
-    { open: options.open ?? [], binary: options.binary, failSpawn: options.failSpawn },
+    {
+      open: options.open ?? [],
+      binary: options.binary,
+      failSpawn: options.failSpawn,
+      codex: options.codex,
+      codexTranscripts: options.codexTranscripts,
+    },
   );
 }
 
@@ -618,10 +650,59 @@ test.describe("several projects", () => {
   });
 });
 
+test.describe("with codex installed too", () => {
+  test.beforeEach(async ({ page }) => {
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
+  });
+
+  test("offers both agents and starts the one you pick", async ({ page }) => {
+    const chips = page.getByTestId("agent-chip");
+    await expect(chips).toHaveCount(2);
+    await chips.nth(1).click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].agent).toBe("codex");
+    await expect(page.getByTestId("agent-tag")).toHaveText("codex");
+    await expect(page.locator(AGENT)).toContainText("Codex");
+  });
+
+  // Codex mints its own id. The core reports it, and the name with it.
+  test("learns a codex session's id and name, and lists it to resume later", async ({ page }) => {
+    await page.getByTestId("agent-chip").nth(1).click();
+    await running(page);
+    await page.evaluate(() => {
+      window.__fake.codexTranscripts = [
+        { id: "cx-1", title: "Refactor billing", modified: 1000, size: 10 },
+      ];
+      window.__fake.identify?.({ ptyId: "pty-1", sessionId: "cx-1", title: "Refactor billing" });
+    });
+    await expect(rows(page).first()).toContainText("Refactor billing");
+
+    await page.evaluate(() => window.__fake.end("pty-1", 0, true));
+    await page.locator("[data-testid='close-session']").first().click();
+    await expect(page.getByTestId("past-session")).toContainText("Refactor billing");
+  });
+
+  test("folds codex sessions from outside apart, and resumes one", async ({ page }) => {
+    await open(page, {
+      open: [ONE],
+      codex: "/usr/local/bin/codex",
+      codexTranscripts: [{ id: "old", title: "Old thread", modified: 900, size: 10 }],
+    });
+    const fold = page.getByTestId("outside-fold");
+    await expect(fold).toHaveText(/1 codex session to resume/);
+    await fold.click();
+    await page.getByTestId("outside-session").click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0]).toMatchObject({ agent: "codex", session: "old" });
+  });
+});
+
 test.describe("when things are missing", () => {
   test("explains a missing binary and starts nothing", async ({ page }) => {
     await open(page, { open: [ONE], binary: null });
-    await expect(page.getByTestId("agent-status")).toContainText("not found on your PATH");
+    await expect(page.getByTestId("agent-status")).toContainText(
+      "Neither claude nor codex was found on your PATH",
+    );
     expect(await spawnCount(page)).toBe(0);
   });
 

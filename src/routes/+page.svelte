@@ -11,7 +11,12 @@
   import { BINDINGS, resolveAction } from "$lib/keymap";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import { closeViewer, files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
-  import { cycle as cycleSession, ended as sessionEnded, followCwd } from "$lib/sessions.svelte";
+  import {
+    cycle as cycleSession,
+    ended as sessionEnded,
+    followCwd,
+    identified,
+  } from "$lib/sessions.svelte";
   import { cycle as cycleShell, ended as shellEnded } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import {
@@ -44,6 +49,9 @@
       .onSessionEnded((event) => {
         if (!sessionEnded(event) && !shellEnded(event)) stash(event);
       })
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onSessionIdentified((event) => identified(event.ptyId, event.sessionId, event.title))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

@@ -1,11 +1,13 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
-  import { isReady } from "$lib/agent.svelte";
+  import { AGENTS, agentTag, installed, isReady } from "$lib/agent.svelte";
+  import type { AgentId } from "$lib/core";
   import {
     ago,
     byKey,
     close as closeSession,
     create,
+    defaultAgent,
     forProject,
     historyFor,
     historyLabel,
@@ -23,8 +25,28 @@
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
 
-  /** Projects whose sessions from outside the app are unfolded. */
+  /** Folds of sessions from outside the app that are open, by project and agent. */
   let unfolded = $state<Record<string, boolean>>({});
+
+  /** With more than one agent to run, every row says which it is, and the
+      new-session row offers the choice. With one, nothing changes. */
+  let several = $derived(installed().length > 1);
+
+  /** The agent chip picked on a project's new-session row, when not the
+      project's default. */
+  let picked = $state<Record<string, AgentId>>({});
+
+  function chip(path: string): AgentId {
+    const choice = picked[path];
+    return choice !== undefined && installed().includes(choice) ? choice : defaultAgent(path);
+  }
+
+  function pickNext(path: string, direction: 1 | -1) {
+    const options = installed();
+    if (options.length < 2) return;
+    const at = options.indexOf(chip(path));
+    picked[path] = options[(at + direction + options.length) % options.length];
+  }
 
   /**
    * Every row the keyboard can land on, in the order the pane shows them.
@@ -46,14 +68,22 @@
       }
       if (workspace.active !== path) continue;
       for (const transcript of historyFor(path)) {
-        out.push({ id: `past:${transcript.id}`, run: () => resume(path, transcript.id) });
+        out.push({
+          id: `past:${transcript.id}`,
+          run: () => resume(path, transcript.id, transcript.agent),
+        });
       }
-      if (isReady()) out.push({ id: `new:${path}`, run: () => start(path) });
-      if (outsideFor(path).length > 0) {
-        out.push({ id: `fold:${path}`, run: () => (unfolded[path] = !unfolded[path]) });
-        if (unfolded[path]) {
-          for (const transcript of outsideFor(path)) {
-            out.push({ id: `outside:${transcript.id}`, run: () => resume(path, transcript.id) });
+      if (isReady()) out.push({ id: `new:${path}`, run: () => start(path, chip(path)) });
+      for (const agent of AGENTS) {
+        if (outsideFor(path, agent).length === 0) continue;
+        const fold = `${path}:${agent}`;
+        out.push({ id: `fold:${fold}`, run: () => (unfolded[fold] = !unfolded[fold]) });
+        if (unfolded[fold]) {
+          for (const transcript of outsideFor(path, agent)) {
+            out.push({
+              id: `outside:${transcript.id}`,
+              run: () => resume(path, transcript.id, transcript.agent),
+            });
           }
         }
       }
@@ -94,13 +124,13 @@
     focusPane("agent");
   }
 
-  function resume(path: string, id: string) {
-    create(path, id);
+  function resume(path: string, id: string, agent: AgentId) {
+    create(path, id, agent);
     focusPane("agent");
   }
 
-  function start(path: string) {
-    create(path);
+  function start(path: string, agent: AgentId) {
+    create(path, null, agent);
     focusPane("agent");
   }
 
@@ -126,6 +156,15 @@
       case "End":
         moveTo(rows.length - 1);
         break;
+      case "ArrowLeft":
+      case "ArrowRight": {
+        // On the new-session row the arrows pick the agent; elsewhere they
+        // are nothing to the pane.
+        const path = current?.startsWith("new:") ? current.slice("new:".length) : null;
+        if (path === null) return;
+        pickNext(path, e.key === "ArrowRight" ? 1 : -1);
+        break;
+      }
       case "Enter":
       case " ":
         if (at === -1) return;
@@ -228,6 +267,7 @@
           <button class="row" tabindex="-1" onclick={() => choose(session.key)} data-testid="session-row">
             <span class="dot" class:live={isLive(session)}></span>
             <span class="label">{label(session)}</span>
+            {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
             <span class="state">{statusLabel(session)}</span>
           </button>
           <button
@@ -246,7 +286,7 @@
             class="row past"
             class:cursor={current === `past:${transcript.id}`}
             tabindex="-1"
-            onclick={() => resume(project.path, transcript.id)}
+            onclick={() => resume(project.path, transcript.id, transcript.agent)}
             disabled={!isReady()}
             title={transcript.title ?? transcript.id}
             data-row="past:{transcript.id}"
@@ -254,56 +294,81 @@
           >
             <span class="dot"></span>
             <span class="label">{historyLabel(transcript)}</span>
+            {#if several}<span class="tag">{agentTag(transcript.agent)}</span>{/if}
             <span class="state">{ago(transcript.modified)}</span>
           </button>
         {/each}
 
-        <button
-          class="new"
+        <!-- With several agents the row carries a chip per agent; the lit
+             one is what Enter starts, a click on a chip starts that one. -->
+        <div
+          class="new-row"
           class:cursor={current === `new:${project.path}`}
-          tabindex="-1"
-          onclick={() => start(project.path)}
-          disabled={!isReady()}
           data-row="new:{project.path}"
-          data-testid="new-session">+ New session</button
         >
-
-        <!-- Claude Code run in a plain terminal here leaves transcripts in
-             the same place. They are resumable, so they are here, folded,
-             rather than mixed in with what this window started. -->
-        {#if outsideFor(project.path).length > 0}
-          {@const outside = outsideFor(project.path)}
           <button
-            class="fold"
-            class:cursor={current === `fold:${project.path}`}
+            class="new"
             tabindex="-1"
-            onclick={() => (unfolded[project.path] = !unfolded[project.path])}
-            aria-expanded={Boolean(unfolded[project.path])}
-            data-row="fold:{project.path}"
-            data-testid="outside-fold"
+            onclick={() => start(project.path, chip(project.path))}
+            disabled={!isReady()}
+            data-testid="new-session">+ New session</button
           >
-            <span class="chevron" class:open={unfolded[project.path]}>▸</span>
-            {outside.length} from outside the workbench
-          </button>
-          {#if unfolded[project.path]}
-            {#each outside as transcript (transcript.id)}
-              <button
-                class="row past outside"
-                class:cursor={current === `outside:${transcript.id}`}
-                tabindex="-1"
-                onclick={() => resume(project.path, transcript.id)}
-                disabled={!isReady()}
-                title={transcript.title ?? transcript.id}
-                data-row="outside:{transcript.id}"
-                data-testid="outside-session"
-              >
-                <span class="dot"></span>
-                <span class="label">{historyLabel(transcript)}</span>
-                <span class="state">{ago(transcript.modified)}</span>
-              </button>
-            {/each}
+          {#if several}
+            <span class="chips" role="group" aria-label="Agent for the new session">
+              {#each installed() as id (id)}
+                <button
+                  class="chip"
+                  class:on={chip(project.path) === id}
+                  tabindex="-1"
+                  onclick={() => start(project.path, id)}
+                  data-testid="agent-chip"
+                  data-agent={id}>{agentTag(id)}</button
+                >
+              {/each}
+            </span>
           {/if}
-        {/if}
+        </div>
+
+        <!-- An agent run in a plain terminal here leaves its sessions in the
+             same place. They are resumable, so they are here, folded by
+             agent, rather than mixed in with what this window started. -->
+        {#each AGENTS as agent (agent)}
+          {@const outside = outsideFor(project.path, agent)}
+          {@const fold = `${project.path}:${agent}`}
+          {#if outside.length > 0}
+            <button
+              class="fold"
+              class:cursor={current === `fold:${fold}`}
+              tabindex="-1"
+              onclick={() => (unfolded[fold] = !unfolded[fold])}
+              aria-expanded={Boolean(unfolded[fold])}
+              data-row="fold:{fold}"
+              data-agent={agent}
+              data-testid="outside-fold"
+            >
+              <span class="chevron" class:open={unfolded[fold]}>▸</span>
+              {outside.length} {agentTag(agent)} {outside.length === 1 ? "session" : "sessions"} to resume
+            </button>
+            {#if unfolded[fold]}
+              {#each outside as transcript (transcript.id)}
+                <button
+                  class="row past outside"
+                  class:cursor={current === `outside:${transcript.id}`}
+                  tabindex="-1"
+                  onclick={() => resume(project.path, transcript.id, transcript.agent)}
+                  disabled={!isReady()}
+                  title={transcript.title ?? transcript.id}
+                  data-row="outside:{transcript.id}"
+                  data-testid="outside-session"
+                >
+                  <span class="dot"></span>
+                  <span class="label">{historyLabel(transcript)}</span>
+                  <span class="state">{ago(transcript.modified)}</span>
+                </button>
+              {/each}
+            {/if}
+          {/if}
+        {/each}
 
         <!-- Off by default: it writes into the project's settings.local.json,
              and the watcher already covers the same ground. What it adds is
@@ -499,6 +564,44 @@
     font-size: 10px;
     color: var(--ink-3);
     flex: none;
+  }
+
+  .tag {
+    flex: none;
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 0 4px;
+    line-height: 1.4;
+  }
+
+  .chips {
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  .chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    padding: 1px 6px;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .chip.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .chip:hover:not(.on) {
+    color: var(--ink-2);
   }
 
   /* A filled dot is a live process; hollow is a row you can still read but

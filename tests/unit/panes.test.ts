@@ -10,6 +10,7 @@ const fake = {
   status: [] as { path: string; status: string; add: number; del: number; binary: boolean }[],
   fileList: [] as string[],
   transcripts: [] as { id: string; title: string | null; modified: number; size: number }[],
+  codexTranscripts: [] as { id: string; title: string | null; modified: number; size: number }[],
   hookInstalled: false,
 };
 
@@ -26,7 +27,8 @@ vi.mock("$lib/core", () => ({
     gitWatch: async () => {},
     onGitChanged: async () => () => {},
     kill: async () => {},
-    transcripts: async () => fake.transcripts,
+    transcripts: async (_project: string, agent: string) =>
+      agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
     hookStatus: async () => ({ installed: fake.hookInstalled, settings: "", events: "" }),
     hookInstall: async () => ({ installed: true, settings: "", events: "" }),
     hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
@@ -35,7 +37,7 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
-import { agent } from "$lib/agent.svelte";
+import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetSessions, create, loadRemembered, started, sessions } from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
 
@@ -70,6 +72,7 @@ beforeEach(() => {
     { path: "src/token_cache.rs", status: "D", add: 0, del: 41, binary: false },
   ];
   fake.transcripts = [];
+  fake.codexTranscripts = [];
   fake.hookInstalled = false;
   resetHook();
   fake.fileList = [
@@ -82,9 +85,8 @@ beforeEach(() => {
     "src/lib.rs",
     "src/main.rs",
   ];
-  agent.availability = "ready";
-  agent.path = "/usr/local/bin/claude";
-  agent.error = null;
+  resetAgent();
+  applyDetect({ id: "claude-code", path: "/usr/local/bin/claude", caps: null, fromLoginShell: true }, true);
 });
 
 const repo = (path: string, name: string, isGit = true) => ({
@@ -148,6 +150,57 @@ describe("SessionsPane", () => {
     expect(screen.getByText("no git")).toBeInTheDocument();
   });
 
+  // With codex installed too, every row says whose it is, the new-session
+  // row offers the choice, and each agent's outside sessions fold apart.
+  it("offers both agents and tells their sessions apart", async () => {
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const mine = create("/repo", null, "claude-code");
+    started(mine.key, "pty-1", "session-1");
+    fake.transcripts = [{ id: "c1", title: "from a terminal", modified: 1000, size: 400 }];
+    fake.codexTranscripts = [{ id: "x1", title: "Refactor billing", modified: 900, size: 400 }];
+
+    render(SessionsPane);
+    expect(screen.getByTestId("agent-tag")).toHaveTextContent("claude");
+    const chips = screen.getAllByTestId("agent-chip");
+    expect(chips.map((chip) => chip.textContent)).toEqual(["claude", "codex"]);
+    expect(chips[0]).toHaveClass("on");
+
+    await waitFor(() => expect(screen.getAllByTestId("outside-fold")).toHaveLength(2));
+    const folds = screen.getAllByTestId("outside-fold");
+    expect(folds[0]).toHaveTextContent("1 claude session to resume");
+    expect(folds[1]).toHaveTextContent("1 codex session to resume");
+
+    await fireEvent.click(chips[1]);
+    expect(sessions.all.at(-1)?.agent).toBe("codex");
+    expect(layout.focus).toBe("agent");
+
+    await fireEvent.click(folds[1]);
+    await fireEvent.click(screen.getByTestId("outside-session"));
+    const resumed = sessions.all.at(-1)!;
+    expect(resumed.agent).toBe("codex");
+    expect(resumed.resumedFrom).toBe("x1");
+    expect(resumed.title).toBeNull();
+  });
+
+  it("picks the agent with the arrows on the new-session row", async () => {
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "ArrowRight" });
+    expect(screen.getAllByTestId("agent-chip")[1]).toHaveClass("on");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(sessions.all[0].agent).toBe("codex");
+    // The choice sticks: the next new session in the project starts there.
+    expect(sessions.preferred["/repo"]).toBe("codex");
+  });
+
   // A session under another project is that project's work: picking it
   // brings the project forward, so the panes show what the session is doing.
   it("brings a session's project forward when the session is picked", async () => {
@@ -202,7 +255,7 @@ describe("SessionsPane", () => {
     await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
 
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("new-session")).toHaveClass("cursor");
+    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
@@ -269,7 +322,7 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
-    expect(screen.getByTestId("outside-fold")).toHaveTextContent("2 from outside");
+    expect(screen.getByTestId("outside-fold")).toHaveTextContent("2 claude sessions to resume");
     expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
     expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument();
 
@@ -332,7 +385,9 @@ describe("SessionsPane", () => {
   it("offers no new session while there is no agent to run", () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
-    agent.availability = "missing";
+    resetAgent();
+    applyDetect({ id: "claude-code", path: null, caps: null, fromLoginShell: true }, true);
+    applyDetect({ id: "codex", path: null, caps: null, fromLoginShell: true }, true);
 
     render(SessionsPane);
     expect(screen.getByTestId("new-session")).toBeDisabled();
