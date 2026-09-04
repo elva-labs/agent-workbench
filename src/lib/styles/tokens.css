@@ -55,6 +55,8 @@
   --line-ui: 1.5;
   --line-term: 1.35;
   --pane-pad: 12px;
+  /* Concentric with the window's own rounded corners, at the frame's padding. */
+  --pane-radius: 6px;
   --splitter-w: 6px;
 }
 

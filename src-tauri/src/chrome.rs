@@ -22,7 +22,7 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
         NSToolbar::alloc(mtm),
         &NSString::from_str("workbench-chrome"),
     );
-    toolbar.setShowsBaselineSeparator(false);
+    // No separator to hide: the title bar is transparent and draws nothing.
     ns_window.setToolbar(Some(&toolbar));
     ns_window.setToolbarStyle(NSWindowToolbarStyle::Unified);
 }
