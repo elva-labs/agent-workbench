@@ -177,7 +177,12 @@ const typed = (page: Page) => page.evaluate(() => window.__fake.writes.join(""))
 const spawns = (page: Page) => page.evaluate(() => window.__fake.spawns);
 const spawnCount = (page: Page) => page.evaluate(() => window.__fake.spawns.length);
 const killed = (page: Page) => page.evaluate(() => window.__fake.killed);
-const running = (page: Page) => expect(page.locator(AGENT)).toContainText("running");
+/** A running session in the project you are looking at, started if there
+    is none: nothing starts by itself any more. */
+const running = async (page: Page) => {
+  if ((await spawnCount(page)) === 0) await page.getByTestId("new-session").click();
+  await expect(page.locator(AGENT)).toContainText("running");
+};
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
 
 async function open(page: Page, options: FakeOptions = {}) {
@@ -205,8 +210,15 @@ test.describe("one project", () => {
   });
 
   // A workbench whose purpose is running an agent opens with one running.
-  test("starts a session by itself", async ({ page }) => {
-    await running(page);
+  // Restarting the app must not pile up fresh sessions: what runs is what
+  // you asked for, resumed from the list or started outright.
+  test("waits to be asked before starting a session", async ({ page }) => {
+    await expect(page.getByTestId("agent-status")).toContainText("Resume a past one");
+    await page.waitForTimeout(300);
+    expect(await spawnCount(page)).toBe(0);
+
+    await page.getByTestId("start-agent").click();
+    await expect(page.locator(AGENT)).toContainText("running");
     await expect(page.getByTestId("agent-status")).toHaveCount(0);
     expect(await spawnCount(page)).toBe(1);
     expect((await spawns(page))[0].project).toBe(ONE);
@@ -546,7 +558,7 @@ test.describe("several projects", () => {
     await open(page, { open: [ONE, TWO] });
   });
 
-  test("opens both and starts a session in the one you are looking at", async ({ page }) => {
+  test("opens both and starts a session only in the one you are looking at", async ({ page }) => {
     await running(page);
     await expect(page.locator(SESSIONS)).toContainText("one");
     await expect(page.locator(SESSIONS)).toContainText("two");
@@ -561,6 +573,7 @@ test.describe("several projects", () => {
     await expect.poll(() => buffer(page)).toContain("work in one");
 
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
+    await page.getByTestId("new-session").click();
     await expect.poll(() => spawnCount(page)).toBe(2);
     expect(await killed(page)).toEqual([]);
 
@@ -579,6 +592,7 @@ test.describe("several projects", () => {
   test("closing a project stops its sessions and keeps the rest", async ({ page }) => {
     await running(page);
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
+    await page.getByTestId("new-session").click();
     await expect.poll(() => spawnCount(page)).toBe(2);
 
     await page.locator("[data-testid='close-project']").first().click();
@@ -590,7 +604,7 @@ test.describe("several projects", () => {
     await running(page);
   });
 
-  test("opens a picked project and starts a session in it", async ({ page }) => {
+  test("opens a picked project and starts a session in it when asked", async ({ page }) => {
     await running(page);
     await page.evaluate(() => {
       window.__fake.picked = "/home/ada/dev/three";
@@ -598,6 +612,7 @@ test.describe("several projects", () => {
 
     await page.getByTestId("open-project").click();
     await expect(page.locator(SESSIONS)).toContainText("three");
+    await page.getByTestId("new-session").click();
     await expect.poll(() => spawnCount(page)).toBe(2);
     expect((await spawns(page)).at(-1)!.project).toBe("/home/ada/dev/three");
   });
@@ -612,6 +627,7 @@ test.describe("when things are missing", () => {
 
   test("reports a spawn that never got started, and does not retry", async ({ page }) => {
     await open(page, { open: [ONE], failSpawn: "no pty available" });
+    await page.getByTestId("new-session").click();
     await expect(page.getByTestId("agent-status")).toContainText("no pty available");
 
     await page.waitForTimeout(400);

@@ -12,7 +12,6 @@
     create,
     launch,
     sessions,
-    shouldAutoStart,
     statusLabel,
     statusMessage,
     titled,
@@ -35,19 +34,6 @@
       .catch((error) => detectFailed(String(error)));
   }
 
-  // Opening a project starts a session in it when it has none. A workbench
-  // whose purpose is running an agent should not open onto a button. What it
-  // must never do is restart one that stopped: that is the respawn loop the
-  // exit policy forbids.
-  $effect(() => {
-    const project = workspace.active;
-    const availability = agent.availability;
-    untrack(() => {
-      if (availability === "ready" && project !== null && shouldAutoStart(project)) {
-        create(project);
-      }
-    });
-  });
 
   function startAnother() {
     if (workspace.active !== null) create(workspace.active);
@@ -84,7 +70,9 @@
       </div>
     {:else if current === null}
       <div class="overlay" data-testid="agent-status">
-        <p class="message">No session open in this project.</p>
+        <p class="message">
+          No session open. Resume a past one from the list, or start a new one.
+        </p>
         <button onclick={startAnother} data-testid="start-agent">New session</button>
       </div>
     {:else if current.status !== "running"}

@@ -3,6 +3,7 @@
   import { isReady } from "$lib/agent.svelte";
   import {
     ago,
+    byKey,
     close as closeSession,
     create,
     forProject,
@@ -83,8 +84,12 @@
     }
   });
 
-  /** Picking a session is wanting to type into it. */
+  /** Picking a session is wanting to type into it, and to see its project:
+      one under another project brings that project forward first. */
   function choose(key: string) {
+    const session = byKey(key);
+    if (session === null) return;
+    if (session.project !== workspace.active) activate(session.project);
     select(key);
     focusPane("agent");
   }

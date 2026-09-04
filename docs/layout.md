@@ -205,9 +205,10 @@ unmounts when it was closed and a second signal would land on an id that may
 since have been reused. On shutdown the PTY master closes with the process and
 the child sees SIGHUP.
 
-Auto-start is narrowed to match: opening a project starts a session when it has
-**none**. A project you return to keeps what it had, and a session that stopped
-stays stopped until you ask for another.
+Nothing starts by itself. Opening a project, or the app, shows what the
+project has: live sessions if any, past ones to resume, and a new-session row.
+What runs is what you asked for. Starting one on every open would pile up
+fresh sessions on every restart, when the one you wanted was in the list.
 
 ## What a session is called, and where it works
 
@@ -215,7 +216,13 @@ A row is `session N` until the agent says otherwise. Claude Code writes the
 session's name into the terminal title, with a status glyph in front and its
 own name around it; the title handler strips both and a title that was only
 ever "Claude Code" is no title. Naming a session inside Claude Code renames
-the row at once.
+the row at once. The name is kept by session id in `localStorage` under
+`workbench.names`, so the past-session list shows the name you knew a session
+by, ahead of any title read from the transcript, and resuming it starts the
+row under that name.
+
+Picking a session that belongs to another project brings that project
+forward: the panes show the project the session is working in.
 
 The changes pane follows the session, not just the project. Every couple of
 seconds the core is asked where the active session's process is working

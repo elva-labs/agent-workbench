@@ -36,7 +36,7 @@ vi.mock("$lib/core", () => ({
 }));
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { agent } from "$lib/agent.svelte";
-import { reset as resetSessions, create, loadMine, started, sessions } from "$lib/sessions.svelte";
+import { reset as resetSessions, create, loadRemembered, started, sessions } from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
 
 beforeEach(() => {
@@ -148,6 +148,24 @@ describe("SessionsPane", () => {
     expect(screen.getByText("no git")).toBeInTheDocument();
   });
 
+  // A session under another project is that project's work: picking it
+  // brings the project forward, so the panes show what the session is doing.
+  it("brings a session's project forward when the session is picked", async () => {
+    workspace.open.push(repo("/one", "one"), repo("/two", "two"));
+    workspace.active = "/one";
+    const mine = create("/one");
+    started(mine.key, "pty-1", "session-1");
+    const theirs = create("/two");
+    started(theirs.key, "pty-2", "session-2");
+    sessions.active = mine.key;
+
+    render(SessionsPane);
+    await fireEvent.click(screen.getAllByTestId("session-row")[1]);
+    expect(workspace.active).toBe("/two");
+    expect(sessions.active).toBe(theirs.key);
+    expect(layout.focus).toBe("agent");
+  });
+
   // Cmd+1, Down, Enter, type: the pane is one tab stop with a cursor in it.
   it("walks the rows with the keyboard and confirms with Enter", async () => {
     workspace.open.push(repo("/repo", "repo"));
@@ -230,7 +248,7 @@ describe("SessionsPane", () => {
       { id: "abc-123", title: "rename the token cache", modified: 1000, size: 400 },
     ];
     localStorage.setItem("workbench.mine", JSON.stringify({ "/repo": ["abc-123"] }));
-    loadMine();
+    loadRemembered();
 
     render(SessionsPane);
     await waitFor(() =>

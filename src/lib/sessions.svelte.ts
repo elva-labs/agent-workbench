@@ -49,6 +49,7 @@ export interface Session {
 }
 
 const MINE_KEY = "workbench.mine";
+const NAMES_KEY = "workbench.names";
 
 export const sessions = $state({
   all: [] as Session[],
@@ -64,6 +65,12 @@ export const sessions = $state({
    * these are the ones that are ours to list first.
    */
   mine: {} as Record<string, string[]>,
+  /**
+   * What the agent called each session, by session id, kept so a past
+   * session is listed under the name you knew it by rather than by a title
+   * read out of the transcript, or by when it last moved.
+   */
+  names: {} as Record<string, string>,
 });
 
 export async function loadHistory(project: string) {
@@ -91,19 +98,51 @@ function adopt(project: string, id: string) {
   }
 }
 
-export function loadMine() {
+/** What is remembered between runs: which sessions are ours, and what they
+    were called. A corrupt entry is not worth a broken pane: it reads as
+    nothing remembered. */
+export function loadRemembered() {
   try {
     const raw = localStorage.getItem(MINE_KEY);
-    if (raw === null) return;
-    const stored: unknown = JSON.parse(raw);
-    if (typeof stored !== "object" || stored === null) return;
-    const mine: Record<string, string[]> = {};
-    for (const [project, ids] of Object.entries(stored)) {
-      if (Array.isArray(ids)) mine[project] = ids.filter((id): id is string => typeof id === "string");
+    if (raw !== null) {
+      const stored: unknown = JSON.parse(raw);
+      if (typeof stored === "object" && stored !== null) {
+        const mine: Record<string, string[]> = {};
+        for (const [project, ids] of Object.entries(stored)) {
+          if (Array.isArray(ids)) {
+            mine[project] = ids.filter((id): id is string => typeof id === "string");
+          }
+        }
+        sessions.mine = mine;
+      }
     }
-    sessions.mine = mine;
   } catch {
-    // A corrupt entry is not worth a broken pane. Nothing is ours, then.
+    // Nothing is ours, then.
+  }
+  try {
+    const raw = localStorage.getItem(NAMES_KEY);
+    if (raw !== null) {
+      const stored: unknown = JSON.parse(raw);
+      if (typeof stored === "object" && stored !== null) {
+        const names: Record<string, string> = {};
+        for (const [id, name] of Object.entries(stored)) {
+          if (typeof name === "string") names[id] = name;
+        }
+        sessions.names = names;
+      }
+    }
+  } catch {
+    // Nothing is named, then.
+  }
+}
+
+function rememberName(id: string, name: string) {
+  if (sessions.names[id] === name) return;
+  sessions.names[id] = name;
+  try {
+    localStorage.setItem(NAMES_KEY, JSON.stringify(sessions.names));
+  } catch {
+    // Non-fatal: the name does not survive a restart.
   }
 }
 
@@ -136,6 +175,8 @@ export function outsideFor(project: string): Transcript[] {
  * moved rather than to an error.
  */
 export function historyLabel(transcript: Transcript): string {
+  const known = sessions.names[transcript.id];
+  if (known !== undefined) return known;
   if (transcript.title !== null && transcript.title !== "") return transcript.title;
   return `session from ${ago(transcript.modified)}`;
 }
@@ -198,11 +239,13 @@ export function sessionTitle(raw: string): string | null {
   return title;
 }
 
-/** The agent set the terminal title: that is what the session is called. */
+/** The agent set the terminal title: that is what the session is called,
+    now and when it is listed as a past session later. */
 export function titled(key: string, raw: string) {
   const session = byKey(key);
   if (session === null) return;
   session.title = sessionTitle(raw);
+  if (session.title !== null && session.id !== null) rememberName(session.id, session.title);
 }
 
 /**
@@ -269,7 +312,8 @@ export function create(project: string, resumedFrom: string | null = null): Sess
     id: resumedFrom,
     resumedFrom,
     ordinal: ordinals[project],
-    title: null,
+    // A resumed session keeps the name it had until the agent says otherwise.
+    title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
     cwd: null,
     worktree: null,
     exitCode: null,
@@ -404,11 +448,6 @@ export function closeProject(project: string) {
  * Only when it has none at all. A project you return to keeps the sessions it
  * had, and a session that stopped stays stopped until you say otherwise.
  */
-export function shouldAutoStart(project: string | null): boolean {
-  if (project === null || !isReady()) return false;
-  return forProject(project).length === 0;
-}
-
 export function statusMessage(session: Session): string {
   switch (session.status) {
     case "starting":
@@ -447,6 +486,7 @@ export function reset() {
   sessions.active = null;
   sessions.history = {};
   sessions.mine = {};
+  sessions.names = {};
   counter = 0;
   ordinals = {};
   resetExits();

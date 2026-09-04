@@ -7,7 +7,7 @@ import {
   historyFor,
   historyLabel,
   isMine,
-  loadMine,
+  loadRemembered,
   located,
   outsideFor,
   followCwd,
@@ -27,7 +27,6 @@ import {
   reset,
   select,
   sessions,
-  shouldAutoStart,
   started,
   statusLabel,
   statusMessage,
@@ -319,45 +318,6 @@ describe("closing", () => {
   });
 });
 
-describe("auto-start", () => {
-  it("starts one for a project that has none", () => {
-    expect(shouldAutoStart(A)).toBe(true);
-  });
-
-  it("does not start a second", () => {
-    create(A);
-    expect(shouldAutoStart(A)).toBe(false);
-  });
-
-  // Coming back to a project you left is the reason its sessions stayed alive.
-  it("does not start one when returning to a project that has some", () => {
-    live(A, "pty-1");
-    expect(shouldAutoStart(A)).toBe(false);
-  });
-
-  // The rule the exit policy turns on: a crash must never become a loop.
-  it("does not restart after a crash", () => {
-    const session = live(A, "pty-1");
-    ended({ id: "pty-1", code: 1, clean: false });
-    expect(session.status).toBe("crashed");
-    expect(shouldAutoStart(A)).toBe(false);
-  });
-
-  it("starts one again once the last row is closed", () => {
-    close(live(A, "pty-1").key);
-    expect(shouldAutoStart(A)).toBe(true);
-  });
-
-  it("starts nothing without a project", () => {
-    expect(shouldAutoStart(null)).toBe(false);
-  });
-
-  it("starts nothing when there is no agent to run", () => {
-    agent.availability = "missing";
-    expect(shouldAutoStart(A)).toBe(false);
-  });
-});
-
 describe("labels", () => {
   it("numbers sessions within their project", () => {
     const first = create(A);
@@ -467,15 +427,15 @@ describe("history", () => {
     started(session.key, "pty-1", "kept");
     reset();
     expect(isMine(A, "kept")).toBe(false);
-    loadMine();
+    loadRemembered();
     expect(isMine(A, "kept")).toBe(true);
   });
 
   it("survives a corrupt record of what is ours", () => {
     localStorage.setItem("workbench.mine", "{not json");
-    expect(() => loadMine()).not.toThrow();
+    expect(() => loadRemembered()).not.toThrow();
     localStorage.setItem("workbench.mine", JSON.stringify({ [A]: ["ok", 7] }));
-    loadMine();
+    loadRemembered();
     expect(isMine(A, "ok")).toBe(true);
   });
 
@@ -564,6 +524,34 @@ describe("titles", () => {
     const session = create(A, "0520dd94-aaaa");
     titled(session.key, "earlier work");
     expect(label(session)).toBe("earlier work");
+  });
+
+  // The name is what you knew the session by. It outlives the process, so a
+  // past session is listed under it, and a resumed one starts out with it.
+  it("keeps the name for the past-session list and for resuming", () => {
+    const session = live(A, "pty-1");
+    titled(session.key, "✳ fix-activity-tracking-bugs");
+    close(session.key);
+    sessions.history[A] = [{ id: "session-pty-1", title: "a summary", modified: 1000, size: 1 }];
+    expect(historyLabel(sessions.history[A][0])).toBe("fix-activity-tracking-bugs");
+
+    const again = create(A, "session-pty-1");
+    expect(label(again)).toBe("fix-activity-tracking-bugs");
+  });
+
+  it("remembers names across a restart", () => {
+    const session = live(A, "pty-1");
+    titled(session.key, "kept name");
+    reset();
+    expect(sessions.names).toEqual({});
+    loadRemembered();
+    expect(sessions.names["session-pty-1"]).toBe("kept name");
+  });
+
+  it("does not remember the agent's own name as a session's", () => {
+    const session = live(A, "pty-1");
+    titled(session.key, "Claude Code");
+    expect(sessions.names).toEqual({});
   });
 });
 
