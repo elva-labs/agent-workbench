@@ -119,10 +119,14 @@ export function leftmost(): PaneId {
 }
 
 /** Room the macOS window controls take at the top left, in pixels from the
-    window edge: they start at the header's own padding (frame, border and
-    pane padding: 21), span three 12px buttons 20px apart, and leave the
-    pane's padding again before the title. */
-export const CONTROLS_INSET = 85;
+    window edge. They sit where macOS puts them, which the app does not try
+    to move: about 12px in, three buttons 20px apart, and the pane's own
+    padding again before the title. */
+export const CONTROLS_INSET = 80;
+
+/** The frame's top padding on macOS: what puts the leftmost header's centre
+    level with the window controls, which sit about 20px from the top. */
+export const MAC_FRAME_TOP = 2;
 
 /** The width the changes pane is currently asking for. */
 export function changesWidth() {

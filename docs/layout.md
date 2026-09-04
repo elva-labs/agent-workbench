@@ -128,12 +128,18 @@ shells keep 320px between them.
 ## The window's own chrome
 
 On macOS the window has no title bar. The frame extends to the top edge
-(`titleBarStyle: Overlay`, `hiddenTitle`), and the traffic lights are placed
-over the header row of whichever pane is at the left edge: sessions normally,
-the agent once that pane is closed or folded, the viewer when reviewing hides
-the agent too. That pane's header takes a left inset (`CONTROLS_INSET`) so its
-title clears them. The pane headers, and the top of the terminal list, are
+(`titleBarStyle: Overlay`, `hiddenTitle`), and the traffic lights sit over the
+header row of whichever pane is at the left edge: sessions normally, the agent
+once that pane is closed or folded, the viewer when reviewing hides the agent
+too. That pane's header takes a left inset (`CONTROLS_INSET`) so its title
+clears them. The pane headers, and the top of the terminal list, are
 `data-tauri-drag-region`: grab one to move the window, double-click to zoom.
+
+The lights stay where macOS puts them. Tauri's `trafficLightPosition` is
+applied once, at creation, and macOS lays the title bar out again on its own
+schedule, so a moved position does not hold; the header is aligned to the
+default instead, by trimming the frame's top padding on macOS
+(`MAC_FRAME_TOP`) until the header's centre is level with the buttons.
 
 Windows and Linux keep the native title bar and their own controls. The overlay
 style and traffic-light fields are ignored there.

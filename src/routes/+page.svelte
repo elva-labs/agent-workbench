@@ -14,8 +14,10 @@
   import { cycle as cycleSession, ended as sessionEnded, followCwd } from "$lib/sessions.svelte";
   import { cycle as cycleShell, ended as shellEnded } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
+  import { isMac } from "$lib/keymap";
   import {
     CONTROLS_INSET,
+    MAC_FRAME_TOP,
     DEFAULT,
     MIN,
     MIN_REVIEW,
@@ -168,7 +170,14 @@
 
 <svelte:window on:keydown={onKeydown} />
 
-<div class="frame" style:--controls-inset="{CONTROLS_INSET}px">
+<!-- On macOS the window controls overlay the top left, and the frame's top
+     padding is what lines the leftmost header up with them. -->
+<div
+  class="frame"
+  class:mac={isMac()}
+  style:--controls-inset="{CONTROLS_INSET}px"
+  style:--mac-frame-top="{MAC_FRAME_TOP}px"
+>
   <div class="stack" bind:clientHeight={stack}>
   <main
     class="shell"
@@ -251,6 +260,10 @@
     height: calc(100vh - 26px);
     padding: var(--frame-pad);
     background: var(--bg);
+  }
+
+  .frame.mac {
+    padding-top: var(--mac-frame-top);
   }
 
   .stack {
