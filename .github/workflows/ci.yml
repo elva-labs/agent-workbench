@@ -129,16 +129,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      # The runner's Evergreen runtime trails the one the tier was seen green
-      # under, and remote debugging is where they differ: on 151 the switch
-      # in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS never reaches the browser
-      # process, while WEBVIEW2_USER_DATA_FOLDER beside it does. Current, it
-      # is the runtime the app ships against anyway.
-      - name: The WebView2 runtime, brought current
-        shell: pwsh
-        run: |
-          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile MicrosoftEdgeWebview2Setup.exe
-          Start-Process .\MicrosoftEdgeWebview2Setup.exe -ArgumentList "/silent","/install" -Wait
       - name: Edge WebDriver matching the WebView2 runtime
         shell: pwsh
         run: |

@@ -204,6 +204,39 @@ async function waitForDebugger(app: Started, port: number, ms: number) {
   );
 }
 
+/** Whether this process runs elevated, at high integrity, which is how a
+    GitHub runner runs a job and how a developer's shell usually does not. */
+function elevated(): boolean {
+  try {
+    // By path: under Git Bash, which is what runs this on CI, a bare
+    // `whoami` is coreutils' and knows no /groups.
+    const whoami = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "whoami.exe");
+    const groups = execFileSync(whoami, ["/groups"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return groups.includes("S-1-16-12288");
+  } catch {
+    return false;
+  }
+}
+
+const POLICY = "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
+
+/** Puts the browser switches where an elevated host will read them.
+
+    Elevated, WebView2 ignores every WEBVIEW2_* variable, with
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS named first, and honours the HKLM
+    policy instead, keyed by the executable's name. Writing HKLM takes the
+    elevation that makes this necessary. Gives back the undo. */
+function policySwitches(exe: string, switches: string): () => void {
+  execFileSync("reg", ["add", POLICY, "/v", exe, "/t", "REG_SZ", "/d", switches, "/f"], { stdio: "ignore" });
+  return () => {
+    try {
+      execFileSync("reg", ["delete", POLICY, "/v", exe, "/f"], { stdio: "ignore" });
+    } catch {
+      // Already gone.
+    }
+  };
+}
+
 /** The whole tree, because the app is the parent of WebView2's own
     processes and killing it alone leaves them holding the profile. */
 function killTree(pid: number | undefined) {
@@ -296,11 +329,15 @@ async function attach(home: string, bin: string): Promise<App> {
   // own, not under the run's temp HOME: WebView2 is particular about where
   // its profile goes, and the runner's temp is on another drive.
   const profile = join(process.env.LOCALAPPDATA ?? tmpdir(), "agent-workbench-driver", basename(home));
+  const switches = `--remote-debugging-port=${debugPort}`;
   const env = {
     ...environment(home, bin),
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: switches,
     WEBVIEW2_USER_DATA_FOLDER: profile,
   };
+  // The variable is enough at standard integrity. Elevated, as on a CI
+  // runner, WebView2 ignores it and reads the machine policy instead.
+  const unsetPolicy = elevated() ? policySwitches(basename(BIN), switches) : () => {};
 
   const edge: ChildProcess = spawn(edgedriver, [`--port=${DRIVER_PORT}`], {
     stdio: ["ignore", "inherit", "inherit"],
@@ -309,6 +346,7 @@ async function attach(home: string, bin: string): Promise<App> {
   const stopAll = async () => {
     killTree(app.child.pid);
     killTree(edge.pid);
+    unsetPolicy();
     await removeProfile(profile);
   };
 

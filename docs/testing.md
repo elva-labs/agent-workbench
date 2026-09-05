@@ -139,6 +139,16 @@ Two things follow from attaching rather than launching, both in
   under the run's temp `HOME`: WebView2 is particular about where its
   profile goes, and on the CI runner the temp directory is on another drive.
 
+- **Elevated, WebView2 ignores every `WEBVIEW2_*` variable**, and Microsoft's
+  security guidance names `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` first; the
+  machine policy under `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2` is
+  what an elevated host reads. A GitHub runner runs its job elevated, which
+  is how the switch went missing from the browser process's command line
+  there while the same environment worked on a developer's machine. So when
+  the harness finds itself at high integrity it writes the switch to that
+  policy, keyed by the executable's name, and removes it after. At standard
+  integrity it never touches the registry.
+
 When the debugger does not come up, the harness says whether the app died,
 with its exit code and everything it printed, or is still running with no
 port open; then whether the port accepts a connection at all, and every
