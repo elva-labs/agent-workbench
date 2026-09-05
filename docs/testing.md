@@ -133,6 +133,15 @@ Two things follow from attaching rather than launching, both in
   reads `HOME` first, so the core is satisfied either way, and moving
   `USERPROFILE` off the real profile stops WebView2 opening its debugging port
   at all. That one fails silently.
+- The webview gets a profile of its own per run, so the tests never touch
+  the real app's and nothing persists between runs. It lives under the real
+  `%LOCALAPPDATA%`, next to where the app would put its own, rather than
+  under the run's temp `HOME`: WebView2 is particular about where its
+  profile goes, and on the CI runner the temp directory is on another drive.
+
+When the debugger does not come up, the harness says whether the app died,
+with its exit code and everything it printed, or is still running with no
+port open. Those are different problems, and the log is all a runner leaves.
 
 CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
 macOS, and the driver tier on Linux and Windows, with the Linux smoke

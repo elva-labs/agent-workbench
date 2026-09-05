@@ -1,8 +1,8 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { Builder, type WebDriver } from "selenium-webdriver";
 
 /**
@@ -155,13 +155,51 @@ async function debuggerUp(port: number): Promise<boolean> {
   }
 }
 
-async function waitForDebugger(port: number, ms: number) {
+/** The app as a process: whether it is still there, and what it said. */
+interface Started {
+  child: ChildProcess;
+  /** Set once the process is gone, however it went. */
+  exited?: { code: number | null; signal: NodeJS.Signals | null };
+  /** Everything it wrote, for the report when it does not come up. */
+  said: string[];
+}
+
+/** Starts the binary, echoing its output through and keeping a copy, so
+    a failure can say whether the app died or is merely silent. */
+function start(env: NodeJS.ProcessEnv): Started {
+  const child = spawn(BIN, [], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const started: Started = { child, said: [] };
+  for (const stream of [child.stdout, child.stderr]) {
+    stream?.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      started.said.push(chunk.toString());
+    });
+  }
+  child.on("error", (error) => started.said.push(`could not start ${BIN}: ${error.message}\n`));
+  child.on("exit", (code, signal) => {
+    started.exited = { code, signal };
+  });
+  return started;
+}
+
+async function waitForDebugger(app: Started, port: number, ms: number) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
+    if (app.exited) break;
     if (await debuggerUp(port)) return;
     await new Promise((r) => setTimeout(r, 200));
   }
-  throw new Error(`the WebView2 debugger never answered on ${port}`);
+  // Whichever it was, say which: an app that died and one that is running
+  // with no port open are different problems, and the log is all a CI
+  // runner leaves behind.
+  const fate = app.exited
+    ? `the app exited with code ${app.exited.code}` + (app.exited.signal ? ` (${app.exited.signal})` : "")
+    : `the app is still running as pid ${app.child.pid} after ${ms}ms`;
+  const output = app.said.join("").trim();
+  throw new Error(
+    `the WebView2 debugger never answered on ${port}: ${fate}.` +
+      (output ? `\nThe app said:\n${output}` : "\nThe app printed nothing."),
+  );
 }
 
 /** The whole tree, because the app is the parent of WebView2's own
@@ -193,21 +231,31 @@ function killTree(pid: number | undefined) {
 async function attach(home: string, bin: string): Promise<App> {
   const edgedriver = process.env.TAURI_NATIVE_DRIVER ?? "msedgedriver";
   const debugPort = await freePort();
+  // A profile of this run's own, so nothing the webview persists leaks
+  // between runs, and so the tests never touch the real app's. It lives
+  // under the real local app data, next to where the app would put its
+  // own, not under the run's temp HOME: WebView2 is particular about where
+  // its profile goes, and the runner's temp is on another drive.
+  const profile = join(process.env.LOCALAPPDATA ?? tmpdir(), "agent-workbench-driver", basename(home));
   const env = {
     ...environment(home, bin),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}`,
-    // Inside this run's HOME, so a run leaves no profile behind.
-    WEBVIEW2_USER_DATA_FOLDER: join(home, "webview2"),
+    WEBVIEW2_USER_DATA_FOLDER: profile,
   };
 
   const edge: ChildProcess = spawn(edgedriver, [`--port=${DRIVER_PORT}`], {
     stdio: ["ignore", "inherit", "inherit"],
   });
-  const app: ChildProcess = spawn(BIN, [], { env, stdio: ["ignore", "inherit", "inherit"] });
+  const app = start(env);
+  const stopAll = () => {
+    killTree(app.child.pid);
+    killTree(edge.pid);
+    rmSync(profile, { recursive: true, force: true });
+  };
 
   try {
     await waitForPort(DRIVER_PORT, 15_000);
-    await waitForDebugger(debugPort, 60_000);
+    await waitForDebugger(app, debugPort, 60_000);
 
     const driver = await new Builder()
       .usingServer(`http://127.0.0.1:${DRIVER_PORT}/`)
@@ -225,13 +273,11 @@ async function attach(home: string, bin: string): Promise<App> {
         // Attached, so quitting the session detaches rather than closing
         // the app: it is ours to stop.
         await driver.quit().catch(() => {});
-        killTree(app.pid);
-        killTree(edge.pid);
+        stopAll();
       },
     };
   } catch (failure) {
-    killTree(app.pid);
-    killTree(edge.pid);
+    stopAll();
     throw failure;
   }
 }
