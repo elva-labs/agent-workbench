@@ -84,7 +84,7 @@ pub fn list(home: &Path, project: &Path) -> Vec<Transcript> {
         })
         .collect();
 
-    transcripts.sort_by(|a, b| b.modified.cmp(&a.modified));
+    transcripts.sort_by_key(|transcript| std::cmp::Reverse(transcript.modified));
     transcripts
 }
 
@@ -148,7 +148,11 @@ fn read_tail(path: &Path) -> Option<String> {
     if start == 0 {
         return Some(text);
     }
-    Some(text.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default())
+    Some(
+        text.split_once('\n')
+            .map(|(_, rest)| rest.to_string())
+            .unwrap_or_default(),
+    )
 }
 
 /// The newest entry of a kind in the tail, and the field it carries. The
@@ -255,7 +259,10 @@ mod tests {
 
     #[test]
     fn mangles_a_path_the_way_claude_code_does() {
-        assert_eq!(mangle(Path::new("/home/ada/dev/demo")), "-home-ada-dev-demo");
+        assert_eq!(
+            mangle(Path::new("/home/ada/dev/demo")),
+            "-home-ada-dev-demo"
+        );
     }
 
     #[test]
@@ -366,7 +373,10 @@ mod tests {
 {"type":"ai-title","aiTitle":"an ai title","sessionId":"named"}
 "#,
         );
-        let named = list(&home, project).into_iter().find(|t| t.id == "named").unwrap();
+        let named = list(&home, project)
+            .into_iter()
+            .find(|t| t.id == "named")
+            .unwrap();
         assert_eq!(named.title.as_deref(), Some("my name"));
 
         write_transcript(
@@ -377,7 +387,10 @@ mod tests {
 {"type":"user","message":{"content":"the prompt"}}
 "#,
         );
-        let summarised = list(&home, project).into_iter().find(|t| t.id == "summarised").unwrap();
+        let summarised = list(&home, project)
+            .into_iter()
+            .find(|t| t.id == "summarised")
+            .unwrap();
         assert_eq!(summarised.title.as_deref(), Some("the summary"));
     }
 
@@ -386,7 +399,10 @@ mod tests {
     fn finds_the_latest_name_at_the_end_of_a_long_transcript() {
         let home = home("longtail");
         let project = Path::new("/home/ada/dev/demo");
-        let filler = format!("{{\"type\":\"assistant\",\"pad\":\"{}\"}}\n", "x".repeat(1000));
+        let filler = format!(
+            "{{\"type\":\"assistant\",\"pad\":\"{}\"}}\n",
+            "x".repeat(1000)
+        );
         let body = format!(
             "{{\"type\":\"user\",\"message\":{{\"content\":\"the prompt\"}}}}\n{}{{\"type\":\"ai-title\",\"aiTitle\":\"late name\"}}\n",
             filler.repeat(200)
@@ -427,7 +443,10 @@ mod tests {
 {"type":"user","message":{"content":[{"type":"text","text":"<system-reminder>ignored</system-reminder>"},{"type":"text","text":"Can you review #717?"}]}}
 "#,
         );
-        assert_eq!(list(&home, project)[0].title.as_deref(), Some("Can you review #717?"));
+        assert_eq!(
+            list(&home, project)[0].title.as_deref(),
+            Some("Can you review #717?")
+        );
     }
 
     // Content has been both a bare string and a list of typed blocks.
@@ -442,7 +461,10 @@ mod tests {
             r#"{"type":"user","message":{"content":[{"type":"text","text":"fix the watcher"}]}}"#,
         );
 
-        assert_eq!(list(&home, project)[0].title.as_deref(), Some("fix the watcher"));
+        assert_eq!(
+            list(&home, project)[0].title.as_deref(),
+            Some("fix the watcher")
+        );
     }
 
     // The whole reason this parsing is quarantined: it can break on any release.
@@ -450,7 +472,12 @@ mod tests {
     fn a_format_it_does_not_recognise_is_a_missing_title_not_an_error() {
         let home = home("unknown");
         let project = Path::new("/home/ada/dev/demo");
-        write_transcript(&home, project, "s", r#"{"v":3,"kind":"turn","body":{"who":"human"}}"#);
+        write_transcript(
+            &home,
+            project,
+            "s",
+            r#"{"v":3,"kind":"turn","body":{"who":"human"}}"#,
+        );
 
         let found = list(&home, project);
         assert_eq!(found.len(), 1, "the session is still listed");
@@ -468,7 +495,10 @@ mod tests {
             "not json at all\n{\"type\":\"user\",\"message\":{\"content\":\"still found\"}}\n",
         );
 
-        assert_eq!(list(&home, project)[0].title.as_deref(), Some("still found"));
+        assert_eq!(
+            list(&home, project)[0].title.as_deref(),
+            Some("still found")
+        );
     }
 
     #[test]
@@ -526,6 +556,9 @@ mod tests {
 "#,
         );
 
-        assert_eq!(list(&home, project)[0].title.as_deref(), Some("the actual request"));
+        assert_eq!(
+            list(&home, project)[0].title.as_deref(),
+            Some("the actual request")
+        );
     }
 }

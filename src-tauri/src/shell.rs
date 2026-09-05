@@ -26,7 +26,11 @@ fn program(vars: &HashMap<String, String>) -> String {
     vars.get("SHELL")
         .filter(|shell| !shell.is_empty())
         .cloned()
-        .or_else(|| std::env::var("SHELL").ok().filter(|shell| !shell.is_empty()))
+        .or_else(|| {
+            std::env::var("SHELL")
+                .ok()
+                .filter(|shell| !shell.is_empty())
+        })
         .unwrap_or_else(|| "/bin/sh".to_string())
 }
 
@@ -35,7 +39,11 @@ fn program(vars: &HashMap<String, String>) -> String {
     vars.get("COMSPEC")
         .filter(|shell| !shell.is_empty())
         .cloned()
-        .or_else(|| std::env::var("COMSPEC").ok().filter(|shell| !shell.is_empty()))
+        .or_else(|| {
+            std::env::var("COMSPEC")
+                .ok()
+                .filter(|shell| !shell.is_empty())
+        })
         .unwrap_or_else(|| "cmd.exe".to_string())
 }
 
@@ -77,8 +85,16 @@ mod tests {
             ("CLAUDE_CODE_SESSION_ID".to_string(), "parent".to_string()),
         ]);
         let command = command(Path::new("/tmp"), &vars);
-        assert_eq!(command.get_cwd().map(|cwd| cwd.to_string_lossy().to_string()), Some("/tmp".to_string()));
-        assert_eq!(command.get_env("NVM_BIN"), Some("/home/ada/.nvm/bin".as_ref()));
+        assert_eq!(
+            command
+                .get_cwd()
+                .map(|cwd| cwd.to_string_lossy().to_string()),
+            Some("/tmp".to_string())
+        );
+        assert_eq!(
+            command.get_env("NVM_BIN"),
+            Some("/home/ada/.nvm/bin".as_ref())
+        );
         assert_eq!(command.get_env("TERM"), Some("xterm-256color".as_ref()));
         assert_eq!(
             command.get_env("CLAUDE_CODE_SESSION_ID"),

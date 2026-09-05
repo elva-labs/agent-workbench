@@ -7,7 +7,7 @@
 //! worth more than being clever.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -142,7 +142,11 @@ fn attach_extra(active: &mut Active, also: Option<PathBuf>) {
     if active.extra.as_ref() == Some(&extra) || !extra.exists() {
         return;
     }
-    if active.watcher.watch(&extra, RecursiveMode::NonRecursive).is_ok() {
+    if active
+        .watcher
+        .watch(&extra, RecursiveMode::NonRecursive)
+        .is_ok()
+    {
         active.extra = Some(extra);
     }
 }
@@ -154,7 +158,12 @@ pub fn unwatch(watchers: &Watchers) {
     }
 }
 
-fn debounce(app: AppHandle, receiver: Receiver<notify::Result<Event>>, root: PathBuf, stop: Arc<Stop>) {
+fn debounce(
+    app: AppHandle,
+    receiver: Receiver<notify::Result<Event>>,
+    root: PathBuf,
+    stop: Arc<Stop>,
+) {
     let ignored = Ignored::for_root(&root);
     loop {
         // Block until something happens, then wait for the burst to finish.
@@ -206,7 +215,9 @@ impl Ignored {
     /// ignored: a spurious refresh is cheap and a missed one is not.
     fn covers(&self, event: &notify::Result<Event>) -> bool {
         let Ok(event) = event else { return false };
-        let Some(repo) = self.repo.as_ref() else { return false };
+        let Some(repo) = self.repo.as_ref() else {
+            return false;
+        };
         !event.paths.is_empty()
             && event.paths.iter().all(|path| {
                 path.strip_prefix(&self.root)

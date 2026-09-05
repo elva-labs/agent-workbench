@@ -10,14 +10,14 @@
 //! blocking pool, and the window stays responsive whatever the shell does.
 
 mod adapter;
+mod chrome;
+mod codex;
+mod cwd;
 mod env;
 mod git;
 mod hook;
 mod project;
 mod pty;
-mod chrome;
-mod codex;
-mod cwd;
 mod shell;
 mod transcripts;
 mod watch;
@@ -30,7 +30,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
-use adapter::{LaunchCtx, Surface, adapter_for};
+use adapter::{adapter_for, LaunchCtx, Surface};
 use pty::Sessions;
 use watch::Watchers;
 

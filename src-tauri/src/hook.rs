@@ -17,7 +17,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
@@ -81,9 +81,9 @@ fn is_ours(entry: &Value, home: &Path) -> bool {
         .get("hooks")
         .and_then(Value::as_array)
         .is_some_and(|hooks| {
-            hooks.iter().any(|hook| {
-                hook.get("command").and_then(Value::as_str) == Some(ours.as_str())
-            })
+            hooks
+                .iter()
+                .any(|hook| hook.get("command").and_then(Value::as_str) == Some(ours.as_str()))
         })
 }
 
@@ -238,7 +238,13 @@ mod tests {
         install(&home, &project).unwrap();
         install(&home, &project).unwrap();
 
-        assert_eq!(settings_of(&project)["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            settings_of(&project)["hooks"]["PostToolUse"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     // Somebody else's settings are not ours to rearrange.
@@ -269,11 +275,17 @@ mod tests {
         .unwrap();
 
         install(&home, &project).unwrap();
-        let entries = settings_of(&project)["hooks"]["PostToolUse"].as_array().unwrap().clone();
+        let entries = settings_of(&project)["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(entries.len(), 2);
 
         uninstall(&home, &project).unwrap();
-        let after = settings_of(&project)["hooks"]["PostToolUse"].as_array().unwrap().clone();
+        let after = settings_of(&project)["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(after.len(), 1);
         assert_eq!(after[0]["hooks"][0]["command"], "echo hi");
     }
@@ -321,7 +333,10 @@ mod tests {
     #[test]
     fn the_events_file_lives_under_the_home_directory() {
         let path = events_path(Path::new("/home/ada"));
-        assert_eq!(path, Path::new("/home/ada/.agent-workbench/last-tool-use.json"));
+        assert_eq!(
+            path,
+            Path::new("/home/ada/.agent-workbench/last-tool-use.json")
+        );
     }
 
     // The watcher can only attach to a file that exists.

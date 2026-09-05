@@ -213,7 +213,9 @@ pub fn diff(root: &Path, file: &str) -> Result<FileDiff, String> {
 
         lines.push(DiffLine {
             kind: kind.to_string(),
-            text: String::from_utf8_lossy(line.content()).trim_end_matches('\n').to_string(),
+            text: String::from_utf8_lossy(line.content())
+                .trim_end_matches('\n')
+                .to_string(),
             old: line.old_lineno(),
             new: line.new_lineno(),
         });

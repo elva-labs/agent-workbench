@@ -93,7 +93,11 @@ fn name_of(name: Option<String>, title: Option<String>, first: Option<String>) -
 /// A thread that started in the project at or after a moment, newest first:
 /// the one a `codex` just spawned there is about to create. Codex mints its
 /// own ids, so this is how the workbench learns the id of what it started.
-pub fn started_since(codex_home: &Path, project: &Path, since: u64) -> Option<(String, Option<String>)> {
+pub fn started_since(
+    codex_home: &Path,
+    project: &Path,
+    since: u64,
+) -> Option<(String, Option<String>)> {
     let connection = open(codex_home)?;
     let cwd = project.to_string_lossy().to_string();
     connection
@@ -130,8 +134,22 @@ mod tests {
         dir
     }
 
+    /// One thread as Codex would record it: id, cwd, name, title, first
+    /// message, created, updated, archived, source.
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        i64,
+        i64,
+        i64,
+        &'a str,
+    );
+
     /// The columns the queries touch, with Codex's own names and types.
-    fn seed(dir: &Path, version: u32, rows: &[(&str, &str, &str, &str, &str, i64, i64, i64, &str)]) {
+    fn seed(dir: &Path, version: u32, rows: &[Row]) {
         let connection = Connection::open(dir.join(format!("state_{version}.sqlite"))).unwrap();
         connection
             .execute_batch(
@@ -169,10 +187,30 @@ mod tests {
             &dir,
             5,
             &[
-                ("a", P, "", "Refactor billing", "refactor the billing module", 10, 20, 0, "cli"),
+                (
+                    "a",
+                    P,
+                    "",
+                    "Refactor billing",
+                    "refactor the billing module",
+                    10,
+                    20,
+                    0,
+                    "cli",
+                ),
                 ("b", P, "given name", "Something", "hello", 11, 30, 0, "cli"),
                 ("c", P, "", "", "just a prompt", 12, 25, 0, "cli"),
-                ("d", "/elsewhere", "", "other project", "x", 13, 40, 0, "cli"),
+                (
+                    "d",
+                    "/elsewhere",
+                    "",
+                    "other project",
+                    "x",
+                    13,
+                    40,
+                    0,
+                    "cli",
+                ),
                 ("e", P, "", "archived", "x", 14, 50, 1, "cli"),
                 ("f", P, "", "exec run", "x", 15, 60, 0, "exec"),
                 ("g", P, "", "", "", 16, 70, 0, "cli"),
@@ -209,7 +247,10 @@ mod tests {
                 ("after", P, "", "", "", 205, 205, 0, "cli"),
             ],
         );
-        assert_eq!(started_since(&dir, Path::new(P), 200), Some(("after".to_string(), None)));
+        assert_eq!(
+            started_since(&dir, Path::new(P), 200),
+            Some(("after".to_string(), None))
+        );
         assert_eq!(started_since(&dir, Path::new(P), 300), None);
         assert_eq!(started_since(&dir, Path::new("/nope"), 0), None);
     }
@@ -228,7 +269,9 @@ mod tests {
     fn a_schema_it_does_not_recognise_is_no_history() {
         let dir = codex_home("schema");
         let connection = Connection::open(dir.join("state_5.sqlite")).unwrap();
-        connection.execute_batch("CREATE TABLE sessions (id TEXT)").unwrap();
+        connection
+            .execute_batch("CREATE TABLE sessions (id TEXT)")
+            .unwrap();
         assert!(list(&dir, Path::new(P)).is_empty());
         assert_eq!(started_since(&dir, Path::new(P), 0), None);
     }

@@ -214,9 +214,6 @@ impl AgentAdapter for Codex {
 static CLAUDE_CODE: ClaudeCode = ClaudeCode;
 static CODEX: Codex = Codex;
 
-/// Every agent the workbench knows how to drive, in the order they are offered.
-pub const AGENT_IDS: &[&str] = &["claude-code", "codex"];
-
 pub fn adapter_for(id: &str) -> Option<&'static dyn AgentAdapter> {
     match id {
         "claude-code" => Some(&CLAUDE_CODE),
@@ -251,8 +248,8 @@ mod tests {
         assert!(adapter_for("claude-code").is_some());
         assert!(adapter_for("codex").is_some());
         assert!(adapter_for("some-other-agent").is_none());
-        for id in AGENT_IDS {
-            assert_eq!(adapter_for(id).unwrap().id(), *id);
+        for id in ["claude-code", "codex"] {
+            assert_eq!(adapter_for(id).unwrap().id(), id);
         }
     }
 
@@ -276,7 +273,11 @@ mod tests {
             env: &vars,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
-        let argv: Vec<String> = resumed.get_argv().iter().map(|a| a.to_string_lossy().to_string()).collect();
+        let argv: Vec<String> = resumed
+            .get_argv()
+            .iter()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
         assert_eq!(&argv[1..], ["resume", "abc"]);
         let Surface::Pty(fresh) = Codex.launch(&ctx, "ignored").unwrap();
         assert_eq!(fresh.get_argv().len(), 1, "no id is handed to codex");
@@ -359,7 +360,10 @@ mod tests {
         let mut vars = vars_with_path(&dir);
         vars.insert("CLAUDE_CODE_CHILD_SESSION".to_string(), "1".to_string());
         vars.insert("CLAUDE_CODE_SESSION_ID".to_string(), "abc".to_string());
-        vars.insert("CLAUDE_CODE_MESSAGING_SOCKET".to_string(), "/tmp/s".to_string());
+        vars.insert(
+            "CLAUDE_CODE_MESSAGING_SOCKET".to_string(),
+            "/tmp/s".to_string(),
+        );
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
@@ -367,7 +371,11 @@ mod tests {
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
         for marker in SESSION_SCOPED {
-            assert_eq!(command.get_env(marker), None, "{marker} should not be inherited");
+            assert_eq!(
+                command.get_env(marker),
+                None,
+                "{marker} should not be inherited"
+            );
         }
     }
 
@@ -384,7 +392,10 @@ mod tests {
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
-        assert_eq!(command.get_env("CLAUDE_CODE_USE_BEDROCK"), Some("1".as_ref()));
+        assert_eq!(
+            command.get_env("CLAUDE_CODE_USE_BEDROCK"),
+            Some("1".as_ref())
+        );
     }
 
     #[test]
@@ -398,6 +409,9 @@ mod tests {
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
-        assert_eq!(command.get_env("NVM_BIN"), Some("/home/ada/.nvm/bin".as_ref()));
+        assert_eq!(
+            command.get_env("NVM_BIN"),
+            Some("/home/ada/.nvm/bin".as_ref())
+        );
     }
 }

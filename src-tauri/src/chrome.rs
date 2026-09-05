@@ -14,7 +14,9 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     use objc2_foundation::NSString;
 
     // The setup hook runs on the main thread, which AppKit insists on.
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     let Ok(ptr) = window.ns_window() else { return };
     // The pointer is the window's NSWindow, alive for as long as the window.
     let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
