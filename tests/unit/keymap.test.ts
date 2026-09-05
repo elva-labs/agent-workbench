@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
-  BINDINGS,
   bindingsFor,
   isMac,
   resolveAction as resolve,
   type KeyContext,
   type KeyState,
 } from "$lib/keymap";
+import { applyPreset, resetKeys, setBinding } from "$lib/keys.svelte";
+
+beforeEach(resetKeys);
 
 const mod = (key: string, extra: Partial<KeyState> = {}): KeyState => ({
   key,
@@ -102,11 +104,32 @@ describe("resolveAction", () => {
   });
 
   it("publishes a binding for every action it resolves", () => {
-    expect(BINDINGS.length).toBeGreaterThan(0);
-    for (const binding of BINDINGS) {
+    const bindings = bindingsFor(true);
+    expect(bindings.length).toBeGreaterThan(0);
+    for (const binding of bindings) {
       expect(binding.keys).not.toBe("");
       expect(binding.does).not.toBe("");
     }
+  });
+
+  it("opens the settings on mod+comma", () => {
+    expect(resolveAction(mod(","))).toEqual({ type: "openSettings" });
+  });
+
+  // The chords are the user's: a preset or a chord of their own is what
+  // resolves, and the status bar follows.
+  it("resolves whatever the keymap says", () => {
+    applyPreset("vim");
+    expect(resolveAction(mod("h"))).toEqual({ type: "focus", pane: "sessions" });
+    expect(resolveAction(mod("l"))).toEqual({ type: "focus", pane: "changes" });
+    expect(resolveAction(mod("j"))).toEqual({ type: "focus", pane: "terminal" });
+    expect(resolveAction(mod("j", { shiftKey: true }))).toEqual({ type: "toggleTerminal" });
+    expect(resolveAction(mod("1"))).toBeNull();
+    expect(bindingsFor(true).map((b) => b.keys)).toContain("⌘⇧J");
+
+    setBinding("review", { key: "g", shift: false, alt: false });
+    expect(resolveAction(mod("g"))).toEqual({ type: "toggleReview" });
+    expect(resolveAction(mod("d"))).toBeNull();
   });
 
   // The status bar shows the keys you actually have.

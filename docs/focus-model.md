@@ -29,8 +29,29 @@ Only <kbd>Cmd</kbd> chords (<kbd>Ctrl</kbd> on Windows and Linux). Nothing else.
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd> | Changed files or all files |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd> | Cycle theme: light, dark, system |
 
+| <kbd>Cmd</kbd><kbd>,</kbd> | Open the settings |
+
 Unbound <kbd>Cmd</kbd> chords are passed through rather than swallowed, so a
 future binding is additive and a typo is not silently absorbed.
+
+## The chords are the user's
+
+The table above is the default preset. Settings, reached from the native menu
+or <kbd>Cmd</kbd><kbd>,</kbd>, holds the whole table: pick a preset, or click
+a chord and press a new one. The one rule that does not move is the modifier:
+every chord carries <kbd>Cmd</kbd> (<kbd>Ctrl</kbd> elsewhere), because the
+keys without it belong to whatever terminal has focus, and <kbd>Ctrl+C</kbd>
+and <kbd>Ctrl+R</kbd> are refused outright since on Windows and Linux they
+are the agent's. A chord another action holds is refused with the name of that
+action, rather than taken from it. The table is kept under `workbench.keys`
+and the status bar spells whatever it holds.
+
+The **Vim** preset lays movement between panes on <kbd>h</kbd>, <kbd>j</kbd>,
+<kbd>k</kbd> and <kbd>l</kbd>, as the panes lie: sessions to the left, changes
+to the right, the terminal below, the agent above it. The terminal panel
+toggles on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>J</kbd>, and sessions step on
+<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The model in
+`src/lib/keys.svelte.ts`; the dialog in `src/lib/components/Settings.svelte`.
 
 ## What the app never claims
 

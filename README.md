@@ -62,6 +62,9 @@ end-to-end tier asserts on geometry rather than state, and
 src/lib/layout.svelte.ts   the two shapes, responsive collapse, persistence
 src/lib/files.svelte.ts    file list, scope, and what the viewer shows
 src/lib/keymap.ts          the focus model as a pure function
+src/lib/keys.svelte.ts     the chords: presets, the user's own, persistence
+src/lib/settings.svelte.ts whether the settings are open
+src/lib/platform.ts        which desktop this is
 src/lib/theme.svelte.ts    light / dark / system
 src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
 src/lib/core.ts            the one seam to Rust: commands, channel, events
@@ -73,7 +76,7 @@ src/lib/drops.svelte.ts    files dropped on the window, typed into a terminal
 src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
 src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
-src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView
+src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView, Settings
 src/lib/panes/             the three panes and the terminal panel
 src-tauri/src/project.rs   what a folder is: name, repository root, is it git
 src-tauri/src/git.rs       status, diffs, content and the file listing
@@ -86,6 +89,7 @@ src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode, Codex
 src-tauri/src/shell.rs     the user's shell, started the way the agent is
 src-tauri/src/pty.rs       sessions, the output channel, and the exit event
 src-tauri/src/cwd.rs       where a process is working, per platform
+src-tauri/src/menu.rs      the native menu, with Settings in it
 src-tauri/src/lib.rs       the commands the webview can call
 ```
 

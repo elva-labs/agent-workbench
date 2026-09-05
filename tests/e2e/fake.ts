@@ -90,6 +90,10 @@ export async function installFakeCore(
         ptyCwd: async () => null,
         onSessionEnded: async () => () => {},
         onSessionIdentified: async () => () => {},
+        onOpenSettings: async (handler: () => void) => {
+          (window as unknown as Record<string, unknown>).__openSettings = handler;
+          return () => {};
+        },
         onFileDrag: async (handler: (drag: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__fileDrag = handler;
           return () => {};

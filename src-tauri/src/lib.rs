@@ -16,6 +16,7 @@ mod cwd;
 mod env;
 mod git;
 mod hook;
+mod menu;
 mod project;
 mod pty;
 mod shell;
@@ -364,6 +365,7 @@ pub fn run() {
         .manage(Arc::new(Sessions::default()))
         .manage(Arc::new(Watchers::default()))
         .setup(|app| {
+            menu::install(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&window);
             }

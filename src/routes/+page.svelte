@@ -5,10 +5,12 @@
   import AgentPane from "$lib/panes/AgentPane.svelte";
   import ChangesPane from "$lib/panes/ChangesPane.svelte";
   import TerminalPanel from "$lib/panes/TerminalPanel.svelte";
+  import Settings from "$lib/components/Settings.svelte";
   import { core } from "$lib/core";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
-  import { BINDINGS, resolveAction } from "$lib/keymap";
+  import { bindingsFor, isMac, resolveAction } from "$lib/keymap";
+  import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import { closeViewer, files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
   import {
@@ -55,6 +57,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onOpenSettings(openSettings)
       .then((unlisten) => offs.push(unlisten));
     offs.push(followCwd());
     return () => offs.forEach((off) => off());
@@ -150,6 +155,9 @@
       case "toggleTerminal":
         toggleTerminal();
         break;
+      case "openSettings":
+        openSettings();
+        break;
       case "cycle":
         // Shells when the keyboard is in the panel, sessions anywhere else,
         // and the keyboard lands in what was switched to.
@@ -241,11 +249,15 @@
   </div>
 </div>
 
+{#if settings.open}
+  <Settings />
+{/if}
+
 <footer class="status no-select">
   <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>
   <span class="mode" data-testid="mode-readout">{layout.mode}</span>
   <span class="spacer"></span>
-  {#each BINDINGS as binding (binding.keys)}
+  {#each bindingsFor(isMac()) as binding (binding.does)}
     <span class="binding" class:minor={binding.minor}>
       <kbd>{binding.keys}</kbd>{binding.does}
     </span>

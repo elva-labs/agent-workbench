@@ -1,4 +1,8 @@
 import type { PaneId } from "$lib/layout.svelte";
+import { actionOf, chordFor, chordFromEvent, describe, type ActionKey } from "$lib/keys.svelte";
+import { isMac } from "$lib/platform";
+
+export { isMac };
 
 /**
  * The focus model, in one place.
@@ -28,6 +32,7 @@ export type Action =
   | { type: "toggleScope" }
   | { type: "toggleTerminal" }
   | { type: "exitReview" }
+  | { type: "openSettings" }
   /** Next or previous session, or shell when the terminal panel has focus. */
   | { type: "cycle"; direction: 1 | -1 };
 
@@ -46,12 +51,6 @@ export interface KeyContext {
   mac?: boolean;
 }
 
-/** Whether this is running on macOS, where Cmd rather than Ctrl is the app key. */
-export function isMac(nav: { platform?: string; userAgent?: string } | undefined = globalThis.navigator): boolean {
-  if (nav === undefined) return false;
-  return /Mac|iPhone|iPad/.test(nav.platform ?? nav.userAgent ?? "");
-}
-
 const DEFAULT_CONTEXT: KeyContext = { focus: "agent", reviewing: false };
 
 /** Panes that hold a pty, whose keys are the process's rather than the app's. */
@@ -59,12 +58,31 @@ function isTerminal(pane: PaneId): boolean {
   return pane === "agent" || pane === "terminal";
 }
 
+/** What each bound action does. The chords come from the keymap the user
+    chose; this is the part that does not change. */
+const ACTION_OF: Record<ActionKey, Action> = {
+  "focus.sessions": { type: "focus", pane: "sessions" },
+  "focus.agent": { type: "focus", pane: "agent" },
+  "focus.changes": { type: "focus", pane: "changes" },
+  "focus.terminal": { type: "focus", pane: "terminal" },
+  "toggle.sessions": { type: "toggle", pane: "sessions" },
+  "toggle.changes": { type: "toggle", pane: "changes" },
+  "toggle.terminal": { type: "toggleTerminal" },
+  "session.next": { type: "cycle", direction: 1 },
+  "session.previous": { type: "cycle", direction: -1 },
+  review: { type: "toggleReview" },
+  view: { type: "toggleView" },
+  scope: { type: "toggleScope" },
+  theme: { type: "cycleTheme" },
+  settings: { type: "openSettings" },
+};
+
 /** Returns the chrome action for a key event, or null to pass it to the pane. */
 export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): Action | null {
   const mac = ctx.mac ?? isMac();
-  const mod = Boolean(mac ? e.metaKey : e.ctrlKey);
+  const chord = chordFromEvent(e, mac);
 
-  if (!mod) {
+  if (chord === null) {
     // Escape belongs to the agent whenever the agent has it. A pane that owns
     // focus may use it: the viewer closes on it, and a list pane hands the
     // keyboard back to the agent, so a look at the side panes ends where
@@ -75,43 +93,8 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
     return null;
   }
 
-  if (e.shiftKey) {
-    switch (e.key.toLowerCase()) {
-      case "t":
-        return { type: "cycleTheme" };
-      case "a":
-        return { type: "toggleScope" };
-      case "arrowdown":
-        return { type: "cycle", direction: 1 };
-      case "arrowup":
-        return { type: "cycle", direction: -1 };
-      default:
-        return null;
-    }
-  }
-
-  switch (e.key.toLowerCase()) {
-    case "1":
-      return { type: "focus", pane: "sessions" };
-    case "2":
-      return { type: "focus", pane: "agent" };
-    case "3":
-      return { type: "focus", pane: "changes" };
-    case "4":
-      return { type: "focus", pane: "terminal" };
-    case "j":
-      return { type: "toggleTerminal" };
-    case "b":
-      return { type: "toggle", pane: "sessions" };
-    case "\\":
-      return { type: "toggle", pane: "changes" };
-    case "d":
-      return { type: "toggleReview" };
-    case "e":
-      return { type: "toggleView" };
-    default:
-      return null;
-  }
+  const action = actionOf(chord);
+  return action === null ? null : ACTION_OF[action];
 }
 
 export interface Binding {
@@ -121,23 +104,25 @@ export interface Binding {
 }
 
 /**
- * Human-readable bindings for the status bar, in the platform's own glyphs.
- * `minor` ones are dropped first when the window is too narrow to show them
- * all.
+ * Human-readable bindings for the status bar, in the platform's own glyphs
+ * and from the keymap as it is now. `minor` ones are dropped first when the
+ * window is too narrow to show them all.
  */
 export function bindingsFor(mac: boolean): Binding[] {
-  const m = mac ? "⌘" : "Ctrl+";
-  const shift = mac ? "⇧⌘" : "Ctrl+Shift+";
+  const d = (action: ActionKey) => describe(chordFor(action), mac);
   return [
-    { keys: `${m}1 ${m}2 ${m}3 ${m}4`, does: "focus", minor: true },
-    { keys: `${m}B`, does: "sessions", minor: true },
-    { keys: `${m}\\`, does: "changes", minor: true },
-    { keys: `${m}J`, does: "terminal" },
-    { keys: `${shift}↑↓`, does: "switch session" },
-    { keys: `${m}D`, does: "review" },
-    { keys: `${m}E`, does: "diff/content" },
-    { keys: `${shift}A`, does: "scope", minor: true },
+    {
+      keys: `${d("focus.sessions")} ${d("focus.agent")} ${d("focus.changes")} ${d("focus.terminal")}`,
+      does: "focus",
+      minor: true,
+    },
+    { keys: d("toggle.sessions"), does: "sessions", minor: true },
+    { keys: d("toggle.changes"), does: "changes", minor: true },
+    { keys: d("toggle.terminal"), does: "terminal" },
+    { keys: `${d("session.next")} ${d("session.previous")}`, does: "switch session" },
+    { keys: d("review"), does: "review" },
+    { keys: d("view"), does: "diff/content" },
+    { keys: d("scope"), does: "scope", minor: true },
+    { keys: d("settings"), does: "settings", minor: true },
   ];
 }
-
-export const BINDINGS: Binding[] = bindingsFor(isMac());

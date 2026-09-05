@@ -143,6 +143,8 @@ export interface Core {
   /** Files dragged over and dropped on the window. The webview never gets
       the DOM events for these; the window takes them and reports paths. */
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
+  /** Settings was chosen from the native menu. */
+  onOpenSettings(handler: () => void): Promise<() => void>;
 
   /** Sessions the agent already has on disk for this project, newest first. */
   transcripts(project: string, agent: AgentId): Promise<Transcript[]>;
@@ -224,6 +226,10 @@ const tauriCore: Core = {
     return listen<SessionIdentified>("session_identified", (event) => handler(event.payload));
   },
 
+  async onOpenSettings(handler) {
+    return listen("open_settings", () => handler());
+  },
+
   async onFileDrag(handler) {
     return getCurrentWebview().onDragDropEvent((event) => {
       const drag = event.payload;
@@ -290,6 +296,9 @@ const detachedCore: Core = {
     return () => {};
   },
   async onFileDrag() {
+    return () => {};
+  },
+  async onOpenSettings() {
     return () => {};
   },
   async transcripts() {

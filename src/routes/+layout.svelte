@@ -10,6 +10,7 @@
 
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
+  import { loadKeys } from "$lib/keys.svelte";
   import { loadLayout } from "$lib/layout.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { restore } from "$lib/workspace.svelte";
@@ -18,6 +19,7 @@
 
   onMount(() => {
     loadTheme();
+    loadKeys();
     loadLayout();
     loadRemembered();
     restore();

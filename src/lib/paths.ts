@@ -7,13 +7,11 @@
  * distinction is made once.
  */
 
-const SEPARATORS = /[\\/]/;
+import { isWindows } from "$lib/platform";
 
-/** Whether this is running on Windows, where paths have backslashes and a
-    drive, and a shell quotes rather than escapes. */
-export function isWindows(nav: { platform?: string } | undefined = globalThis.navigator): boolean {
-  return /Win/.test(nav?.platform ?? "");
-}
+export { isWindows };
+
+const SEPARATORS = /[\\/]/;
 
 /** The last segment of a path, whichever way its separators lean. */
 export function lastSegment(path: string): string {

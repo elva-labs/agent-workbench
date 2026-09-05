@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { By, until } from "selenium-webdriver";
+import { By, Key, until } from "selenium-webdriver";
 import {
   launch,
   openProjects,
@@ -105,6 +105,17 @@ describe("the real app", () => {
     await type(driver, "crash\n");
     const status = await driver.findElement(By.css("[data-testid='agent-status']"));
     await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
+  });
+
+  // The chord reaches the settings whether the native menu's accelerator
+  // takes it or the webview does.
+  it("opens the settings on the chord, with the menu in place", async () => {
+    const { driver } = app;
+    const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+    await driver.actions().keyDown(key).sendKeys(",").keyUp(key).perform();
+    await driver.wait(until.elementLocated(By.css("[data-testid='settings']")), 10_000);
+    await driver.findElement(By.css("[data-testid='settings-close']")).click();
+    await driver.wait(async () => (await driver.findElements(By.css("[data-testid='settings']"))).length === 0, 5_000);
   });
 
   it("offers codex too, and runs it", async () => {
