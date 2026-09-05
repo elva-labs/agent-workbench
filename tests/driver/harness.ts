@@ -478,9 +478,16 @@ export async function waitForText(driver: WebDriver, needle: string, ms = 20_000
   await driver.wait(async () => (await screenText(driver)).includes(needle), ms, `no "${needle}" on screen`);
 }
 
-/** Types into whatever has the keyboard, which after focusing a terminal is
-    xterm's own textarea. */
+/** Types into the active session's terminal. The terminal is given the
+    keyboard first, so what happened to focus since the last keystroke, a
+    pane re-rendering, a window that never quite had it, does not decide
+    where the text goes. */
 export async function type(driver: WebDriver, text: string) {
+  await driver.executeScript(() => {
+    const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
+      .__WORKBENCH_TERMINALS__;
+    Object.values(registry ?? {}).at(-1)?.focus();
+  });
   const focused = await driver.switchTo().activeElement();
   await focused.sendKeys(text);
 }

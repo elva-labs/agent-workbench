@@ -105,12 +105,19 @@ describe("the real app", () => {
     await type(driver, "crash\n");
     // The overlay is only there once the session stops, and how long the
     // agent takes to die is the platform's business: wait for it to appear
-    // rather than expecting it the instant the newline is through.
-    const status = await driver.wait(
-      until.elementLocated(By.css("[data-testid='agent-status']")),
-      15_000,
-    );
-    await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
+    // rather than expecting it the instant the newline is through. When it
+    // does not, the screen says whether the word even reached the agent.
+    try {
+      const status = await driver.wait(
+        until.elementLocated(By.css("[data-testid='agent-status']")),
+        15_000,
+      );
+      await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
+    } catch (failure) {
+      const screen = await screenText(driver);
+      const rows = await textOf(driver, SESSIONS);
+      throw new Error(`${(failure as Error).message}\nThe terminal showed:\n${screen}\nThe sessions pane showed:\n${rows}`);
+    }
   });
 
   // The chord reaches the settings whether the native menu's accelerator
