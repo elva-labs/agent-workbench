@@ -101,9 +101,18 @@ component gets that component's raw source served as its stylesheet, which
 WebKit hits reliably on a fresh server. `scripts/smoke.sh`, which photographs
 the window, serves it the same way.
 
-On Windows the same tests run under WebView2 through Edge WebDriver, with the
-fake agents installed as batch files, which is how npm installs a command
-there. CI runs the browser tier on Linux, the core's own tests on Linux,
-Windows and macOS, and the driver tier on Linux and Windows, with the Linux
-smoke screenshot as an artifact. There is no driver for macOS, so the macOS
-window is checked by hand. See [release.md](release.md).
+On Windows the same tests are meant to run under WebView2 through Edge
+WebDriver, with the fake agents installed as batch files, which is how npm
+installs a command there. That job is not green yet: Edge WebDriver starts the
+app in its WebView2 mode and reports that the `DevToolsActivePort` file never
+appears, with or without the app handing the driver's flags on to WebView2
+(`src-tauri/src/webdriver.rs`). The job reports rather than blocks, and
+starts the binary on its own first so the log says whether the app came up at
+all. The next thing to try is attach mode: start the app with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and give
+the driver `debuggerAddress`, which tauri-driver does not pass through today.
+
+CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
+macOS, and the driver tier on Linux, with the Linux smoke screenshot as an
+artifact. There is no driver for macOS, so the macOS window is checked by
+hand. See [release.md](release.md).

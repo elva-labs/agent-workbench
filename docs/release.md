@@ -10,9 +10,10 @@
 - **Core** on Linux, Windows and macOS: `cargo fmt --check`, `cargo clippy`
   with warnings as errors, and `cargo test`. This is where a platform-specific
   path in the core breaks first.
-- **Real app** on Linux and Windows: the driver tier, `tests/driver`, against
-  the actual binary through `tauri-driver`. See [testing.md](testing.md). The
-  Linux job also photographs the window and keeps the picture as an artifact.
+- **Real app** on Linux: the driver tier, `tests/driver`, against the actual
+  binary through `tauri-driver`. See [testing.md](testing.md). The job also
+  photographs the window and keeps the picture as an artifact. The same job on
+  Windows runs but does not block yet; testing.md says where it stands.
 
 There is no driver for macOS, so the macOS window is the one thing checked by
 hand.
