@@ -322,8 +322,8 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
+    // The last row is the new-session row.
     await fireEvent.keyDown(nav, { key: "End" });
-    await fireEvent.keyDown(nav, { key: "ArrowUp" });
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(sessions.all).toHaveLength(1);
     expect(layout.focus).toBe("agent");
@@ -409,20 +409,6 @@ describe("SessionsPane", () => {
 
     await waitFor(() => expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument());
     expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
-  });
-
-  // Off by default: it edits the project's settings, so nobody gets it for
-  // merely opening a folder.
-  it("offers the hook, off, and turns it on when asked", async () => {
-    workspace.open.push(repo("/repo", "repo"));
-    workspace.active = "/repo";
-
-    render(SessionsPane);
-    const toggle = await screen.findByTestId("hook-toggle");
-    expect(toggle).toHaveTextContent("filesystem");
-
-    await fireEvent.click(toggle);
-    await waitFor(() => expect(screen.getByTestId("hook-toggle")).toHaveTextContent("hook"));
   });
 
   it("adds another session on request", async () => {

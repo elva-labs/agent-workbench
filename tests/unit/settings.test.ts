@@ -1,13 +1,46 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import Settings from "$lib/components/Settings.svelte";
 import { chordFor, keys, resetKeys } from "$lib/keys.svelte";
 import { closeSettings, openSettings, settings } from "$lib/settings.svelte";
 import { setPalette, setTheme, theme } from "$lib/theme.svelte";
 
+import { reset as resetHook } from "$lib/hook.svelte";
+import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
+
 vi.mock("$lib/platform", () => ({ isMac: () => true, isWindows: () => false }));
 
+const fake = { hooks: {} as Record<string, boolean> };
+
+vi.mock("$lib/core", () => ({
+  core: () => ({
+    hookStatus: async (project: string) => ({
+      installed: fake.hooks[project] === true,
+      settings: "",
+      events: "",
+    }),
+    hookInstall: async (project: string) => {
+      fake.hooks[project] = true;
+      return { installed: true, settings: "", events: "" };
+    },
+    hookUninstall: async (project: string) => {
+      fake.hooks[project] = false;
+      return { installed: false, settings: "", events: "" };
+    },
+  }),
+}));
+
+const repo = (path: string, name: string, isGit = true) => ({
+  path,
+  name,
+  repository: isGit ? path : null,
+  isGit,
+});
+
 beforeEach(() => {
+  fake.hooks = {};
+  resetHook();
+  resetWorkspace();
   resetKeys();
   setTheme("system");
   setPalette("teal");
@@ -15,6 +48,39 @@ beforeEach(() => {
 });
 
 describe("the settings", () => {
+  // Off by default: the hooks edit the project's own settings, so nobody
+  // gets them for merely opening a folder.
+  it("offers the agent hooks per open project, off, and turns them on when asked", async () => {
+    workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
+    workspace.active = "/repo";
+
+    render(Settings);
+    const rows = screen.getAllByTestId("hooks-row");
+    expect(rows).toHaveLength(2);
+    expect(screen.queryByTestId("hooks-none")).toBeNull();
+    const first = within(rows[0]);
+    await waitFor(() => expect(first.getByTestId("hooks-off")).toHaveAttribute("aria-checked", "true"));
+
+    await fireEvent.click(first.getByTestId("hooks-on"));
+    await waitFor(() => expect(first.getByTestId("hooks-on")).toHaveAttribute("aria-checked", "true"));
+    expect(fake.hooks["/repo"]).toBe(true);
+    // The other project is untouched.
+    expect(within(rows[1]).getByTestId("hooks-off")).toHaveAttribute("aria-checked", "true");
+
+    // Asking for what it already has is nothing; asking for the other turns it off.
+    await fireEvent.click(first.getByTestId("hooks-on"));
+    expect(fake.hooks["/repo"]).toBe(true);
+    await fireEvent.click(first.getByTestId("hooks-off"));
+    await waitFor(() => expect(first.getByTestId("hooks-off")).toHaveAttribute("aria-checked", "true"));
+    expect(fake.hooks["/repo"]).toBe(false);
+  });
+
+  it("says so when there is no project to choose for", () => {
+    render(Settings);
+    expect(screen.getByTestId("hooks-none")).toBeInTheDocument();
+    expect(screen.queryByTestId("hooks-row")).toBeNull();
+  });
+
   it("picks a theme", async () => {
     render(Settings);
     await fireEvent.click(screen.getByTestId("theme-dark"));

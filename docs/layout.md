@@ -255,7 +255,7 @@ Attention comes through the pty for both agents: Claude Code rings the bell,
 Codex sends a terminal notification, and the terminal view hears BEL, OSC 9
 and OSC 777 alike. This needs nothing installed.
 
-With the project's hooks installed (the `live updates` toggle, see below),
+With the project's hooks installed (`Live updates` in the settings, see below),
 the transitions are exact instead. Both agents' `UserPromptSubmit`, `Stop`
 and permission hooks append their stdin to `~/.agent-workbench/sessions.jsonl`,
 the core tails it (`activity.rs`) and tells the window, and from the first
@@ -339,8 +339,8 @@ forwards, never back.
 
 ## Live updates
 
-The changes pane learns that the tree moved in one of two ways, and the toggle
-under each project says which.
+The changes pane learns that the tree moved in one of two ways, and the
+`Live updates` section of the settings says which, per open project.
 
 **Filesystem**, the default. A `notify` watcher on the worktree, debounced at
 150ms. It costs nothing, needs no permission, and catches every writer: the

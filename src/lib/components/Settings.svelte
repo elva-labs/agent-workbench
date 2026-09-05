@@ -14,6 +14,8 @@
     type PresetName,
   } from "$lib/keys.svelte";
   import { closeSettings } from "$lib/settings.svelte";
+  import { check, hook, isInstalled, isKnown, toggle } from "$lib/hook.svelte";
+  import { workspace } from "$lib/workspace.svelte";
   import {
     PALETTES,
     resolvedTheme,
@@ -43,6 +45,18 @@
   let problem = $state<{ action: ActionKey; text: string } | null>(null);
 
   onMount(() => dialog.focus());
+
+  // Each open project's hooks are read once, when the settings can show them.
+  $effect(() => {
+    for (const project of workspace.open) {
+      if (!isKnown(project.path)) check(project.path);
+    }
+  });
+
+  /** Sets a project's hooks to on or off; asking for the state it has is nothing. */
+  function setHooks(path: string, on: boolean) {
+    if (isInstalled(path) !== on) toggle(path);
+  }
 
   function record(action: ActionKey) {
     recording = action;
@@ -144,6 +158,48 @@
           </button>
         {/each}
       </div>
+
+      <h3>Live updates</h3>
+      <p class="note">
+        A file watcher is always on: whatever changes in a project, by the agent or by you,
+        shows in the changes pane within a moment. Agent hooks go further. Installed in a
+        project's <code>.claude</code> and <code>.codex</code> settings, they report each edit
+        the moment a tool finishes, and say exactly when a session is working, waiting for you
+        or asking for permission. Without them, a session's state is read from its output, which
+        a redraw can fool. They are off until you turn them on here, because they write into the
+        project's own configuration.
+      </p>
+      {#if workspace.open.length === 0}
+        <p class="note quiet" data-testid="hooks-none">Open a project to choose for it.</p>
+      {/if}
+      <div class="projects">
+        {#each workspace.open as project (project.path)}
+          <div class="project" data-testid="hooks-row" data-project={project.path}>
+            <span class="project-name" title={project.path}>{project.name}</span>
+            <div class="seg" role="radiogroup" aria-label="Live updates for {project.name}">
+              <button
+                role="radio"
+                aria-checked={!isInstalled(project.path)}
+                class:on={!isInstalled(project.path)}
+                onclick={() => setHooks(project.path, false)}
+                disabled={hook.busy}
+                data-testid="hooks-off">Watcher only</button
+              >
+              <button
+                role="radio"
+                aria-checked={isInstalled(project.path)}
+                class:on={isInstalled(project.path)}
+                onclick={() => setHooks(project.path, true)}
+                disabled={hook.busy}
+                data-testid="hooks-on">Agent hooks</button
+              >
+            </div>
+          </div>
+        {/each}
+      </div>
+      {#if hook.error}
+        <p class="error" data-testid="hook-error">{hook.error}</p>
+      {/if}
 
       <h3>Keys</h3>
       <p class="note">
@@ -267,6 +323,45 @@
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--ink-2);
+    max-width: 64ch;
+  }
+
+  .note code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+
+  .note.quiet {
+    color: var(--ink-3);
+  }
+
+  .projects {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .project {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .project-name {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .error {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--del);
     max-width: 64ch;
   }
 

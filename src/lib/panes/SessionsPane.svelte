@@ -21,7 +21,6 @@
     statusLabel,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
-  import { check, hook, isInstalled, isKnown, toggle } from "$lib/hook.svelte";
   import { focusPane, layout } from "$lib/layout.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
@@ -107,7 +106,6 @@
           }
         }
       }
-      if (!hook.busy) out.push({ id: `hook:${path}`, run: () => toggle(path) });
     }
     for (const path of notOpen) out.push({ id: `recent:${path}`, run: () => openPath(path) });
     return out;
@@ -208,7 +206,6 @@
   $effect(() => {
     for (const project of workspace.open) {
       if (sessions.history[project.path] === undefined) loadHistory(project.path);
-      if (!isKnown(project.path)) check(project.path);
     }
   });
 
@@ -401,27 +398,6 @@
           {/if}
         {/each}
 
-        <!-- Off by default: it writes into the project's settings.local.json,
-             and the watcher already covers the same ground. What it adds is
-             hearing from the agent the moment a tool finishes. -->
-        <button
-          class="hook"
-          class:on={isInstalled(project.path)}
-          class:cursor={current === `hook:${project.path}`}
-          tabindex="-1"
-          onclick={() => toggle(project.path)}
-          disabled={hook.busy}
-          data-row="hook:{project.path}"
-          title={isInstalled(project.path)
-            ? "The agents report edits, and when they start, stop and ask, directly. Click to remove the hooks."
-            : "Add hooks so edits are reported the moment a tool finishes, and each session says exactly when it started, stopped or is asking for permission."}
-          data-testid="hook-toggle"
-        >
-          {isInstalled(project.path) ? "live updates: hook" : "live updates: filesystem"}
-        </button>
-        {#if hook.error}
-          <p class="error" data-testid="hook-error">{hook.error}</p>
-        {/if}
       {/if}
     {/each}
   </div>
@@ -804,29 +780,8 @@
     margin-bottom: 10px;
   }
 
-  .hook {
-    display: block;
-    width: 100%;
-    text-align: left;
-    margin: 0 0 10px;
-    border: 0;
-    background: none;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    color: var(--ink-3);
-    cursor: pointer;
-    padding: 2px var(--pane-pad) 2px 26px;
-  }
 
-  .hook.on {
-    color: var(--accent);
-  }
 
-  .hook:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 
   .empty p,
   .error {
