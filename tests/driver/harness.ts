@@ -195,10 +195,12 @@ async function waitForDebugger(app: Started, port: number, ms: number) {
   const fate = app.exited
     ? `the app exited with code ${app.exited.code}` + (app.exited.signal ? ` (${app.exited.signal})` : "")
     : `the app is still running as pid ${app.child.pid} after ${ms}ms`;
+  const socket = (await portOpen(port)) ? "accepts connections but does not answer HTTP" : "is not open at all";
   const output = app.said.join("").trim();
   throw new Error(
-    `the WebView2 debugger never answered on ${port}: ${fate}.` +
-      (output ? `\nThe app said:\n${output}` : "\nThe app printed nothing."),
+    `the WebView2 debugger never answered on ${port}: ${fate}; the port ${socket}.\n` +
+      (output ? `The app said:\n${output}\n` : "The app printed nothing.\n") +
+      webview2Report(),
   );
 }
 
@@ -211,6 +213,63 @@ function killTree(pid: number | undefined) {
   } catch {
     // Already gone, which is the outcome either way.
   }
+}
+
+/** Removes the run's profile once WebView2 has let go of it. taskkill
+    returns before the handles are released, so the first tries meet
+    EBUSY; and a cleanup that throws would replace whatever error the run
+    was actually about, which is how one runner log said nothing useful. */
+async function removeProfile(profile: string) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  process.stderr.write(`could not remove ${profile}: something still holds it\n`);
+}
+
+/** What WebView2 is actually doing, for when the port never opens. The
+    browser process's command line says whether the switch reached it and
+    which profile it took; netstat says what it is listening on. Every
+    msedgewebview2.exe is listed, its type and the switches that matter. */
+function webview2Report(): string {
+  const lines: string[] = [];
+  try {
+    const processes = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }",
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    )
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== "")
+      .map((line) => {
+        const [pid, ...rest] = line.trim().split(" ");
+        const command = rest.join(" ");
+        const type = /--type=(\S+)/.exec(command)?.[1] ?? "browser";
+        const switches = command.match(/--(?:remote-debugging\S*|user-data-dir=(?:"[^"]*"|\S*))/g) ?? [];
+        return `  ${pid} ${type} ${switches.join(" ")}`;
+      });
+    lines.push(processes.length ? `msedgewebview2.exe processes:\n${processes.join("\n")}` : "No msedgewebview2.exe is running.");
+  } catch (error) {
+    lines.push(`could not list WebView2 processes: ${(error as Error).message}`);
+  }
+  try {
+    const listening = execFileSync("netstat", ["-ano", "-p", "tcp"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split(/\r?\n/)
+      .filter((line) => /LISTENING/.test(line))
+      .map((line) => `  ${line.trim()}`);
+    lines.push(`Listening, per netstat:\n${listening.join("\n")}`);
+  } catch (error) {
+    lines.push(`could not run netstat: ${(error as Error).message}`);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -247,15 +306,17 @@ async function attach(home: string, bin: string): Promise<App> {
     stdio: ["ignore", "inherit", "inherit"],
   });
   const app = start(env);
-  const stopAll = () => {
+  const stopAll = async () => {
     killTree(app.child.pid);
     killTree(edge.pid);
-    rmSync(profile, { recursive: true, force: true });
+    await removeProfile(profile);
   };
 
   try {
     await waitForPort(DRIVER_PORT, 15_000);
-    await waitForDebugger(app, debugPort, 60_000);
+    // Generous: a CI runner's first launch has a profile to create and no
+    // GPU, and a report after the wait is worth more than a quick one.
+    await waitForDebugger(app, debugPort, 120_000);
 
     const driver = await new Builder()
       .usingServer(`http://127.0.0.1:${DRIVER_PORT}/`)
@@ -273,11 +334,11 @@ async function attach(home: string, bin: string): Promise<App> {
         // Attached, so quitting the session detaches rather than closing
         // the app: it is ours to stop.
         await driver.quit().catch(() => {});
-        stopAll();
+        await stopAll();
       },
     };
   } catch (failure) {
-    stopAll();
+    await stopAll();
     throw failure;
   }
 }

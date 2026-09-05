@@ -141,7 +141,10 @@ Two things follow from attaching rather than launching, both in
 
 When the debugger does not come up, the harness says whether the app died,
 with its exit code and everything it printed, or is still running with no
-port open. Those are different problems, and the log is all a runner leaves.
+port open; then whether the port accepts a connection at all, and every
+`msedgewebview2.exe` with its type and the debugging and profile switches
+on its command line, and what is listening per `netstat`. Those are
+different problems, and the log is all a runner leaves.
 
 CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
 macOS, and the driver tier on Linux and Windows, with the Linux smoke
