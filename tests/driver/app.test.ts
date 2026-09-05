@@ -103,7 +103,13 @@ describe("the real app", () => {
   it("reports the exit code when the agent dies", async () => {
     const { driver } = app;
     await type(driver, "crash\n");
-    const status = await driver.findElement(By.css("[data-testid='agent-status']"));
+    // The overlay is only there once the session stops, and how long the
+    // agent takes to die is the platform's business: wait for it to appear
+    // rather than expecting it the instant the newline is through.
+    const status = await driver.wait(
+      until.elementLocated(By.css("[data-testid='agent-status']")),
+      15_000,
+    );
     await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
   });
 
