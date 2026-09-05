@@ -114,15 +114,11 @@ jobs:
 
   # The real binary under WebView2, through Edge WebDriver. The fake agents
   # are batch files on PATH, which is how npm installs a command there, and
-  # the driver has to match the WebView2 runtime the runner has.
+  # the driver has to match the WebView2 runtime the runner has. The harness
+  # starts the app itself and attaches, so there is no tauri-driver here.
   driver-windows:
     name: Real app (Windows)
     runs-on: windows-latest
-    # Reports rather than blocks until it has been seen green: Edge WebDriver
-    # starts the app with Chromium's own flags, which the app hands on to
-    # WebView2 (src-tauri/src/webdriver.rs), and that path has only been
-    # exercised here.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -133,14 +129,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: tauri-driver
-        uses: actions/cache@v4
-        id: tauri-driver
-        with:
-          path: ~/.cargo/bin/tauri-driver.exe
-          key: tauri-driver-${{ runner.os }}-2
-      - if: steps.tauri-driver.outputs.cache-hit != 'true'
-        run: cargo install tauri-driver --locked
       - name: Edge WebDriver matching the WebView2 runtime
         shell: pwsh
         run: |
@@ -153,20 +141,6 @@ jobs:
       - run: npm ci
       - run: cargo build
         working-directory: src-tauri
-      # Evidence for the driver failure below: does the binary come up on
-      # its own, and what does it say if it does not.
-      - name: Does the app start at all
-        shell: pwsh
-        run: |
-          npm run build | Out-Null
-          $preview = Start-Process cmd -ArgumentList "/c","npx vite preview --port 1420 --strictPort" -PassThru -NoNewWindow
-          Start-Sleep -Seconds 8
-          $app = Start-Process "src-tauri\target\debug\agent-workbench.exe" -PassThru -RedirectStandardError app.err -RedirectStandardOutput app.out
-          Start-Sleep -Seconds 10
-          if ($app.HasExited) { Write-Host "exited with $($app.ExitCode)" } else { Write-Host "still running after 10s" }
-          Get-Content app.err, app.out -ErrorAction SilentlyContinue | Select-Object -First 40
-          Stop-Process -Id $app.Id -ErrorAction SilentlyContinue
-          Stop-Process -Id $preview.Id -ErrorAction SilentlyContinue
       - run: bash scripts/driver.sh
         env:
           CI: true

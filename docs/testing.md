@@ -52,7 +52,7 @@ by `cargo test` on one side, the fake on the other, and by running the app.
 That is what the fourth tier is for, below: the real binary on `tauri-driver`.
 Two things about it:
 
-- `tauri-driver` supports **Linux and Windows only**. There is no WebDriver for
+- The tier runs on **Linux and Windows only**. There is no WebDriver for
   macOS WKWebView, so the target platform is the one platform that tier cannot
   run on. It is a regression net for the core, not a substitute for opening
   the app on a Mac.
@@ -101,18 +101,62 @@ component gets that component's raw source served as its stylesheet, which
 WebKit hits reliably on a fresh server. `scripts/smoke.sh`, which photographs
 the window, serves it the same way.
 
-On Windows the same tests are meant to run under WebView2 through Edge
-WebDriver, with the fake agents installed as batch files, which is how npm
-installs a command there. That job is not green yet: Edge WebDriver starts the
-app in its WebView2 mode and reports that the `DevToolsActivePort` file never
-appears, with or without the app handing the driver's flags on to WebView2
-(`src-tauri/src/webdriver.rs`). The job reports rather than blocks, and
-starts the binary on its own first so the log says whether the app came up at
-all. The next thing to try is attach mode: start the app with
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and give
-the driver `debuggerAddress`, which tauri-driver does not pass through today.
+### Windows attaches instead of launching
+
+The same tests run on Windows under WebView2 through Edge WebDriver, with the
+fake agents installed as batch files, which is how npm installs a command
+there. Getting there took a different route than Linux, and the reason is
+worth keeping.
+
+Edge WebDriver starts the app the way it starts a browser: it passes
+`--remote-debugging-port` and `--user-data-dir`, then waits for a
+`DevToolsActivePort` file to appear in that directory. **WebView2 never
+writes that file.** It is a Chrome-browser courtesy, not a WebView2 one, so
+forwarding the flags cannot help: not as flags, and not as the two
+environment variables the runtime honours over them. Remote debugging really
+does come up, and `/json/version` answers on the port; the file the driver is
+waiting for simply never arrives, so it kills the app and reports a crash.
+
+So on Windows the harness starts the binary itself with the debugger open and
+hands Edge WebDriver `debuggerAddress` to attach to what is already running.
+That skips `tauri-driver`, whose only job there was the launch that cannot
+work. Linux is unchanged: `tauri-driver` still bridges to WebKitWebDriver and
+still starts the binary.
+
+Two things follow from attaching rather than launching, both in
+`tests/driver/harness.ts`:
+
+- Quitting the session detaches instead of closing the app, so the harness
+  kills the process tree itself. The tree, because the app is the parent of
+  WebView2's own processes.
+- The run's scoped `HOME` is set, but **not** `USERPROFILE`. `home_directory()`
+  reads `HOME` first, so the core is satisfied either way, and moving
+  `USERPROFILE` off the real profile stops WebView2 opening its debugging port
+  at all. That one fails silently.
+- The webview gets a profile of its own per run, so the tests never touch
+  the real app's and nothing persists between runs. It lives under the real
+  `%LOCALAPPDATA%`, next to where the app would put its own, rather than
+  under the run's temp `HOME`: WebView2 is particular about where its
+  profile goes, and on the CI runner the temp directory is on another drive.
+
+- **Elevated, WebView2 ignores every `WEBVIEW2_*` variable**, and Microsoft's
+  security guidance names `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` first; the
+  machine policy under `HKLM\SOFTWARE\Policies\Microsoft\Edge\WebView2` is
+  what an elevated host reads. A GitHub runner runs its job elevated, which
+  is how the switch went missing from the browser process's command line
+  there while the same environment worked on a developer's machine. So when
+  the harness finds itself at high integrity it writes the switch to that
+  policy, keyed by the executable's name, and removes it after. At standard
+  integrity it never touches the registry.
+
+When the debugger does not come up, the harness says whether the app died,
+with its exit code and everything it printed, or is still running with no
+port open; then whether the port accepts a connection at all, and every
+`msedgewebview2.exe` with its type and the debugging and profile switches
+on its command line, and what is listening per `netstat`. Those are
+different problems, and the log is all a runner leaves.
 
 CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
-macOS, and the driver tier on Linux, with the Linux smoke screenshot as an
-artifact. There is no driver for macOS, so the macOS window is checked by
-hand. See [release.md](release.md).
+macOS, and the driver tier on Linux and Windows, with the Linux smoke
+screenshot as an artifact. There is no driver for macOS, so the macOS window
+is checked by hand. See [release.md](release.md).

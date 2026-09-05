@@ -2,10 +2,12 @@
 #
 # Run the WebDriver tier against the real binary.
 #
-# Needs tauri-driver and the platform's WebView driver on PATH: on Linux
-# `cargo install tauri-driver` and the webkit2gtk-driver package. On a
-# headless machine it brings up Xvfb and a window manager first. The debug
-# binary loads the dev server, which is started here if it is not up.
+# Needs the platform's WebView driver: on Linux `cargo install tauri-driver`
+# and the webkit2gtk-driver package. On Windows only Edge WebDriver, matching
+# the WebView2 runtime, in TAURI_NATIVE_DRIVER -- the harness starts the app
+# and attaches, so tauri-driver is not in the picture there. On a headless
+# machine it brings up Xvfb and a window manager first. The debug binary
+# loads the dev server, which is started here if it is not up.
 #
 #   scripts/driver.sh [vitest args]
 #
