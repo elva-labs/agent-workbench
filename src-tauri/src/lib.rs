@@ -21,6 +21,7 @@ mod pty;
 mod shell;
 mod transcripts;
 mod watch;
+mod webdriver;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -356,6 +357,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    webdriver::forward();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

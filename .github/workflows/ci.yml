@@ -118,10 +118,10 @@ jobs:
   driver-windows:
     name: Real app (Windows)
     runs-on: windows-latest
-    # Not yet green. Edge WebDriver starts the app with Chromium's own flags,
-    # --remote-debugging-port and --user-data-dir, and expects WebView2 to
-    # honour them; the app does not forward them yet, so no session opens.
-    # It reports rather than blocks until that is done.
+    # Reports rather than blocks until it has been seen green: Edge WebDriver
+    # starts the app with Chromium's own flags, which the app hands on to
+    # WebView2 (src-tauri/src/webdriver.rs), and that path has only been
+    # exercised here.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
