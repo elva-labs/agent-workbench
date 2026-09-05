@@ -159,7 +159,7 @@ jobs:
         shell: pwsh
         run: |
           npm run build | Out-Null
-          $preview = Start-Process npx -ArgumentList "vite","preview","--port","1420","--strictPort" -PassThru -NoNewWindow
+          $preview = Start-Process cmd -ArgumentList "/c","npx vite preview --port 1420 --strictPort" -PassThru -NoNewWindow
           Start-Sleep -Seconds 8
           $app = Start-Process "src-tauri\target\debug\agent-workbench.exe" -PassThru -RedirectStandardError app.err -RedirectStandardOutput app.out
           Start-Sleep -Seconds 10
