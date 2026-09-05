@@ -253,8 +253,17 @@ screen in a focused window never goes unread.
 
 Attention comes through the pty for both agents: Claude Code rings the bell,
 Codex sends a terminal notification, and the terminal view hears BEL, OSC 9
-and OSC 777 alike. This needs nothing installed. The heuristic can be wrong
-by a redraw; exact transitions from the agents' hooks are the follow-up.
+and OSC 777 alike. This needs nothing installed.
+
+With the project's hooks installed (the `live updates` toggle, see below),
+the transitions are exact instead. Both agents' `UserPromptSubmit`, `Stop`
+and permission hooks append their stdin to `~/.agent-workbench/sessions.jsonl`,
+the core tails it (`activity.rs`) and tells the window, and from the first
+such line a session's row follows the hooks: `working` from the prompt,
+`needs permission` while the agent asks, with a hollow ring on the dot,
+`waiting for you` from the stop. The pty heuristic stands down for that
+session, except for one thing the hooks do not say: output after a permission
+prompt means it was granted and the agent went on.
 
 ## What a session is called, and where it works
 

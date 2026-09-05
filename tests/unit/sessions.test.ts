@@ -9,6 +9,7 @@ import {
   historyLabel,
   isMine,
   isViewed,
+  exact,
   loadRemembered,
   output,
   QUIET_MS,
@@ -753,6 +754,52 @@ describe("working, and waiting for you", () => {
     ended({ id: "pty-1", code: 0, clean: true });
     expect(behind.unread).toBe(true);
     expect(behind.working).toBe(false);
+  });
+
+  // The hooks are exact where the pty is a guess, so they win, and once one
+  // has spoken for a session the guess stands down for it.
+  it("takes the hooks' word, and the heuristic stands down", () => {
+    vi.useFakeTimers();
+    try {
+      const behind = live(A, "pty-1");
+      live(A, "pty-2");
+      exact("session-pty-1", "prompt");
+      expect(behind.working).toBe(true);
+      expect(behind.exact).toBe(true);
+      vi.advanceTimersByTime(QUIET_MS * 3);
+      expect(behind.working).toBe(true);
+      expect(behind.unread).toBe(false);
+
+      exact("session-pty-1", "permission");
+      expect(behind.working).toBe(false);
+      expect(behind.needs).toBe("permission");
+      expect(behind.unread).toBe(true);
+      expect(statusLabel(behind)).toBe("needs permission");
+
+      // Granted: output means it went on.
+      output(behind.key, WORK_BYTES);
+      expect(behind.needs).toBeNull();
+      expect(behind.working).toBe(true);
+      vi.advanceTimersByTime(QUIET_MS * 3);
+      expect(behind.working).toBe(true);
+
+      exact("session-pty-1", "stop");
+      expect(behind.working).toBe(false);
+      expect(statusLabel(behind)).toBe("waiting for you");
+      viewed(behind.key);
+      exact("session-pty-1", "idle");
+      expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads a session the user prompted, and ignores an id it does not have", () => {
+    const session = live(A, "pty-1");
+    session.unread = true;
+    exact("session-pty-1", "prompt");
+    expect(session.unread).toBe(false);
+    expect(() => exact("nope", "stop")).not.toThrow();
   });
 
   it("does nothing for a key it does not have", () => {

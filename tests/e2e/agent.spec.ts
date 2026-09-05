@@ -52,6 +52,8 @@ declare global {
       codexTitles: Record<string, string>;
       /** The app's handler for an agent writing down its own session id. */
       identify: ((identified: unknown) => void) | null;
+      /** The app's handler for a session hook firing. */
+      sessionEvent: ((event: unknown) => void) | null;
       /** What the core says the agent's working directory is. */
       cwd: string | null;
       /** The app's handler for files dragged over the window. */
@@ -97,6 +99,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         codexTranscripts: codexTranscripts ?? [],
         codexTitles: {},
         identify: null,
+        sessionEvent: null,
         cwd: null,
         drag: null,
         emit(ptyId, text) {
@@ -179,6 +182,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         },
         onSessionIdentified: async (handler: (identified: unknown) => void) => {
           fake.identify = handler;
+          return () => {};
+        },
+        onSessionEvent: async (handler: (event: unknown) => void) => {
+          fake.sessionEvent = handler;
           return () => {};
         },
         onOpenSettings: async () => () => {},
@@ -624,6 +631,34 @@ test.describe("working, and waiting for you", () => {
   test("marks a session that rings behind another at once", async ({ page }) => {
     await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
     await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
+  });
+
+  // With the hooks installed the transitions are exact: the agent says when
+  // it starts, stops and asks, and quiet on the pty no longer means anything.
+  test("takes the hooks' word over the heuristic", async ({ page }) => {
+    const event = (kind: string) =>
+      page.evaluate((kind) => window.__fake.sessionEvent?.({ sessionId: "session-1", kind }), kind);
+
+    await event("prompt");
+    await expect(rows(page).first()).toContainText("working");
+    // Quiet for longer than the heuristic's patience: still working.
+    await page.waitForTimeout(2600);
+    await expect(rows(page).first()).toContainText("working");
+
+    await event("permission");
+    await expect(rows(page).first()).toContainText("needs permission");
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/permission/);
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
+
+    // Granted: the agent goes on, which shows as output.
+    await page.evaluate(() => window.__fake.emit("pty-1", "x".repeat(400)));
+    await expect(rows(page).first()).toContainText("working");
+    await expect(rows(page).first().locator(".dot")).not.toHaveClass(/permission/);
+
+    await event("stop");
+    await expect(rows(page).first()).toContainText("waiting for you");
+    await rows(page).first().click();
+    await expect(rows(page).first()).toContainText("running");
   });
 
   test("does not mark the session you are looking at", async ({ page }) => {

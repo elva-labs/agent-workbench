@@ -1,4 +1,4 @@
-import { core, type AgentId, type SessionEnded, type Transcript } from "$lib/core";
+import { core, type AgentId, type SessionEnded, type SessionEvent, type Transcript } from "$lib/core";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { isReady } from "$lib/agent.svelte";
@@ -53,6 +53,11 @@ export interface Session {
   /** The agent stopped, or asked for attention, while nobody was looking.
       Cleared by looking. */
   unread: boolean;
+  /** The agent's own hooks are reporting this session, so its transitions
+      are exact and the pty heuristic stands down. */
+  exact: boolean;
+  /** What the agent is blocked on, when its hooks say so. */
+  needs: "permission" | null;
   exitCode: number | null;
   error: string | null;
   /** Set once the terminal has been created, so it is only built once. */
@@ -417,6 +422,8 @@ export function create(
     worktree: null,
     working: false,
     unread: false,
+    exact: false,
+    needs: null,
     exitCode: null,
     error: null,
     mounted: false,
@@ -585,6 +592,7 @@ export function statusLabel(session: Session | null): string {
     case "starting":
       return "starting";
     case "running":
+      if (session.needs === "permission") return "needs permission";
       return session.working ? "working" : session.unread ? "waiting for you" : "running";
     case "exited":
       return "ended";
@@ -626,6 +634,15 @@ export function isViewed(session: Session): boolean {
 export function output(key: string, bytes: number, now = Date.now()) {
   const session = byKey(key);
   if (session === null) return;
+  if (session.exact) {
+    // The hooks say when it starts and stops. Output still says one thing
+    // they do not: a permission was granted and the agent went on.
+    if (session.needs !== null && bytes >= WORK_BYTES) {
+      session.needs = null;
+      session.working = true;
+    }
+    return;
+  }
   let pulse = pulses.get(key);
   if (pulse === undefined) {
     pulse = { bytes: 0, windowStart: now, quiet: null };
@@ -668,6 +685,40 @@ export function rang(key: string) {
 export function viewed(key: string) {
   const session = byKey(key);
   if (session !== null) session.unread = false;
+}
+
+/**
+ * One of the agent's own hooks fired. From here on the session's transitions
+ * are exact: the heuristic stands down for it. A prompt is the user at the
+ * keyboard, so it reads the session as well as starting it.
+ */
+export function exact(sessionId: string, kind: SessionEvent["kind"]) {
+  const session = sessions.all.find((candidate) => candidate.id === sessionId);
+  if (session === undefined) return;
+  session.exact = true;
+  const pulse = pulses.get(session.key);
+  if (pulse?.quiet) clearTimeout(pulse.quiet);
+  pulses.delete(session.key);
+  switch (kind) {
+    case "prompt":
+      session.working = true;
+      session.needs = null;
+      session.unread = false;
+      break;
+    case "stop":
+      session.working = false;
+      session.needs = null;
+      if (!isViewed(session)) session.unread = true;
+      break;
+    case "permission":
+      session.working = false;
+      session.needs = "permission";
+      if (!isViewed(session)) session.unread = true;
+      break;
+    case "idle":
+      if (!isViewed(session)) session.unread = true;
+      break;
+  }
 }
 
 /** How many sessions are waiting for the user. */

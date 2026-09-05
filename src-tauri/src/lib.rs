@@ -9,6 +9,7 @@
 //! The work that can take a while goes through `blocking`, onto the runtime's
 //! blocking pool, and the window stays responsive whatever the shell does.
 
+mod activity;
 mod adapter;
 mod chrome;
 mod codex;
@@ -387,6 +388,16 @@ pub fn run() {
             menu::install(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&window);
+            }
+            // The session log is tailed for the life of the app, whether or
+            // not any hook is installed yet: installing one later just
+            // starts the lines coming.
+            if let Some(home) = home_directory() {
+                if let Err(error) =
+                    activity::watch(app.handle().clone(), hook::activity_path(&home))
+                {
+                    eprintln!("session log: {error}");
+                }
             }
             Ok(())
         })

@@ -24,6 +24,7 @@
   import {
     cycle as cycleSession,
     ended as sessionEnded,
+    exact,
     followCwd,
     identified,
     sessions,
@@ -66,6 +67,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onSessionIdentified((event) => identified(event.ptyId, event.sessionId, event.title))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onSessionEvent((event) => exact(event.sessionId, event.kind))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

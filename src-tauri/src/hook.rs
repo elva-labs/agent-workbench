@@ -1,5 +1,12 @@
-//! An optional `PostToolUse` hook, so the changes pane hears from the agent
-//! rather than only from the filesystem.
+//! Optional hooks, so the panes hear from the agent rather than guess.
+//!
+//! Two kinds. A `PostToolUse` hook, so the changes pane hears the moment a
+//! tool changed a file; and session hooks, `UserPromptSubmit`, `Stop` and
+//! the permission prompt, appended to a log the core tails, so a row says
+//! exactly when its agent started, stopped, or asked for permission rather
+//! than reading that off the pty. Both agents take the same shape: Claude
+//! Code in the project's `.claude/settings.local.json`, Codex in the
+//! project's `.codex/hooks.json`, with the same events and the same stdin.
 //!
 //! The watcher already works, and this does not replace it: a person editing
 //! in another editor still has to show up. What the hook adds is immediacy and
@@ -31,12 +38,37 @@ pub struct HookStatus {
     pub events: String,
 }
 
+/// Where session hooks append: one JSON line per event, the hook's stdin as
+/// it came. The core tails it; see `activity.rs`.
+pub fn activity_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("sessions.jsonl")
+}
+
+/// The session events each agent can report, by the agent's own name for
+/// them. The permission prompt is the one they spell differently.
+const CLAUDE_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "Notification"];
+const CODEX_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "PermissionRequest"];
+
 pub fn events_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("last-tool-use.json")
 }
 
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
+}
+
+fn codex_hooks_path(project: &Path) -> PathBuf {
+    project.join(".codex").join("hooks.json")
+}
+
+/// The command a session hook runs: add what the agent said to the log.
+fn activity_command(home: &Path) -> String {
+    let log = activity_path(home);
+    format!(
+        "mkdir -p {parent} && cat >> {file}",
+        parent = shell_quote(&bash_path(&log.parent().unwrap_or(home).to_string_lossy())),
+        file = shell_quote(&bash_path(&log.to_string_lossy())),
+    )
 }
 
 /// The command the hook runs: replace our file with what the agent just did.
@@ -67,12 +99,14 @@ fn bash_path(path: &str) -> String {
 /// Makes sure the file exists, so the watcher has something to attach to
 /// before the hook has ever fired.
 fn touch_events(home: &Path) -> Result<(), String> {
-    let events = events_path(home);
-    if let Some(parent) = events.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
-    }
-    if !events.exists() {
-        std::fs::write(&events, "").map_err(|e| format!("could not create {events:?}: {e}"))?;
+    for path in [events_path(home), activity_path(home)] {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {parent:?}: {e}"))?;
+        }
+        if !path.exists() {
+            std::fs::write(&path, "").map_err(|e| format!("could not create {path:?}: {e}"))?;
+        }
     }
     Ok(())
 }
@@ -91,25 +125,80 @@ fn read_settings(path: &Path) -> Map<String, Value> {
 }
 
 fn is_ours(entry: &Value, home: &Path) -> bool {
-    let ours = command(home);
+    let ours = [command(home), activity_command(home)];
     entry
         .get("hooks")
         .and_then(Value::as_array)
         .is_some_and(|hooks| {
-            hooks
-                .iter()
-                .any(|hook| hook.get("command").and_then(Value::as_str) == Some(ours.as_str()))
+            hooks.iter().any(|hook| {
+                hook.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| ours.iter().any(|own| own == command))
+            })
         })
 }
 
+fn has_ours(settings: &Map<String, Value>, event: &str, home: &Path) -> bool {
+    settings
+        .get("hooks")
+        .and_then(|hooks| hooks.get(event))
+        .and_then(Value::as_array)
+        .is_some_and(|entries| entries.iter().any(|entry| is_ours(entry, home)))
+}
+
+/// Adds our entry under an event, leaving whatever else is there alone.
+fn add_entry(
+    settings: &mut Map<String, Value>,
+    event: &str,
+    entry: Value,
+    home: &Path,
+) -> Result<bool, String> {
+    let hooks = settings
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("the hooks setting is not an object")?;
+    let entries = hooks
+        .entry(event)
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or_else(|| format!("the {event} setting is not a list"))?;
+    if entries.iter().any(|entry| is_ours(entry, home)) {
+        return Ok(false);
+    }
+    entries.push(entry);
+    Ok(true)
+}
+
+/// Removes our entries under an event, and the empty scaffolding they leave.
+fn remove_entries(settings: &mut Map<String, Value>, event: &str, home: &Path) {
+    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) {
+        entries.retain(|entry| !is_ours(entry, home));
+        if entries.is_empty() {
+            hooks.remove(event);
+        }
+    }
+    if hooks.is_empty() {
+        settings.remove("hooks");
+    }
+}
+
+fn session_entry(home: &Path) -> Value {
+    json!({ "hooks": [{ "type": "command", "command": activity_command(home) }] })
+}
+
+/// Installed is all of ours in Claude Code's settings. The Codex file is
+/// written alongside and not asked about: a project without Codex has none.
 pub fn status(home: &Path, project: &Path) -> HookStatus {
     let settings = settings_path(project);
-    let installed = read_settings(&settings)
-        .get("hooks")
-        .and_then(|hooks| hooks.get("PostToolUse"))
-        .and_then(Value::as_array)
-        .is_some_and(|entries| entries.iter().any(|entry| is_ours(entry, home)));
-
+    let read = read_settings(&settings);
+    let installed = has_ours(&read, "PostToolUse", home)
+        && CLAUDE_SESSION_EVENTS
+            .iter()
+            .all(|event| has_ours(&read, event, home));
     HookStatus {
         installed,
         settings: settings.to_string_lossy().to_string(),
@@ -117,58 +206,63 @@ pub fn status(home: &Path, project: &Path) -> HookStatus {
     }
 }
 
-/// Adds the hook, leaving every other setting and every other hook alone.
+/// Adds the hooks, leaving every other setting and every other hook alone.
 pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
     let path = settings_path(project);
     let mut settings = read_settings(&path);
-
-    let hooks = settings
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("the hooks setting is not an object")?;
-
-    let entries = hooks
-        .entry("PostToolUse")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
-        .ok_or("the PostToolUse setting is not a list")?;
-
-    if !entries.iter().any(|entry| is_ours(entry, home)) {
-        entries.push(json!({
+    let mut changed = add_entry(
+        &mut settings,
+        "PostToolUse",
+        json!({
             "matcher": MATCHER,
             "hooks": [{ "type": "command", "command": command(home) }],
-        }));
+        }),
+        home,
+    )?;
+    for event in CLAUDE_SESSION_EVENTS {
+        changed |= add_entry(&mut settings, event, session_entry(home), home)?;
+    }
+    if changed {
         write_settings(&path, &settings)?;
+    }
+
+    let codex = codex_hooks_path(project);
+    let mut hooks = read_settings(&codex);
+    let mut changed = false;
+    for event in CODEX_SESSION_EVENTS {
+        changed |= add_entry(&mut hooks, event, session_entry(home), home)?;
+    }
+    if changed {
+        write_settings(&codex, &hooks)?;
     }
 
     touch_events(home)?;
     Ok(status(home, project))
 }
 
-/// Removes only our entry. Anything else in PostToolUse stays.
+/// Removes only our entries. Anything else in the files stays, and a Codex
+/// file that held nothing but ours goes with them.
 pub fn uninstall(home: &Path, project: &Path) -> Result<HookStatus, String> {
     let path = settings_path(project);
-    let mut settings = read_settings(&path);
-
-    if let Some(entries) = settings
-        .get_mut("hooks")
-        .and_then(|hooks| hooks.get_mut("PostToolUse"))
-        .and_then(Value::as_array_mut)
-    {
-        entries.retain(|entry| !is_ours(entry, home));
-        let empty = entries.is_empty();
-
-        // Leave no empty scaffolding behind that was not there before.
-        if empty {
-            if let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) {
-                hooks.remove("PostToolUse");
-                if hooks.is_empty() {
-                    settings.remove("hooks");
-                }
-            }
+    if path.exists() {
+        let mut settings = read_settings(&path);
+        for event in ["PostToolUse"].iter().chain(CLAUDE_SESSION_EVENTS) {
+            remove_entries(&mut settings, event, home);
         }
         write_settings(&path, &settings)?;
+    }
+
+    let codex = codex_hooks_path(project);
+    if codex.exists() {
+        let mut hooks = read_settings(&codex);
+        for event in CODEX_SESSION_EVENTS {
+            remove_entries(&mut hooks, event, home);
+        }
+        if hooks.is_empty() {
+            std::fs::remove_file(&codex).map_err(|e| format!("could not remove {codex:?}: {e}"))?;
+        } else {
+            write_settings(&codex, &hooks)?;
+        }
     }
 
     Ok(status(home, project))
@@ -384,5 +478,77 @@ mod tests {
         let command = command(Path::new("/home/ada"));
         assert!(command.contains("cat > "), "{command}");
         assert!(!command.contains(">>"), "{command}");
+    }
+
+    fn codex_hooks_of(project: &Path) -> Value {
+        std::fs::read_to_string(codex_hooks_path(project))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    #[test]
+    fn installs_the_session_hooks_for_both_agents() {
+        let (home, project) = fixture("sessions");
+        install(&home, &project).unwrap();
+
+        let claude = settings_of(&project);
+        for event in ["UserPromptSubmit", "Stop", "Notification"] {
+            let command = claude["hooks"][event][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap();
+            assert!(command.contains("sessions.jsonl"), "{event}: {command}");
+            assert!(command.contains(">>"), "appends, so a burst loses nothing");
+        }
+        let codex = codex_hooks_of(&project);
+        for event in ["UserPromptSubmit", "Stop", "PermissionRequest"] {
+            assert!(codex["hooks"][event][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("sessions.jsonl"));
+        }
+        assert!(activity_path(&home).exists());
+        assert!(status(&home, &project).installed);
+    }
+
+    #[test]
+    fn uninstalling_takes_the_session_hooks_too_and_an_empty_codex_file_with_them() {
+        let (home, project) = fixture("sessions-off");
+        install(&home, &project).unwrap();
+        uninstall(&home, &project).unwrap();
+        assert!(settings_of(&project).get("hooks").is_none());
+        assert!(!codex_hooks_path(&project).exists());
+        assert!(!status(&home, &project).installed);
+    }
+
+    #[test]
+    fn leaves_someone_elses_codex_hooks_alone() {
+        let (home, project) = fixture("codex-theirs");
+        std::fs::create_dir_all(project.join(".codex")).unwrap();
+        std::fs::write(
+            codex_hooks_path(&project),
+            r#"{"description":"mine","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#,
+        )
+        .unwrap();
+        install(&home, &project).unwrap();
+        let hooks = codex_hooks_of(&project);
+        assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        uninstall(&home, &project).unwrap();
+        let hooks = codex_hooks_of(&project);
+        assert_eq!(hooks["description"], "mine");
+        assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        assert_eq!(hooks["hooks"]["Stop"][0]["hooks"][0]["command"], "say done");
+    }
+
+    #[test]
+    fn is_not_installed_until_every_hook_is_there() {
+        let (home, project) = fixture("partial");
+        install(&home, &project).unwrap();
+        let mut settings = read_settings(&settings_path(&project));
+        remove_entries(&mut settings, "Stop", &home);
+        write_settings(&settings_path(&project), &settings).unwrap();
+        assert!(!status(&home, &project).installed);
+        install(&home, &project).unwrap();
+        assert!(status(&home, &project).installed);
     }
 }

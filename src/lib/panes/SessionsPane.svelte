@@ -267,6 +267,7 @@
               class:live={isLive(session)}
               class:working={session.working}
               class:unread={session.unread}
+              class:permission={session.needs === "permission"}
             ></span>
             <span class="label" class:unread={session.unread}>{label(session)}</span>
             {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
@@ -384,8 +385,8 @@
           disabled={hook.busy}
           data-row="hook:{project.path}"
           title={isInstalled(project.path)
-            ? "The agent reports edits directly. Click to remove the hook."
-            : "Add a PostToolUse hook so edits are reported the moment a tool finishes."}
+            ? "The agents report edits, and when they start, stop and ask, directly. Click to remove the hooks."
+            : "Add hooks so edits are reported the moment a tool finishes, and each session says exactly when it started, stopped or is asking for permission."}
           data-testid="hook-toggle"
         >
           {isInstalled(project.path) ? "live updates: hook" : "live updates: filesystem"}
@@ -636,6 +637,14 @@
   .label.unread {
     color: var(--ink);
     font-weight: 500;
+  }
+
+  /* Asking: a hollow accent ring, whatever else the dot was. */
+  .dot.permission {
+    background: var(--surface);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+    animation: none;
   }
 
   @keyframes breathe {

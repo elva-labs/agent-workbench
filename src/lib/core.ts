@@ -45,6 +45,14 @@ export interface Spawned {
   sessionId: string | null;
 }
 
+/** A transition one of the agent's own hooks reported, by session id:
+    `prompt` (the user sent one), `stop` (the turn ended), `permission` (it
+    is asking), `idle` (it has been waiting a while). */
+export interface SessionEvent {
+  sessionId: string;
+  kind: "prompt" | "stop" | "permission" | "idle";
+}
+
 export interface SessionIdentified {
   ptyId: string;
   sessionId: string;
@@ -159,6 +167,8 @@ export interface Core {
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
   /** An agent that mints its own ids has written one down for a session. */
   onSessionIdentified(handler: (identified: SessionIdentified) => void): Promise<() => void>;
+  /** A session hook fired, for projects with the hooks installed. */
+  onSessionEvent(handler: (event: SessionEvent) => void): Promise<() => void>;
   /** Files dragged over and dropped on the window. The webview never gets
       the DOM events for these; the window takes them and reports paths. */
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
@@ -260,6 +270,10 @@ const tauriCore: Core = {
     return listen<SessionIdentified>("session_identified", (event) => handler(event.payload));
   },
 
+  async onSessionEvent(handler) {
+    return listen<SessionEvent>("session_event", (event) => handler(event.payload));
+  },
+
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
   },
@@ -331,6 +345,9 @@ const detachedCore: Core = {
     return () => {};
   },
   async onSessionIdentified() {
+    return () => {};
+  },
+  async onSessionEvent() {
     return () => {};
   },
   async onFileDrag() {
