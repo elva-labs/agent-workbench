@@ -142,8 +142,14 @@ schedule, so a moved position does not hold; a toolbar makes the title bar
 taller and AppKit centres the buttons in it on every layout, which is the
 same device Electron's inset title bar style uses.
 
-Windows and Linux keep the native title bar and their own controls. The overlay
-style and traffic-light fields are ignored there.
+On Windows and Linux the window is undecorated instead, and the app draws
+minimize, maximize and close at the end of the rightmost pane's header, where
+the platform has them: the changes pane, or the agent once that is closed. The
+pane headers are drag regions there too, so the window moves by its top row
+and zooms on a double-click, and the platform keeps the resize borders. There
+is no menu bar on those platforms, since one would sit in the row the app
+took; a menu button at the start of the leftmost header, where macOS has its
+lights, pops the native menu with Settings and Quit in it.
 
 ## On window resize
 

@@ -144,6 +144,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         openUrl: async (url: string) => {
           fake.opened.push(url);
         },
+        windowControl: async () => {},
+        openAppMenu: async () => {},
         spawn: async (spawnOptions: any, onOutput: (bytes: Uint8Array) => void) => {
           if (fake.failSpawn) throw new Error(fake.failSpawn);
           const id = `pty-${++ptyCount}`;

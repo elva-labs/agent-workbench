@@ -142,6 +142,10 @@ export interface Core {
   setWindowTitle(title: string): Promise<void>;
   /** Opens a link in the system browser. */
   openUrl(url: string): Promise<void>;
+  /** The window's own controls, for the platforms where the app draws them. */
+  windowControl(action: "minimize" | "maximize" | "close"): Promise<void>;
+  /** The native popup that stands in for a menu bar on those platforms. */
+  openAppMenu(): Promise<void>;
   spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<Spawned>;
   /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
   spawnShell(options: ShellOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
@@ -215,6 +219,15 @@ const tauriCore: Core = {
   },
 
   openUrl: (url) => openWithSystem(url),
+
+  async windowControl(action) {
+    const window = getCurrentWindow();
+    if (action === "minimize") await window.minimize();
+    else if (action === "maximize") await window.toggleMaximize();
+    else await window.close();
+  },
+
+  openAppMenu: () => invoke("app_menu"),
 
   async spawn(options, onOutput) {
     const channel = new Channel<unknown>();
@@ -293,6 +306,8 @@ const detachedCore: Core = {
   },
   async setWindowTitle() {},
   async openUrl() {},
+  async windowControl() {},
+  async openAppMenu() {},
   async spawn() {
     throw new Error("not connected to the workbench core");
   },

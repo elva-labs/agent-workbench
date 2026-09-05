@@ -118,6 +118,14 @@ export function leftmost(): PaneId {
   return "changes";
 }
 
+/** The pane at the right edge of the top row, whose header carries the
+    window controls on Windows and Linux. */
+export function rightmost(): PaneId {
+  if (changesVisible()) return "changes";
+  if (agentVisible()) return "agent";
+  return "sessions";
+}
+
 /** Room the macOS window controls take at the top left, in pixels from the
     window edge. The window carries a unified toolbar (see `chrome.rs`), and
     in one of those AppKit puts the buttons about 20px in, 20px apart, and

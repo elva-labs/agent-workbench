@@ -18,6 +18,7 @@ import {
   layout,
   leftmost,
   loadLayout,
+  rightmost,
   saveLayout,
   sessionsVisible,
   terminalVisible,
@@ -508,5 +509,23 @@ describe("the leftmost pane", () => {
     layout.mode = "reviewing";
     applyLayout(500);
     expect(leftmost()).toBe("changes");
+  });
+});
+
+describe("the rightmost pane", () => {
+  it("is the changes pane while that is showing", () => {
+    applyLayout(1600, 900);
+    expect(rightmost()).toBe("changes");
+  });
+
+  it("is the agent once the changes pane is gone", () => {
+    togglePane("changes");
+    expect(rightmost()).toBe("agent");
+  });
+
+  it("is the viewer when reviewing, whatever else folded", () => {
+    layout.mode = "reviewing";
+    applyLayout(500);
+    expect(rightmost()).toBe("changes");
   });
 });

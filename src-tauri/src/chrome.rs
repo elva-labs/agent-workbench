@@ -1,7 +1,11 @@
-//! The window's own chrome on macOS.
+//! The window's own chrome.
 //!
-//! The window has no title bar, and the traffic lights sit over the header
-//! of the leftmost pane. Where they sit is macOS's decision, and the setting
+//! The window has no title bar anywhere. On macOS the traffic lights sit over
+//! the header of the leftmost pane; on Windows and Linux the window is
+//! undecorated and the app draws minimize, maximize and close at the end of
+//! the rightmost pane's header, where the platform puts them.
+//!
+//! On macOS the traffic lights sit over the header of the leftmost pane. Where they sit is macOS's decision, and the setting
 //! for moving them is applied once and undone by the next title bar layout.
 //! What does hold is a toolbar: a window with a unified toolbar gets a taller
 //! title bar, and AppKit centres the buttons in it on every layout. An empty,
@@ -29,5 +33,9 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     ns_window.setToolbarStyle(NSWindowToolbarStyle::Unified);
 }
 
+/// Windows and Linux: no decorations, so the top row is the app's. The
+/// window keeps its resize borders and its shadow; only the bar goes.
 #[cfg(not(target_os = "macos"))]
-pub fn inset_window_controls(_window: &tauri::WebviewWindow) {}
+pub fn inset_window_controls(window: &tauri::WebviewWindow) {
+    let _ = window.set_decorations(false);
+}

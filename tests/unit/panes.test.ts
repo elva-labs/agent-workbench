@@ -12,6 +12,7 @@ const fake = {
   transcripts: [] as { id: string; title: string | null; modified: number; size: number }[],
   codexTranscripts: [] as { id: string; title: string | null; modified: number; size: number }[],
   hookInstalled: false,
+  controls: [] as string[],
 };
 
 vi.mock("$lib/core", () => ({
@@ -36,6 +37,12 @@ vi.mock("$lib/core", () => ({
     hookStatus: async () => ({ installed: fake.hookInstalled, settings: "", events: "" }),
     hookInstall: async () => ({ installed: true, settings: "", events: "" }),
     hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
+    windowControl: async (action: string) => {
+      fake.controls.push(action);
+    },
+    openAppMenu: async () => {
+      fake.controls.push("menu");
+    },
     setWindowTitle: async () => {},
     projectInfo: async (path: string) => ({ path, name: path, repository: path, isGit: true }),
   }),
@@ -412,6 +419,38 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     expect(screen.getByText("~/dev/two")).toBeInTheDocument();
     expect(screen.queryByText("~/dev/one")).not.toBeInTheDocument();
+  });
+});
+
+// Off macOS the window is undecorated and the app draws the controls at the
+// end of the rightmost header. jsdom reports no platform, which is not a Mac.
+describe("the window controls", () => {
+  it("sit at the end of the rightmost pane's header and drive the window", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.controls = [];
+    render(ChangesPane);
+    const controls = screen.getByTestId("window-controls");
+    await fireEvent.click(within(controls).getByRole("button", { name: "Minimize" }));
+    await fireEvent.click(within(controls).getByRole("button", { name: "Maximize" }));
+    await fireEvent.click(within(controls).getByRole("button", { name: "Close" }));
+    expect(fake.controls).toEqual(["minimize", "maximize", "close"]);
+  });
+
+  it("are not on a pane that is not at the right edge", () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    render(SessionsPane);
+    expect(screen.queryByTestId("window-controls")).not.toBeInTheDocument();
+  });
+
+  it("have a menu button at the leftmost header that asks for the native menu", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.controls = [];
+    render(SessionsPane);
+    await fireEvent.click(screen.getByTestId("app-menu"));
+    expect(fake.controls).toEqual(["menu"]);
   });
 });
 

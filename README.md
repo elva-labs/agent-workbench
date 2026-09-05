@@ -11,7 +11,8 @@ the real binary is driven end to end on Linux and Windows.
 Per platform:
 
 - **macOS**: the title bar is the app's own, with the window controls over the
-  leftmost pane's header.
+  leftmost pane's header. Elsewhere the window is undecorated and the app
+  draws the controls at the end of the rightmost pane's header.
 - **Linux**: WebKitGTK. Building needs `libwebkit2gtk-4.1-dev`,
   `libayatana-appindicator3-dev`, `librsvg2-dev` and `patchelf`; the driver
   tier needs `webkit2gtk-driver` and `tauri-driver`.

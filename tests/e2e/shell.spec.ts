@@ -493,3 +493,33 @@ test.describe("the search field", () => {
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
   });
 });
+
+// Off macOS the window is undecorated: the controls are the app's, at the end
+// of whichever pane is rightmost, and the settings have a button in the bar.
+test.describe("the window's own controls", () => {
+  test("sit at the rightmost header and follow it", async ({ page }) => {
+    await expect(page.locator(`${CHANGES} [data-testid='window-controls']`)).toBeVisible();
+    await page.keyboard.press(`${MOD}+\\`);
+    await expect(page.locator(CHANGES)).toBeHidden();
+    await expect(page.locator(`${AGENT} [data-testid='window-controls']`)).toBeVisible();
+  });
+
+  test("drive the window through the core", async ({ page }) => {
+    const controls = page.locator(`${CHANGES} [data-testid='window-controls']`);
+    await controls.getByRole("button", { name: "Minimize" }).click();
+    await controls.getByRole("button", { name: "Maximize" }).click();
+    await controls.getByRole("button", { name: "Close" }).click();
+    expect(
+      await page.evaluate(() => (window as unknown as { __windowControls?: string[] }).__windowControls),
+    ).toEqual(["minimize", "maximize", "close"]);
+  });
+
+  test("put a menu button at the leftmost header that asks the core for the native menu", async ({ page }) => {
+    await page.locator(`${SESSIONS} [data-testid='app-menu']`).click();
+    expect(
+      await page.evaluate(() => (window as unknown as { __windowControls?: string[] }).__windowControls),
+    ).toEqual(["menu"]);
+    await page.keyboard.press(`${MOD}+b`);
+    await expect(page.locator(`${AGENT} [data-testid='app-menu']`)).toBeVisible();
+  });
+});

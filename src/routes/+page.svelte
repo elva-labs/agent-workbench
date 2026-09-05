@@ -368,6 +368,7 @@
     gap: 5px;
   }
 
+
   kbd {
     font-family: inherit;
     color: var(--ink-2);
