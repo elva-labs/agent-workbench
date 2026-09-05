@@ -212,6 +212,24 @@ describe("SessionsPane", () => {
     expect(sessions.preferred["/repo"]).toBe("codex");
   });
 
+  it("shows a session working, and one waiting for you", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const busy = create("/repo");
+    started(busy.key, "pty-1", "session-1");
+    busy.working = true;
+    const done = create("/repo");
+    started(done.key, "pty-2", "session-2");
+    done.unread = true;
+
+    render(SessionsPane);
+    const rows = screen.getAllByTestId("session-row");
+    expect(rows[0].querySelector(".dot")).toHaveClass("working");
+    expect(rows[0]).toHaveTextContent("working");
+    expect(rows[1].querySelector(".dot")).toHaveClass("unread");
+    expect(rows[1]).toHaveTextContent("waiting for you");
+  });
+
   // A session under another project is that project's work: picking it
   // brings the project forward, so the panes show what the session is doing.
   it("brings a session's project forward when the session is picked", async () => {

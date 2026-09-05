@@ -87,6 +87,7 @@ export async function installFakeCore(
           const w = window as unknown as { __windowControls?: string[] };
           (w.__windowControls ??= []).push("menu");
         },
+        setBadge: async () => {},
         spawn: async (spawnOptions: { session?: string }) => ({
           ptyId: `pty-${++ptyCount}`,
           sessionId: spawnOptions.session ?? `session-${ptyCount}`,

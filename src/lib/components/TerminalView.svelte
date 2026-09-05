@@ -34,6 +34,8 @@
     start: (cols: number, rows: number, onOutput: (bytes: Uint8Array) => void) => Promise<boolean>;
     /** The process set the terminal's title. */
     onTitle?: (title: string) => void;
+    /** The process rang the bell or sent a notification: it wants the user. */
+    onAttention?: () => void;
     /** Send Shift+Enter as Meta+Enter, which the agent takes as a newline
         rather than a send. A shell gets a plain Enter either way. */
     newlineOnShiftEnter?: boolean;
@@ -47,6 +49,7 @@
     focused = false,
     start,
     onTitle,
+    onAttention,
     newlineOnShiftEnter = false,
   }: Props = $props();
 
@@ -151,6 +154,15 @@
     });
 
     terminal.onTitleChange((title) => onTitle?.(title));
+    // BEL is how Claude Code asks for attention; OSC 9 and OSC 777 are the
+    // terminal notifications Codex sends. All three mean the same here.
+    terminal.onBell(() => onAttention?.());
+    for (const osc of [9, 777]) {
+      terminal.parser.registerOscHandler(osc, () => {
+        onAttention?.();
+        return true;
+      });
+    }
     register(id, host, terminal);
 
     observer = new ResizeObserver(() => measure());

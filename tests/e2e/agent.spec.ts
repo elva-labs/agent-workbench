@@ -37,6 +37,8 @@ declare global {
       titles: string[];
       /** Links handed to the system browser. */
       opened: string[];
+      /** Counts put on the app's icon. */
+      badges: (number | null)[];
       picked: string | null;
       outputs: Record<string, (bytes: Uint8Array) => void>;
       enders: ((ended: unknown) => void)[];
@@ -85,6 +87,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         killed: [],
         titles: [],
         opened: [],
+        badges: [],
         picked: null,
         outputs: {},
         enders: [],
@@ -146,6 +149,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         },
         windowControl: async () => {},
         openAppMenu: async () => {},
+        setBadge: async (count: number | null) => {
+          fake.badges.push(count);
+        },
         spawn: async (spawnOptions: any, onOutput: (bytes: Uint8Array) => void) => {
           if (fake.failSpawn) throw new Error(fake.failSpawn);
           const id = `pty-${++ptyCount}`;
@@ -586,6 +592,45 @@ test.describe("several sessions in one project", () => {
     await expect(rows(page)).toHaveCount(1);
     expect(await killed(page)).toEqual(["pty-1"]);
     await running(page);
+  });
+});
+
+test.describe("working, and waiting for you", () => {
+  test.beforeEach(async ({ page }) => {
+    await open(page, { open: [ONE] });
+    await running(page);
+    await page.getByTestId("new-session").click();
+    await expect(rows(page)).toHaveCount(2);
+    // Looking at the second; the first works behind it.
+  });
+
+  test("shows a session working while its output flows, then waiting once it stops", async ({ page }) => {
+    await page.evaluate(() => window.__fake.emit("pty-1", "x".repeat(400)));
+    await expect(rows(page).first()).toContainText("working");
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/working/);
+
+    await expect(rows(page).first()).toContainText("waiting for you", { timeout: 6000 });
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
+    await expect(page.getByTestId("waiting-readout")).toHaveText(/1 waiting/);
+    expect((await page.evaluate(() => window.__fake.badges)).at(-1)).toBe(1);
+
+    // Looking at it reads it.
+    await rows(page).first().click();
+    await expect(rows(page).first()).not.toContainText("waiting for you");
+    await expect(page.getByTestId("waiting-readout")).toHaveCount(0);
+    expect((await page.evaluate(() => window.__fake.badges)).at(-1)).toBeNull();
+  });
+
+  test("marks a session that rings behind another at once", async ({ page }) => {
+    await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
+  });
+
+  test("does not mark the session you are looking at", async ({ page }) => {
+    await page.evaluate(() => window.__fake.emit("pty-2", "x".repeat(400)));
+    await expect(rows(page).nth(1)).toContainText("working");
+    await expect(rows(page).nth(1)).toContainText("running", { timeout: 6000 });
+    await expect(rows(page).nth(1).locator(".dot")).not.toHaveClass(/unread/);
   });
 });
 

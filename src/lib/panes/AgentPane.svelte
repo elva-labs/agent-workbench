@@ -18,6 +18,7 @@
     activeSession,
     create,
     launch,
+    rang,
     sessions,
     statusLabel,
     statusMessage,
@@ -63,6 +64,7 @@
         focused={layout.focus === "agent"}
         start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
         onTitle={session.agent === "claude-code" ? (raw) => titled(session.key, raw) : undefined}
+        onAttention={() => rang(session.key)}
         newlineOnShiftEnter
       />
     {/each}

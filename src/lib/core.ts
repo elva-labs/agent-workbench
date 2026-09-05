@@ -146,6 +146,8 @@ export interface Core {
   windowControl(action: "minimize" | "maximize" | "close"): Promise<void>;
   /** The native popup that stands in for a menu bar on those platforms. */
   openAppMenu(): Promise<void>;
+  /** A count on the app's icon, or none. Sessions waiting for the user. */
+  setBadge(count: number | null): Promise<void>;
   spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<Spawned>;
   /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
   spawnShell(options: ShellOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
@@ -229,6 +231,10 @@ const tauriCore: Core = {
 
   openAppMenu: () => invoke("app_menu"),
 
+  async setBadge(count) {
+    await getCurrentWindow().setBadgeCount(count === null ? undefined : count);
+  },
+
   async spawn(options, onOutput) {
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => onOutput(toBytes(message));
@@ -308,6 +314,7 @@ const detachedCore: Core = {
   async openUrl() {},
   async windowControl() {},
   async openAppMenu() {},
+  async setBadge() {},
   async spawn() {
     throw new Error("not connected to the workbench core");
   },

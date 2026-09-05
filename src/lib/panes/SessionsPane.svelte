@@ -262,8 +262,13 @@
           data-row="session:{session.key}"
         >
           <button class="row" tabindex="-1" onclick={() => choose(session.key)} data-testid="session-row">
-            <span class="dot" class:live={isLive(session)}></span>
-            <span class="label">{label(session)}</span>
+            <span
+              class="dot"
+              class:live={isLive(session)}
+              class:working={session.working}
+              class:unread={session.unread}
+            ></span>
+            <span class="label" class:unread={session.unread}>{label(session)}</span>
             {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
             <span class="state">{statusLabel(session)}</span>
           </button>
@@ -614,6 +619,39 @@
   .dot.live {
     background: var(--add);
     border-color: var(--add);
+  }
+
+  /* At work: the dot breathes. Waiting for you: the accent, and the name in
+     ink rather than grey, until you look. */
+  .dot.working {
+    animation: breathe 1.2s ease-in-out infinite;
+  }
+
+  .dot.unread {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+
+  .label.unread {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot.working {
+      animation: none;
+    }
   }
 
   .icon {

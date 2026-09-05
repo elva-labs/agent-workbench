@@ -238,6 +238,24 @@ fresh sessions on every restart, when the one you wanted was in the list.
 Which agent a session runs is the row's business: see
 [docs/adapters.md](adapters.md) for the two and how they differ.
 
+## Working, and waiting for you
+
+A row says what its agent is doing, read off the pty rather than asked. An
+agent at work streams, its spinner and its text keep bytes flowing, and an
+agent waiting shows a still screen give or take a redraw; so more than a
+redraw's worth of bytes in a second is **working** (the dot breathes) and two
+seconds of quiet after that is waiting. A session that goes quiet, ends, or
+rings for attention while nobody is looking at it is **unread**: the accent
+dot, the name in ink, `waiting for you` in its row and in the agent pane, a
+count in the status bar, and the same count on the app's icon. Looking at it,
+which is having it on screen in a focused window, reads it; a session on
+screen in a focused window never goes unread.
+
+Attention comes through the pty for both agents: Claude Code rings the bell,
+Codex sends a terminal notification, and the terminal view hears BEL, OSC 9
+and OSC 777 alike. This needs nothing installed. The heuristic can be wrong
+by a redraw; exact transitions from the agents' hooks are the follow-up.
+
 ## What a session is called, and where it works
 
 A row is `session N` until the agent says otherwise. Claude Code writes the

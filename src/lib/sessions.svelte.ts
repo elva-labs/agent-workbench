@@ -1,5 +1,6 @@
 import { core, type AgentId, type SessionEnded, type Transcript } from "$lib/core";
 import { AGENTS, installed } from "$lib/agent.svelte";
+import { attention } from "$lib/attention.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 
@@ -45,6 +46,13 @@ export interface Session {
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
+  /** Whether the agent is doing something right now, read off the pty:
+      output is flowing while it works, and the screen is still when it
+      waits. */
+  working: boolean;
+  /** The agent stopped, or asked for attention, while nobody was looking.
+      Cleared by looking. */
+  unread: boolean;
   exitCode: number | null;
   error: string | null;
   /** Set once the terminal has been created, so it is only built once. */
@@ -407,6 +415,8 @@ export function create(
     title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
     cwd: null,
     worktree: null,
+    working: false,
+    unread: false,
     exitCode: null,
     error: null,
     mounted: false,
@@ -441,7 +451,10 @@ export async function launch(
         cols,
         rows,
       },
-      onOutput,
+      (bytes) => {
+        output(key, bytes.length);
+        onOutput(bytes);
+      },
     );
     if (started(key, ptyId, sessionId)) return true;
     // The row was closed while the process was coming up. Nothing owns it
@@ -497,6 +510,9 @@ export function ended(event: SessionEnded): boolean {
   session.ptyId = null;
   session.exitCode = event.code;
   session.status = event.clean ? "exited" : "crashed";
+  // An ending is something to see too, and not a thing still working.
+  session.working = false;
+  if (!isViewed(session)) session.unread = true;
   // The transcript is complete now, so the history it belongs in has moved.
   loadHistory(session.project);
   return true;
@@ -518,6 +534,10 @@ export function close(key: string) {
     // sessions still live.
     session.ptyId = null;
   }
+
+  const pulse = pulses.get(key);
+  if (pulse?.quiet) clearTimeout(pulse.quiet);
+  pulses.delete(key);
 
   const at = sessions.all.indexOf(session);
   sessions.all.splice(at, 1);
@@ -565,7 +585,7 @@ export function statusLabel(session: Session | null): string {
     case "starting":
       return "starting";
     case "running":
-      return "running";
+      return session.working ? "working" : session.unread ? "waiting for you" : "running";
     case "exited":
       return "ended";
     default:
@@ -573,8 +593,94 @@ export function statusLabel(session: Session | null): string {
   }
 }
 
+/**
+ * Activity, read off the pty.
+ *
+ * An agent at work streams: its spinner and its text keep bytes flowing. An
+ * agent waiting shows a still screen, give or take a redraw. So "working" is
+ * more than a redraw's worth of bytes in the last second, and "waiting" is a
+ * second of quiet after that. A session that goes quiet while nobody is
+ * looking at it, or rings for attention, is unread until someone does.
+ */
+
+/** Quiet this long after output is the agent waiting. */
+export const QUIET_MS = 2000;
+/** Output within a second below this is a redraw, not work. */
+export const WORK_BYTES = 256;
+const WINDOW_MS = 1000;
+
+interface Pulse {
+  bytes: number;
+  windowStart: number;
+  quiet: ReturnType<typeof setTimeout> | null;
+}
+
+const pulses = new Map<string, Pulse>();
+
+/** Whether the session is the one on screen, in a window that is looked at. */
+export function isViewed(session: Session): boolean {
+  return attention.focused && sessions.active === session.key;
+}
+
+/** Bytes arrived for a session. */
+export function output(key: string, bytes: number, now = Date.now()) {
+  const session = byKey(key);
+  if (session === null) return;
+  let pulse = pulses.get(key);
+  if (pulse === undefined) {
+    pulse = { bytes: 0, windowStart: now, quiet: null };
+    pulses.set(key, pulse);
+  }
+  if (now - pulse.windowStart > WINDOW_MS) {
+    pulse.bytes = 0;
+    pulse.windowStart = now;
+  }
+  pulse.bytes += bytes;
+  if (pulse.bytes >= WORK_BYTES && !session.working) session.working = true;
+
+  if (pulse.quiet !== null) clearTimeout(pulse.quiet);
+  pulse.quiet = setTimeout(() => settle(key), QUIET_MS);
+}
+
+/** The agent went quiet: it is waiting, and unread unless watched stop. */
+function settle(key: string) {
+  const session = byKey(key);
+  const pulse = pulses.get(key);
+  if (pulse !== undefined) {
+    pulse.quiet = null;
+    pulse.bytes = 0;
+  }
+  if (session === null || !session.working) return;
+  session.working = false;
+  if (!isViewed(session)) session.unread = true;
+}
+
+/** The agent rang the bell, or sent a notification: it wants the user,
+    whatever else is going on. Heard in a focused window on this session,
+    it needs no mark. */
+export function rang(key: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  if (!isViewed(session)) session.unread = true;
+}
+
+/** The user looked: the session is on screen in a focused window. */
+export function viewed(key: string) {
+  const session = byKey(key);
+  if (session !== null) session.unread = false;
+}
+
+/** How many sessions are waiting for the user. */
+export function unreadCount(): number {
+  return sessions.all.filter((session) => session.unread).length;
+}
+
 /** Test seam: the counter is module state and rows outlive a component. */
 export function reset() {
+  for (const pulse of pulses.values()) {
+    if (pulse.quiet !== null) clearTimeout(pulse.quiet);
+  }
+  pulses.clear();
   sessions.all = [];
   sessions.active = null;
   sessions.history = {};

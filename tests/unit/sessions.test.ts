@@ -1,13 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { stash } from "$lib/exits";
+import { attention, resetAttention } from "$lib/attention.svelte";
 import {
   activeSession,
   ago,
   historyFor,
   historyLabel,
   isMine,
+  isViewed,
   loadRemembered,
+  output,
+  QUIET_MS,
+  rang,
+  unreadCount,
+  viewed,
+  WORK_BYTES,
   located,
   outsideFor,
   followCwd,
@@ -67,6 +75,7 @@ vi.mock("$lib/core", () => ({
 
 beforeEach(() => {
   reset();
+  resetAttention();
   killed.length = 0;
   historyReads = 0;
   cwdAnswer = null;
@@ -646,5 +655,109 @@ describe("where the session works", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("working, and waiting for you", () => {
+  it("is working while more than a redraw's worth of bytes flows", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      output(session.key, WORK_BYTES - 1);
+      expect(session.working).toBe(false);
+      output(session.key, 1);
+      expect(session.working).toBe(true);
+      expect(statusLabel(session)).toBe("working");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is waiting after a stretch of quiet, and seen if it was on screen", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      expect(session.working).toBe(false);
+      expect(session.unread).toBe(false);
+      expect(statusLabel(session)).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The whole point: something finished while you were elsewhere.
+  it("goes unread when it stops behind another session, until looked at", () => {
+    vi.useFakeTimers();
+    try {
+      const other = live(A, "pty-1");
+      const busy = live(A, "pty-2");
+      select(other.key);
+      output(busy.key, WORK_BYTES);
+      output(busy.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      expect(busy.unread).toBe(true);
+      expect(statusLabel(busy)).toBe("waiting for you");
+      expect(unreadCount()).toBe(1);
+
+      viewed(busy.key);
+      expect(busy.unread).toBe(false);
+      expect(unreadCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes unread when it stops while the window is elsewhere", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      attention.focused = false;
+      expect(isViewed(session)).toBe(false);
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      expect(session.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps working while bytes keep coming", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_MS / 2);
+      output(session.key, 10);
+      vi.advanceTimersByTime(QUIET_MS / 2 + 10);
+      expect(session.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks a ring for attention at once, unless it was heard on screen", () => {
+    const heard = live(A, "pty-1");
+    const behind = live(A, "pty-2");
+    select(heard.key);
+    rang(heard.key);
+    expect(heard.unread).toBe(false);
+    rang(behind.key);
+    expect(behind.unread).toBe(true);
+  });
+
+  it("marks an ending that nobody saw", () => {
+    const behind = live(A, "pty-1");
+    live(A, "pty-2");
+    ended({ id: "pty-1", code: 0, clean: true });
+    expect(behind.unread).toBe(true);
+    expect(behind.working).toBe(false);
+  });
+
+  it("does nothing for a key it does not have", () => {
+    expect(() => output("nope", 999)).not.toThrow();
+    expect(() => rang("nope")).not.toThrow();
+    expect(() => viewed("nope")).not.toThrow();
   });
 });

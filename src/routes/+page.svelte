@@ -26,7 +26,11 @@
     ended as sessionEnded,
     followCwd,
     identified,
+    sessions,
+    unreadCount,
+    viewed,
   } from "$lib/sessions.svelte";
+  import { attention, badge, followFocus } from "$lib/attention.svelte";
   import { cycle as cycleShell, ended as shellEnded } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import {
@@ -70,7 +74,19 @@
       .onOpenSettings(openSettings)
       .then((unlisten) => offs.push(unlisten));
     offs.push(followCwd());
+    offs.push(followFocus());
     return () => offs.forEach((off) => off());
+  });
+
+  // Looking at a session is what reads it: the one on screen, in a window
+  // that has focus. Either changing is a look.
+  $effect(() => {
+    const key = sessions.active;
+    if (attention.focused && key !== null) viewed(key);
+  });
+
+  $effect(() => {
+    badge(unreadCount());
   });
 
   let reviewing = $derived(layout.mode === "reviewing");
@@ -271,6 +287,11 @@
 <footer class="status no-select">
   <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>
   <span class="mode" data-testid="mode-readout">{layout.mode}</span>
+  {#if unreadCount() > 0}
+    <span class="waiting" data-testid="waiting-readout">
+      {unreadCount()} waiting for you
+    </span>
+  {/if}
   <span class="spacer"></span>
   {#each bindingsFor(isMac()) as binding (binding.does)}
     <span class="binding" class:minor={binding.minor}>
@@ -366,6 +387,10 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
+  }
+
+  .waiting {
+    color: var(--accent);
   }
 
 
