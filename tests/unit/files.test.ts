@@ -7,6 +7,15 @@ import {
   closeViewer,
   deselect,
   effectiveView,
+  filtering,
+  openAt,
+  requestField,
+  search,
+  searchingLines,
+  setMode,
+  setQuery,
+  SEARCH_DELAY,
+  visible,
   files,
   isOpen,
   listed,
@@ -32,6 +41,10 @@ const fake = {
   diff: { lines: [{ kind: "hunk", text: "@@ -1 +1 @@", old: null, new: null }], binary: false, truncated: false },
   content: { lines: ["one", "two"], binary: false, truncated: false },
   statusCalls: 0,
+  hits: [] as { path: string; line: number; text: string }[],
+  grepCalls: [] as { query: string; scope: string }[],
+  grepFail: null as string | null,
+  grepTruncated: false,
   diffCalls: 0,
   fail: null as string | null,
 };
@@ -45,6 +58,11 @@ vi.mock("$lib/core", () => ({
     },
     async gitFiles() {
       return fake.fileList;
+    },
+    async gitGrep(_root: string, query: string, scope: string) {
+      fake.grepCalls.push({ query, scope });
+      if (fake.grepFail !== null) throw new Error(fake.grepFail);
+      return { hits: fake.hits, truncated: fake.grepTruncated };
     },
     async gitDiff() {
       fake.diffCalls += 1;
@@ -64,6 +82,8 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 
+const hit = (path: string, line: number, text: string) => ({ path, line, text });
+
 const changed = (path: string, status = "M", add = 2, del = 1) => ({
   path,
   status,
@@ -74,6 +94,7 @@ const changed = (path: string, status = "M", add = 2, del = 1) => ({
 
 beforeEach(() => {
   clear();
+  files.view = "diff";
   resetWorkspace();
   workspace.open.push({ path: ROOT, name: "repo", repository: ROOT, isGit: true });
   workspace.active = ROOT;
@@ -83,6 +104,10 @@ beforeEach(() => {
   fake.statusCalls = 0;
   fake.diffCalls = 0;
   fake.fail = null;
+  fake.hits = [];
+  fake.grepCalls = [];
+  fake.grepFail = null;
+  fake.grepTruncated = false;
 });
 
 describe("refresh", () => {
@@ -189,6 +214,112 @@ describe("scope", () => {
     await select("src/lib.rs");
     await setScope("changed");
     expect(files.selected).toBe("src/lib.rs");
+  });
+});
+
+describe("the search field", () => {
+  it("narrows the tree to paths holding every word, in any order", async () => {
+    await refresh();
+    setQuery("cache mod");
+    expect(filtering()).toBe(true);
+    expect(visible().map((f) => f.path)).toEqual(["src/cache/mod.rs"]);
+    setQuery("LIB");
+    expect(visible().map((f) => f.path)).toEqual(["src/lib.rs"]);
+    setQuery("");
+    expect(filtering()).toBe(false);
+    expect(visible()).toHaveLength(3);
+  });
+
+  it("holds every folder open while narrowing", async () => {
+    await refresh();
+    toggleDir({ path: "src", hasChange: true });
+    expect(isOpen({ path: "src", hasChange: true })).toBe(false);
+    setQuery("lib");
+    expect(isOpen({ path: "src", hasChange: true })).toBe(true);
+  });
+
+  it("searches inside files in lines mode, after a pause, in the scope", async () => {
+    vi.useFakeTimers();
+    try {
+      await refresh();
+      fake.hits = [hit("src/lib.rs", 3, "fn main() {")];
+      setMode("lines");
+      setQuery("main");
+      expect(fake.grepCalls).toEqual([]);
+      await vi.advanceTimersByTimeAsync(SEARCH_DELAY + 10);
+      expect(fake.grepCalls).toEqual([{ query: "main", scope: "changed" }]);
+      expect(files.hits).toEqual(fake.hits);
+      expect(searchingLines()).toBe(true);
+
+      // Typing on restarts the pause: one search for the whole word.
+      setQuery("mai");
+      setQuery("main(");
+      await vi.advanceTimersByTimeAsync(SEARCH_DELAY + 10);
+      expect(fake.grepCalls).toHaveLength(2);
+      expect(fake.grepCalls[1].query).toBe("main(");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("searches at once on request, and says when the list was cut", async () => {
+    await refresh();
+    fake.hits = [hit("a.rs", 1, "x")];
+    fake.grepTruncated = true;
+    setMode("lines");
+    files.query = "x";
+    await search();
+    expect(files.hits).toHaveLength(1);
+    expect(files.hitsTruncated).toBe(true);
+    expect(files.searching).toBe(false);
+  });
+
+  it("reports a search that failed, and keeps the tree", async () => {
+    await refresh();
+    fake.grepFail = "git grep exploded";
+    setMode("lines");
+    files.query = "x";
+    await search();
+    expect(files.error).toContain("exploded");
+    expect(files.hits).toEqual([]);
+  });
+
+  it("drops the hits on the way back to files mode", async () => {
+    await refresh();
+    fake.hits = [hit("a.rs", 1, "x")];
+    setMode("lines");
+    files.query = "x";
+    await search();
+    setMode("files");
+    expect(files.hits).toEqual([]);
+    expect(searchingLines()).toBe(false);
+  });
+
+  it("opens a file at a line as the whole file, marked there", async () => {
+    await refresh();
+    await openAt("src/lib.rs", 7);
+    expect(files.selected).toBe("src/lib.rs");
+    expect(files.view).toBe("content");
+    expect(files.target).toEqual({ path: "src/lib.rs", line: 7 });
+    // The mark is that file's; another file has none.
+    await select("src/cache/mod.rs");
+    expect(files.target).toBeNull();
+  });
+
+  it("hands the field to a chord in the mode asked for", () => {
+    const before = files.fieldRequests;
+    requestField("lines");
+    expect(files.mode).toBe("lines");
+    expect(files.fieldRequests).toBe(before + 1);
+  });
+
+  it("forgets the query with the project", async () => {
+    await refresh();
+    setQuery("lib");
+    setMode("lines");
+    clear();
+    expect(files.query).toBe("");
+    expect(files.mode).toBe("files");
   });
 });
 

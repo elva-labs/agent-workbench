@@ -163,6 +163,25 @@ The process is told one column fewer than the grid has. A glyph can overhang
 its cell to the right, an italic *d* most of all, and the renderer clips at the
 last column; with that column never written to, the overhang always has room.
 
+## The field above the tree
+
+The pane's toolbar is a search field. What is typed narrows the tree to the
+paths holding every word of it, in any order, with every folder on the way
+open; or, in **lines** mode, is searched for inside the files and the hits
+stand in for the tree, a row per file and a row per hit, the match marked.
+A hit opens the file as a whole, scrolled to the line and marked there.
+Search follows the scope: the changed files, or every file the tree lists.
+It runs through `git grep`, fixed string and case-folded, tracked and
+untracked files alike, and is cut at a few hundred hits with a note saying
+so. Escape clears the field, then leaves it; Enter searches at once, or
+opens the first match in files mode; Down steps into what was found.
+
+Scope, view and reload moved into the menu at the field's end, each with its
+chord beside it. The viewer closes from its own bar. <kbd>Cmd</kbd><kbd>F</kbd>
+puts the keyboard in the field in files mode when the changes pane has focus,
+and <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd> in lines mode from anywhere,
+opening the pane if it was closed.
+
 ## Inside the tree
 
 Folders come before files, then alphabetical. A chain of folders that holds

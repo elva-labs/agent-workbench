@@ -12,7 +12,15 @@
   import { bindingsFor, isMac, resolveAction } from "$lib/keymap";
   import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
-  import { closeViewer, files, listed, select, toggleScope, toggleView } from "$lib/files.svelte";
+  import {
+    closeViewer,
+    files,
+    listed,
+    requestField,
+    select,
+    toggleScope,
+    toggleView,
+  } from "$lib/files.svelte";
   import {
     cycle as cycleSession,
     ended as sessionEnded,
@@ -157,6 +165,13 @@
         break;
       case "openSettings":
         openSettings();
+        break;
+      case "find":
+        // The field lives in the changes pane, so the pane comes out if it
+        // was closed, and takes focus.
+        if (!changesVisible()) togglePane("changes");
+        focusPane("changes");
+        requestField(action.mode);
         break;
       case "cycle":
         // Shells when the keyboard is in the panel, sessions anywhere else,

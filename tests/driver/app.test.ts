@@ -118,6 +118,21 @@ describe("the real app", () => {
     await driver.wait(async () => (await driver.findElements(By.css("[data-testid='settings']"))).length === 0, 5_000);
   });
 
+  // Lines search runs git grep in the real repository.
+  it("finds lines inside the files", async () => {
+    const { driver } = app;
+    await driver.findElement(By.css("[data-testid='mode-lines']")).click();
+    const field = await driver.findElement(By.css("[data-testid='search-field']"));
+    await field.sendKeys("println");
+    await waitForPaneText(driver, "[data-testid='search-results']", "println");
+    await waitForPaneText(driver, "[data-testid='search-results']", "lib.rs");
+    await driver.findElement(By.css("[data-testid='search-hit']")).click();
+    await waitForPaneText(driver, "[data-testid='viewer']", "println");
+    await field.clear();
+    await driver.findElement(By.css("[data-testid='mode-files']")).click();
+    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+  });
+
   it("offers codex too, and runs it", async () => {
     const { driver } = app;
     const chips = await driver.findElements(By.css("[data-testid='agent-chip']"));

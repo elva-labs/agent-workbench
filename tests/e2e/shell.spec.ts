@@ -20,6 +20,17 @@ function row(page: Page, name: string) {
   return page.locator(TREE).getByText(name, { exact: true });
 }
 
+/** Scope and view live in the pane's menu: open it, pick, it closes. */
+async function chooseAll(page: Page) {
+  await page.getByTestId("changes-menu").click();
+  await page.getByTestId("menu-scope-all").click();
+}
+
+async function chooseView(page: Page, view: "diff" | "content") {
+  await page.getByTestId("changes-menu").click();
+  await page.getByTestId(`menu-view-${view}`).click();
+}
+
 function rowNames(page: Page) {
   return page.locator(`${TREE} [role='treeitem'] .name`).allTextContents();
 }
@@ -201,7 +212,7 @@ test.describe("the file tree", () => {
 
   // Why the tree scales: widening the scope adds folders, not hundreds of rows.
   test("leaves folders with nothing changed shut", async ({ page }) => {
-    await page.getByRole("button", { name: "All files" }).click();
+    await chooseAll(page);
     await expect.poll(() => rowNames(page)).toContain("docs");
     const names = await rowNames(page);
 
@@ -210,7 +221,7 @@ test.describe("the file tree", () => {
   });
 
   test("opens and shuts a folder on click", async ({ page }) => {
-    await page.getByRole("button", { name: "All files" }).click();
+    await chooseAll(page);
 
     await row(page, "docs").click();
     expect(await rowNames(page)).toContain("architecture.md");
@@ -245,7 +256,7 @@ test.describe("the file tree", () => {
   });
 
   test("does not scroll the pane sideways on a deep path", async ({ page }) => {
-    await page.getByRole("button", { name: "All files" }).click();
+    await chooseAll(page);
     const overflow = await page
       .locator(TREE)
       .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
@@ -291,11 +302,11 @@ test.describe("the file viewer", () => {
     await row(page, "mod.rs").click();
     const viewer = page.getByTestId("viewer");
 
-    await page.getByRole("button", { name: "Content" }).click();
+    await chooseView(page, "content");
     await expect(viewer).toHaveAttribute("data-view", "content");
     await expect(viewer.getByText("@@ -1,9 +1,12 @@")).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Diff" }).click();
+    await chooseView(page, "diff");
     await expect(viewer).toHaveAttribute("data-view", "diff");
   });
 
@@ -347,11 +358,13 @@ test.describe("the file viewer", () => {
   });
 
   test("widens the scope and falls back to content for an unchanged file", async ({ page }) => {
-    await page.getByRole("button", { name: "All files" }).click();
+    await chooseAll(page);
     await row(page, "Cargo.toml").click();
 
     await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
-    await expect(page.getByRole("button", { name: "Diff" })).toBeDisabled();
+    await page.getByTestId("changes-menu").click();
+    await expect(page.getByTestId("menu-view-diff")).toBeDisabled();
+    await page.keyboard.press("Escape");
   });
 
   test("closes on Escape and restores the sessions pane", async ({ page }) => {
@@ -420,5 +433,63 @@ test.describe("the file viewer", () => {
 
     await page.keyboard.press(`${MOD}+d`);
     expect(await widthOf(page, CHANGES)).toBeCloseTo(reviewing, 0);
+  });
+});
+
+test.describe("the search field", () => {
+  test("narrows the tree as you type, and clears on Escape", async ({ page }) => {
+    const field = page.getByTestId("search-field");
+    await field.fill("cache");
+    await expect.poll(() => rowNames(page)).toEqual(["src", "cache", "mod.rs", "token_cache.rs"]);
+    await field.press("Escape");
+    await expect(field).toHaveValue("");
+    await expect.poll(() => rowNames(page)).toContain("lib.rs");
+  });
+
+  test("searches inside files and opens a file at the line", async ({ page }) => {
+    await page.getByTestId("mode-lines").click();
+    await page.getByTestId("search-field").fill("struct cache");
+    await expect(page.getByTestId("search-hit")).toHaveCount(1);
+    await expect(page.getByTestId("search-file")).toContainText("src/cache/mod.rs");
+    await expect(page.getByTestId("search-hit").locator("mark")).toHaveText("struct Cache");
+
+    await page.getByTestId("search-hit").click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
+    const marked = page.locator("[data-testid='viewer'] tr.target");
+    await expect(marked).toHaveCount(1);
+    await expect(marked).toContainText("// src/cache/mod.rs");
+    await expect(marked).toBeInViewport();
+  });
+
+  test("says when the list was cut", async ({ page }) => {
+    await page.getByTestId("mode-lines").click();
+    await page.getByTestId("search-field").fill("flood");
+    await expect(page.getByTestId("search-truncated")).toBeVisible();
+  });
+
+  test("takes the keyboard on its chords", async ({ page }) => {
+    // Shift+mod+F from the agent: the field, in lines mode.
+    await page.keyboard.press(`${MOD}+Shift+f`);
+    await expect(page.getByTestId("search-field")).toBeFocused();
+    await expect(page.getByTestId("mode-lines")).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+
+    // Plain mod+F only counts outside the terminals.
+    await page.keyboard.press(`${MOD}+2`);
+    await page.keyboard.press(`${MOD}+f`);
+    await expect(page.getByTestId("search-field")).not.toBeFocused();
+    await page.keyboard.press(`${MOD}+3`);
+    await page.keyboard.press(`${MOD}+f`);
+    await expect(page.getByTestId("search-field")).toBeFocused();
+    await expect(page.getByTestId("mode-files")).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("closes the viewer from its own bar", async ({ page }) => {
+    await row(page, "mod.rs").click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await page.locator("[data-testid='viewer'] .close").click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
   });
 });

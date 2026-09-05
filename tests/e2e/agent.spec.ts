@@ -188,6 +188,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         hookInstall: async () => ({ installed: true, settings: "", events: "" }),
         hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
         gitStatus: async () => [],
+        gitGrep: async () => ({ hits: [], truncated: false }),
         gitFiles: async () => [],
         gitDiff: async () => ({ lines: [], binary: false, truncated: false }),
         gitContent: async () => ({ lines: [], binary: false, truncated: false }),

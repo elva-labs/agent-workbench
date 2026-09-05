@@ -112,6 +112,19 @@ describe("resolveAction", () => {
     }
   });
 
+  // Narrowing the tree is the changes pane's own. In a terminal the chord is
+  // the process's: Ctrl+F is forward-char in a shell.
+  it("claims the filter only outside the terminals, and the search anywhere", () => {
+    expect(resolveAction(mod("f"), { focus: "changes" })).toEqual({ type: "find", mode: "files" });
+    expect(resolveAction(mod("f"), { focus: "sessions" })).toEqual({ type: "find", mode: "files" });
+    expect(resolveAction(mod("f"), { focus: "agent" })).toBeNull();
+    expect(resolveAction(mod("f"), { focus: "terminal" })).toBeNull();
+    expect(resolveAction(mod("f", { shiftKey: true }), { focus: "agent" })).toEqual({
+      type: "find",
+      mode: "lines",
+    });
+  });
+
   it("opens the settings on mod+comma", () => {
     expect(resolveAction(mod(","))).toEqual({ type: "openSettings" });
   });

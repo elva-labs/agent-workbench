@@ -106,6 +106,22 @@ export async function installFakeCore(
         hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
         gitStatus: async () => state.fixture.status,
         gitFiles: async () => state.fixture.files,
+        // A search over what the fixture's viewer shows: every listed file
+        // "contains" the shared header line, and the cache module a struct.
+        gitGrep: async (_root: string, query: string, scope: string) => {
+          const q = query.toLowerCase();
+          const paths = scope === "changed" ? state.fixture.status.map((f) => f.path) : state.fixture.files;
+          const hits: { path: string; line: number; text: string }[] = [];
+          for (const path of paths) {
+            if ("use std::collections::hashmap;".includes(q)) {
+              hits.push({ path, line: 1, text: "use std::collections::HashMap;" });
+            }
+            if (path === "src/cache/mod.rs" && "pub struct cache {".includes(q)) {
+              hits.push({ path, line: 3, text: "pub struct Cache {" });
+            }
+          }
+          return { hits, truncated: q === "flood" };
+        },
         gitDiff: async (_root: string, file: string) => ({
           lines: [
             { kind: "hunk", text: "@@ -1,9 +1,12 @@", old: null, new: null },

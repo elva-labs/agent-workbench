@@ -23,6 +23,8 @@ export type ActionKey =
   | "review"
   | "view"
   | "scope"
+  | "find"
+  | "findLines"
   | "theme"
   | "settings";
 
@@ -57,6 +59,8 @@ export const ACTIONS: ActionInfo[] = [
   { key: "review", label: "Open or close the file viewer", group: "Changes" },
   { key: "view", label: "Diff or whole file", group: "Changes" },
   { key: "scope", label: "Changed files or all files", group: "Changes" },
+  { key: "find", label: "Filter files (in the changes pane)", group: "Changes" },
+  { key: "findLines", label: "Search in files", group: "Changes" },
   { key: "theme", label: "Cycle the theme", group: "App" },
   { key: "settings", label: "Open settings", group: "App" },
 ];
@@ -78,6 +82,8 @@ export const PRESETS: Record<PresetName, Keymap> = {
     review: plain("d"),
     view: plain("e"),
     scope: shifted("a"),
+    find: plain("f"),
+    findLines: shifted("f"),
     theme: shifted("t"),
     settings: plain(","),
   },
@@ -96,6 +102,8 @@ export const PRESETS: Record<PresetName, Keymap> = {
     review: plain("d"),
     view: plain("e"),
     scope: shifted("a"),
+    find: plain("f"),
+    findLines: shifted("f"),
     theme: shifted("t"),
     settings: plain(","),
   },

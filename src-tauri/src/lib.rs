@@ -282,6 +282,25 @@ async fn git_files(root: PathBuf) -> Result<Vec<String>, String> {
     blocking(move || git::list_files(&root)).await
 }
 
+/// Lines matching a query, in the changed files only or in every file the
+/// tree lists.
+#[tauri::command]
+async fn git_grep(root: PathBuf, query: String, scope: String) -> Result<git::GrepResult, String> {
+    blocking(move || {
+        if scope == "changed" {
+            let paths: Vec<String> = git::status(&root)?
+                .into_iter()
+                .filter(|file| file.status != "D")
+                .map(|file| file.path)
+                .collect();
+            git::grep(&root, &query, Some(&paths))
+        } else {
+            git::grep(&root, &query, None)
+        }
+    })
+    .await
+}
+
 #[tauri::command]
 async fn git_diff(root: PathBuf, file: String) -> Result<git::FileDiff, String> {
     blocking(move || git::diff(&root, &file)).await
@@ -381,6 +400,7 @@ pub fn run() {
             hook_uninstall,
             git_status,
             git_files,
+            git_grep,
             git_diff,
             git_content,
             git_watch,

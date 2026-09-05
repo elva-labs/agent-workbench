@@ -311,6 +311,105 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepHit {
+    pub path: String,
+    /// One-based, as editors count.
+    pub line: u32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepResult {
+    pub hits: Vec<GrepHit>,
+    /// True when there were more than the cap and the rest were dropped.
+    pub truncated: bool,
+}
+
+/// Hits beyond this many are cut: a query like `e` matches most lines of a
+/// repository, and a list that long says nothing a shorter one does not.
+pub const GREP_CAP: usize = 500;
+
+/// Lines matching a query, through `git grep`: fixed string, case-folded,
+/// text files only, tracked and untracked alike, so what is searched is what
+/// the tree lists. `paths` narrows it to those files, which is how a search
+/// follows the changed-files scope. An empty query is no search.
+pub fn grep(root: &Path, query: &str, paths: Option<&[String]>) -> Result<GrepResult, String> {
+    if query.trim().is_empty() {
+        return Ok(GrepResult {
+            hits: Vec::new(),
+            truncated: false,
+        });
+    }
+    if let Some(paths) = paths {
+        if paths.is_empty() {
+            return Ok(GrepResult {
+                hits: Vec::new(),
+                truncated: false,
+            });
+        }
+    }
+
+    let workdir = workdir(root)?;
+    let mut command = std::process::Command::new("git");
+    command.current_dir(&workdir).args([
+        "grep",
+        "-n",
+        "-I",
+        "-i",
+        "-F",
+        "--no-color",
+        "--untracked",
+        "-e",
+        query,
+    ]);
+    if let Some(paths) = paths {
+        command.arg("--");
+        command.args(paths);
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("could not run git grep: {e}"))?;
+    // 1 is git's "nothing matched"; anything above is an error worth reading.
+    if !output.status.success() && output.status.code() != Some(1) {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if message.is_empty() {
+            "git grep failed".to_string()
+        } else {
+            message
+        });
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut hits = Vec::new();
+    let mut truncated = false;
+    for line in text.lines() {
+        if hits.len() >= GREP_CAP {
+            truncated = true;
+            break;
+        }
+        // path:line:text, and a path may itself hold no colon that matters:
+        // the line number is the first field that parses.
+        let Some((path, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let Some((number, matched)) = rest.split_once(':') else {
+            continue;
+        };
+        let Ok(number) = number.parse::<u32>() else {
+            continue;
+        };
+        hits.push(GrepHit {
+            path: path.to_string(),
+            line: number,
+            text: matched.to_string(),
+        });
+    }
+    Ok(GrepResult { hits, truncated })
+}
+
 /// The worktree root, which is what the watcher should watch and what paths
 /// are relative to.
 pub fn workdir(root: &Path) -> Result<PathBuf, String> {
@@ -578,5 +677,70 @@ mod tests {
         if let Err(message) = status(&dir) {
             assert!(message.contains("not a git repository"), "{message}");
         }
+    }
+
+    #[test]
+    fn finds_lines_by_text_across_tracked_and_untracked_files() {
+        let dir = repo("grep");
+        write(&dir, "src/lib.rs", "fn handle_client() {}\nfn other() {}\n");
+        commit(&dir);
+        write(&dir, "notes.md", "call handle_client twice\n");
+        write(&dir, "image.bin", "\0\0handle_client\0");
+
+        let found = grep(&dir, "Handle_Client", None).unwrap();
+        assert!(!found.truncated);
+        let mut where_: Vec<(String, u32)> = found
+            .hits
+            .iter()
+            .map(|h| (h.path.clone(), h.line))
+            .collect();
+        where_.sort();
+        assert_eq!(
+            where_,
+            [("notes.md".to_string(), 1), ("src/lib.rs".to_string(), 1)]
+        );
+        assert_eq!(
+            found
+                .hits
+                .iter()
+                .find(|h| h.path == "src/lib.rs")
+                .unwrap()
+                .text,
+            "fn handle_client() {}"
+        );
+    }
+
+    #[test]
+    fn narrows_to_the_given_files() {
+        let dir = repo("grep-scope");
+        write(&dir, "a.rs", "needle\n");
+        write(&dir, "b.rs", "needle\n");
+        commit(&dir);
+        let found = grep(&dir, "needle", Some(&["b.rs".to_string()])).unwrap();
+        assert_eq!(found.hits.len(), 1);
+        assert_eq!(found.hits[0].path, "b.rs");
+        assert!(grep(&dir, "needle", Some(&[])).unwrap().hits.is_empty());
+    }
+
+    #[test]
+    fn nothing_matched_is_an_empty_list_not_an_error() {
+        let dir = repo("grep-none");
+        write(&dir, "a.rs", "fn main() {}\n");
+        commit(&dir);
+        assert!(grep(&dir, "zzz-not-here", None).unwrap().hits.is_empty());
+        assert!(grep(&dir, "   ", None).unwrap().hits.is_empty());
+    }
+
+    #[test]
+    fn cuts_a_flood_of_hits_and_says_so() {
+        let dir = repo("grep-cap");
+        let body: String = (0..(GREP_CAP + 20))
+            .map(|i| format!("common line {i}\n"))
+            .collect();
+        write(&dir, "big.txt", &body);
+        commit(&dir);
+        let found = grep(&dir, "common", None).unwrap();
+        assert_eq!(found.hits.len(), GREP_CAP);
+        assert!(found.truncated);
     }
 }

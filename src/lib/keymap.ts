@@ -33,6 +33,8 @@ export type Action =
   | { type: "toggleTerminal" }
   | { type: "exitReview" }
   | { type: "openSettings" }
+  /** The search field: narrowing the tree, or searching inside files. */
+  | { type: "find"; mode: "files" | "lines" }
   /** Next or previous session, or shell when the terminal panel has focus. */
   | { type: "cycle"; direction: 1 | -1 };
 
@@ -73,6 +75,8 @@ const ACTION_OF: Record<ActionKey, Action> = {
   review: { type: "toggleReview" },
   view: { type: "toggleView" },
   scope: { type: "toggleScope" },
+  find: { type: "find", mode: "files" },
+  findLines: { type: "find", mode: "lines" },
   theme: { type: "cycleTheme" },
   settings: { type: "openSettings" },
 };
@@ -94,7 +98,11 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   }
 
   const action = actionOf(chord);
-  return action === null ? null : ACTION_OF[action];
+  if (action === null) return null;
+  // Filtering the tree is the changes pane's own: in a terminal the same
+  // chord is the process's, Ctrl+F most of all.
+  if (action === "find" && isTerminal(ctx.focus)) return null;
+  return ACTION_OF[action];
 }
 
 export interface Binding {
@@ -123,6 +131,7 @@ export function bindingsFor(mac: boolean): Binding[] {
     { keys: d("review"), does: "review" },
     { keys: d("view"), does: "diff/content" },
     { keys: d("scope"), does: "scope", minor: true },
+    { keys: d("findLines"), does: "search", minor: true },
     { keys: d("settings"), does: "settings", minor: true },
   ];
 }

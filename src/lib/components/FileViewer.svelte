@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { effectiveView, files, selectedEntry } from "$lib/files.svelte";
+  import { closeViewer, effectiveView, files, selectedEntry } from "$lib/files.svelte";
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
   // read-only EditorView on content, which is also where side-by-side comes
@@ -9,9 +9,34 @@
   let view = $derived(effectiveView());
   let diff = $derived(files.diff);
   let content = $derived(files.content);
+
+  let viewer: HTMLDivElement;
+
+  /** The line a search hit asked for, when it is this file's. */
+  let target = $derived(
+    entry !== null && files.target?.path === entry.path ? files.target.line : null,
+  );
+
+  // Once the lines are there, bring the target into view. Bound to what is
+  // rendered, so it runs again when the content arrives after the target.
+  $effect(() => {
+    target;
+    content;
+    diff;
+    if (target === null || !viewer) return;
+    queueMicrotask(() =>
+      viewer.querySelector(".target")?.scrollIntoView({ block: "center" }),
+    );
+  });
 </script>
 
-<div class="viewer" data-testid="viewer" data-view={view}>
+<div class="viewer" data-testid="viewer" data-view={view} bind:this={viewer}>
+  {#if entry !== null}
+    <div class="bar">
+      <span class="path" title={entry.path}>{entry.path}</span>
+      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
+    </div>
+  {/if}
   {#if entry === null}
     <p class="empty">Pick a file to read it.</p>
   {:else if entry.binary}
@@ -20,7 +45,7 @@
     <table class="lines diff">
       <tbody>
         {#each diff!.lines as line, i (i)}
-          <tr class={line.kind}>
+          <tr class={line.kind} class:target={target !== null && line.new === target}>
             <td class="num">{line.old ?? ""}</td>
             <td class="num">{line.new ?? ""}</td>
             <td class="sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</td>
@@ -33,7 +58,7 @@
     <table class="lines">
       <tbody>
         {#each content!.lines as line, i (i)}
-          <tr>
+          <tr class:target={target === i + 1}>
             <td class="num">{i + 1}</td>
             <td class="text">{line}</td>
           </tr>
@@ -56,6 +81,51 @@
 </div>
 
 <style>
+  .bar {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 6px var(--pane-pad);
+    border-bottom: 1px solid var(--rule);
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 1;
+  }
+
+  .bar .path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-2);
+  }
+
+  .close {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border: 1px solid var(--rule);
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .close:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  tr.target td {
+    background: var(--accent-soft);
+  }
+
   .viewer {
     height: 100%;
     overflow: auto;

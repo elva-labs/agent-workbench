@@ -27,6 +27,8 @@ Only <kbd>Cmd</kbd> chords (<kbd>Ctrl</kbd> on Windows and Linux). Nothing else.
 | <kbd>Cmd</kbd><kbd>D</kbd> | Open or close the file viewer |
 | <kbd>Cmd</kbd><kbd>E</kbd> | Diff or whole file |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd> | Changed files or all files |
+| <kbd>Cmd</kbd><kbd>F</kbd> | Filter files, when a list pane has focus |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd> | Search in files |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd> | Cycle theme: light, dark, system |
 
 | <kbd>Cmd</kbd><kbd>,</kbd> | Open the settings |

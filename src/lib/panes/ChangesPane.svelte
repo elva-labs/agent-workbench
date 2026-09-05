@@ -2,19 +2,28 @@
   import Pane from "$lib/components/Pane.svelte";
   import FileTree from "$lib/components/FileTree.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
+  import SearchResults from "$lib/components/SearchResults.svelte";
+  import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import { onMount, untrack } from "svelte";
   import {
     canDiff,
     clear,
+    clearQuery,
     closeViewer,
     files,
     listed,
+    openAt,
     refresh,
+    search,
+    searchingLines,
     select,
     selectedEntry,
+    setMode,
+    setQuery,
     setScope,
     setView,
+    visible,
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
   import { isInstalled } from "$lib/hook.svelte";
@@ -27,6 +36,62 @@
   let root = $derived(watchRoot());
   let worktree = $derived(followedWorktree());
   let notGit = $derived(activeProject() !== null && root === null);
+
+  let field: HTMLInputElement;
+  let menuOpen = $state(false);
+
+  // A chord asked for the field: put the keyboard in it, whatever had it.
+  $effect(() => {
+    files.fieldRequests;
+    if (files.fieldRequests > 0 && field) {
+      field.focus();
+      field.select();
+    }
+  });
+
+  function onFieldKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      // Once to clear, once more to leave, as the field's own convention.
+      e.stopPropagation();
+      if (files.query !== "") clearQuery();
+      else field.blur();
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (files.mode === "lines") void search();
+      else {
+        const first = visible()[0];
+        if (first !== undefined) open(first.path);
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      // Down leaves the field for what it found.
+      e.preventDefault();
+      const next = field.closest("section")?.querySelector<HTMLElement>(
+        "[data-testid='file-tree'], [data-testid='search-results'] button.hit",
+      );
+      next?.focus();
+    }
+  }
+
+  function openHit(path: string, line: number) {
+    void openAt(path, line);
+    enterReview();
+  }
+
+  function choose(run: () => void) {
+    run();
+    menuOpen = false;
+  }
+
+  function onMenuKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      menuOpen = false;
+    }
+  }
 
   onMount(() => {
     let off: (() => void) | null = null;
@@ -91,37 +156,100 @@
   title="Changes"
   meta={worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`}
 >
-  <!-- Scope and view are one control surface: widening the scope is what puts
-       files in the list that have no diff, so the two belong side by side. -->
+  <!-- The field is the toolbar: what you type narrows the tree, or searches
+       inside the files. Scope and view moved into the menu at the end, with
+       their chords beside them. -->
   <div class="head">
-    <div class="seg" role="group" aria-label="Which files to list">
-      <button class:on={files.scope === "changed"} onclick={() => setScope("changed")}>
-        Changed
-      </button>
-      <button class:on={files.scope === "all"} onclick={() => setScope("all")}>All files</button>
-    </div>
-
-    <div class="seg" role="group" aria-label="How to show the file">
+    <label class="field" class:lines={files.mode === "lines"}>
+      <span class="glyph" aria-hidden="true">⌕</span>
+      <input
+        type="search"
+        bind:this={field}
+        value={files.query}
+        oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+        onkeydown={onFieldKeydown}
+        placeholder={files.mode === "lines" ? "search in files…" : "filter files…"}
+        aria-label={files.mode === "lines" ? "Search in files" : "Filter files"}
+        spellcheck="false"
+        autocomplete="off"
+        data-testid="search-field"
+      />
+      <span class="modes" role="radiogroup" aria-label="What to search">
+        <button
+          role="radio"
+          aria-checked={files.mode === "files"}
+          class:on={files.mode === "files"}
+          onclick={() => setMode("files")}
+          title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
+          data-testid="mode-files">files</button
+        >
+        <button
+          role="radio"
+          aria-checked={files.mode === "lines"}
+          class:on={files.mode === "lines"}
+          onclick={() => setMode("lines")}
+          title="Search inside the files ({describe(chordFor('findLines'))})"
+          data-testid="mode-lines">lines</button
+        >
+      </span>
+    </label>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="more" onkeydown={onMenuKeydown}>
       <button
-        class:on={files.view === "diff" && diffable}
-        disabled={!diffable}
-        title={diffable ? "" : "This file has no changes to diff"}
-        onclick={() => setView("diff")}
+        class="tool"
+        onclick={() => (menuOpen = !menuOpen)}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="More"
+        data-testid="changes-menu">⋯</button
       >
-        Diff
-      </button>
-      <button
-        class:on={files.view === "content" || !diffable}
-        disabled={files.selected === null}
-        onclick={() => setView("content")}
-      >
-        Content
-      </button>
+      {#if menuOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div class="scrim" onclick={() => (menuOpen = false)}></div>
+        <div class="menu" role="menu" data-testid="changes-menu-items">
+          <button
+            role="menuitemradio"
+            aria-checked={files.scope === "changed"}
+            onclick={() => choose(() => setScope("changed"))}
+            data-testid="menu-scope-changed"
+          >
+            <span>Changed files</span><kbd>{describe(chordFor("scope"))}</kbd>
+          </button>
+          <button
+            role="menuitemradio"
+            aria-checked={files.scope === "all"}
+            onclick={() => choose(() => setScope("all"))}
+            data-testid="menu-scope-all"
+          >
+            <span>All files</span><kbd>{describe(chordFor("scope"))}</kbd>
+          </button>
+          <hr />
+          <button
+            role="menuitemradio"
+            aria-checked={files.view === "diff" && diffable}
+            disabled={!diffable}
+            onclick={() => choose(() => setView("diff"))}
+            data-testid="menu-view-diff"
+          >
+            <span>Diff</span><kbd>{describe(chordFor("view"))}</kbd>
+          </button>
+          <button
+            role="menuitemradio"
+            aria-checked={files.view === "content" || !diffable}
+            disabled={files.selected === null}
+            onclick={() => choose(() => setView("content"))}
+            data-testid="menu-view-content"
+          >
+            <span>Whole file</span><kbd>{describe(chordFor("view"))}</kbd>
+          </button>
+          <hr />
+          <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
+            <span>Reload</span>
+          </button>
+        </div>
+      {/if}
     </div>
-
-    {#if reviewing}
-      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
-    {/if}
   </div>
 
   {#if files.error}
@@ -138,7 +266,11 @@
        to itself; reviewing, it becomes the left column and keeps its scroll
        position, its open folders and its selection. -->
   <div class="split" class:reviewing style:--tree-w="{layout.tree}px">
-    <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} />
+    {#if searchingLines()}
+      <SearchResults onOpen={openHit} />
+    {:else}
+      <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} />
+    {/if}
     {#if reviewing}
       <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
       <FileViewer />
@@ -157,42 +289,155 @@
     flex: none;
   }
 
-  .seg {
+  .field {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    gap: 1px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px 0 8px;
+    border: 1px solid var(--rule);
+    background: var(--surface-2);
   }
 
-  .seg button,
-  .close {
+  .field:focus-within {
+    border-color: var(--accent);
+  }
+
+  .field.lines {
+    background: var(--accent-soft);
+  }
+
+  .glyph {
+    flex: none;
+    color: var(--ink-3);
+    font-size: 12px;
+  }
+
+  .field input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 0;
+    border: 0;
+    background: none;
     font-family: var(--mono);
-    font-size: 10.5px;
+    font-size: 11.5px;
+    color: var(--ink);
+    outline: none;
+  }
+
+  .field input::placeholder {
+    color: var(--ink-3);
+  }
+
+  .field input::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .modes {
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+  }
+
+  .modes button,
+  .tool {
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 10px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    padding: 4px 9px;
-    border: 1px solid var(--rule);
-    background: var(--surface);
     color: var(--ink-3);
     cursor: pointer;
+    padding: 2px 5px;
   }
 
-  .seg button.on {
-    background: var(--accent-soft);
-    border-color: var(--accent);
+  .modes button.on {
+    color: var(--accent);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 1px 4px;
+  }
+
+  .modes button:hover:not(.on),
+  .tool:hover {
+    color: var(--ink);
+  }
+
+  .tool {
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 6px;
+  }
+
+  .more {
+    position: relative;
+    flex: none;
+  }
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+  }
+
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 5;
+    min-width: 232px;
+    padding: 4px 0;
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
+  }
+
+  .menu hr {
+    border: 0;
+    border-top: 1px solid var(--rule);
+    margin: 4px 0;
+  }
+
+  .menu button {
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 5px var(--pane-pad) 5px 24px;
+    border: 0;
+    background: none;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .menu button[aria-checked="true"]::before {
+    content: "•";
+    position: absolute;
+    left: 10px;
     color: var(--accent);
   }
 
-  .seg button:disabled {
-    opacity: 0.4;
+  .menu button:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+
+  .menu button:disabled {
+    opacity: 0.45;
     cursor: default;
   }
 
-  .close {
-    margin-left: auto;
-  }
-
-  .close:hover {
-    border-color: var(--rule-strong);
-    color: var(--ink-2);
+  .menu kbd {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
   }
 
   .notice {

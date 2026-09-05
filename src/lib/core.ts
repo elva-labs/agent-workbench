@@ -87,6 +87,19 @@ export interface FileDiff {
   truncated: boolean;
 }
 
+export interface GrepHit {
+  path: string;
+  /** One-based, as editors count. */
+  line: number;
+  text: string;
+}
+
+export interface GrepResult {
+  hits: GrepHit[];
+  /** True when there were more than the core's cap and the rest were dropped. */
+  truncated: boolean;
+}
+
 export interface FileContent {
   lines: string[];
   binary: boolean;
@@ -158,6 +171,8 @@ export interface Core {
 
   gitStatus(root: string): Promise<ChangedFile[]>;
   gitFiles(root: string): Promise<string[]>;
+  /** Lines matching a query, in the changed files or in every file listed. */
+  gitGrep(root: string, query: string, scope: "changed" | "all"): Promise<GrepResult>;
   gitDiff(root: string, file: string): Promise<FileDiff>;
   gitContent(root: string, file: string): Promise<FileContent>;
   /** Starts watching a worktree, replacing whatever was watched before. */
@@ -255,6 +270,7 @@ const tauriCore: Core = {
 
   gitStatus: (root) => invoke<ChangedFile[]>("git_status", { root }),
   gitFiles: (root) => invoke<string[]>("git_files", { root }),
+  gitGrep: (root, query, scope) => invoke<GrepResult>("git_grep", { root, query, scope }),
   gitDiff: (root, file) => invoke<FileDiff>("git_diff", { root, file }),
   gitContent: (root, file) => invoke<FileContent>("git_content", { root, file }),
   gitWatch: (root) => invoke("git_watch", { root }),
@@ -321,6 +337,9 @@ const detachedCore: Core = {
   },
   async gitFiles() {
     return [];
+  },
+  async gitGrep() {
+    return { hits: [], truncated: false };
   },
   async gitDiff() {
     return { lines: [], binary: false, truncated: false };

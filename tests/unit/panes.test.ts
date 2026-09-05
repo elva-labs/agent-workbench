@@ -18,6 +18,10 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     gitStatus: async () => fake.status,
     gitFiles: async () => fake.fileList,
+    gitGrep: async (_root: string, query: string) => ({
+      hits: query === "" ? [] : [{ path: "src/lib.rs", line: 4, text: `found ${query} here` }],
+      truncated: false,
+    }),
     gitDiff: async () => ({
       lines: [{ kind: "hunk", text: "@@ -1,9 +1,12 @@", old: null, new: null }],
       binary: false,
@@ -411,6 +415,76 @@ describe("SessionsPane", () => {
   });
 });
 
+describe("the changes toolbar", () => {
+  beforeEach(async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.status = [
+      { path: "src/cache/mod.rs", status: "M", add: 1, del: 1, binary: false },
+      { path: "src/lib.rs", status: "M", add: 1, del: 1, binary: false },
+    ];
+    fake.fileList = ["Cargo.toml", "src/cache/mod.rs", "src/lib.rs"];
+  });
+
+  it("narrows the tree as you type", async () => {
+    render(ChangesPane);
+    await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
+    await fireEvent.input(screen.getByTestId("search-field"), { target: { value: "cache" } });
+    const names = screen.getAllByRole("treeitem").map((row) => row.textContent?.trim());
+    expect(names.some((name) => name?.includes("mod.rs"))).toBe(true);
+    expect(names.some((name) => name?.includes("lib.rs"))).toBe(false);
+  });
+
+  it("puts scope and view in the menu, with their chords", async () => {
+    render(ChangesPane);
+    await fireEvent.click(screen.getByTestId("changes-menu"));
+    expect(screen.getByTestId("menu-scope-changed")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("menu-scope-all")).toHaveTextContent(/⌘⇧A|Ctrl\+Shift\+A/);
+    await fireEvent.click(screen.getByTestId("menu-scope-all"));
+    expect(files.scope).toBe("all");
+    // Choosing closes the menu.
+    expect(screen.queryByTestId("changes-menu-items")).not.toBeInTheDocument();
+  });
+
+  // Lines mode: the hits stand in for the tree, and one opens the file there.
+  it("lists hits in lines mode and opens a file at the line", async () => {
+    render(ChangesPane);
+    await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
+    await fireEvent.click(screen.getByTestId("mode-lines"));
+    await fireEvent.input(screen.getByTestId("search-field"), { target: { value: "needle" } });
+    await fireEvent.keyDown(screen.getByTestId("search-field"), { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("search-hit")).toBeInTheDocument());
+    expect(screen.getByTestId("search-file")).toHaveTextContent("src/lib.rs");
+    expect(screen.getByTestId("search-hit")).toHaveTextContent("4");
+    expect(screen.getByTestId("search-hit").querySelector("mark")).toHaveTextContent("needle");
+
+    await fireEvent.click(screen.getByTestId("search-hit"));
+    expect(files.selected).toBe("src/lib.rs");
+    expect(files.target).toEqual({ path: "src/lib.rs", line: 4 });
+    expect(files.view).toBe("content");
+    expect(layout.mode).toBe("reviewing");
+  });
+
+  it("clears the field on Escape before leaving it", async () => {
+    render(ChangesPane);
+    const field = screen.getByTestId("search-field");
+    await fireEvent.input(field, { target: { value: "lib" } });
+    await fireEvent.keyDown(field, { key: "Escape" });
+    expect(files.query).toBe("");
+  });
+});
+
+/** Scope and view live in the pane's menu now: open it, pick, it closes. */
+async function chooseAll() {
+  await fireEvent.click(screen.getByTestId("changes-menu"));
+  await fireEvent.click(screen.getByTestId("menu-scope-all"));
+}
+
+async function chooseContent() {
+  await fireEvent.click(screen.getByTestId("changes-menu"));
+  await fireEvent.click(screen.getByTestId("menu-view-content"));
+}
+
 describe("the file tree", () => {
   beforeEach(async () => {
     workspace.open.push(repo("/repo", "repo"));
@@ -449,7 +523,7 @@ describe("the file tree", () => {
   // holding the agent's work are open.
   it("opens folders with changes and leaves the rest shut", async () => {
     await renderChanges();
-    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+    await chooseAll();
 
     expect(rowNames()).toContain("cache");
     expect(rowNames()).toContain("store.rs");
@@ -460,7 +534,7 @@ describe("the file tree", () => {
 
   it("opens a folder when it is clicked, and shuts it again", async () => {
     await renderChanges();
-    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+    await chooseAll();
 
     await fireEvent.click(screen.getByText("docs"));
     expect(rowNames()).toContain("architecture.md");
@@ -471,7 +545,7 @@ describe("the file tree", () => {
 
   it("folds a chain of folders that hold nothing else into one row", async () => {
     await renderChanges();
-    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+    await chooseAll();
     // docs holds only one file, so it never folds; src/git holds only one too.
     await fireEvent.click(screen.getByText("git"));
     expect(rowNames()).toContain("watcher.rs");
@@ -603,25 +677,28 @@ describe("ChangesPane head", () => {
     await refresh();
   });
 
-  it("carries both controls in one head", async () => {
+  it("carries the field and the menu in one head", async () => {
     await renderChanges();
-    expect(screen.getByRole("group", { name: /which files/i })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /how to show/i })).toBeInTheDocument();
+    expect(screen.getByTestId("search-field")).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /what to search/i })).toBeInTheDocument();
+    expect(screen.getByTestId("changes-menu")).toBeInTheDocument();
   });
 
-  it("leaves the view controls disabled until a file is picked", async () => {
+  it("leaves the view items disabled until a file is picked", async () => {
     await renderChanges();
-    expect(screen.getByRole("button", { name: "Diff" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Content" })).toBeDisabled();
+    await fireEvent.click(screen.getByTestId("changes-menu"));
+    expect(screen.getByTestId("menu-view-diff")).toBeDisabled();
+    expect(screen.getByTestId("menu-view-content")).toBeDisabled();
   });
 
   // The connection between the two controls: no changes means no diff.
   it("disables Diff for a file that has no changes", async () => {
     await renderChanges();
-    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+    await chooseAll();
     await fireEvent.click(screen.getByText("Cargo.toml"));
-    expect(screen.getByRole("button", { name: "Diff" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Content" })).toHaveClass("on");
+    await fireEvent.click(screen.getByTestId("changes-menu"));
+    expect(screen.getByTestId("menu-view-diff")).toBeDisabled();
+    expect(screen.getByTestId("menu-view-content")).toHaveAttribute("aria-checked", "true");
   });
 
   it("closes back to the tree alone", async () => {
@@ -653,7 +730,7 @@ describe("FileViewer", () => {
   it("switches to the whole file", async () => {
     await renderChanges();
     await fireEvent.click(screen.getByText("mod.rs"));
-    await fireEvent.click(screen.getByRole("button", { name: "Content" }));
+    await chooseContent();
 
     const viewer = screen.getByTestId("viewer");
     expect(viewer).toHaveAttribute("data-view", "content");
@@ -662,7 +739,7 @@ describe("FileViewer", () => {
 
   it("falls back to content for a file with no diff", async () => {
     await renderChanges();
-    await fireEvent.click(screen.getByRole("button", { name: "All files" }));
+    await chooseAll();
     await fireEvent.click(screen.getByText("Cargo.toml"));
     expect(screen.getByTestId("viewer")).toHaveAttribute("data-view", "content");
   });
@@ -670,7 +747,7 @@ describe("FileViewer", () => {
   it("says so when a deleted file has no content to show", async () => {
     await renderChanges();
     await fireEvent.click(screen.getByText("token_cache.rs"));
-    await fireEvent.click(screen.getByRole("button", { name: "Content" }));
+    await chooseContent();
     expect(screen.getByText(/deleted/i)).toBeInTheDocument();
   });
 });

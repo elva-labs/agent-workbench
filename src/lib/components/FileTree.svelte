@@ -1,6 +1,6 @@
 <script lang="ts">
   import { buildTree, flatten, parentOf, type Row, type TreeNode } from "$lib/tree";
-  import { files, isOpen, listed, toggleDir } from "$lib/files.svelte";
+  import { files, isOpen, toggleDir, visible } from "$lib/files.svelte";
 
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
@@ -22,7 +22,7 @@
     }
   });
 
-  let rows = $derived(flatten(buildTree(listed()), isOpen));
+  let rows = $derived(flatten(buildTree(visible()), isOpen));
 
   // Roving focus lives on the tree, not on every row: one tab stop, and arrow
   // keys move a cursor within it. That is what makes a few hundred rows

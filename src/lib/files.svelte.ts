@@ -1,5 +1,5 @@
 import { SvelteSet } from "svelte/reactivity";
-import { core, type ChangedFile, type DiffLine } from "$lib/core";
+import { core, type ChangedFile, type DiffLine, type GrepHit } from "$lib/core";
 import { exitReview } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
@@ -36,10 +36,31 @@ export interface FileEntry {
   binary?: boolean;
 }
 
+export type SearchMode = "files" | "lines";
+
+/** Typing pauses this long before a search runs: a query is typed, not sent. */
+export const SEARCH_DELAY = 250;
+
 export const files = $state({
   scope: "changed" as Scope,
   view: "diff" as View,
   selected: null as string | null,
+
+  /**
+   * The search field. In files mode the query narrows the tree to paths
+   * holding it; in lines mode it is searched for inside the files, and the
+   * hits stand in for the tree.
+   */
+  query: "",
+  mode: "files" as SearchMode,
+  hits: [] as GrepHit[],
+  hitsTruncated: false,
+  searching: false,
+  /** Bumped when a chord asks for the field, which the pane answers by
+      putting the keyboard in it. */
+  fieldRequests: 0,
+  /** A line the viewer should scroll to and mark, from a search hit. */
+  target: null as { path: string; line: number } | null,
 
   changed: [] as FileEntry[],
   everything: [] as FileEntry[],
@@ -106,6 +127,8 @@ export async function refresh() {
   if (files.everythingLoaded || files.scope === "all") await loadEverything(read);
   // The open file may have been changed by the agent, so its diff is stale.
   if (read === treeRead && files.selected !== null) await loadSelected();
+  // The files moved, so what matched may have too.
+  if (read === treeRead && searchingLines()) void search();
 }
 
 async function loadEverything(read = treeRead) {
@@ -135,6 +158,112 @@ async function loadEverything(read = treeRead) {
 
 export function listed(): FileEntry[] {
   return files.scope === "changed" ? files.changed : files.everything;
+}
+
+/** Whether the tree is being narrowed by the field right now. */
+export function filtering(): boolean {
+  return files.mode === "files" && files.query.trim() !== "";
+}
+
+/** Whether the hits stand in for the tree right now. */
+export function searchingLines(): boolean {
+  return files.mode === "lines" && files.query.trim() !== "";
+}
+
+/** A path holds the query when every word of the query is in it, in any
+    order: `cache mod` finds `src/cache/mod.rs`. Case does not count. */
+export function matches(path: string, query: string): boolean {
+  const haystack = path.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word !== "")
+    .every((word) => haystack.includes(word));
+}
+
+/** What the tree shows: the listing, narrowed by the field in files mode. */
+export function visible(): FileEntry[] {
+  if (!filtering()) return listed();
+  return listed().filter((file) => matches(file.path, files.query));
+}
+
+export function setQuery(query: string) {
+  files.query = query;
+  if (files.mode === "lines") scheduleSearch();
+}
+
+export function setMode(mode: SearchMode) {
+  if (files.mode === mode) return;
+  files.mode = mode;
+  if (mode === "lines") scheduleSearch();
+  else {
+    files.hits = [];
+    files.hitsTruncated = false;
+  }
+}
+
+export function clearQuery() {
+  files.query = "";
+  files.hits = [];
+  files.hitsTruncated = false;
+  files.searching = false;
+}
+
+/** A chord asked for the field: switch it to the mode and hand it the keys. */
+export function requestField(mode: SearchMode) {
+  setMode(mode);
+  files.fieldRequests += 1;
+}
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+let searchRead = 0;
+
+function scheduleSearch() {
+  if (searchTimer !== null) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchTimer = null;
+    void search();
+  }, SEARCH_DELAY);
+}
+
+/** Runs the lines search now. Only the latest answer lands: a slow search
+    for an earlier query must not overwrite a quick one for the current. */
+export async function search() {
+  if (searchTimer !== null) {
+    clearTimeout(searchTimer);
+    searchTimer = null;
+  }
+  const root = watchRoot();
+  const query = files.query.trim();
+  if (root === null || files.mode !== "lines" || query === "") {
+    files.hits = [];
+    files.hitsTruncated = false;
+    files.searching = false;
+    return;
+  }
+  const read = ++searchRead;
+  files.searching = true;
+  try {
+    const result = await core().gitGrep(root, query, files.scope);
+    if (read !== searchRead) return;
+    files.hits = result.hits;
+    files.hitsTruncated = result.truncated;
+    files.error = null;
+  } catch (error) {
+    if (read !== searchRead) return;
+    files.hits = [];
+    files.hitsTruncated = false;
+    files.error = String(error);
+  } finally {
+    if (read === searchRead) files.searching = false;
+  }
+}
+
+/** Opens a file at a line: the whole file, scrolled and marked there. */
+export async function openAt(path: string, line: number) {
+  files.target = { path, line };
+  files.view = "content";
+  await select(path);
 }
 
 export function changedCount() {
@@ -187,6 +316,7 @@ async function loadSelected() {
 }
 
 export async function select(path: string) {
+  if (files.target !== null && files.target.path !== path) files.target = null;
   files.selected = path;
   reveal(path);
   await loadSelected();
@@ -194,6 +324,7 @@ export async function select(path: string) {
 
 /** Nothing chosen: the tree shows no highlight and the viewer has nothing. */
 export function deselect() {
+  files.target = null;
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;
@@ -233,6 +364,9 @@ export function toggleScope() {
 }
 
 export function isOpen(node: { path: string; hasChange: boolean }): boolean {
+  // A narrowed tree is all matches: every folder on the way to one is open,
+  // or the match would be hidden by a fold.
+  if (filtering()) return true;
   if (files.collapsed.has(node.path)) return false;
   if (files.expanded.has(node.path)) return true;
   return node.hasChange;
@@ -280,6 +414,12 @@ export function clear() {
   files.error = null;
   files.loading = false;
   files.scope = "changed";
+  files.query = "";
+  files.mode = "files";
+  files.hits = [];
+  files.hitsTruncated = false;
+  files.searching = false;
+  files.target = null;
   files.expanded.clear();
   files.collapsed.clear();
 }
