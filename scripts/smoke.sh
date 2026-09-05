@@ -45,14 +45,17 @@ if [[ -z "${DISPLAY:-}" ]]; then
   sleep 1
 fi
 
-npm run dev >/dev/null 2>&1 &
+# The built frontend, served static, rather than the dev server: a first
+# request that races the dev server's compile gets raw source served as CSS.
+npm run build >/dev/null 2>&1 || { echo "the frontend did not build"; exit 1; }
+npx vite preview --port 1420 --strictPort >/dev/null 2>&1 &
 PIDS+=($!)
 
 for _ in $(seq 1 60); do
   curl -sf http://localhost:1420 >/dev/null && break
   sleep 1
 done
-curl -sf http://localhost:1420 >/dev/null || { echo "dev server never came up"; exit 1; }
+curl -sf http://localhost:1420 >/dev/null || { echo "the preview server never came up"; exit 1; }
 
 "./$BIN" >/dev/null 2>&1 &
 APP=$!

@@ -156,14 +156,13 @@
     observer = new ResizeObserver(() => measure());
     observer.observe(host);
 
-    // The end-to-end tests read the buffer to check that bytes arriving on the
-    // channel actually land on screen; the WebGL renderer draws to a canvas
-    // rather than to the DOM. Only ever exposed alongside a fake core.
-    if (window.__WORKBENCH_CORE__) {
-      const registry = window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, Terminal> };
-      registry.__WORKBENCH_TERMINALS__ ??= {};
-      registry.__WORKBENCH_TERMINALS__[id] = terminal;
-    }
+    // The end-to-end tiers read the buffer to check that bytes arriving on
+    // the channel actually land on screen; the WebGL renderer draws to a
+    // canvas rather than to the DOM. The browser tier runs on a fake core and
+    // the driver tier on the real binary, so it is always there.
+    const registry = window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, Terminal> };
+    registry.__WORKBENCH_TERMINALS__ ??= {};
+    registry.__WORKBENCH_TERMINALS__[id] = terminal;
 
     spawn();
 

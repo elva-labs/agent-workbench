@@ -77,3 +77,31 @@ npx playwright test --headed                 # watch the browser do it
 npx playwright test -g "splitter"            # one e2e test
 npx playwright show-report                   # after a failure
 ```
+
+## The real app: the driver tier
+
+`npm run test:driver` runs `tests/driver` against the actual binary, over
+WebDriver. `tauri-driver` bridges the W3C protocol to the platform's own
+WebView driver, WebKitWebDriver on Linux, so this is the tier that exercises
+the core end to end: the environment capture, the pty, git2, the watcher and
+both transcript readers, under the renderer the app ships with rather than
+under Chromium. It needs `cargo install tauri-driver` and the
+`webkit2gtk-driver` package; on a headless machine `scripts/driver.sh` brings
+up Xvfb and a window manager first.
+
+The agent under test is a shell script called `claude` (and one called
+`codex`) that prints its arguments and echoes what it is told. It sits in a
+directory that a fake login shell puts first on PATH, because the core asks
+the login shell for its environment rather than trusting its own. Each run
+gets a HOME of its own, so nothing the app persists leaks between runs.
+
+The binary loads the frontend from the dev URL, and what answers there is the
+built frontend served static by `vite preview`, not the dev server. The dev
+server compiles on demand, and a first request that races the compile of a
+component gets that component's raw source served as its stylesheet, which
+WebKit hits reliably on a fresh server. `scripts/smoke.sh`, which photographs
+the window, serves it the same way.
+
+CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
+macOS, and the driver tier on Linux, with the smoke screenshot as an artifact.
+There is no driver for macOS, so the macOS window is checked by hand.
