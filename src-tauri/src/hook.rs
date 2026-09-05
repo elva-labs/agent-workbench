@@ -243,8 +243,24 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        assert!(command.contains(&home.to_string_lossy().to_string()));
-        assert!(!command.contains(&project.to_string_lossy().to_string()));
+        // Spelled for the shell that runs it: forward slashes on Windows too.
+        assert!(command.contains(&bash_path(&home.to_string_lossy())));
+        assert!(!command.contains(&bash_path(&project.to_string_lossy())));
+    }
+
+    #[test]
+    fn spells_paths_for_bash() {
+        if cfg!(windows) {
+            assert_eq!(
+                bash_path(r"C:\Users\ada\.agent-workbench"),
+                "C:/Users/ada/.agent-workbench"
+            );
+        } else {
+            assert_eq!(
+                bash_path("/home/ada/.agent-workbench"),
+                "/home/ada/.agent-workbench"
+            );
+        }
     }
 
     #[test]
