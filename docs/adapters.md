@@ -17,11 +17,12 @@ id, a project, and an id to resume by.
 ## Detection
 
 Each agent is looked for once, on the login shell's PATH. A machine with one of
-them shows no sign of the other: one chip fewer, no tags. With both, every
-session row carries a `claude` or `codex` tag and the new-session row carries
-a chip per agent. The lit chip is what Enter starts; it is the agent last
+them shows no sign of the other: no tags, and a new session starts it. With
+both, every session row carries a `claude` or `codex` tag, and the new-session
+row opens in place into a row per agent. The cursor starts on the agent last
 started in the project, remembered under `workbench.agents`, else the first
-installed. Left and Right move it; a click on a chip starts that agent.
+installed, and that row says `last used`. Up and Down move it, Enter or a
+click starts that agent, and Escape closes the choice.
 
 ## Ids that the agent mints
 

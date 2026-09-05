@@ -9,7 +9,7 @@
   import { drops, register, unregister } from "$lib/drops.svelte";
   import { isMac, resolveAction } from "$lib/keymap";
   import { layout } from "$lib/layout.svelte";
-  import { WriteQueue, buildTheme, tokenReader } from "$lib/terminal";
+  import { WriteQueue, buildTheme, colorReply, softwareGl, tokenReader } from "$lib/terminal";
   import { theme } from "$lib/theme.svelte";
 
   /**
@@ -59,6 +59,19 @@
    * clips at the last column; with the last column never written to, there
    * is always room for the overhang.
    */
+  /** What WebGL here draws with, unmasked where the browser allows. */
+  function glRenderer(): string | null {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+    if (!gl) return null;
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    const renderer = info
+      ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL)
+      : gl.getParameter(gl.RENDERER);
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return typeof renderer === "string" ? renderer : null;
+  }
+
   function reported(cols: number) {
     return Math.max(1, cols - 1);
   }
@@ -103,15 +116,18 @@
     terminal.loadAddon(new WebLinksAddon(follow));
     terminal.open(host);
 
-    // The GPU renderer where there is one. Software rendering and headless X
-    // servers have no context to give, and the DOM renderer is the fallback:
-    // slower under a flood of output, identical to look at.
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      terminal.loadAddon(webgl);
-    } catch {
-      // DOM renderer it is.
+    // The GPU renderer where there is one. A software rasteriser gives a
+    // context that presents late or not at all, and a headless X server may
+    // give none; the DOM renderer is the fallback for both: slower under a
+    // flood of output, identical to look at.
+    if (!softwareGl(glRenderer())) {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        terminal.loadAddon(webgl);
+      } catch {
+        // DOM renderer it is.
+      }
     }
 
     measure();
@@ -160,6 +176,16 @@
     for (const osc of [9, 777]) {
       terminal.parser.registerOscHandler(osc, () => {
         onAttention?.();
+        return true;
+      });
+    }
+    // A program asking for the colours gets the theme's; a program setting
+    // them is left to xterm.
+    for (const osc of [10, 11] as const) {
+      terminal.parser.registerOscHandler(osc, (data) => {
+        const reply = colorReply(osc, data, terminal!.options.theme ?? {});
+        if (reply === null) return false;
+        if (ptyId !== null) core().write(ptyId, reply).catch(() => {});
         return true;
       });
     }

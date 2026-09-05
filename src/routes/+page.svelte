@@ -9,7 +9,7 @@
   import { core } from "$lib/core";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
-  import { bindingsFor, isMac, resolveAction } from "$lib/keymap";
+  import { isMac, resolveAction } from "$lib/keymap";
   import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import {
@@ -296,13 +296,6 @@
       {unreadCount()} waiting for you
     </span>
   {/if}
-  <span class="spacer"></span>
-  {#each bindingsFor(isMac()) as binding (binding.does)}
-    <span class="binding" class:minor={binding.minor}>
-      <kbd>{binding.keys}</kbd>{binding.does}
-    </span>
-  {/each}
-  <span class="binding minor"><kbd>theme</kbd>{theme.choice}</span>
 </footer>
 
 <style>
@@ -383,31 +376,16 @@
     color: var(--ink-3);
   }
 
-  .spacer {
-    flex: 1;
-  }
 
-  .binding {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-  }
 
   .waiting {
     color: var(--accent);
   }
 
 
-  kbd {
-    font-family: inherit;
-    color: var(--ink-2);
-  }
 
   /* The status bar is the first thing to lose room; drop the least useful
      reminders rather than letting the row clip mid-word. */
   @media (max-width: 1100px) {
-    .binding.minor {
-      display: none;
-    }
   }
 </style>

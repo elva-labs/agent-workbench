@@ -740,9 +740,13 @@ test.describe("with codex installed too", () => {
   });
 
   test("offers both agents and starts the one you pick", async ({ page }) => {
-    const chips = page.getByTestId("agent-chip");
-    await expect(chips).toHaveCount(2);
-    await chips.nth(1).click();
+    await page.getByTestId("new-session").click();
+    const options = page.getByTestId("agent-option");
+    await expect(options).toHaveCount(2);
+    await expect(options.nth(0)).toHaveText(/Claude Code/);
+    await expect(options.nth(1)).toHaveText(/Codex/);
+    await options.nth(1).click();
+    await expect(page.getByTestId("agent-choice")).toHaveCount(0);
     await expect.poll(() => spawns(page)).toHaveLength(1);
     expect((await spawns(page))[0].agent).toBe("codex");
     await expect(page.getByTestId("agent-tag")).toHaveText("codex");
@@ -751,7 +755,8 @@ test.describe("with codex installed too", () => {
 
   // Codex mints its own id. The core reports it, and the name with it.
   test("learns a codex session's id and name, and lists it to resume later", async ({ page }) => {
-    await page.getByTestId("agent-chip").nth(1).click();
+    await page.getByTestId("new-session").click();
+    await page.getByTestId("agent-option").nth(1).click();
     await running(page);
     await page.evaluate(() => {
       window.__fake.codexTranscripts = [

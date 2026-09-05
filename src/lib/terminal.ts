@@ -135,3 +135,29 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   }
   return joined;
 }
+
+/**
+ * The answer to a program asking what colour the terminal draws in (OSC 10
+ * for the foreground, OSC 11 for the background, `?` as the argument), or
+ * null when the sequence is not a query. xterm.js does not answer these by
+ * itself, and Codex waits on the answer before drawing its first screen.
+ */
+export function colorReply(osc: 10 | 11, data: string, theme: ITheme): string | null {
+  if (data.trim() !== "?") return null;
+  const hex = (osc === 10 ? theme.foreground : theme.background) ?? (osc === 10 ? "#000000" : "#ffffff");
+  const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (match === null) return null;
+  const [, r, g, b] = match;
+  return `\x1b]${osc};rgb:${r}${r}/${g}${g}/${b}${b}\x1b\\`;
+}
+
+/**
+ * Whether a WebGL renderer name is a software rasteriser: Mesa's llvmpipe
+ * under a headless X server, SwiftShader in a browser without a GPU. Those
+ * hand out a context and then present frames late or not at all, and the
+ * DOM renderer is the one to use.
+ */
+export function softwareGl(renderer: string | null): boolean {
+  if (renderer === null) return false;
+  return /llvmpipe|softpipe|swiftshader|swrast|software/i.test(renderer);
+}

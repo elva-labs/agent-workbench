@@ -81,7 +81,9 @@ describe("the real app", () => {
 
   it("starts the agent in a pty, in the project, with the id it was given", async () => {
     const { driver } = app;
+    // Both fakes are on PATH, so the row opens into the choice first.
     await driver.findElement(By.css("[data-testid='new-session']")).click();
+    await driver.findElement(By.css("[data-testid='agent-option'][data-agent='claude-code']")).click();
     await waitForText(driver, "FAKE CLAUDE --session-id");
     await waitForText(driver, "in ");
     const text = await screenText(driver);
@@ -152,9 +154,10 @@ describe("the real app", () => {
 
   it("offers codex too, and runs it", async () => {
     const { driver } = app;
-    const chips = await driver.findElements(By.css("[data-testid='agent-chip']"));
-    expect(chips).toHaveLength(2);
-    await chips[1].click();
+    await driver.findElement(By.css("[data-testid='new-session']")).click();
+    const options = await driver.findElements(By.css("[data-testid='agent-option']"));
+    expect(options).toHaveLength(2);
+    await options[1].click();
     await waitForText(driver, "FAKE CODEX");
     const tags = await driver.findElements(By.css("[data-testid='agent-tag']"));
     const texts = await Promise.all(tags.map((tag) => tag.getText()));

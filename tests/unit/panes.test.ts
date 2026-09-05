@@ -174,18 +174,24 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     expect(screen.getByTestId("agent-tag")).toHaveTextContent("claude");
-    const chips = screen.getAllByTestId("agent-chip");
-    expect(chips.map((chip) => chip.textContent)).toEqual(["claude", "codex"]);
-    expect(chips[0]).toHaveClass("on");
+    // The new-session row opens, in place, into one row per agent.
+    await fireEvent.click(screen.getByTestId("new-session"));
+    expect(screen.queryByTestId("new-session")).toBeNull();
+    const options = screen.getAllByTestId("agent-option");
+    expect(options.map((option) => option.dataset.agent)).toEqual(["claude-code", "codex"]);
+    expect(options[0]).toHaveTextContent("Claude Code");
+    expect(options[1]).toHaveTextContent("Codex");
 
     await waitFor(() => expect(screen.getAllByTestId("outside-fold")).toHaveLength(2));
     const folds = screen.getAllByTestId("outside-fold");
     expect(folds[0]).toHaveTextContent("1 claude session to resume");
     expect(folds[1]).toHaveTextContent("1 codex session to resume");
 
-    await fireEvent.click(chips[1]);
+    await fireEvent.click(options[1]);
     expect(sessions.all.at(-1)?.agent).toBe("codex");
     expect(layout.focus).toBe("agent");
+    expect(screen.queryByTestId("agent-choice")).toBeNull();
+    expect(screen.getByTestId("new-session")).toBeInTheDocument();
 
     await fireEvent.click(folds[1]);
     await fireEvent.click(screen.getByTestId("outside-session"));
@@ -195,7 +201,7 @@ describe("SessionsPane", () => {
     expect(resumed.title).toBeNull();
   });
 
-  it("picks the agent with the arrows on the new-session row", async () => {
+  it("picks the agent from the keyboard, Enter opening the choice and Escape closing it", async () => {
     applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
@@ -204,12 +210,29 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    await fireEvent.keyDown(nav, { key: "ArrowRight" });
-    expect(screen.getAllByTestId("agent-chip")[1]).toHaveClass("on");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    // Open, with the cursor on the project's default.
+    let options = screen.getAllByTestId("agent-option");
+    expect(options[0]).toHaveClass("cursor");
+    expect(sessions.all).toHaveLength(0);
+
+    // Escape closes it and puts the cursor back on the row.
+    await fireEvent.keyDown(nav, { key: "Escape" });
+    expect(screen.queryByTestId("agent-choice")).toBeNull();
+    expect(screen.getByTestId("new-session").closest(".new-row")).toHaveClass("cursor");
+
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    options = screen.getAllByTestId("agent-option");
+    expect(options[1]).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(sessions.all[0].agent).toBe("codex");
-    // The choice sticks: the next new session in the project starts there.
+    // The choice sticks: the next choice opens on it, and it is marked.
     expect(sessions.preferred["/repo"]).toBe("codex");
+    await fireEvent.click(screen.getByTestId("new-session"));
+    options = screen.getAllByTestId("agent-option");
+    expect(options[1]).toHaveClass("cursor");
+    expect(options[1]).toHaveTextContent("last used");
   });
 
   it("shows a session working, and one waiting for you", async () => {

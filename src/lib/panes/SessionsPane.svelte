@@ -1,6 +1,6 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
-  import { AGENTS, agentTag, installed, isReady } from "$lib/agent.svelte";
+  import { AGENTS, agentLabel, agentTag, installed, isReady } from "$lib/agent.svelte";
   import type { AgentId } from "$lib/core";
   import { shorten } from "$lib/paths";
   import {
@@ -33,20 +33,31 @@
       new-session row offers the choice. With one, nothing changes. */
   let several = $derived(installed().length > 1);
 
-  /** The agent chip picked on a project's new-session row, when not the
-      project's default. */
-  let picked = $state<Record<string, AgentId>>({});
+  /** The project whose new-session row is open on the choice of agent. */
+  let choosing = $state<string | null>(null);
 
-  function chip(path: string): AgentId {
-    const choice = picked[path];
-    return choice !== undefined && installed().includes(choice) ? choice : defaultAgent(path);
+  /** New session: with one agent it starts; with several the row opens
+      into the choice, the cursor on the one the project used last. */
+  function offer(path: string) {
+    if (!several) {
+      start(path, defaultAgent(path));
+      return;
+    }
+    choosing = path;
+    cursor = `pick:${path}:${defaultAgent(path)}`;
   }
 
-  function pickNext(path: string, direction: 1 | -1) {
-    const options = installed();
-    if (options.length < 2) return;
-    const at = options.indexOf(chip(path));
-    picked[path] = options[(at + direction + options.length) % options.length];
+  function startWith(path: string, agent: AgentId) {
+    choosing = null;
+    start(path, agent);
+  }
+
+  /** Closes the choice, the cursor back on the row it opened from. */
+  function dismiss(): boolean {
+    if (choosing === null) return false;
+    cursor = `new:${choosing}`;
+    choosing = null;
+    return true;
   }
 
   /**
@@ -74,7 +85,15 @@
           run: () => resume(path, transcript.id, transcript.agent),
         });
       }
-      if (isReady()) out.push({ id: `new:${path}`, run: () => start(path, chip(path)) });
+      if (isReady()) {
+        if (several && choosing === path) {
+          for (const agent of installed()) {
+            out.push({ id: `pick:${path}:${agent}`, run: () => startWith(path, agent) });
+          }
+        } else {
+          out.push({ id: `new:${path}`, run: () => offer(path) });
+        }
+      }
       for (const agent of AGENTS) {
         if (outsideFor(path, agent).length === 0) continue;
         const fold = `${path}:${agent}`;
@@ -157,15 +176,12 @@
       case "End":
         moveTo(rows.length - 1);
         break;
-      case "ArrowLeft":
-      case "ArrowRight": {
-        // On the new-session row the arrows pick the agent; elsewhere they
-        // are nothing to the pane.
-        const path = current?.startsWith("new:") ? current.slice("new:".length) : null;
-        if (path === null) return;
-        pickNext(path, e.key === "ArrowRight" ? 1 : -1);
+      case "Escape":
+        // Closes an open choice of agent, and goes no further: Escape
+        // elsewhere is the agent's.
+        if (!dismiss()) return;
+        e.stopPropagation();
         break;
-      }
       case "Enter":
       case " ":
         if (at === -1) return;
@@ -302,35 +318,47 @@
           </button>
         {/each}
 
-        <!-- With several agents the row carries a chip per agent; the lit
-             one is what Enter starts, a click on a chip starts that one. -->
-        <div
-          class="new-row"
-          class:cursor={current === `new:${project.path}`}
-          data-row="new:{project.path}"
-        >
-          <button
-            class="new"
-            tabindex="-1"
-            onclick={() => start(project.path, chip(project.path))}
-            disabled={!isReady()}
-            data-testid="new-session">+ New session</button
+        <!-- With several agents the row opens, in place, into the choice of
+             agent; with one there is nothing to choose and it starts. -->
+        {#if several && choosing === project.path}
+          <div class="choice" role="group" aria-label="Agent for the new session" data-testid="agent-choice">
+            <div class="choice-head">
+              <span>new session with</span>
+              <button class="cancel" tabindex="-1" onclick={dismiss} aria-label="Cancel" data-testid="choice-cancel"
+                >esc</button
+              >
+            </div>
+            {#each installed() as id (id)}
+              <button
+                class="option"
+                class:cursor={current === `pick:${project.path}:${id}`}
+                tabindex="-1"
+                onclick={() => startWith(project.path, id)}
+                data-row="pick:{project.path}:{id}"
+                data-testid="agent-option"
+                data-agent={id}
+              >
+                <span class="mark">›</span>
+                <span class="label">{agentLabel(id)}</span>
+                {#if sessions.preferred[project.path] === id}<span class="state">last used</span>{/if}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <div
+            class="new-row"
+            class:cursor={current === `new:${project.path}`}
+            data-row="new:{project.path}"
           >
-          {#if several}
-            <span class="chips" role="group" aria-label="Agent for the new session">
-              {#each installed() as id (id)}
-                <button
-                  class="chip"
-                  class:on={chip(project.path) === id}
-                  tabindex="-1"
-                  onclick={() => start(project.path, id)}
-                  data-testid="agent-chip"
-                  data-agent={id}>{agentTag(id)}</button
-                >
-              {/each}
-            </span>
-          {/if}
-        </div>
+            <button
+              class="new"
+              tabindex="-1"
+              onclick={() => offer(project.path)}
+              disabled={!isReady()}
+              data-testid="new-session">+ New session</button
+            >
+          </div>
+        {/if}
 
         <!-- An agent run in a plain terminal here leaves its sessions in the
              same place. They are resumable, so they are here, folded by
@@ -587,31 +615,59 @@
     line-height: 1.4;
   }
 
-  .chips {
-    display: inline-flex;
-    gap: 4px;
+  .choice {
+    margin: 2px 0 10px;
   }
 
-  .chip {
+  .choice-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 2px var(--pane-pad) 2px 26px;
     font-family: var(--mono);
     font-size: 10px;
-    letter-spacing: 0.06em;
-    padding: 1px 6px;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+  }
+
+  .cancel {
+    padding: 0 5px;
     border: 1px solid var(--rule);
     border-radius: 2px;
     background: none;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
     color: var(--ink-3);
     cursor: pointer;
   }
 
-  .chip.on {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--accent-soft);
+  .cancel:hover {
+    color: var(--ink-2);
   }
 
-  .chip:hover:not(.on) {
+  .option {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    width: 100%;
+    text-align: left;
+    padding: 3px var(--pane-pad) 3px 26px;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11.5px;
     color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .option:hover {
+    color: var(--accent);
+  }
+
+  .mark {
+    flex: none;
+    color: var(--ink-3);
   }
 
   /* A filled dot is a live process; hollow is a row you can still read but

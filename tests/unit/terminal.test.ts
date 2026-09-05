@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { WriteQueue, buildTheme, withAlpha } from "$lib/terminal";
+import { WriteQueue, buildTheme, colorReply, softwareGl, withAlpha } from "$lib/terminal";
 import { toBytes } from "$lib/core";
 
 describe("toBytes", () => {
@@ -239,5 +239,33 @@ describe("WriteQueue", () => {
 
     held.frame?.();
     expect(written).toEqual([]);
+  });
+});
+
+describe("colorReply", () => {
+  const theme = { foreground: "#1a2b3c", background: "#FAFAF7" };
+
+  it("answers a colour query with the theme's colour, 16 bits a channel", () => {
+    expect(colorReply(10, "?", theme)).toBe("\x1b]10;rgb:1a1a/2b2b/3c3c\x1b\\");
+    expect(colorReply(11, "?", theme)).toBe("\x1b]11;rgb:FAFA/FAFA/F7F7\x1b\\");
+  });
+
+  it("leaves a colour being set to the terminal", () => {
+    expect(colorReply(11, "rgb:0000/0000/0000", theme)).toBeNull();
+    expect(colorReply(10, "#123456", theme)).toBeNull();
+  });
+
+  it("has an answer even for a theme without the colour", () => {
+    expect(colorReply(11, "?", {})).toBe("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
+  });
+});
+
+describe("softwareGl", () => {
+  it("knows a software rasteriser by name", () => {
+    expect(softwareGl("Mesa/X.org, llvmpipe (LLVM 15.0.7, 256 bits)")).toBe(true);
+    expect(softwareGl("Google SwiftShader")).toBe(true);
+    expect(softwareGl("ANGLE (Apple, Apple M2, OpenGL 4.1)")).toBe(false);
+    expect(softwareGl("WebKit WebGL")).toBe(false);
+    expect(softwareGl(null)).toBe(false);
   });
 });
