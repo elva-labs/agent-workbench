@@ -556,8 +556,11 @@
     color: var(--accent);
   }
 
+  /* The name keeps a few characters whatever the state says; past that the
+     state is what gives way. */
   .label {
     flex: 1;
+    min-width: 5ch;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -566,7 +569,11 @@
   .state {
     font-size: 10px;
     color: var(--ink-3);
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tag {
