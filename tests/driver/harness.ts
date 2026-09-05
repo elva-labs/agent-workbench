@@ -314,14 +314,19 @@ async function attach(home: string, bin: string): Promise<App> {
 
   try {
     await waitForPort(DRIVER_PORT, 15_000);
-    // Generous: a CI runner's first launch has a profile to create and no
-    // GPU, and a report after the wait is worth more than a quick one.
-    await waitForDebugger(app, debugPort, 120_000);
+    // Generous, but inside the test's own beforeAll budget of two minutes
+    // with the driver's wait above: a report after the wait is worth more
+    // than a quick one, and none at all, when vitest kills the hook first,
+    // is worth nothing.
+    await waitForDebugger(app, debugPort, 90_000);
 
     const driver = await new Builder()
       .usingServer(`http://127.0.0.1:${DRIVER_PORT}/`)
       .withCapabilities({
         browserName: "MicrosoftEdge",
+        // Only the address. msedgedriver 152 rejects the documented
+        // webviewOptions as an unrecognised option, and attaching does not
+        // need it.
         "ms:edgeOptions": { debuggerAddress: `127.0.0.1:${debugPort}` },
       })
       .build();
