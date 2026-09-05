@@ -40,13 +40,28 @@ fn settings_path(project: &Path) -> PathBuf {
 }
 
 /// The command the hook runs: replace our file with what the agent just did.
+/// Claude Code runs hooks through a POSIX shell on every platform, Git Bash
+/// on Windows, so the command is the same everywhere and the paths are
+/// spelled the way that shell reads them.
 fn command(home: &Path) -> String {
     let events = events_path(home);
     format!(
         "mkdir -p {parent} && cat > {file}",
-        parent = shell_quote(&events.parent().unwrap_or(home).to_string_lossy()),
-        file = shell_quote(&events.to_string_lossy()),
+        parent = shell_quote(&bash_path(
+            &events.parent().unwrap_or(home).to_string_lossy()
+        )),
+        file = shell_quote(&bash_path(&events.to_string_lossy())),
     )
+}
+
+/// A path as Git Bash reads it: forward slashes. Elsewhere a path is already
+/// that, and a backslash in one is a character, not a separator.
+fn bash_path(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
 }
 
 /// Makes sure the file exists, so the watcher has something to attach to

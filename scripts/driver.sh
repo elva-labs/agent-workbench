@@ -21,12 +21,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -x "src-tauri/target/debug/agent-workbench" ]]; then
+BIN="src-tauri/target/debug/agent-workbench"
+[[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && BIN="$BIN.exe"
+if [[ ! -x "$BIN" ]]; then
   echo "building the core first..."
   cargo build --manifest-path src-tauri/Cargo.toml
 fi
 
-if [[ -z "${DISPLAY:-}" ]]; then
+# A display is only something to arrange on Linux.
+if [[ "$(uname -s)" == "Linux" && -z "${DISPLAY:-}" ]]; then
   export DISPLAY=:99
   Xvfb :99 -screen 0 1440x900x24 >/dev/null 2>&1 &
   PIDS+=($!)

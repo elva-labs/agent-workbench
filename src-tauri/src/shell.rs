@@ -51,6 +51,7 @@ fn program(vars: &HashMap<String, String>) -> String {
 mod tests {
     use super::*;
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn argv(command: &CommandBuilder) -> Vec<String> {
         command
             .get_argv()

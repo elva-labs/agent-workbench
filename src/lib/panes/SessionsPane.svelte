@@ -2,6 +2,7 @@
   import Pane from "$lib/components/Pane.svelte";
   import { AGENTS, agentTag, installed, isReady } from "$lib/agent.svelte";
   import type { AgentId } from "$lib/core";
+  import { shorten } from "$lib/paths";
   import {
     ago,
     byKey,
@@ -199,10 +200,6 @@
     return workspace.open.some((project) => project.path === path);
   }
 
-  function shorten(path: string) {
-    const home = path.match(/^\/(?:Users|home)\/[^/]+/);
-    return home ? `~${path.slice(home[0].length)}` : path;
-  }
 </script>
 
 <Pane id="sessions" title="Projects &amp; sessions" meta="">

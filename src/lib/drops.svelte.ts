@@ -1,5 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import { layout } from "$lib/layout.svelte";
+import { isWindows } from "$lib/paths";
 import { sessions } from "$lib/sessions.svelte";
 import { terminals } from "$lib/terminals.svelte";
 
@@ -55,17 +56,22 @@ export function targetAt(x: number, y: number): string | null {
 }
 
 /**
- * A path as a shell reads it: spaces and metacharacters escaped with a
- * backslash, which is what the terminal apps do and what the agent unescapes.
+ * A path as a shell reads it. On a POSIX shell, spaces and metacharacters
+ * escaped with a backslash, which is what the terminal apps do and what the
+ * agent unescapes. On Windows a backslash is a separator, so a path that
+ * needs it is quoted instead.
  */
-export function shellPath(path: string): string {
+export function shellPath(path: string, windows: boolean = isWindows()): string {
+  if (windows) {
+    return /[\s&|<>^()"]/.test(path) ? `"${path.replace(/"/g, '""')}"` : path;
+  }
   return path.replace(/([\s"'\\$&|;<>()*?\[\]#~!{}`])/g, "\\$1");
 }
 
 /** What a drop of these files types: each path, and a space after the last
     so the next word does not run into it. */
-export function pasteFor(paths: string[]): string {
-  return paths.map(shellPath).join(" ") + " ";
+export function pasteFor(paths: string[], windows: boolean = isWindows()): string {
+  return paths.map((path) => shellPath(path, windows)).join(" ") + " ";
 }
 
 export function handle(event: DragEvent) {

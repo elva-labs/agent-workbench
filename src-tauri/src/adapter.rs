@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use portable_pty::CommandBuilder;
 use serde::Serialize;
 
-use crate::env::find_on_path;
+use crate::env::{find_on_path, is_shell_script};
 
 /// What an agent can and cannot do. Be honest here: a pane greys itself out
 /// rather than failing when it asks for something the agent has no notion of.
@@ -113,6 +113,28 @@ pub fn prepare(command: &mut CommandBuilder, project: &Path, vars: &HashMap<Stri
     command.env("COLORTERM", "truecolor");
 }
 
+/// A command for a program found on PATH, with its arguments. A `.cmd` or
+/// `.bat` on Windows cannot be started by the OS; it goes through the command
+/// interpreter, which is what a shell would do with it.
+fn program(binary: PathBuf, args: &[&str], vars: &HashMap<String, String>) -> CommandBuilder {
+    let mut command = if cfg!(windows) && is_shell_script(&binary) {
+        let comspec = vars
+            .get("COMSPEC")
+            .cloned()
+            .unwrap_or_else(|| "cmd.exe".to_string());
+        let mut command = CommandBuilder::new(comspec);
+        command.arg("/c");
+        command.arg(binary);
+        command
+    } else {
+        CommandBuilder::new(binary)
+    };
+    for arg in args {
+        command.arg(arg);
+    }
+    command
+}
+
 pub struct ClaudeCode;
 
 impl ClaudeCode {
@@ -123,10 +145,7 @@ impl ClaudeCode {
                 .to_string()
         })?;
 
-        let mut command = CommandBuilder::new(binary);
-        for arg in args {
-            command.arg(arg);
-        }
+        let mut command = program(binary, args, ctx.env);
         prepare(&mut command, ctx.project, ctx.env);
 
         Ok(Surface::Pty(command))
@@ -171,10 +190,7 @@ impl Codex {
                 .to_string()
         })?;
 
-        let mut command = CommandBuilder::new(binary);
-        for arg in args {
-            command.arg(arg);
-        }
+        let mut command = program(binary, args, ctx.env);
         prepare(&mut command, ctx.project, ctx.env);
 
         Ok(Surface::Pty(command))

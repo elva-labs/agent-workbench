@@ -34,6 +34,8 @@ export interface App {
   stop: () => Promise<void>;
 }
 
+const WINDOWS = process.platform === "win32";
+
 /** A tool that prints its arguments, then echoes each line it is given
     until told to exit. What a pty test needs from an agent. */
 const FAKE_AGENT = (name: string) => `#!/bin/sh
@@ -45,6 +47,19 @@ while IFS= read -r line; do
   esac
   echo "echo: $line"
 done
+`;
+
+/** The same tool as a batch file, which is how npm installs a command on
+    Windows and what the core has to run through cmd. */
+const FAKE_AGENT_CMD = (name: string) => `@echo off
+echo FAKE ${name} %*
+:loop
+set line=
+set /p line=
+if "%line%"=="exit" exit /b 0
+if "%line%"=="crash" exit /b 3
+echo echo: %line%
+goto loop
 `;
 
 /** Stands in for the user's login shell: the same shell, with the fake
@@ -60,13 +75,19 @@ export function fixtures(): { home: string; bin: string } {
   const bin = join(home, "bin");
   mkdirSync(bin);
   for (const name of ["claude", "codex"]) {
+    if (WINDOWS) {
+      writeFileSync(join(bin, `${name}.cmd`), FAKE_AGENT_CMD(name.toUpperCase()));
+      continue;
+    }
     const path = join(bin, name);
     writeFileSync(path, FAKE_AGENT(name.toUpperCase()));
     chmodSync(path, 0o755);
   }
-  const shell = join(bin, "login-shell");
-  writeFileSync(shell, FAKE_SHELL(bin));
-  chmodSync(shell, 0o755);
+  if (!WINDOWS) {
+    const shell = join(bin, "login-shell");
+    writeFileSync(shell, FAKE_SHELL(bin));
+    chmodSync(shell, 0o755);
+  }
   return { home, bin };
 }
 
@@ -92,18 +113,28 @@ async function waitForPort(port: number, ms: number) {
 
 export async function launch(): Promise<App> {
   const { home, bin } = fixtures();
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    HOME: home,
-    SHELL: join(bin, "login-shell"),
-    // WebKitGTK's compositor has no GPU to talk to under Xvfb.
-    WEBKIT_DISABLE_COMPOSITING_MODE: "1",
-    WEBKIT_DISABLE_DMABUF_RENDERER: "1",
-  };
+  // On Windows the core takes the environment it was started with, so the
+  // fake agents go on PATH here; elsewhere the fake login shell puts them
+  // there, and HOME is where both agents' indexes are looked for.
+  const env: NodeJS.ProcessEnv = WINDOWS
+    ? { ...process.env, HOME: home, USERPROFILE: home, PATH: `${bin};${process.env.PATH ?? ""}` }
+    : {
+        ...process.env,
+        HOME: home,
+        SHELL: join(bin, "login-shell"),
+        // WebKitGTK's compositor has no GPU to talk to under Xvfb.
+        WEBKIT_DISABLE_COMPOSITING_MODE: "1",
+        WEBKIT_DISABLE_DMABUF_RENDERER: "1",
+      };
 
-  const tauriDriver: ChildProcess = spawn("tauri-driver", ["--port", String(DRIVER_PORT)], {
+  // Windows has no driver of its own on PATH: Edge WebDriver, matching the
+  // WebView2 runtime, is handed over by whoever set the machine up.
+  const args = ["--port", String(DRIVER_PORT)];
+  if (process.env.TAURI_NATIVE_DRIVER) args.push("--native-driver", process.env.TAURI_NATIVE_DRIVER);
+  const tauriDriver: ChildProcess = spawn("tauri-driver", args, {
     env,
     stdio: ["ignore", "inherit", "inherit"],
+    shell: WINDOWS,
   });
   await waitForPort(DRIVER_PORT, 15_000);
 

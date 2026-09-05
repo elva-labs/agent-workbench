@@ -111,3 +111,43 @@ jobs:
           name: smoke-linux
           path: smoke.png
           retention-days: 7
+
+  # The real binary under WebView2, through Edge WebDriver. The fake agents
+  # are batch files on PATH, which is how npm installs a command there, and
+  # the driver has to match the WebView2 runtime the runner has.
+  driver-windows:
+    name: Real app (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: tauri-driver
+        uses: actions/cache@v4
+        id: tauri-driver
+        with:
+          path: ~/.cargo/bin/tauri-driver.exe
+          key: tauri-driver-${{ runner.os }}-2
+      - if: steps.tauri-driver.outputs.cache-hit != 'true'
+        run: cargo install tauri-driver --locked
+      - name: Edge WebDriver matching the WebView2 runtime
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key).pv
+          Write-Host "WebView2 runtime $version"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath edgedriver
+          "TAURI_NATIVE_DRIVER=$PWD\edgedriver\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: npm ci
+      - run: cargo build
+        working-directory: src-tauri
+      - run: bash scripts/driver.sh
+        env:
+          CI: true

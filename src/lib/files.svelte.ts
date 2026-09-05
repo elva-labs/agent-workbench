@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine } from "$lib/core";
 import { exitReview } from "$lib/layout.svelte";
+import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
 
 /**
@@ -263,7 +264,7 @@ export function reveal(path: string) {
 }
 
 export function basename(path: string) {
-  return path.slice(path.lastIndexOf("/") + 1);
+  return lastSegment(path);
 }
 
 /** Called when the project changes: none of the old tree applies. */

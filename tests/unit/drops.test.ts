@@ -56,13 +56,20 @@ beforeEach(() => {
 
 describe("paths as typed", () => {
   it("escapes what a shell would read as something else", () => {
-    expect(shellPath("/Users/ada/Screen Shot 1.png")).toBe("/Users/ada/Screen\\ Shot\\ 1.png");
-    expect(shellPath("/tmp/a&b(c).txt")).toBe("/tmp/a\\&b\\(c\\).txt");
-    expect(shellPath("/plain/path.rs")).toBe("/plain/path.rs");
+    expect(shellPath("/Users/ada/Screen Shot 1.png", false)).toBe("/Users/ada/Screen\\ Shot\\ 1.png");
+    expect(shellPath("/tmp/a&b(c).txt", false)).toBe("/tmp/a\\&b\\(c\\).txt");
+    expect(shellPath("/plain/path.rs", false)).toBe("/plain/path.rs");
   });
 
   it("types every path, and a space after the last", () => {
-    expect(pasteFor(["/a", "/b c"])).toBe("/a /b\\ c ");
+    expect(pasteFor(["/a", "/b c"], false)).toBe("/a /b\\ c ");
+  });
+
+  // A backslash is a separator on Windows, so a path that needs it is quoted.
+  it("quotes rather than escapes on Windows", () => {
+    expect(shellPath("C:\\Users\\ada\\Screen Shot.png", true)).toBe('"C:\\Users\\ada\\Screen Shot.png"');
+    expect(shellPath("C:\\work\\notes.md", true)).toBe("C:\\work\\notes.md");
+    expect(pasteFor(["C:\\a b", "C:\\c"], true)).toBe('"C:\\a b" C:\\c ');
   });
 });
 

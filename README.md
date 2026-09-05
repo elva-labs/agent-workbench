@@ -4,8 +4,22 @@ A desktop workbench for coding agent CLIs. Three panes: projects and sessions on
 the left, the agent's own TUI fullscreen in the middle, live git changes on the
 right. Claude Code first, with an adapter seam defined from the start.
 
-Rust and Tauri v2, Svelte frontend. macOS is the target; Windows and Linux come
-later, so nothing in the core is allowed to be macOS-only.
+Rust and Tauri v2, Svelte frontend. macOS first, with Linux and Windows kept
+working: nothing in the core is macOS-only, CI runs the core on all three, and
+the real binary is driven end to end on Linux and Windows.
+
+Per platform:
+
+- **macOS**: the title bar is the app's own, with the window controls over the
+  leftmost pane's header.
+- **Linux**: WebKitGTK. Building needs `libwebkit2gtk-4.1-dev`,
+  `libayatana-appindicator3-dev`, `librsvg2-dev` and `patchelf`; the driver
+  tier needs `webkit2gtk-driver` and `tauri-driver`.
+- **Windows**: WebView2. Agents installed by npm are `claude.cmd` and
+  `codex.cmd`, which the core runs through `cmd /c`. The optional hook runs
+  under Git Bash, which Claude Code needs there anyway. What is not there
+  yet: following a session into a worktree, which reads the process's working
+  directory and has no Windows implementation.
 
 **Status: the plan is done.** Open a folder, a session starts in it, the right
 pane shows the real changed files and diffs as the agent edits them, past

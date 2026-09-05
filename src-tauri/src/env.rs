@@ -14,10 +14,13 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 /// Generous, because nvm and friends take a second or two on a cold cache, and
 /// a shell that takes longer than this is not going to finish.
+#[cfg(unix)]
 const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
@@ -123,6 +126,7 @@ fn from_login_shell() -> Option<HashMap<String, String>> {
 /// Deliberately tolerant. An interactive shell may print its own noise to
 /// stdout before `env` runs, so anything that is not a plausible assignment is
 /// skipped rather than treated as a variable.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn parse_env0(bytes: &[u8]) -> HashMap<String, String> {
     let mut vars = HashMap::new();
 
@@ -145,6 +149,7 @@ pub fn parse_env0(bytes: &[u8]) -> HashMap<String, String> {
     vars
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn is_plausible_key(key: &str) -> bool {
     !key.is_empty()
         && !key.starts_with(|c: char| c.is_ascii_digit())
@@ -157,10 +162,38 @@ fn is_plausible_key(key: &str) -> bool {
 /// Using `std::env::var("PATH")` here would defeat the whole module.
 pub fn find_on_path(vars: &HashMap<String, String>, program: &str) -> Option<PathBuf> {
     let path = vars.get("PATH")?;
+    let names = candidates(program, pathext(vars));
     path.split(PATH_SEPARATOR)
         .filter(|dir| !dir.is_empty())
-        .map(|dir| Path::new(dir).join(program))
+        .flat_map(|dir| names.iter().map(move |name| Path::new(dir).join(name)))
         .find(|candidate| is_executable(candidate))
+}
+
+/// The names a program may go by in a PATH directory. On Windows a program
+/// installed by npm is `claude.cmd`, and what PATHEXT lists is what the shell
+/// would try; elsewhere the name is the name.
+fn candidates(program: &str, pathext: Option<&str>) -> Vec<String> {
+    let mut names = vec![program.to_string()];
+    if let Some(pathext) = pathext {
+        for ext in pathext.split(';').filter(|ext| !ext.is_empty()) {
+            names.push(format!("{program}{}", ext.to_ascii_lowercase()));
+        }
+    }
+    names
+}
+
+#[cfg(windows)]
+fn pathext(vars: &HashMap<String, String>) -> Option<&str> {
+    Some(
+        vars.get("PATHEXT")
+            .map(String::as_str)
+            .unwrap_or(".COM;.EXE;.BAT;.CMD"),
+    )
+}
+
+#[cfg(not(windows))]
+fn pathext(_vars: &HashMap<String, String>) -> Option<&str> {
+    None
 }
 
 #[cfg(unix)]
@@ -179,6 +212,15 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
+}
+
+/// Whether a found program is a script the shell has to run rather than a
+/// binary the OS can start: `.cmd` and `.bat`, which is how npm installs a
+/// command on Windows.
+pub fn is_shell_script(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
 }
 
 #[cfg(test)]
@@ -319,6 +361,8 @@ mod tests {
         std::fs::remove_file(&bin).ok();
     }
 
+    // Only a Unix file system says what is executable; on Windows a file is.
+    #[cfg(unix)]
     #[test]
     fn ignores_a_non_executable_file() {
         let dir = std::env::temp_dir().join("workbench-path-test-plain");
@@ -327,7 +371,6 @@ mod tests {
         std::fs::write(&bin, b"text").unwrap();
 
         let vars = HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())]);
-        #[cfg(unix)]
         assert_eq!(find_on_path(&vars, "not-executable"), None);
 
         std::fs::remove_file(&bin).ok();
@@ -342,5 +385,32 @@ mod tests {
     fn skips_empty_path_segments() {
         let vars = HashMap::from([("PATH".to_string(), "::".to_string())]);
         assert_eq!(find_on_path(&vars, "claude"), None);
+    }
+
+    #[test]
+    fn tries_the_extensions_the_shell_would_on_windows() {
+        assert_eq!(candidates("claude", None), ["claude"]);
+        assert_eq!(
+            candidates("claude", Some(".COM;.EXE;.BAT;.CMD")),
+            [
+                "claude",
+                "claude.com",
+                "claude.exe",
+                "claude.bat",
+                "claude.cmd"
+            ]
+        );
+    }
+
+    #[test]
+    fn knows_a_script_from_a_binary() {
+        assert!(is_shell_script(Path::new(
+            r"C:\Users\ada\AppData\Roaming\npm\claude.cmd"
+        )));
+        assert!(is_shell_script(Path::new("thing.BAT")));
+        assert!(!is_shell_script(Path::new("/usr/local/bin/claude")));
+        assert!(!is_shell_script(Path::new(
+            r"C:\Program Files\claude\claude.exe"
+        )));
     }
 }

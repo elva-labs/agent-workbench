@@ -1,4 +1,5 @@
 import { core, type ProjectInfo } from "$lib/core";
+import { lastSegment } from "$lib/paths";
 import { activeSession, closeProject, forProject, sessions } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
 
@@ -53,7 +54,7 @@ export function followedWorktree(): string | null {
   if (project === null || worktree === null) return null;
   const own = project.repository ?? project.path;
   if (worktree === own) return null;
-  return worktree.slice(worktree.lastIndexOf("/") + 1);
+  return lastSegment(worktree);
 }
 
 export function isOpen(path: string): boolean {

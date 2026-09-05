@@ -74,7 +74,7 @@ describe("the real app", () => {
   it("opens a repository and lists what changed in it", async () => {
     const { driver } = app;
     await openProjects(driver, [repo]);
-    await waitForPaneText(driver, SESSIONS, repo.split("/").pop()!);
+    await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
     await waitForPaneText(driver, TREE, "lib.rs");
     expect(await textOf(driver, TREE)).not.toContain("README.md");
   });
