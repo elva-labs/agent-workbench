@@ -480,14 +480,27 @@ export async function waitForText(driver: WebDriver, needle: string, ms = 20_000
   await driver.wait(async () => (await screenText(driver)).includes(needle), ms, `no "${needle}" on screen`);
 }
 
-/** Types into the active session's terminal, a line at a time.
+/** What the active session's terminal shows on the cursor's line. Typed
+    input is echoed there, so this is where a keystroke shows up. */
+function cursorLine(driver: WebDriver): Promise<string> {
+  return driver.executeScript(() => {
+    const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
+      .__WORKBENCH_TERMINALS__;
+    const term = Object.values(registry ?? {}).at(-1);
+    if (!term) return "";
+    const active = term.buffer.active;
+    return active.getLine(active.baseY + active.cursorY)?.translateToString(true) ?? "";
+  }) as Promise<string>;
+}
+
+/** Types into the active session's terminal, one key at a time.
 
     The terminal is given the keyboard first, so what happened to focus
-    since the last keystroke does not decide where the text goes. Enter is
-    sent only once the line has been echoed back onto the screen: WebDriver
-    delivers characters and the Enter key by different routes, and under
-    WebView2 the key has been seen to overtake the last character, which
-    hands the agent "cras" and then "h". */
+    since the last keystroke does not decide where the text goes. Each key
+    is sent only once the one before it has been echoed onto the cursor's
+    line: WebDriver under WebView2 has delivered keys out of order whenever
+    two were in flight, "helol" for "hello", and Enter ahead of the last
+    letter of "crash". */
 export async function type(driver: WebDriver, text: string) {
   await driver.executeScript(() => {
     const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
@@ -495,14 +508,16 @@ export async function type(driver: WebDriver, text: string) {
     Object.values(registry ?? {}).at(-1)?.focus();
   });
   const focused = await driver.switchTo().activeElement();
-  const lines = text.split("\n");
-  const last = lines.pop() ?? "";
-  for (const line of lines) {
-    if (line !== "") {
-      await focused.sendKeys(line);
-      await waitForText(driver, line, 10_000);
+  let line = "";
+  for (const key of text) {
+    if (key === "\n") {
+      await focused.sendKeys(Key.ENTER);
+      line = "";
+      continue;
     }
-    await focused.sendKeys(Key.ENTER);
+    line += key;
+    await focused.sendKeys(key);
+    const typed = line;
+    await driver.wait(async () => (await cursorLine(driver)).endsWith(typed), 10_000, `"${typed}" never echoed`);
   }
-  if (last !== "") await focused.sendKeys(last);
 }

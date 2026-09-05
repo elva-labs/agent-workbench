@@ -133,7 +133,7 @@ mod tests {
     // What the agent is started in has to be a path every program takes.
     #[test]
     fn gives_a_path_without_the_verbatim_prefix() {
-        let dir = temp("workbench-project-plain");
+        let dir = temp("workbench-project-verbatim");
         let info = describe(&dir).unwrap();
         assert!(!info.path.starts_with(r"\\?\"), "{}", info.path);
         assert!(Path::new(&info.path).is_dir());
