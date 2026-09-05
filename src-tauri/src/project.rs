@@ -30,8 +30,10 @@ pub fn describe(path: &Path) -> Result<ProjectInfo, String> {
         return Err(format!("{} is not a directory", path.display()));
     }
 
-    let path = path
-        .canonicalize()
+    // The plain form of the path. Windows' own canonical form carries the
+    // verbatim \\?\ prefix, which cmd.exe does not accept as a directory:
+    // an agent started there lands in the Windows directory instead.
+    let path = dunce::canonicalize(path)
         .map_err(|e| format!("could not resolve {}: {e}", path.display()))?;
 
     let repository = find_repository(&path);
@@ -119,8 +121,22 @@ mod tests {
         assert_eq!(info.name, "deep");
         assert_eq!(
             info.repository,
-            Some(dir.canonicalize().unwrap().to_string_lossy().to_string())
+            Some(
+                dunce::canonicalize(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            )
         );
+    }
+
+    // What the agent is started in has to be a path every program takes.
+    #[test]
+    fn gives_a_path_without_the_verbatim_prefix() {
+        let dir = temp("workbench-project-plain");
+        let info = describe(&dir).unwrap();
+        assert!(!info.path.starts_with(r"\\?\"), "{}", info.path);
+        assert!(Path::new(&info.path).is_dir());
     }
 
     // A worktree and a submodule both carry .git as a file, not a directory.

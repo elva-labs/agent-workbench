@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { Builder, type WebDriver } from "selenium-webdriver";
+import { Builder, Key, type WebDriver } from "selenium-webdriver";
 
 /**
  * The real app under WebDriver.
@@ -40,6 +40,7 @@ const WINDOWS = process.platform === "win32";
     until told to exit. What a pty test needs from an agent. */
 const FAKE_AGENT = (name: string) => `#!/bin/sh
 echo "FAKE ${name} $*"
+echo "in $PWD"
 while IFS= read -r line; do
   case "$line" in
     exit) exit 0 ;;
@@ -53,6 +54,7 @@ done
     Windows and what the core has to run through cmd. */
 const FAKE_AGENT_CMD = (name: string) => `@echo off
 echo FAKE ${name} %*
+echo in %CD%
 :loop
 set line=
 set /p line=
@@ -478,10 +480,14 @@ export async function waitForText(driver: WebDriver, needle: string, ms = 20_000
   await driver.wait(async () => (await screenText(driver)).includes(needle), ms, `no "${needle}" on screen`);
 }
 
-/** Types into the active session's terminal. The terminal is given the
-    keyboard first, so what happened to focus since the last keystroke, a
-    pane re-rendering, a window that never quite had it, does not decide
-    where the text goes. */
+/** Types into the active session's terminal, a line at a time.
+
+    The terminal is given the keyboard first, so what happened to focus
+    since the last keystroke does not decide where the text goes. Enter is
+    sent only once the line has been echoed back onto the screen: WebDriver
+    delivers characters and the Enter key by different routes, and under
+    WebView2 the key has been seen to overtake the last character, which
+    hands the agent "cras" and then "h". */
 export async function type(driver: WebDriver, text: string) {
   await driver.executeScript(() => {
     const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
@@ -489,5 +495,14 @@ export async function type(driver: WebDriver, text: string) {
     Object.values(registry ?? {}).at(-1)?.focus();
   });
   const focused = await driver.switchTo().activeElement();
-  await focused.sendKeys(text);
+  const lines = text.split("\n");
+  const last = lines.pop() ?? "";
+  for (const line of lines) {
+    if (line !== "") {
+      await focused.sendKeys(line);
+      await waitForText(driver, line, 10_000);
+    }
+    await focused.sendKeys(Key.ENTER);
+  }
+  if (last !== "") await focused.sendKeys(last);
 }

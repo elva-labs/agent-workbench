@@ -83,8 +83,12 @@ describe("the real app", () => {
     const { driver } = app;
     await driver.findElement(By.css("[data-testid='new-session']")).click();
     await waitForText(driver, "FAKE CLAUDE --session-id");
+    await waitForText(driver, "in ");
     const text = await screenText(driver);
     expect(text).toMatch(/--session-id [0-9a-f-]{36}/);
+    // Where it was started, in its own words. A path cmd.exe refuses puts
+    // it in the Windows directory instead.
+    expect(text).toMatch(new RegExp(`in .*${repo.split(/[\\/]/).pop()}`));
     await waitForPaneText(driver, SESSIONS, "running");
   });
 
