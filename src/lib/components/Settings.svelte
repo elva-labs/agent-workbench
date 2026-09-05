@@ -161,13 +161,9 @@
 
       <h3>Live updates</h3>
       <p class="note">
-        A file watcher is always on: whatever changes in a project, by the agent or by you,
-        shows in the changes pane within a moment. Agent hooks go further. Installed in a
-        project's <code>.claude</code> and <code>.codex</code> settings, they report each edit
-        the moment a tool finishes, and say exactly when a session is working, waiting for you
-        or asking for permission. Without them, a session's state is read from its output, which
-        a redraw can fool. They are off until you turn them on here, because they write into the
-        project's own configuration.
+        The watcher sees every change in the project. Agent hooks, written into the project's
+        <code>.claude</code> and <code>.codex</code> settings, also report edits the moment they
+        happen and say exactly when a session is working, waiting or asking for permission.
       </p>
       {#if workspace.open.length === 0}
         <p class="note quiet" data-testid="hooks-none">Open a project to choose for it.</p>
