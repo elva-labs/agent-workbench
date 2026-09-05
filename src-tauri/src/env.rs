@@ -14,9 +14,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Duration;
 #[cfg(unix)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Generous, because nvm and friends take a second or two on a cold cache, and
 /// a shell that takes longer than this is not going to finish.

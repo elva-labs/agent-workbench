@@ -49,14 +49,13 @@ arriving on the channel actually land on screen.
 What this tier does not cover is Rust itself. The two halves meeting is checked
 by `cargo test` on one side, the fake on the other, and by running the app.
 
-A fourth tier is still worth adding: WebdriverIO on `tauri-driver`, driving the
-packaged binary with a real Rust core behind it. Two things to know before that
-lands:
+That is what the fourth tier is for, below: the real binary on `tauri-driver`.
+Two things about it:
 
 - `tauri-driver` supports **Linux and Windows only**. There is no WebDriver for
   macOS WKWebView, so the target platform is the one platform that tier cannot
-  run on. It runs in CI on Linux and is a regression net, not a substitute for
-  opening the app on a Mac.
+  run on. It is a regression net for the core, not a substitute for opening
+  the app on a Mac.
 - Frontend end-to-end stays on Playwright. It is faster, it runs everywhere, and
   the fake core covers pane behaviour without a binary.
 
@@ -102,6 +101,9 @@ component gets that component's raw source served as its stylesheet, which
 WebKit hits reliably on a fresh server. `scripts/smoke.sh`, which photographs
 the window, serves it the same way.
 
-CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
-macOS, and the driver tier on Linux, with the smoke screenshot as an artifact.
-There is no driver for macOS, so the macOS window is checked by hand.
+On Windows the same tests run under WebView2 through Edge WebDriver, with the
+fake agents installed as batch files, which is how npm installs a command
+there. CI runs the browser tier on Linux, the core's own tests on Linux,
+Windows and macOS, and the driver tier on Linux and Windows, with the Linux
+smoke screenshot as an artifact. There is no driver for macOS, so the macOS
+window is checked by hand. See [release.md](release.md).

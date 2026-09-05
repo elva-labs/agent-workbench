@@ -53,7 +53,8 @@ scripts/smoke.sh      # boots the real Tauri binary and photographs the window
 ```
 
 See [docs/testing.md](docs/testing.md) for what each tier is for and why the
-end-to-end tier asserts on geometry rather than state.
+end-to-end tier asserts on geometry rather than state, and
+[docs/release.md](docs/release.md) for what CI runs and how a release is cut.
 
 ## Layout
 
