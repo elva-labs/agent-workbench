@@ -69,10 +69,17 @@ jobs:
       - run: npm ci
 
       # Builds the frontend, the core and the bundles, and attaches them to a
-      # draft release for the tag. Signing keys are read from the secrets
-      # when they exist; without them the bundles are unsigned, which macOS
-      # and Windows warn about on first open.
-      - uses: tauri-apps/tauri-action@v0
+      # draft release for the tag. Two copies of the step: the bundler takes
+      # an empty APPLE_CERTIFICATE as one to import, so the signing variables
+      # are only present at all when the secret is.
+      - name: Whether there is a signing certificate
+        id: signing
+        shell: bash
+        run: echo "apple=${{ secrets.APPLE_CERTIFICATE != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and attach (signed)
+        if: steps.signing.outputs.apple == 'true'
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -81,6 +88,20 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Agent Workbench {0}', github.ref_name) || '' }}
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      # Unsigned: macOS asks the user to right-click and open the first time,
+      # and Windows shows a SmartScreen warning.
+      - name: Build and attach (unsigned)
+        if: steps.signing.outputs.apple != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Agent Workbench {0}', github.ref_name) || '' }}
