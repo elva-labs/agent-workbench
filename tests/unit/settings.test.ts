@@ -3,13 +3,14 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import Settings from "$lib/components/Settings.svelte";
 import { chordFor, keys, resetKeys } from "$lib/keys.svelte";
 import { closeSettings, openSettings, settings } from "$lib/settings.svelte";
-import { setTheme, theme } from "$lib/theme.svelte";
+import { setPalette, setTheme, theme } from "$lib/theme.svelte";
 
 vi.mock("$lib/platform", () => ({ isMac: () => true, isWindows: () => false }));
 
 beforeEach(() => {
   resetKeys();
   setTheme("system");
+  setPalette("teal");
   openSettings();
 });
 
@@ -22,6 +23,17 @@ describe("the settings", () => {
     expect(screen.getByTestId("theme-dark")).toHaveAttribute("aria-checked", "true");
     await fireEvent.click(screen.getByTestId("theme-system"));
     expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+
+  it("picks a colour palette", async () => {
+    render(Settings);
+    expect(screen.getAllByRole("radio", { name: /indigo|amber|rose|mono|teal/i })).toHaveLength(5);
+    await fireEvent.click(screen.getByTestId("palette-indigo"));
+    expect(theme.palette).toBe("indigo");
+    expect(document.documentElement.dataset.palette).toBe("indigo");
+    expect(screen.getByTestId("palette-indigo")).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(screen.getByTestId("palette-teal"));
+    expect(document.documentElement.dataset.palette).toBeUndefined();
   });
 
   it("switches presets and shows the chords in the platform's glyphs", async () => {

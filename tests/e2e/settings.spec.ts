@@ -32,6 +32,22 @@ test("changes the theme and keeps it", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
+test("changes the colour palette, which repaints the panes, and keeps it", async ({ page }) => {
+  const accentOf = () =>
+    page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+  const before = await accentOf();
+
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("palette-indigo").click();
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "indigo");
+  expect(await accentOf()).not.toBe(before);
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await expect(page.locator(AGENT)).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "indigo");
+});
+
 // The vim preset moves between panes on h, j, k and l. The status bar and the
 // keys themselves follow at once, and the choice survives a reload.
 test("switches to the vim preset and the keys follow", async ({ page }) => {

@@ -9,6 +9,10 @@
  * The ANSI layer exists here rather than next to the terminal because it is the
  * same palette: cyan IS the accent, so agent output carries the app's colour
  * without touching the agent's rendering. Read by the xterm ITheme builder.
+ *
+ * This file is the teal palette. The others, chosen in Settings and stamped
+ * as data-palette on <html>, restate the accent and the cast of the greys in
+ * palettes.css.
  */
 
 :root {

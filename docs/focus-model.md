@@ -38,7 +38,10 @@ future binding is additive and a typo is not silently absorbed.
 
 The table above is the default preset. Settings, reached from the native menu
 or <kbd>Cmd</kbd><kbd>,</kbd>, holds the whole table: pick a preset, or click
-a chord and press a new one. The one rule that does not move is the modifier:
+a chord and press a new one. The same dialog holds the appearance (system,
+light or dark) and the colour palette: teal, which `tokens.css` is written in,
+or one of the others in `palettes.css`, each restating the accent and the cast
+of the greys for both appearances while add and del stay what they are. The one rule that does not move is the modifier:
 every chord carries <kbd>Cmd</kbd> (<kbd>Ctrl</kbd> elsewhere), because the
 keys without it belong to whatever terminal has focus, and <kbd>Ctrl+C</kbd>
 and <kbd>Ctrl+R</kbd> are refused outright since on Windows and Linux they

@@ -48,7 +48,9 @@ fi
 # The built frontend, served static, rather than the dev server: a first
 # request that races the dev server's compile gets raw source served as CSS.
 npm run build >/dev/null 2>&1 || { echo "the frontend did not build"; exit 1; }
-npx vite preview --port 1420 --strictPort >/dev/null 2>&1 &
+# vite itself, not npx: the pid kept is then the server's, and the trap ends
+# it rather than leaving a child on the port for the next run.
+node node_modules/vite/bin/vite.js preview --port 1420 --strictPort >/dev/null 2>&1 &
 PIDS+=($!)
 
 for _ in $(seq 1 60); do

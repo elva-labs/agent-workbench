@@ -44,7 +44,9 @@ fi
 # a first request racing that compile gets raw source served as CSS.
 if ! curl -sf http://localhost:1420 >/dev/null; then
   npm run build >/dev/null 2>&1 || { echo "the frontend did not build"; exit 1; }
-  npx vite preview --port 1420 --strictPort >/dev/null 2>&1 &
+  # vite itself, not npx: the pid kept is then the server's, and the trap
+  # ends it rather than leaving a child on the port for the next run.
+  node node_modules/vite/bin/vite.js preview --port 1420 --strictPort >/dev/null 2>&1 &
   PIDS+=($!)
   for _ in $(seq 1 60); do
     curl -sf http://localhost:1420 >/dev/null && break

@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cycleTheme, loadTheme, resolvedTheme, setTheme, theme } from "$lib/theme.svelte";
+import {
+  PALETTES,
+  cycleTheme,
+  loadTheme,
+  resolvedTheme,
+  setPalette,
+  setTheme,
+  theme,
+} from "$lib/theme.svelte";
 
 beforeEach(() => {
   theme.choice = "system";
+  theme.palette = "teal";
   delete document.documentElement.dataset.theme;
+  delete document.documentElement.dataset.palette;
+  localStorage.clear();
 });
 
 describe("setTheme", () => {
@@ -24,6 +35,39 @@ describe("setTheme", () => {
   it("persists the choice", () => {
     setTheme("dark");
     expect(localStorage.getItem("workbench.theme")).toBe("dark");
+  });
+});
+
+describe("setPalette", () => {
+  it("stamps data-palette for a palette other than teal", () => {
+    setPalette("indigo");
+    expect(document.documentElement.dataset.palette).toBe("indigo");
+    expect(theme.palette).toBe("indigo");
+    setPalette("teal");
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+  });
+
+  it("persists the palette and restores it", () => {
+    setPalette("amber");
+    theme.palette = "teal";
+    loadTheme();
+    expect(theme.palette).toBe("amber");
+    expect(document.documentElement.dataset.palette).toBe("amber");
+  });
+
+  it("ignores a palette it does not know", () => {
+    localStorage.setItem("workbench.palette", "plaid");
+    theme.palette = "teal";
+    loadTheme();
+    expect(theme.palette).toBe("teal");
+  });
+
+  it("lists every palette with a swatch for each appearance", () => {
+    expect(PALETTES.map((p) => p.name)).toEqual(["teal", "indigo", "amber", "rose", "mono"]);
+    for (const palette of PALETTES) {
+      expect(palette.swatch.light).toMatch(/^#[0-9a-f]{6}$/);
+      expect(palette.swatch.dark).toMatch(/^#[0-9a-f]{6}$/);
+    }
   });
 });
 

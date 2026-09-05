@@ -1,0 +1,185 @@
+/*
+ * Colour palettes.
+ *
+ * tokens.css is the teal palette, the default. Each palette here restates
+ * the accent and the cast of the greys around it, for light and for dark;
+ * ink stays ink, and the semantic add and del stay what they are, so a
+ * diff reads the same whatever the accent. Chosen in Settings and stamped
+ * as data-palette on <html>; no stamp is teal.
+ *
+ * Each palette appears three times, like the dark set in tokens.css: light
+ * on the bare stamp, dark under the system preference unless light was
+ * chosen, and dark again under the explicit choice.
+ */
+
+/* Indigo: a cool blue accent, greys leaning blue. */
+:root[data-palette="indigo"] {
+  --bg: #f4f5f8;
+  --surface-2: #eef0f5;
+  --rule: #dde1ea;
+  --rule-strong: #c5cad6;
+  --ink-2: #4f5666;
+  --ink-3: #7d8493;
+  --accent: #3f56b5;
+  --accent-soft: #e6e9f7;
+  --ansi-cyan: #3f56b5;
+  --ansi-bright-cyan: #5f76d3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="indigo"]:not([data-theme="light"]) {
+    --bg: #0f1114;
+    --surface: #17191d;
+    --surface-2: #1e2126;
+    --rule: #272b33;
+    --rule-strong: #3a3f49;
+    --ink-2: #a4abb9;
+    --ink-3: #798190;
+    --accent: #8ea1ee;
+    --accent-soft: #1c2140;
+    --ansi-cyan: #8ea1ee;
+    --ansi-bright-cyan: #b0bef5;
+  }
+}
+
+:root[data-palette="indigo"][data-theme="dark"] {
+  --bg: #0f1114;
+  --surface: #17191d;
+  --surface-2: #1e2126;
+  --rule: #272b33;
+  --rule-strong: #3a3f49;
+  --ink-2: #a4abb9;
+  --ink-3: #798190;
+  --accent: #8ea1ee;
+  --accent-soft: #1c2140;
+  --ansi-cyan: #8ea1ee;
+  --ansi-bright-cyan: #b0bef5;
+}
+
+/* Amber: a warm accent, greys leaning warm. */
+:root[data-palette="amber"] {
+  --bg: #f7f5f2;
+  --surface-2: #f0ece6;
+  --rule: #e5ded4;
+  --rule-strong: #cfc6b9;
+  --ink-2: #5a544b;
+  --ink-3: #89817a;
+  --accent: #a0651a;
+  --accent-soft: #f7ecdc;
+  --ansi-cyan: #a0651a;
+  --ansi-bright-cyan: #c4863a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="amber"]:not([data-theme="light"]) {
+    --bg: #12100e;
+    --surface: #1a1714;
+    --surface-2: #1f1b17;
+    --rule: #2d2721;
+    --rule-strong: #423a31;
+    --ink-2: #b2aa9e;
+    --ink-3: #857c72;
+    --accent: #e0b15c;
+    --accent-soft: #33270f;
+    --ansi-cyan: #e0b15c;
+    --ansi-bright-cyan: #eccb8a;
+  }
+}
+
+:root[data-palette="amber"][data-theme="dark"] {
+  --bg: #12100e;
+  --surface: #1a1714;
+  --surface-2: #1f1b17;
+  --rule: #2d2721;
+  --rule-strong: #423a31;
+  --ink-2: #b2aa9e;
+  --ink-3: #857c72;
+  --accent: #e0b15c;
+  --accent-soft: #33270f;
+  --ansi-cyan: #e0b15c;
+  --ansi-bright-cyan: #eccb8a;
+}
+
+/* Rose: a pink accent, greys leaning rose. */
+:root[data-palette="rose"] {
+  --bg: #f7f4f6;
+  --surface-2: #f1ebee;
+  --rule: #e7dde2;
+  --rule-strong: #d0c3c9;
+  --ink-2: #5a4f55;
+  --ink-3: #897d84;
+  --accent: #b0426b;
+  --accent-soft: #f8e6ee;
+  --ansi-cyan: #b0426b;
+  --ansi-bright-cyan: #cf6a8f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="rose"]:not([data-theme="light"]) {
+    --bg: #12100f;
+    --surface: #1b1618;
+    --surface-2: #201b1e;
+    --rule: #2e262a;
+    --rule-strong: #433840;
+    --ink-2: #b3a6ac;
+    --ink-3: #857a80;
+    --accent: #ec8fb3;
+    --accent-soft: #341a26;
+    --ansi-cyan: #ec8fb3;
+    --ansi-bright-cyan: #f4b0ca;
+  }
+}
+
+:root[data-palette="rose"][data-theme="dark"] {
+  --bg: #12100f;
+  --surface: #1b1618;
+  --surface-2: #201b1e;
+  --rule: #2e262a;
+  --rule-strong: #433840;
+  --ink-2: #b3a6ac;
+  --ink-3: #857a80;
+  --accent: #ec8fb3;
+  --accent-soft: #341a26;
+  --ansi-cyan: #ec8fb3;
+  --ansi-bright-cyan: #f4b0ca;
+}
+
+/* Mono: no accent hue at all. Focus and selection are a darker grey, and
+   only add and del carry colour. Cyan in the terminal stays teal, since a
+   terminal without cyan is a broken terminal, not a quiet one. */
+:root[data-palette="mono"] {
+  --bg: #f4f4f4;
+  --surface-2: #ececec;
+  --rule: #dcdcdc;
+  --rule-strong: #c4c4c4;
+  --ink-2: #505050;
+  --ink-3: #808080;
+  --accent: #2b2b2b;
+  --accent-soft: #e4e4e4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="mono"]:not([data-theme="light"]) {
+    --bg: #101010;
+    --surface: #181818;
+    --surface-2: #1f1f1f;
+    --rule: #2a2a2a;
+    --rule-strong: #3d3d3d;
+    --ink-2: #a8a8a8;
+    --ink-3: #7c7c7c;
+    --accent: #d8d8d8;
+    --accent-soft: #2c2c2c;
+  }
+}
+
+:root[data-palette="mono"][data-theme="dark"] {
+  --bg: #101010;
+  --surface: #181818;
+  --surface-2: #1f1f1f;
+  --rule: #2a2a2a;
+  --rule-strong: #3d3d3d;
+  --ink-2: #a8a8a8;
+  --ink-3: #7c7c7c;
+  --accent: #d8d8d8;
+  --accent-soft: #2c2c2c;
+}

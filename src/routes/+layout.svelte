@@ -7,6 +7,7 @@
   import "@fontsource/archivo/600.css";
   import "@fontsource/archivo/700.css";
   import "$lib/styles/tokens.css";
+  import "$lib/styles/palettes.css";
 
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";

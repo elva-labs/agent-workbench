@@ -14,7 +14,14 @@
     type PresetName,
   } from "$lib/keys.svelte";
   import { closeSettings } from "$lib/settings.svelte";
-  import { setTheme, theme, type ThemeChoice } from "$lib/theme.svelte";
+  import {
+    PALETTES,
+    resolvedTheme,
+    setPalette,
+    setTheme,
+    theme,
+    type ThemeChoice,
+  } from "$lib/theme.svelte";
 
   /**
    * The settings, over the workbench. Reached from the native menu or its
@@ -104,8 +111,8 @@
     </header>
 
     <div class="body">
-      <h3>Theme</h3>
-      <div class="seg" role="radiogroup" aria-label="Theme">
+      <h3>Appearance</h3>
+      <div class="seg" role="radiogroup" aria-label="Appearance">
         {#each THEMES as option (option.choice)}
           <button
             role="radio"
@@ -115,6 +122,26 @@
             title={option.hint}
             data-testid="theme-{option.choice}">{option.label}</button
           >
+        {/each}
+      </div>
+
+      <h3>Colour</h3>
+      <div class="swatches" role="radiogroup" aria-label="Colour">
+        {#each PALETTES as palette (palette.name)}
+          <button
+            class="swatch"
+            role="radio"
+            aria-checked={theme.palette === palette.name}
+            class:on={theme.palette === palette.name}
+            onclick={() => setPalette(palette.name)}
+            data-testid="palette-{palette.name}"
+          >
+            <span
+              class="dot"
+              style:background={resolvedTheme() === "dark" ? palette.swatch.dark : palette.swatch.light}
+            ></span>
+            {palette.label}
+          </button>
         {/each}
       </div>
 
@@ -270,6 +297,40 @@
   .seg button.on {
     background: var(--accent-soft);
     color: var(--accent);
+  }
+
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .swatch {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 4px 10px 4px 8px;
+    border: 1px solid var(--rule);
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .swatch.on {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex: none;
   }
 
   .custom {

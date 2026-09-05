@@ -67,6 +67,7 @@ src/lib/settings.svelte.ts whether the settings are open
 src/lib/platform.ts        which desktop this is
 src/lib/theme.svelte.ts    light / dark / system
 src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
+src/lib/styles/palettes.css the other colour palettes, restating the accent
 src/lib/core.ts            the one seam to Rust: commands, channel, events
 src/lib/workspace.svelte.ts the open projects, the recent list, the picker
 src/lib/sessions.svelte.ts every session this window has, live or finished
