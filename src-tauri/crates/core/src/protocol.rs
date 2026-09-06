@@ -295,7 +295,9 @@ pub fn dispatch(
 mod tests {
     use super::*;
     use crate::events::testing::Recorder;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    #[cfg(unix)]
+    use std::sync::Mutex;
 
     fn core() -> Core {
         Core::new(Arc::new(Recorder::default()))

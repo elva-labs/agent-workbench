@@ -3,7 +3,9 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+#[cfg(unix)]
+use serde_json::json;
+use serde_json::Value;
 
 fn daemon() -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
@@ -99,9 +101,13 @@ mod client {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use serde_json::{json, Value};
+    #[cfg(unix)]
+    use serde_json::json;
+    use serde_json::Value;
     use workbench_core::client::CLOSED;
-    use workbench_core::{Connection, Output};
+    use workbench_core::Connection;
+    #[cfg(unix)]
+    use workbench_core::Output;
 
     fn connect(events: Arc<Mutex<Vec<(String, Value)>>>) -> Arc<Connection> {
         Connection::open(

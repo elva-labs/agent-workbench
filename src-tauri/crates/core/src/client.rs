@@ -314,6 +314,7 @@ mod tests {
         assert!(text.ends_with("end"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_process_that_never_speaks_is_not_connected_for_long() {
         let connection = Connection::open(

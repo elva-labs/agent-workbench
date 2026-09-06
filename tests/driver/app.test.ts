@@ -176,47 +176,51 @@ describe("the real app", () => {
   // A project on another machine: the path names the host, the app runs
   // the daemon there (here, the daemon itself) and everything else is the
   // same. The agent starts on the remote, its bytes come back, the watcher
-  // there reports the edit, and the crash arrives as an ended session.
-  it("opens a project on a remote and runs the agent there", async () => {
-    const { driver } = app;
-    const remote = `ssh://test${repo}`;
-    await openProjects(driver, [remote]);
-    await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
-    await driver.findElement(By.css("[data-testid='new-session']")).click();
-    await driver
-      .findElement(
-        By.css("[data-testid='agent-option'][data-agent='claude-code']"),
-      )
-      .click();
-    await waitForText(driver, "FAKE CLAUDE --session-id");
-    await waitForText(driver, "in ");
-    expect(await screenText(driver)).toMatch(
-      new RegExp(`in .*${repo.split(/[\\/]/).pop()}`),
-    );
-    await type(driver, "over the wire\n");
-    await waitForText(driver, "echo: over the wire");
+  // there reports the edit, and the crash arrives as an ended session. A
+  // remote path is POSIX, so not from a Windows checkout.
+  it.skipIf(process.platform === "win32")(
+    "opens a project on a remote and runs the agent there",
+    async () => {
+      const { driver } = app;
+      const remote = `ssh://test${repo}`;
+      await openProjects(driver, [remote]);
+      await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
+      await driver.findElement(By.css("[data-testid='new-session']")).click();
+      await driver
+        .findElement(
+          By.css("[data-testid='agent-option'][data-agent='claude-code']"),
+        )
+        .click();
+      await waitForText(driver, "FAKE CLAUDE --session-id");
+      await waitForText(driver, "in ");
+      expect(await screenText(driver)).toMatch(
+        new RegExp(`in .*${repo.split(/[\\/]/).pop()}`),
+      );
+      await type(driver, "over the wire\n");
+      await waitForText(driver, "echo: over the wire");
 
-    writeFileSync(join(repo, "NOTES.md"), "remote\n");
-    await waitForPaneText(driver, TREE, "NOTES.md");
+      writeFileSync(join(repo, "NOTES.md"), "remote\n");
+      await waitForPaneText(driver, TREE, "NOTES.md");
 
-    await type(driver, "crash\n");
-    const status = await driver.wait(
-      until.elementLocated(By.css("[data-testid='agent-status']")),
-      15_000,
-    );
-    await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
+      await type(driver, "crash\n");
+      const status = await driver.wait(
+        until.elementLocated(By.css("[data-testid='agent-status']")),
+        15_000,
+      );
+      await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
 
-    // The terminal panel's shell is on the remote too, in the project.
-    const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
-    await driver.actions().keyDown(key).sendKeys("j").keyUp(key).perform();
-    await driver.wait(
-      until.elementLocated(By.css("[data-testid='terminal']")),
-      10_000,
-    );
-    await type(driver, "echo shell-in-$PWD\n");
-    await waitForText(driver, `shell-in-${repo}`);
-    await driver.actions().keyDown(key).sendKeys("j").keyUp(key).perform();
-  });
+      // The terminal panel's shell is on the remote too, in the project.
+      const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+      await driver.actions().keyDown(key).sendKeys("j").keyUp(key).perform();
+      await driver.wait(
+        until.elementLocated(By.css("[data-testid='terminal']")),
+        10_000,
+      );
+      await type(driver, "echo shell-in-$PWD\n");
+      await waitForText(driver, `shell-in-${repo}`);
+      await driver.actions().keyDown(key).sendKeys("j").keyUp(key).perform();
+    },
+  );
 
   it("offers codex too, and runs it", async () => {
     const { driver } = app;
