@@ -85,22 +85,25 @@ fn menu_bar(handle: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
 
+    // The items name the product outright: left to the system they name the
+    // process, which in a dev build is the crate.
+    let name = handle.package_info().name.clone();
     let application = Submenu::with_items(
         handle,
-        "Agent Workbench",
+        &name,
         true,
         &[
-            &PredefinedMenuItem::about(handle, None, None)?,
+            &PredefinedMenuItem::about(handle, Some(&format!("About {name}")), None)?,
             &PredefinedMenuItem::separator(handle)?,
             &settings,
             &PredefinedMenuItem::separator(handle)?,
             &PredefinedMenuItem::services(handle, None)?,
             &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::hide(handle, None)?,
+            &PredefinedMenuItem::hide(handle, Some(&format!("Hide {name}")))?,
             &PredefinedMenuItem::hide_others(handle, None)?,
             &PredefinedMenuItem::show_all(handle, None)?,
             &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::quit(handle, None)?,
+            &PredefinedMenuItem::quit(handle, Some(&format!("Quit {name}")))?,
         ],
     )?;
     Menu::with_items(handle, &[&application, &edit, &window])
