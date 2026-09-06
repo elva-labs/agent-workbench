@@ -8,6 +8,7 @@
 pub mod activity;
 pub mod adapter;
 pub mod api;
+pub mod client;
 pub mod codex;
 pub mod cwd;
 pub mod env;
@@ -22,4 +23,5 @@ pub mod transcripts;
 pub mod watch;
 
 pub use api::{Core, DetectReport, DirEntry, SessionIdentified, Spawned, SESSION_IDENTIFIED};
+pub use client::Connection;
 pub use events::{Output, Sink};

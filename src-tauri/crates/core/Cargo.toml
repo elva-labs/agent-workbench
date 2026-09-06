@@ -7,6 +7,11 @@ edition = "2021"
 [lib]
 name = "workbench_core"
 
+# The same core on another machine, spoken to over stdio.
+[[bin]]
+name = "agent-workbench-remote"
+path = "src/bin/agent-workbench-remote.rs"
+
 [dependencies]
 dunce = "1"
 serde = { version = "1", features = ["derive"] }
