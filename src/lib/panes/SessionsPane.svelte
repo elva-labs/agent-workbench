@@ -71,7 +71,10 @@
   }
 
   let rows = $derived.by(() => {
-    const out: Row[] = [];
+    const out: Row[] = [
+      { id: "open", run: pick },
+      { id: "remote", run: openRemote },
+    ];
     for (const project of workspace.open) {
       const path = project.path;
       out.push({ id: `project:${path}`, run: () => activate(path) });
@@ -120,8 +123,16 @@
     if (cursor !== null && rows.some((row) => row.id === cursor)) return cursor;
     const active = sessions.active === null ? null : `session:${sessions.active}`;
     if (active !== null && rows.some((row) => row.id === active)) return active;
+    const project = workspace.active === null ? null : `project:${workspace.active}`;
+    if (project !== null && rows.some((row) => row.id === project)) return project;
     return rows[0]?.id ?? null;
   });
+
+  /** What the × on the row under the cursor would do. */
+  function remove(id: string) {
+    if (id.startsWith("project:")) closeProject(id.slice("project:".length));
+    else if (id.startsWith("session:")) closeSession(id.slice("session:".length));
+  }
 
   // Focusing the pane by key puts the keyboard here, so the arrows work at
   // once, and starts the cursor over from the session you are in rather than
@@ -186,6 +197,11 @@
         if (at === -1) return;
         rows[at].run();
         break;
+      case "Delete":
+      case "Backspace":
+        if (current === null) return;
+        remove(current);
+        break;
       default:
         return;
     }
@@ -217,15 +233,6 @@
 </script>
 
 <Pane id="sessions" title="Projects &amp; sessions" meta="">
-  <div class="head">
-    <button onclick={pick} disabled={workspace.opening} data-testid="open-project">
-      Open project
-    </button>
-    <button class="remote" onclick={openRemote} disabled={workspace.opening} data-testid="open-remote" title="A project on another machine, over ssh">
-      Remote…
-    </button>
-  </div>
-
   {#if workspace.error}
     <p class="error" data-testid="project-error">{workspace.error}</p>
   {/if}
@@ -249,6 +256,31 @@
     onpointerdown={onPointerdown}
     data-testid="sessions-nav"
   >
+  <!-- The way in, on the same cursor as the rows below. -->
+  <div class="head">
+    <button
+      class:cursor={current === "open"}
+      tabindex="-1"
+      onclick={pick}
+      disabled={workspace.opening}
+      data-row="open"
+      data-testid="open-project"
+    >
+      Open project
+    </button>
+    <button
+      class="remote"
+      class:cursor={current === "remote"}
+      tabindex="-1"
+      onclick={openRemote}
+      disabled={workspace.opening}
+      data-row="remote"
+      data-testid="open-remote"
+      title="A project on another machine, over ssh"
+    >
+      Remote…
+    </button>
+  </div>
   <div class="tree">
     {#each workspace.open as project (project.path)}
       {@const own = forProject(project.path)}
@@ -452,6 +484,15 @@
   .head button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  .head button.cursor {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .nav:focus-within .head .cursor::before {
+    content: none;
   }
 
   /* The way out is the accent; the way elsewhere is quieter. */

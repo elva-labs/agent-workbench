@@ -90,7 +90,10 @@ inside. <kbd>↑</kbd> and <kbd>↓</kbd> move the cursor, <kbd>Home</kbd> and
 <kbd>End</kbd> jump, <kbd>Enter</kbd> does what a click on the row does, and
 the cursor only shows while the keyboard is in the pane. A click puts the
 cursor on what was clicked; focusing the pane by key starts it over from the
-session you are in, or the selected file.
+session you are in, else your project, or the selected file. Everything in
+the sessions pane is on that cursor, the Open project and Remote buttons at
+the top included, and <kbd>Delete</kbd> does what the × on a project or
+session row does.
 
 Confirming a session moves the keyboard into the agent, so
 <kbd>Cmd</kbd><kbd>1</kbd>, <kbd>↓</kbd>, <kbd>Enter</kbd>, type is the whole

@@ -108,6 +108,21 @@ test.describe("a remote project", () => {
     await expect(page.getByTestId("remote")).toHaveCount(0);
   });
 
+  test("is reached from the keyboard, on the sessions pane's cursor", async ({
+    page,
+  }) => {
+    await installFakeCore(page, { open: [] });
+    await page.goto("/");
+    await page.keyboard.press("Control+1");
+    await page.keyboard.press("Home");
+    await expect(page.getByTestId("open-project")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("open-remote")).toHaveClass(/cursor/);
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("remote")).toBeVisible();
+    await expect(page.getByTestId("remote-host")).toBeFocused();
+  });
+
   test("a connection going away ends the sessions on it and says why", async ({
     page,
   }) => {

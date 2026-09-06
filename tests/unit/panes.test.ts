@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/svelte";
 import SessionsPane from "$lib/panes/SessionsPane.svelte";
 import ChangesPane from "$lib/panes/ChangesPane.svelte";
 import { DEFAULT, layout, togglePane } from "$lib/layout.svelte";
@@ -7,20 +13,44 @@ import { files, refresh, clear as clearFiles } from "$lib/files.svelte";
 
 /** Stands in for git. Reassigned per test rather than mocked per call. */
 const fake = {
-  status: [] as { path: string; status: string; add: number; del: number; binary: boolean }[],
+  status: [] as {
+    path: string;
+    status: string;
+    add: number;
+    del: number;
+    binary: boolean;
+  }[],
   fileList: [] as string[],
-  transcripts: [] as { id: string; title: string | null; modified: number; size: number }[],
-  codexTranscripts: [] as { id: string; title: string | null; modified: number; size: number }[],
+  transcripts: [] as {
+    id: string;
+    title: string | null;
+    modified: number;
+    size: number;
+  }[],
+  codexTranscripts: [] as {
+    id: string;
+    title: string | null;
+    modified: number;
+    size: number;
+  }[],
   hookInstalled: false,
+  picked: 0,
   controls: [] as string[],
 };
 
 vi.mock("$lib/core", () => ({
   core: () => ({
+    pickProject: async () => {
+      fake.picked += 1;
+      return null;
+    },
     gitStatus: async () => fake.status,
     gitFiles: async () => fake.fileList,
     gitGrep: async (_root: string, query: string) => ({
-      hits: query === "" ? [] : [{ path: "src/lib.rs", line: 4, text: `found ${query} here` }],
+      hits:
+        query === ""
+          ? []
+          : [{ path: "src/lib.rs", line: 4, text: `found ${query} here` }],
       truncated: false,
     }),
     gitDiff: async () => ({
@@ -28,13 +58,21 @@ vi.mock("$lib/core", () => ({
       binary: false,
       truncated: false,
     }),
-    gitContent: async () => ({ lines: ["use std::collections::HashMap;"], binary: false, truncated: false }),
+    gitContent: async () => ({
+      lines: ["use std::collections::HashMap;"],
+      binary: false,
+      truncated: false,
+    }),
     gitWatch: async () => {},
     onGitChanged: async () => () => {},
     kill: async () => {},
     transcripts: async (_project: string, agent: string) =>
       agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
-    hookStatus: async () => ({ installed: fake.hookInstalled, settings: "", events: "" }),
+    hookStatus: async () => ({
+      installed: fake.hookInstalled,
+      settings: "",
+      events: "",
+    }),
     hookInstall: async () => ({ installed: true, settings: "", events: "" }),
     hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
     windowControl: async (action: string) => {
@@ -44,15 +82,28 @@ vi.mock("$lib/core", () => ({
       fake.controls.push("menu");
     },
     setWindowTitle: async () => {},
-    projectInfo: async (path: string) => ({ path, name: path, repository: path, isGit: true }),
+    projectInfo: async (path: string) => ({
+      path,
+      name: path,
+      repository: path,
+      isGit: true,
+    }),
   }),
 }));
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
-import { reset as resetSessions, create, loadRemembered, started, sessions } from "$lib/sessions.svelte";
+import {
+  reset as resetSessions,
+  create,
+  loadRemembered,
+  started,
+  sessions,
+} from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
+import { remote, resetRemote } from "$lib/remote.svelte";
 
 beforeEach(() => {
+  resetRemote();
   layout.sessions = DEFAULT.sessions;
   layout.changes = DEFAULT.changes;
   layout.review = DEFAULT.review;
@@ -97,7 +148,15 @@ beforeEach(() => {
     "src/main.rs",
   ];
   resetAgent();
-  applyDetect({ id: "claude-code", path: "/usr/local/bin/claude", caps: null, fromLoginShell: true }, true);
+  applyDetect(
+    {
+      id: "claude-code",
+      path: "/usr/local/bin/claude",
+      caps: null,
+      fromLoginShell: true,
+    },
+    true,
+  );
 });
 
 const repo = (path: string, name: string, isGit = true) => ({
@@ -112,15 +171,21 @@ const tree = () => screen.getByRole("tree");
 /** The pane loads its own data now, so rendering is not the end of it. */
 async function renderChanges() {
   render(ChangesPane);
-  await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
+  await waitFor(() =>
+    expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0),
+  );
 }
 const rowNames = () =>
-  screen.getAllByRole("treeitem").map((el) => el.querySelector(".name")!.textContent!.trim());
+  screen
+    .getAllByRole("treeitem")
+    .map((el) => el.querySelector(".name")!.textContent!.trim());
 
 describe("Pane shell", () => {
   it("takes focus when pointed at", async () => {
     render(SessionsPane);
-    await fireEvent.pointerDown(screen.getByRole("region", { name: /projects/i }));
+    await fireEvent.pointerDown(
+      screen.getByRole("region", { name: /projects/i }),
+    );
     expect(layout.focus).toBe("sessions");
   });
 
@@ -128,7 +193,9 @@ describe("Pane shell", () => {
     // No project here, so the tree stays empty; focus is all this checks.
     togglePane("changes");
     render(ChangesPane);
-    await fireEvent.pointerDown(screen.getByRole("region", { name: /changes/i }));
+    await fireEvent.pointerDown(
+      screen.getByRole("region", { name: /changes/i }),
+    );
     expect(layout.focus).toBe("agent");
   });
 });
@@ -164,13 +231,25 @@ describe("SessionsPane", () => {
   // With codex installed too, every row says whose it is, the new-session
   // row offers the choice, and each agent's outside sessions fold apart.
   it("offers both agents and tells their sessions apart", async () => {
-    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    applyDetect(
+      {
+        id: "codex",
+        path: "/usr/local/bin/codex",
+        caps: null,
+        fromLoginShell: true,
+      },
+      true,
+    );
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     const mine = create("/repo", null, "claude-code");
     started(mine.key, "pty-1", "session-1");
-    fake.transcripts = [{ id: "c1", title: "from a terminal", modified: 1000, size: 400 }];
-    fake.codexTranscripts = [{ id: "x1", title: "Refactor billing", modified: 900, size: 400 }];
+    fake.transcripts = [
+      { id: "c1", title: "from a terminal", modified: 1000, size: 400 },
+    ];
+    fake.codexTranscripts = [
+      { id: "x1", title: "Refactor billing", modified: 900, size: 400 },
+    ];
 
     render(SessionsPane);
     expect(screen.getByTestId("agent-tag")).toHaveTextContent("claude");
@@ -178,11 +257,16 @@ describe("SessionsPane", () => {
     await fireEvent.click(screen.getByTestId("new-session"));
     expect(screen.queryByTestId("new-session")).toBeNull();
     const options = screen.getAllByTestId("agent-option");
-    expect(options.map((option) => option.dataset.agent)).toEqual(["claude-code", "codex"]);
+    expect(options.map((option) => option.dataset.agent)).toEqual([
+      "claude-code",
+      "codex",
+    ]);
     expect(options[0]).toHaveTextContent("Claude Code");
     expect(options[1]).toHaveTextContent("Codex");
 
-    await waitFor(() => expect(screen.getAllByTestId("outside-fold")).toHaveLength(2));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("outside-fold")).toHaveLength(2),
+    );
     const folds = screen.getAllByTestId("outside-fold");
     expect(folds[0]).toHaveTextContent("1 claude session to resume");
     expect(folds[1]).toHaveTextContent("1 codex session to resume");
@@ -202,7 +286,15 @@ describe("SessionsPane", () => {
   });
 
   it("picks the agent from the keyboard, Enter opening the choice and Escape closing it", async () => {
-    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    applyDetect(
+      {
+        id: "codex",
+        path: "/usr/local/bin/codex",
+        caps: null,
+        fromLoginShell: true,
+      },
+      true,
+    );
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     layout.focus = "sessions";
@@ -219,7 +311,9 @@ describe("SessionsPane", () => {
     // Escape closes it and puts the cursor back on the row.
     await fireEvent.keyDown(nav, { key: "Escape" });
     expect(screen.queryByTestId("agent-choice")).toBeNull();
-    expect(screen.getByTestId("new-session").closest(".new-row")).toHaveClass("cursor");
+    expect(screen.getByTestId("new-session").closest(".new-row")).toHaveClass(
+      "cursor",
+    );
 
     await fireEvent.keyDown(nav, { key: "Enter" });
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
@@ -299,20 +393,52 @@ describe("SessionsPane", () => {
     workspace.active = "/repo";
     const only = create("/repo");
     started(only.key, "pty-1", "session-1");
-    fake.transcripts = [{ id: "abc-123", title: "from a terminal", modified: 1000, size: 400 }];
+    fake.transcripts = [
+      { id: "abc-123", title: "from a terminal", modified: 1000, size: 400 },
+    ];
     layout.focus = "sessions";
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
-    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+    );
 
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass("cursor");
+    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
+      "cursor",
+    );
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("outside-session")).toHaveClass("cursor");
+  });
+
+  // Nothing in the pane needs the mouse: the way in sits on the same
+  // cursor as the rows, and Delete does what the × on a row does.
+  it("reaches Open project and Remote from the keyboard, and closes with Delete", async () => {
+    workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
+    workspace.active = "/repo";
+    layout.focus = "sessions";
+    fake.picked = 0;
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    // The cursor starts on the project you are in, not on the way in.
+    expect(screen.getByTestId("open-project")).not.toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Home" });
+    expect(screen.getByTestId("open-project")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(fake.picked).toBe(1);
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("open-remote")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(remote.open).toBe(true);
+
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "Delete" });
+    expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
   });
 
   it("starts a new session from the keyboard", async () => {
@@ -350,9 +476,17 @@ describe("SessionsPane", () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     fake.transcripts = [
-      { id: "abc-123", title: "rename the token cache", modified: 1000, size: 400 },
+      {
+        id: "abc-123",
+        title: "rename the token cache",
+        modified: 1000,
+        size: 400,
+      },
     ];
-    localStorage.setItem("workbench.mine", JSON.stringify({ "/repo": ["abc-123"] }));
+    localStorage.setItem(
+      "workbench.mine",
+      JSON.stringify({ "/repo": ["abc-123"] }),
+    );
     loadRemembered();
 
     render(SessionsPane);
@@ -373,8 +507,12 @@ describe("SessionsPane", () => {
     ];
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
-    expect(screen.getByTestId("outside-fold")).toHaveTextContent("2 claude sessions to resume");
+    await waitFor(() =>
+      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("outside-fold")).toHaveTextContent(
+      "2 claude sessions to resume",
+    );
     expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
     expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument();
 
@@ -386,10 +524,14 @@ describe("SessionsPane", () => {
   it("opens a past session as a live one, resumed by id", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
-    fake.transcripts = [{ id: "abc-123", title: "earlier work", modified: 1000, size: 400 }];
+    fake.transcripts = [
+      { id: "abc-123", title: "earlier work", modified: 1000, size: 400 },
+    ];
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+    );
     await fireEvent.click(screen.getByTestId("outside-fold"));
     await fireEvent.click(screen.getByTestId("outside-session"));
 
@@ -400,14 +542,20 @@ describe("SessionsPane", () => {
   it("stops offering a past session once it is open", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
-    fake.transcripts = [{ id: "abc-123", title: "earlier work", modified: 1000, size: 400 }];
+    fake.transcripts = [
+      { id: "abc-123", title: "earlier work", modified: 1000, size: 400 },
+    ];
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("outside-fold")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+    );
     await fireEvent.click(screen.getByTestId("outside-fold"));
     await fireEvent.click(screen.getByTestId("outside-session"));
 
-    await waitFor(() => expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument(),
+    );
     expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
   });
 
@@ -424,8 +572,14 @@ describe("SessionsPane", () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     resetAgent();
-    applyDetect({ id: "claude-code", path: null, caps: null, fromLoginShell: true }, true);
-    applyDetect({ id: "codex", path: null, caps: null, fromLoginShell: true }, true);
+    applyDetect(
+      { id: "claude-code", path: null, caps: null, fromLoginShell: true },
+      true,
+    );
+    applyDetect(
+      { id: "codex", path: null, caps: null, fromLoginShell: true },
+      true,
+    );
 
     render(SessionsPane);
     expect(screen.getByTestId("new-session")).toBeDisabled();
@@ -458,9 +612,15 @@ describe("the window controls", () => {
     fake.controls = [];
     render(ChangesPane);
     const controls = screen.getByTestId("window-controls");
-    await fireEvent.click(within(controls).getByRole("button", { name: "Minimize" }));
-    await fireEvent.click(within(controls).getByRole("button", { name: "Maximize" }));
-    await fireEvent.click(within(controls).getByRole("button", { name: "Close" }));
+    await fireEvent.click(
+      within(controls).getByRole("button", { name: "Minimize" }),
+    );
+    await fireEvent.click(
+      within(controls).getByRole("button", { name: "Maximize" }),
+    );
+    await fireEvent.click(
+      within(controls).getByRole("button", { name: "Close" }),
+    );
     expect(fake.controls).toEqual(["minimize", "maximize", "close"]);
   });
 
@@ -494,9 +654,15 @@ describe("the changes toolbar", () => {
 
   it("narrows the tree as you type", async () => {
     render(ChangesPane);
-    await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
-    await fireEvent.input(screen.getByTestId("search-field"), { target: { value: "cache" } });
-    const names = screen.getAllByRole("treeitem").map((row) => row.textContent?.trim());
+    await waitFor(() =>
+      expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0),
+    );
+    await fireEvent.input(screen.getByTestId("search-field"), {
+      target: { value: "cache" },
+    });
+    const names = screen
+      .getAllByRole("treeitem")
+      .map((row) => row.textContent?.trim());
     expect(names.some((name) => name?.includes("mod.rs"))).toBe(true);
     expect(names.some((name) => name?.includes("lib.rs"))).toBe(false);
   });
@@ -504,8 +670,13 @@ describe("the changes toolbar", () => {
   it("puts scope and view in the menu, with their chords", async () => {
     render(ChangesPane);
     await fireEvent.click(screen.getByTestId("changes-menu"));
-    expect(screen.getByTestId("menu-scope-changed")).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByTestId("menu-scope-all")).toHaveTextContent(/⌘⇧A|Ctrl\+Shift\+A/);
+    expect(screen.getByTestId("menu-scope-changed")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("menu-scope-all")).toHaveTextContent(
+      /⌘⇧A|Ctrl\+Shift\+A/,
+    );
     await fireEvent.click(screen.getByTestId("menu-scope-all"));
     expect(files.scope).toBe("all");
     // Choosing closes the menu.
@@ -515,14 +686,24 @@ describe("the changes toolbar", () => {
   // Lines mode: the hits stand in for the tree, and one opens the file there.
   it("lists hits in lines mode and opens a file at the line", async () => {
     render(ChangesPane);
-    await waitFor(() => expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByRole("treeitem").length).toBeGreaterThan(0),
+    );
     await fireEvent.click(screen.getByTestId("mode-lines"));
-    await fireEvent.input(screen.getByTestId("search-field"), { target: { value: "needle" } });
-    await fireEvent.keyDown(screen.getByTestId("search-field"), { key: "Enter" });
-    await waitFor(() => expect(screen.getByTestId("search-hit")).toBeInTheDocument());
+    await fireEvent.input(screen.getByTestId("search-field"), {
+      target: { value: "needle" },
+    });
+    await fireEvent.keyDown(screen.getByTestId("search-field"), {
+      key: "Enter",
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("search-hit")).toBeInTheDocument(),
+    );
     expect(screen.getByTestId("search-file")).toHaveTextContent("src/lib.rs");
     expect(screen.getByTestId("search-hit")).toHaveTextContent("4");
-    expect(screen.getByTestId("search-hit").querySelector("mark")).toHaveTextContent("needle");
+    expect(
+      screen.getByTestId("search-hit").querySelector("mark"),
+    ).toHaveTextContent("needle");
 
     await fireEvent.click(screen.getByTestId("search-hit"));
     expect(files.selected).toBe("src/lib.rs");
@@ -560,7 +741,13 @@ describe("the file tree", () => {
 
   it("nests changed files under their folders", async () => {
     await renderChanges();
-    expect(rowNames()).toEqual(["src", "cache", "mod.rs", "lib.rs", "token_cache.rs"]);
+    expect(rowNames()).toEqual([
+      "src",
+      "cache",
+      "mod.rs",
+      "lib.rs",
+      "token_cache.rs",
+    ]);
   });
 
   it("marks folders as folders and files as selectable", async () => {
@@ -629,7 +816,13 @@ describe("the file tree", () => {
     await renderChanges();
     await fireEvent.click(screen.getByText("lib.rs"));
     expect(tree()).toBeInTheDocument();
-    expect(rowNames()).toEqual(["src", "cache", "mod.rs", "lib.rs", "token_cache.rs"]);
+    expect(rowNames()).toEqual([
+      "src",
+      "cache",
+      "mod.rs",
+      "lib.rs",
+      "token_cache.rs",
+    ]);
   });
 
   it("switches files without leaving the viewer", async () => {
@@ -650,7 +843,10 @@ describe("tree keyboard navigation", () => {
 
   const cursorName = () => {
     const id = tree().getAttribute("aria-activedescendant")!;
-    return document.getElementById(id)!.querySelector(".name")!.textContent!.trim();
+    return document
+      .getElementById(id)!
+      .querySelector(".name")!
+      .textContent!.trim();
   };
 
   it("starts on the first row", async () => {
@@ -746,7 +942,9 @@ describe("ChangesPane head", () => {
   it("carries the field and the menu in one head", async () => {
     await renderChanges();
     expect(screen.getByTestId("search-field")).toBeInTheDocument();
-    expect(screen.getByRole("radiogroup", { name: /what to search/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radiogroup", { name: /what to search/i }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("changes-menu")).toBeInTheDocument();
   });
 
@@ -764,13 +962,18 @@ describe("ChangesPane head", () => {
     await fireEvent.click(screen.getByText("Cargo.toml"));
     await fireEvent.click(screen.getByTestId("changes-menu"));
     expect(screen.getByTestId("menu-view-diff")).toBeDisabled();
-    expect(screen.getByTestId("menu-view-content")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("menu-view-content")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("closes back to the tree alone", async () => {
     await renderChanges();
     await fireEvent.click(screen.getByText("lib.rs"));
-    await fireEvent.click(screen.getByRole("button", { name: /close the viewer/i }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: /close the viewer/i }),
+    );
     expect(layout.mode).toBe("working");
     expect(screen.queryByTestId("viewer")).not.toBeInTheDocument();
     expect(tree()).toBeInTheDocument();
@@ -800,14 +1003,19 @@ describe("FileViewer", () => {
 
     const viewer = screen.getByTestId("viewer");
     expect(viewer).toHaveAttribute("data-view", "content");
-    expect(within(viewer).queryByText("@@ -1,9 +1,12 @@")).not.toBeInTheDocument();
+    expect(
+      within(viewer).queryByText("@@ -1,9 +1,12 @@"),
+    ).not.toBeInTheDocument();
   });
 
   it("falls back to content for a file with no diff", async () => {
     await renderChanges();
     await chooseAll();
     await fireEvent.click(screen.getByText("Cargo.toml"));
-    expect(screen.getByTestId("viewer")).toHaveAttribute("data-view", "content");
+    expect(screen.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "content",
+    );
   });
 
   it("says so when a deleted file has no content to show", async () => {
