@@ -185,6 +185,11 @@ fn open(app: &AppHandle, host: &str, files: &ssh::Files) -> Result<Arc<Connectio
     Ok(connection)
 }
 
+/// `transport`, for a test outside this crate.
+pub fn transport_for_test(host: &str, files: &ssh::Files) -> Command {
+    transport(host, files).expect("a transport")
+}
+
 /// The process that carries the conversation. ssh, with the user's login
 /// environment so the agent and its keys are the user's own, and the app's
 /// own key for a host the app set up; or, for a test, whatever

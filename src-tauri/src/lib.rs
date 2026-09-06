@@ -10,8 +10,8 @@
 
 mod chrome;
 mod menu;
-mod remote;
-mod ssh;
+pub mod remote;
+pub mod ssh;
 
 pub use ssh::{askpass, ASKPASS_FLAG};
 
