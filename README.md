@@ -80,19 +80,30 @@ src/lib/terminal.ts        xterm theme from the tokens, and the write queue
 src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
 src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView, Settings
 src/lib/panes/             the three panes and the terminal panel
-src-tauri/src/project.rs   what a folder is: name, repository root, is it git
-src-tauri/src/git.rs       status, diffs, content and the file listing
-src-tauri/src/transcripts.rs  Claude Code's past sessions, from its transcripts
-src-tauri/src/codex.rs     Codex's past sessions, from its SQLite index
-src-tauri/src/watch.rs     noticing the worktree moved, debounced
-src-tauri/src/hook.rs      the optional PostToolUse hook, off by default
-src-tauri/src/env.rs       the login shell environment, and PATH lookup
-src-tauri/src/adapter.rs   the agent seam: Surface, Caps, ClaudeCode, Codex
-src-tauri/src/shell.rs     the user's shell, started the way the agent is
-src-tauri/src/pty.rs       sessions, the output channel, and the exit event
-src-tauri/src/cwd.rs       where a process is working, per platform
+src/lib/remote.svelte.ts   projects on other machines, and the dialog that reaches them
+src-tauri/crates/core/     the core with no window attached, and the remote daemon
+  src/api.rs               the core as one object: what a window or a daemon calls
+  src/events.rs            the Sink for events and the Output for a pty's bytes
+  src/protocol.rs          the wire: JSON lines, and the one dispatcher
+  src/client.rs            the near end of the wire: a core elsewhere as an object here
+  src/bin/agent-workbench-remote.rs  the daemon: the dispatcher on stdio
+  src/project.rs           what a folder is: name, repository root, is it git
+  src/git.rs               status, diffs, content and the file listing
+  src/transcripts.rs       Claude Code's past sessions, from its transcripts
+  src/codex.rs             Codex's past sessions, from its SQLite index
+  src/watch.rs             noticing the worktree moved, debounced
+  src/hook.rs              the optional hooks, off by default
+  src/activity.rs          the session log the hooks append to, tailed
+  src/env.rs               the login shell environment, and PATH lookup
+  src/adapter.rs           the agent seam: Surface, Caps, ClaudeCode, Codex
+  src/shell.rs             the user's shell, started the way the agent is
+  src/pty.rs               sessions, their output, and the exit event
+  src/cwd.rs               where a process is working, per platform
+src-tauri/src/lib.rs       the commands the webview can call, routed by path
+src-tauri/src/remote.rs    ssh://host paths to the connection for that host
+src-tauri/src/ssh.rs       keys, passwords once, fingerprints, the daemon's install
 src-tauri/src/menu.rs      the native menu, with Settings in it
-src-tauri/src/lib.rs       the commands the webview can call
+src-tauri/src/chrome.rs    the window's own chrome, per platform
 ```
 
 ## Reading
@@ -102,6 +113,8 @@ src-tauri/src/lib.rs       the commands the webview can call
 - [docs/focus-model.md](docs/focus-model.md) — who owns the keyboard, and why the
   answer is "the agent, nearly always".
 - [docs/testing.md](docs/testing.md) — the three test tiers.
+- [docs/remote.md](docs/remote.md) — projects on other machines: the daemon,
+  the wire, and getting onto a machine without handling a key.
 
 ## Phases
 

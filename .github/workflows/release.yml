@@ -14,9 +14,54 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The daemon for the machines a project can be on, built first so every
+  # app can carry them and put one on a machine that has none.
+  daemon:
+    name: Daemon (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl, so the binary runs on any Linux whatever its libc.
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - name: darwin-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: darwin-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: daemon-${{ matrix.target }}
+      - run: cargo build --release -p workbench-core --bin agent-workbench-remote --target ${{ matrix.target }}
+        working-directory: src-tauri
+      - run: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote version
+        if: matrix.os != 'macos-latest' || matrix.target == 'aarch64-apple-darwin'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.name }}
+          path: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    needs: daemon
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +112,23 @@ jobs:
           key: ${{ matrix.target }}
 
       - run: npm ci
+
+      # Every daemon build goes into the app's resources, at the path the
+      # app looks for one to send to a machine.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: daemon-*
+          path: daemons
+      - name: Bundle the daemons
+        shell: bash
+        run: |
+          for dir in daemons/daemon-*; do
+            target=${dir#daemons/daemon-}
+            mkdir -p "src-tauri/resources/remote/$target"
+            cp "$dir/agent-workbench-remote" "src-tauri/resources/remote/$target/"
+            chmod +x "src-tauri/resources/remote/$target/agent-workbench-remote"
+          done
+          ls -l src-tauri/resources/remote/*
 
       # Builds the frontend, the core and the bundles, and attaches them to a
       # draft release for the tag. Two copies of the step: the bundler takes

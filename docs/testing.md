@@ -162,3 +162,10 @@ artifact. The core's tests on Windows and macOS and the driver tier on
 Windows run nightly, only on a day main moved, or on request from the
 Actions tab: those runners cost two and ten Linux minutes a minute. There is no driver for macOS, so the macOS window
 is checked by hand. See [release.md](release.md).
+
+The driver tier also opens its repository as `ssh://test/<repo>`, with
+`WORKBENCH_REMOTE_COMMAND` pointing the app at the daemon itself where it
+would run ssh, so a project on another machine is exercised end to end
+without one. The real road, through `sshd` on this machine with the app's
+own key and the daemon installed over ssh, is `src-tauri/tests/localhost.rs`,
+which runs only with `WORKBENCH_SSH_LOCALHOST=1`. See [remote.md](remote.md).
