@@ -60,12 +60,14 @@ fn next_id() -> String {
     format!("pty-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
+/// Starts a process in a pty. The output is made once the id is known, so
+/// whoever carries the bytes can label them.
 pub fn spawn(
     sink: Arc<dyn Sink>,
     sessions: Arc<Sessions>,
     command: CommandBuilder,
     size: PtySize,
-    mut output: Output,
+    make_output: impl FnOnce(&str) -> Output,
 ) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(size)
@@ -92,6 +94,7 @@ pub fn spawn(
     let pid = child.process_id();
 
     let id = next_id();
+    let mut output = make_output(&id);
 
     sessions.inner.lock().expect("sessions lock").insert(
         id.clone(),

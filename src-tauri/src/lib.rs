@@ -66,7 +66,12 @@ async fn pty_spawn(
     on_output: Channel,
 ) -> Result<Spawned, String> {
     let core = Arc::clone(&core);
-    blocking(move || core.spawn(&agent, &project, session, cols, rows, to_channel(on_output))).await
+    blocking(move || {
+        core.spawn(&agent, &project, session, cols, rows, |_| {
+            to_channel(on_output)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -78,7 +83,7 @@ async fn pty_shell(
     on_output: Channel,
 ) -> Result<String, String> {
     let core = Arc::clone(&core);
-    blocking(move || core.shell(&project, cols, rows, to_channel(on_output))).await
+    blocking(move || core.shell(&project, cols, rows, |_| to_channel(on_output))).await
 }
 
 #[tauri::command]

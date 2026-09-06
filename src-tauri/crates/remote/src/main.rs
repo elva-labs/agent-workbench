@@ -1,0 +1,93 @@
+//! Agent Workbench on another machine.
+//!
+//! `agent-workbench-remote serve` is the core with no window, spoken to over
+//! stdin and stdout: one JSON object a line, requests in, answers and events
+//! out. The desktop app starts it over SSH and drives it exactly as it
+//! drives its own core; nothing on this side knows it is remote. Each
+//! request gets a thread, so a slow `git status` never holds up a keystroke
+//! bound for a pty. It ends when stdin does.
+
+use std::io::{BufRead, Write};
+use std::sync::{Arc, Mutex};
+
+use serde_json::Value;
+use workbench_core::protocol::{dispatch, Message, Request};
+use workbench_core::{Core, Output, Sink};
+
+/// Everything going out shares one writer and goes out whole: a line at a
+/// time, under a lock, flushed, so two threads never interleave.
+struct Stdout(Mutex<std::io::Stdout>);
+
+impl Stdout {
+    fn send(&self, message: &Message) {
+        let Ok(line) = serde_json::to_string(message) else {
+            return;
+        };
+        let mut out = self.0.lock().expect("stdout lock");
+        // A failed write means the other end is gone; the reader will see
+        // EOF next and the process ends there.
+        let _ = writeln!(out, "{line}");
+        let _ = out.flush();
+    }
+}
+
+/// The core's events, out on the same writer.
+struct Events(Arc<Stdout>);
+
+impl Sink for Events {
+    fn emit(&self, event: &str, payload: Value) {
+        self.0.send(&Message::event(event, payload));
+    }
+}
+
+fn serve() {
+    let out = Arc::new(Stdout(Mutex::new(std::io::stdout())));
+    let core = Arc::new(Core::new(Arc::new(Events(Arc::clone(&out)))));
+    if let Err(error) = core.start() {
+        eprintln!("session log: {error}");
+    }
+
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: Request = match serde_json::from_str(&line) {
+            Ok(request) => request,
+            Err(error) => {
+                eprintln!("not a request: {error}");
+                continue;
+            }
+        };
+        let core = Arc::clone(&core);
+        let out = Arc::clone(&out);
+        std::thread::spawn(move || {
+            let for_output = Arc::clone(&out);
+            let make_output = move |id: &str| -> Output {
+                let id = id.to_string();
+                Box::new(move |bytes: &[u8]| {
+                    for_output.send(&Message::output(&id, bytes));
+                    true
+                })
+            };
+            let answer = match dispatch(&core, &request.method, request.params, make_output) {
+                Ok(result) => Message::ok(request.id, result),
+                Err(error) => Message::err(request.id, error),
+            };
+            out.send(&answer);
+        });
+    }
+}
+
+fn main() {
+    let mut args = std::env::args().skip(1);
+    match args.next().as_deref() {
+        Some("serve") => serve(),
+        Some("--version" | "version") => println!("{}", env!("CARGO_PKG_VERSION")),
+        _ => {
+            eprintln!("usage: agent-workbench-remote serve | version");
+            std::process::exit(2);
+        }
+    }
+}

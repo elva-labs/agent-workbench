@@ -112,7 +112,7 @@ impl Core {
         session: Option<String>,
         cols: u16,
         rows: u16,
-        output: Output,
+        output: impl FnOnce(&str) -> Output,
     ) -> Result<Spawned, String> {
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let environment = env::environment();
@@ -162,7 +162,7 @@ impl Core {
         project: &Path,
         cols: u16,
         rows: u16,
-        output: Output,
+        output: impl FnOnce(&str) -> Output,
     ) -> Result<String, String> {
         let environment = env::environment();
         let command = shell::command(project, &environment.vars);
@@ -455,7 +455,7 @@ mod tests {
                 true
             }
         });
-        let id = core.shell(Path::new("/tmp"), 80, 24, output).unwrap();
+        let id = core.shell(Path::new("/tmp"), 80, 24, |_| output).unwrap();
         core.pty_write(&id, b"exit 3\n").unwrap();
         for _ in 0..100 {
             if !recorder.events.lock().unwrap().is_empty() {

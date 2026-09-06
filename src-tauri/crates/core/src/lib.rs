@@ -15,6 +15,7 @@ pub mod events;
 pub mod git;
 pub mod hook;
 pub mod project;
+pub mod protocol;
 pub mod pty;
 pub mod shell;
 pub mod transcripts;

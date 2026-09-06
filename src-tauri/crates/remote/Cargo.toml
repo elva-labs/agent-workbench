@@ -1,0 +1,13 @@
+[package]
+name = "agent-workbench-remote"
+version = "0.1.0"
+description = "Agent Workbench on another machine: the core, spoken to over stdio"
+edition = "2021"
+
+[[bin]]
+name = "agent-workbench-remote"
+path = "src/main.rs"
+
+[dependencies]
+workbench-core = { path = "../core" }
+serde_json = "1"

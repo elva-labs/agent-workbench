@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 # The core, everything that does not need a window, is its own crate so the
 # remote daemon can build on it without linking a webview.
 [workspace]
-members = ["crates/core"]
+members = ["crates/core", "crates/remote"]
 
 [dependencies]
 workbench-core = { path = "crates/core" }
