@@ -572,6 +572,11 @@ async fn remote_dirs(
     blocking(move || {
         let connection = remotes.connection(&host)?;
         let home = connection.call("home", Value::Null)?;
+        // The path may come back the way it went out, with the host on.
+        let path = match route(&path) {
+            Route::Remote { rest, .. } => rest,
+            Route::Local(path) => path,
+        };
         let base = if path.is_empty() {
             home.as_str()
                 .ok_or("the host has no home directory")?
