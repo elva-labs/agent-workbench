@@ -189,6 +189,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           return () => {};
         },
         onOpenSettings: async () => () => {},
+        onRemoteClosed: async () => () => {},
+        remoteHosts: async () => ({ configured: [], saved: [] }),
         sessionTitle: async (_agent: string, id: string) => fake.codexTitles[id] ?? null,
         onFileDrag: async (handler: (drag: unknown) => void) => {
           fake.drag = handler;

@@ -67,6 +67,25 @@ export interface ShellOptions {
   rows: number;
 }
 
+/** Machines the window can offer: named in the user's ssh configuration,
+    or set up by the app itself. */
+export interface RemoteHosts {
+  configured: string[];
+  saved: { host: string; user: string; target: string }[];
+}
+
+/** Directories under a path on a machine, each with the host on, so any
+    of them opens as it is. */
+export interface RemoteDirs {
+  path: string;
+  dirs: { name: string; path: string }[];
+}
+
+export interface RemoteClosed {
+  host: string;
+  reason: string;
+}
+
 export interface ProjectInfo {
   path: string;
   name: string;
@@ -194,6 +213,21 @@ export interface Core {
   /** Starts watching a worktree, replacing whatever was watched before. */
   gitWatch(root: string): Promise<void>;
   onGitChanged(handler: (root: string) => void): Promise<() => void>;
+
+  /** Machines to offer: the ssh configuration's and the app's own. */
+  remoteHosts(): Promise<RemoteHosts>;
+  /** What a machine identifies itself as, to trust before a password goes there. */
+  remoteFingerprint(host: string): Promise<string>;
+  /** Opens the connection to a target, putting the daemon there first if it is missing. */
+  remoteConnect(target: string): Promise<{ host: string; version: string }>;
+  /** Installs the app's key over a password given once, then connects. */
+  remoteSetup(host: string, user: string, password: string): Promise<{ host: string; version: string }>;
+  /** Directories under a path on the target, or under its home for "". */
+  remoteDirs(target: string, path: string): Promise<RemoteDirs>;
+  remoteDisconnect(target: string): Promise<void>;
+  remoteForget(target: string): Promise<void>;
+  /** A connection went away, with every session it carried. */
+  onRemoteClosed(handler: (closed: RemoteClosed) => void): Promise<() => void>;
 }
 
 /**
@@ -311,6 +345,18 @@ const tauriCore: Core = {
   async onGitChanged(handler) {
     return listen<string>("git_changed", (event) => handler(event.payload));
   },
+
+  remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
+  remoteFingerprint: (host) => invoke<string>("remote_fingerprint", { host }),
+  remoteConnect: (host) => invoke<{ host: string; version: string }>("remote_connect", { host }),
+  remoteSetup: (host, user, password) =>
+    invoke<{ host: string; version: string }>("remote_setup", { host, user, password }),
+  remoteDirs: (host, path) => invoke<RemoteDirs>("remote_dirs", { host, path }),
+  remoteDisconnect: (host) => invoke<void>("remote_disconnect", { host }),
+  remoteForget: (target) => invoke<void>("remote_forget", { target }),
+  async onRemoteClosed(handler) {
+    return listen<RemoteClosed>("remote_closed", (event) => handler(event.payload));
+  },
 };
 
 /** What the app does when there is no core behind it: say so, do nothing. */
@@ -388,6 +434,26 @@ const detachedCore: Core = {
   },
   async gitWatch() {},
   async onGitChanged() {
+    return () => {};
+  },
+  async remoteHosts() {
+    return { configured: [], saved: [] };
+  },
+  async remoteFingerprint() {
+    throw new Error("no core to reach a machine with");
+  },
+  async remoteConnect() {
+    throw new Error("no core to reach a machine with");
+  },
+  async remoteSetup() {
+    throw new Error("no core to reach a machine with");
+  },
+  async remoteDirs() {
+    throw new Error("no core to reach a machine with");
+  },
+  async remoteDisconnect() {},
+  async remoteForget() {},
+  async onRemoteClosed() {
     return () => {};
   },
 };

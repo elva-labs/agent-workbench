@@ -21,6 +21,7 @@
     statusLabel,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
+  import { hostOf, openRemote } from "$lib/remote.svelte";
   import { focusPane, layout } from "$lib/layout.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
@@ -220,6 +221,9 @@
     <button onclick={pick} disabled={workspace.opening} data-testid="open-project">
       Open project
     </button>
+    <button class="remote" onclick={openRemote} disabled={workspace.opening} data-testid="open-remote" title="A project on another machine, over ssh">
+      Remote…
+    </button>
   </div>
 
   {#if workspace.error}
@@ -256,6 +260,7 @@
       >
         <button class="row project-row" tabindex="-1" onclick={() => activate(project.path)} title={project.path}>
           <span class="name">{project.name}</span>
+          {#if hostOf(project.path) !== null}<span class="host" data-testid="project-host">{hostOf(project.path)}</span>{/if}
           {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
         </button>
         <button
@@ -424,13 +429,15 @@
 <style>
   .head {
     display: flex;
+    gap: 6px;
     padding: 8px var(--pane-pad);
     border-bottom: 1px solid var(--rule);
     flex: none;
   }
 
   .head button {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     font-family: var(--mono);
     font-size: 10.5px;
     letter-spacing: 0.08em;
@@ -445,6 +452,35 @@
   .head button:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* The way out is the accent; the way elsewhere is quieter. */
+  .head button.remote {
+    flex: 0 0 auto;
+    border-color: var(--rule);
+    background: none;
+    color: var(--ink-3);
+  }
+
+  .head button.remote:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Where a project is, when it is not here. */
+  .host {
+    flex: none;
+    margin-left: 6px;
+    padding: 0 4px;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 12ch;
   }
 
   .nav {

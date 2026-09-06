@@ -6,6 +6,8 @@
   import ChangesPane from "$lib/panes/ChangesPane.svelte";
   import TerminalPanel from "$lib/panes/TerminalPanel.svelte";
   import Settings from "$lib/components/Settings.svelte";
+  import Remote from "$lib/components/Remote.svelte";
+  import { remote } from "$lib/remote.svelte";
   import { core } from "$lib/core";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
@@ -32,7 +34,7 @@
     viewed,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
-  import { cycle as cycleShell, ended as shellEnded } from "$lib/terminals.svelte";
+  import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
@@ -76,6 +78,24 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onOpenSettings(openSettings)
+      .then((unlisten) => offs.push(unlisten));
+    // A connection going away takes every pty on it: each ends the way a
+    // killed one does, and the pane says why.
+    core()
+      .onRemoteClosed((closed) => {
+        const prefix = `ssh://${closed.host}#`;
+        for (const session of sessions.all) {
+          if (session.ptyId?.startsWith(prefix)) {
+            sessionEnded({ id: session.ptyId, code: null, clean: false });
+          }
+        }
+        for (const shell of terminals.all) {
+          if (shell.ptyId?.startsWith(prefix)) {
+            shellEnded({ id: shell.ptyId, code: null, clean: false });
+          }
+        }
+        workspace.error = `${closed.host}: ${closed.reason}`;
+      })
       .then((unlisten) => offs.push(unlisten));
     offs.push(followCwd());
     offs.push(followFocus());
@@ -286,6 +306,9 @@
 
 {#if settings.open}
   <Settings />
+{/if}
+{#if remote.open}
+  <Remote />
 {/if}
 
 <footer class="status no-select">

@@ -52,6 +52,7 @@ export async function installFakeCore(
     ({ open, fixture }) => {
       const state = { fixture, changed: null as unknown };
       (window as unknown as Record<string, unknown>).__fixture = state;
+      const remotes = { authorized: new Set(["box", "ada@box"]) };
 
       if (open.length > 0) {
         localStorage.setItem(
@@ -100,6 +101,34 @@ export async function installFakeCore(
         onSessionEnded: async () => () => {},
         onSessionIdentified: async () => () => {},
         onSessionEvent: async () => () => {},
+
+        // Two machines: `box`, which the user's own ssh setup reaches, and
+        // `lab`, which wants the app's key put on over a password first.
+        remoteHosts: async () => ({ configured: ["box", "lab"], saved: [] }),
+        remoteFingerprint: async (host: string) => `256 SHA256:Ab12Cd34Ef56 ${host} (ED25519)`,
+        remoteConnect: async (target: string) => {
+          if (!remotes.authorized.has(target)) {
+            throw new Error(`${target}: Permission denied (publickey,password).`);
+          }
+          return { host: target, version: "0.1.0" };
+        },
+        remoteSetup: async (host: string, user: string, password: string) => {
+          if (password !== "hunter2") throw new Error("the password was not accepted");
+          const target = `${user}@${host}`;
+          remotes.authorized.add(target);
+          return { host: target, version: "0.1.0" };
+        },
+        remoteDirs: async (target: string, path: string) => {
+          const base = path === "" ? `ssh://${target}/home/ada` : path;
+          const names = base.endsWith("/home/ada") ? ["dev", "notes"] : base.endsWith("/dev") ? ["demo", "tools"] : [];
+          return { path: base, dirs: names.map((name) => ({ name, path: `${base}/${name}` })) };
+        },
+        remoteDisconnect: async () => {},
+        remoteForget: async () => {},
+        onRemoteClosed: async (handler: (closed: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__remoteClosed = handler;
+          return () => {};
+        },
         onOpenSettings: async (handler: () => void) => {
           (window as unknown as Record<string, unknown>).__openSettings = handler;
           return () => {};
