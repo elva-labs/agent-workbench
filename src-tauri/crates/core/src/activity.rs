@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+
+use crate::events::{self, Sink};
 
 pub const SESSION_EVENT: &str = "session_event";
 
@@ -99,13 +100,13 @@ impl Tail {
     }
 
     /// Reads what is new and says it. Rotates a log nothing is waiting on.
-    pub fn drain(&self, app: &AppHandle) {
+    pub fn drain(&self, sink: &Arc<dyn Sink>) {
         let mut offset = self.offset.lock().expect("tail lock");
         let (lines, end) = read_new(&self.path, *offset);
         *offset = end;
         for line in lines {
             if let Some(event) = classify(&line) {
-                let _ = app.emit(SESSION_EVENT, event);
+                events::emit(sink, SESSION_EVENT, &event);
             }
         }
         if end > ROTATE_AT && std::fs::write(&self.path, "").is_ok() {
@@ -116,7 +117,7 @@ impl Tail {
 
 /// Watches the log for the life of the app. The file is created first, so
 /// there is something to watch before any hook has fired.
-pub fn watch(app: AppHandle, path: PathBuf) -> Result<(), String> {
+pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     }
@@ -139,7 +140,7 @@ pub fn watch(app: AppHandle, path: PathBuf) -> Result<(), String> {
         while receiver.recv().is_ok() {
             // Coalesce a burst: whatever arrived is read in one go.
             while receiver.try_recv().is_ok() {}
-            tail.drain(&app);
+            tail.drain(&sink);
         }
     });
     Ok(())

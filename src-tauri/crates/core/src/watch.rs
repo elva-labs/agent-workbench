@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use git2::Repository;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as _};
-use tauri::{AppHandle, Emitter};
+
+use crate::events::Sink;
 
 /// A save is several syscalls, and an agent editing a file is several saves.
 /// Waiting for the noise to stop turns a burst into one refresh.
@@ -85,7 +86,7 @@ pub fn is_interesting(path: &Path) -> bool {
 /// hook writes. Both mean the same thing to the pane, which is that the tree
 /// may have moved.
 pub fn watch(
-    app: AppHandle,
+    sink: Arc<dyn Sink>,
     watchers: &Watchers,
     root: PathBuf,
     also: Option<PathBuf>,
@@ -121,7 +122,7 @@ pub fn watch(
     std::thread::spawn({
         let stop = Arc::clone(&stop);
         let root = root.clone();
-        move || debounce(app, receiver, root, stop)
+        move || debounce(sink, receiver, root, stop)
     });
 
     let mut active = Active {
@@ -159,7 +160,7 @@ pub fn unwatch(watchers: &Watchers) {
 }
 
 fn debounce(
-    app: AppHandle,
+    sink: Arc<dyn Sink>,
     receiver: Receiver<notify::Result<Event>>,
     root: PathBuf,
     stop: Arc<Stop>,
@@ -189,7 +190,10 @@ fn debounce(
             return;
         }
         if worth_it {
-            let _ = app.emit(GIT_CHANGED, root.to_string_lossy().to_string());
+            sink.emit(
+                GIT_CHANGED,
+                serde_json::Value::String(root.to_string_lossy().to_string()),
+            );
         }
     }
 }

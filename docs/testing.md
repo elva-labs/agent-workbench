@@ -47,7 +47,7 @@ than to the DOM, so reading the buffer is the only way to assert that bytes
 arriving on the channel actually land on screen.
 
 What this tier does not cover is Rust itself. The two halves meeting is checked
-by `cargo test` on one side, the fake on the other, and by running the app.
+by `cargo test --workspace` on one side, the fake on the other, and by running the app.
 
 That is what the fourth tier is for, below: the real binary on `tauri-driver`.
 Two things about it:

@@ -17,21 +17,20 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# The core, everything that does not need a window, is its own crate so the
+# remote daemon can build on it without linking a webview.
+[workspace]
+members = ["crates/core"]
+
 [dependencies]
-dunce = "1"
+workbench-core = { path = "crates/core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-portable-pty = "0.9"
 tauri-plugin-dialog = "2"
-git2 = { version = "0.20", default-features = false }
-notify = "8"
-uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
 objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString"] }

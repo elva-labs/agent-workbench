@@ -1,13 +1,12 @@
 //! PTY sessions: spawning them, carrying their output, and ending them.
 //!
-//! Output goes to the frontend on a Tauri `Channel`, one per session. Channels
-//! are built for ordered, high-throughput delivery and are what Tauri itself
-//! uses for child process output; the event system is explicitly not for low
-//! latency or high throughput, so it carries lifecycle only.
+//! Output goes to whoever spawned the session through an [`Output`], one per
+//! session: a stream, raw bytes, ordered. Lifecycle, which is to say the end
+//! of a session, goes through the [`Sink`] as an event.
 //!
-//! Bytes go over the channel raw rather than as a string. A read can land in
-//! the middle of a UTF-8 sequence, and xterm.js has a decoder that handles
-//! exactly that. Decoding here would mean writing a second one.
+//! Bytes go out raw rather than as a string. A read can land in the middle of
+//! a UTF-8 sequence, and xterm.js has a decoder that handles exactly that.
+//! Decoding here would mean writing a second one.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -15,8 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
-use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{AppHandle, Emitter};
+
+use crate::events::{self, Output, Sink};
 
 /// 64 KiB: comfortably more than a full-screen redraw, so a busy TUI is read
 /// in a handful of syscalls rather than hundreds.
@@ -50,7 +49,7 @@ pub struct Sessions {
 
 impl Sessions {
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.inner.lock().expect("sessions lock").len()
     }
 }
@@ -62,11 +61,11 @@ fn next_id() -> String {
 }
 
 pub fn spawn(
-    app: AppHandle,
+    sink: Arc<dyn Sink>,
     sessions: Arc<Sessions>,
     command: CommandBuilder,
     size: PtySize,
-    output: Channel,
+    mut output: Output,
 ) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(size)
@@ -113,11 +112,8 @@ pub fn spawn(
                     // EOF: the agent closed its end.
                     Ok(0) => break,
                     Ok(n) => {
-                        if output
-                            .send(InvokeResponseBody::Raw(buffer[..n].to_vec()))
-                            .is_err()
-                        {
-                            // The webview is gone. Nothing left to deliver to.
+                        if !output(&buffer[..n]) {
+                            // The listener is gone. Nothing left to deliver to.
                             break;
                         }
                     }
@@ -142,7 +138,7 @@ pub fn spawn(
                 Err(_) => (None, false),
             };
 
-            let _ = app.emit(SESSION_ENDED, SessionEnded { id, code, clean });
+            events::emit(&sink, SESSION_ENDED, &SessionEnded { id, code, clean });
         }
     });
 
