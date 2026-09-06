@@ -205,6 +205,17 @@ describe("the real app", () => {
       15_000,
     );
     await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
+
+    // The terminal panel's shell is on the remote too, in the project.
+    const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+    await driver.actions().keyDown(key).sendKeys("j").keyUp(key).perform();
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='terminal']")),
+      10_000,
+    );
+    await type(driver, "echo shell-in-$PWD\n");
+    await waitForText(driver, `shell-in-${repo}`);
+    await driver.actions().keyDown(key).sendKeys("j").keyUp(key).perform();
   });
 
   it("offers codex too, and runs it", async () => {
