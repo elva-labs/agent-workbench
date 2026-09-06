@@ -1,9 +1,16 @@
 name: CI
 
+# Every push and pull request runs on Linux only: the frontend, the core and
+# the real app. Windows and macOS runners cost two and ten Linux minutes a
+# minute, so their jobs run nightly, and only when main moved that day, or
+# on request from the Actions tab.
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -13,6 +20,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether the Windows and macOS jobs run this time: yes when asked, on the
+  # nightly only if main has a commit from the last day, never for a push
+  # or a pull request.
+  gate:
+    name: Gate
+    runs-on: ubuntu-24.04
+    outputs:
+      other: ${{ steps.decide.outputs.other }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decide
+        run: |
+          case "${{ github.event_name }}" in
+            workflow_dispatch) other=true ;;
+            schedule) if [ -n "$(git log -1 --since='24 hours ago' --format=%H)" ]; then other=true; else other=false; fi ;;
+            *) other=false ;;
+          esac
+          echo "other=$other" >> "$GITHUB_OUTPUT"
+          echo "Windows and macOS jobs: $other"
+
   # The frontend as a user meets it: types, stores, and the whole app in a
   # real browser against a fake core. Platform-independent, so one runner.
   frontend:
@@ -39,14 +66,16 @@ jobs:
           retention-days: 7
 
   # The core on every platform it ships to: formatted, lint-clean, and its
-  # own tests green. Nothing here needs a display.
+  # own tests green. Nothing here needs a display. Linux every time; the
+  # other two behind the gate.
   core:
     name: Core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    needs: gate
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: ${{ fromJSON(needs.gate.outputs.other == 'true' && '["ubuntu-24.04", "windows-latest", "macos-latest"]' || '["ubuntu-24.04"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Linux build dependencies
@@ -119,6 +148,8 @@ jobs:
   driver-windows:
     name: Real app (Windows)
     runs-on: windows-latest
+    needs: gate
+    if: needs.gate.outputs.other == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

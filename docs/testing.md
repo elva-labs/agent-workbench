@@ -156,7 +156,9 @@ port open; then whether the port accepts a connection at all, and every
 on its command line, and what is listening per `netstat`. Those are
 different problems, and the log is all a runner leaves.
 
-CI runs the browser tier on Linux, the core's own tests on Linux, Windows and
-macOS, and the driver tier on Linux and Windows, with the Linux smoke
-screenshot as an artifact. There is no driver for macOS, so the macOS window
+CI runs the browser tier, the core's own tests and the driver tier on Linux
+for every push and pull request, with the Linux smoke screenshot as an
+artifact. The core's tests on Windows and macOS and the driver tier on
+Windows run nightly, only on a day main moved, or on request from the
+Actions tab: those runners cost two and ten Linux minutes a minute. There is no driver for macOS, so the macOS window
 is checked by hand. See [release.md](release.md).
