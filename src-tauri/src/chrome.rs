@@ -28,9 +28,21 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
         NSToolbar::alloc(mtm),
         &NSString::from_str("workbench-chrome"),
     );
+    // WORKBENCH_CHROME picks the toolbar for a side-by-side look on a Mac:
+    // `none` leaves the buttons where AppKit puts them, `compact` is the
+    // shorter unified toolbar, anything else the full one. macOS rounds a
+    // window's corners by its toolbar style, so this is where that is set.
+    let style = std::env::var("WORKBENCH_CHROME").unwrap_or_default();
+    if style == "none" {
+        return;
+    }
     // No separator to hide: the title bar is transparent and draws nothing.
     ns_window.setToolbar(Some(&toolbar));
-    ns_window.setToolbarStyle(NSWindowToolbarStyle::Unified);
+    ns_window.setToolbarStyle(if style == "compact" {
+        NSWindowToolbarStyle::UnifiedCompact
+    } else {
+        NSWindowToolbarStyle::Unified
+    });
 }
 
 /// Windows and Linux: no decorations, so the top row is the app's. The
