@@ -1,26 +1,33 @@
 //! Agent Workbench, the desktop app.
 //!
 //! The core lives in its own crate with no window attached; this is the
-//! window. Every command is a thin wrapper that hands the work to the core
-//! on the blocking pool, since a synchronous Tauri command runs on the main
-//! thread, the one that paints the window, and a `git status` on a large tree
-//! or a slow `.zshrc` would freeze the UI for as long as it took.
+//! window. Every command is a thin wrapper that routes by the path or id it
+//! was given: a plain one goes to the core here, an `ssh://host` one to the
+//! same core on that host (see `remote`). Either way the work runs on the
+//! blocking pool, since a synchronous Tauri command runs on the main thread,
+//! the one that paints the window, and a `git status` on a large tree or a
+//! slow `.zshrc` would freeze the UI for as long as it took.
 
 mod chrome;
 mod menu;
+mod remote;
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
+use serde::Serialize;
+use serde_json::{json, Value};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
-use workbench_core::{Core, DetectReport, Output, Sink, Spawned};
+use workbench_core::{Core, Output, Sink};
+
+use remote::{route, with_host, with_host_id, Remotes, Route};
 
 /// The core's events, straight to the window.
 struct TauriSink(AppHandle);
 
 impl Sink for TauriSink {
-    fn emit(&self, event: &str, payload: serde_json::Value) {
+    fn emit(&self, event: &str, payload: Value) {
         let _ = self.0.emit(event, payload);
     }
 }
@@ -48,28 +55,69 @@ where
         .map_err(|e| format!("the task failed: {e}"))?
 }
 
+fn value<T: Serialize>(result: T) -> Result<Value, String> {
+    serde_json::to_value(result).map_err(|e| format!("could not encode the result: {e}"))
+}
+
+/// Runs a command against the core here, or forwards it to the host the
+/// route names, with the same parameters.
+async fn routed<T, F>(
+    core: Arc<Core>,
+    remotes: Arc<Remotes>,
+    route: Route,
+    method: &'static str,
+    params: impl FnOnce(String) -> Value + Send + 'static,
+    local: F,
+) -> Result<Value, String>
+where
+    T: Serialize + Send + 'static,
+    F: FnOnce(&Core, &str) -> Result<T, String> + Send + 'static,
+{
+    match route {
+        Route::Local(rest) => blocking(move || local(&core, &rest).and_then(value)).await,
+        Route::Remote { host, rest } => {
+            blocking(move || remotes.connection(&host)?.call(method, params(rest))).await
+        }
+    }
+}
+
 #[tauri::command]
-async fn agent_detect(core: State<'_, Arc<Core>>, id: String) -> Result<DetectReport, String> {
+async fn agent_detect(core: State<'_, Arc<Core>>, id: String) -> Result<Value, String> {
     let core = Arc::clone(&core);
-    blocking(move || core.detect(&id)).await
+    blocking(move || core.detect(&id).and_then(value)).await
 }
 
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn pty_spawn(
     core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
     agent: String,
-    project: PathBuf,
+    project: String,
     session: Option<String>,
     cols: u16,
     rows: u16,
     on_output: Channel,
-) -> Result<Spawned, String> {
+) -> Result<Value, String> {
     let core = Arc::clone(&core);
-    blocking(move || {
-        core.spawn(&agent, &project, session, cols, rows, |_| {
-            to_channel(on_output)
-        })
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&project) {
+        Route::Local(project) => {
+            let spawned = core.spawn(&agent, Path::new(&project), session, cols, rows, |_| {
+                to_channel(on_output)
+            })?;
+            value(spawned)
+        }
+        Route::Remote { host, rest } => {
+            let connection = remotes.connection(&host)?;
+            let spawned = connection.call(
+                "pty_spawn",
+                json!({ "agent": agent, "project": rest, "session": session, "cols": cols, "rows": rows }),
+            )?;
+            let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
+            connection.attach_output(&id, to_channel(on_output));
+            Ok(json!({ "ptyId": with_host_id(&host, &id), "sessionId": spawned["sessionId"] }))
+        }
     })
     .await
 }
@@ -77,152 +125,409 @@ async fn pty_spawn(
 #[tauri::command]
 async fn pty_shell(
     core: State<'_, Arc<Core>>,
-    project: PathBuf,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
     cols: u16,
     rows: u16,
     on_output: Channel,
-) -> Result<String, String> {
+) -> Result<Value, String> {
     let core = Arc::clone(&core);
-    blocking(move || core.shell(&project, cols, rows, |_| to_channel(on_output))).await
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&project) {
+        Route::Local(project) => {
+            let id = core.shell(Path::new(&project), cols, rows, |_| to_channel(on_output))?;
+            Ok(Value::String(id))
+        }
+        Route::Remote { host, rest } => {
+            let connection = remotes.connection(&host)?;
+            let id = connection.call(
+                "pty_shell",
+                json!({ "project": rest, "cols": cols, "rows": rows }),
+            )?;
+            let id = id.as_str().ok_or("no pty id")?.to_string();
+            connection.attach_output(&id, to_channel(on_output));
+            Ok(Value::String(with_host_id(&host, &id)))
+        }
+    })
+    .await
 }
 
 #[tauri::command]
 async fn project_info(
     core: State<'_, Arc<Core>>,
-    path: PathBuf,
-) -> Result<workbench_core::project::ProjectInfo, String> {
+    remotes: State<'_, Arc<Remotes>>,
+    path: String,
+) -> Result<Value, String> {
     let core = Arc::clone(&core);
-    blocking(move || core.project_info(&path)).await
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&path) {
+        Route::Local(path) => core.project_info(Path::new(&path)).and_then(value),
+        Route::Remote { host, rest } => {
+            let project = remotes
+                .connection(&host)?
+                .call("project_info", json!({ "path": rest }))?;
+            Ok(remote::project_homeward(&host, project))
+        }
+    })
+    .await
 }
 
 #[tauri::command]
 async fn hook_status(
     core: State<'_, Arc<Core>>,
-    project: PathBuf,
-) -> Result<workbench_core::hook::HookStatus, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.hook_status(&project)).await
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "hook_status",
+        |rest| json!({ "project": rest }),
+        |core, project| core.hook_status(Path::new(project)),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn hook_install(
     core: State<'_, Arc<Core>>,
-    project: PathBuf,
-) -> Result<workbench_core::hook::HookStatus, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.hook_install(&project)).await
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "hook_install",
+        |rest| json!({ "project": rest }),
+        |core, project| core.hook_install(Path::new(project)),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn hook_uninstall(
     core: State<'_, Arc<Core>>,
-    project: PathBuf,
-) -> Result<workbench_core::hook::HookStatus, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.hook_uninstall(&project)).await
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "hook_uninstall",
+        |rest| json!({ "project": rest }),
+        |core, project| core.hook_uninstall(Path::new(project)),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn sessions_list(
     core: State<'_, Arc<Core>>,
-    project: PathBuf,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
     agent: String,
-) -> Result<Vec<workbench_core::transcripts::Transcript>, String> {
-    let core = Arc::clone(&core);
-    blocking(move || Ok(core.sessions_list(&project, &agent))).await
+) -> Result<Value, String> {
+    let for_local = agent.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "sessions_list",
+        move |rest| json!({ "project": rest, "agent": agent }),
+        move |core, project| Ok(core.sessions_list(Path::new(project), &for_local)),
+    )
+    .await
 }
 
+/// A session's title has no path to route by, so the core here is asked
+/// first and then every host with a connection open.
 #[tauri::command]
 async fn session_title(
     core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
     agent: String,
     id: String,
 ) -> Result<Option<String>, String> {
     let core = Arc::clone(&core);
-    blocking(move || Ok(core.session_title(&agent, &id))).await
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        if let Some(title) = core.session_title(&agent, &id) {
+            return Ok(Some(title));
+        }
+        for connection in remotes.all() {
+            let params = json!({ "agent": agent, "id": id });
+            if let Ok(Value::String(title)) = connection.call("session_title", params) {
+                return Ok(Some(title));
+            }
+        }
+        Ok(None)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn git_status(
     core: State<'_, Arc<Core>>,
-    root: PathBuf,
-) -> Result<Vec<workbench_core::git::ChangedFile>, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.git_status(&root)).await
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "git_status",
+        |rest| json!({ "root": rest }),
+        |core, root| core.git_status(Path::new(root)),
+    )
+    .await
 }
 
 #[tauri::command]
-async fn git_files(core: State<'_, Arc<Core>>, root: PathBuf) -> Result<Vec<String>, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.git_files(&root)).await
+async fn git_files(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "git_files",
+        |rest| json!({ "root": rest }),
+        |core, root| core.git_files(Path::new(root)),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn git_grep(
     core: State<'_, Arc<Core>>,
-    root: PathBuf,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
     query: String,
     scope: String,
-) -> Result<workbench_core::git::GrepResult, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.git_grep(&root, &query, &scope)).await
+) -> Result<Value, String> {
+    let (q, s) = (query.clone(), scope.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "git_grep",
+        move |rest| json!({ "root": rest, "query": query, "scope": scope }),
+        move |core, root| core.git_grep(Path::new(root), &q, &s),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn git_diff(
     core: State<'_, Arc<Core>>,
-    root: PathBuf,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
     file: String,
-) -> Result<workbench_core::git::FileDiff, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.git_diff(&root, &file)).await
+) -> Result<Value, String> {
+    let f = file.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "git_diff",
+        move |rest| json!({ "root": rest, "file": file }),
+        move |core, root| core.git_diff(Path::new(root), &f),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn git_content(
     core: State<'_, Arc<Core>>,
-    root: PathBuf,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
     file: String,
-) -> Result<workbench_core::git::FileContent, String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.git_content(&root, &file)).await
+) -> Result<Value, String> {
+    let f = file.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "git_content",
+        move |rest| json!({ "root": rest, "file": file }),
+        move |core, root| core.git_content(Path::new(root), &f),
+    )
+    .await
 }
 
 #[tauri::command]
-async fn git_watch(core: State<'_, Arc<Core>>, root: PathBuf) -> Result<(), String> {
-    let core = Arc::clone(&core);
-    blocking(move || core.git_watch(&root)).await
+async fn git_watch(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "git_watch",
+        |rest| json!({ "root": rest }),
+        |core, root| core.git_watch(Path::new(root)),
+    )
+    .await
 }
 
+/// Nothing to route by, so every core stops watching.
 #[tauri::command]
-async fn git_unwatch(core: State<'_, Arc<Core>>) -> Result<(), String> {
+async fn git_unwatch(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+) -> Result<(), String> {
     core.git_unwatch();
-    Ok(())
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        for connection in remotes.all() {
+            let _ = connection.call("git_unwatch", Value::Null);
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-async fn pty_write(core: State<'_, Arc<Core>>, id: String, data: String) -> Result<(), String> {
-    core.pty_write(&id, data.as_bytes())
+async fn pty_write(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    data: String,
+) -> Result<(), String> {
+    match route(&id) {
+        Route::Local(id) => core.pty_write(&id, data.as_bytes()),
+        Route::Remote { host, rest } => {
+            let remotes = Arc::clone(&remotes);
+            blocking(move || {
+                remotes
+                    .connection(&host)?
+                    .call("pty_write", json!({ "id": rest, "data": data }))
+                    .map(|_| ())
+            })
+            .await
+        }
+    }
 }
 
 #[tauri::command]
 async fn pty_resize(
     core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
     id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    core.pty_resize(&id, cols, rows)
+    match route(&id) {
+        Route::Local(id) => core.pty_resize(&id, cols, rows),
+        Route::Remote { host, rest } => {
+            let remotes = Arc::clone(&remotes);
+            blocking(move || {
+                remotes
+                    .connection(&host)?
+                    .call(
+                        "pty_resize",
+                        json!({ "id": rest, "cols": cols, "rows": rows }),
+                    )
+                    .map(|_| ())
+            })
+            .await
+        }
+    }
 }
 
 #[tauri::command]
-async fn pty_kill(core: State<'_, Arc<Core>>, id: String) -> Result<(), String> {
-    core.pty_kill(&id)
+async fn pty_kill(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<(), String> {
+    match route(&id) {
+        Route::Local(id) => core.pty_kill(&id),
+        Route::Remote { host, rest } => {
+            let remotes = Arc::clone(&remotes);
+            blocking(move || {
+                remotes
+                    .connection(&host)?
+                    .call("pty_kill", json!({ "id": rest }))
+                    .map(|_| ())
+            })
+            .await
+        }
+    }
 }
 
 #[tauri::command]
-async fn pty_cwd(core: State<'_, Arc<Core>>, id: String) -> Result<Option<String>, String> {
-    core.pty_cwd(&id)
+async fn pty_cwd(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Option<String>, String> {
+    match route(&id) {
+        Route::Local(id) => core.pty_cwd(&id),
+        Route::Remote { host, rest } => {
+            let remotes = Arc::clone(&remotes);
+            blocking(move || {
+                let cwd = remotes
+                    .connection(&host)?
+                    .call("pty_cwd", json!({ "id": rest }))?;
+                Ok(cwd.as_str().map(|path| with_host(&host, path)))
+            })
+            .await
+        }
+    }
+}
+
+/// Opens the connection to a host, or says why it cannot.
+#[tauri::command]
+async fn remote_connect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<Value, String> {
+    let remotes = Arc::clone(&remotes);
+    blocking(move || remotes.connect(&host)).await
+}
+
+#[tauri::command]
+async fn remote_disconnect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<(), String> {
+    remotes.disconnect(&host);
+    Ok(())
+}
+
+/// The directories under a path on a host, or under its home for an empty
+/// path, each with the host on so the window can open it as it is.
+#[tauri::command]
+async fn remote_dirs(
+    remotes: State<'_, Arc<Remotes>>,
+    host: String,
+    path: String,
+) -> Result<Value, String> {
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        let connection = remotes.connection(&host)?;
+        let home = connection.call("home", Value::Null)?;
+        let base = if path.is_empty() {
+            home.as_str()
+                .ok_or("the host has no home directory")?
+                .to_string()
+        } else {
+            path
+        };
+        let mut dirs = connection.call("list_dirs", json!({ "path": base }))?;
+        if let Some(entries) = dirs.as_array_mut() {
+            for entry in entries {
+                if let Some(path) = entry.get("path").and_then(Value::as_str) {
+                    let qualified = with_host(&host, path);
+                    entry["path"] = Value::String(qualified);
+                }
+            }
+        }
+        Ok(json!({ "path": with_host(&host, &base), "dirs": dirs }))
+    })
+    .await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -236,6 +541,7 @@ pub fn run() {
                 eprintln!("session log: {error}");
             }
             app.manage(core);
+            app.manage(Arc::new(Remotes::new(app.handle().clone())));
             menu::install(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&window);
@@ -263,6 +569,9 @@ pub fn run() {
             pty_resize,
             pty_kill,
             pty_cwd,
+            remote_connect,
+            remote_disconnect,
+            remote_dirs,
             menu::app_menu
         ])
         .run(tauri::generate_context!())

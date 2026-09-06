@@ -175,6 +175,17 @@ impl Connection {
 
     /// Sends a request and waits for its answer.
     pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.call_within(method, params, CALL_TIMEOUT)
+    }
+
+    /// The same, with its own patience: the first exchange over a fresh
+    /// connection should not take a minute to fail.
+    pub fn call_within(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, String> {
         if !self.is_alive() {
             return Err(self.explain("not connected"));
         }
@@ -200,11 +211,11 @@ impl Connection {
                 return Err(self.explain("the connection is closed"));
             }
         }
-        match receiver.recv_timeout(CALL_TIMEOUT) {
+        match receiver.recv_timeout(timeout) {
             Ok(answer) => answer,
             Err(_) => {
                 self.pending.lock().expect("pending lock").remove(&id);
-                Err(format!("no answer to {method} in time"))
+                Err(self.explain(&format!("no answer to {method} in time")))
             }
         }
     }

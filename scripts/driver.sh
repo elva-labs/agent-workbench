@@ -27,7 +27,7 @@ BIN="src-tauri/target/debug/agent-workbench"
 [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && BIN="$BIN.exe"
 if [[ ! -x "$BIN" ]]; then
   echo "building the core first..."
-  cargo build --manifest-path src-tauri/Cargo.toml
+  cargo build --workspace --manifest-path src-tauri/Cargo.toml
 fi
 
 # A display is only something to arrange on Linux.

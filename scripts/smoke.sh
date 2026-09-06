@@ -26,7 +26,7 @@ trap cleanup EXIT
 
 if [[ ! -x "$BIN" ]]; then
   echo "building the core first..."
-  cargo build --manifest-path src-tauri/Cargo.toml
+  cargo build --workspace --manifest-path src-tauri/Cargo.toml
 fi
 
 HEADLESS=0

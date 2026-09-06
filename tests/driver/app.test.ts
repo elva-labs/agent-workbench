@@ -40,7 +40,7 @@ beforeAll(async () => {
   git(["add", "."]);
   git(["commit", "-q", "-m", "start"]);
   // A change to see in the pane.
-  writeFileSync(join(repo, "lib.rs"), "fn main() { println!(\"hi\"); }\n");
+  writeFileSync(join(repo, "lib.rs"), 'fn main() { println!("hi"); }\n');
 
   app = await launch();
 }, 120_000);
@@ -52,13 +52,18 @@ afterAll(async () => {
 describe("the real app", () => {
   it("comes up with three panes filling the window", async () => {
     const { driver } = app;
-    await driver.wait(until.elementLocated(By.css("section[data-pane='agent']")), 20_000);
+    await driver.wait(
+      until.elementLocated(By.css("section[data-pane='agent']")),
+      20_000,
+    );
     await driver.manage().window().setRect({ width: 1440, height: 900 });
     await new Promise((r) => setTimeout(r, 500));
 
     const heights: Record<string, number> = await driver.executeScript(() => {
       const out: Record<string, number> = {};
-      for (const pane of document.querySelectorAll<HTMLElement>("section[data-pane]")) {
+      for (const pane of document.querySelectorAll<HTMLElement>(
+        "section[data-pane]",
+      )) {
         out[pane.dataset.pane!] = pane.getBoundingClientRect().height;
       }
       out.window = window.innerHeight;
@@ -83,7 +88,11 @@ describe("the real app", () => {
     const { driver } = app;
     // Both fakes are on PATH, so the row opens into the choice first.
     await driver.findElement(By.css("[data-testid='new-session']")).click();
-    await driver.findElement(By.css("[data-testid='agent-option'][data-agent='claude-code']")).click();
+    await driver
+      .findElement(
+        By.css("[data-testid='agent-option'][data-agent='claude-code']"),
+      )
+      .click();
     await waitForText(driver, "FAKE CLAUDE --session-id");
     await waitForText(driver, "in ");
     const text = await screenText(driver);
@@ -122,7 +131,9 @@ describe("the real app", () => {
     } catch (failure) {
       const screen = await screenText(driver);
       const rows = await textOf(driver, SESSIONS);
-      throw new Error(`${(failure as Error).message}\nThe terminal showed:\n${screen}\nThe sessions pane showed:\n${rows}`);
+      throw new Error(
+        `${(failure as Error).message}\nThe terminal showed:\n${screen}\nThe sessions pane showed:\n${rows}`,
+      );
     }
   });
 
@@ -132,16 +143,26 @@ describe("the real app", () => {
     const { driver } = app;
     const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
     await driver.actions().keyDown(key).sendKeys(",").keyUp(key).perform();
-    await driver.wait(until.elementLocated(By.css("[data-testid='settings']")), 10_000);
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='settings']")),
+      10_000,
+    );
     await driver.findElement(By.css("[data-testid='settings-close']")).click();
-    await driver.wait(async () => (await driver.findElements(By.css("[data-testid='settings']"))).length === 0, 5_000);
+    await driver.wait(
+      async () =>
+        (await driver.findElements(By.css("[data-testid='settings']")))
+          .length === 0,
+      5_000,
+    );
   });
 
   // Lines search runs git grep in the real repository.
   it("finds lines inside the files", async () => {
     const { driver } = app;
     await driver.findElement(By.css("[data-testid='mode-lines']")).click();
-    const field = await driver.findElement(By.css("[data-testid='search-field']"));
+    const field = await driver.findElement(
+      By.css("[data-testid='search-field']"),
+    );
     await field.sendKeys("println");
     await waitForPaneText(driver, "[data-testid='search-results']", "println");
     await waitForPaneText(driver, "[data-testid='search-results']", "lib.rs");
@@ -152,10 +173,46 @@ describe("the real app", () => {
     await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
 
+  // A project on another machine: the path names the host, the app runs
+  // the daemon there (here, the daemon itself) and everything else is the
+  // same. The agent starts on the remote, its bytes come back, the watcher
+  // there reports the edit, and the crash arrives as an ended session.
+  it("opens a project on a remote and runs the agent there", async () => {
+    const { driver } = app;
+    const remote = `ssh://test${repo}`;
+    await openProjects(driver, [remote]);
+    await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
+    await driver.findElement(By.css("[data-testid='new-session']")).click();
+    await driver
+      .findElement(
+        By.css("[data-testid='agent-option'][data-agent='claude-code']"),
+      )
+      .click();
+    await waitForText(driver, "FAKE CLAUDE --session-id");
+    await waitForText(driver, "in ");
+    expect(await screenText(driver)).toMatch(
+      new RegExp(`in .*${repo.split(/[\\/]/).pop()}`),
+    );
+    await type(driver, "over the wire\n");
+    await waitForText(driver, "echo: over the wire");
+
+    writeFileSync(join(repo, "NOTES.md"), "remote\n");
+    await waitForPaneText(driver, TREE, "NOTES.md");
+
+    await type(driver, "crash\n");
+    const status = await driver.wait(
+      until.elementLocated(By.css("[data-testid='agent-status']")),
+      15_000,
+    );
+    await driver.wait(until.elementTextContains(status, "code 3"), 15_000);
+  });
+
   it("offers codex too, and runs it", async () => {
     const { driver } = app;
     await driver.findElement(By.css("[data-testid='new-session']")).click();
-    const options = await driver.findElements(By.css("[data-testid='agent-option']"));
+    const options = await driver.findElements(
+      By.css("[data-testid='agent-option']"),
+    );
     expect(options).toHaveLength(2);
     await options[1].click();
     await waitForText(driver, "FAKE CODEX");

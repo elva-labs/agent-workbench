@@ -1,5 +1,11 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -20,9 +26,23 @@ import { Builder, Key, type WebDriver } from "selenium-webdriver";
  */
 
 const ROOT = resolve(__dirname, "../..");
+/** The daemon, for a "remote" that is this machine: the app is told to run
+    it directly where it would run ssh. */
+const DAEMON = resolve(
+  ROOT,
+  "src-tauri/target/debug",
+  process.platform === "win32"
+    ? "agent-workbench-remote.exe"
+    : "agent-workbench-remote",
+);
+
 const BIN =
   process.env.WORKBENCH_BIN ??
-  join(ROOT, "src-tauri/target/debug", process.platform === "win32" ? "agent-workbench.exe" : "agent-workbench");
+  join(
+    ROOT,
+    "src-tauri/target/debug",
+    process.platform === "win32" ? "agent-workbench.exe" : "agent-workbench",
+  );
 const DRIVER_PORT = 4444;
 
 export interface App {
@@ -78,7 +98,10 @@ export function fixtures(): { home: string; bin: string } {
   mkdirSync(bin);
   for (const name of ["claude", "codex"]) {
     if (WINDOWS) {
-      writeFileSync(join(bin, `${name}.cmd`), FAKE_AGENT_CMD(name.toUpperCase()));
+      writeFileSync(
+        join(bin, `${name}.cmd`),
+        FAKE_AGENT_CMD(name.toUpperCase()),
+      );
       continue;
     }
     const path = join(bin, name);
@@ -124,11 +147,17 @@ async function waitForPort(port: number, ms: number) {
     port at all, which is the one thing this tier cannot do without. */
 function environment(home: string, bin: string): NodeJS.ProcessEnv {
   return WINDOWS
-    ? { ...process.env, HOME: home, PATH: `${bin};${process.env.PATH ?? ""}` }
+    ? {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin};${process.env.PATH ?? ""}`,
+        WORKBENCH_REMOTE_COMMAND: `${DAEMON} serve`,
+      }
     : {
         ...process.env,
         HOME: home,
         SHELL: join(bin, "login-shell"),
+        WORKBENCH_REMOTE_COMMAND: `${DAEMON} serve`,
         // WebKitGTK's compositor has no GPU to talk to under Xvfb.
         WEBKIT_DISABLE_COMPOSITING_MODE: "1",
         WEBKIT_DISABLE_DMABUF_RENDERER: "1",
@@ -177,7 +206,9 @@ function start(env: NodeJS.ProcessEnv): Started {
       started.said.push(chunk.toString());
     });
   }
-  child.on("error", (error) => started.said.push(`could not start ${BIN}: ${error.message}\n`));
+  child.on("error", (error) =>
+    started.said.push(`could not start ${BIN}: ${error.message}\n`),
+  );
   child.on("exit", (code, signal) => {
     started.exited = { code, signal };
   });
@@ -195,9 +226,12 @@ async function waitForDebugger(app: Started, port: number, ms: number) {
   // with no port open are different problems, and the log is all a CI
   // runner leaves behind.
   const fate = app.exited
-    ? `the app exited with code ${app.exited.code}` + (app.exited.signal ? ` (${app.exited.signal})` : "")
+    ? `the app exited with code ${app.exited.code}` +
+      (app.exited.signal ? ` (${app.exited.signal})` : "")
     : `the app is still running as pid ${app.child.pid} after ${ms}ms`;
-  const socket = (await portOpen(port)) ? "accepts connections but does not answer HTTP" : "is not open at all";
+  const socket = (await portOpen(port))
+    ? "accepts connections but does not answer HTTP"
+    : "is not open at all";
   const output = app.said.join("").trim();
   throw new Error(
     `the WebView2 debugger never answered on ${port}: ${fate}; the port ${socket}.\n` +
@@ -212,15 +246,23 @@ function elevated(): boolean {
   try {
     // By path: under Git Bash, which is what runs this on CI, a bare
     // `whoami` is coreutils' and knows no /groups.
-    const whoami = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "whoami.exe");
-    const groups = execFileSync(whoami, ["/groups"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const whoami = join(
+      process.env.SystemRoot ?? "C:\\Windows",
+      "System32",
+      "whoami.exe",
+    );
+    const groups = execFileSync(whoami, ["/groups"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return groups.includes("S-1-16-12288");
   } catch {
     return false;
   }
 }
 
-const POLICY = "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
+const POLICY =
+  "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
 
 /** Puts the browser switches where an elevated host will read them.
 
@@ -229,10 +271,16 @@ const POLICY = "HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalB
     policy instead, keyed by the executable's name. Writing HKLM takes the
     elevation that makes this necessary. Gives back the undo. */
 function policySwitches(exe: string, switches: string): () => void {
-  execFileSync("reg", ["add", POLICY, "/v", exe, "/t", "REG_SZ", "/d", switches, "/f"], { stdio: "ignore" });
+  execFileSync(
+    "reg",
+    ["add", POLICY, "/v", exe, "/t", "REG_SZ", "/d", switches, "/f"],
+    { stdio: "ignore" },
+  );
   return () => {
     try {
-      execFileSync("reg", ["delete", POLICY, "/v", exe, "/f"], { stdio: "ignore" });
+      execFileSync("reg", ["delete", POLICY, "/v", exe, "/f"], {
+        stdio: "ignore",
+      });
     } catch {
       // Already gone.
     }
@@ -244,7 +292,9 @@ function policySwitches(exe: string, switches: string): () => void {
 function killTree(pid: number | undefined) {
   if (pid === undefined) return;
   try {
-    execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+    });
   } catch {
     // Already gone, which is the outcome either way.
   }
@@ -263,7 +313,9 @@ async function removeProfile(profile: string) {
       await new Promise((r) => setTimeout(r, 200));
     }
   }
-  process.stderr.write(`could not remove ${profile}: something still holds it\n`);
+  process.stderr.write(
+    `could not remove ${profile}: something still holds it\n`,
+  );
 }
 
 /** What WebView2 is actually doing, for when the port never opens. The
@@ -278,7 +330,7 @@ function webview2Report(): string {
       [
         "-NoProfile",
         "-Command",
-        "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }",
+        'Get-CimInstance Win32_Process -Filter "Name=\'msedgewebview2.exe\'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }',
       ],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
     )
@@ -288,15 +340,27 @@ function webview2Report(): string {
         const [pid, ...rest] = line.trim().split(" ");
         const command = rest.join(" ");
         const type = /--type=(\S+)/.exec(command)?.[1] ?? "browser";
-        const switches = command.match(/--(?:remote-debugging\S*|user-data-dir=(?:"[^"]*"|\S*))/g) ?? [];
+        const switches =
+          command.match(
+            /--(?:remote-debugging\S*|user-data-dir=(?:"[^"]*"|\S*))/g,
+          ) ?? [];
         return `  ${pid} ${type} ${switches.join(" ")}`;
       });
-    lines.push(processes.length ? `msedgewebview2.exe processes:\n${processes.join("\n")}` : "No msedgewebview2.exe is running.");
+    lines.push(
+      processes.length
+        ? `msedgewebview2.exe processes:\n${processes.join("\n")}`
+        : "No msedgewebview2.exe is running.",
+    );
   } catch (error) {
-    lines.push(`could not list WebView2 processes: ${(error as Error).message}`);
+    lines.push(
+      `could not list WebView2 processes: ${(error as Error).message}`,
+    );
   }
   try {
-    const listening = execFileSync("netstat", ["-ano", "-p", "tcp"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+    const listening = execFileSync("netstat", ["-ano", "-p", "tcp"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .split(/\r?\n/)
       .filter((line) => /LISTENING/.test(line))
       .map((line) => `  ${line.trim()}`);
@@ -330,7 +394,11 @@ async function attach(home: string, bin: string): Promise<App> {
   // under the real local app data, next to where the app would put its
   // own, not under the run's temp HOME: WebView2 is particular about where
   // its profile goes, and the runner's temp is on another drive.
-  const profile = join(process.env.LOCALAPPDATA ?? tmpdir(), "agent-workbench-driver", basename(home));
+  const profile = join(
+    process.env.LOCALAPPDATA ?? tmpdir(),
+    "agent-workbench-driver",
+    basename(home),
+  );
   const switches = `--remote-debugging-port=${debugPort}`;
   const env = {
     ...environment(home, bin),
@@ -339,7 +407,9 @@ async function attach(home: string, bin: string): Promise<App> {
   };
   // The variable is enough at standard integrity. Elevated, as on a CI
   // runner, WebView2 ignores it and reads the machine policy instead.
-  const unsetPolicy = elevated() ? policySwitches(basename(BIN), switches) : () => {};
+  const unsetPolicy = elevated()
+    ? policySwitches(basename(BIN), switches)
+    : () => {};
 
   const edge: ChildProcess = spawn(edgedriver, [`--port=${DRIVER_PORT}`], {
     stdio: ["ignore", "inherit", "inherit"],
@@ -392,7 +462,8 @@ async function attach(home: string, bin: string): Promise<App> {
 async function bridge(home: string, bin: string): Promise<App> {
   const env = environment(home, bin);
   const args = ["--port", String(DRIVER_PORT)];
-  if (process.env.TAURI_NATIVE_DRIVER) args.push("--native-driver", process.env.TAURI_NATIVE_DRIVER);
+  if (process.env.TAURI_NATIVE_DRIVER)
+    args.push("--native-driver", process.env.TAURI_NATIVE_DRIVER);
   const tauriDriver: ChildProcess = spawn("tauri-driver", args, {
     env,
     stdio: ["ignore", "inherit", "inherit"],
@@ -425,16 +496,13 @@ export async function launch(): Promise<App> {
 
 /** Points the app at projects, the way a restart would find them. */
 export async function openProjects(driver: WebDriver, paths: string[]) {
-  await driver.executeScript(
-    (paths: string[]) => {
-      localStorage.setItem(
-        "workbench.workspace",
-        JSON.stringify({ open: paths, active: paths[0] ?? null, recent: paths }),
-      );
-      location.reload();
-    },
-    paths,
-  );
+  await driver.executeScript((paths: string[]) => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: paths, active: paths[0] ?? null, recent: paths }),
+    );
+    location.reload();
+  }, paths);
   await driver.wait(async () => {
     const ready = await driver.executeScript(
       () => document.querySelector("section[data-pane='agent']") !== null,
@@ -447,49 +515,69 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
     text the user cannot select, and the tree is deliberately that. */
 export function textOf(driver: WebDriver, selector: string): Promise<string> {
   return driver.executeScript(
-    (selector: string) => document.querySelector<HTMLElement>(selector)?.innerText ?? "",
+    (selector: string) =>
+      document.querySelector<HTMLElement>(selector)?.innerText ?? "",
     selector,
   ) as Promise<string>;
 }
 
-export async function waitForPaneText(driver: WebDriver, selector: string, needle: string, ms = 15_000) {
-  await driver.wait(async () => (await textOf(driver, selector)).includes(needle), ms, `no "${needle}" in ${selector}`);
+export async function waitForPaneText(
+  driver: WebDriver,
+  selector: string,
+  needle: string,
+  ms = 15_000,
+) {
+  await driver.wait(
+    async () => (await textOf(driver, selector)).includes(needle),
+    ms,
+    `no "${needle}" in ${selector}`,
+  );
 }
 
 /** What the active session's terminal shows, as text. */
 export function screenText(driver: WebDriver, key?: string): Promise<string> {
-  return driver.executeScript(
-    (key: string | undefined) => {
-      const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-        .__WORKBENCH_TERMINALS__;
-      if (!registry) return "";
-      const term = key ? registry[key] : Object.values(registry).at(-1);
-      if (!term) return "";
-      const active = term.buffer.active;
-      const lines: string[] = [];
-      for (let i = 0; i < active.length; i++) {
-        lines.push(active.getLine(i)?.translateToString(true) ?? "");
-      }
-      return lines.join("\n").trim();
-    },
-    key,
-  ) as Promise<string>;
+  return driver.executeScript((key: string | undefined) => {
+    const registry = (
+      window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
+    ).__WORKBENCH_TERMINALS__;
+    if (!registry) return "";
+    const term = key ? registry[key] : Object.values(registry).at(-1);
+    if (!term) return "";
+    const active = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < active.length; i++) {
+      lines.push(active.getLine(i)?.translateToString(true) ?? "");
+    }
+    return lines.join("\n").trim();
+  }, key) as Promise<string>;
 }
 
-export async function waitForText(driver: WebDriver, needle: string, ms = 20_000) {
-  await driver.wait(async () => (await screenText(driver)).includes(needle), ms, `no "${needle}" on screen`);
+export async function waitForText(
+  driver: WebDriver,
+  needle: string,
+  ms = 20_000,
+) {
+  await driver.wait(
+    async () => (await screenText(driver)).includes(needle),
+    ms,
+    `no "${needle}" on screen`,
+  );
 }
 
 /** What the active session's terminal shows on the cursor's line. Typed
     input is echoed there, so this is where a keystroke shows up. */
 function cursorLine(driver: WebDriver): Promise<string> {
   return driver.executeScript(() => {
-    const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-      .__WORKBENCH_TERMINALS__;
+    const registry = (
+      window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
+    ).__WORKBENCH_TERMINALS__;
     const term = Object.values(registry ?? {}).at(-1);
     if (!term) return "";
     const active = term.buffer.active;
-    return active.getLine(active.baseY + active.cursorY)?.translateToString(true) ?? "";
+    return (
+      active.getLine(active.baseY + active.cursorY)?.translateToString(true) ??
+      ""
+    );
   }) as Promise<string>;
 }
 
@@ -503,9 +591,12 @@ function cursorLine(driver: WebDriver): Promise<string> {
     letter of "crash". */
 export async function type(driver: WebDriver, text: string) {
   await driver.executeScript(() => {
-    const registry = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-      .__WORKBENCH_TERMINALS__;
-    Object.values(registry ?? {}).at(-1)?.focus();
+    const registry = (
+      window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
+    ).__WORKBENCH_TERMINALS__;
+    Object.values(registry ?? {})
+      .at(-1)
+      ?.focus();
   });
   const focused = await driver.switchTo().activeElement();
   let line = "";
@@ -518,6 +609,10 @@ export async function type(driver: WebDriver, text: string) {
     line += key;
     await focused.sendKeys(key);
     const typed = line;
-    await driver.wait(async () => (await cursorLine(driver)).endsWith(typed), 10_000, `"${typed}" never echoed`);
+    await driver.wait(
+      async () => (await cursorLine(driver)).endsWith(typed),
+      10_000,
+      `"${typed}" never echoed`,
+    );
   }
 }

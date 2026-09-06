@@ -128,7 +128,7 @@ jobs:
       - if: steps.tauri-driver.outputs.cache-hit != 'true'
         run: cargo install tauri-driver --locked
       - run: npm ci
-      - run: cargo build
+      - run: cargo build --workspace
         working-directory: src-tauri
       - run: scripts/driver.sh
         env:
@@ -170,7 +170,7 @@ jobs:
           Expand-Archive edgedriver.zip -DestinationPath edgedriver
           "TAURI_NATIVE_DRIVER=$PWD\edgedriver\msedgedriver.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: npm ci
-      - run: cargo build
+      - run: cargo build --workspace
         working-directory: src-tauri
       - run: bash scripts/driver.sh
         env:
