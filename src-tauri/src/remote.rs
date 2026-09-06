@@ -12,18 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use workbench_core::client::{Connection, CLOSED};
 use workbench_core::env;
+
+use crate::ssh;
 
 pub const SCHEME: &str = "ssh://";
 
 /// A connection went away: `{ host, reason }`.
 pub const REMOTE_CLOSED: &str = "remote_closed";
-
-/// Where the daemon lives on the remote. Through the login shell, so `$HOME`
-/// is the user's there.
-const DAEMON: &str = "$HOME/.agent-workbench/bin/agent-workbench-remote serve";
 
 /// How long the first exchange may take: ssh connecting, the daemon
 /// starting, one answer. Past this the machine or the daemon is not there.
@@ -108,7 +106,14 @@ impl Remotes {
         }
     }
 
-    /// The connection to a host, opened if there is none alive.
+    /// The app's own files for remotes, under the user's home.
+    pub fn files(&self) -> Result<ssh::Files, String> {
+        let home = workbench_core::api::home_directory().ok_or("no home directory")?;
+        Ok(ssh::Files::new(&home))
+    }
+
+    /// The connection to a host, opened if there is none alive. Opening
+    /// puts the daemon on the machine first when it is missing or old.
     pub fn connection(&self, host: &str) -> Result<Arc<Connection>, String> {
         let mut connections = self.connections.lock().expect("connections lock");
         if let Some(connection) = connections.get(host) {
@@ -116,7 +121,11 @@ impl Remotes {
                 return Ok(Arc::clone(connection));
             }
         }
-        let connection = open(&self.app, host)?;
+        if std::env::var_os("WORKBENCH_REMOTE_COMMAND").is_none() {
+            let resources = self.app.path().resource_dir().ok();
+            ssh::ensure_daemon(&self.files()?, host, resources.as_deref())?;
+        }
+        let connection = open(&self.app, host, &self.files()?)?;
         connections.insert(host.to_string(), Arc::clone(&connection));
         Ok(connection)
     }
@@ -152,8 +161,8 @@ impl Remotes {
     }
 }
 
-fn open(app: &AppHandle, host: &str) -> Result<Arc<Connection>, String> {
-    let mut command = transport(host)?;
+fn open(app: &AppHandle, host: &str, files: &ssh::Files) -> Result<Arc<Connection>, String> {
+    let mut command = transport(host, files)?;
     let app = app.clone();
     let name = host.to_string();
     let connection = Connection::open(
@@ -177,9 +186,10 @@ fn open(app: &AppHandle, host: &str) -> Result<Arc<Connection>, String> {
 }
 
 /// The process that carries the conversation. ssh, with the user's login
-/// environment so the agent and its keys are the user's own; or, for a
-/// test, whatever `WORKBENCH_REMOTE_COMMAND` names, `{host}` replaced.
-fn transport(host: &str) -> Result<Command, String> {
+/// environment so the agent and its keys are the user's own, and the app's
+/// own key for a host the app set up; or, for a test, whatever
+/// `WORKBENCH_REMOTE_COMMAND` names, `{host}` replaced.
+fn transport(host: &str, files: &ssh::Files) -> Result<Command, String> {
     let vars = &env::environment().vars;
     if let Ok(template) = std::env::var("WORKBENCH_REMOTE_COMMAND") {
         let parts: Vec<String> = template
@@ -206,9 +216,15 @@ fn transport(host: &str) -> Result<Command, String> {
             "ServerAliveInterval=30",
             "-o",
             "StrictHostKeyChecking=accept-new",
-            host,
-            DAEMON,
         ])
+        .args(files.options(host))
+        .args(ssh::target_args(host))
+        // Through the login shell there, so `$HOME` is the user's.
+        .arg(format!(
+            "\"$HOME/{}/{}\" serve",
+            ssh::DAEMON_DIR,
+            ssh::DAEMON_NAME
+        ))
         .envs(vars);
     Ok(command)
 }
@@ -299,8 +315,9 @@ mod tests {
 
     #[test]
     fn the_test_transport_is_whatever_the_variable_names() {
+        let files = ssh::Files::new(&std::env::temp_dir().join("workbench-remote-none"));
         std::env::set_var("WORKBENCH_REMOTE_COMMAND", "/bin/echo hello {host}");
-        let command = transport("box").unwrap();
+        let command = transport("box", &files).unwrap();
         std::env::remove_var("WORKBENCH_REMOTE_COMMAND");
         assert_eq!(command.get_program(), "/bin/echo");
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();

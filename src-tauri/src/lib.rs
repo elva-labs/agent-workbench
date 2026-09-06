@@ -11,6 +11,9 @@
 mod chrome;
 mod menu;
 mod remote;
+mod ssh;
+
+pub use ssh::{askpass, ASKPASS_FLAG};
 
 use std::path::Path;
 use std::sync::Arc;
@@ -491,6 +494,66 @@ async fn remote_connect(remotes: State<'_, Arc<Remotes>>, host: String) -> Resul
     blocking(move || remotes.connect(&host)).await
 }
 
+/// The hosts the user's ssh configuration names, and the ones the app set
+/// up itself.
+#[tauri::command]
+async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String> {
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        let files = remotes.files()?;
+        let home = workbench_core::api::home_directory().ok_or("no home directory")?;
+        let saved: Vec<Value> = files
+            .saved()
+            .into_iter()
+            .map(
+                |saved| json!({ "host": saved.host, "user": saved.user, "target": saved.target() }),
+            )
+            .collect();
+        Ok(json!({
+            "configured": ssh::config_hosts(&ssh::ssh_config(&home)),
+            "saved": saved,
+        }))
+    })
+    .await
+}
+
+/// What the machine identifies itself as, for the user to trust before a
+/// password goes anywhere near it.
+#[tauri::command]
+async fn remote_fingerprint(host: String) -> Result<String, String> {
+    blocking(move || ssh::fingerprint(&host)).await
+}
+
+/// Sets a machine up from a password given once: the app's key goes on,
+/// the machine is remembered, the daemon is put there, and the connection
+/// opens. Gives back the target that names the machine in paths.
+#[tauri::command]
+async fn remote_setup(
+    remotes: State<'_, Arc<Remotes>>,
+    host: String,
+    user: String,
+    password: String,
+) -> Result<Value, String> {
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        let files = remotes.files()?;
+        let saved = ssh::Saved { host, user };
+        ssh::install_key(&files, &saved, &password)?;
+        files.save(saved.clone())?;
+        let target = saved.target();
+        remotes.connect(&target)
+    })
+    .await
+}
+
+/// Forgets a machine the app set up: its entry, not its key on the
+/// machine, which the user removes there if they want it gone.
+#[tauri::command]
+async fn remote_forget(remotes: State<'_, Arc<Remotes>>, target: String) -> Result<(), String> {
+    remotes.disconnect(&target);
+    remotes.files()?.forget(&target)
+}
+
 #[tauri::command]
 async fn remote_disconnect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<(), String> {
     remotes.disconnect(&host);
@@ -572,6 +635,10 @@ pub fn run() {
             remote_connect,
             remote_disconnect,
             remote_dirs,
+            remote_hosts,
+            remote_fingerprint,
+            remote_setup,
+            remote_forget,
             menu::app_menu
         ])
         .run(tauri::generate_context!())
