@@ -59,10 +59,7 @@ fn reaches_this_machine_over_ssh_and_runs_the_daemon_there() {
     let _authorized = Authorized::add(&public);
 
     let user = std::env::var("USER").unwrap();
-    let saved = Saved {
-        host: "localhost".into(),
-        user: user.clone(),
-    };
+    let saved = Saved::new("localhost", &user).unwrap();
     files.save(saved.clone()).unwrap();
     let target = saved.target();
 

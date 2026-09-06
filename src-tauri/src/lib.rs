@@ -537,7 +537,7 @@ async fn remote_setup(
     let remotes = Arc::clone(&remotes);
     blocking(move || {
         let files = remotes.files()?;
-        let saved = ssh::Saved { host, user };
+        let saved = ssh::Saved::new(&host, &user)?;
         ssh::install_key(&files, &saved, &password)?;
         files.save(saved.clone())?;
         let target = saved.target();

@@ -35,10 +35,55 @@ pub struct Saved {
 }
 
 impl Saved {
+    /// A remote from what the user typed, or why it cannot be one.
+    pub fn new(host: &str, user: &str) -> Result<Self, String> {
+        check_name(host, "host")?;
+        check_name(user, "user")?;
+        if user.contains(['@', ':']) {
+            return Err("the user name cannot contain @ or :".into());
+        }
+        Ok(Self {
+            host: host.to_string(),
+            user: user.to_string(),
+        })
+    }
+
     /// What goes in the path: `user@host`.
     pub fn target(&self) -> String {
         format!("{}@{}", self.user, self.host)
     }
+}
+
+/// Whether a target, host or user is one thing ssh can be handed as its
+/// destination: a name, never a flag. Anything starting with `-` would be
+/// read by ssh as an option, and an option can name a command to run.
+pub fn check_name(name: &str, what: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err(format!("no {what} given"));
+    }
+    if name.starts_with('-') {
+        return Err(format!("a {what} cannot start with -"));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | ':'))
+    {
+        return Err(format!(
+            "a {what} can only have letters, digits, . _ - @ and :"
+        ));
+    }
+    if name.matches('@').count() > 1 {
+        return Err(format!("a {what} can have one @ at most"));
+    }
+    if name
+        .split('@')
+        .any(|part| part.is_empty() || part.starts_with('-'))
+    {
+        return Err(format!(
+            "a {what} cannot have an empty part or one starting with -"
+        ));
+    }
+    Ok(())
 }
 
 /// The app's own files for remotes, under the user's home.
@@ -201,6 +246,7 @@ pub fn ensure_key(files: &Files) -> Result<String, String> {
 /// or not before anything is sent to it. The lines ssh-keygen prints, one
 /// per key type.
 pub fn fingerprint(host: &str) -> Result<String, String> {
+    check_name(host, "host")?;
     let (name, port) = split_port(host);
     let mut keyscan = Command::new(tool("ssh-keyscan")?);
     keyscan.args(["-T", "5"]);
@@ -439,6 +485,7 @@ pub fn run(
     script: &str,
     stdin: Option<&[u8]>,
 ) -> Result<String, String> {
+    check_name(target, "target")?;
     let mut command = Command::new(ssh()?);
     command
         .envs(&env::environment().vars)
@@ -557,6 +604,21 @@ mod tests {
 
         files.forget("ada@box").unwrap();
         assert!(files.saved().is_empty());
+    }
+
+    #[test]
+    fn a_destination_is_a_name_and_never_a_flag() {
+        assert!(check_name("ada@box", "target").is_ok());
+        assert!(check_name("box.example.com:2222", "host").is_ok());
+        assert!(check_name("-oProxyCommand=evil", "host").is_err());
+        assert!(check_name("ada@-box", "target").is_err());
+        assert!(check_name("box;rm", "host").is_err());
+        assert!(check_name("a b", "host").is_err());
+        assert!(check_name("", "host").is_err());
+        assert!(check_name("a@b@c", "target").is_err());
+        assert!(Saved::new("box", "ada").is_ok());
+        assert!(Saved::new("box", "ada@x").is_err());
+        assert!(Saved::new("-box", "ada").is_err());
     }
 
     #[test]

@@ -115,6 +115,9 @@ impl Remotes {
     /// The connection to a host, opened if there is none alive. Opening
     /// puts the daemon on the machine first when it is missing or old.
     pub fn connection(&self, host: &str) -> Result<Arc<Connection>, String> {
+        // The host came out of a path the window keeps, and a path is not
+        // trusted to be a name rather than a flag for ssh.
+        ssh::check_name(host, "host")?;
         let mut connections = self.connections.lock().expect("connections lock");
         if let Some(connection) = connections.get(host) {
             if connection.is_alive() {
