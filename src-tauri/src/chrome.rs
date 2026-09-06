@@ -18,11 +18,11 @@
 #[cfg(target_os = "macos")]
 const CONTROLS_X: f64 = 13.0;
 
-/// Points between the window's top edge and the top of the buttons. With the
-/// frame's 10px padding, the pane's border and a 32px header, this centres
-/// them on the header's text.
+/// Points from the window's top edge to the middle of the buttons: the
+/// frame's 10px padding, the pane's border and half a 32px header, so they
+/// sit on the header's text.
 #[cfg(target_os = "macos")]
-const CONTROLS_Y: f64 = 21.0;
+const CONTROLS_CENTRE: f64 = 27.0;
 
 #[cfg(target_os = "macos")]
 pub fn inset_window_controls(window: &tauri::WebviewWindow) {
@@ -46,11 +46,14 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     });
 }
 
-/// Moves the three standard buttons, and grows the title bar view down to
-/// hold them, the way tao's own inset does at creation.
+/// Puts the three standard buttons where the header's text is. The title
+/// bar views are made tall enough to hold them there first, and each button
+/// is then placed by window coordinates, so how AppKit lays the title bar
+/// out inside does not matter.
 #[cfg(target_os = "macos")]
 fn place_window_controls(window: &tauri::WebviewWindow) {
     use objc2_app_kit::{NSWindow, NSWindowButton};
+    use objc2_foundation::NSPoint;
 
     let Ok(ptr) = window.ns_window() else { return };
     // The pointer is the window's NSWindow, alive for as long as the window,
@@ -66,24 +69,40 @@ fn place_window_controls(window: &tauri::WebviewWindow) {
     let Some(zoom) = ns_window.standardWindowButton(NSWindowButton::ZoomButton) else {
         return;
     };
-    // Two views up from a button is the title bar view, in every AppKit so
-    // far; the buttons are its grandchildren.
-    let Some(title_bar) = (unsafe { close.superview().and_then(|view| view.superview()) }) else {
+    // The buttons sit in the title bar view, which sits in its container, in
+    // every AppKit so far.
+    let Some(bar) = (unsafe { close.superview() }) else {
+        return;
+    };
+    let Some(container) = (unsafe { bar.superview() }) else {
         return;
     };
 
-    let close_frame = close.frame();
-    let bar_height = close_frame.size.height + CONTROLS_Y;
-    let mut bar = title_bar.frame();
-    bar.size.height = bar_height;
-    bar.origin.y = ns_window.frame().size.height - bar_height;
-    title_bar.setFrame(bar);
+    let window_height = ns_window.frame().size.height;
+    let height = CONTROLS_CENTRE * 2.0;
+    let mut outer = container.frame();
+    outer.size.height = height;
+    outer.origin.y = window_height - height;
+    container.setFrame(outer);
+    let mut inner = bar.frame();
+    inner.origin.y = 0.0;
+    inner.size.height = height;
+    bar.setFrame(inner);
 
-    let spacing = miniaturize.frame().origin.x - close_frame.origin.x;
+    let spacing = miniaturize.frame().origin.x - close.frame().origin.x;
     for (index, button) in [close, miniaturize, zoom].iter().enumerate() {
-        let mut frame = button.frame();
-        frame.origin.x = CONTROLS_X + index as f64 * spacing;
-        button.setFrameOrigin(frame.origin);
+        let size = button.frame().size;
+        let centre = bar.convertPoint_fromView(
+            NSPoint::new(
+                CONTROLS_X + size.width / 2.0 + index as f64 * spacing,
+                window_height - CONTROLS_CENTRE,
+            ),
+            None,
+        );
+        button.setFrameOrigin(NSPoint::new(
+            centre.x - size.width / 2.0,
+            centre.y - size.height / 2.0,
+        ));
     }
 }
 
