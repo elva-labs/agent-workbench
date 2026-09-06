@@ -1,37 +1,38 @@
 # Agent Workbench
 
-A desktop workbench for coding agent CLIs. Three panes: projects and sessions on
-the left, the agent's own TUI fullscreen in the middle, live git changes on the
-right. Claude Code first, with an adapter seam defined from the start.
+A desktop app for working with coding agents that run as terminal programs,
+Claude Code and Codex CLI today. It puts the agent's own interface in the
+middle, the project's live git changes beside it, and every project and
+session you have going down the left, so you can run several agents at once,
+see what each one changed as it happens, and come back to a session later.
 
-Rust and Tauri v2, Svelte frontend. macOS first, with Linux and Windows kept
-working: nothing in the core is macOS-only, CI runs the core on all three, and
-the real binary is driven end to end on Linux and Windows.
+The agents are not wrapped or replaced. Each runs in a real pty, full screen,
+with the keyboard almost entirely its own. The app adds what a terminal
+window lacks: the changes as they land, past sessions to resume, a session's
+state at a glance, and projects on other machines over ssh.
 
-Per platform:
+## What it does
 
-- **macOS**: the title bar is the app's own, with the window controls over the
-  leftmost pane's header. Elsewhere the window is undecorated and the app
-  draws the controls at the end of the rightmost pane's header.
-- **Linux**: WebKitGTK. Building needs `libwebkit2gtk-4.1-dev`,
-  `libayatana-appindicator3-dev`, `librsvg2-dev` and `patchelf`; the driver
-  tier needs `webkit2gtk-driver` and `tauri-driver`.
-- **Windows**: WebView2. Agents installed by npm are `claude.cmd` and
-  `codex.cmd`, which the core runs through `cmd /c`. The optional hook runs
-  under Git Bash, which Claude Code needs there anyway. What is not there
-  yet: following a session into a worktree, which reads the process's working
-  directory and has no Windows implementation.
+- **Sessions.** Open a folder and start a session in it, or resume one the
+  agent had there before. Several projects and sessions run side by side;
+  switching between them stops nothing. A session's row says whether the
+  agent is working, waiting for you, or asking for permission.
+- **Changes.** The changed files and their diffs, refreshed as the agent
+  edits, with a file viewer and search over the tree. A session that moves
+  into a git worktree takes the pane with it.
+- **Terminal.** Plain shells under the panes, per project, split if you like.
+- **Remote projects.** Name a machine and work in a folder there. The agent,
+  the changes and the shells run on that machine; the window does not know
+  the difference. See [remote](docs/remote.md).
+- **Keyboard first.** The agent owns the keyboard. The app claims a few
+  modifier chords, all of them yours to change. See
+  [focus](docs/focus-model.md).
 
-**Status: the plan is done.** Open a folder, a session starts in it, the right
-pane shows the real changed files and diffs as the agent edits them, past
-sessions are listed from Claude Code's own transcripts and can be resumed, and
-several projects and sessions run side by side.
+## Platforms
 
-## The rule that keeps it coherent
-
-**Rust owns state, the webview owns pixels.** Every PTY, git query, filesystem
-watch and session index lives in the Rust core. Svelte renders and dispatches,
-and holds no truth of its own.
+macOS, Linux and Windows. The window is the app's own on all three: the
+traffic lights over the leftmost pane on macOS, app-drawn controls on the
+others. [Platforms](docs/platforms.md) has what differs.
 
 ## Running it
 
@@ -40,86 +41,31 @@ npm install
 npm run tauri dev
 ```
 
-Linux also needs `libwebkit2gtk-4.1-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`
-and `librsvg2-dev`.
+Linux needs the WebKitGTK development packages Tauri asks for, plus
+`libxdo-dev`, `libayatana-appindicator3-dev` and `librsvg2-dev`.
 
 ## Verifying it
 
 ```
 npm run verify        # types, unit, Rust, end-to-end
-npm run test:unit     # vitest, jsdom
-npm run test:e2e      # playwright, real browser
-npm run test:coverage # fails under 80% lines on src/lib
-scripts/smoke.sh      # boots the real Tauri binary and photographs the window
+npm run test:driver   # the real binary, driven over WebDriver
 ```
 
-See [docs/testing.md](docs/testing.md) for what each tier is for and why the
-end-to-end tier asserts on geometry rather than state, and
-[docs/release.md](docs/release.md) for what CI runs and how a release is cut.
-
-## Layout
-
-```
-src/lib/layout.svelte.ts   the two shapes, responsive collapse, persistence
-src/lib/files.svelte.ts    file list, scope, and what the viewer shows
-src/lib/keymap.ts          the focus model as a pure function
-src/lib/keys.svelte.ts     the chords: presets, the user's own, persistence
-src/lib/settings.svelte.ts whether the settings are open
-src/lib/platform.ts        which desktop this is
-src/lib/theme.svelte.ts    light / dark / system
-src/lib/styles/tokens.css  semantic tokens, and the 16 ANSI slots beside them
-src/lib/styles/palettes.css the other colour palettes, restating the accent
-src/lib/core.ts            the one seam to Rust: commands, channel, events
-src/lib/workspace.svelte.ts the open projects, the recent list, the picker
-src/lib/sessions.svelte.ts every session this window has, live or finished
-src/lib/terminals.svelte.ts the shells in the terminal panel, per project
-src/lib/exits.ts           exits that arrived before the spawn that owns them
-src/lib/drops.svelte.ts    files dropped on the window, typed into a terminal
-src/lib/agent.svelte.ts    what the agent pane is doing, and the exit policy
-src/lib/terminal.ts        xterm theme from the tokens, and the write queue
-src/lib/tree.ts            paths to a folder tree: nesting, sorting, compression
-src/lib/components/        Pane shell, Splitter, FileTree, FileViewer, TerminalView, Settings
-src/lib/panes/             the three panes and the terminal panel
-src/lib/remote.svelte.ts   projects on other machines, and the dialog that reaches them
-src-tauri/crates/core/     the core with no window attached, and the remote daemon
-  src/api.rs               the core as one object: what a window or a daemon calls
-  src/events.rs            the Sink for events and the Output for a pty's bytes
-  src/protocol.rs          the wire: JSON lines, and the one dispatcher
-  src/client.rs            the near end of the wire: a core elsewhere as an object here
-  src/bin/agent-workbench-remote.rs  the daemon: the dispatcher on stdio
-  src/project.rs           what a folder is: name, repository root, is it git
-  src/git.rs               status, diffs, content and the file listing
-  src/transcripts.rs       Claude Code's past sessions, from its transcripts
-  src/codex.rs             Codex's past sessions, from its SQLite index
-  src/watch.rs             noticing the worktree moved, debounced
-  src/hook.rs              the optional hooks, off by default
-  src/activity.rs          the session log the hooks append to, tailed
-  src/env.rs               the login shell environment, and PATH lookup
-  src/adapter.rs           the agent seam: Surface, Caps, ClaudeCode, Codex
-  src/shell.rs             the user's shell, started the way the agent is
-  src/pty.rs               sessions, their output, and the exit event
-  src/cwd.rs               where a process is working, per platform
-src-tauri/src/lib.rs       the commands the webview can call, routed by path
-src-tauri/src/remote.rs    ssh://host paths to the connection for that host
-src-tauri/src/ssh.rs       keys, passwords once, fingerprints, the daemon's install
-src-tauri/src/menu.rs      the native menu, with Settings in it
-src-tauri/src/chrome.rs    the window's own chrome, per platform
-```
+[Testing](docs/testing.md) says what each tier covers.
 
 ## Reading
 
-- [docs/layout.md](docs/layout.md) — the two shapes, what gives way when the
-  window shrinks, and why the file viewer is a pane rather than a sheet.
-- [docs/focus-model.md](docs/focus-model.md) — who owns the keyboard, and why the
-  answer is "the agent, nearly always".
-- [docs/testing.md](docs/testing.md) — the three test tiers.
-- [docs/remote.md](docs/remote.md) — projects on other machines: the daemon,
-  the wire, and getting onto a machine without handling a key.
-
-## Phases
-
-0. **Skeleton and tokens** — layout, splitters, two themes, focus model. Done.
-1. **The agent pane** — login-shell PATH, portable-pty, xterm.js over a Tauri Channel. Done.
-2. **Changes and diffs** — git2 status, a debounced notify watcher, real diffs. Done.
-3. **Projects and sessions** — the transcript index, built on filenames and stat data. Done.
-4. **Making it feel like one app** — ANSI theming from the tokens, keyboard resolution. Done.
+- [Architecture](docs/architecture.md): the one rule, the two halves, and
+  the core that runs without a window.
+- [Layout](docs/layout.md): the two shapes, what gives way when the window
+  shrinks, the terminal panel, the window's chrome.
+- [Sessions](docs/sessions.md): what a session is, what its row says, past
+  sessions, and how the changes pane keeps up.
+- [Focus](docs/focus-model.md): who owns the keyboard.
+- [Settings](docs/settings.md): appearance, palettes, keys, live updates.
+- [Hooks](docs/hooks.md): what the app installs in a project when asked, and
+  what it gives.
+- [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
+- [Remote](docs/remote.md): projects on other machines.
+- [Platforms](docs/platforms.md): what differs on each.
+- [Testing](docs/testing.md) and [CI and releases](docs/release.md).
