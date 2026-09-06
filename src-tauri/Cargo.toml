@@ -33,6 +33,6 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSToolbar", "NSWindow"] }
-objc2-foundation = { version = "0.3", features = ["NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString"] }
 
