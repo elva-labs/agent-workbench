@@ -138,6 +138,7 @@
   // once, and starts the cursor over from the session you are in rather than
   // from whatever a click left it on. A click inside already has the keyboard.
   $effect(() => {
+    layout.focusRequest;
     if (layout.focus === "sessions" && nav && !nav.contains(document.activeElement)) {
       cursor = null;
       nav.focus();

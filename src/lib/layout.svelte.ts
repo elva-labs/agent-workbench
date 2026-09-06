@@ -58,7 +58,8 @@ export const DEFAULT = {
 } as const;
 
 /** Content width below which the sessions pane cannot fit alongside the rest. */
-export const NEEDS_SESSIONS = MIN.sessions + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
+export const NEEDS_SESSIONS =
+  MIN.sessions + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
 /** Content width below which even the changes pane has to go. */
 export const NEEDS_CHANGES = MIN.changes + SPLITTER + MIN.agent;
 /**
@@ -90,6 +91,9 @@ export const layout = $state({
   reviewTouched: false,
   mode: "working" as Mode,
   focus: "agent" as PaneId,
+  /** Counts every request to focus a pane by key, so a pane that already
+      has the focus state still takes the keyboard when asked again. */
+  focusRequest: 0,
   width: 1200,
   height: 800,
 });
@@ -168,11 +172,17 @@ export function applyLayout(width: number, height: number = layout.height) {
     layout.agentHidden = width < NEEDS_AGENT_WHILE_REVIEWING;
 
     const room = layout.agentHidden ? width : width - SPLITTER - MIN.agent;
-    layout.review = Math.min(Math.max(layout.review, MIN_REVIEW), Math.max(MIN_REVIEW, room));
+    layout.review = Math.min(
+      Math.max(layout.review, MIN_REVIEW),
+      Math.max(MIN_REVIEW, room),
+    );
 
     // Inside the pane, the content keeps its minimum and the tree gives way.
     const treeRoom = layout.review - SPLITTER - MIN.viewer;
-    layout.tree = Math.min(Math.max(layout.tree, MIN.tree), Math.max(MIN.tree, treeRoom));
+    layout.tree = Math.min(
+      Math.max(layout.tree, MIN.tree),
+      Math.max(MIN.tree, treeRoom),
+    );
     return;
   }
 
@@ -183,12 +193,21 @@ export function applyLayout(width: number, height: number = layout.height) {
   const showSessions = sessionsVisible();
   const showChanges = changesVisible();
 
-  let sessions = showSessions ? Math.max(MIN.sessions, layout.sessions) : layout.sessions;
-  let changes = showChanges ? Math.max(MIN.changes, layout.changes) : layout.changes;
+  let sessions = showSessions
+    ? Math.max(MIN.sessions, layout.sessions)
+    : layout.sessions;
+  let changes = showChanges
+    ? Math.max(MIN.changes, layout.changes)
+    : layout.changes;
 
-  const splitters = (showSessions ? SPLITTER : 0) + (showChanges ? SPLITTER : 0);
+  const splitters =
+    (showSessions ? SPLITTER : 0) + (showChanges ? SPLITTER : 0);
   let overflow =
-    (showSessions ? sessions : 0) + (showChanges ? changes : 0) + splitters + MIN.agent - width;
+    (showSessions ? sessions : 0) +
+    (showChanges ? changes : 0) +
+    splitters +
+    MIN.agent -
+    width;
 
   // The changes pane gives way first: while you are working, the file list is
   // the thing you can most afford to have narrow.
@@ -236,7 +255,8 @@ export function exitReview() {
 export function togglePane(pane: "sessions" | "changes") {
   if (pane === "sessions") {
     layout.sessionsChosen = !layout.sessionsChosen;
-    if (!sessionsVisible() && layout.focus === "sessions") layout.focus = "agent";
+    if (!sessionsVisible() && layout.focus === "sessions")
+      layout.focus = "agent";
   } else {
     layout.changesChosen = !layout.changesChosen;
     if (!changesVisible() && layout.focus === "changes") layout.focus = "agent";
@@ -268,6 +288,7 @@ export function focusPane(id: PaneId) {
   if (id === "agent" && !agentVisible()) return;
   if (id === "terminal" && !terminalVisible()) return;
   layout.focus = id;
+  layout.focusRequest += 1;
 }
 
 export function loadLayout() {
@@ -285,11 +306,16 @@ export function loadLayout() {
     if (typeof v.review === "number") layout.review = v.review;
     if (typeof v.tree === "number") layout.tree = v.tree;
     if (typeof v.terminal === "number") layout.terminal = v.terminal;
-    if (typeof v.terminalList === "number") layout.terminalList = v.terminalList;
-    if (typeof v.reviewTouched === "boolean") layout.reviewTouched = v.reviewTouched;
-    if (typeof v.sessionsChosen === "boolean") layout.sessionsChosen = v.sessionsChosen;
-    if (typeof v.changesChosen === "boolean") layout.changesChosen = v.changesChosen;
-    if (typeof v.terminalChosen === "boolean") layout.terminalChosen = v.terminalChosen;
+    if (typeof v.terminalList === "number")
+      layout.terminalList = v.terminalList;
+    if (typeof v.reviewTouched === "boolean")
+      layout.reviewTouched = v.reviewTouched;
+    if (typeof v.sessionsChosen === "boolean")
+      layout.sessionsChosen = v.sessionsChosen;
+    if (typeof v.changesChosen === "boolean")
+      layout.changesChosen = v.changesChosen;
+    if (typeof v.terminalChosen === "boolean")
+      layout.terminalChosen = v.terminalChosen;
   } catch {
     // A corrupt entry is not worth a broken window. Defaults stand.
   }
