@@ -14,11 +14,11 @@
 //! every other window's.
 
 /// Where the close button's left edge goes, in points from the window's
-/// left edge: the frame's padding, the pane's border and the pane's own
-/// padding, so the buttons start where the header's content does. The
-/// other two follow at AppKit's spacing.
+/// left edge: past the frame's padding and the pane's border, with the same
+/// gap to the border as the buttons have to the header's top and bottom.
+/// The other two follow at AppKit's spacing.
 #[cfg(target_os = "macos")]
-const CONTROLS_X: f64 = 23.0;
+const CONTROLS_X: f64 = 18.0;
 
 /// Points from the window's top edge to the middle of the buttons: the
 /// frame's 10px padding, the pane's border and half a 32px header, so they
