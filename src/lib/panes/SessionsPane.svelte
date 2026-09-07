@@ -19,7 +19,6 @@
     select,
     sessions,
     statusLabel,
-    archive as archiveSession,
     disown,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
@@ -130,15 +129,12 @@
     return rows[0]?.id ?? null;
   });
 
-  /** What the × on the row under the cursor would do, or with Shift the
-      archive button; a past row has only the latter. */
-  function remove(id: string, shift: boolean) {
+  /** What the button on the row under the cursor would do: × on a project
+      or a live session, archive on a past one. */
+  function remove(id: string) {
     if (id.startsWith("project:")) closeProject(id.slice("project:".length));
-    else if (id.startsWith("session:")) {
-      const key = id.slice("session:".length);
-      if (shift) archiveSession(key);
-      else closeSession(key);
-    } else if (id.startsWith("past:") && workspace.active !== null) {
+    else if (id.startsWith("session:")) closeSession(id.slice("session:".length));
+    else if (id.startsWith("past:") && workspace.active !== null) {
       disown(workspace.active, id.slice("past:".length));
     }
   }
@@ -210,7 +206,7 @@
       case "Delete":
       case "Backspace":
         if (current === null) return;
-        remove(current, e.shiftKey);
+        remove(current);
         break;
       default:
         return;
@@ -334,16 +330,8 @@
             <span class="state">{statusLabel(session)}</span>
           </button>
           <!-- Over the row's end rather than beside it, so a name is never
-               squeezed to make room for them. -->
+               squeezed to make room for it. -->
           <span class="actions">
-            <button
-              class="icon"
-              tabindex="-1"
-              onclick={() => archiveSession(session.key)}
-              aria-label="Archive {label(session)}"
-              title="Stop, and file with the sessions to resume"
-              data-testid="archive-session">↧</button
-            >
             <button
               class="icon"
               tabindex="-1"

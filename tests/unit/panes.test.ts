@@ -442,68 +442,64 @@ describe("SessionsPane", () => {
     expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
   });
 
-  // The row's buttons sit over its end: × stops the session and leaves it
-  // under the project's own past, the archive button stops it and files it
-  // with the sessions to resume. A past row has the archive button alone.
-  it("archives a session to the fold, from the button and from the keyboard", async () => {
+  // A live row's × sits over its end and stops the session, which leaves
+  // it under the project's own past; a past row's archive button files it
+  // with the sessions to resume. Two steps, never both at once.
+  it("closes a live session, then archives it from its past row", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     const one = create("/repo", null, "claude-code");
     started(one.key, "pty-1", "session-1");
-    const two = create("/repo", null, "claude-code");
-    started(two.key, "pty-2", "session-2");
     fake.transcripts = [
       { id: "session-1", title: "first", modified: 1000, size: 400 },
-      { id: "session-2", title: "second", modified: 900, size: 400 },
       { id: "session-3", title: "third", modified: 800, size: 400 },
     ];
     layout.focus = "sessions";
 
     render(SessionsPane);
-    await fireEvent.click(screen.getAllByTestId("archive-session")[0]);
-    expect(sessions.all.map((session) => session.key)).toEqual([two.key]);
-    // The third was from outside all along; the archived one joins it.
-    await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "2 claude sessions to resume",
-      ),
-    );
-
-    // Shift+Delete on the row under the cursor, which is the session you
-    // are in, archives it too.
-    const nav = screen.getByTestId("sessions-nav");
-    expect(screen.getByTestId("session-row").closest(".session")).toHaveClass(
-      "cursor",
-    );
-    await fireEvent.keyDown(nav, { key: "Delete", shiftKey: true });
+    expect(screen.queryByTestId("archive-past")).toBeNull();
+    await fireEvent.click(screen.getByTestId("close-session"));
     expect(sessions.all).toHaveLength(0);
-    await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "3 claude sessions to resume",
-      ),
-    );
-
-    // A session that ran here and was closed is a past row of ours, which
-    // archives with its own button.
-    const three = create("/repo", null, "claude-code");
-    started(three.key, "pty-3", "session-3");
-    closeStore(three.key);
     await waitFor(() =>
       expect(screen.getByTestId("past-session")).toBeInTheDocument(),
     );
     await waitFor(() =>
       expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "2 claude sessions to resume",
+        "1 claude session to resume",
       ),
     );
+
     await fireEvent.click(screen.getByTestId("archive-past"));
     await waitFor(() =>
       expect(screen.queryByTestId("past-session")).not.toBeInTheDocument(),
     );
     await waitFor(() =>
       expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "3 claude sessions to resume",
+        "2 claude sessions to resume",
       ),
+    );
+
+    // Delete on a past row under the cursor archives it the same way.
+    const two = create("/repo", null, "claude-code");
+    started(two.key, "pty-2", "session-2");
+    fake.transcripts.push({
+      id: "session-2",
+      title: "second",
+      modified: 700,
+      size: 400,
+    });
+    closeStore(two.key);
+    await waitFor(() =>
+      expect(screen.getByTestId("past-session")).toBeInTheDocument(),
+    );
+    const nav = screen.getByTestId("sessions-nav");
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("past-session").closest(".session")).toHaveClass(
+      "cursor",
+    );
+    await fireEvent.keyDown(nav, { key: "Delete" });
+    await waitFor(() =>
+      expect(screen.queryByTestId("past-session")).not.toBeInTheDocument(),
     );
   });
 

@@ -786,10 +786,12 @@ test.describe("working, and waiting for you", () => {
     await expect(rows(page).first()).toContainText("running");
   });
 
-  // The row's buttons appear over its end on hover. Archive stops the
-  // session and files it with the sessions to resume, behind the fold.
-  test("archives a session from its row into the fold", async ({ page }) => {
-    await running(page);
+  // A row's × appears over its end on hover and stops the session; the
+  // past row it leaves has the archive button, which files it with the
+  // sessions to resume, behind the fold.
+  test("closes a session from its row, then archives it from its past row", async ({
+    page,
+  }) => {
     await page.evaluate(() => {
       window.__fake.transcripts = [
         { id: "session-1", title: "the one", modified: 1000, size: 10 },
@@ -800,12 +802,16 @@ test.describe("working, and waiting for you", () => {
     await expect(row.locator(".actions")).toHaveCSS("opacity", "0");
     await rows(page).first().hover();
     await expect(row.locator(".actions")).toHaveCSS("opacity", "1");
-    await row.getByTestId("archive-session").click();
+    await expect(row.getByTestId("archive-past")).toHaveCount(0);
+    await row.getByTestId("close-session").click();
     await expect(rows(page)).toHaveCount(before - 1);
+    await expect(page.getByTestId("past-session")).toHaveText(/the one/);
+    await page.getByTestId("past-session").hover();
+    await page.getByTestId("archive-past").click();
+    await expect(page.getByTestId("past-session")).toHaveCount(0);
     await expect(page.getByTestId("outside-fold")).toHaveText(
       /1 claude session to resume/,
     );
-    await expect(page.getByTestId("past-session")).toHaveCount(0);
   });
 
   test("does not mark the session you are looking at", async ({ page }) => {

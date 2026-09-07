@@ -41,7 +41,6 @@ import {
   started,
   statusLabel,
   statusMessage,
-  archive,
   disown,
 } from "$lib/sessions.svelte";
 
@@ -847,17 +846,14 @@ describe("working, and waiting for you", () => {
     expect(() => exact("nope", "stop")).not.toThrow();
   });
 
-  // Archiving stops the session and takes it out of ours, so it is listed
-  // behind the fold with the sessions from outside, still there to resume.
-  it("archives a session: stopped, and no longer ours", () => {
-    const session = live(A, "pty-1");
+  // Disowning takes a session out of ours, so it is listed behind the fold
+  // with the sessions from outside, still there to resume.
+  it("disowns a session", () => {
+    live(A, "pty-1");
     expect(isMine(A, "session-pty-1")).toBe(true);
-    archive(session.key);
-    expect(sessions.all).toHaveLength(0);
+    disown(A, "session-pty-1");
     expect(isMine(A, "session-pty-1")).toBe(false);
-    expect(killed).toContain("pty-1");
-    disown(A, "not-ours");
-    expect(() => archive("nope")).not.toThrow();
+    expect(() => disown(A, "not-ours")).not.toThrow();
   });
 
   it("does nothing for a key it does not have", () => {

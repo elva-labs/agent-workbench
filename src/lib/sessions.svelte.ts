@@ -538,16 +538,6 @@ export function disown(project: string, id: string) {
   }
 }
 
-/** Archives a live session: stops it, and files it with the sessions to
-    resume rather than under the project's own past. */
-export function archive(key: string) {
-  const session = byKey(key);
-  if (session === null) return;
-  const { project, id } = session;
-  close(key);
-  if (id !== null) disown(project, id);
-}
-
 export function close(key: string) {
   const session = byKey(key);
   if (session === null) return;
