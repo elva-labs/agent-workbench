@@ -51,6 +51,31 @@ jobs:
         working-directory: src-tauri
       - run: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote version
         if: matrix.os != 'macos-latest' || matrix.target == 'aarch64-apple-darwin'
+
+      # The macOS daemons carry the organisation's Developer ID, as the app
+      # does, so a machine that gets one from the release or the tap runs
+      # what the certificate says it is.
+      - name: Sign
+        if: runner.os == 'macOS' && env.CERTIFICATE != ''
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/daemon.keychain-db"
+          password=$(openssl rand -hex 16)
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          daemon="src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote"
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" "$daemon"
+          codesign --verify --verbose=2 "$daemon"
       - uses: actions/upload-artifact@v4
         with:
           name: daemon-${{ matrix.name }}

@@ -23,10 +23,14 @@ machine kind it can put one on.
    targets, and opens a draft release for the tag with everything attached.
    It refuses a tag that does not match the version in the configuration.
 4. Read the draft, then publish it.
-5. Put the release in the organisation's Homebrew tap: `scripts/cask.sh`
-   with the version prints the cask, checksums included, to commit there as
-   `Casks/agent-workbench.rb`. Users then get it with `brew tap elva-labs/elva`
-   and `brew install --cask agent-workbench`, and updates with `brew upgrade`.
+5. Put the release in the organisation's Homebrew tap. `scripts/cask.sh`
+   with the version prints the cask for the app, and `scripts/formula.sh`
+   the formula for the daemon, checksums included; they go in the tap as
+   `Casks/agent-workbench.rb` and `Formula/agent-workbench-remote.rb`. Users
+   then get the app with `brew tap elva-labs/elva` and
+   `brew install --cask agent-workbench`, a remote machine gets the daemon
+   with `brew install elva-labs/elva/agent-workbench-remote`, and both
+   update with `brew upgrade`.
 
 Running the workflow by hand from the Actions tab builds the same bundles
 without touching releases; they are kept as workflow artifacts for a

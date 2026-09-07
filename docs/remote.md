@@ -77,8 +77,11 @@ different machines with the same name get a suffix on the second.
 curl -fsSL https://raw.githubusercontent.com/elva-labs/agent-workbench/main/scripts/install-remote.sh | sh
 ```
 
-puts the build for the machine under `~/.agent-workbench/bin`. Each release
-carries the builds as assets, for Linux x86_64 and aarch64 and both macOS
+puts the build for the machine under `~/.agent-workbench/bin`. With Homebrew
+on the machine, `brew install elva-labs/elva/agent-workbench-remote` does the
+same into its own bin, and `brew upgrade` keeps it current; the token from
+`connect` names whichever daemon printed it. Each release carries the
+builds as assets, for Linux x86_64 and aarch64 and both macOS
 architectures. The desktop refuses a daemon at another version than its
 own and says so, since the two speak the same protocol only when they match.
 
