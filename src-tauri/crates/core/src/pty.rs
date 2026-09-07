@@ -95,6 +95,9 @@ pub fn spawn(
 
     let id = next_id();
     let mut output = make_output(&id);
+    // The reader holds this for as long as it reads, so the end of the
+    // session can wait for the last of the output to have gone out first.
+    let (reading, read_done) = std::sync::mpsc::channel::<()>();
 
     sessions.inner.lock().expect("sessions lock").insert(
         id.clone(),
@@ -109,6 +112,7 @@ pub fn spawn(
     std::thread::spawn({
         let mut reader = reader;
         move || {
+            let _reading = reading;
             let mut buffer = vec![0u8; READ_BUFFER];
             loop {
                 match reader.read(&mut buffer) {
@@ -131,6 +135,9 @@ pub fn spawn(
         let sessions = Arc::clone(&sessions);
         move || {
             let status = child.wait();
+            // Bounded: a grandchild that kept the pty open would otherwise
+            // hold the end back for as long as it lived.
+            let _ = read_done.recv_timeout(std::time::Duration::from_secs(2));
             sessions.inner.lock().expect("sessions lock").remove(&id);
 
             let (code, clean) = match status {
