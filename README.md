@@ -37,7 +37,19 @@ macOS, Linux and Windows. The window is the app's own on all three: the
 traffic lights over the leftmost pane on macOS, app-drawn controls on the
 others. [Platforms](docs/platforms.md) has what differs.
 
-## Running it
+## Installing it
+
+Every [release](https://github.com/elva-labs/agent-workbench/releases) carries
+installers: `.dmg` for macOS on either chip, `.AppImage`, `.deb` and `.rpm`
+for Linux, `.msi` and a setup `.exe` for Windows. The macOS builds are signed
+and notarized. On macOS there is also a tap:
+
+```
+brew tap elva-labs/elva
+brew install --cask agent-workbench
+```
+
+## Running it from source
 
 ```
 npm install
