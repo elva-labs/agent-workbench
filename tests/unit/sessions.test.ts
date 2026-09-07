@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Transcript } from "$lib/core";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { stash } from "$lib/exits";
 import { attention, resetAttention } from "$lib/attention.svelte";
@@ -7,6 +8,7 @@ import {
   ago,
   historyFor,
   historyLabel,
+  loadHistory,
   isMine,
   isViewed,
   exact,
@@ -49,6 +51,7 @@ const B = "/home/ada/dev/two";
 
 const killed: string[] = [];
 let historyReads = 0;
+let historyAnswer: Transcript[] = [];
 let cwdAnswer: string | null = null;
 let cwdAsks = 0;
 vi.mock("$lib/core", () => ({
@@ -72,7 +75,7 @@ vi.mock("$lib/core", () => ({
     // Every agent is asked; the count follows one of them.
     transcripts: async (_project: string, agent: string) => {
       if (agent === "claude-code") historyReads += 1;
-      return [];
+      return agent === "claude-code" ? historyAnswer : [];
     },
   }),
 }));
@@ -82,6 +85,7 @@ beforeEach(() => {
   resetAttention();
   killed.length = 0;
   historyReads = 0;
+  historyAnswer = [];
   cwdAnswer = null;
   cwdAsks = 0;
   resetAgent();
@@ -432,6 +436,27 @@ describe("history", () => {
     close(session.key);
     expect(historyFor(A)).toHaveLength(1);
     expect(outsideFor(A)).toHaveLength(0);
+  });
+
+  // A session resumed inside a worktree is reported from there as well as
+  // from the project. One entry, the newer, or a list keyed by id breaks.
+  it("lists a session reported twice once, as the newer copy", async () => {
+    historyAnswer = [
+      { id: "same", title: "older copy", modified: 1000, size: 100, cwd: null },
+      {
+        id: "same",
+        title: "newer copy",
+        modified: 2000,
+        size: 100,
+        cwd: "/p/.claude/worktrees/w",
+      },
+      { id: "other", title: "other", modified: 500, size: 100, cwd: null },
+    ];
+    await loadHistory(A);
+    expect(outsideFor(A).map((t) => [t.id, t.title])).toEqual([
+      ["same", "newer copy"],
+      ["other", "other"],
+    ]);
   });
 
   // Claude Code run in a terminal in the same directory leaves transcripts in

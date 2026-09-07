@@ -118,7 +118,12 @@ pub fn list(home: &Path, project: &Path) -> Vec<Transcript> {
         }
     }
 
+    // A session resumed from another directory is written again there under
+    // the same id, so one session can be in several folders: it is listed
+    // once, as the copy that moved last.
     transcripts.sort_by_key(|transcript| std::cmp::Reverse(transcript.modified));
+    let mut seen = std::collections::HashSet::new();
+    transcripts.retain(|transcript| seen.insert(transcript.id.clone()));
     transcripts
 }
 
@@ -327,6 +332,41 @@ mod tests {
 
     // A worktree's sessions belong to the project it is under, and say
     // where they ran; a sibling project with a longer name is not one.
+    // The same session resumed inside a worktree is written there again
+    // under its id. One row, the one that moved last.
+    #[test]
+    fn lists_a_session_found_in_two_folders_once() {
+        let home = home("twice");
+        let project = Path::new("/home/ada/dev/demo");
+        let worktree = Path::new("/home/ada/dev/demo/.claude/worktrees/gerrit");
+        let older = write_transcript(
+            &home,
+            project,
+            "same",
+            r#"{"cwd":"/home/ada/dev/demo","type":"user"}"#,
+        );
+        write_transcript(
+            &home,
+            worktree,
+            "same",
+            r#"{"cwd":"/home/ada/dev/demo/.claude/worktrees/gerrit","type":"user"}"#,
+        );
+        let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        std::fs::File::options()
+            .write(true)
+            .open(&older)
+            .unwrap()
+            .set_modified(earlier)
+            .unwrap();
+        let found = list(&home, project);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "same");
+        assert_eq!(
+            found[0].cwd.as_deref(),
+            Some("/home/ada/dev/demo/.claude/worktrees/gerrit")
+        );
+    }
+
     #[test]
     fn lists_sessions_from_worktrees_under_the_project() {
         let home = home("worktrees");

@@ -1,4 +1,10 @@
-import { core, type AgentId, type SessionEnded, type SessionEvent, type Transcript } from "$lib/core";
+import {
+  core,
+  type AgentId,
+  type SessionEnded,
+  type SessionEvent,
+  type Transcript,
+} from "$lib/core";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { isReady } from "$lib/agent.svelte";
@@ -17,7 +23,8 @@ import { claim, resetExits } from "$lib/exits";
  * there could only ever be one.
  */
 
-export type SessionStatus = "starting" | "running" | "exited" | "crashed" | "failed";
+export type SessionStatus =
+  "starting" | "running" | "exited" | "crashed" | "failed";
 
 export interface Session {
   /** Stable for the lifetime of the row, unlike the pty id which only exists
@@ -109,14 +116,21 @@ export async function loadHistory(project: string) {
         .catch(() => [] as HistoryEntry[]),
     ),
   );
-  sessions.history[project] = lists.flat().sort((a, b) => b.modified - a.modified);
+  // Listed once per id, as the newest: a session resumed from another
+  // directory can be reported from more than one place.
+  const newest = new Map<string, HistoryEntry>();
+  for (const entry of lists.flat().sort((a, b) => b.modified - a.modified)) {
+    if (!newest.has(entry.id)) newest.set(entry.id, entry);
+  }
+  sessions.history[project] = [...newest.values()];
 }
 
 /** The agent a new session in the project starts with: the one last started
     there, else the first one installed. */
 export function defaultAgent(project: string): AgentId {
   const preferred = sessions.preferred[project];
-  if (preferred !== undefined && installed().includes(preferred)) return preferred;
+  if (preferred !== undefined && installed().includes(preferred))
+    return preferred;
   return installed()[0] ?? "claude-code";
 }
 
@@ -158,7 +172,9 @@ export function loadRemembered() {
         const mine: Record<string, string[]> = {};
         for (const [project, ids] of Object.entries(stored)) {
           if (Array.isArray(ids)) {
-            mine[project] = ids.filter((id): id is string => typeof id === "string");
+            mine[project] = ids.filter(
+              (id): id is string => typeof id === "string",
+            );
           }
         }
         sessions.mine = mine;
@@ -189,7 +205,8 @@ export function loadRemembered() {
       if (typeof stored === "object" && stored !== null) {
         const preferred: Record<string, AgentId> = {};
         for (const [project, agent] of Object.entries(stored)) {
-          if (agent === "claude-code" || agent === "codex") preferred[project] = agent;
+          if (agent === "claude-code" || agent === "codex")
+            preferred[project] = agent;
         }
         sessions.preferred = preferred;
       }
@@ -229,10 +246,14 @@ export function historyFor(project: string): HistoryEntry[] {
 /** Past sessions from outside the app: an agent run in a terminal in the
     same directory. Just as resumable, but not the first thing to show. One
     agent's, or every agent's. */
-export function outsideFor(project: string, agent: AgentId | null = null): HistoryEntry[] {
+export function outsideFor(
+  project: string,
+  agent: AgentId | null = null,
+): HistoryEntry[] {
   return closed(project).filter(
     (transcript) =>
-      !isMine(project, transcript.id) && (agent === null || transcript.agent === agent),
+      !isMine(project, transcript.id) &&
+      (agent === null || transcript.agent === agent),
   );
 }
 
@@ -244,7 +265,8 @@ export function outsideFor(project: string, agent: AgentId | null = null): Histo
 export function historyLabel(transcript: Transcript): string {
   const known = sessions.names[transcript.id];
   if (known !== undefined) return known;
-  if (transcript.title !== null && transcript.title !== "") return transcript.title;
+  if (transcript.title !== null && transcript.title !== "")
+    return transcript.title;
   return `session from ${ago(transcript.modified)}`;
 }
 
@@ -266,7 +288,9 @@ export function forProject(project: string): Session[] {
 }
 
 export function activeSession(): Session | null {
-  return sessions.all.find((session) => session.key === sessions.active) ?? null;
+  return (
+    sessions.all.find((session) => session.key === sessions.active) ?? null
+  );
 }
 
 export function byKey(key: string): Session | null {
@@ -311,7 +335,11 @@ export function sessionTitle(raw: string): string | null {
  * by its pty, since that is all the two sides share until now. The id makes
  * the session ours, and the name that came with it names the row.
  */
-export function identified(ptyId: string, sessionId: string, title: string | null) {
+export function identified(
+  ptyId: string,
+  sessionId: string,
+  title: string | null,
+) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   session.id = sessionId;
@@ -334,7 +362,8 @@ export function titled(key: string, raw: string) {
   const session = byKey(key);
   if (session === null) return;
   session.title = sessionTitle(raw);
-  if (session.title !== null && session.id !== null) rememberName(session.id, session.title);
+  if (session.title !== null && session.id !== null)
+    rememberName(session.id, session.title);
 }
 
 /**
@@ -365,7 +394,12 @@ const CWD_POLL = 2000;
 export function followCwd(): () => void {
   const timer = setInterval(() => {
     const session = activeSession();
-    if (session === null || session.ptyId === null || session.status !== "running") return;
+    if (
+      session === null ||
+      session.ptyId === null ||
+      session.status !== "running"
+    )
+      return;
     const { key, ptyId, agent, id } = session;
     core()
       .ptyCwd(ptyId)
@@ -486,7 +520,11 @@ export async function launch(
  * The process is up. False when the row is already gone, which is the caller's
  * cue that nothing owns the pty it was just handed.
  */
-export function started(key: string, ptyId: string, sessionId: string | null): boolean {
+export function started(
+  key: string,
+  ptyId: string,
+  sessionId: string | null,
+): boolean {
   const session = byKey(key);
   if (session === null) return false;
   session.ptyId = ptyId;
@@ -518,7 +556,9 @@ export function failed(key: string, error: string) {
  * spawn result has not landed yet.
  */
 export function ended(event: SessionEnded): boolean {
-  const session = sessions.all.find((candidate) => candidate.ptyId === event.id);
+  const session = sessions.all.find(
+    (candidate) => candidate.ptyId === event.id,
+  );
   if (session === undefined) return false;
   session.ptyId = null;
   session.exitCode = event.code;
@@ -536,7 +576,9 @@ export function ended(event: SessionEnded): boolean {
     from outside, behind the fold, still there to resume. */
 export function disown(project: string, id: string) {
   if (!isMine(project, id)) return;
-  sessions.mine[project] = (sessions.mine[project] ?? []).filter((mine) => mine !== id);
+  sessions.mine[project] = (sessions.mine[project] ?? []).filter(
+    (mine) => mine !== id,
+  );
   try {
     localStorage.setItem(MINE_KEY, JSON.stringify(sessions.mine));
   } catch {
@@ -611,7 +653,11 @@ export function statusLabel(session: Session | null): string {
       return "starting";
     case "running":
       if (session.needs === "permission") return "needs permission";
-      return session.working ? "working" : session.unread ? "waiting for you" : "running";
+      return session.working
+        ? "working"
+        : session.unread
+          ? "waiting for you"
+          : "running";
     case "exited":
       return "ended";
     default:
