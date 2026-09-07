@@ -5,7 +5,7 @@
 # ~/.agent-workbench/bin. Then `agent-workbench-remote connect` prints the
 # token to paste into the desktop.
 #
-#   curl -fsSL https://raw.githubusercontent.com/ganhammar/agent-workbench/main/scripts/install-remote.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/elva-labs/agent-workbench/main/scripts/install-remote.sh | sh
 #
 # AGENT_WORKBENCH_VERSION picks a release other than the latest, as v0.2.0.
 set -eu
@@ -21,7 +21,7 @@ case "$(uname -m)" in
   *) echo "no daemon build for $(uname -m)"; exit 1 ;;
 esac
 
-repo="ganhammar/agent-workbench"
+repo="elva-labs/agent-workbench"
 if [ -n "${AGENT_WORKBENCH_VERSION:-}" ]; then
   url="https://github.com/$repo/releases/download/$AGENT_WORKBENCH_VERSION/agent-workbench-remote-$os-$arch"
 else

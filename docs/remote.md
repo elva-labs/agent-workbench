@@ -74,7 +74,7 @@ different machines with the same name get a suffix on the second.
 ## Installing the daemon on a machine
 
 ```
-curl -fsSL https://raw.githubusercontent.com/ganhammar/agent-workbench/main/scripts/install-remote.sh | sh
+curl -fsSL https://raw.githubusercontent.com/elva-labs/agent-workbench/main/scripts/install-remote.sh | sh
 ```
 
 puts the build for the machine under `~/.agent-workbench/bin`. Each release
