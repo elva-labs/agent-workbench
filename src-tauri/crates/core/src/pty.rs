@@ -124,6 +124,7 @@ pub fn spawn(
                             break;
                         }
                     }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(_) => break,
                 }
             }

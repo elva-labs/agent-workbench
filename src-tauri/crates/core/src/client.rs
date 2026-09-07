@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -27,6 +27,34 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// is the whole explanation when a connection fails.
 const STDERR_KEEP: usize = 4096;
 
+/// How long an explanation waits for the last of stderr once the process is
+/// gone. The pipe closes with the process, so this is only ever the gap
+/// between one thread seeing the end and another.
+const STDERR_GRACE: Duration = Duration::from_millis(500);
+
+/// The tail of what the process wrote to stderr, and whether the pipe has
+/// closed: an explanation of a dead connection waits for the close, so the
+/// last thing the process said is in it.
+#[derive(Default)]
+struct Stderr {
+    text: Mutex<String>,
+    done: Mutex<bool>,
+    closed: Condvar,
+}
+
+impl Stderr {
+    fn said(&self, wait: bool) -> String {
+        if wait {
+            let done = self.done.lock().expect("stderr lock");
+            let _ = self
+                .closed
+                .wait_timeout_while(done, STDERR_GRACE, |done| !*done)
+                .expect("stderr lock");
+        }
+        self.text.lock().expect("stderr lock").trim().to_string()
+    }
+}
+
 pub type OnEvent = Box<dyn Fn(&str, Value) + Send + Sync>;
 
 pub struct Connection {
@@ -36,7 +64,7 @@ pub struct Connection {
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>,
     outputs: Mutex<Outputs>,
     alive: AtomicBool,
-    stderr: Arc<Mutex<String>>,
+    stderr: Arc<Stderr>,
 }
 
 #[derive(Default)]
@@ -95,7 +123,7 @@ impl Connection {
             pending: Mutex::new(HashMap::new()),
             outputs: Mutex::new(Outputs::default()),
             alive: AtomicBool::new(true),
-            stderr: Arc::new(Mutex::new(String::new())),
+            stderr: Arc::new(Stderr::default()),
         });
 
         std::thread::spawn({
@@ -163,9 +191,10 @@ impl Connection {
         self.alive.load(Ordering::SeqCst)
     }
 
-    /// What the process said on stderr, appended to a reason.
+    /// What the process said on stderr, appended to a reason. Once the
+    /// process is gone this has all of it.
     pub fn explain(&self, reason: &str) -> String {
-        let said = self.stderr.lock().expect("stderr lock").trim().to_string();
+        let said = self.stderr.said(!self.is_alive());
         if said.is_empty() {
             reason.to_string()
         } else {
@@ -250,13 +279,13 @@ impl Drop for Connection {
 /// payload is the reason, with what the process said.
 pub const CLOSED: &str = "connection_closed";
 
-fn keep_tail(mut stderr: impl Read, kept: Arc<Mutex<String>>) {
+fn keep_tail(mut stderr: impl Read, kept: Arc<Stderr>) {
     let mut buffer = [0u8; 1024];
     loop {
         match stderr.read(&mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                let mut text = kept.lock().expect("stderr lock");
+                let mut text = kept.text.lock().expect("stderr lock");
                 text.push_str(&String::from_utf8_lossy(&buffer[..n]));
                 if text.len() > STDERR_KEEP {
                     let cut = text.len() - STDERR_KEEP;
@@ -270,6 +299,8 @@ fn keep_tail(mut stderr: impl Read, kept: Arc<Mutex<String>>) {
             }
         }
     }
+    *kept.done.lock().expect("stderr lock") = true;
+    kept.closed.notify_all();
 }
 
 #[cfg(test)]
@@ -306,10 +337,10 @@ mod tests {
 
     #[test]
     fn keeps_only_the_tail_of_stderr() {
-        let kept = Arc::new(Mutex::new(String::new()));
+        let kept = Arc::new(Stderr::default());
         let long = "x".repeat(STDERR_KEEP + 100) + "end";
         keep_tail(long.as_bytes(), Arc::clone(&kept));
-        let text = kept.lock().unwrap();
+        let text = kept.said(true);
         assert!(text.len() <= STDERR_KEEP);
         assert!(text.ends_with("end"));
     }

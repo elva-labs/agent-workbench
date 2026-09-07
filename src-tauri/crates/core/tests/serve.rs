@@ -73,12 +73,17 @@ fn streams_a_shell_s_output_and_its_end() {
     for line in lines.by_ref() {
         let value: Value = serde_json::from_str(&line.unwrap()).unwrap();
         if value["id"] == 1 {
-            let id = value["result"].as_str().unwrap().to_string();
-            let write = json!({"id": 2, "method": "pty_write", "params": {"id": id, "data": "echo marker-$((40+2))\nexit 4\n"}});
-            writeln!(stdin, "{write}").unwrap();
-            pty = Some(id);
+            pty = Some(value["result"].as_str().unwrap().to_string());
         } else if value["event"] == "pty_output" {
-            assert_eq!(value["payload"]["id"], pty.as_deref().unwrap());
+            let id = pty.as_deref().unwrap();
+            assert_eq!(value["payload"]["id"], id);
+            // The shell's first bytes mean it is up and reading; typed at it
+            // any earlier, the lines would be for the tty the shell has not
+            // yet set up, as they would be in any terminal.
+            if seen.is_empty() {
+                let write = json!({"id": 2, "method": "pty_write", "params": {"id": id, "data": "echo marker-$((40+2))\nexit 4\n"}});
+                writeln!(stdin, "{write}").unwrap();
+            }
             let bytes = workbench_core::protocol::output_bytes("pty_output", &value["payload"])
                 .unwrap()
                 .1;
