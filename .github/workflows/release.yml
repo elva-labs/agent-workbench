@@ -151,6 +151,34 @@ jobs:
         shell: bash
         run: echo "apple=${{ secrets.MACOS_CERTIFICATE != '' }}" >> "$GITHUB_OUTPUT"
 
+      # The bundler signs the app and what it built, not the daemons it
+      # carries as resources, and notarization refuses a Mach-O inside the
+      # app that is not signed with the same identity, hardened runtime and
+      # timestamp. The two macOS daemons are signed here first, from the
+      # certificate in a keychain of this step's own.
+      - name: Sign the bundled macOS daemons
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true'
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/daemons.keychain-db"
+          password=$(openssl rand -hex 16)
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          for daemon in src-tauri/resources/remote/darwin-*/agent-workbench-remote; do
+            codesign --force --options runtime --timestamp --sign "$IDENTITY" "$daemon"
+            codesign --verify --verbose=2 "$daemon"
+          done
+
       # The bundler reads the notarization key from a file. The variables
       # are exported only when the key is there, so a certificate on its
       # own signs without notarizing rather than failing.
