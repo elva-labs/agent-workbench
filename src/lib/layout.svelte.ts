@@ -243,12 +243,20 @@ export function enterReview() {
   saveLayout();
 }
 
+/** Leaves the viewer. The keyboard stays in the tree, so closing a file is
+    a step back to the list and not a jump to the agent; it goes to the agent
+    only when the changes pane is not there to hold it. */
 export function exitReview() {
   if (layout.mode === "working") return;
   layout.mode = "working";
   layout.sessionsForced = false;
-  layout.focus = "agent";
   applyLayout(layout.width);
+  if (layout.focus === "changes" && changesVisible()) {
+    // The viewer that had the document's focus is gone; the tree takes it.
+    layout.focusRequest += 1;
+  } else {
+    layout.focus = "agent";
+  }
   saveLayout();
 }
 

@@ -60,8 +60,8 @@ step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>.
   and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them.
 - **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent
   needs it, and so does a shell in the panel. A pane that owns focus may use
-  it: the file viewer closes on it, and a list pane hands the keyboard back
-  to the agent. This is the one key whose meaning depends on context, so
+  it: the file viewer closes on it and leaves the keyboard in the tree, and
+  a list pane hands the keyboard back to the agent. This is the one key whose meaning depends on context, so
   the resolution takes the focus state and lives in one testable place.
 - **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** The
   terminal would send the same carriage return as for <kbd>Enter</kbd>, so

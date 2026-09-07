@@ -1,6 +1,7 @@
 <script lang="ts">
   import { buildTree, flatten, parentOf, type Row, type TreeNode } from "$lib/tree";
   import { files, isOpen, toggleDir, visible } from "$lib/files.svelte";
+  import { layout } from "$lib/layout.svelte";
 
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
@@ -17,6 +18,9 @@
   let root: HTMLDivElement;
 
   $effect(() => {
+    // Read so a request to take the keyboard again re-runs this: the
+    // viewer's close leaves the document's focus on nothing.
+    layout.focusRequest;
     if (focused && root && document.activeElement !== root && !root.contains(document.activeElement)) {
       root.focus();
     }

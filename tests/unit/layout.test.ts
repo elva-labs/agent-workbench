@@ -150,10 +150,20 @@ describe("review mode", () => {
     expect(sessionsVisible()).toBe(true);
   });
 
-  it("moves focus to the viewer and back to the agent", () => {
+  it("moves focus to the viewer and leaves it in the tree on exit", () => {
     applyLayout(1600);
     enterReview();
     expect(layout.focus).toBe("changes");
+    const asked = layout.focusRequest;
+    exitReview();
+    expect(layout.focus).toBe("changes");
+    expect(layout.focusRequest).toBe(asked + 1);
+  });
+
+  it("sends focus to the agent on exit when the changes pane is not shown", () => {
+    applyLayout(1600);
+    enterReview();
+    layout.changesChosen = false;
     exitReview();
     expect(layout.focus).toBe("agent");
   });

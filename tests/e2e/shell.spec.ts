@@ -291,6 +291,22 @@ test.describe("the file viewer", () => {
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
+  test("closes on Escape and leaves the keyboard in the tree", async ({ page }) => {
+    await page.locator(TREE).focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("viewer")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("viewer")).toHaveCount(0);
+    await expect(page.locator(TREE)).toBeFocused();
+    // The arrows still walk the tree; nothing went to the agent.
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator(TREE)).toBeFocused();
+  });
+
   test("shows the diff first", async ({ page }) => {
     await row(page, "mod.rs").click();
     const viewer = page.getByTestId("viewer");

@@ -161,4 +161,4 @@ the parent and the first child, and <kbd>Enter</kbd> opens the file under
 the cursor. The cursor is drawn separately from the open file, so you can
 walk the tree without changing what the viewer shows. Escape, the Esc
 button, or a click on the empty part of the tree closes the viewer and
-clears the selection together.
+clears the selection together; the keyboard stays in the tree.
