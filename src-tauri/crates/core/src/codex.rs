@@ -52,8 +52,10 @@ fn open(codex_home: &Path) -> Option<Connection> {
 
 /// A thread as listed. Sessions run non-interactively (`codex exec`) are left
 /// out, as Codex's own picker leaves them out; so are archived ones.
-const LIST: &str = "SELECT id, name, title, first_user_message, updated_at, tokens_used \
-                    FROM threads WHERE cwd = ?1 AND archived = 0 AND source <> 'exec' \
+/// The project's own threads and those run anywhere under it, a worktree
+/// most of all.
+const LIST: &str = "SELECT id, name, title, first_user_message, updated_at, tokens_used, cwd \
+                    FROM threads WHERE (cwd = ?1 OR cwd LIKE ?2) AND archived = 0 AND source <> 'exec' \
                     ORDER BY updated_at DESC";
 
 /// Newest first. A project Codex has never been used in has none.
@@ -64,13 +66,16 @@ pub fn list(codex_home: &Path, project: &Path) -> Vec<Transcript> {
     let Ok(mut statement) = connection.prepare(LIST) else {
         return Vec::new();
     };
-    let cwd = project.to_string_lossy().to_string();
-    let rows = statement.query_map([cwd], |row| {
+    let root = project.to_string_lossy().to_string();
+    let under = format!("{root}/%");
+    let rows = statement.query_map([root.clone(), under], |row| {
+        let cwd: String = row.get(6)?;
         Ok(Transcript {
             id: row.get(0)?,
             title: name_of(row.get(1)?, row.get(2)?, row.get(3)?),
             modified: row.get::<_, i64>(4).map(|s| s.max(0) as u64)?,
             size: row.get::<_, i64>(5).map(|s| s.max(0) as u64)?,
+            cwd: (cwd != root).then_some(cwd),
         })
     });
     match rows {

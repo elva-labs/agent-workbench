@@ -105,10 +105,14 @@ impl Core {
         })
     }
 
+    /// `cwd` is where the agent runs when that is not the project itself:
+    /// a worktree under it that a resumed session belongs to.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
         agent: &str,
         project: &Path,
+        cwd: Option<&Path>,
         session: Option<String>,
         cols: u16,
         rows: u16,
@@ -116,6 +120,7 @@ impl Core {
     ) -> Result<Spawned, String> {
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let environment = env::environment();
+        let project = cwd.unwrap_or(project);
 
         let ctx = LaunchCtx {
             project,

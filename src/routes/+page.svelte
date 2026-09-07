@@ -8,6 +8,8 @@
   import Settings from "$lib/components/Settings.svelte";
   import Remote from "$lib/components/Remote.svelte";
   import { remote } from "$lib/remote.svelte";
+  import Resume from "$lib/components/Resume.svelte";
+  import { resume } from "$lib/resume.svelte";
   import { core } from "$lib/core";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
@@ -309,6 +311,9 @@
 {/if}
 {#if remote.open}
   <Remote />
+{/if}
+{#if resume.open}
+  <Resume />
 {/if}
 
 <footer class="status no-select">

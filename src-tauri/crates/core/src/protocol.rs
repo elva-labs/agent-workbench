@@ -96,6 +96,8 @@ struct SpawnParams {
     agent: String,
     project: PathBuf,
     #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default)]
     session: Option<String>,
     cols: u16,
     rows: u16,
@@ -205,7 +207,15 @@ pub fn dispatch(
         }
         "pty_spawn" => {
             let p: SpawnParams = parse(params)?;
-            value(core.spawn(&p.agent, &p.project, p.session, p.cols, p.rows, make_output)?)
+            value(core.spawn(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                p.session,
+                p.cols,
+                p.rows,
+                make_output,
+            )?)
         }
         "pty_shell" => {
             let p: ShellParams = parse(params)?;

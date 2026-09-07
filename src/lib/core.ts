@@ -30,6 +30,8 @@ export interface DetectReport {
 export interface SpawnOptions {
   agent: AgentId;
   project: string;
+  /** Where to run when that is not the project: a worktree under it. */
+  cwd?: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
   cols: number;
@@ -148,6 +150,9 @@ export interface Transcript {
   size: number;
   /** Absent when the transcript format moved: a missing title, not an error. */
   title: string | null;
+  /** Where the session ran when that is not the project itself: a worktree
+      under it, which is where it resumes. */
+  cwd?: string | null;
 }
 
 export interface HookStatus {

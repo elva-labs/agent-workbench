@@ -955,7 +955,9 @@ test.describe("with codex installed too", () => {
     const fold = page.getByTestId("outside-fold");
     await expect(fold).toHaveText(/1 codex session to resume/);
     await fold.click();
-    await page.getByTestId("outside-session").click();
+    await expect(page.getByTestId("resume-filter")).toBeFocused();
+    await page.getByTestId("resume-row").click();
+    await expect(page.getByTestId("resume")).toHaveCount(0);
     await expect.poll(() => spawns(page)).toHaveLength(1);
     expect((await spawns(page))[0]).toMatchObject({
       agent: "codex",

@@ -23,12 +23,11 @@
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
+  import { openResume } from "$lib/resume.svelte";
+  import { lastSegment } from "$lib/paths";
   import { focusPane, layout } from "$lib/layout.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
-
-  /** Folds of sessions from outside the app that are open, by project and agent. */
-  let unfolded = $state<Record<string, boolean>>({});
 
   /** With more than one agent to run, every row says which it is, and the
       new-session row offers the choice. With one, nothing changes. */
@@ -86,7 +85,7 @@
       for (const transcript of historyFor(path)) {
         out.push({
           id: `past:${transcript.id}`,
-          run: () => resume(path, transcript.id, transcript.agent),
+          run: () => resume(path, transcript.id, transcript.agent, transcript.cwd ?? null),
         });
       }
       if (isReady()) {
@@ -100,16 +99,7 @@
       }
       for (const agent of AGENTS) {
         if (outsideFor(path, agent).length === 0) continue;
-        const fold = `${path}:${agent}`;
-        out.push({ id: `fold:${fold}`, run: () => (unfolded[fold] = !unfolded[fold]) });
-        if (unfolded[fold]) {
-          for (const transcript of outsideFor(path, agent)) {
-            out.push({
-              id: `outside:${transcript.id}`,
-              run: () => resume(path, transcript.id, transcript.agent),
-            });
-          }
-        }
+        out.push({ id: `fold:${path}:${agent}`, run: () => openResume(path, agent) });
       }
     }
     for (const path of notOpen) out.push({ id: `recent:${path}`, run: () => openPath(path) });
@@ -160,8 +150,9 @@
     focusPane("agent");
   }
 
-  function resume(path: string, id: string, agent: AgentId) {
-    create(path, id, agent);
+  /** A past session resumes where it ran: in its worktree when it had one. */
+  function resume(path: string, id: string, agent: AgentId, cwd: string | null = null) {
+    create(path, id, agent, cwd);
     focusPane("agent");
   }
 
@@ -357,13 +348,14 @@
             <button
               class="row past"
               tabindex="-1"
-              onclick={() => resume(project.path, transcript.id, transcript.agent)}
+              onclick={() => resume(project.path, transcript.id, transcript.agent, transcript.cwd ?? null)}
               disabled={!isReady()}
               title={transcript.title ?? transcript.id}
               data-testid="past-session"
             >
               <span class="dot"></span>
               <span class="label">{historyLabel(transcript)}</span>
+              {#if transcript.cwd}<span class="tag where" title={transcript.cwd} data-testid="session-where">{lastSegment(transcript.cwd)}</span>{/if}
               {#if several}<span class="tag">{agentTag(transcript.agent)}</span>{/if}
               <span class="state">{ago(transcript.modified)}</span>
             </button>
@@ -423,8 +415,9 @@
         {/if}
 
         <!-- An agent run in a plain terminal here leaves its sessions in the
-             same place. They are resumable, so they are here, folded by
-             agent, rather than mixed in with what this window started. -->
+             same place. They are resumable, so they are here, one row per
+             agent that opens the list, rather than mixed in with what this
+             window started. -->
         {#each AGENTS as agent (agent)}
           {@const outside = outsideFor(project.path, agent)}
           {@const fold = `${project.path}:${agent}`}
@@ -433,38 +426,18 @@
               class="fold"
               class:cursor={current === `fold:${fold}`}
               tabindex="-1"
-              onclick={() => (unfolded[fold] = !unfolded[fold])}
-              aria-expanded={Boolean(unfolded[fold])}
+              onclick={() => openResume(project.path, agent)}
               data-row="fold:{fold}"
               data-agent={agent}
               data-testid="outside-fold"
             >
-              <span class="chevron" class:open={unfolded[fold]}>▸</span>
+              <span class="chevron">▸</span>
               <span class="fold-text"
                 >{`${outside.length} ${agentTag(agent)} ${outside.length === 1 ? "session" : "sessions"} to resume`}</span
               >
             </button>
-            {#if unfolded[fold]}
-              {#each outside as transcript (transcript.id)}
-                <button
-                  class="row past outside"
-                  class:cursor={current === `outside:${transcript.id}`}
-                  tabindex="-1"
-                  onclick={() => resume(project.path, transcript.id, transcript.agent)}
-                  disabled={!isReady()}
-                  title={transcript.title ?? transcript.id}
-                  data-row="outside:{transcript.id}"
-                  data-testid="outside-session"
-                >
-                  <span class="dot"></span>
-                  <span class="label">{historyLabel(transcript)}</span>
-                  <span class="state">{ago(transcript.modified)}</span>
-                </button>
-              {/each}
-            {/if}
           {/if}
         {/each}
-
       {/if}
     {/each}
   </div>
@@ -727,6 +700,16 @@
     white-space: nowrap;
   }
 
+  /* Where a past session ran, when not in the project itself. */
+  .tag.where {
+    color: var(--accent);
+    border-color: var(--accent-soft);
+    max-width: 10ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .tag {
     flex: none;
     font-size: 9.5px;
@@ -931,17 +914,8 @@
     transition: transform 90ms ease;
   }
 
-  .chevron.open {
-    transform: rotate(90deg);
-  }
 
-  .past.outside {
-    margin-bottom: 2px;
-  }
 
-  .past.outside:last-of-type {
-    margin-bottom: 10px;
-  }
 
 
 

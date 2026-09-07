@@ -85,14 +85,21 @@ it as another live session through the agent's resume command, so a past
 conversation becomes a row like any other and the one you were in keeps
 running.
 
-Ours first, the rest behind a fold. The agent's history holds every session
+Ours first, the rest behind a row. The agent's history holds every session
 run in the project, including ones started from a plain terminal, and months
 of those would bury the app's own. The sessions this app has run are
-remembered by id and listed outright; the others sit behind a single row that
-counts them, per agent, and unfold on click. Resuming one from there adopts
-it. Nothing is deleted or moved, and the split does not survive a wiped
-local storage, which only means everything shows as from outside until it
-is resumed again.
+remembered by id and listed outright; the others sit behind a single row per
+agent that counts them and opens a dialog over them, with a filter that
+takes every word you type against a session's name, its id and the worktree
+it ran in, and Enter or a click on one to resume it. Resuming one adopts it.
+Nothing is deleted or moved, and the split does not survive a wiped local
+storage, which only means everything shows as from outside until it is
+resumed again.
+
+A session run in a directory under the project, a worktree the agent made
+most of all, is filed by the agent under that directory rather than the
+project. Both lists take those in as the project's own, marked with the
+worktree's name, and resuming one starts the agent in that worktree again.
 
 The lists are built on filenames and stat data, not contents: the filename
 is the session id, mtime is recency, size a rough length. Titles are the

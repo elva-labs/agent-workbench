@@ -102,9 +102,11 @@ import {
 } from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
 import { remote, resetRemote } from "$lib/remote.svelte";
+import { offered, pickResume, resetResume, resume } from "$lib/resume.svelte";
 
 beforeEach(() => {
   resetRemote();
+  resetResume();
   layout.sessions = DEFAULT.sessions;
   layout.changes = DEFAULT.changes;
   layout.review = DEFAULT.review;
@@ -278,12 +280,16 @@ describe("SessionsPane", () => {
     expect(screen.queryByTestId("agent-choice")).toBeNull();
     expect(screen.getByTestId("new-session")).toBeInTheDocument();
 
+    // The fold opens the list to resume from, for that agent.
     await fireEvent.click(folds[1]);
-    await fireEvent.click(screen.getByTestId("outside-session"));
+    expect(resume.open).toBe(true);
+    expect(resume.agent).toBe("codex");
+    pickResume(offered()[0]);
     const resumed = sessions.all.at(-1)!;
     expect(resumed.agent).toBe("codex");
     expect(resumed.resumedFrom).toBe("x1");
     expect(resumed.title).toBeNull();
+    expect(resume.open).toBe(false);
   });
 
   it("picks the agent from the keyboard, Enter opening the choice and Escape closing it", async () => {
@@ -412,8 +418,7 @@ describe("SessionsPane", () => {
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("outside-session")).toHaveClass("cursor");
+    expect(resume.open).toBe(true);
   });
 
   // Nothing in the pane needs the mouse: the way in sits on the same
@@ -576,11 +581,10 @@ describe("SessionsPane", () => {
       "2 claude sessions to resume",
     );
     expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId("outside-fold"));
-    expect(screen.getAllByTestId("outside-session")).toHaveLength(2);
-    expect(screen.getByText("from a terminal")).toBeInTheDocument();
+    expect(resume.open).toBe(true);
+    expect(offered().map((entry) => entry.id)).toEqual(["abc-123", "def-456"]);
   });
 
   it("opens a past session as a live one, resumed by id", async () => {
@@ -595,7 +599,7 @@ describe("SessionsPane", () => {
       expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
     );
     await fireEvent.click(screen.getByTestId("outside-fold"));
-    await fireEvent.click(screen.getByTestId("outside-session"));
+    pickResume(offered()[0]);
 
     expect(sessions.all).toHaveLength(1);
     expect(sessions.all[0].resumedFrom).toBe("abc-123");
@@ -613,12 +617,11 @@ describe("SessionsPane", () => {
       expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
     );
     await fireEvent.click(screen.getByTestId("outside-fold"));
-    await fireEvent.click(screen.getByTestId("outside-session"));
+    pickResume(offered()[0]);
 
     await waitFor(() =>
-      expect(screen.queryByTestId("outside-session")).not.toBeInTheDocument(),
+      expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
   });
 
   it("adds another session on request", async () => {

@@ -43,6 +43,9 @@ export interface Session {
   title: string | null;
   /** The directory the process was last seen working in. */
   cwd: string | null;
+  /** Where the agent was started when that is not the project: the
+      worktree a resumed session belongs to. */
+  startIn: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -404,6 +407,7 @@ export function create(
   project: string,
   resumedFrom: string | null = null,
   agent: AgentId = defaultAgent(project),
+  startIn: string | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   prefer(project, agent);
@@ -419,6 +423,7 @@ export function create(
     // A resumed session keeps the name it had until the agent says otherwise.
     title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
     cwd: null,
+    startIn,
     worktree: null,
     working: false,
     unread: false,
@@ -454,6 +459,7 @@ export async function launch(
       {
         agent: session.agent,
         project: session.project,
+        cwd: session.startIn ?? undefined,
         session: session.resumedFrom ?? undefined,
         cols,
         rows,

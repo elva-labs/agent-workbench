@@ -35,6 +35,9 @@ pub struct Transcript {
     /// Absent when the format moved, which is a missing title rather than a
     /// broken pane.
     pub title: Option<String>,
+    /// Where the session ran when that is not the project itself: a worktree
+    /// under it, which is where it resumes.
+    pub cwd: Option<String>,
 }
 
 /// Claude Code's directory name for a project: the working directory path with
@@ -56,21 +59,51 @@ pub fn directory_for(home: &Path, project: &Path) -> PathBuf {
 
 /// Newest first. A project Claude Code has never been used in has none, which
 /// is an empty list rather than an error.
+///
+/// A session started in a directory under the project, a worktree most of
+/// all, is filed by Claude Code under that directory's own name. Those are
+/// the project's sessions too, so every directory whose name begins with
+/// the project's is read, and each transcript in one is kept when it says
+/// it ran under the project: the names alone would take a sibling project
+/// with a longer name for a subdirectory.
 pub fn list(home: &Path, project: &Path) -> Vec<Transcript> {
-    let directory = directory_for(home, project);
-    let Ok(entries) = std::fs::read_dir(&directory) else {
+    let own = mangle(project);
+    let under = format!("{own}-");
+    let Ok(directories) = std::fs::read_dir(home.join(".claude").join("projects")) else {
         return Vec::new();
     };
+    let root = project.to_string_lossy().to_string();
 
-    let mut transcripts: Vec<Transcript> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
-        .filter_map(|entry| {
+    let mut transcripts: Vec<Transcript> = Vec::new();
+    for directory in directories.filter_map(Result::ok) {
+        let name = directory.file_name().to_string_lossy().to_string();
+        let exact = name == own;
+        if !exact && !name.starts_with(&under) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(directory.path()) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            let id = path.file_stem()?.to_string_lossy().to_string();
-            let meta = entry.metadata().ok()?;
-
-            Some(Transcript {
+            if !path.extension().is_some_and(|ext| ext == "jsonl") {
+                continue;
+            }
+            let Some(id) = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+            else {
+                continue;
+            };
+            let Ok(meta) = entry.metadata() else { continue };
+            let cwd = read_cwd(&path);
+            let inside = cwd
+                .as_deref()
+                .is_some_and(|cwd| cwd == root || cwd.starts_with(&format!("{root}/")));
+            if !exact && !inside {
+                continue;
+            }
+            transcripts.push(Transcript {
                 id,
                 modified: meta
                     .modified()
@@ -80,12 +113,22 @@ pub fn list(home: &Path, project: &Path) -> Vec<Transcript> {
                     .unwrap_or(0),
                 size: meta.len(),
                 title: read_title(&path),
-            })
-        })
-        .collect();
+                cwd: cwd.filter(|cwd| cwd != &root),
+            });
+        }
+    }
 
     transcripts.sort_by_key(|transcript| std::cmp::Reverse(transcript.modified));
     transcripts
+}
+
+/// Where the session ran, from the first line that says.
+fn read_cwd(path: &Path) -> Option<String> {
+    let head = read_head(path)?;
+    head.lines().find_map(|line| {
+        let value: serde_json::Value = serde_json::from_str(line).ok()?;
+        value.get("cwd")?.as_str().map(str::to_string)
+    })
 }
 
 /// Everything below here is the part that can break on any release.
@@ -280,6 +323,46 @@ mod tests {
     fn a_project_with_no_history_has_no_sessions() {
         let home = home("empty");
         assert!(list(&home, Path::new("/home/ada/dev/never-used")).is_empty());
+    }
+
+    // A worktree's sessions belong to the project it is under, and say
+    // where they ran; a sibling project with a longer name is not one.
+    #[test]
+    fn lists_sessions_from_worktrees_under_the_project() {
+        let home = home("worktrees");
+        let project = Path::new("/home/ada/dev/demo");
+        let worktree = Path::new("/home/ada/dev/demo/.claude/worktrees/gerrit");
+        let sibling = Path::new("/home/ada/dev/demo-v2");
+        write_transcript(
+            &home,
+            project,
+            "own",
+            r#"{"cwd":"/home/ada/dev/demo","type":"user"}"#,
+        );
+        write_transcript(
+            &home,
+            worktree,
+            "tree",
+            r#"{"cwd":"/home/ada/dev/demo/.claude/worktrees/gerrit","type":"user"}"#,
+        );
+        write_transcript(
+            &home,
+            sibling,
+            "other",
+            r#"{"cwd":"/home/ada/dev/demo-v2","type":"user"}"#,
+        );
+
+        let found = list(&home, project);
+        let mut ids: Vec<&str> = found.iter().map(|t| t.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["own", "tree"]);
+        let tree = found.iter().find(|t| t.id == "tree").unwrap();
+        assert_eq!(
+            tree.cwd.as_deref(),
+            Some("/home/ada/dev/demo/.claude/worktrees/gerrit")
+        );
+        let own = found.iter().find(|t| t.id == "own").unwrap();
+        assert_eq!(own.cwd, None);
     }
 
     #[test]

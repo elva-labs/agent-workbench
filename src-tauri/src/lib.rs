@@ -95,6 +95,7 @@ async fn pty_spawn(
     remotes: State<'_, Arc<Remotes>>,
     agent: String,
     project: String,
+    cwd: Option<String>,
     session: Option<String>,
     cols: u16,
     rows: u16,
@@ -102,18 +103,30 @@ async fn pty_spawn(
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
+    // A working directory is on the project's machine, with or without the
+    // host on it.
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
     blocking(move || match route(&project) {
         Route::Local(project) => {
-            let spawned = core.spawn(&agent, Path::new(&project), session, cols, rows, |_| {
-                to_channel(on_output)
-            })?;
+            let spawned = core.spawn(
+                &agent,
+                Path::new(&project),
+                cwd.as_deref().map(Path::new),
+                session,
+                cols,
+                rows,
+                |_| to_channel(on_output),
+            )?;
             value(spawned)
         }
         Route::Remote { host, rest } => {
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "session": session, "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));
