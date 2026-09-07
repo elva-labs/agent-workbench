@@ -34,9 +34,11 @@ The bundles are unsigned until the repository has the secrets for it.
 Unsigned still works: macOS asks the user to clear the quarantine flag or
 right-click and open the first time, and Windows shows a SmartScreen warning.
 
-- **macOS**: `APPLE_CERTIFICATE` (the Developer ID Application certificate,
-  base64), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, and for
-  notarization `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password) and
-  `APPLE_TEAM_ID`. The workflow passes them through when they exist.
+- **macOS**: `MACOS_CERTIFICATE` (the Developer ID Application certificate
+  as a base64 `.p12`), `MACOS_CERTIFICATE_PASSWORD` and `MACOS_SIGN_IDENTITY`
+  sign the app; `NOTARY_KEY` (an App Store Connect API key, base64),
+  `NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` notarize it. These are the
+  organisation's secrets, shared with its other apps. With the certificate
+  alone the app is signed but not notarized.
 - **Windows**: a code-signing certificate through the Tauri bundle
   configuration or Azure Trusted Signing. Not wired yet.

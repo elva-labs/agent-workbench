@@ -143,23 +143,42 @@ jobs:
       # Builds the frontend, the core and the bundles, and attaches them to a
       # draft release for the tag. Two copies of the step: the bundler takes
       # an empty APPLE_CERTIFICATE as one to import, so the signing variables
-      # are only present at all when the secret is.
+      # are only present at all when the secret is. The secrets are the
+      # organisation's: a Developer ID certificate, and an App Store Connect
+      # API key for notarization.
       - name: Whether there is a signing certificate
         id: signing
         shell: bash
-        run: echo "apple=${{ secrets.APPLE_CERTIFICATE != '' }}" >> "$GITHUB_OUTPUT"
+        run: echo "apple=${{ secrets.MACOS_CERTIFICATE != '' }}" >> "$GITHUB_OUTPUT"
+
+      # The bundler reads the notarization key from a file. The variables
+      # are exported only when the key is there, so a certificate on its
+      # own signs without notarizing rather than failing.
+      - name: Notarization key
+        if: runner.os == 'macOS' && steps.signing.outputs.apple == 'true'
+        shell: bash
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          if [[ -n "$NOTARY_KEY" ]]; then
+            echo "$NOTARY_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+            {
+              echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notary.p8"
+              echo "APPLE_API_KEY=$NOTARY_KEY_ID"
+              echo "APPLE_API_ISSUER=$NOTARY_ISSUER_ID"
+            } >> "$GITHUB_ENV"
+          fi
 
       - name: Build and attach (signed)
         if: steps.signing.outputs.apple == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('Agent Workbench {0}', github.ref_name) || '' }}
