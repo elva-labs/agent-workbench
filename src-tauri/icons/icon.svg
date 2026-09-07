@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="#121416"/>
+  <g clip-path="url(#tile)">
+    <!-- the head, in shadow under the brim -->
+    <path fill="#1e2226" d="M 396 470 L 628 470 L 628 640 Q 628 720 512 720 Q 396 720 396 640 Z"/>
+    <!-- coat: upturned collar, two lapels meeting at the throat -->
+    <path fill="#ece7da" d="M 110 924 C 190 820 270 700 306 590 L 512 742 L 512 924 Z"/>
+    <path fill="#ece7da" d="M 914 924 C 834 820 754 700 718 590 L 512 742 L 512 924 Z"/>
+    <path fill="#121416" d="M 448 924 L 512 774 L 576 924 Z"/>
+    <!-- lapel folds -->
+    <path fill="#121416" opacity="0.18" d="M 306 590 L 512 742 L 512 790 L 340 640 Z"/>
+    <path fill="#121416" opacity="0.18" d="M 718 590 L 512 742 L 512 790 L 684 640 Z"/>
+    <!-- hat: pinched crown -->
+    <path fill="#ece7da" d="M 338 462 C 352 380 372 300 388 258 C 430 232 470 226 512 246 C 554 226 594 232 636 258 C 652 300 672 380 686 462 Z"/>
+    <!-- hat: band -->
+    <path fill="#121416" d="M 344 420 L 680 420 L 686 462 L 338 462 Z"/>
+    <!-- hat: brim, snapped down at the front -->
+    <path fill="#ece7da" d="M 196 466 C 300 404 570 378 838 442 C 700 530 380 548 196 466 Z"/>
+    <!-- the eyes, lit under the brim -->
+    <rect x="410" y="556" width="84" height="22" rx="11" fill="#58c0b4"/>
+    <rect x="530" y="556" width="84" height="22" rx="11" fill="#58c0b4"/>
+  </g>
+</svg>
