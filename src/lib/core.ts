@@ -71,7 +71,14 @@ export interface ShellOptions {
     or set up by the app itself. */
 export interface RemoteHosts {
   configured: string[];
-  saved: { host: string; user: string; target: string }[];
+  /** Paired machines: named by the token, reached at the address it carried. */
+  saved: {
+    name: string;
+    host: string;
+    user: string;
+    port: number;
+    target: string;
+  }[];
 }
 
 /** Directories under a path on a machine, each with the host on, so any
@@ -175,9 +182,15 @@ export interface Core {
   openAppMenu(): Promise<void>;
   /** A count on the app's icon, or none. Sessions waiting for the user. */
   setBadge(count: number | null): Promise<void>;
-  spawn(options: SpawnOptions, onOutput: (bytes: Uint8Array) => void): Promise<Spawned>;
+  spawn(
+    options: SpawnOptions,
+    onOutput: (bytes: Uint8Array) => void,
+  ): Promise<Spawned>;
   /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
-  spawnShell(options: ShellOptions, onOutput: (bytes: Uint8Array) => void): Promise<string>;
+  spawnShell(
+    options: ShellOptions,
+    onOutput: (bytes: Uint8Array) => void,
+  ): Promise<string>;
   write(id: string, data: string): Promise<void>;
   resize(id: string, cols: number, rows: number): Promise<void>;
   kill(id: string): Promise<void>;
@@ -185,7 +198,9 @@ export interface Core {
   ptyCwd(id: string): Promise<string | null>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
   /** An agent that mints its own ids has written one down for a session. */
-  onSessionIdentified(handler: (identified: SessionIdentified) => void): Promise<() => void>;
+  onSessionIdentified(
+    handler: (identified: SessionIdentified) => void,
+  ): Promise<() => void>;
   /** A session hook fired, for projects with the hooks installed. */
   onSessionEvent(handler: (event: SessionEvent) => void): Promise<() => void>;
   /** Files dragged over and dropped on the window. The webview never gets
@@ -207,7 +222,11 @@ export interface Core {
   gitStatus(root: string): Promise<ChangedFile[]>;
   gitFiles(root: string): Promise<string[]>;
   /** Lines matching a query, in the changed files or in every file listed. */
-  gitGrep(root: string, query: string, scope: "changed" | "all"): Promise<GrepResult>;
+  gitGrep(
+    root: string,
+    query: string,
+    scope: "changed" | "all",
+  ): Promise<GrepResult>;
   gitDiff(root: string, file: string): Promise<FileDiff>;
   gitContent(root: string, file: string): Promise<FileContent>;
   /** Starts watching a worktree, replacing whatever was watched before. */
@@ -216,12 +235,10 @@ export interface Core {
 
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
-  /** What a machine identifies itself as, to trust before a password goes there. */
-  remoteFingerprint(host: string): Promise<string>;
   /** Opens the connection to a target, putting the daemon there first if it is missing. */
   remoteConnect(target: string): Promise<{ host: string; version: string }>;
-  /** Installs the app's key over a password given once, then connects. */
-  remoteSetup(host: string, user: string, password: string): Promise<{ host: string; version: string }>;
+  /** Takes in the token the daemon printed on a machine, then connects. */
+  remotePair(token: string): Promise<{ host: string; version: string }>;
   /** Directories under a path on the target, or under its home for "". */
   remoteDirs(target: string, path: string): Promise<RemoteDirs>;
   remoteDisconnect(target: string): Promise<void>;
@@ -254,7 +271,11 @@ const tauriCore: Core = {
   detect: (agent) => invoke<DetectReport>("agent_detect", { id: agent }),
 
   async pickProject() {
-    const chosen = await openDialog({ directory: true, multiple: false, title: "Open project" });
+    const chosen = await openDialog({
+      directory: true,
+      multiple: false,
+      title: "Open project",
+    });
     return typeof chosen === "string" ? chosen : null;
   },
 
@@ -297,15 +318,21 @@ const tauriCore: Core = {
   ptyCwd: (id) => invoke<string | null>("pty_cwd", { id }),
 
   async onSessionEnded(handler) {
-    return listen<SessionEnded>("session_ended", (event) => handler(event.payload));
+    return listen<SessionEnded>("session_ended", (event) =>
+      handler(event.payload),
+    );
   },
 
   async onSessionIdentified(handler) {
-    return listen<SessionIdentified>("session_identified", (event) => handler(event.payload));
+    return listen<SessionIdentified>("session_identified", (event) =>
+      handler(event.payload),
+    );
   },
 
   async onSessionEvent(handler) {
-    return listen<SessionEvent>("session_event", (event) => handler(event.payload));
+    return listen<SessionEvent>("session_event", (event) =>
+      handler(event.payload),
+    );
   },
 
   async onOpenSettings(handler) {
@@ -323,13 +350,16 @@ const tauriCore: Core = {
       const scale = window.devicePixelRatio || 1;
       const x = drag.position.x / scale;
       const y = drag.position.y / scale;
-      if (drag.type === "drop") handler({ type: "drop", paths: drag.paths, x, y });
+      if (drag.type === "drop")
+        handler({ type: "drop", paths: drag.paths, x, y });
       else handler({ type: "over", x, y });
     });
   },
 
-  transcripts: (project, agent) => invoke<Transcript[]>("sessions_list", { project, agent }),
-  sessionTitle: (agent, id) => invoke<string | null>("session_title", { agent, id }),
+  transcripts: (project, agent) =>
+    invoke<Transcript[]>("sessions_list", { project, agent }),
+  sessionTitle: (agent, id) =>
+    invoke<string | null>("session_title", { agent, id }),
 
   hookStatus: (project) => invoke<HookStatus>("hook_status", { project }),
   hookInstall: (project) => invoke<HookStatus>("hook_install", { project }),
@@ -337,9 +367,11 @@ const tauriCore: Core = {
 
   gitStatus: (root) => invoke<ChangedFile[]>("git_status", { root }),
   gitFiles: (root) => invoke<string[]>("git_files", { root }),
-  gitGrep: (root, query, scope) => invoke<GrepResult>("git_grep", { root, query, scope }),
+  gitGrep: (root, query, scope) =>
+    invoke<GrepResult>("git_grep", { root, query, scope }),
   gitDiff: (root, file) => invoke<FileDiff>("git_diff", { root, file }),
-  gitContent: (root, file) => invoke<FileContent>("git_content", { root, file }),
+  gitContent: (root, file) =>
+    invoke<FileContent>("git_content", { root, file }),
   gitWatch: (root) => invoke("git_watch", { root }),
 
   async onGitChanged(handler) {
@@ -347,15 +379,17 @@ const tauriCore: Core = {
   },
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
-  remoteFingerprint: (host) => invoke<string>("remote_fingerprint", { host }),
-  remoteConnect: (host) => invoke<{ host: string; version: string }>("remote_connect", { host }),
-  remoteSetup: (host, user, password) =>
-    invoke<{ host: string; version: string }>("remote_setup", { host, user, password }),
+  remoteConnect: (host) =>
+    invoke<{ host: string; version: string }>("remote_connect", { host }),
+  remotePair: (token) =>
+    invoke<{ host: string; version: string }>("remote_pair", { token }),
   remoteDirs: (host, path) => invoke<RemoteDirs>("remote_dirs", { host, path }),
   remoteDisconnect: (host) => invoke<void>("remote_disconnect", { host }),
   remoteForget: (target) => invoke<void>("remote_forget", { target }),
   async onRemoteClosed(handler) {
-    return listen<RemoteClosed>("remote_closed", (event) => handler(event.payload));
+    return listen<RemoteClosed>("remote_closed", (event) =>
+      handler(event.payload),
+    );
   },
 };
 
@@ -439,13 +473,10 @@ const detachedCore: Core = {
   async remoteHosts() {
     return { configured: [], saved: [] };
   },
-  async remoteFingerprint() {
-    throw new Error("no core to reach a machine with");
-  },
   async remoteConnect() {
     throw new Error("no core to reach a machine with");
   },
-  async remoteSetup() {
+  async remotePair() {
     throw new Error("no core to reach a machine with");
   },
   async remoteDirs() {

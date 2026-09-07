@@ -34,37 +34,53 @@ watching, is asked of every open connection.
 
 ## Getting onto a machine
 
-Three doors, in the order the dialog tries them.
+Two doors.
 
-1. **A host the user's own ssh reaches.** Nothing to set up: the app runs the
-   user's ssh client with the user's login environment, so agent keys,
-   hardware keys, jump hosts and the ssh configuration all apply, and the
-   configuration's host names are offered as suggestions.
-2. **A host with only a password.** The app makes itself an ed25519 key with
-   `ssh-keygen` the first time it needs one and installs the public half over
-   the password, once. The password reaches ssh through the app itself as its
-   askpass program and a file only this user can read, gone again after.
-   Before anything goes to the machine, what it identifies itself as is shown
-   for the user to trust. Machines set up this way are remembered and reached
-   with that key and the app's own known hosts; any other host is the user's
-   ssh configuration's business, with new host keys accepted and changed ones
-   refused.
-3. **No ssh at all** is not built. A pairing code and a relay would be the
-   shape of it.
+**A token from the machine.** Install the daemon there and run
+`agent-workbench-remote connect`. It makes a key pair, authorises the public
+half in the user's `authorized_keys` restricted to running the daemon and
+nothing else, no shell, no forwarding, and prints a token holding the
+private half, the machine's name and address, the user, and the machine's
+own host key. Pasted into the desktop under Remote, that is everything:
+the key goes to a file only this user can read, the host key to the app's
+own known hosts, and the connection opens. When the machine's own name is
+not one the desktop can resolve, `connect --host <address>` says where to
+reach it instead; `--port` likewise. The token is a credential: whoever
+has it can run the daemon on that machine as that user. To take it back,
+remove the `agent-workbench` line from `authorized_keys` there.
+
+**A host the user's own ssh reaches.** Named as it would be on the command
+line, `name` or `user@name`. The app runs the user's ssh client with the
+user's login environment, so agent keys, hardware keys, jump hosts and the
+ssh configuration all apply, the configuration's host names are offered as
+suggestions, and the daemon is put on the machine over the same connection
+when it is missing or old, from the builds the app carries.
 
 Every destination is checked to be a name and never a flag, since ssh reads
 an argument starting with `-` as an option and an option can name a command
 to run.
 
-## Putting the daemon there
+## A machine is its host key
 
-Opening a connection first asks the machine whether it has the daemon at this
-app's version, and when it does not, sends the build for what `uname -sm`
-reports and installs it under the user's home there over the same
-connection. Every app carries builds for Linux x86_64 and aarch64 and both
-macOS architectures; a developer can name another build with
-`WORKBENCH_REMOTE_BIN`. A machine of any other kind gets an error saying
-which build it would need.
+A paired machine is known by its host key. Its name is what every project
+path carries, `ssh://ada@lab/home/ada/repo`, and never changes; its address
+and port are kept beside it and are what ssh is told to reach, with the host
+key checked under the name whatever the address. When the address changes,
+running `connect` on the machine again and pasting the new token is the
+whole of it: the desktop recognises the host key, keeps the name, and takes
+the new address and key, so every open project on it keeps working. Two
+different machines with the same name get a suffix on the second.
+
+## Installing the daemon on a machine
+
+```
+curl -fsSL https://raw.githubusercontent.com/ganhammar/agent-workbench/main/scripts/install-remote.sh | sh
+```
+
+puts the build for the machine under `~/.agent-workbench/bin`. Each release
+carries the builds as assets, for Linux x86_64 and aarch64 and both macOS
+architectures. The desktop refuses a daemon at another version than its
+own and says so, since the two speak the same protocol only when they match.
 
 ## What is not there yet
 
@@ -72,8 +88,8 @@ which build it would need.
   agents installed on this machine; an agent missing on the remote fails when
   it starts, in the terminal.
 - Files dropped on a remote session's terminal type this machine's paths.
-- Windows remotes are untried. The daemon builds there, but the install step
-  speaks to a POSIX shell.
+- Windows remotes are untried. The daemon builds there, but `connect` and
+  the install step speak to a POSIX shell.
 
 ## Trying it without a second machine
 

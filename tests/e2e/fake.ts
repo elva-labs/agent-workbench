@@ -11,7 +11,13 @@ import type { Page } from "@playwright/test";
 export const PROJECT = "/home/ada/dev/demo";
 
 export interface GitFixture {
-  status: { path: string; status: string; add: number; del: number; binary: boolean }[];
+  status: {
+    path: string;
+    status: string;
+    add: number;
+    del: number;
+    binary: boolean;
+  }[];
   files: string[];
 }
 
@@ -52,7 +58,7 @@ export async function installFakeCore(
     ({ open, fixture }) => {
       const state = { fixture, changed: null as unknown };
       (window as unknown as Record<string, unknown>).__fixture = state;
-      const remotes = { authorized: new Set(["box", "ada@box"]) };
+      const remotes = { reachable: new Set(["lab", "ada@lab"]) };
 
       if (open.length > 0) {
         localStorage.setItem(
@@ -64,7 +70,9 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
-      (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+      (
+        window as unknown as { __WORKBENCH_CORE__: unknown }
+      ).__WORKBENCH_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
           path: agent === "claude-code" ? "/usr/local/bin/claude" : null,
@@ -102,35 +110,45 @@ export async function installFakeCore(
         onSessionIdentified: async () => () => {},
         onSessionEvent: async () => () => {},
 
-        // Two machines: `box`, which the user's own ssh setup reaches, and
-        // `lab`, which wants the app's key put on over a password first.
-        remoteHosts: async () => ({ configured: ["box", "lab"], saved: [] }),
-        remoteFingerprint: async (host: string) => `256 SHA256:Ab12Cd34Ef56 ${host} (ED25519)`,
+        // Two ways in: `lab`, which the user's own ssh setup reaches, and a
+        // token from a machine's `agent-workbench-remote connect`.
+        remoteHosts: async () => ({ configured: ["lab", "work"], saved: [] }),
         remoteConnect: async (target: string) => {
-          if (!remotes.authorized.has(target)) {
-            throw new Error(`${target}: Permission denied (publickey,password).`);
+          if (!remotes.reachable.has(target)) {
+            throw new Error(
+              `ssh: Could not resolve hostname ${target}: Name or service not known`,
+            );
           }
           return { host: target, version: "0.1.0" };
         },
-        remoteSetup: async (host: string, user: string, password: string) => {
-          if (password !== "hunter2") throw new Error("the password was not accepted");
-          const target = `${user}@${host}`;
-          remotes.authorized.add(target);
-          return { host: target, version: "0.1.0" };
+        remotePair: async (token: string) => {
+          if (token !== "awb1.demo")
+            throw new Error("the token is not whole; copy all of it");
+          remotes.reachable.add("ada@lab.example");
+          return { host: "ada@lab.example", version: "0.1.0" };
         },
         remoteDirs: async (target: string, path: string) => {
           const base = path === "" ? `ssh://${target}/home/ada` : path;
-          const names = base.endsWith("/home/ada") ? ["dev", "notes"] : base.endsWith("/dev") ? ["demo", "tools"] : [];
-          return { path: base, dirs: names.map((name) => ({ name, path: `${base}/${name}` })) };
+          const names = base.endsWith("/home/ada")
+            ? ["dev", "notes"]
+            : base.endsWith("/dev")
+              ? ["demo", "tools"]
+              : [];
+          return {
+            path: base,
+            dirs: names.map((name) => ({ name, path: `${base}/${name}` })),
+          };
         },
         remoteDisconnect: async () => {},
         remoteForget: async () => {},
         onRemoteClosed: async (handler: (closed: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__remoteClosed = handler;
+          (window as unknown as Record<string, unknown>).__remoteClosed =
+            handler;
           return () => {};
         },
         onOpenSettings: async (handler: () => void) => {
-          (window as unknown as Record<string, unknown>).__openSettings = handler;
+          (window as unknown as Record<string, unknown>).__openSettings =
+            handler;
           return () => {};
         },
         onFileDrag: async (handler: (drag: unknown) => void) => {
@@ -140,22 +158,44 @@ export async function installFakeCore(
 
         transcripts: async () => [],
         sessionTitle: async () => null,
-        hookStatus: async () => ({ installed: false, settings: "", events: "" }),
-        hookInstall: async () => ({ installed: true, settings: "", events: "" }),
-        hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
+        hookStatus: async () => ({
+          installed: false,
+          settings: "",
+          events: "",
+        }),
+        hookInstall: async () => ({
+          installed: true,
+          settings: "",
+          events: "",
+        }),
+        hookUninstall: async () => ({
+          installed: false,
+          settings: "",
+          events: "",
+        }),
         gitStatus: async () => state.fixture.status,
         gitFiles: async () => state.fixture.files,
         // A search over what the fixture's viewer shows: every listed file
         // "contains" the shared header line, and the cache module a struct.
         gitGrep: async (_root: string, query: string, scope: string) => {
           const q = query.toLowerCase();
-          const paths = scope === "changed" ? state.fixture.status.map((f) => f.path) : state.fixture.files;
+          const paths =
+            scope === "changed"
+              ? state.fixture.status.map((f) => f.path)
+              : state.fixture.files;
           const hits: { path: string; line: number; text: string }[] = [];
           for (const path of paths) {
             if ("use std::collections::hashmap;".includes(q)) {
-              hits.push({ path, line: 1, text: "use std::collections::HashMap;" });
+              hits.push({
+                path,
+                line: 1,
+                text: "use std::collections::HashMap;",
+              });
             }
-            if (path === "src/cache/mod.rs" && "pub struct cache {".includes(q)) {
+            if (
+              path === "src/cache/mod.rs" &&
+              "pub struct cache {".includes(q)
+            ) {
               hits.push({ path, line: 3, text: "pub struct Cache {" });
             }
           }
@@ -164,7 +204,12 @@ export async function installFakeCore(
         gitDiff: async (_root: string, file: string) => ({
           lines: [
             { kind: "hunk", text: "@@ -1,9 +1,12 @@", old: null, new: null },
-            { kind: "ctx", text: "use std::collections::HashMap;", old: 1, new: 1 },
+            {
+              kind: "ctx",
+              text: "use std::collections::HashMap;",
+              old: 1,
+              new: 1,
+            },
             { kind: "del", text: "pub struct TokenCache {", old: 4, new: null },
             { kind: "add", text: "pub struct Cache {", old: null, new: 5 },
             { kind: "add", text: `// ${file}`, old: null, new: 6 },
@@ -184,6 +229,9 @@ export async function installFakeCore(
         },
       };
     },
-    { open: options.open ?? [PROJECT], fixture: options.fixture ?? DEFAULT_FIXTURE },
+    {
+      open: options.open ?? [PROJECT],
+      fixture: options.fixture ?? DEFAULT_FIXTURE,
+    },
   );
 }

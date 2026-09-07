@@ -80,13 +80,57 @@ fn serve() {
     }
 }
 
+/// `connect [--host <address>] [--port <n>]`: pairs this machine with a
+/// desktop by printing a token to paste there.
+fn connect(args: impl Iterator<Item = String>) {
+    let mut host = None;
+    let mut port = 22u16;
+    let mut args = args.peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--host" => host = args.next(),
+            "--port" => {
+                port = match args.next().and_then(|p| p.parse().ok()) {
+                    Some(port) => port,
+                    None => {
+                        eprintln!("--port takes a number");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            other => {
+                eprintln!("connect does not take {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+    let Some(home) = workbench_core::api::home_directory() else {
+        eprintln!("no home directory");
+        std::process::exit(1);
+    };
+    match workbench_core::pair::connect(&home, &workbench_core::pair::own_path(), host, port) {
+        Ok(token) => {
+            println!("Paste this into Agent Workbench, under Remote:");
+            println!();
+            println!("{token}");
+            println!();
+            println!("It holds a key that can run this daemon here and nothing else. To take it back, remove the agent-workbench line from ~/.ssh/authorized_keys.");
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("serve") => serve(),
+        Some("connect") => connect(args),
         Some("--version" | "version") => println!("{}", env!("CARGO_PKG_VERSION")),
         _ => {
-            eprintln!("usage: agent-workbench-remote serve | version");
+            eprintln!("usage: agent-workbench-remote serve | connect [--host <address>] [--port <n>] | version");
             std::process::exit(2);
         }
     }

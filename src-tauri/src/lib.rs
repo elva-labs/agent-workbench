@@ -13,8 +13,6 @@ mod menu;
 pub mod remote;
 pub mod ssh;
 
-pub use ssh::{askpass, ASKPASS_FLAG};
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -506,7 +504,7 @@ async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String>
             .saved()
             .into_iter()
             .map(
-                |saved| json!({ "host": saved.host, "user": saved.user, "target": saved.target() }),
+                |saved| json!({ "name": saved.name, "host": saved.host, "user": saved.user, "port": saved.port, "target": saved.target() }),
             )
             .collect();
         Ok(json!({
@@ -517,31 +515,15 @@ async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String>
     .await
 }
 
-/// What the machine identifies itself as, for the user to trust before a
-/// password goes anywhere near it.
+/// Takes in the token `agent-workbench-remote connect` printed on a
+/// machine: keeps its key and host key, remembers the machine, and opens
+/// the connection. Gives back the target that names the machine in paths.
 #[tauri::command]
-async fn remote_fingerprint(host: String) -> Result<String, String> {
-    blocking(move || ssh::fingerprint(&host)).await
-}
-
-/// Sets a machine up from a password given once: the app's key goes on,
-/// the machine is remembered, the daemon is put there, and the connection
-/// opens. Gives back the target that names the machine in paths.
-#[tauri::command]
-async fn remote_setup(
-    remotes: State<'_, Arc<Remotes>>,
-    host: String,
-    user: String,
-    password: String,
-) -> Result<Value, String> {
+async fn remote_pair(remotes: State<'_, Arc<Remotes>>, token: String) -> Result<Value, String> {
     let remotes = Arc::clone(&remotes);
     blocking(move || {
-        let files = remotes.files()?;
-        let saved = ssh::Saved::new(&host, &user)?;
-        ssh::install_key(&files, &saved, &password)?;
-        files.save(saved.clone())?;
-        let target = saved.target();
-        remotes.connect(&target)
+        let saved = remotes.files()?.pair(&token)?;
+        remotes.connect(&saved.target())
     })
     .await
 }
@@ -641,8 +623,7 @@ pub fn run() {
             remote_disconnect,
             remote_dirs,
             remote_hosts,
-            remote_fingerprint,
-            remote_setup,
+            remote_pair,
             remote_forget,
             menu::app_menu
         ])

@@ -15,6 +15,7 @@ pub mod env;
 pub mod events;
 pub mod git;
 pub mod hook;
+pub mod pair;
 pub mod project;
 pub mod protocol;
 pub mod pty;

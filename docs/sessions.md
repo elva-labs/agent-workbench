@@ -30,18 +30,20 @@ to another project brings that project forward.
 A row says what its agent is doing. Read off the pty, an agent at work
 streams and an agent waiting shows a still screen, so more than a redraw's
 worth of bytes in a second is **working**, with the dot breathing, and two
-seconds of quiet after that is waiting. A session that goes quiet, ends, or
-rings for attention while nobody is looking at it is **unread**: the accent
-dot, the name in ink, `waiting for you` in its row and in the agent pane, a
-count in the status bar, and the same count on the app's icon. Having it on
+seconds of quiet after that is waiting. The dot is the whole of it on the
+row, with the words on hover and for a screen reader; the agent pane's
+header spells the state out. A session that goes quiet, ends, or rings for
+attention while nobody is looking at it is **unread**: the accent dot, the
+name in ink, `waiting for you` in the agent pane, a count in the status bar,
+and the same count on the app's icon. Having it on
 screen in a focused window reads it. Attention comes through the pty for
 both agents, as the bell or a terminal notification, with nothing installed.
 
 With the project's hooks on (Live updates, in the settings) the transitions
 are exact instead. Both agents' prompt, stop and permission hooks append to
 a log the core tails, and from the first line a session's row follows the
-hooks: `working` from the prompt, `needs permission` while the agent asks,
-with a hollow ring on the dot, `waiting for you` from the stop. The pty
+hooks: working from the prompt, needs permission while the agent asks,
+with a hollow ring on the dot, waiting for you from the stop. The pty
 heuristic stands down for that session, except that output after a
 permission prompt means it was granted and the agent went on.
 

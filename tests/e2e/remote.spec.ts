@@ -2,9 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { installFakeCore } from "./fake";
 
 /**
- * A project on another machine. The fake core plays two machines: `box`,
- * which the user's own ssh setup already reaches, and `lab`, which does not
- * know the app yet and wants a password once.
+ * A project on another machine. The fake core plays two ways in: `lab`,
+ * which the user's own ssh setup already reaches, and a token from a
+ * machine's `agent-workbench-remote connect`.
  */
 
 const SESSIONS = "section[data-pane='sessions']";
@@ -17,89 +17,76 @@ async function open(page: Page) {
 }
 
 test.describe("a remote project", () => {
-  test("connects to a machine the ssh setup knows and opens a folder there", async ({
-    page,
-  }) => {
+  test("pairs by a pasted token and opens a folder there", async ({ page }) => {
     await open(page);
-    const host = page.getByTestId("remote-host");
-    await expect(host).toBeFocused();
-    await host.fill("box");
-    await page.getByTestId("remote-connect").click();
+    const token = page.getByTestId("remote-token");
+    await expect(token).toBeFocused();
+    await token.fill("awb1.demo");
+    await page.getByTestId("remote-pair").click();
 
-    // Its home, then down into a folder, and up again.
+    await expect(page.getByTestId("remote").locator("h2")).toHaveText(
+      "On ada@lab.example",
+    );
     await expect(page.getByTestId("remote-path")).toHaveText("/home/ada");
     await expect(page.getByTestId("remote-dir")).toHaveText(["dev", "notes"]);
     await page.getByTestId("remote-dir").filter({ hasText: "dev" }).click();
-    await expect(page.getByTestId("remote-path")).toHaveText("/home/ada/dev");
-    await expect(page.getByTestId("remote-dir")).toHaveText(["demo", "tools"]);
-    await page.getByTestId("remote-up").click();
-    await expect(page.getByTestId("remote-path")).toHaveText("/home/ada");
-    await page.getByTestId("remote-dir").filter({ hasText: "dev" }).click();
     await page.getByTestId("remote-dir").filter({ hasText: "demo" }).click();
-    await expect(page.getByTestId("remote-dir")).toHaveCount(0);
     await page.getByTestId("remote-open").click();
 
-    // Open like any project, and marked with where it is.
     await expect(page.getByTestId("remote")).toHaveCount(0);
     await expect(page.locator(SESSIONS)).toContainText("demo");
-    await expect(page.getByTestId("project-host")).toHaveText("box");
+    await expect(page.getByTestId("project-host")).toHaveText(
+      "ada@lab.example",
+    );
     const stored = await page.evaluate(() =>
       localStorage.getItem("workbench.workspace"),
     );
-    expect(stored).toContain("ssh://box/home/ada/dev/demo");
+    expect(stored).toContain("ssh://ada@lab.example/home/ada/dev/demo");
   });
 
-  test("sets a machine up with a password once, showing what it identifies as", async ({
+  test("says what is wrong with a token, before and after sending it", async ({
+    page,
+  }) => {
+    await open(page);
+    await page.getByTestId("remote-pair").click();
+    await expect(page.getByTestId("remote-error")).toHaveText(
+      "Paste what the machine printed.",
+    );
+    await page.getByTestId("remote-token").fill("not a token");
+    await page.getByTestId("remote-pair").click();
+    await expect(page.getByTestId("remote-error")).toContainText("not a token");
+    await page.getByTestId("remote-token").fill("awb1.cutoff");
+    await page.getByTestId("remote-pair").click();
+    await expect(page.getByTestId("remote-error")).toContainText("not whole");
+  });
+
+  test("connects to a host the ssh setup knows, going up and down its folders", async ({
     page,
   }) => {
     await open(page);
     await page.getByTestId("remote-host").fill("lab");
-    await page.getByTestId("remote-user").fill("ada");
     await page.getByTestId("remote-connect").click();
-
-    await expect(page.getByTestId("remote-fingerprint")).toContainText(
-      "SHA256:Ab12Cd34Ef56 lab",
-    );
-    const password = page.getByTestId("remote-password");
-    await expect(password).toBeFocused();
-    await password.fill("wrong");
-    await page.getByTestId("remote-setup").click();
-    await expect(page.getByTestId("remote-error")).toHaveText(
-      "Error: the password was not accepted",
-    );
-
-    await password.fill("hunter2");
-    await password.press("Enter");
     await expect(page.getByTestId("remote-path")).toHaveText("/home/ada");
-    await expect(page.getByTestId("remote").locator("h2")).toHaveText(
-      "On ada@lab",
-    );
+    await page.getByTestId("remote-dir").filter({ hasText: "dev" }).click();
+    await expect(page.getByTestId("remote-path")).toHaveText("/home/ada/dev");
+    await page.getByTestId("remote-up").click();
+    await expect(page.getByTestId("remote-path")).toHaveText("/home/ada");
     await page.getByTestId("remote-open").click();
-    await expect(page.getByTestId("project-host")).toHaveText("ada@lab");
+    await expect(page.getByTestId("project-host")).toHaveText("lab");
   });
 
-  test("asks for the user before a password can do anything", async ({
-    page,
-  }) => {
-    await open(page);
-    await page.getByTestId("remote-host").fill("lab");
-    await page.getByTestId("remote-connect").click();
-    await expect(page.getByTestId("remote-password")).toBeVisible();
-    await page.getByTestId("remote-password").fill("hunter2");
-    await page.getByTestId("remote-setup").click();
-    await expect(page.getByTestId("remote-error")).toContainText("which user");
-    await page.getByTestId("remote-user").fill("ada");
-    await page.getByTestId("remote-setup").click();
-    await expect(page.getByTestId("remote-path")).toHaveText("/home/ada");
-  });
-
-  test("says so without a machine, and closes on Escape and the scrim", async ({
+  test("says so for a host it cannot reach, and closes on Escape and the scrim", async ({
     page,
   }) => {
     await open(page);
     await page.getByTestId("remote-connect").click();
     await expect(page.getByTestId("remote-error")).toHaveText(
-      "Say which machine.",
+      "Say which host.",
+    );
+    await page.getByTestId("remote-host").fill("nowhere");
+    await page.getByTestId("remote-connect").click();
+    await expect(page.getByTestId("remote-error")).toContainText(
+      "Could not resolve hostname nowhere",
     );
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("remote")).toHaveCount(0);
@@ -121,13 +108,13 @@ test.describe("a remote project", () => {
     await expect(page.getByTestId("open-remote")).toHaveClass(/cursor/);
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("remote")).toBeVisible();
-    await expect(page.getByTestId("remote-host")).toBeFocused();
+    await expect(page.getByTestId("remote-token")).toBeFocused();
   });
 
   test("a connection going away ends the sessions on it and says why", async ({
     page,
   }) => {
-    await installFakeCore(page, { open: ["ssh://box/home/ada/dev/demo"] });
+    await installFakeCore(page, { open: ["ssh://lab/home/ada/dev/demo"] });
     await page.goto("/");
     await page.getByTestId("new-session").click();
     await expect(page.locator(SESSIONS)).toContainText("running");
@@ -135,12 +122,12 @@ test.describe("a remote project", () => {
       (
         window as unknown as { __remoteClosed: (c: unknown) => void }
       ).__remoteClosed({
-        host: "box",
+        host: "lab",
         reason: "the connection closed: Connection reset by peer",
       }),
     );
     await expect(page.getByTestId("project-error")).toContainText(
-      "box: the connection closed",
+      "lab: the connection closed",
     );
   });
 });

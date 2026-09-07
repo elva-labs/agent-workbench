@@ -21,9 +21,10 @@ state at a glance, and projects on other machines over ssh.
   edits, with a file viewer and search over the tree. A session that moves
   into a git worktree takes the pane with it.
 - **Terminal.** Plain shells under the panes, per project, split if you like.
-- **Remote projects.** Name a machine and work in a folder there. The agent,
-  the changes and the shells run on that machine; the window does not know
-  the difference. See [remote](docs/remote.md).
+- **Remote projects.** Pair a machine with one pasted token, or name a host
+  your ssh already reaches, and work in a folder there. The agent, the
+  changes and the shells run on that machine; the window does not know the
+  difference. See [remote](docs/remote.md).
 - **Keyboard first.** The agent owns the keyboard. The app claims a few
   modifier chords, all of them yours to change. See
   [focus](docs/focus-model.md).

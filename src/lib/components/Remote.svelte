@@ -1,34 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    browse,
-    choose,
-    closeRemote,
-    connect,
-    parentOf,
-    pathOn,
-    remote,
-    setup,
-    targetFor,
-  } from "$lib/remote.svelte";
+  import { browse, choose, closeRemote, connect, pair, parentOf, pathOn, remote } from "$lib/remote.svelte";
 
   /**
    * Reaching a machine. Over the workbench like the settings, and closed the
-   * same ways. Three steps: the machine's name, a password once if it does
-   * not know this app, and its folders.
+   * same ways. A token pasted from the machine, or the name of a host the
+   * user's ssh already reaches; then the machine's folders.
    */
 
   let dialog: HTMLDivElement;
-  let hostField = $state<HTMLInputElement | null>(null);
-  let passwordField = $state<HTMLInputElement | null>(null);
+  let tokenField = $state<HTMLTextAreaElement | null>(null);
 
   onMount(() => {
     dialog.focus();
-    hostField?.focus();
-  });
-
-  $effect(() => {
-    if (remote.step === "password") passwordField?.focus();
+    tokenField?.focus();
   });
 
   function onKeydown(e: KeyboardEvent) {
@@ -39,8 +24,14 @@
     }
   }
 
-  /** Every name worth suggesting: the configuration's hosts and the app's
-      own targets, once each. */
+  /** A button that goes busy drops the keyboard on the way, so Escape may
+      arrive at the window rather than the dialog. It still closes. */
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && !dialog.contains(e.target as Node)) closeRemote();
+  }
+
+  /** Every name worth suggesting: the configuration's hosts and the paired
+      machines, once each. */
   let suggestions = $derived(
     Array.from(
       new Set([...remote.hosts.configured, ...remote.hosts.saved.map((saved) => saved.target)]),
@@ -49,6 +40,8 @@
 
   let up = $derived(remote.listing === null ? null : parentOf(remote.listing.path));
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -80,8 +73,33 @@
     <div class="body">
       {#if remote.step === "connect"}
         <p class="note">
-          A machine you already reach with ssh works as it is. Any other asks for a password once.
+          On the machine, run <code>agent-workbench-remote connect</code> and paste what it
+          prints. It brings the key, the address and the user with it.
         </p>
+        <form
+          class="fields"
+          onsubmit={(e) => {
+            e.preventDefault();
+            pair();
+          }}
+        >
+          <textarea
+            bind:this={tokenField}
+            bind:value={remote.token}
+            rows="3"
+            placeholder="awb1.…"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Token"
+            data-testid="remote-token"
+          ></textarea>
+          <div class="actions">
+            <button class="primary" type="submit" disabled={remote.busy} data-testid="remote-pair">
+              {remote.busy ? "Connecting…" : "Connect"}
+            </button>
+          </div>
+        </form>
+        <p class="note quiet">Or a host your ssh already reaches, as you would name it there.</p>
         <form
           class="fields"
           onsubmit={(e) => {
@@ -92,10 +110,9 @@
           <label>
             <span>Host</span>
             <input
-              bind:this={hostField}
               bind:value={remote.host}
               list="remote-hosts"
-              placeholder="box, or box.example.com:2222"
+              placeholder="name, or user@name"
               autocomplete="off"
               spellcheck="false"
               data-testid="remote-host"
@@ -106,66 +123,9 @@
               {/each}
             </datalist>
           </label>
-          <label>
-            <span>User</span>
-            <input
-              bind:value={remote.user}
-              placeholder="as your ssh config says"
-              autocomplete="off"
-              spellcheck="false"
-              data-testid="remote-user"
-            />
-          </label>
           <div class="actions">
             <button class="primary" type="submit" disabled={remote.busy} data-testid="remote-connect">
               {remote.busy ? "Connecting…" : "Connect"}
-            </button>
-          </div>
-        </form>
-      {:else if remote.step === "password"}
-        <p class="note">
-          <strong>{targetFor(remote.host, remote.user) || remote.host}</strong> does not know this app
-          yet. With the password, once, the app puts its own key there and never asks again.
-        </p>
-        {#if remote.fingerprint !== null}
-          <p class="note quiet">The machine identifies itself as</p>
-          <pre class="fingerprint" data-testid="remote-fingerprint">{remote.fingerprint}</pre>
-        {/if}
-        <form
-          class="fields"
-          onsubmit={(e) => {
-            e.preventDefault();
-            setup();
-          }}
-        >
-          {#if remote.user.trim() === ""}
-            <label>
-              <span>User</span>
-              <input bind:value={remote.user} autocomplete="off" spellcheck="false" data-testid="remote-user" />
-            </label>
-          {/if}
-          <label>
-            <span>Password</span>
-            <input
-              type="password"
-              bind:this={passwordField}
-              bind:value={remote.password}
-              autocomplete="current-password"
-              data-testid="remote-password"
-            />
-          </label>
-          <div class="actions">
-            <button
-              class="tool"
-              type="button"
-              onclick={() => {
-                remote.step = "connect";
-                remote.error = null;
-              }}
-              data-testid="remote-back">Back</button
-            >
-            <button class="primary" type="submit" disabled={remote.busy} data-testid="remote-setup">
-              {remote.busy ? "Setting up…" : "Trust and set up"}
             </button>
           </div>
         </form>
@@ -268,18 +228,6 @@
     color: var(--ink-3);
   }
 
-  .fingerprint {
-    margin: 0;
-    padding: 6px 8px;
-    font-family: var(--mono);
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--ink);
-    background: var(--bg);
-    border: 1px solid var(--rule);
-    overflow-x: auto;
-    white-space: pre;
-  }
 
   .fields {
     display: flex;
@@ -297,6 +245,31 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-3);
+  }
+
+  .note code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+  }
+
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.4;
+    padding: 6px 8px;
+    border: 1px solid var(--rule);
+    background: var(--bg);
+    color: var(--ink);
+    outline: none;
+    word-break: break-all;
+  }
+
+  textarea:focus {
+    border-color: var(--accent);
   }
 
   input {

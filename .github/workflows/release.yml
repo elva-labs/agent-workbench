@@ -57,6 +57,16 @@ jobs:
           path: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote
           if-no-files-found: error
           retention-days: 14
+      # On the release itself too, named for the machine kind, which is
+      # what the install script fetches.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          cp "src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote" "agent-workbench-remote-${{ matrix.name }}"
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --draft --title "Agent Workbench ${GITHUB_REF_NAME}" --notes ""
+          gh release upload "${GITHUB_REF_NAME}" "agent-workbench-remote-${{ matrix.name }}" --clobber
 
   build:
     name: Build (${{ matrix.name }})

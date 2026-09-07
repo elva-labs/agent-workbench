@@ -2,11 +2,11 @@
  * Projects on other machines, and the dialog that reaches them.
  *
  * A project's path says where it is: `ssh://user@host/path` is on that
- * machine, and the core routes everything by it. The dialog walks three
- * steps: name the machine, and it either connects or asks for a password
- * once, after which its folders are browsed and one is opened like any
- * other. Whether the machine is reached with the user's own ssh setup or
- * the app's key is the core's business.
+ * machine, and the core routes everything by it. The dialog has two ways
+ * in: a token pasted from `agent-workbench-remote connect` run on the
+ * machine, which brings everything the desktop needs, or the name of a
+ * host the user's own ssh setup already reaches. Either way the machine's
+ * folders are then browsed and one is opened like any other.
  */
 
 import { core, type RemoteDirs, type RemoteHosts } from "$lib/core";
@@ -14,18 +14,17 @@ import { openPath } from "$lib/workspace.svelte";
 
 export const SCHEME = "ssh://";
 
-export type Step = "connect" | "password" | "browse";
+export type Step = "connect" | "browse";
 
 export const remote = $state({
   open: false,
   step: "connect" as Step,
   hosts: { configured: [], saved: [] } as RemoteHosts,
+  /** What the machine printed, pasted. */
+  token: "",
+  /** A host the user's own ssh reaches, `name` or `user@name`. */
   host: "",
-  user: "",
-  password: "",
-  /** What the machine identifies itself as, shown before a password goes there. */
-  fingerprint: null as string | null,
-  /** The `user@host` the connection is open to, once it is. */
+  /** The target the connection is open to, once it is. */
   target: null as string | null,
   listing: null as RemoteDirs | null,
   busy: false,
@@ -62,27 +61,15 @@ export function parentOf(path: string): string | null {
   return `${SCHEME}${host}${cut <= 0 ? "/" : on.slice(0, cut)}`;
 }
 
-/** The target ssh is given: `user@host`, or the host alone when the user's
-    own configuration knows which user. */
-export function targetFor(host: string, user: string): string {
-  const h = host.trim();
-  const u = user.trim();
-  if (h === "") return "";
-  return u === "" ? h : `${u}@${h}`;
-}
-
-/** Whether a failure to connect is one a password would fix: the machine
-    is there and would not let the app in. */
-export function needsSetup(error: string): boolean {
-  return /permission denied|not accepted|publickey|too many authentication|host key/i.test(
-    error,
-  );
+/** Whether pasted text has the shape of a token, so the field can say so
+    before anything is sent. */
+export function looksLikeToken(text: string): boolean {
+  return /^awb1\.[A-Za-z0-9_-]+$/.test(text.trim());
 }
 
 function reset() {
   remote.step = "connect";
-  remote.password = "";
-  remote.fingerprint = null;
+  remote.token = "";
   remote.target = null;
   remote.listing = null;
   remote.busy = false;
@@ -101,14 +88,39 @@ export async function openRemote() {
 
 export function closeRemote() {
   remote.open = false;
-  remote.password = "";
+  remote.token = "";
 }
 
-/** Names the machine. It connects, or it asks for a password once. */
+/** The token, pasted: the machine's key, address and user come with it. */
+export async function pair() {
+  const token = remote.token.trim();
+  if (token === "") {
+    remote.error = "Paste what the machine printed.";
+    return;
+  }
+  if (!looksLikeToken(token)) {
+    remote.error = "That is not a token from agent-workbench-remote connect.";
+    return;
+  }
+  remote.busy = true;
+  remote.error = null;
+  try {
+    const opened = await core().remotePair(token);
+    remote.token = "";
+    remote.target = opened.host;
+    await browse("");
+  } catch (error) {
+    remote.error = String(error);
+  } finally {
+    remote.busy = false;
+  }
+}
+
+/** A host the user's own ssh reaches, by name. */
 export async function connect() {
-  const target = targetFor(remote.host, remote.user);
+  const target = remote.host.trim();
   if (target === "") {
-    remote.error = "Say which machine.";
+    remote.error = "Say which host.";
     return;
   }
   remote.busy = true;
@@ -118,43 +130,13 @@ export async function connect() {
     remote.target = target;
     await browse("");
   } catch (error) {
-    const text = String(error);
-    if (needsSetup(text)) {
-      remote.step = "password";
-      remote.fingerprint = await core()
-        .remoteFingerprint(remote.host.trim())
-        .catch(() => null);
-    } else {
-      remote.error = text;
-    }
-  } finally {
-    remote.busy = false;
-  }
-}
-
-/** The password, once: the app's key goes on the machine and the connection opens. */
-export async function setup() {
-  if (remote.user.trim() === "") {
-    remote.error = "Say which user to log in as.";
-    return;
-  }
-  if (remote.password === "") {
-    remote.error = "The password is needed this once.";
-    return;
-  }
-  remote.busy = true;
-  remote.error = null;
-  try {
-    const opened = await core().remoteSetup(
-      remote.host.trim(),
-      remote.user.trim(),
-      remote.password,
-    );
-    remote.password = "";
-    remote.target = opened.host;
-    await browse("");
-  } catch (error) {
     remote.error = String(error);
+    // A paired machine is reached at the address its token carried, and
+    // addresses move. A new token from it brings the new one.
+    if (remote.hosts.saved.some((saved) => saved.target === target)) {
+      remote.error +=
+        " If the machine's address has changed, run agent-workbench-remote connect there again and paste the new token.";
+    }
   } finally {
     remote.busy = false;
   }
@@ -186,6 +168,5 @@ export function resetRemote() {
   reset();
   remote.open = false;
   remote.host = "";
-  remote.user = "";
   remote.hosts = { configured: [], saved: [] };
 }

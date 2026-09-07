@@ -324,10 +324,13 @@
               class:working={session.working}
               class:unread={session.unread}
               class:permission={session.needs === "permission"}
+              title={statusLabel(session)}
             ></span>
             <span class="label" class:unread={session.unread}>{label(session)}</span>
             {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
-            <span class="state">{statusLabel(session)}</span>
+            <!-- The dot says what the agent is doing; the words are for a
+                 screen reader and for anything reading the row's text. -->
+            <span class="state told">{statusLabel(session)}</span>
           </button>
           <!-- Over the row's end rather than beside it, so a name is never
                squeezed to make room for it. -->
@@ -712,6 +715,15 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .state.told {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
     white-space: nowrap;
   }
 

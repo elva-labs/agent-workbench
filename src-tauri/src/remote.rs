@@ -124,11 +124,15 @@ impl Remotes {
                 return Ok(Arc::clone(connection));
             }
         }
-        if std::env::var_os("WORKBENCH_REMOTE_COMMAND").is_none() {
+        // A paired machine has the daemon, since the daemon made the token,
+        // and its key can run nothing else; a host from the ssh
+        // configuration gets the daemon put there when it is missing.
+        let files = self.files()?;
+        if std::env::var_os("WORKBENCH_REMOTE_COMMAND").is_none() && !files.is_saved(host) {
             let resources = self.app.path().resource_dir().ok();
-            ssh::ensure_daemon(&self.files()?, host, resources.as_deref())?;
+            ssh::ensure_daemon(host, resources.as_deref())?;
         }
-        let connection = open(&self.app, host, &self.files()?)?;
+        let connection = open(&self.app, host, &files)?;
         connections.insert(host.to_string(), Arc::clone(&connection));
         Ok(connection)
     }
@@ -181,11 +185,23 @@ fn open(app: &AppHandle, host: &str, files: &ssh::Files) -> Result<Arc<Connectio
     // The first exchange proves the daemon is there and speaks the
     // protocol. An ssh that could not get in has said why on stderr, and
     // that is the error.
-    if let Err(error) = connection.call_within("ping", Value::Null, HELLO) {
-        connection.close();
-        return Err(error);
+    match connection.call_within("ping", Value::Null, HELLO) {
+        Err(error) => {
+            connection.close();
+            Err(error)
+        }
+        Ok(hello) => {
+            let theirs = hello["version"].as_str().unwrap_or("?");
+            if theirs != env!("CARGO_PKG_VERSION") {
+                connection.close();
+                return Err(format!(
+                    "{host} runs agent-workbench-remote {theirs} and this app is {}; update it there",
+                    env!("CARGO_PKG_VERSION")
+                ));
+            }
+            Ok(connection)
+        }
     }
-    Ok(connection)
 }
 
 /// `transport`, for a test outside this crate.
@@ -254,23 +270,23 @@ mod tests {
     #[test]
     fn a_path_with_a_scheme_names_its_host() {
         assert_eq!(
-            route("ssh://ada@box/home/ada/repo"),
+            route("ssh://ada@lab/home/ada/repo"),
             Route::Remote {
-                host: "ada@box".into(),
+                host: "ada@lab".into(),
                 rest: "/home/ada/repo".into()
             }
         );
         assert_eq!(
-            route("ssh://box#pty-3"),
+            route("ssh://lab#pty-3"),
             Route::Remote {
-                host: "box".into(),
+                host: "lab".into(),
                 rest: "pty-3".into()
             }
         );
         assert_eq!(
-            route("ssh://box"),
+            route("ssh://lab"),
             Route::Remote {
-                host: "box".into(),
+                host: "lab".into(),
                 rest: String::new()
             }
         );
@@ -278,28 +294,28 @@ mod tests {
 
     #[test]
     fn puts_the_host_back_where_it_came_off() {
-        assert_eq!(with_host("box", "/repo"), "ssh://box/repo");
-        assert_eq!(with_host_id("box", "pty-1"), "ssh://box#pty-1");
-        assert_eq!(route(&with_host("ada@box", "/r")), route("ssh://ada@box/r"));
+        assert_eq!(with_host("lab", "/repo"), "ssh://lab/repo");
+        assert_eq!(with_host_id("lab", "pty-1"), "ssh://lab#pty-1");
+        assert_eq!(route(&with_host("ada@lab", "/r")), route("ssh://ada@lab/r"));
     }
 
     #[test]
     fn events_come_home_with_their_host_on() {
-        let ended = homeward("box", "session_ended", json!({"id": "pty-1", "code": 0}));
-        assert_eq!(ended["id"], "ssh://box#pty-1");
+        let ended = homeward("lab", "session_ended", json!({"id": "pty-1", "code": 0}));
+        assert_eq!(ended["id"], "ssh://lab#pty-1");
         assert_eq!(ended["code"], 0);
         let named = homeward(
-            "box",
+            "lab",
             "session_identified",
             json!({"ptyId": "pty-2", "sessionId": "s"}),
         );
-        assert_eq!(named["ptyId"], "ssh://box#pty-2");
+        assert_eq!(named["ptyId"], "ssh://lab#pty-2");
         assert_eq!(
-            homeward("box", "git_changed", json!("/repo")),
-            json!("ssh://box/repo")
+            homeward("lab", "git_changed", json!("/repo")),
+            json!("ssh://lab/repo")
         );
         let other = homeward(
-            "box",
+            "lab",
             "session_event",
             json!({"sessionId": "s", "kind": "stop"}),
         );
@@ -309,13 +325,13 @@ mod tests {
     #[test]
     fn a_remote_project_s_paths_do_too() {
         let project = project_homeward(
-            "box",
+            "lab",
             json!({"name": "repo", "path": "/r", "repository": "/r", "isGit": true}),
         );
-        assert_eq!(project["path"], "ssh://box/r");
-        assert_eq!(project["repository"], "ssh://box/r");
+        assert_eq!(project["path"], "ssh://lab/r");
+        assert_eq!(project["repository"], "ssh://lab/r");
         let plain = project_homeward(
-            "box",
+            "lab",
             json!({"name": "x", "path": "/x", "repository": null}),
         );
         assert_eq!(plain["repository"], Value::Null);
@@ -325,10 +341,10 @@ mod tests {
     fn the_test_transport_is_whatever_the_variable_names() {
         let files = ssh::Files::new(&std::env::temp_dir().join("workbench-remote-none"));
         std::env::set_var("WORKBENCH_REMOTE_COMMAND", "/bin/echo hello {host}");
-        let command = transport("box", &files).unwrap();
+        let command = transport("lab", &files).unwrap();
         std::env::remove_var("WORKBENCH_REMOTE_COMMAND");
         assert_eq!(command.get_program(), "/bin/echo");
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
-        assert_eq!(args, ["hello", "box"]);
+        assert_eq!(args, ["hello", "lab"]);
     }
 }
