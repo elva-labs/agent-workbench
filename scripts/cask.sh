@@ -40,7 +40,7 @@ cask "agent-workbench" do
     strategy :github_latest
   end
 
-  depends_on macos: :catalina
+  depends_on macos: :ventura
 
   app "Agent Workbench.app"
 
