@@ -25,6 +25,10 @@ const CONTROLS_X: f64 = 18.0;
 #[cfg(target_os = "macos")]
 const CONTROLS_CENTRE: f64 = 27.0;
 
+/// Points between one button and the next, which is AppKit's own spacing.
+#[cfg(target_os = "macos")]
+const CONTROLS_GAP: f64 = 8.0;
+
 #[cfg(target_os = "macos")]
 pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     use objc2::runtime::AnyObject;
@@ -120,28 +124,35 @@ fn place_window_controls(window: &tauri::WebviewWindow) {
     let window_height = ns_window.frame().size.height;
     let height = CONTROLS_CENTRE * 2.0;
     let mut outer = container.frame();
-    outer.size.height = height;
-    outer.origin.y = window_height - height;
-    container.setFrame(outer);
+    if outer.size.height != height || outer.origin.y != window_height - height {
+        outer.size.height = height;
+        outer.origin.y = window_height - height;
+        container.setFrame(outer);
+    }
     let mut inner = bar.frame();
-    inner.origin.y = 0.0;
-    inner.size.height = height;
-    bar.setFrame(inner);
+    if inner.size.height != height || inner.origin.y != 0.0 {
+        inner.origin.y = 0.0;
+        inner.size.height = height;
+        bar.setFrame(inner);
+    }
 
-    let spacing = miniaturize.frame().origin.x - close.frame().origin.x;
+    // The buttons are placed from constants alone, never from where the
+    // others are: AppKit moves them one at a time, and this runs as each
+    // one moves.
     for (index, button) in [close, miniaturize, zoom].iter().enumerate() {
         let size = button.frame().size;
         let centre = bar.convertPoint_fromView(
             NSPoint::new(
-                CONTROLS_X + size.width / 2.0 + index as f64 * spacing,
+                CONTROLS_X + size.width / 2.0 + index as f64 * (size.width + CONTROLS_GAP),
                 window_height - CONTROLS_CENTRE,
             ),
             None,
         );
-        button.setFrameOrigin(NSPoint::new(
-            centre.x - size.width / 2.0,
-            centre.y - size.height / 2.0,
-        ));
+        let origin = NSPoint::new(centre.x - size.width / 2.0, centre.y - size.height / 2.0);
+        let now = button.frame().origin;
+        if (now.x - origin.x).abs() > 0.5 || (now.y - origin.y).abs() > 0.5 {
+            button.setFrameOrigin(origin);
+        }
     }
 }
 
