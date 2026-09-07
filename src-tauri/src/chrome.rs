@@ -141,20 +141,21 @@ fn place_window_controls(window: &tauri::WebviewWindow) {
     // one moves. Their frames differ in size, and what lines up their
     // circles is a shared origin row, the way AppKit lays them out itself,
     // so the close button's size sets the row and the pitch for all three.
+    // Each button converts the point into its own superview: the three do
+    // not all sit in the same view.
     let size = close.frame().size;
-    let centre = bar.convertPoint_fromView(
-        NSPoint::new(
-            CONTROLS_X + size.width / 2.0,
-            window_height - CONTROLS_CENTRE,
-        ),
-        None,
-    );
-    let first = NSPoint::new(centre.x - size.width / 2.0, centre.y - size.height / 2.0);
     for (index, button) in [close, miniaturize, zoom].iter().enumerate() {
-        let origin = NSPoint::new(
-            first.x + index as f64 * (size.width + CONTROLS_GAP),
-            first.y,
+        let Some(parent) = (unsafe { button.superview() }) else {
+            continue;
+        };
+        let centre = parent.convertPoint_fromView(
+            NSPoint::new(
+                CONTROLS_X + size.width / 2.0 + index as f64 * (size.width + CONTROLS_GAP),
+                window_height - CONTROLS_CENTRE,
+            ),
+            None,
         );
+        let origin = NSPoint::new(centre.x - size.width / 2.0, centre.y - size.height / 2.0);
         let now = button.frame().origin;
         if (now.x - origin.x).abs() > 0.5 || (now.y - origin.y).abs() > 0.5 {
             button.setFrameOrigin(origin);
