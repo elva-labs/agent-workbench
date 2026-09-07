@@ -31,11 +31,30 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     use tauri::WindowEvent;
 
     place_window_controls(window);
+    // The window shows after setup, and AppKit lays the title bar out again
+    // when it does. A few placements over the first seconds cover that,
+    // whenever in that span it happens.
+    let later = window.clone();
+    std::thread::spawn(move || {
+        let mut waited = 0;
+        for delay in [50, 200, 500, 1000, 2000, 4000] {
+            std::thread::sleep(std::time::Duration::from_millis(delay - waited));
+            waited = delay;
+            let again = later.clone();
+            if later
+                .run_on_main_thread(move || place_window_controls(&again))
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
     let handle = window.clone();
     window.on_window_event(move |event| {
         if matches!(
             event,
             WindowEvent::Resized(_)
+                | WindowEvent::Moved(_)
                 | WindowEvent::Focused(_)
                 | WindowEvent::ScaleFactorChanged { .. }
                 | WindowEvent::ThemeChanged(_)
