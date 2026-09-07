@@ -11,6 +11,8 @@ with the keyboard almost entirely its own. The app adds what a terminal
 window lacks: the changes as they land, past sessions to resume, a session's
 state at a glance, and projects on other machines over ssh.
 
+![Two sessions running, Claude Code and Codex, with a shell below them; then a past session resumed from the list, bringing its worktree's changed files into the changes pane, and one of them opened as a diff.](docs/demo.gif)
+
 ## What it does
 
 - **Sessions.** Open a folder and start a session in it, or resume one the
