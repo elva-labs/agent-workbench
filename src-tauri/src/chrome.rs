@@ -6,12 +6,11 @@
 //! close at the end of the rightmost pane's header, where the platform puts
 //! them.
 //!
-//! macOS lays the traffic lights out again on every resize, focus change and
-//! theme change, at its own height, so where they sit is set at start and
-//! set again after each of those, once AppKit has had its turn. The window
-//! keeps its plain title bar: a toolbar would hold the buttons lower by
-//! itself, but macOS 26 rounds a toolbar window's corners far more than
-//! every other window's.
+//! macOS lays the traffic lights out again whenever it likes, at its own
+//! height, so the app listens for the buttons' frames changing and puts
+//! them back within the same layout pass. The window keeps its plain title
+//! bar: a toolbar would hold the buttons lower by itself, but macOS 26
+//! rounds a toolbar window's corners far more than every other window's.
 
 /// Where the close button's left edge goes, in points from the window's
 /// left edge: past the frame's padding and the pane's border, with the same
@@ -28,43 +27,47 @@ const CONTROLS_CENTRE: f64 = 27.0;
 
 #[cfg(target_os = "macos")]
 pub fn inset_window_controls(window: &tauri::WebviewWindow) {
-    use tauri::WindowEvent;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSViewFrameDidChangeNotification, NSWindow, NSWindowButton};
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::ptr::NonNull;
 
     place_window_controls(window);
-    // The window shows after setup, and AppKit lays the title bar out again
-    // when it does. A few placements over the first seconds cover that,
-    // whenever in that span it happens.
-    let later = window.clone();
-    std::thread::spawn(move || {
-        let mut waited = 0;
-        for delay in [50, 200, 500, 1000, 2000, 4000] {
-            std::thread::sleep(std::time::Duration::from_millis(delay - waited));
-            waited = delay;
-            let again = later.clone();
-            if later
-                .run_on_main_thread(move || place_window_controls(&again))
-                .is_err()
-            {
-                return;
-            }
-        }
-    });
-    let handle = window.clone();
-    window.on_window_event(move |event| {
-        if matches!(
-            event,
-            WindowEvent::Resized(_)
-                | WindowEvent::Moved(_)
-                | WindowEvent::Focused(_)
-                | WindowEvent::ScaleFactorChanged { .. }
-                | WindowEvent::ThemeChanged(_)
-        ) {
-            // Queued rather than done here: AppKit's own layout for the same
-            // event has to have run first, or it wins.
-            let again = handle.clone();
-            let _ = handle.run_on_main_thread(move || place_window_controls(&again));
-        }
-    });
+
+    // AppKit lays the title bar out again on its own schedule: when the
+    // window shows, on a resize, on a focus change. Each time it moves a
+    // button, the button's frame change is heard here and all three are put
+    // back within the same pass, before anything is drawn, so they never
+    // appear anywhere else.
+    let Ok(ptr) = window.ns_window() else { return };
+    let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+    let centre = NSNotificationCenter::defaultCenter();
+    for kind in [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ] {
+        let Some(button) = ns_window.standardWindowButton(kind) else {
+            continue;
+        };
+        button.setPostsFrameChangedNotifications(true);
+        let again = window.clone();
+        let block = block2::RcBlock::new(move |_: NonNull<NSNotification>| {
+            place_window_controls(&again);
+        });
+        let object: &AnyObject = &button;
+        // Delivered on the main thread, where the frames change. The
+        // observation lasts as long as the window, which is the app.
+        let token = unsafe {
+            centre.addObserverForName_object_queue_usingBlock(
+                Some(NSViewFrameDidChangeNotification),
+                Some(object),
+                None,
+                &block,
+            )
+        };
+        std::mem::forget(token);
+    }
 }
 
 /// Puts the three standard buttons where the header's text is. The title
@@ -75,6 +78,21 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
 fn place_window_controls(window: &tauri::WebviewWindow) {
     use objc2_app_kit::{NSWindow, NSWindowButton};
     use objc2_foundation::NSPoint;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Placing the buttons changes their frames, which is heard as a change
+    // to put back: once through is enough.
+    static PLACING: AtomicBool = AtomicBool::new(false);
+    if PLACING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _done = Reset(&PLACING);
+    struct Reset<'a>(&'a AtomicBool);
+    impl Drop for Reset<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
 
     let Ok(ptr) = window.ns_window() else { return };
     // The pointer is the window's NSWindow, alive for as long as the window,
