@@ -21,9 +21,13 @@
     // Read so a request to take the keyboard again re-runs this: the
     // viewer's close leaves the document's focus on nothing.
     layout.focusRequest;
-    if (focused && root && document.activeElement !== root && !root.contains(document.activeElement)) {
-      root.focus();
-    }
+    if (!focused || !root) return;
+    const active = document.activeElement;
+    if (active === root || root.contains(active)) return;
+    // Another control of the same pane, the filter field most of all, keeps
+    // the keyboard it was given; the tree takes it from anywhere else.
+    if (active !== null && root.closest("section[data-pane]")?.contains(active)) return;
+    root.focus();
   });
 
   let rows = $derived(flatten(buildTree(visible()), isOpen));
