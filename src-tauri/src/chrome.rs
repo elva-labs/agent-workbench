@@ -33,7 +33,7 @@ const CONTROLS_GAP: f64 = 8.0;
 pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSViewFrameDidChangeNotification, NSWindow, NSWindowButton};
-    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue};
     use std::ptr::NonNull;
 
     place_window_controls(window);
@@ -61,7 +61,10 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
             // loop, once its own move has finished.
             place_window_controls(&again);
             let later = again.clone();
-            let _ = again.run_on_main_thread(move || place_window_controls(&later));
+            let then = block2::RcBlock::new(move || place_window_controls(&later));
+            // Queued on the main queue: a task handed to Tauri from the main
+            // thread runs at once, which would be inside the move again.
+            unsafe { NSOperationQueue::mainQueue().addOperationWithBlock(&then) };
         });
         let object: &AnyObject = &button;
         // Delivered on the main thread, where the frames change. The
