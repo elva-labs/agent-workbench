@@ -1,26 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="184"/></clipPath>
-  </defs>
   <rect x="100" y="100" width="824" height="824" rx="184" fill="#121416"/>
-  <g clip-path="url(#tile)">
-    <!-- the head, in shadow under the brim -->
-    <path fill="#1e2226" d="M 396 470 L 628 470 L 628 640 Q 628 720 512 720 Q 396 720 396 640 Z"/>
-    <!-- coat: upturned collar, two lapels meeting at the throat -->
-    <path fill="#ece7da" d="M 110 924 C 190 820 270 700 306 590 L 512 742 L 512 924 Z"/>
-    <path fill="#ece7da" d="M 914 924 C 834 820 754 700 718 590 L 512 742 L 512 924 Z"/>
-    <path fill="#121416" d="M 448 924 L 512 774 L 576 924 Z"/>
-    <!-- lapel folds -->
-    <path fill="#121416" opacity="0.18" d="M 306 590 L 512 742 L 512 790 L 340 640 Z"/>
-    <path fill="#121416" opacity="0.18" d="M 718 590 L 512 742 L 512 790 L 684 640 Z"/>
-    <!-- hat: pinched crown -->
-    <path fill="#ece7da" d="M 338 462 C 352 380 372 300 388 258 C 430 232 470 226 512 246 C 554 226 594 232 636 258 C 652 300 672 380 686 462 Z"/>
-    <!-- hat: band -->
-    <path fill="#121416" d="M 344 420 L 680 420 L 686 462 L 338 462 Z"/>
-    <!-- hat: brim, snapped down at the front -->
-    <path fill="#ece7da" d="M 196 466 C 300 404 570 378 838 442 C 700 530 380 548 196 466 Z"/>
-    <!-- the eyes, lit under the brim -->
-    <rect x="410" y="556" width="84" height="22" rx="11" fill="#58c0b4"/>
-    <rect x="530" y="556" width="84" height="22" rx="11" fill="#58c0b4"/>
+  <g transform="translate(32 40) scale(30)" fill="#ece7da">
+    <!-- coat and shoulders -->
+    <path d="M8.84 18.966 c0 0 -1.958 0.699 -3.84 3.264 L9 25 l-1 2 h16 l-1 -2 l4 -2.769 c-1.882 -2.565 -3.84 -3.264 -3.84 -3.264 Z"/>
+    <!-- head, drawn over the coat with a gap of tile around it -->
+    <path stroke="#121416" stroke-width="1.1" stroke-linejoin="round" d="M8.383 17.101 c0 0.877 0.669 2.185 1.524 2.271 C10.625 22.983 12.996 25.957 16 26 c2.982 0.042 5.417 -3.017 6.094 -6.629 c0.853 -0.087 1.52 -1.395 1.52 -2.271 Z"/>
+    <!-- glasses -->
+    <path fill="#16706a" d="M11.77 18.368 c-0.031 1.019 0.666 2.029 1.915 2.105 c0.881 0.054 1.891 -0.39 1.891 -1.635 c0 -0.864 -0.678 -0.995 -1.891 -1.088 S11.794 17.578 11.77 18.368 Z"/>
+    <path fill="#16706a" d="M20.23 18.368 c0.031 1.019 -0.666 2.029 -1.915 2.105 c-0.881 0.054 -1.891 -0.39 -1.891 -1.635 c0 -0.864 0.678 -0.995 1.891 -1.088 S20.206 17.578 20.23 18.368 Z"/>
+    <rect x="15.3" y="18.1" width="1.4" height="0.8" fill="#16706a"/>
+    <!-- brim -->
+    <ellipse cx="16" cy="14.5" rx="11" ry="3.5" stroke="#121416" stroke-width="1.1"/>
+    <!-- crown -->
+    <path stroke="#121416" stroke-width="1.1" stroke-linejoin="round" d="M18.939 5 C18.269 5 17.23 5.5 16 5.5 S13.75 5 13.061 5 C10.877 5 9.817 9.295 9 12.337 C9 13.938 13.125 14 16 14 s7 0 7 -1.662 C22.063 9.122 21.123 5 18.939 5 Z"/>
   </g>
 </svg>
