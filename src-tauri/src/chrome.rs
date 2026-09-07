@@ -167,23 +167,6 @@ fn place_window_controls(window: &tauri::WebviewWindow) {
         if (now.x - origin.x).abs() > 0.5 || (now.y - origin.y).abs() > 0.5 {
             button.setFrameOrigin(origin);
         }
-        if std::env::var_os("WORKBENCH_CHROME_DEBUG").is_some() {
-            let frame = button.frame();
-            let back = parent.convertPoint_toView(frame.origin, None);
-            eprintln!(
-                "button {index}: parent {} flipped={} frame=({:.1},{:.1} {:.1}x{:.1}) wanted=({:.1},{:.1}) in window=({:.1},{:.1}) height={window_height:.1}",
-                parent.class().name().to_string_lossy(),
-                parent.isFlipped(),
-                frame.origin.x,
-                frame.origin.y,
-                frame.size.width,
-                frame.size.height,
-                origin.x,
-                origin.y,
-                back.x,
-                back.y
-            );
-        }
     }
 }
 
