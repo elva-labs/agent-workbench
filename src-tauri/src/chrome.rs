@@ -41,8 +41,7 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     // AppKit lays the title bar out again on its own schedule: when the
     // window shows, on a resize, on a focus change. Each time it moves a
     // button, the button's frame change is heard here and all three are put
-    // back within the same pass, before anything is drawn, so they never
-    // appear anywhere else.
+    // back, so they never stay anywhere else.
     let Ok(ptr) = window.ns_window() else { return };
     let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
     let centre = NSNotificationCenter::defaultCenter();
@@ -57,7 +56,12 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
         button.setPostsFrameChangedNotifications(true);
         let again = window.clone();
         let block = block2::RcBlock::new(move |_: NonNull<NSNotification>| {
+            // The button whose move this is cannot be moved from inside it;
+            // the other two can. It is placed on the next turn of the main
+            // loop, once its own move has finished.
             place_window_controls(&again);
+            let later = again.clone();
+            let _ = again.run_on_main_thread(move || place_window_controls(&later));
         });
         let object: &AnyObject = &button;
         // Delivered on the main thread, where the frames change. The
