@@ -23,7 +23,12 @@ interface FakeOptions {
   /** Where codex is installed. Absent for a machine without it. */
   codex?: string | null;
   /** Past codex sessions the core reports from the start. */
-  codexTranscripts?: { id: string; title: string | null; modified: number; size: number }[];
+  codexTranscripts?: {
+    id: string;
+    title: string | null;
+    modified: number;
+    size: number;
+  }[];
   failSpawn?: string | null;
 }
 
@@ -32,7 +37,12 @@ declare global {
     __fake: {
       writes: string[];
       resizes: { cols: number; rows: number }[];
-      spawns: { agent: string; project: string; session?: string; cols?: number }[];
+      spawns: {
+        agent: string;
+        project: string;
+        session?: string;
+        cols?: number;
+      }[];
       killed: string[];
       titles: string[];
       /** Links handed to the system browser. */
@@ -47,7 +57,18 @@ declare global {
       /** Where codex was found, or null for not installed. */
       codex: string | null;
       /** Past codex sessions the core reports for any project. */
-      codexTranscripts: { id: string; title: string | null; modified: number; size: number }[];
+      codexTranscripts: {
+        id: string;
+        title: string | null;
+        modified: number;
+        size: number;
+      }[];
+      transcripts: {
+        id: string;
+        title: string | null;
+        modified: number;
+        size: number;
+      }[];
       /** What codex's index calls a session, by id. */
       codexTitles: Record<string, string>;
       /** The app's handler for an agent writing down its own session id. */
@@ -97,6 +118,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         binary: binary === undefined ? "/usr/local/bin/claude" : binary,
         codex: codex ?? null,
         codexTranscripts: codexTranscripts ?? [],
+        transcripts: [],
         codexTitles: {},
         identify: null,
         sessionEvent: null,
@@ -106,7 +128,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           fake.outputs[ptyId]?.(new TextEncoder().encode(text));
         },
         end(ptyId, code, clean) {
-          for (const handler of fake.enders) handler({ id: ptyId, code, clean });
+          for (const handler of fake.enders)
+            handler({ id: ptyId, code, clean });
         },
         // The visible terminal, found the way a person would: the one on screen.
         buffer() {
@@ -130,7 +153,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
       }
 
       let ptyCount = 0;
-      (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+      (
+        window as unknown as { __WORKBENCH_CORE__: unknown }
+      ).__WORKBENCH_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
           path: agent === "codex" ? fake.codex : fake.binary,
@@ -155,7 +180,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         setBadge: async (count: number | null) => {
           fake.badges.push(count);
         },
-        spawn: async (spawnOptions: any, onOutput: (bytes: Uint8Array) => void) => {
+        spawn: async (
+          spawnOptions: any,
+          onOutput: (bytes: Uint8Array) => void,
+        ) => {
           if (fake.failSpawn) throw new Error(fake.failSpawn);
           const id = `pty-${++ptyCount}`;
           fake.spawns.push(spawnOptions);
@@ -164,7 +192,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           if (spawnOptions.agent === "codex") {
             return { ptyId: id, sessionId: spawnOptions.session ?? null };
           }
-          return { ptyId: id, sessionId: spawnOptions.session ?? `session-${ptyCount}` };
+          return {
+            ptyId: id,
+            sessionId: spawnOptions.session ?? `session-${ptyCount}`,
+          };
         },
         write: async (_id: string, data: string) => {
           fake.writes.push(data);
@@ -191,7 +222,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         onOpenSettings: async () => () => {},
         onRemoteClosed: async () => () => {},
         remoteHosts: async () => ({ configured: [], saved: [] }),
-        sessionTitle: async (_agent: string, id: string) => fake.codexTitles[id] ?? null,
+        sessionTitle: async (_agent: string, id: string) =>
+          fake.codexTitles[id] ?? null,
         onFileDrag: async (handler: (drag: unknown) => void) => {
           fake.drag = handler;
           return () => {};
@@ -200,15 +232,31 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         // These tests are about sessions, so the repository is empty. The
         // changes pane still asks, and would break the page if it threw.
         transcripts: async (_project: string, agent: string) =>
-          agent === "codex" ? fake.codexTranscripts : [],
-        hookStatus: async () => ({ installed: false, settings: "", events: "" }),
-        hookInstall: async () => ({ installed: true, settings: "", events: "" }),
-        hookUninstall: async () => ({ installed: false, settings: "", events: "" }),
+          agent === "codex" ? fake.codexTranscripts : fake.transcripts,
+        hookStatus: async () => ({
+          installed: false,
+          settings: "",
+          events: "",
+        }),
+        hookInstall: async () => ({
+          installed: true,
+          settings: "",
+          events: "",
+        }),
+        hookUninstall: async () => ({
+          installed: false,
+          settings: "",
+          events: "",
+        }),
         gitStatus: async () => [],
         gitGrep: async () => ({ hits: [], truncated: false }),
         gitFiles: async () => [],
         gitDiff: async () => ({ lines: [], binary: false, truncated: false }),
-        gitContent: async () => ({ lines: [], binary: false, truncated: false }),
+        gitContent: async () => ({
+          lines: [],
+          binary: false,
+          truncated: false,
+        }),
         gitWatch: async () => {},
         onGitChanged: async () => () => {},
       };
@@ -224,14 +272,17 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
 }
 
 const buffer = (page: Page) => page.evaluate(() => window.__fake.buffer());
-const typed = (page: Page) => page.evaluate(() => window.__fake.writes.join(""));
+const typed = (page: Page) =>
+  page.evaluate(() => window.__fake.writes.join(""));
 const spawns = (page: Page) => page.evaluate(() => window.__fake.spawns);
-const spawnCount = (page: Page) => page.evaluate(() => window.__fake.spawns.length);
+const spawnCount = (page: Page) =>
+  page.evaluate(() => window.__fake.spawns.length);
 const killed = (page: Page) => page.evaluate(() => window.__fake.killed);
 /** A running session in the project you are looking at, started if there
     is none: nothing starts by itself any more. */
 const running = async (page: Page) => {
-  if ((await spawnCount(page)) === 0) await page.getByTestId("new-session").click();
+  if ((await spawnCount(page)) === 0)
+    await page.getByTestId("new-session").click();
   await expect(page.locator(AGENT)).toContainText("running");
 };
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
@@ -248,7 +299,9 @@ test.describe("with no project", () => {
   });
 
   test("asks for a project rather than starting anything", async ({ page }) => {
-    await expect(page.getByTestId("agent-status")).toContainText("Open a project");
+    await expect(page.getByTestId("agent-status")).toContainText(
+      "Open a project",
+    );
     await expect(page.getByTestId("no-project")).toBeVisible();
     await page.waitForTimeout(300);
     expect(await spawnCount(page)).toBe(0);
@@ -264,7 +317,9 @@ test.describe("one project", () => {
   // Restarting the app must not pile up fresh sessions: what runs is what
   // you asked for, resumed from the list or started outright.
   test("waits to be asked before starting a session", async ({ page }) => {
-    await expect(page.getByTestId("agent-status")).toContainText("Resume a past one");
+    await expect(page.getByTestId("agent-status")).toContainText(
+      "Resume a past one",
+    );
     await page.waitForTimeout(300);
     expect(await spawnCount(page)).toBe(0);
 
@@ -276,9 +331,13 @@ test.describe("one project", () => {
     await expect(rows(page)).toHaveCount(1);
   });
 
-  test("names the project in the pane and the window title", async ({ page }) => {
+  test("names the project in the pane and the window title", async ({
+    page,
+  }) => {
     await expect(page.locator(SESSIONS)).toContainText("one");
-    expect((await page.evaluate(() => window.__fake.titles)).at(-1)).toContain("one");
+    expect((await page.evaluate(() => window.__fake.titles)).at(-1)).toContain(
+      "one",
+    );
   });
 
   // Claude Code names the session in the terminal title, glyph and all.
@@ -286,9 +345,14 @@ test.describe("one project", () => {
     await running(page);
     await expect(rows(page).first()).toContainText("session 1");
     await page.evaluate(() =>
-      window.__fake.emit("pty-1", "\x1b]0;\u2733 fix-activity-tracking-bugs\x07"),
+      window.__fake.emit(
+        "pty-1",
+        "\x1b]0;\u2733 fix-activity-tracking-bugs\x07",
+      ),
     );
-    await expect(rows(page).first()).toContainText("fix-activity-tracking-bugs");
+    await expect(rows(page).first()).toContainText(
+      "fix-activity-tracking-bugs",
+    );
     await expect(rows(page).first()).not.toContainText("session 1");
   });
 
@@ -316,10 +380,15 @@ test.describe("one project", () => {
 
   // Cmd+click on a link is the terminal convention; a plain click stays
   // the program's, which may be using the mouse itself.
-  test("opens a link on mod+click, and not on a plain click", async ({ page }) => {
+  test("opens a link on mod+click, and not on a plain click", async ({
+    page,
+  }) => {
     await running(page);
     await page.evaluate(() =>
-      window.__fake.emit("pty-1", "Created: https://example.com/issues/6932 \r\n"),
+      window.__fake.emit(
+        "pty-1",
+        "Created: https://example.com/issues/6932 \r\n",
+      ),
     );
     await expect.poll(() => buffer(page)).toContain("example.com");
 
@@ -329,8 +398,9 @@ test.describe("one project", () => {
     // Row 0, a few cells into the URL. Cells are measured from the padding
     // edge: xterm's element carries the 8px inset.
     const cell = await page.evaluate(() => {
-      const t = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-        .__WORKBENCH_TERMINALS__?.["s1"];
+      const t = (
+        window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
+      ).__WORKBENCH_TERMINALS__?.["s1"];
       const size = t?._core._renderService.dimensions.css.cell;
       return size ? { w: size.width, h: size.height } : null;
     });
@@ -349,24 +419,32 @@ test.describe("one project", () => {
       .toEqual(["https://example.com/issues/6932"]);
   });
 
-  test("switches session from the keyboard and lands in the agent", async ({ page }) => {
+  test("switches session from the keyboard and lands in the agent", async ({
+    page,
+  }) => {
     await running(page);
     await page.getByTestId("new-session").click();
     await expect(rows(page)).toHaveCount(2);
 
     await page.keyboard.press(`${MOD}+1`);
-    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await expect(page.getByTestId("focus-readout")).toHaveText(
+      "focus: sessions",
+    );
     await page.keyboard.press("ArrowUp");
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
-    await expect(page.locator("[data-testid='session-row']").first()).toContainText("session 1");
+    await expect(
+      page.locator("[data-testid='session-row']").first(),
+    ).toContainText("session 1");
     await expect(page.locator(".session.on")).toContainText("session 1");
     // Typing goes into the terminal without a click.
     await page.keyboard.type("x");
     await expect.poll(() => typed(page)).toContain("x");
   });
 
-  test("steps between sessions with a chord, from anywhere", async ({ page }) => {
+  test("steps between sessions with a chord, from anywhere", async ({
+    page,
+  }) => {
     await running(page);
     await page.getByTestId("new-session").click();
     await expect(page.locator(".session.on")).toContainText("session 2");
@@ -376,10 +454,14 @@ test.describe("one project", () => {
     await expect(page.locator(".session.on")).toContainText("session 2");
   });
 
-  test("hands the keyboard back to the agent on Escape from a list pane", async ({ page }) => {
+  test("hands the keyboard back to the agent on Escape from a list pane", async ({
+    page,
+  }) => {
     await running(page);
     await page.keyboard.press(`${MOD}+1`);
-    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await expect(page.getByTestId("focus-readout")).toHaveText(
+      "focus: sessions",
+    );
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   });
@@ -394,7 +476,10 @@ test.describe("one project", () => {
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
 
-    await page.evaluate(([x, y]) => window.__fake.drag?.({ type: "over", x, y }), [x, y]);
+    await page.evaluate(
+      ([x, y]) => window.__fake.drag?.({ type: "over", x, y }),
+      [x, y],
+    );
     await expect(term).toHaveClass(/target/);
 
     await page.evaluate(
@@ -413,7 +498,9 @@ test.describe("one project", () => {
       .toContain("/Users/ada/Screen\\ Shot.png /Users/ada/notes.md ");
   });
 
-  test("takes a drop on the pane's chrome as a drop on the agent", async ({ page }) => {
+  test("takes a drop on the pane's chrome as a drop on the agent", async ({
+    page,
+  }) => {
     await running(page);
     await page.evaluate(() =>
       window.__fake.drag?.({ type: "drop", paths: ["/tmp/x.txt"], x: 2, y: 2 }),
@@ -435,8 +522,12 @@ test.describe("one project", () => {
 
   test("writes output into the terminal", async ({ page }) => {
     await running(page);
-    await page.evaluate(() => window.__fake.emit("pty-1", "rename the token cache module"));
-    await expect.poll(() => buffer(page)).toContain("rename the token cache module");
+    await page.evaluate(() =>
+      window.__fake.emit("pty-1", "rename the token cache module"),
+    );
+    await expect
+      .poll(() => buffer(page))
+      .toContain("rename the token cache module");
   });
 
   test("joins chunks, including one split mid-character", async ({ page }) => {
@@ -469,7 +560,9 @@ test.describe("one project", () => {
       window.__fake.resizes.length = 0;
     });
     await page.setViewportSize({ width: 1100, height: 900 });
-    await expect.poll(() => page.evaluate(() => window.__fake.resizes.length)).toBeGreaterThan(0);
+    await expect
+      .poll(() => page.evaluate(() => window.__fake.resizes.length))
+      .toBeGreaterThan(0);
   });
 
   // The last row is the one the prompt lives on. It has to be inside the
@@ -479,11 +572,15 @@ test.describe("one project", () => {
     for (const height of [900, 811, 723, 677]) {
       await page.setViewportSize({ width: 1200, height });
       await page.waitForTimeout(100);
-      const host = await page.locator(`${AGENT} [data-testid='terminal']`).boundingBox();
+      const host = await page
+        .locator(`${AGENT} [data-testid='terminal']`)
+        .boundingBox();
       const screen = await page.locator(`${AGENT} .xterm-screen`).boundingBox();
       expect(host).not.toBeNull();
       expect(screen).not.toBeNull();
-      expect(screen!.y + screen!.height).toBeLessThanOrEqual(host!.y + host!.height - 8);
+      expect(screen!.y + screen!.height).toBeLessThanOrEqual(
+        host!.y + host!.height - 8,
+      );
       expect(screen!.y).toBeGreaterThanOrEqual(host!.y + 8);
     }
   });
@@ -492,12 +589,16 @@ test.describe("one project", () => {
     await running(page);
     await page.evaluate(() => window.__fake.end("pty-1", 0, true));
 
-    await expect(page.getByTestId("agent-status")).toContainText("The session ended.");
+    await expect(page.getByTestId("agent-status")).toContainText(
+      "The session ended.",
+    );
     await expect(page.getByTestId("start-agent")).toHaveText("New session");
   });
 
   // Never respawn on its own: a broken install would otherwise become a loop.
-  test("names the exit code on a crash and waits to be asked", async ({ page }) => {
+  test("names the exit code on a crash and waits to be asked", async ({
+    page,
+  }) => {
     await running(page);
     await page.evaluate(() => window.__fake.end("pty-1", 127, false));
 
@@ -506,7 +607,9 @@ test.describe("one project", () => {
     expect(await spawnCount(page)).toBe(1);
   });
 
-  test("keeps a stopped session's output on screen to be read", async ({ page }) => {
+  test("keeps a stopped session's output on screen to be read", async ({
+    page,
+  }) => {
     await running(page);
     await page.evaluate(() => {
       window.__fake.emit("pty-1", "panicked at src/main.rs");
@@ -517,7 +620,9 @@ test.describe("one project", () => {
     await expect.poll(() => buffer(page)).toContain("panicked at");
   });
 
-  test("survives being hidden and shown again while reviewing", async ({ page }) => {
+  test("survives being hidden and shown again while reviewing", async ({
+    page,
+  }) => {
     await running(page);
     await page.setViewportSize({ width: 720, height: 800 });
 
@@ -567,7 +672,9 @@ test.describe("several sessions in one project", () => {
   });
 
   // The whole point of the model.
-  test("switching back leaves both alive, each with its own scrollback", async ({ page }) => {
+  test("switching back leaves both alive, each with its own scrollback", async ({
+    page,
+  }) => {
     await page.evaluate(() => {
       window.__fake.emit("pty-1", "first session output");
       window.__fake.emit("pty-2", "second session output");
@@ -584,7 +691,11 @@ test.describe("several sessions in one project", () => {
 
   test("typing goes to the session you are looking at", async ({ page }) => {
     await rows(page).first().click();
-    await page.locator(`${AGENT} [data-testid='terminal']:not(.hidden) .xterm-helper-textarea`).press("a");
+    await page
+      .locator(
+        `${AGENT} [data-testid='terminal']:not(.hidden) .xterm-helper-textarea`,
+      )
+      .press("a");
     await expect.poll(() => typed(page)).toBe("a");
   });
 
@@ -613,12 +724,16 @@ test.describe("working, and waiting for you", () => {
     // Looking at the second; the first works behind it.
   });
 
-  test("shows a session working while its output flows, then waiting once it stops", async ({ page }) => {
+  test("shows a session working while its output flows, then waiting once it stops", async ({
+    page,
+  }) => {
     await page.evaluate(() => window.__fake.emit("pty-1", "x".repeat(400)));
     await expect(rows(page).first()).toContainText("working");
     await expect(rows(page).first().locator(".dot")).toHaveClass(/working/);
 
-    await expect(rows(page).first()).toContainText("waiting for you", { timeout: 6000 });
+    await expect(rows(page).first()).toContainText("waiting for you", {
+      timeout: 6000,
+    });
     await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
     await expect(page.getByTestId("waiting-readout")).toHaveText(/1 waiting/);
     expect((await page.evaluate(() => window.__fake.badges)).at(-1)).toBe(1);
@@ -630,7 +745,9 @@ test.describe("working, and waiting for you", () => {
     expect((await page.evaluate(() => window.__fake.badges)).at(-1)).toBeNull();
   });
 
-  test("marks a session that rings behind another at once", async ({ page }) => {
+  test("marks a session that rings behind another at once", async ({
+    page,
+  }) => {
     await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
     await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
   });
@@ -639,7 +756,11 @@ test.describe("working, and waiting for you", () => {
   // it starts, stops and asks, and quiet on the pty no longer means anything.
   test("takes the hooks' word over the heuristic", async ({ page }) => {
     const event = (kind: string) =>
-      page.evaluate((kind) => window.__fake.sessionEvent?.({ sessionId: "session-1", kind }), kind);
+      page.evaluate(
+        (kind) =>
+          window.__fake.sessionEvent?.({ sessionId: "session-1", kind }),
+        kind,
+      );
 
     await event("prompt");
     await expect(rows(page).first()).toContainText("working");
@@ -655,12 +776,36 @@ test.describe("working, and waiting for you", () => {
     // Granted: the agent goes on, which shows as output.
     await page.evaluate(() => window.__fake.emit("pty-1", "x".repeat(400)));
     await expect(rows(page).first()).toContainText("working");
-    await expect(rows(page).first().locator(".dot")).not.toHaveClass(/permission/);
+    await expect(rows(page).first().locator(".dot")).not.toHaveClass(
+      /permission/,
+    );
 
     await event("stop");
     await expect(rows(page).first()).toContainText("waiting for you");
     await rows(page).first().click();
     await expect(rows(page).first()).toContainText("running");
+  });
+
+  // The row's buttons appear over its end on hover. Archive stops the
+  // session and files it with the sessions to resume, behind the fold.
+  test("archives a session from its row into the fold", async ({ page }) => {
+    await running(page);
+    await page.evaluate(() => {
+      window.__fake.transcripts = [
+        { id: "session-1", title: "the one", modified: 1000, size: 10 },
+      ];
+    });
+    const before = await rows(page).count();
+    const row = rows(page).first().locator("..");
+    await expect(row.locator(".actions")).toHaveCSS("opacity", "0");
+    await rows(page).first().hover();
+    await expect(row.locator(".actions")).toHaveCSS("opacity", "1");
+    await row.getByTestId("archive-session").click();
+    await expect(rows(page)).toHaveCount(before - 1);
+    await expect(page.getByTestId("outside-fold")).toHaveText(
+      /1 claude session to resume/,
+    );
+    await expect(page.getByTestId("past-session")).toHaveCount(0);
   });
 
   test("does not mark the session you are looking at", async ({ page }) => {
@@ -676,7 +821,9 @@ test.describe("several projects", () => {
     await open(page, { open: [ONE, TWO] });
   });
 
-  test("opens both and starts a session only in the one you are looking at", async ({ page }) => {
+  test("opens both and starts a session only in the one you are looking at", async ({
+    page,
+  }) => {
     await running(page);
     await expect(page.locator(SESSIONS)).toContainText("one");
     await expect(page.locator(SESSIONS)).toContainText("two");
@@ -685,7 +832,9 @@ test.describe("several projects", () => {
 
   // No confirm dialog: switching project destroys nothing, so there is nothing
   // to warn about.
-  test("switching project leaves the other project's sessions alive", async ({ page }) => {
+  test("switching project leaves the other project's sessions alive", async ({
+    page,
+  }) => {
     await running(page);
     await page.evaluate(() => window.__fake.emit("pty-1", "work in one"));
     await expect.poll(() => buffer(page)).toContain("work in one");
@@ -701,13 +850,17 @@ test.describe("several projects", () => {
     expect(await spawnCount(page)).toBe(2);
   });
 
-  test("never asks before switching, because nothing is lost", async ({ page }) => {
+  test("never asks before switching, because nothing is lost", async ({
+    page,
+  }) => {
     await running(page);
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
     await expect(page.getByTestId("switch-confirm")).toHaveCount(0);
   });
 
-  test("closing a project stops its sessions and keeps the rest", async ({ page }) => {
+  test("closing a project stops its sessions and keeps the rest", async ({
+    page,
+  }) => {
     await running(page);
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
     await page.getByTestId("new-session").click();
@@ -722,7 +875,9 @@ test.describe("several projects", () => {
     await running(page);
   });
 
-  test("opens a picked project and starts a session in it when asked", async ({ page }) => {
+  test("opens a picked project and starts a session in it when asked", async ({
+    page,
+  }) => {
     await running(page);
     await page.evaluate(() => {
       window.__fake.picked = "/home/ada/dev/three";
@@ -756,7 +911,9 @@ test.describe("with codex installed too", () => {
   });
 
   // Codex mints its own id. The core reports it, and the name with it.
-  test("learns a codex session's id and name, and lists it to resume later", async ({ page }) => {
+  test("learns a codex session's id and name, and lists it to resume later", async ({
+    page,
+  }) => {
     await page.getByTestId("new-session").click();
     await page.getByTestId("agent-option").nth(1).click();
     await running(page);
@@ -764,27 +921,40 @@ test.describe("with codex installed too", () => {
       window.__fake.codexTranscripts = [
         { id: "cx-1", title: "Refactor billing", modified: 1000, size: 10 },
       ];
-      window.__fake.identify?.({ ptyId: "pty-1", sessionId: "cx-1", title: "Refactor billing" });
+      window.__fake.identify?.({
+        ptyId: "pty-1",
+        sessionId: "cx-1",
+        title: "Refactor billing",
+      });
     });
     await expect(rows(page).first()).toContainText("Refactor billing");
 
     await page.evaluate(() => window.__fake.end("pty-1", 0, true));
     await page.locator("[data-testid='close-session']").first().click();
-    await expect(page.getByTestId("past-session")).toContainText("Refactor billing");
+    await expect(page.getByTestId("past-session")).toContainText(
+      "Refactor billing",
+    );
   });
 
-  test("folds codex sessions from outside apart, and resumes one", async ({ page }) => {
+  test("folds codex sessions from outside apart, and resumes one", async ({
+    page,
+  }) => {
     await open(page, {
       open: [ONE],
       codex: "/usr/local/bin/codex",
-      codexTranscripts: [{ id: "old", title: "Old thread", modified: 900, size: 10 }],
+      codexTranscripts: [
+        { id: "old", title: "Old thread", modified: 900, size: 10 },
+      ],
     });
     const fold = page.getByTestId("outside-fold");
     await expect(fold).toHaveText(/1 codex session to resume/);
     await fold.click();
     await page.getByTestId("outside-session").click();
     await expect.poll(() => spawns(page)).toHaveLength(1);
-    expect((await spawns(page))[0]).toMatchObject({ agent: "codex", session: "old" });
+    expect((await spawns(page))[0]).toMatchObject({
+      agent: "codex",
+      session: "old",
+    });
   });
 });
 
@@ -797,10 +967,14 @@ test.describe("when things are missing", () => {
     expect(await spawnCount(page)).toBe(0);
   });
 
-  test("reports a spawn that never got started, and does not retry", async ({ page }) => {
+  test("reports a spawn that never got started, and does not retry", async ({
+    page,
+  }) => {
     await open(page, { open: [ONE], failSpawn: "no pty available" });
     await page.getByTestId("new-session").click();
-    await expect(page.getByTestId("agent-status")).toContainText("no pty available");
+    await expect(page.getByTestId("agent-status")).toContainText(
+      "no pty available",
+    );
 
     await page.waitForTimeout(400);
     expect(await spawnCount(page)).toBe(0);

@@ -41,6 +41,8 @@ import {
   started,
   statusLabel,
   statusMessage,
+  archive,
+  disown,
 } from "$lib/sessions.svelte";
 
 const A = "/home/ada/dev/one";
@@ -63,7 +65,9 @@ vi.mock("$lib/core", () => ({
     // here, or the parent for anything ending in "/inside".
     projectInfo: async (path: string) => {
       if (path === "/broken") throw new Error("gone");
-      const repository = path.endsWith("/inside") ? path.slice(0, -"/inside".length) : path;
+      const repository = path.endsWith("/inside")
+        ? path.slice(0, -"/inside".length)
+        : path;
       return { path, name: path, repository, isGit: true };
     },
     // Every agent is asked; the count follows one of them.
@@ -82,7 +86,15 @@ beforeEach(() => {
   cwdAnswer = null;
   cwdAsks = 0;
   resetAgent();
-  applyDetect({ id: "claude-code", path: "/usr/local/bin/claude", caps: null, fromLoginShell: true }, true);
+  applyDetect(
+    {
+      id: "claude-code",
+      path: "/usr/local/bin/claude",
+      caps: null,
+      fromLoginShell: true,
+    },
+    true,
+  );
 });
 
 /** A session that has actually come up, as one does in practice. */
@@ -461,7 +473,10 @@ describe("history", () => {
   // A transcript already open as a live session is that session, not a
   // separate row offering to open it again.
   it("hides a transcript that is already resumed", () => {
-    sessions.history[A] = [transcript("abc", "one", 1000), transcript("def", "two", 900)];
+    sessions.history[A] = [
+      transcript("abc", "one", 1000),
+      transcript("def", "two", 900),
+    ];
     create(A, "abc");
     expect(outsideFor(A).map((t) => t.id)).toEqual(["def"]);
   });
@@ -469,7 +484,10 @@ describe("history", () => {
   // A fresh session writes a transcript as it goes. That transcript is the
   // live row, not a past session offering to open itself again.
   it("hides the transcript a live session is writing", () => {
-    sessions.history[A] = [transcript("fresh", "one", 1000), transcript("def", "two", 900)];
+    sessions.history[A] = [
+      transcript("fresh", "one", 1000),
+      transcript("def", "two", 900),
+    ];
     const session = create(A);
     started(session.key, "pty-1", "fresh");
     expect(historyFor(A)).toEqual([]);
@@ -477,14 +495,18 @@ describe("history", () => {
   });
 
   it("uses the title when there is one", () => {
-    expect(historyLabel(transcript("abc", "rename the cache", 1000))).toBe("rename the cache");
+    expect(historyLabel(transcript("abc", "rename the cache", 1000))).toBe(
+      "rename the cache",
+    );
   });
 
   // The format is documented as internal and version-unstable, so a title that
   // could not be read falls back rather than showing an error.
   it("falls back to recency when the title could not be read", () => {
     const now = Date.now();
-    const label = historyLabel(transcript("abc", null, Math.floor(now / 1000) - 7200));
+    const label = historyLabel(
+      transcript("abc", null, Math.floor(now / 1000) - 7200),
+    );
     expect(label).toContain("session from");
     expect(label).toContain("2h ago");
   });
@@ -496,7 +518,8 @@ describe("history", () => {
 
 describe("ago", () => {
   const now = 1_000_000_000_000;
-  const at = (secondsAgo: number) => ago(Math.floor(now / 1000) - secondsAgo, now);
+  const at = (secondsAgo: number) =>
+    ago(Math.floor(now / 1000) - secondsAgo, now);
 
   it("is coarse on purpose: the pane wants recency, not a timestamp", () => {
     expect(at(5)).toBe("just now");
@@ -529,7 +552,15 @@ describe("an agent that mints its own id", () => {
   });
 
   it("starts with the agent last started in the project", () => {
-    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    applyDetect(
+      {
+        id: "codex",
+        path: "/usr/local/bin/codex",
+        caps: null,
+        fromLoginShell: true,
+      },
+      true,
+    );
     expect(defaultAgent(A)).toBe("claude-code");
     create(A, null, "codex");
     expect(defaultAgent(A)).toBe("codex");
@@ -549,7 +580,10 @@ describe("an agent that mints its own id", () => {
 describe("titles", () => {
   it.each([
     ["✳ fix-activity-tracking-bugs", "fix-activity-tracking-bugs"],
-    ["✻ fix-activity-tracking-bugs · Claude Code", "fix-activity-tracking-bugs"],
+    [
+      "✻ fix-activity-tracking-bugs · Claude Code",
+      "fix-activity-tracking-bugs",
+    ],
     ["fix-activity-tracking-bugs - Claude Code", "fix-activity-tracking-bugs"],
     ["Claude Code · rename the cache", "rename the cache"],
     ["  rename the cache  ", "rename the cache"],
@@ -558,9 +592,12 @@ describe("titles", () => {
   });
 
   // The agent names itself before it names the session. That is not a title.
-  it.each(["Claude Code", "✳ Claude Code", "claude", "", "✳ "])("takes %j as no title", (raw) => {
-    expect(sessionTitle(raw)).toBeNull();
-  });
+  it.each(["Claude Code", "✳ Claude Code", "claude", "", "✳ "])(
+    "takes %j as no title",
+    (raw) => {
+      expect(sessionTitle(raw)).toBeNull();
+    },
+  );
 
   it("labels the row with the title once the agent sets one", () => {
     const session = live(A, "pty-1");
@@ -584,9 +621,17 @@ describe("titles", () => {
     titled(session.key, "✳ fix-activity-tracking-bugs");
     close(session.key);
     sessions.history[A] = [
-      { id: "session-pty-1", title: "a summary", modified: 1000, size: 1, agent: "claude-code" },
+      {
+        id: "session-pty-1",
+        title: "a summary",
+        modified: 1000,
+        size: 1,
+        agent: "claude-code",
+      },
     ];
-    expect(historyLabel(sessions.history[A][0])).toBe("fix-activity-tracking-bugs");
+    expect(historyLabel(sessions.history[A][0])).toBe(
+      "fix-activity-tracking-bugs",
+    );
 
     const again = create(A, "session-pty-1");
     expect(label(again)).toBe("fix-activity-tracking-bugs");
@@ -800,6 +845,19 @@ describe("working, and waiting for you", () => {
     exact("session-pty-1", "prompt");
     expect(session.unread).toBe(false);
     expect(() => exact("nope", "stop")).not.toThrow();
+  });
+
+  // Archiving stops the session and takes it out of ours, so it is listed
+  // behind the fold with the sessions from outside, still there to resume.
+  it("archives a session: stopped, and no longer ours", () => {
+    const session = live(A, "pty-1");
+    expect(isMine(A, "session-pty-1")).toBe(true);
+    archive(session.key);
+    expect(sessions.all).toHaveLength(0);
+    expect(isMine(A, "session-pty-1")).toBe(false);
+    expect(killed).toContain("pty-1");
+    disown(A, "not-ours");
+    expect(() => archive("nope")).not.toThrow();
   });
 
   it("does nothing for a key it does not have", () => {

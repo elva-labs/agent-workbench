@@ -12,6 +12,12 @@ project has: live sessions if any, past ones to resume, and a new-session
 row. With more than one agent installed the row opens in place into a row
 per agent; see [agents](adapters.md).
 
+A row's own buttons appear over its end on hover, so a name is never
+squeezed to make room for them: × stops the session and leaves it under the
+project's own past, and archive stops it and files it with the sessions to
+resume instead. A past row has the archive button alone. On the keyboard,
+Delete is the ×, Shift+Delete the archive.
+
 The kill lives in one place: closing a session stops its pty and clears the
 id, and the terminal's own teardown does not, so a second signal never lands
 on an id that may since have been reused. On shutdown the pty master closes

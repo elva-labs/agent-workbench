@@ -526,6 +526,28 @@ export function ended(event: SessionEnded): boolean {
 }
 
 /** Closes a row for good, stopping it first if it is still going. */
+/** Takes a session out of ours: from then on it is listed with the ones
+    from outside, behind the fold, still there to resume. */
+export function disown(project: string, id: string) {
+  if (!isMine(project, id)) return;
+  sessions.mine[project] = (sessions.mine[project] ?? []).filter((mine) => mine !== id);
+  try {
+    localStorage.setItem(MINE_KEY, JSON.stringify(sessions.mine));
+  } catch {
+    // Non-fatal: the split into ours and outside does not survive a restart.
+  }
+}
+
+/** Archives a live session: stops it, and files it with the sessions to
+    resume rather than under the project's own past. */
+export function archive(key: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  const { project, id } = session;
+  close(key);
+  if (id !== null) disown(project, id);
+}
+
 export function close(key: string) {
   const session = byKey(key);
   if (session === null) return;

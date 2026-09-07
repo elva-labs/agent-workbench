@@ -19,6 +19,8 @@
     select,
     sessions,
     statusLabel,
+    archive as archiveSession,
+    disown,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
@@ -128,10 +130,17 @@
     return rows[0]?.id ?? null;
   });
 
-  /** What the × on the row under the cursor would do. */
-  function remove(id: string) {
+  /** What the × on the row under the cursor would do, or with Shift the
+      archive button; a past row has only the latter. */
+  function remove(id: string, shift: boolean) {
     if (id.startsWith("project:")) closeProject(id.slice("project:".length));
-    else if (id.startsWith("session:")) closeSession(id.slice("session:".length));
+    else if (id.startsWith("session:")) {
+      const key = id.slice("session:".length);
+      if (shift) archiveSession(key);
+      else closeSession(key);
+    } else if (id.startsWith("past:") && workspace.active !== null) {
+      disown(workspace.active, id.slice("past:".length));
+    }
   }
 
   // Focusing the pane by key puts the keyboard here, so the arrows work at
@@ -201,7 +210,7 @@
       case "Delete":
       case "Backspace":
         if (current === null) return;
-        remove(current);
+        remove(current, e.shiftKey);
         break;
       default:
         return;
@@ -324,33 +333,60 @@
             {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
             <span class="state">{statusLabel(session)}</span>
           </button>
-          <button
-            class="icon"
-            tabindex="-1"
-            onclick={() => closeSession(session.key)}
-            aria-label="Close {label(session)}"
-            data-testid="close-session">×</button
-          >
+          <!-- Over the row's end rather than beside it, so a name is never
+               squeezed to make room for them. -->
+          <span class="actions">
+            <button
+              class="icon"
+              tabindex="-1"
+              onclick={() => archiveSession(session.key)}
+              aria-label="Archive {label(session)}"
+              title="Stop, and file with the sessions to resume"
+              data-testid="archive-session">↧</button
+            >
+            <button
+              class="icon"
+              tabindex="-1"
+              onclick={() => closeSession(session.key)}
+              aria-label="Close {label(session)}"
+              title="Stop"
+              data-testid="close-session">×</button
+            >
+          </span>
         </div>
       {/each}
 
       {#if workspace.active === project.path}
         {#each historyFor(project.path) as transcript (transcript.id)}
-          <button
-            class="row past"
+          <div
+            class="session past-row"
             class:cursor={current === `past:${transcript.id}`}
-            tabindex="-1"
-            onclick={() => resume(project.path, transcript.id, transcript.agent)}
-            disabled={!isReady()}
-            title={transcript.title ?? transcript.id}
             data-row="past:{transcript.id}"
-            data-testid="past-session"
           >
-            <span class="dot"></span>
-            <span class="label">{historyLabel(transcript)}</span>
-            {#if several}<span class="tag">{agentTag(transcript.agent)}</span>{/if}
-            <span class="state">{ago(transcript.modified)}</span>
-          </button>
+            <button
+              class="row past"
+              tabindex="-1"
+              onclick={() => resume(project.path, transcript.id, transcript.agent)}
+              disabled={!isReady()}
+              title={transcript.title ?? transcript.id}
+              data-testid="past-session"
+            >
+              <span class="dot"></span>
+              <span class="label">{historyLabel(transcript)}</span>
+              {#if several}<span class="tag">{agentTag(transcript.agent)}</span>{/if}
+              <span class="state">{ago(transcript.modified)}</span>
+            </button>
+            <span class="actions">
+              <button
+                class="icon"
+                tabindex="-1"
+                onclick={() => disown(project.path, transcript.id)}
+                aria-label="Archive {historyLabel(transcript)}"
+                title="File with the sessions to resume"
+                data-testid="archive-past">↧</button
+              >
+            </span>
+          </div>
         {/each}
 
         <!-- With several agents the row opens, in place, into the choice of
@@ -413,7 +449,9 @@
               data-testid="outside-fold"
             >
               <span class="chevron" class:open={unfolded[fold]}>▸</span>
-              {outside.length} {agentTag(agent)} {outside.length === 1 ? "session" : "sessions"} to resume
+              <span class="fold-text"
+                >{`${outside.length} ${agentTag(agent)} ${outside.length === 1 ? "session" : "sessions"} to resume`}</span
+              >
             </button>
             {#if unfolded[fold]}
               {#each outside as transcript (transcript.id)}
@@ -562,8 +600,38 @@
 
   .project,
   .session {
+    --row-bg: var(--surface);
+    position: relative;
     display: flex;
     align-items: center;
+  }
+
+  .session:hover {
+    --row-bg: var(--surface-2);
+    background: var(--row-bg);
+  }
+
+  /* The row's own buttons, over its end on hover, on the row's own colour
+     so they read; the text runs under the fade. */
+  .actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 4px 0 14px;
+    background: linear-gradient(to right, transparent, var(--row-bg) 12px);
+    opacity: 0;
+  }
+
+  .session:hover .actions,
+  .actions:focus-within {
+    opacity: 1;
+  }
+
+  .past-row .past {
+    flex: 1;
   }
 
   .row {
@@ -631,7 +699,8 @@
   }
 
   .session.on {
-    background: var(--accent-soft);
+    --row-bg: var(--accent-soft);
+    background: var(--row-bg);
   }
 
   .session.on .label {
@@ -798,6 +867,14 @@
     opacity: 1;
   }
 
+  .actions .icon {
+    padding: 2px 5px;
+  }
+
+  .actions .icon:hover {
+    color: var(--accent);
+  }
+
   .new {
     display: block;
     width: 100%;
@@ -826,6 +903,7 @@
     align-items: center;
     gap: 5px;
     width: 100%;
+    min-width: 0;
     margin: 0 0 4px;
     border: 0;
     background: none;
@@ -834,6 +912,13 @@
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px var(--pane-pad) 2px 26px;
+  }
+
+  .fold-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .fold:hover {
