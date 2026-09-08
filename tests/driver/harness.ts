@@ -496,13 +496,28 @@ export async function launch(): Promise<App> {
 
 /** Points the app at projects, the way a restart would find them. */
 export async function openProjects(driver: WebDriver, paths: string[]) {
-  await driver.executeScript((paths: string[]) => {
-    localStorage.setItem(
-      "workbench.workspace",
-      JSON.stringify({ open: paths, active: paths[0] ?? null, recent: paths }),
-    );
-    location.reload();
-  }, paths);
+  // The call lands while the page may still be changing under the previous
+  // test, and the driver has answered it with "no such element" once in a
+  // long while: asked again a moment later, it goes through.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await driver.executeScript((paths: string[]) => {
+        localStorage.setItem(
+          "workbench.workspace",
+          JSON.stringify({
+            open: paths,
+            active: paths[0] ?? null,
+            recent: paths,
+          }),
+        );
+        location.reload();
+      }, paths);
+      break;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
   await driver.wait(async () => {
     const ready = await driver.executeScript(
       () => document.querySelector("section[data-pane='agent']") !== null,

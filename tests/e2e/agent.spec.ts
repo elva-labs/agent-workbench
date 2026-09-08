@@ -719,6 +719,8 @@ test.describe("working, and waiting for you", () => {
   test.beforeEach(async ({ page }) => {
     await open(page, { open: [ONE] });
     await running(page);
+    // A line sent to the first: from here its output can be work.
+    await page.keyboard.press("Enter");
     await page.getByTestId("new-session").click();
     await expect(rows(page)).toHaveCount(2);
     // Looking at the second; the first works behind it.
@@ -727,7 +729,11 @@ test.describe("working, and waiting for you", () => {
   test("shows a session working while its output flows, then waiting once it stops", async ({
     page,
   }) => {
-    await page.evaluate(() => window.__fake.emit("pty-1", "x".repeat(400)));
+    // Seconds of output running, the way an agent at work streams.
+    for (let i = 0; i < 3; i += 1) {
+      await page.evaluate(() => window.__fake.emit("pty-1", "x".repeat(400)));
+      await page.waitForTimeout(1100);
+    }
     await expect(rows(page).first()).toContainText("working");
     await expect(rows(page).first().locator(".dot")).toHaveClass(/working/);
 
@@ -815,7 +821,12 @@ test.describe("working, and waiting for you", () => {
   });
 
   test("does not mark the session you are looking at", async ({ page }) => {
-    await page.evaluate(() => window.__fake.emit("pty-2", "x".repeat(400)));
+    // The second is the one on screen: a line to it, then seconds of output.
+    await page.keyboard.press("Enter");
+    for (let i = 0; i < 3; i += 1) {
+      await page.evaluate(() => window.__fake.emit("pty-2", "x".repeat(400)));
+      await page.waitForTimeout(1100);
+    }
     await expect(rows(page).nth(1)).toContainText("working");
     await expect(rows(page).nth(1)).toContainText("running", { timeout: 6000 });
     await expect(rows(page).nth(1).locator(".dot")).not.toHaveClass(/unread/);
