@@ -17,8 +17,12 @@ the app's own directory in the user's home.
 For Codex, entries in the project's `.codex/hooks.json` for prompt
 submitted, stop and permission request, appending to the same log.
 
-The local settings file is the one Claude Code keeps out of version control,
-so the entries never turn up in a diff.
+Neither file turns up in a diff or as untracked: installing adds both to
+the repository's own exclude list, the one git keeps outside the commits,
+under `.git/info/exclude`. Claude Code does the same for its local settings
+file the first time it writes one; the app does it in case it gets there
+first, and for the Codex file, which Codex leaves alone. The two lines stay
+in the exclude list when the hooks are turned off, where they do nothing.
 
 ## What they give
 

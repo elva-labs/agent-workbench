@@ -237,7 +237,50 @@ pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
     }
 
     touch_events(home)?;
+    exclude_from_git(project);
     Ok(status(home, project))
+}
+
+/// The two files, kept out of the repository's diffs and untracked list by
+/// its own exclude file, the one that is never committed. Claude Code does
+/// this for its local settings when it writes them first; here the app may
+/// be first, and Codex does not do it at all. A project outside any
+/// repository has nothing to exclude from.
+fn exclude_from_git(project: &Path) {
+    let Ok(repo) = git2::Repository::discover(project) else {
+        return;
+    };
+    let Some(workdir) = repo.workdir() else {
+        return;
+    };
+    let project = dunce::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    let workdir = dunce::canonicalize(workdir).unwrap_or_else(|_| workdir.to_path_buf());
+    let Ok(inside) = project.strip_prefix(&workdir) else {
+        return;
+    };
+    let exclude = repo.commondir().join("info").join("exclude");
+    let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
+    let before = text.len();
+    for file in [".claude/settings.local.json", ".codex/hooks.json"] {
+        let line = format!(
+            "/{}",
+            inside.join(file).to_string_lossy().replace('\\', "/")
+        );
+        if text.lines().any(|existing| existing.trim() == line) {
+            continue;
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&line);
+        text.push('\n');
+    }
+    if text.len() != before {
+        if let Some(dir) = exclude.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&exclude, text);
+    }
 }
 
 /// Removes only our entries. Anything else in the files stays, and a Codex
@@ -299,6 +342,31 @@ mod tests {
     fn reports_not_installed_when_there_are_no_settings() {
         let (home, project) = fixture("none");
         assert!(!status(&home, &project).installed);
+    }
+
+    #[test]
+    fn keeps_both_files_out_of_the_repository() {
+        let (home, project) = fixture("exclude");
+        git2::Repository::init(&project).unwrap();
+        install(&home, &project).unwrap();
+        install(&home, &project).unwrap();
+        let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
+        let ours: Vec<&str> = exclude
+            .lines()
+            .filter(|line| line.contains("settings.local") || line.contains("hooks.json"))
+            .collect();
+        assert_eq!(ours, ["/.claude/settings.local.json", "/.codex/hooks.json"]);
+    }
+
+    #[test]
+    fn excludes_by_the_path_inside_the_repository() {
+        let (home, project) = fixture("exclude-sub");
+        git2::Repository::init(&project).unwrap();
+        let sub = project.join("packages").join("app");
+        std::fs::create_dir_all(&sub).unwrap();
+        install(&home, &sub).unwrap();
+        let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
+        assert!(exclude.contains("/packages/app/.claude/settings.local.json"));
     }
 
     #[test]
