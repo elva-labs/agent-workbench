@@ -93,7 +93,15 @@ describe("the real app", () => {
         By.css("[data-testid='agent-option'][data-agent='claude-code']"),
       )
       .click();
-    await waitForText(driver, "FAKE CLAUDE --session-id");
+    // The first pty the app opens is the slow one: on a Windows runner the
+    // console host, cmd.exe and the scan of a freshly written script all
+    // come cold, and one night that took past twenty seconds. Later spawns
+    // in the same run come up in under a second.
+    await waitForText(
+      driver,
+      "FAKE CLAUDE --session-id",
+      process.platform === "win32" ? 90_000 : 20_000,
+    );
     await waitForText(driver, "in ");
     const text = await screenText(driver);
     expect(text).toMatch(/--session-id [0-9a-f-]{36}/);
