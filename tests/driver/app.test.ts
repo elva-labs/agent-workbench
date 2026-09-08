@@ -193,7 +193,14 @@ describe("the real app", () => {
       const remote = `ssh://test${repo}`;
       await openProjects(driver, [remote]);
       await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
-      await driver.findElement(By.css("[data-testid='new-session']")).click();
+      // The row is there before the agents are detected again after the
+      // reload; the button follows the detection.
+      await driver
+        .wait(
+          until.elementLocated(By.css("[data-testid='new-session']")),
+          10_000,
+        )
+        .click();
       await driver
         .findElement(
           By.css("[data-testid='agent-option'][data-agent='claude-code']"),
