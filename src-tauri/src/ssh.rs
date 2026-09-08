@@ -412,6 +412,52 @@ pub fn daemon_build(target: &str, resources: Option<&Path>) -> Option<PathBuf> {
     bundled.is_file().then_some(bundled)
 }
 
+/// The daemon build for this machine, by the names the bundle uses.
+pub fn local_daemon_target() -> Option<&'static str> {
+    daemon_target(&format!(
+        "{} {}",
+        match std::env::consts::OS {
+            "linux" => "Linux",
+            "macos" => "Darwin",
+            _ => return None,
+        },
+        std::env::consts::ARCH
+    ))
+}
+
+/// Puts this app's own daemon build where the hooks and the agents look
+/// for it on this machine, when it is missing or another version. A
+/// machine kind with no build, Windows today, gets nothing and the hooks
+/// go in without the server.
+pub fn ensure_local_daemon(home: &Path, resources: Option<&Path>) -> Result<(), String> {
+    let Some(target) = local_daemon_target() else {
+        return Ok(());
+    };
+    let Some(source) = daemon_build(target, resources) else {
+        return Ok(());
+    };
+    let destination = workbench_core::hook::daemon_path(home);
+    let current = Command::new(&destination)
+        .arg("version")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    if current.as_deref() == Some(env!("CARGO_PKG_VERSION")) {
+        return Ok(());
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
+    }
+    let staged = destination.with_extension("new");
+    std::fs::copy(&source, &staged)
+        .map_err(|e| format!("could not copy the daemon to {}: {e}", staged.display()))?;
+    restrict(&staged, 0o755);
+    std::fs::rename(&staged, &destination)
+        .map_err(|e| format!("could not put the daemon at {}: {e}", destination.display()))?;
+    Ok(())
+}
+
 /// Runs a command on a host the user's own ssh reaches, and gives back what
 /// it printed.
 pub fn run(target: &str, script: &str, stdin: Option<&[u8]>) -> Result<String, String> {

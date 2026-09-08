@@ -1,6 +1,6 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine, type GrepHit } from "$lib/core";
-import { exitReview } from "$lib/layout.svelte";
+import { enterReview, exitReview } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
 
@@ -60,15 +60,31 @@ export const files = $state({
       putting the keyboard in it. */
   fieldRequests: 0,
   /** A line the viewer should scroll to and mark, from a search hit. */
-  target: null as { path: string; line: number } | null,
+  /** The place a search hit, a reference in the agent's output or the
+      agent's own show request asked for: a line, or a range of them, and
+      what was said about it. */
+  target: null as {
+    path: string;
+    line: number;
+    to?: number;
+    note?: string | null;
+  } | null,
 
   changed: [] as FileEntry[],
   everything: [] as FileEntry[],
   /** Loaded lazily: the all-files list is only worth asking for when shown. */
   everythingLoaded: false,
 
-  diff: null as { lines: DiffLine[]; binary: boolean; truncated: boolean } | null,
-  content: null as { lines: string[]; binary: boolean; truncated: boolean } | null,
+  diff: null as {
+    lines: DiffLine[];
+    binary: boolean;
+    truncated: boolean;
+  } | null,
+  content: null as {
+    lines: string[];
+    binary: boolean;
+    truncated: boolean;
+  } | null,
   loading: false,
   error: null as string | null,
 
@@ -124,7 +140,8 @@ export async function refresh() {
     return;
   }
 
-  if (files.everythingLoaded || files.scope === "all") await loadEverything(read);
+  if (files.everythingLoaded || files.scope === "all")
+    await loadEverything(read);
   // The open file may have been changed by the agent, so its diff is stale.
   if (read === treeRead && files.selected !== null) await loadSelected();
   // The files moved, so what matched may have too.
@@ -138,7 +155,9 @@ async function loadEverything(read = treeRead) {
   try {
     const paths = await core().gitFiles(root);
     if (read !== treeRead) return;
-    const changedByPath = new Map(files.changed.map((file) => [file.path, file]));
+    const changedByPath = new Map(
+      files.changed.map((file) => [file.path, file]),
+    );
 
     // The changed ones keep their status and counts; the rest are plain.
     files.everything = paths.map(
@@ -266,6 +285,28 @@ export async function openAt(path: string, line: number) {
   await select(path);
 }
 
+/** Opens a file at a range of lines with a note above it, in the viewer:
+    what the agent asked to show, or a reference in its output. A file git
+    has not changed is not in the tree until the scope takes in everything,
+    so it does. */
+export async function showRange(
+  path: string,
+  from: number,
+  to: number,
+  note: string | null,
+) {
+  if (
+    files.scope !== "all" &&
+    !files.changed.some((file) => file.path === path)
+  ) {
+    await setScope("all");
+  }
+  files.target = { path, line: from, to: Math.max(from, to), note };
+  files.view = "content";
+  await select(path);
+  enterReview();
+}
+
 export function changedCount() {
   return files.changed.length;
 }
@@ -303,7 +344,8 @@ async function loadSelected() {
   try {
     const diff = canDiff(entry) ? await core().gitDiff(root, entry.path) : null;
     // A deleted file has a diff but nothing left to read.
-    const content = entry.status === "D" ? null : await core().gitContent(root, entry.path);
+    const content =
+      entry.status === "D" ? null : await core().gitContent(root, entry.path);
     if (read !== fileRead) return;
     files.diff = diff;
     files.content = content;
@@ -343,7 +385,10 @@ export async function setScope(scope: Scope) {
   if (scope === "all" && !files.everythingLoaded) await loadEverything();
 
   // Narrowing the scope can drop the open file out of the list.
-  if (files.selected !== null && !listed().some((file) => file.path === files.selected)) {
+  if (
+    files.selected !== null &&
+    !listed().some((file) => file.path === files.selected)
+  ) {
     files.selected = null;
     files.diff = null;
     files.content = null;

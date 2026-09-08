@@ -131,9 +131,16 @@ fn main() {
     match args.next().as_deref() {
         Some("serve") => serve(),
         Some("connect") => connect(args),
+        Some("mcp") => match workbench_core::api::home_directory() {
+            Some(home) => workbench_core::mcp::serve(&home),
+            None => {
+                eprintln!("no home directory");
+                std::process::exit(1);
+            }
+        },
         Some("--version" | "version") => println!("{}", env!("CARGO_PKG_VERSION")),
         _ => {
-            eprintln!("usage: agent-workbench-remote serve | connect [--host <address>] [--port <n>] | version");
+            eprintln!("usage: agent-workbench-remote serve | connect [--host <address>] [--port <n>] | mcp | version");
             std::process::exit(2);
         }
     }

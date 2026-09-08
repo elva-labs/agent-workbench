@@ -219,6 +219,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           fake.sessionEvent = handler;
           return () => {};
         },
+        onShowRequest: async () => () => {},
         onOpenSettings: async () => () => {},
         onRemoteClosed: async () => () => {},
         remoteHosts: async () => ({ configured: [], saved: [] }),

@@ -205,10 +205,20 @@ async fn hook_status(
 
 #[tauri::command]
 async fn hook_install(
+    app: tauri::AppHandle,
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
 ) -> Result<Value, String> {
+    // The server the hooks point the agents at is the daemon; on this
+    // machine the app puts its own build in place first. A remote has it
+    // already, since the connection runs it.
+    if let Route::Local(_) = route(&project) {
+        if let Some(home) = core.home() {
+            let resources = app.path().resource_dir().ok();
+            ssh::ensure_local_daemon(home, resources.as_deref())?;
+        }
+    }
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),

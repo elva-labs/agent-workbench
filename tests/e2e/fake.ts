@@ -109,6 +109,10 @@ export async function installFakeCore(
         onSessionEnded: async () => () => {},
         onSessionIdentified: async () => () => {},
         onSessionEvent: async () => () => {},
+        onShowRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__showRequest = handler;
+          return () => {};
+        },
 
         // Two ways in: `lab`, which the user's own ssh setup reaches, and a
         // token from a machine's `agent-workbench-remote connect`.

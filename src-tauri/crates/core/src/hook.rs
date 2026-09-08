@@ -53,6 +53,34 @@ pub fn events_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("last-tool-use.json")
 }
 
+/// Where the daemon lives on a machine, which is also the MCP server the
+/// agents are pointed at: on a remote the connection runs it from here,
+/// and on the desktop the app puts its own build here when the hooks go
+/// in. Without one here there is no server to name, and the hooks alone
+/// are installed.
+pub fn daemon_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench")
+        .join("bin")
+        .join(if cfg!(windows) {
+            "agent-workbench-remote.exe"
+        } else {
+            "agent-workbench-remote"
+        })
+}
+
+/// Claude Code's own file of per-project state, where a server added for
+/// one project and this user goes; nothing of it is in the project.
+fn claude_json_path(home: &Path) -> PathBuf {
+    home.join(".claude.json")
+}
+
+fn codex_config_path(project: &Path) -> PathBuf {
+    project.join(".codex").join("config.toml")
+}
+
+const SERVER_NAME: &str = "agent-workbench";
+const CODEX_SERVER_KEY: &str = "agent_workbench";
+
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
 }
@@ -237,8 +265,132 @@ pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
     }
 
     touch_events(home)?;
+    if daemon_path(home).is_file() {
+        install_server(home, project)?;
+    }
     exclude_from_git(project);
     Ok(status(home, project))
+}
+
+/// Points both agents at the daemon as an MCP server for the project:
+/// Claude Code in its own per-project state under the user's home, Codex
+/// in the project's own config, beside its hooks file.
+fn install_server(home: &Path, project: &Path) -> Result<(), String> {
+    let daemon = daemon_path(home).to_string_lossy().to_string();
+    let key = dunce::canonicalize(project)
+        .unwrap_or_else(|_| project.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    let claude = claude_json_path(home);
+    let mut state = read_settings(&claude);
+    let servers = state
+        .entry("projects")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's projects state is not an object")?
+        .entry(key)
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's project state is not an object")?
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's mcpServers state is not an object")?;
+    let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
+    if servers.get(SERVER_NAME) != Some(&entry) {
+        servers.insert(SERVER_NAME.into(), entry);
+        write_settings(&claude, &state)?;
+    }
+
+    let codex = codex_config_path(project);
+    let text = std::fs::read_to_string(&codex).unwrap_or_default();
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+    let mut server = toml_edit::Table::new();
+    server["command"] = toml_edit::value(daemon.as_str());
+    let mut args = toml_edit::Array::new();
+    args.push("mcp");
+    server["args"] = toml_edit::value(args);
+    let servers = document
+        .entry("mcp_servers")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let servers = servers
+        .as_table_mut()
+        .ok_or("the mcp_servers setting is not a table")?;
+    servers.set_implicit(true);
+    let same = servers
+        .get(CODEX_SERVER_KEY)
+        .and_then(|item| item.as_table())
+        .is_some_and(|table| {
+            table.get("command").and_then(|c| c.as_str()) == Some(daemon.as_str())
+        });
+    if !same {
+        servers.insert(CODEX_SERVER_KEY, toml_edit::Item::Table(server));
+        if let Some(parent) = codex.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {parent:?}: {e}"))?;
+        }
+        std::fs::write(&codex, document.to_string())
+            .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
+    }
+    Ok(())
+}
+
+/// Takes the server out of both agents' configuration, and a Codex config
+/// that held nothing but it goes too.
+fn uninstall_server(home: &Path, project: &Path) -> Result<(), String> {
+    let key = dunce::canonicalize(project)
+        .unwrap_or_else(|_| project.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let claude = claude_json_path(home);
+    if claude.exists() {
+        let mut state = read_settings(&claude);
+        let mut changed = false;
+        if let Some(servers) = state
+            .get_mut("projects")
+            .and_then(Value::as_object_mut)
+            .and_then(|projects| projects.get_mut(&key))
+            .and_then(Value::as_object_mut)
+            .and_then(|project| project.get_mut("mcpServers"))
+            .and_then(Value::as_object_mut)
+        {
+            changed = servers.remove(SERVER_NAME).is_some();
+        }
+        if changed {
+            write_settings(&claude, &state)?;
+        }
+    }
+
+    let codex = codex_config_path(project);
+    if codex.exists() {
+        let text = std::fs::read_to_string(&codex).unwrap_or_default();
+        let mut document = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+        let mut changed = false;
+        if let Some(servers) = document
+            .get_mut("mcp_servers")
+            .and_then(|item| item.as_table_mut())
+        {
+            changed = servers.remove(CODEX_SERVER_KEY).is_some();
+            if servers.is_empty() {
+                document.remove("mcp_servers");
+            }
+        }
+        if changed {
+            if document.as_table().is_empty() {
+                std::fs::remove_file(&codex)
+                    .map_err(|e| format!("could not remove {codex:?}: {e}"))?;
+            } else {
+                std::fs::write(&codex, document.to_string())
+                    .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The two files, kept out of the repository's diffs and untracked list by
@@ -261,7 +413,11 @@ fn exclude_from_git(project: &Path) {
     let exclude = repo.commondir().join("info").join("exclude");
     let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
     let before = text.len();
-    for file in [".claude/settings.local.json", ".codex/hooks.json"] {
+    for file in [
+        ".claude/settings.local.json",
+        ".codex/hooks.json",
+        ".codex/config.toml",
+    ] {
         let line = format!(
             "/{}",
             inside.join(file).to_string_lossy().replace('\\', "/")
@@ -307,6 +463,7 @@ pub fn uninstall(home: &Path, project: &Path) -> Result<HookStatus, String> {
             write_settings(&codex, &hooks)?;
         }
     }
+    uninstall_server(home, project)?;
 
     Ok(status(home, project))
 }
@@ -367,6 +524,71 @@ mod tests {
         install(&home, &sub).unwrap();
         let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
         assert!(exclude.contains("/packages/app/.claude/settings.local.json"));
+    }
+
+    fn with_daemon(home: &Path) {
+        let daemon = daemon_path(home);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+    }
+
+    // The server goes where each agent keeps a project's servers: Claude's
+    // own state under the home, Codex's config in the project.
+    #[test]
+    fn points_both_agents_at_the_daemon_as_a_server_and_takes_it_back() {
+        let (home, project) = fixture("server");
+        with_daemon(&home);
+        std::fs::create_dir_all(project.join(".codex")).unwrap();
+        std::fs::write(
+            project.join(".codex/config.toml"),
+            "model = \"o3\"\n\n[mcp_servers.other]\ncommand = \"other\"\n",
+        )
+        .unwrap();
+        install(&home, &project).unwrap();
+
+        let key = dunce::canonicalize(&project)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let state = read_settings(&claude_json_path(&home));
+        let server = &state["projects"][&key]["mcpServers"]["agent-workbench"];
+        assert_eq!(server["args"], json!(["mcp"]));
+        assert_eq!(
+            server["command"].as_str().unwrap(),
+            daemon_path(&home).to_string_lossy()
+        );
+        let codex = std::fs::read_to_string(project.join(".codex/config.toml")).unwrap();
+        assert!(codex.contains("model = \"o3\""));
+        assert!(codex.contains("[mcp_servers.other]"));
+        assert!(codex.contains("[mcp_servers.agent_workbench]"));
+        assert!(codex.contains("args = [\"mcp\"]"));
+
+        uninstall(&home, &project).unwrap();
+        let state = read_settings(&claude_json_path(&home));
+        assert!(state["projects"][&key]["mcpServers"]
+            .get("agent-workbench")
+            .is_none());
+        let codex = std::fs::read_to_string(project.join(".codex/config.toml")).unwrap();
+        assert!(codex.contains("[mcp_servers.other]"));
+        assert!(!codex.contains("agent_workbench"));
+    }
+
+    #[test]
+    fn a_codex_config_of_only_the_server_goes_with_it() {
+        let (home, project) = fixture("server-only");
+        with_daemon(&home);
+        install(&home, &project).unwrap();
+        assert!(project.join(".codex/config.toml").exists());
+        uninstall(&home, &project).unwrap();
+        assert!(!project.join(".codex/config.toml").exists());
+    }
+
+    #[test]
+    fn without_a_daemon_here_only_the_hooks_go_in() {
+        let (home, project) = fixture("no-daemon");
+        install(&home, &project).unwrap();
+        assert!(!claude_json_path(&home).exists());
+        assert!(!project.join(".codex/config.toml").exists());
     }
 
     #[test]

@@ -12,6 +12,7 @@
   import { resume } from "$lib/resume.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
+  import { showRequested } from "$lib/show.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
@@ -80,6 +81,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onSessionEvent((event) => exact(event.sessionId, event.kind))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onShowRequest((request) => void showRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

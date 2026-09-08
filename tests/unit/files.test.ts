@@ -9,6 +9,7 @@ import {
   effectiveView,
   filtering,
   openAt,
+  showRange,
   requestField,
   search,
   searchingLines,
@@ -36,9 +37,19 @@ const ROOT = "/repo";
 
 /** What the core would report. Reassigned per test to stand in for git. */
 const fake = {
-  status: [] as { path: string; status: string; add: number; del: number; binary: boolean }[],
+  status: [] as {
+    path: string;
+    status: string;
+    add: number;
+    del: number;
+    binary: boolean;
+  }[],
   fileList: [] as string[],
-  diff: { lines: [{ kind: "hunk", text: "@@ -1 +1 @@", old: null, new: null }], binary: false, truncated: false },
+  diff: {
+    lines: [{ kind: "hunk", text: "@@ -1 +1 @@", old: null, new: null }],
+    binary: false,
+    truncated: false,
+  },
   content: { lines: ["one", "two"], binary: false, truncated: false },
   statusCalls: 0,
   hits: [] as { path: string; line: number; text: string }[],
@@ -82,7 +93,11 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 
-const hit = (path: string, line: number, text: string) => ({ path, line, text });
+const hit = (path: string, line: number, text: string) => ({
+  path,
+  line,
+  text,
+});
 
 const changed = (path: string, status = "M", add = 2, del = 1) => ({
   path,
@@ -96,11 +111,25 @@ beforeEach(() => {
   clear();
   files.view = "diff";
   resetWorkspace();
-  workspace.open.push({ path: ROOT, name: "repo", repository: ROOT, isGit: true });
+  workspace.open.push({
+    path: ROOT,
+    name: "repo",
+    repository: ROOT,
+    isGit: true,
+  });
   workspace.active = ROOT;
 
-  fake.status = [changed("src/cache/mod.rs"), changed("src/lib.rs"), changed("gone.rs", "D", 0, 41)];
-  fake.fileList = ["Cargo.toml", "src/cache/mod.rs", "src/lib.rs", "src/main.rs"];
+  fake.status = [
+    changed("src/cache/mod.rs"),
+    changed("src/lib.rs"),
+    changed("gone.rs", "D", 0, 41),
+  ];
+  fake.fileList = [
+    "Cargo.toml",
+    "src/cache/mod.rs",
+    "src/lib.rs",
+    "src/main.rs",
+  ];
   fake.statusCalls = 0;
   fake.diffCalls = 0;
   fake.fail = null;
@@ -304,6 +333,36 @@ describe("the search field", () => {
     // The mark is that file's; another file has none.
     await select("src/cache/mod.rs");
     expect(files.target).toBeNull();
+  });
+
+  // What the agent asked to show: a range with a note, the file open in the
+  // viewer even when git has not changed it, which takes the whole tree.
+  it("shows a range with a note, widening the scope to a file git left alone", async () => {
+    await refresh();
+    expect(files.scope).toBe("changed");
+    await showRange("src/main.rs", 3, 5, "The entry point.");
+    expect(files.scope).toBe("all");
+    expect(files.selected).toBe("src/main.rs");
+    expect(files.view).toBe("content");
+    expect(files.target).toEqual({
+      path: "src/main.rs",
+      line: 3,
+      to: 5,
+      note: "The entry point.",
+    });
+    expect(layout.mode).toBe("reviewing");
+
+    // A changed file needs no widening.
+    clear();
+    await refresh();
+    await showRange("src/lib.rs", 2, 1, null);
+    expect(files.scope).toBe("changed");
+    expect(files.target).toEqual({
+      path: "src/lib.rs",
+      line: 2,
+      to: 2,
+      note: null,
+    });
   });
 
   it("hands the field to a chord in the mode asked for", () => {

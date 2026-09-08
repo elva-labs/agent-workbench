@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
 
-use crate::events::{self, Sink};
+use crate::events::Sink;
 
 pub const SESSION_EVENT: &str = "session_event";
 
@@ -83,19 +83,41 @@ pub fn read_new(path: &Path, offset: u64) -> (Vec<String>, u64) {
     (lines, start + complete.len() as u64)
 }
 
+/// What a line of a log means to the window: an event and its payload, or
+/// nothing for a line the log's reader does not care about.
+pub type Classify = dyn Fn(&str) -> Option<(String, serde_json::Value)> + Send + Sync;
+
 pub struct Tail {
     path: PathBuf,
     offset: Mutex<u64>,
+    rotate_at: u64,
+    classify: Box<Classify>,
 }
 
 impl Tail {
     /// Starts at the end: what happened before the window opened is not
     /// news, and the window has no rows for it.
     pub fn new(path: PathBuf) -> Self {
+        Self::reading(path, ROTATE_AT, |line| {
+            classify(line).and_then(|event| {
+                serde_json::to_value(event)
+                    .ok()
+                    .map(|value| (SESSION_EVENT.to_string(), value))
+            })
+        })
+    }
+
+    pub fn reading(
+        path: PathBuf,
+        rotate_at: u64,
+        classify: impl Fn(&str) -> Option<(String, serde_json::Value)> + Send + Sync + 'static,
+    ) -> Self {
         let end = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         Self {
             path,
             offset: Mutex::new(end),
+            rotate_at,
+            classify: Box::new(classify),
         }
     }
 
@@ -105,26 +127,43 @@ impl Tail {
         let (lines, end) = read_new(&self.path, *offset);
         *offset = end;
         for line in lines {
-            if let Some(event) = classify(&line) {
-                events::emit(sink, SESSION_EVENT, &event);
+            if let Some((event, payload)) = (self.classify)(&line) {
+                sink.emit(&event, payload);
             }
         }
-        if end > ROTATE_AT && std::fs::write(&self.path, "").is_ok() {
+        if end > self.rotate_at && std::fs::write(&self.path, "").is_ok() {
             *offset = 0;
         }
     }
 }
 
-/// Watches the log for the life of the app. The file is created first, so
-/// there is something to watch before any hook has fired.
+/// Watches the session log for the life of the app.
 pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
+    watch_log(sink, path, ROTATE_AT, |line| {
+        classify(line).and_then(|event| {
+            serde_json::to_value(event)
+                .ok()
+                .map(|value| (SESSION_EVENT.to_string(), value))
+        })
+    })
+}
+
+/// Watches a log for the life of the app, reading each new line with
+/// `classify`. The file is created first, so there is something to watch
+/// before anything has written to it.
+pub fn watch_log(
+    sink: Arc<dyn Sink>,
+    path: PathBuf,
+    rotate_at: u64,
+    classify: impl Fn(&str) -> Option<(String, serde_json::Value)> + Send + Sync + 'static,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     }
     if !path.exists() {
         std::fs::write(&path, "").map_err(|e| format!("could not create {path:?}: {e}"))?;
     }
-    let tail = Arc::new(Tail::new(path.clone()));
+    let tail = Arc::new(Tail::reading(path.clone(), rotate_at, classify));
     let (sender, receiver) = channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(move |event| {
         let _ = sender.send(event);

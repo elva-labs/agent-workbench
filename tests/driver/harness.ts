@@ -28,7 +28,7 @@ import { Builder, Key, type WebDriver } from "selenium-webdriver";
 const ROOT = resolve(__dirname, "../..");
 /** The daemon, for a "remote" that is this machine: the app is told to run
     it directly where it would run ssh. */
-const DAEMON = resolve(
+export const DAEMON = resolve(
   ROOT,
   "src-tauri/target/debug",
   process.platform === "win32"

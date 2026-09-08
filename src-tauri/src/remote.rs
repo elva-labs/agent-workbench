@@ -81,6 +81,10 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
                 return Value::String(with_host(host, root));
             }
         }
+        workbench_core::show::SHOW_REQUEST => {
+            put_back(&mut payload, "path", |path| with_host(host, path));
+            put_back(&mut payload, "cwd", |path| with_host(host, path));
+        }
         _ => {}
     }
     payload

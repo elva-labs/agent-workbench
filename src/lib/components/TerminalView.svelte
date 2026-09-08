@@ -8,6 +8,7 @@
   import { core } from "$lib/core";
   import { drops, register, unregister } from "$lib/drops.svelte";
   import { isMac, resolveAction } from "$lib/keymap";
+  import { references } from "$lib/refs";
   import { layout } from "$lib/layout.svelte";
   import { typed } from "$lib/sessions.svelte";
   import { WriteQueue, buildTheme, colorReply, softwareGl, tokenReader } from "$lib/terminal";
@@ -40,6 +41,9 @@
     /** Send Shift+Enter as Meta+Enter, which the agent takes as a newline
         rather than a send. A shell gets a plain Enter either way. */
     newlineOnShiftEnter?: boolean;
+    /** A reference to a place in a file in the output, `path:line`, was
+        opened with the same modifier and click as a link. */
+    onFileRef?: (path: string, line: number) => void;
   }
 
   let {
@@ -52,6 +56,7 @@
     onTitle,
     onAttention,
     newlineOnShiftEnter = false,
+    onFileRef,
   }: Props = $props();
 
   /**
@@ -115,6 +120,27 @@
     terminal.loadAddon(fit);
     // Bare URLs in the output, found by the addon.
     terminal.loadAddon(new WebLinksAddon(follow));
+    // References to a place in a file, `path:line`, as the agent writes
+    // them: opened in the viewer on the same modifier and click.
+    if (onFileRef !== undefined) {
+      const open = onFileRef;
+      terminal.registerLinkProvider({
+        provideLinks(y, callback) {
+          const line = terminal?.buffer.active.getLine(y - 1);
+          if (!line) return callback(undefined);
+          const text = line.translateToString(true);
+          const links = references(text).map((ref) => ({
+            range: { start: { x: ref.start + 1, y }, end: { x: ref.end, y } },
+            text: text.slice(ref.start, ref.end),
+            activate: (event: MouseEvent) => {
+              const mod = isMac() ? event.metaKey : event.ctrlKey;
+              if (mod) open(ref.path, ref.line);
+            },
+          }));
+          callback(links.length > 0 ? links : undefined);
+        },
+      });
+    }
     terminal.open(host);
 
     // The GPU renderer where there is one. A software rasteriser gives a

@@ -86,7 +86,10 @@ impl Core {
     /// coming.
     pub fn start(&self) -> Result<(), String> {
         match &self.home {
-            Some(home) => activity::watch(Arc::clone(&self.sink), hook::activity_path(home)),
+            Some(home) => {
+                activity::watch(Arc::clone(&self.sink), hook::activity_path(home))?;
+                crate::show::watch(Arc::clone(&self.sink), crate::show::requests_path(home))
+            }
             None => Ok(()),
         }
     }

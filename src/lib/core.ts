@@ -55,6 +55,17 @@ export interface SessionEvent {
   kind: "prompt" | "stop" | "permission" | "idle";
 }
 
+/** A place in a file the agent asked to show, through the daemon's MCP
+    tool: the file, absolute, a range of lines, a note, and where the agent
+    runs, which says which project it is for. */
+export interface ShowRequest {
+  path: string;
+  from: number;
+  to: number;
+  note: string | null;
+  cwd: string;
+}
+
 export interface SessionIdentified {
   ptyId: string;
   sessionId: string;
@@ -208,6 +219,8 @@ export interface Core {
   ): Promise<() => void>;
   /** A session hook fired, for projects with the hooks installed. */
   onSessionEvent(handler: (event: SessionEvent) => void): Promise<() => void>;
+  /** The agent asked to show the user a place in a file. */
+  onShowRequest(handler: (request: ShowRequest) => void): Promise<() => void>;
   /** Files dragged over and dropped on the window. The webview never gets
       the DOM events for these; the window takes them and reports paths. */
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
@@ -339,6 +352,11 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onShowRequest(handler) {
+    return listen<ShowRequest>("show_request", (event) =>
+      handler(event.payload),
+    );
+  },
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -433,6 +451,9 @@ const detachedCore: Core = {
     return () => {};
   },
   async onSessionEvent() {
+    return () => {};
+  },
+  async onShowRequest() {
     return () => {};
   },
   async onFileDrag() {

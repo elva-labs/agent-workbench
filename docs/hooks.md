@@ -36,6 +36,24 @@ place of the reading off its output. [Sessions](sessions.md) describes both.
 The session log holds a line per event and is trimmed once it grows past
 half a megabyte; nothing in it is needed after the window has seen it.
 
+## The show tool
+
+With the hooks goes a tool for the agent: `show`, offered over MCP by the
+daemon, which the app puts on the machine alongside. Called with a file, a
+range of lines and a note, it opens the file in the changes pane's viewer,
+scrolled to the lines with them highlighted and the note above, in the
+project the agent runs in, brought forward if it was not on screen. The
+daemon tells the agent when to reach for it as it connects: when the user
+asks where something is, or an answer points at a place in a file, once,
+for the place being talked about. Claude Code is pointed at the server in
+its own per-project state under the user's home; Codex in the project's
+`.codex/config.toml`, kept out of the repository like the hooks file. A
+machine kind the app has no daemon build for gets the hooks without the
+tool.
+
+A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
+same way on a click with the modifier a link takes, with nothing installed.
+
 ## Removing them
 
 Turning hooks off for a project removes the app's entries and nothing else.

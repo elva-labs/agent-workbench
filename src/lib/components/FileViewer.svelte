@@ -12,10 +12,16 @@
 
   let viewer: HTMLDivElement;
 
-  /** The line a search hit asked for, when it is this file's. */
+  /** The place asked for, when it is this file's: a line or a range. */
   let target = $derived(
-    entry !== null && files.target?.path === entry.path ? files.target.line : null,
+    entry !== null && files.target?.path === entry.path ? files.target : null,
   );
+  const marked = (line: number | null | undefined) =>
+    target !== null &&
+    line !== null &&
+    line !== undefined &&
+    line >= target.line &&
+    line <= (target.to ?? target.line);
 
   // Once the lines are there, bring the target into view. Bound to what is
   // rendered, so it runs again when the content arrives after the target.
@@ -37,6 +43,9 @@
       <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
     </div>
   {/if}
+  {#if target?.note}
+    <p class="note" data-testid="viewer-note">{target.note}</p>
+  {/if}
   {#if entry === null}
     <p class="empty">Pick a file to read it.</p>
   {:else if entry.binary}
@@ -45,7 +54,7 @@
     <table class="lines diff">
       <tbody>
         {#each diff!.lines as line, i (i)}
-          <tr class={line.kind} class:target={target !== null && line.new === target}>
+          <tr class={line.kind} class:target={marked(line.new)}>
             <td class="num">{line.old ?? ""}</td>
             <td class="num">{line.new ?? ""}</td>
             <td class="sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</td>
@@ -58,7 +67,7 @@
     <table class="lines">
       <tbody>
         {#each content!.lines as line, i (i)}
-          <tr class:target={target === i + 1}>
+          <tr class:target={marked(i + 1)}>
             <td class="num">{i + 1}</td>
             <td class="text">{line}</td>
           </tr>
@@ -124,6 +133,16 @@
 
   tr.target td {
     background: var(--accent-soft);
+  }
+
+  .note {
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink);
+    background: var(--accent-soft);
+    border-bottom: 1px solid var(--rule);
   }
 
   .viewer {

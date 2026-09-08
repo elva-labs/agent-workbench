@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { By, Key, until } from "selenium-webdriver";
 import {
+  DAEMON,
   launch,
   openProjects,
   screenText,
@@ -178,6 +179,62 @@ describe("the real app", () => {
     await waitForPaneText(driver, "[data-testid='viewer']", "println");
     await field.clear();
     await driver.findElement(By.css("[data-testid='mode-files']")).click();
+    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+  });
+
+  // The agent's show tool, through the daemon as the agent would call it:
+  // one JSON-RPC exchange on its stdin, and the viewer opens on the lines.
+  it("opens the viewer where the agent's show tool pointed", async () => {
+    const { driver } = app;
+    await openProjects(driver, [repo]);
+    await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
+    const messages = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "show",
+          arguments: {
+            path: "README.md",
+            from: 1,
+            to: 2,
+            note: "The top of it.",
+          },
+        },
+      },
+    ];
+    const said = execFileSync(DAEMON, ["mcp"], {
+      cwd: repo,
+      env: { ...process.env, HOME: app.home },
+      input:
+        messages.map((message) => JSON.stringify(message)).join("\n") + "\n",
+    }).toString();
+    expect(said).toContain("Shown:");
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='viewer-note']")),
+      10_000,
+    );
+    expect(await textOf(driver, "[data-testid='viewer-note']")).toBe(
+      "The top of it.",
+    );
+    await driver.wait(
+      async () =>
+        (await driver.findElements(By.css("[data-testid='viewer'] tr.target")))
+          .length === 2,
+      10_000,
+    );
     await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
 

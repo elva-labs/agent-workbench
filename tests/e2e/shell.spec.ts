@@ -74,12 +74,16 @@ test("moves focus between panes by click and by keyboard", async ({ page }) => {
 
 test("drags the sessions splitter and keeps the width", async ({ page }) => {
   const before = await widthOf(page, SESSIONS);
-  const handle = page.getByRole("separator", { name: "Resize projects and sessions" });
+  const handle = page.getByRole("separator", {
+    name: "Resize projects and sessions",
+  });
   const box = (await handle.boundingBox())!;
 
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2, {
+    steps: 8,
+  });
   await page.mouse.up();
 
   const after = await widthOf(page, SESSIONS);
@@ -91,7 +95,9 @@ test("drags the sessions splitter and keeps the width", async ({ page }) => {
 });
 
 test("resizes a pane from the keyboard and resets it", async ({ page }) => {
-  const handle = page.getByRole("separator", { name: "Resize projects and sessions" });
+  const handle = page.getByRole("separator", {
+    name: "Resize projects and sessions",
+  });
   const before = await widthOf(page, SESSIONS);
 
   await handle.focus();
@@ -132,30 +138,44 @@ test("cycles the theme and keeps the choice", async ({ page }) => {
 
 test("repaints the panes when the theme changes", async ({ page }) => {
   const pane = page.locator(AGENT);
-  const light = await pane.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const light = await pane.evaluate(
+    (el) => getComputedStyle(el).backgroundColor,
+  );
   await page.keyboard.press(`${MOD}+Shift+T`);
   await page.keyboard.press(`${MOD}+Shift+T`);
-  const dark = await pane.evaluate((el) => getComputedStyle(el).backgroundColor);
+  const dark = await pane.evaluate(
+    (el) => getComputedStyle(el).backgroundColor,
+  );
   expect(dark).not.toBe(light);
 });
 
-test("does not scroll the window: the shell is chrome, not a document", async ({ page }) => {
+test("does not scroll the window: the shell is chrome, not a document", async ({
+  page,
+}) => {
   const overflow = await page.evaluate(() => ({
-    x: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    y: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+    x:
+      document.documentElement.scrollWidth >
+      document.documentElement.clientWidth,
+    y:
+      document.documentElement.scrollHeight >
+      document.documentElement.clientHeight,
   }));
   expect(overflow).toEqual({ x: false, y: false });
 });
 
 test.describe("responsive collapse", () => {
-  test("folds the sessions pane away rather than squeezing the agent", async ({ page }) => {
+  test("folds the sessions pane away rather than squeezing the agent", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 800, height: 800 });
     await expect(page.locator(SESSIONS)).toBeHidden();
     await expect(page.locator(CHANGES)).toBeVisible();
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
-  test("folds the changes pane away too when the window is narrower still", async ({ page }) => {
+  test("folds the changes pane away too when the window is narrower still", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 600, height: 800 });
     await expect(page.locator(SESSIONS)).toBeHidden();
     await expect(page.locator(CHANGES)).toBeHidden();
@@ -169,7 +189,9 @@ test.describe("responsive collapse", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
     const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
     );
     expect(overflow).toBe(false);
   });
@@ -230,7 +252,9 @@ test.describe("the file tree", () => {
     expect(await rowNames(page)).not.toContain("architecture.md");
   });
 
-  test("takes the keyboard on Cmd+3, so the arrows work at once", async ({ page }) => {
+  test("takes the keyboard on Cmd+3, so the arrows work at once", async ({
+    page,
+  }) => {
     await page.keyboard.press(`${MOD}+3`);
     await expect(page.locator(TREE)).toBeFocused();
     await page.keyboard.press("ArrowDown");
@@ -246,7 +270,9 @@ test.describe("the file tree", () => {
     await page.keyboard.press("Enter");
 
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
-    await expect(page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@")).toBeVisible();
+    await expect(
+      page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@"),
+    ).toBeVisible();
   });
 
   test("shuts a folder with the left arrow", async ({ page }) => {
@@ -265,7 +291,34 @@ test.describe("the file tree", () => {
 });
 
 test.describe("the file viewer", () => {
-  test("opens by clicking a file, and the changes pane grows", async ({ page }) => {
+  // The agent's show tool: the file opens where it pointed, the lines
+  // marked, its note above them, whatever git thinks of the file.
+  test("opens where the agent asked to show, with the note", async ({
+    page,
+  }) => {
+    await page.evaluate(() =>
+      (
+        window as unknown as { __showRequest: (request: unknown) => void }
+      ).__showRequest({
+        path: "/home/ada/dev/demo/src/main.rs",
+        from: 2,
+        to: 3,
+        note: "The entry point.",
+        cwd: "/home/ada/dev/demo",
+      }),
+    );
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer-note")).toHaveText(
+      "The entry point.",
+    );
+    const marked = page.getByTestId("viewer").locator("tr.target");
+    await expect(marked).toHaveCount(2);
+    await expect(marked.first().locator(".num")).toHaveText("2");
+  });
+
+  test("opens by clicking a file, and the changes pane grows", async ({
+    page,
+  }) => {
     const before = await widthOf(page, CHANGES);
     await row(page, "mod.rs").click();
 
@@ -284,14 +337,18 @@ test.describe("the file viewer", () => {
     expect(Math.abs(viewer.y - tree.y)).toBeLessThan(2);
   });
 
-  test("folds the sessions pane away and keeps the agent visible", async ({ page }) => {
+  test("folds the sessions pane away and keeps the agent visible", async ({
+    page,
+  }) => {
     await row(page, "mod.rs").click();
     await expect(page.locator(SESSIONS)).toBeHidden();
     await expect(page.locator(AGENT)).toBeVisible();
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
-  test("closes on Escape and leaves the keyboard in the tree", async ({ page }) => {
+  test("closes on Escape and leaves the keyboard in the tree", async ({
+    page,
+  }) => {
     await page.locator(TREE).focus();
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
@@ -329,16 +386,23 @@ test.describe("the file viewer", () => {
   test("switches view from the keyboard", async ({ page }) => {
     await row(page, "mod.rs").click();
     await page.keyboard.press(`${MOD}+e`);
-    await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "content",
+    );
   });
 
-  test("switches files from the tree without moving the layout", async ({ page }) => {
+  test("switches files from the tree without moving the layout", async ({
+    page,
+  }) => {
     await row(page, "mod.rs").click();
     const agentWidth = await widthOf(page, AGENT);
     const treeWidth = await widthOf(page, TREE);
 
     await row(page, "lib.rs").click();
-    await expect(page.getByTestId("viewer").getByText("// src/lib.rs")).toBeVisible();
+    await expect(
+      page.getByTestId("viewer").getByText("// src/lib.rs"),
+    ).toBeVisible();
 
     expect(await widthOf(page, AGENT)).toBeCloseTo(agentWidth, 0);
     expect(await widthOf(page, TREE)).toBeCloseTo(treeWidth, 0);
@@ -348,11 +412,15 @@ test.describe("the file viewer", () => {
     await row(page, "mod.rs").click();
     const before = await widthOf(page, TREE);
 
-    const handle = page.getByRole("separator", { name: "Resize the file tree" });
+    const handle = page.getByRole("separator", {
+      name: "Resize the file tree",
+    });
     const box = (await handle.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 6 });
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, {
+      steps: 6,
+    });
     await page.mouse.up();
 
     expect(await widthOf(page, TREE)).toBeGreaterThan(before + 40);
@@ -366,18 +434,25 @@ test.describe("the file viewer", () => {
     const box = (await handle.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 - 80, box.y + box.height / 2, { steps: 8 });
+    await page.mouse.move(box.x + box.width / 2 - 80, box.y + box.height / 2, {
+      steps: 8,
+    });
     await page.mouse.up();
 
     expect(await widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
-  test("widens the scope and falls back to content for an unchanged file", async ({ page }) => {
+  test("widens the scope and falls back to content for an unchanged file", async ({
+    page,
+  }) => {
     await chooseAll(page);
     await row(page, "Cargo.toml").click();
 
-    await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "content",
+    );
     await page.getByTestId("changes-menu").click();
     await expect(page.getByTestId("menu-view-diff")).toBeDisabled();
     await page.keyboard.press("Escape");
@@ -395,7 +470,9 @@ test.describe("the file viewer", () => {
     await expect(page.locator(`${TREE} [aria-selected='true']`)).toHaveCount(0);
   });
 
-  test("lets the file go on a click below the tree, and closes the viewer", async ({ page }) => {
+  test("lets the file go on a click below the tree, and closes the viewer", async ({
+    page,
+  }) => {
     await row(page, "mod.rs").click();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
 
@@ -418,7 +495,9 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
   });
 
-  test("hides the agent rather than squeezing it in a narrow window", async ({ page }) => {
+  test("hides the agent rather than squeezing it in a narrow window", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 720, height: 800 });
     await page.keyboard.press(`${MOD}+d`);
 
@@ -438,7 +517,9 @@ test.describe("the file viewer", () => {
     expect(await widthOf(page, AGENT)).toBeCloseTo(before, 0);
   });
 
-  test("remembers the working and reviewing widths separately", async ({ page }) => {
+  test("remembers the working and reviewing widths separately", async ({
+    page,
+  }) => {
     const working = await widthOf(page, CHANGES);
     await row(page, "mod.rs").click();
     const reviewing = await widthOf(page, CHANGES);
@@ -453,25 +534,38 @@ test.describe("the file viewer", () => {
 });
 
 test.describe("the search field", () => {
-  test("narrows the tree as you type, and clears on Escape", async ({ page }) => {
+  test("narrows the tree as you type, and clears on Escape", async ({
+    page,
+  }) => {
     const field = page.getByTestId("search-field");
     await field.fill("cache");
-    await expect.poll(() => rowNames(page)).toEqual(["src", "cache", "mod.rs", "token_cache.rs"]);
+    await expect
+      .poll(() => rowNames(page))
+      .toEqual(["src", "cache", "mod.rs", "token_cache.rs"]);
     await field.press("Escape");
     await expect(field).toHaveValue("");
     await expect.poll(() => rowNames(page)).toContain("lib.rs");
   });
 
-  test("searches inside files and opens a file at the line", async ({ page }) => {
+  test("searches inside files and opens a file at the line", async ({
+    page,
+  }) => {
     await page.getByTestId("mode-lines").click();
     await page.getByTestId("search-field").fill("struct cache");
     await expect(page.getByTestId("search-hit")).toHaveCount(1);
-    await expect(page.getByTestId("search-file")).toContainText("src/cache/mod.rs");
-    await expect(page.getByTestId("search-hit").locator("mark")).toHaveText("struct Cache");
+    await expect(page.getByTestId("search-file")).toContainText(
+      "src/cache/mod.rs",
+    );
+    await expect(page.getByTestId("search-hit").locator("mark")).toHaveText(
+      "struct Cache",
+    );
 
     await page.getByTestId("search-hit").click();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
-    await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "content");
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "content",
+    );
     const marked = page.locator("[data-testid='viewer'] tr.target");
     await expect(marked).toHaveCount(1);
     await expect(marked).toContainText("// src/cache/mod.rs");
@@ -488,7 +582,10 @@ test.describe("the search field", () => {
     // Shift+mod+F from the agent: the field, in lines mode.
     await page.keyboard.press(`${MOD}+Shift+f`);
     await expect(page.getByTestId("search-field")).toBeFocused();
-    await expect(page.getByTestId("mode-lines")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("mode-lines")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
 
@@ -499,7 +596,10 @@ test.describe("the search field", () => {
     await page.keyboard.press(`${MOD}+3`);
     await page.keyboard.press(`${MOD}+f`);
     await expect(page.getByTestId("search-field")).toBeFocused();
-    await expect(page.getByTestId("mode-files")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("mode-files")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   test("closes the viewer from its own bar", async ({ page }) => {
@@ -514,10 +614,14 @@ test.describe("the search field", () => {
 // of whichever pane is rightmost, and the settings have a button in the bar.
 test.describe("the window's own controls", () => {
   test("sit at the rightmost header and follow it", async ({ page }) => {
-    await expect(page.locator(`${CHANGES} [data-testid='window-controls']`)).toBeVisible();
+    await expect(
+      page.locator(`${CHANGES} [data-testid='window-controls']`),
+    ).toBeVisible();
     await page.keyboard.press(`${MOD}+\\`);
     await expect(page.locator(CHANGES)).toBeHidden();
-    await expect(page.locator(`${AGENT} [data-testid='window-controls']`)).toBeVisible();
+    await expect(
+      page.locator(`${AGENT} [data-testid='window-controls']`),
+    ).toBeVisible();
   });
 
   test("drive the window through the core", async ({ page }) => {
@@ -526,16 +630,28 @@ test.describe("the window's own controls", () => {
     await controls.getByRole("button", { name: "Maximize" }).click();
     await controls.getByRole("button", { name: "Close" }).click();
     expect(
-      await page.evaluate(() => (window as unknown as { __windowControls?: string[] }).__windowControls),
+      await page.evaluate(
+        () =>
+          (window as unknown as { __windowControls?: string[] })
+            .__windowControls,
+      ),
     ).toEqual(["minimize", "maximize", "close"]);
   });
 
-  test("put a menu button at the leftmost header that asks the core for the native menu", async ({ page }) => {
+  test("put a menu button at the leftmost header that asks the core for the native menu", async ({
+    page,
+  }) => {
     await page.locator(`${SESSIONS} [data-testid='app-menu']`).click();
     expect(
-      await page.evaluate(() => (window as unknown as { __windowControls?: string[] }).__windowControls),
+      await page.evaluate(
+        () =>
+          (window as unknown as { __windowControls?: string[] })
+            .__windowControls,
+      ),
     ).toEqual(["menu"]);
     await page.keyboard.press(`${MOD}+b`);
-    await expect(page.locator(`${AGENT} [data-testid='app-menu']`)).toBeVisible();
+    await expect(
+      page.locator(`${AGENT} [data-testid='app-menu']`),
+    ).toBeVisible();
   });
 });

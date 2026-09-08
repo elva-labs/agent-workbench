@@ -24,6 +24,7 @@
     statusMessage,
     titled,
   } from "$lib/sessions.svelte";
+  import { referenced } from "$lib/show.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let current = $derived(activeSession());
@@ -65,6 +66,7 @@
         start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
         onTitle={session.agent === "claude-code" ? (raw) => titled(session.key, raw) : undefined}
         onAttention={() => rang(session.key)}
+        onFileRef={(path, line) => referenced(session.key, path, line)}
         newlineOnShiftEnter
       />
     {/each}
