@@ -1,6 +1,6 @@
 [package]
 name = "agent-workbench"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
 description = "Three-pane desktop workbench for coding agent CLIs"
 authors = ["you"]
