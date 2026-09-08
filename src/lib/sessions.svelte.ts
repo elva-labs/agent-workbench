@@ -60,6 +60,12 @@ export interface Session {
       output is flowing while it works, and the screen is still when it
       waits. */
   working: boolean;
+  /** Whether output can mean work yet: the user has sent the agent a line,
+      or it has been up long enough to have finished starting. Until then
+      what it draws is its own start-up, spinners included. */
+  engaged: boolean;
+  /** When the process came up, for the start-up allowance. */
+  startedAt: number | null;
   /** The agent stopped, or asked for attention, while nobody was looking.
       Cleared by looking. */
   unread: boolean;
@@ -460,6 +466,8 @@ export function create(
     startIn,
     worktree: null,
     working: false,
+    engaged: false,
+    startedAt: null,
     unread: false,
     exact: false,
     needs: null,
@@ -528,6 +536,7 @@ export function started(
   const session = byKey(key);
   if (session === null) return false;
   session.ptyId = ptyId;
+  session.startedAt = Date.now();
   session.status = "running";
   if (sessionId !== null) {
     session.id = sessionId;
@@ -668,22 +677,34 @@ export function statusLabel(session: Session | null): string {
 /**
  * Activity, read off the pty.
  *
- * An agent at work streams: its spinner and its text keep bytes flowing. An
- * agent waiting shows a still screen, give or take a redraw. So "working" is
- * more than a redraw's worth of bytes in the last second, and "waiting" is a
- * second of quiet after that. A session that goes quiet while nobody is
- * looking at it, or rings for attention, is unread until someone does.
+ * An agent at work streams: its spinner and its text keep bytes flowing for
+ * seconds on end. An agent waiting shows a still screen, give or take a
+ * redraw, and a redraw is one burst: a footer's clock ticking over, a
+ * status line changing. So "working" is more than a redraw's worth of bytes
+ * in each of three seconds running, and "waiting" is two seconds of quiet
+ * after that. Nothing counts until the user has sent the agent a line or a
+ * minute has passed since it came up: an agent starting draws plenty, its
+ * spinner while it connects most of all, and none of it is work. A session
+ * that goes quiet while nobody is looking at it, or rings for attention,
+ * is unread until someone does.
  */
 
 /** Quiet this long after output is the agent waiting. */
 export const QUIET_MS = 2000;
 /** Output within a second below this is a redraw, not work. */
 export const WORK_BYTES = 256;
+/** Seconds running with more than a redraw each before it is work. */
+export const WORK_WINDOWS = 3;
+/** How long after the process comes up its output is start-up, not work,
+    unless the user has sent it a line. */
+export const GRACE_MS = 60_000;
 const WINDOW_MS = 1000;
 
 interface Pulse {
   bytes: number;
   windowStart: number;
+  /** Windows before this one that were busy, without a quiet one between. */
+  run: number;
   quiet: ReturnType<typeof setTimeout> | null;
 }
 
@@ -692,6 +713,14 @@ const pulses = new Map<string, Pulse>();
 /** Whether the session is the one on screen, in a window that is looked at. */
 export function isViewed(session: Session): boolean {
   return attention.focused && sessions.active === session.key;
+}
+
+/** The user typed into a pty. A line sent is the agent spoken to: from
+    then on what it writes back can be work. */
+export function typed(ptyId: string, data: string) {
+  if (!data.includes("\r") && !data.includes("\n")) return;
+  const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
+  if (session !== undefined) session.engaged = true;
 }
 
 /** Bytes arrived for a session. */
@@ -707,17 +736,32 @@ export function output(key: string, bytes: number, now = Date.now()) {
     }
     return;
   }
+  if (!session.engaged) {
+    if (session.startedAt === null || now - session.startedAt < GRACE_MS)
+      return;
+    session.engaged = true;
+  }
   let pulse = pulses.get(key);
   if (pulse === undefined) {
-    pulse = { bytes: 0, windowStart: now, quiet: null };
+    pulse = { bytes: 0, windowStart: now, run: 0, quiet: null };
     pulses.set(key, pulse);
   }
   if (now - pulse.windowStart > WINDOW_MS) {
+    // The window closed. A busy one followed directly by this one extends
+    // the run; a whole window of quiet between them ends it.
+    const followed = now - pulse.windowStart < 2 * WINDOW_MS;
+    pulse.run = followed && pulse.bytes >= WORK_BYTES ? pulse.run + 1 : 0;
     pulse.bytes = 0;
     pulse.windowStart = now;
   }
   pulse.bytes += bytes;
-  if (pulse.bytes >= WORK_BYTES && !session.working) session.working = true;
+  if (
+    pulse.bytes >= WORK_BYTES &&
+    pulse.run >= WORK_WINDOWS - 1 &&
+    !session.working
+  ) {
+    session.working = true;
+  }
 
   if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   pulse.quiet = setTimeout(() => settle(key), QUIET_MS);
@@ -730,6 +774,7 @@ function settle(key: string) {
   if (pulse !== undefined) {
     pulse.quiet = null;
     pulse.bytes = 0;
+    pulse.run = 0;
   }
   if (session === null || !session.working) return;
   session.working = false;

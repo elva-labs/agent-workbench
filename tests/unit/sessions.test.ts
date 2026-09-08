@@ -17,6 +17,9 @@ import {
   QUIET_MS,
   rang,
   unreadCount,
+  typed,
+  GRACE_MS,
+  WORK_WINDOWS,
   viewed,
   WORK_BYTES,
   located,
@@ -729,10 +732,25 @@ describe("where the session works", () => {
 });
 
 describe("working, and waiting for you", () => {
-  it("is working while more than a redraw's worth of bytes flows", () => {
+  /** The user sent the agent a line: its output can be work from here. */
+  const spokenTo = (session: ReturnType<typeof live>) =>
+    typed(session.ptyId!, "hello\r");
+  /** A second of more than a redraw, `windows` times running. */
+  const streams = (session: ReturnType<typeof live>, windows: number) => {
+    for (let i = 0; i < windows; i += 1) {
+      if (i > 0) vi.advanceTimersByTime(1010);
+      output(session.key, WORK_BYTES);
+    }
+  };
+
+  it("is working once more than a redraw's worth flows for seconds running", () => {
     vi.useFakeTimers();
     try {
       const session = live(A, "pty-1");
+      spokenTo(session);
+      streams(session, WORK_WINDOWS - 1);
+      expect(session.working).toBe(false);
+      vi.advanceTimersByTime(1010);
       output(session.key, WORK_BYTES - 1);
       expect(session.working).toBe(false);
       output(session.key, 1);
@@ -743,11 +761,64 @@ describe("working, and waiting for you", () => {
     }
   });
 
+  // A footer's clock ticking over, a status line changing: one burst each,
+  // with a still screen between. Not work, and never unread.
+  it("does not take a burst now and then for work", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      spokenTo(session);
+      attention.focused = false;
+      for (let i = 0; i < 5; i += 1) {
+        output(session.key, WORK_BYTES * 8);
+        vi.advanceTimersByTime(QUIET_MS + 500);
+      }
+      expect(session.working).toBe(false);
+      expect(session.unread).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // An agent starting draws plenty, its spinner while it connects most of
+  // all. None of it counts until it is spoken to, or a minute has passed.
+  it("takes nothing for work while the agent starts, until spoken to", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      attention.focused = false;
+      streams(session, WORK_WINDOWS + 2);
+      expect(session.working).toBe(false);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      expect(session.unread).toBe(false);
+
+      spokenTo(session);
+      streams(session, WORK_WINDOWS);
+      expect(session.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes output for work a minute after the start without a word", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      vi.advanceTimersByTime(GRACE_MS);
+      streams(session, WORK_WINDOWS);
+      expect(session.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is waiting after a stretch of quiet, and seen if it was on screen", () => {
     vi.useFakeTimers();
     try {
       const session = live(A, "pty-1");
-      output(session.key, WORK_BYTES);
+      spokenTo(session);
+      streams(session, WORK_WINDOWS);
+      expect(session.working).toBe(true);
       vi.advanceTimersByTime(QUIET_MS + 10);
       expect(session.working).toBe(false);
       expect(session.unread).toBe(false);
@@ -763,9 +834,9 @@ describe("working, and waiting for you", () => {
     try {
       const other = live(A, "pty-1");
       const busy = live(A, "pty-2");
+      spokenTo(busy);
       select(other.key);
-      output(busy.key, WORK_BYTES);
-      output(busy.key, WORK_BYTES);
+      streams(busy, WORK_WINDOWS);
       vi.advanceTimersByTime(QUIET_MS + 10);
       expect(busy.unread).toBe(true);
       expect(statusLabel(busy)).toBe("waiting for you");
@@ -783,9 +854,10 @@ describe("working, and waiting for you", () => {
     vi.useFakeTimers();
     try {
       const session = live(A, "pty-1");
+      spokenTo(session);
       attention.focused = false;
       expect(isViewed(session)).toBe(false);
-      output(session.key, WORK_BYTES);
+      streams(session, WORK_WINDOWS);
       vi.advanceTimersByTime(QUIET_MS + 10);
       expect(session.unread).toBe(true);
     } finally {
@@ -797,7 +869,8 @@ describe("working, and waiting for you", () => {
     vi.useFakeTimers();
     try {
       const session = live(A, "pty-1");
-      output(session.key, WORK_BYTES);
+      spokenTo(session);
+      streams(session, WORK_WINDOWS);
       vi.advanceTimersByTime(QUIET_MS / 2);
       output(session.key, 10);
       vi.advanceTimersByTime(QUIET_MS / 2 + 10);

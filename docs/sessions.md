@@ -28,9 +28,12 @@ to another project brings that project forward.
 ## What a row says
 
 A row says what its agent is doing. Read off the pty, an agent at work
-streams and an agent waiting shows a still screen, so more than a redraw's
-worth of bytes in a second is **working**, with the dot breathing, and two
-seconds of quiet after that is waiting. The dot is the whole of it on the
+streams for seconds on end and an agent waiting shows a still screen, give
+or take a redraw, so more than a redraw's worth of bytes in each of three
+seconds running is **working**, with the dot breathing, and two seconds of
+quiet after that is waiting. A single burst, a clock ticking over in the
+footer, is not work, and nothing the agent draws while starting counts
+until you have sent it a line or a minute has passed. The dot is the whole of it on the
 row, with the words on hover and for a screen reader; the agent pane's
 header spells the state out. A session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the

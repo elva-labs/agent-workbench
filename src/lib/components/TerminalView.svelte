@@ -9,6 +9,7 @@
   import { drops, register, unregister } from "$lib/drops.svelte";
   import { isMac, resolveAction } from "$lib/keymap";
   import { layout } from "$lib/layout.svelte";
+  import { typed } from "$lib/sessions.svelte";
   import { WriteQueue, buildTheme, colorReply, softwareGl, tokenReader } from "$lib/terminal";
   import { theme } from "$lib/theme.svelte";
 
@@ -166,7 +167,10 @@
     terminal.onData((data) => {
       // A write that fails is a process that has gone; the exit event is what
       // reports that, not every keystroke after it.
-      if (ptyId !== null) core().write(ptyId, data).catch(() => {});
+      if (ptyId !== null) {
+        typed(ptyId, data);
+        core().write(ptyId, data).catch(() => {});
+      }
     });
 
     terminal.onTitleChange((title) => onTitle?.(title));
