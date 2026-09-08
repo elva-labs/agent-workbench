@@ -129,5 +129,8 @@ test.describe("a remote project", () => {
     await expect(page.getByTestId("project-error")).toContainText(
       "lab: the connection closed",
     );
+    // The notice stays until dismissed; it is not in the way after that.
+    await page.getByTestId("project-error-dismiss").click();
+    await expect(page.getByTestId("project-error")).toHaveCount(0);
   });
 });

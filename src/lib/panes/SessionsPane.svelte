@@ -231,7 +231,17 @@
 
 <Pane id="sessions" title="Projects &amp; sessions" meta="">
   {#if workspace.error}
-    <p class="error" data-testid="project-error">{workspace.error}</p>
+    <div class="error-row">
+      <p class="error" data-testid="project-error">{workspace.error}</p>
+      <button
+        class="dismiss"
+        tabindex="-1"
+        onclick={() => (workspace.error = null)}
+        aria-label="Dismiss"
+        title="Dismiss"
+        data-testid="project-error-dismiss">×</button
+      >
+    </div>
   {/if}
 
   {#if workspace.open.length === 0}
@@ -931,6 +941,33 @@
 
   .error {
     color: var(--del);
+  }
+
+  .error-row {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .error-row .error {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .dismiss {
+    flex: none;
+    margin: 10px var(--pane-pad) 0 0;
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .dismiss:hover {
+    color: var(--ink);
   }
 
   .section {
