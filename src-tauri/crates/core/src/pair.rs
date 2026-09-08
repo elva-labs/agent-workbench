@@ -6,6 +6,12 @@
 //! the machine's own host key. Pasted into the desktop, that is everything
 //! the desktop needs to reach the machine: no password, no host to type,
 //! and nothing the key can do there but run the daemon.
+//!
+//! A machine has several addresses, and which one reaches it depends on
+//! where the desktop is: its own network, a VPN both are on, or the open
+//! internet. The token carries every address the machine can find for
+//! itself, best first, and the desktop tries them in turn; the host key
+//! says it is the same machine whichever answered.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,7 +27,13 @@ pub struct Pairing {
     /// Its address may change; the name and the host key stay.
     pub name: String,
     /// Where the desktop reaches it: an address or a name it can resolve.
+    /// The first of `hosts`, kept on its own for a desktop that reads no
+    /// further.
     pub host: String,
+    /// Every address the machine found for itself, best first: a VPN's,
+    /// its own network's, the internet's, its name.
+    #[serde(default)]
+    pub hosts: Vec<String>,
     pub port: u16,
     pub user: String,
     /// The private key, in OpenSSH's own format, for the desktop to keep.
@@ -63,6 +75,18 @@ impl Pairing {
             return Err("the token is missing something".into());
         }
         Ok(pairing)
+    }
+
+    /// The addresses to try, in order. A token from before addresses were
+    /// several has the one.
+    pub fn addresses(&self) -> Vec<String> {
+        let mut all: Vec<String> = Vec::new();
+        for host in std::iter::once(&self.host).chain(self.hosts.iter()) {
+            if !host.is_empty() && !all.contains(host) {
+                all.push(host.clone());
+            }
+        }
+        all
     }
 }
 
@@ -141,8 +165,10 @@ pub fn connect(
     restrict(&authorized, 0o600);
 
     let name = hostname();
+    let hosts = candidates(host, &name);
     let pairing = Pairing {
-        host: host.unwrap_or_else(|| name.clone()),
+        host: hosts[0].clone(),
+        hosts,
         name,
         port,
         user: std::env::var("USER")
@@ -153,6 +179,98 @@ pub fn connect(
             .ok_or("could not read this machine's host key under /etc/ssh")?,
     };
     Ok(pairing.encode())
+}
+
+/// Every way the machine might be reached, best first: an address given
+/// outright, a VPN's address, the machine's own network's, the internet's,
+/// and its name for whatever resolves it. Each is found from the machine's
+/// own view; none is checked from anywhere else, which is the desktop's
+/// part.
+pub fn candidates(given: Option<String>, name: &str) -> Vec<String> {
+    let mut all: Vec<String> = Vec::new();
+    let mut add = |candidate: Option<String>| {
+        if let Some(candidate) = candidate {
+            let candidate = candidate.trim().to_string();
+            if !candidate.is_empty() && !all.contains(&candidate) {
+                all.push(candidate);
+            }
+        }
+    };
+    add(given);
+    add(tailnet_address());
+    let (lan, vpn) = interface_addresses();
+    for address in vpn {
+        add(Some(address));
+    }
+    for address in lan {
+        add(Some(address));
+    }
+    add(public_address());
+    add(Some(name.to_string()));
+    all
+}
+
+/// Tailscale's address for this machine, when Tailscale is here and up.
+fn tailnet_address() -> Option<String> {
+    let output = Command::new("tailscale").args(["ip", "-4"]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+/// The machine's IPv4 addresses on its interfaces: the private ones, and
+/// separately the ones in the range VPNs such as Tailscale hand out, which
+/// reach further and go first.
+fn interface_addresses() -> (Vec<String>, Vec<String>) {
+    let mut lan = Vec::new();
+    let mut vpn = Vec::new();
+    let Ok(interfaces) = if_addrs::get_if_addrs() else {
+        return (lan, vpn);
+    };
+    for interface in interfaces {
+        let std::net::IpAddr::V4(ip) = interface.ip() else {
+            continue;
+        };
+        if interface.is_loopback() || ip.is_link_local() || ip.is_unspecified() {
+            continue;
+        }
+        let octets = ip.octets();
+        let carrier_grade = octets[0] == 100 && (64..128).contains(&octets[1]);
+        if carrier_grade {
+            vpn.push(ip.to_string());
+        } else if ip.is_private() {
+            lan.push(ip.to_string());
+        } else {
+            // A public address on an interface reaches the machine from
+            // anywhere; it belongs with the network's own.
+            lan.push(ip.to_string());
+        }
+    }
+    (lan, vpn)
+}
+
+/// The address the internet sees this machine as, asked of a service that
+/// says so, when curl is here and answers within a few seconds. Nothing
+/// when it is not: a machine behind a router is not reached this way
+/// unless the router forwards the port, and that is for the desktop to
+/// find out.
+fn public_address() -> Option<String> {
+    let output = Command::new("curl")
+        .args(["-fsS", "--max-time", "4", "https://api.ipify.org"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    text.parse::<std::net::Ipv4Addr>()
+        .ok()
+        .map(|ip| ip.to_string())
 }
 
 fn hostname() -> String {
@@ -188,10 +306,43 @@ mod tests {
             host: "lab.example".into(),
             port: 22,
             user: "ada".into(),
+            hosts: vec!["lab.example".into(), "192.168.1.20".into()],
             key: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n"
                 .into(),
             host_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample".into(),
         }
+    }
+
+    #[test]
+    fn the_addresses_are_the_host_then_the_rest_once_each() {
+        assert_eq!(pairing().addresses(), ["lab.example", "192.168.1.20"]);
+        let mut old = pairing();
+        old.hosts = Vec::new();
+        assert_eq!(old.addresses(), ["lab.example"]);
+    }
+
+    // A token from before addresses were several still reads.
+    #[test]
+    fn a_token_without_the_list_still_reads() {
+        let json = serde_json::json!({
+            "name": "lab", "host": "lab.example", "port": 22, "user": "ada",
+            "key": "k", "hostKey": "ssh-ed25519 AAAA"
+        });
+        let token = format!(
+            "awb1.{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.to_string())
+        );
+        let pairing = Pairing::decode(&token).unwrap();
+        assert_eq!(pairing.addresses(), ["lab.example"]);
+    }
+
+    #[test]
+    fn an_address_given_outright_goes_first_and_the_name_last() {
+        let all = candidates(Some("lab.example".into()), "lab");
+        assert_eq!(all.first().map(String::as_str), Some("lab.example"));
+        assert_eq!(all.last().map(String::as_str), Some("lab"));
+        let mut seen = std::collections::HashSet::new();
+        assert!(all.iter().all(|address| seen.insert(address.clone())));
     }
 
     #[test]

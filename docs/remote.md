@@ -43,9 +43,14 @@ nothing else, no shell, no forwarding, and prints a token holding the
 private half, the machine's name and address, the user, and the machine's
 own host key. Pasted into the desktop under Remote, that is everything:
 the key goes to a file only this user can read, the host key to the app's
-own known hosts, and the connection opens. When the machine's own name is
-not one the desktop can resolve, `connect --host <address>` says where to
-reach it instead; `--port` likewise. The token is a credential: whoever
+own known hosts, and the connection opens. The token carries every address
+the machine can find for itself, best first: the one a VPN such as
+Tailscale gives it, the ones on its own networks, the one the internet sees
+it as, and its name. The desktop tries them in turn and keeps the one that
+answered at the front, so a machine at home is reached on its own network
+from the sofa and over the VPN from elsewhere with the same token.
+`connect --host <address>` puts an address of your own first; `--port`
+likewise. The token is a credential: whoever
 has it can run the daemon on that machine as that user. To take it back,
 remove the `agent-workbench` line from `authorized_keys` there.
 
@@ -84,6 +89,17 @@ same into its own bin, and `brew upgrade` keeps it current; the token from
 builds as assets, for Linux x86_64 and aarch64 and both macOS
 architectures. The desktop refuses a daemon at another version than its
 own and says so, since the two speak the same protocol only when they match.
+
+## When nothing answers
+
+Every address in the token is tried, and when none answers the desktop
+says so with the addresses it tried. The machine is then on a network the
+desktop is not, or the port is closed there. Three things work, and none
+needs the app to change: a VPN such as Tailscale on both ends, since its
+address is in the token; a port on the machine's router forwarded to it;
+or a name in your ssh configuration that reaches the machine its own way,
+through a jump host, a cloud provider's session manager or anything else
+ssh can be told, named in the second field of the Remote dialog.
 
 ## What is not there yet
 

@@ -110,11 +110,14 @@ fn connect(args: impl Iterator<Item = String>) {
     };
     match workbench_core::pair::connect(&home, &workbench_core::pair::own_path(), host, port) {
         Ok(token) => {
+            let addresses = workbench_core::pair::Pairing::decode(&token)
+                .map(|pairing| pairing.addresses().join(", "))
+                .unwrap_or_default();
             println!("Paste this into Agent Workbench, under Remote:");
             println!();
             println!("{token}");
             println!();
-            println!("It holds a key that can run this daemon here and nothing else. To take it back, remove the agent-workbench line from ~/.ssh/authorized_keys.");
+            println!("It reaches this machine at {addresses}, trying each in turn, on port {port}. It holds a key that can run this daemon here and nothing else. To take it back, remove the agent-workbench line from ~/.ssh/authorized_keys.");
         }
         Err(error) => {
             eprintln!("{error}");

@@ -168,8 +168,65 @@ impl Remotes {
     }
 }
 
+/// Opens the connection to a host. A paired machine is tried at each of
+/// its addresses in turn, the one that reached it last first, and the one
+/// that answers is remembered; a host from the ssh configuration is what
+/// ssh makes of it.
 fn open(app: &AppHandle, host: &str, files: &ssh::Files) -> Result<Arc<Connection>, String> {
-    let mut command = transport(host, files)?;
+    let Some(saved) = files.saved_target(host) else {
+        return open_at(app, host, files, None);
+    };
+    if std::env::var_os("WORKBENCH_REMOTE_COMMAND").is_some() {
+        return open_at(app, host, files, None);
+    }
+    let addresses = saved.addresses();
+    let mut failures = Vec::new();
+    for address in &addresses {
+        match open_at(app, host, files, Some((&saved, address))) {
+            Ok(connection) => {
+                let _ = files.remember_address(host, address);
+                return Ok(connection);
+            }
+            Err(error) => failures.push((address.clone(), error)),
+        }
+    }
+    // Every address said no. One that was refused by the machine itself,
+    // a key or a version, is the reason; addresses that never answered are
+    // the network, and that is said plainly with what helps.
+    if let Some((_, refused)) = failures.iter().find(|(_, error)| !unreachable(error)) {
+        return Err(refused.clone());
+    }
+    let tried = addresses.join(", ");
+    Err(format!(
+        "{}: none of its addresses answered on port {} from here ({tried}). The machine is on another network, or the port is closed there. A VPN such as Tailscale on both ends, a port forwarded to it, or a host your ssh configuration knows how to reach all work.",
+        saved.name, saved.port
+    ))
+}
+
+/// Whether ssh's complaint is the network, not the machine: nothing
+/// answered, or nothing there to answer.
+fn unreachable(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    [
+        "timed out",
+        "no route",
+        "unreachable",
+        "connection refused",
+        "could not resolve",
+        "name or service not known",
+        "nodename nor servname",
+    ]
+    .iter()
+    .any(|sign| lower.contains(sign))
+}
+
+fn open_at(
+    app: &AppHandle,
+    host: &str,
+    files: &ssh::Files,
+    at: Option<(&ssh::Saved, &str)>,
+) -> Result<Arc<Connection>, String> {
+    let mut command = transport(host, files, at)?;
     let app = app.clone();
     let name = host.to_string();
     let connection = Connection::open(
@@ -206,14 +263,20 @@ fn open(app: &AppHandle, host: &str, files: &ssh::Files) -> Result<Arc<Connectio
 
 /// `transport`, for a test outside this crate.
 pub fn transport_for_test(host: &str, files: &ssh::Files) -> Command {
-    transport(host, files).expect("a transport")
+    let saved = files.saved_target(host);
+    let at = saved.as_ref().map(|saved| (saved, saved.host.as_str()));
+    transport(host, files, at).expect("a transport")
 }
 
 /// The process that carries the conversation. ssh, with the user's login
 /// environment so the agent and its keys are the user's own, and the app's
 /// own key for a host the app set up; or, for a test, whatever
 /// `WORKBENCH_REMOTE_COMMAND` names, `{host}` replaced.
-fn transport(host: &str, files: &ssh::Files) -> Result<Command, String> {
+fn transport(
+    host: &str,
+    files: &ssh::Files,
+    at: Option<(&ssh::Saved, &str)>,
+) -> Result<Command, String> {
     let vars = &env::environment().vars;
     if let Ok(template) = std::env::var("WORKBENCH_REMOTE_COMMAND") {
         let parts: Vec<String> = template
@@ -235,13 +298,18 @@ fn transport(host: &str, files: &ssh::Files) -> Result<Command, String> {
             "-o",
             "BatchMode=yes",
             "-o",
-            "ConnectTimeout=15",
+            // Short enough that trying a machine's addresses in turn is
+            // not a wait; a connection that takes longer is not one.
+            "ConnectTimeout=8",
             "-o",
             "ServerAliveInterval=30",
             "-o",
             "StrictHostKeyChecking=accept-new",
         ])
-        .args(files.options(host))
+        .args(match at {
+            Some((saved, address)) => files.options_at(saved, address),
+            None => files.options(host),
+        })
         .args(ssh::target_args(host))
         // Through the login shell there, so `$HOME` is the user's.
         .arg(format!(
@@ -338,10 +406,27 @@ mod tests {
     }
 
     #[test]
+    fn tells_the_network_from_the_machine_in_ssh_s_complaints() {
+        assert!(unreachable(
+            "ssh: connect to host 10.0.0.5 port 22: Operation timed out"
+        ));
+        assert!(unreachable(
+            "ssh: connect to host lab port 22: Connection refused"
+        ));
+        assert!(unreachable(
+            "ssh: Could not resolve hostname lab: Name or service not known"
+        ));
+        assert!(!unreachable("ada@lab: Permission denied (publickey)."));
+        assert!(!unreachable(
+            "lab runs agent-workbench-remote 0.1.1 and this app is 0.1.2; update it there"
+        ));
+    }
+
+    #[test]
     fn the_test_transport_is_whatever_the_variable_names() {
         let files = ssh::Files::new(&std::env::temp_dir().join("workbench-remote-none"));
         std::env::set_var("WORKBENCH_REMOTE_COMMAND", "/bin/echo hello {host}");
-        let command = transport("lab", &files).unwrap();
+        let command = transport("lab", &files, None).unwrap();
         std::env::remove_var("WORKBENCH_REMOTE_COMMAND");
         assert_eq!(command.get_program(), "/bin/echo");
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();

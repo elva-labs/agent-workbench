@@ -27,7 +27,11 @@ pub const DAEMON_NAME: &str = "agent-workbench-remote";
 #[serde(rename_all = "camelCase")]
 pub struct Saved {
     pub name: String,
+    /// The address that reached it last, tried first.
     pub host: String,
+    /// Every address the token carried, in the token's order.
+    #[serde(default)]
+    pub hosts: Vec<String>,
     pub user: String,
     #[serde(default = "default_port")]
     pub port: u16,
@@ -42,6 +46,18 @@ impl Saved {
     /// What goes in the path: `user@name`.
     pub fn target(&self) -> String {
         format!("{}@{}", self.user, self.name)
+    }
+
+    /// The addresses to try, in order: the one that reached it last, then
+    /// the rest as the token had them.
+    pub fn addresses(&self) -> Vec<String> {
+        let mut all = vec![self.host.clone()];
+        for host in &self.hosts {
+            if !all.contains(host) {
+                all.push(host.clone());
+            }
+        }
+        all
     }
 
     /// The line for the app's known hosts, under the name, which is what
@@ -161,22 +177,43 @@ impl Files {
     /// name. Nothing for any other target: those are the user's own ssh
     /// configuration's business.
     pub fn options(&self, target: &str) -> Vec<String> {
-        let Some(saved) = self
-            .saved()
-            .into_iter()
-            .find(|known| known.target() == target)
-        else {
+        let Some(saved) = self.saved_target(target) else {
             return Vec::new();
         };
+        self.options_at(&saved, &saved.host)
+    }
+
+    /// The paired machine behind a target, if it is one.
+    pub fn saved_target(&self, target: &str) -> Option<Saved> {
+        self.saved()
+            .into_iter()
+            .find(|known| known.target() == target)
+    }
+
+    /// The address that reached a paired machine goes first from now on.
+    pub fn remember_address(&self, target: &str, address: &str) -> Result<(), String> {
+        let Some(mut saved) = self.saved_target(target) else {
+            return Ok(());
+        };
+        if saved.host == address {
+            return Ok(());
+        }
+        saved.host = address.to_string();
+        self.save(saved)
+    }
+
+    /// The options that reach a paired machine at one of its addresses.
+    pub fn options_at(&self, saved: &Saved, address: &str) -> Vec<String> {
+        let target = saved.target();
         vec![
             "-o".into(),
-            format!("HostName={}", saved.host),
+            format!("HostName={address}"),
             "-p".into(),
             saved.port.to_string(),
             "-o".into(),
             format!("HostKeyAlias={}", saved.name),
             "-i".into(),
-            self.key_for(target).to_string_lossy().into(),
+            self.key_for(&target).to_string_lossy().into(),
             "-o".into(),
             "IdentitiesOnly=yes".into(),
             "-o".into(),
@@ -194,7 +231,10 @@ impl Files {
     pub fn pair(&self, token: &str) -> Result<Saved, String> {
         let pairing = Pairing::decode(token)?;
         check_name(&pairing.name, "name")?;
-        check_name(&pairing.host, "host")?;
+        let addresses = pairing.addresses();
+        for address in &addresses {
+            check_name(address, "host")?;
+        }
         check_name(&pairing.user, "user")?;
         if pairing.user.contains(['@', ':']) || pairing.name.contains(['@', ':']) {
             return Err("the token's names are not ones".into());
@@ -219,7 +259,8 @@ impl Files {
         };
         let saved = Saved {
             name,
-            host: pairing.host.clone(),
+            host: addresses[0].clone(),
+            hosts: addresses,
             user: pairing.user.clone(),
             port: pairing.port,
             host_key: pairing.host_key.clone(),
@@ -450,6 +491,7 @@ mod tests {
         Pairing {
             name: "lab".into(),
             host: host.into(),
+            hosts: vec![host.into(), "10.0.0.5".into()],
             port,
             user: "ada".into(),
             key: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
@@ -484,6 +526,21 @@ mod tests {
         assert_eq!(target_args("ada@lab"), ["ada@lab"]);
         assert_eq!(target_args("ada@lab:2222"), ["-p", "2222", "ada@lab"]);
         assert_eq!(split_port("lab:abc"), ("lab:abc", None));
+    }
+
+    #[test]
+    fn pairing_keeps_every_address_and_puts_the_one_that_answered_first() {
+        let files = Files::new(&std::env::temp_dir().join("workbench-ssh-addresses"));
+        let _ = std::fs::remove_dir_all(&files.dir);
+        let saved = files
+            .pair(&token("lab.example", 22, "ssh-ed25519 AAAA"))
+            .unwrap();
+        assert_eq!(saved.addresses(), ["lab.example", "10.0.0.5"]);
+        files.remember_address(&saved.target(), "10.0.0.5").unwrap();
+        let again = files.saved_target(&saved.target()).unwrap();
+        assert_eq!(again.addresses(), ["10.0.0.5", "lab.example"]);
+        let options = files.options(&saved.target());
+        assert!(options.contains(&"HostName=10.0.0.5".to_string()));
     }
 
     #[test]
@@ -555,6 +612,7 @@ mod tests {
         let bad = Pairing {
             name: "lab".into(),
             host: "-oProxyCommand=x".into(),
+            hosts: Vec::new(),
             port: 22,
             user: "ada".into(),
             key: "k".into(),
