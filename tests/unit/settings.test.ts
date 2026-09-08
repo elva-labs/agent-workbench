@@ -11,7 +11,7 @@ import { chordFor, keys, resetKeys } from "$lib/keys.svelte";
 import { closeSettings, openSettings, settings } from "$lib/settings.svelte";
 import { setPalette, setTheme, theme } from "$lib/theme.svelte";
 
-import { reset as resetHook } from "$lib/hook.svelte";
+import { hook, reset as resetHook } from "$lib/hook.svelte";
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 
 vi.mock("$lib/platform", () => ({ isMac: () => true, isWindows: () => false }));
@@ -64,6 +64,11 @@ describe("the settings", () => {
       "aria-checked",
       "true",
     );
+    // The overrides are folded away until one is in use.
+    const overrides = screen.getByTestId("hooks-overrides");
+    expect(overrides).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.click(overrides);
+    expect(overrides).toHaveAttribute("aria-expanded", "true");
     const rows = screen.getAllByTestId("hooks-row");
     expect(rows).toHaveLength(2);
     const first = within(rows[0]);
@@ -97,10 +102,23 @@ describe("the settings", () => {
     await waitFor(() => expect(fake.hooks["/repo"]).toBe(true));
   });
 
+  it("shows the overrides open when a project has one", () => {
+    workspace.open.push(repo("/repo", "repo"));
+    hook.overrides["/repo"] = false;
+    render(Settings);
+    const overrides = screen.getByTestId("hooks-overrides");
+    expect(overrides).toHaveAttribute("aria-expanded", "true");
+    expect(overrides).toHaveTextContent("(1)");
+    expect(
+      within(screen.getByTestId("hooks-row")).getByTestId("hooks-off"),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
   it("says so when there is no project to choose for", () => {
     render(Settings);
     expect(screen.getByTestId("hooks-none")).toBeInTheDocument();
     expect(screen.queryByTestId("hooks-row")).toBeNull();
+    expect(screen.queryByTestId("hooks-overrides")).toBeNull();
     expect(screen.getByTestId("hooks-everywhere")).toBeInTheDocument();
   });
 

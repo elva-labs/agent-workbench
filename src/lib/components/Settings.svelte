@@ -46,6 +46,16 @@
 
   onMount(() => dialog.focus());
 
+  /** How many open projects have a word of their own. */
+  let overridden = $derived(
+    workspace.open.filter((project) => overrideOf(project.path) !== null).length,
+  );
+  // The overrides are the rare case: folded away unless one is in use.
+  let overridesOpen = $state(false);
+  $effect(() => {
+    if (overridden > 0) overridesOpen = true;
+  });
+
   /** The answer for every project, applied to the open ones at once. */
   function setHooksEverywhere(on: boolean) {
     if (hook.everywhere !== on) {
@@ -167,8 +177,8 @@
         The watcher sees every change in the project. Agent hooks, written into the project's
         <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
         also report edits the moment they happen and say exactly when a session is working,
-        waiting or asking for permission. One answer for every project; a project can say
-        otherwise below.
+        waiting or asking for permission. The choice for every project applies to each one
+        you open, and a project can say otherwise under the overrides.
       </p>
       <div class="project" data-testid="hooks-everywhere">
         <span class="project-name">Every project</span>
@@ -193,9 +203,20 @@
       </div>
       {#if workspace.open.length === 0}
         <p class="note quiet" data-testid="hooks-none">Every project you open follows that.</p>
+      {:else}
+        <button
+          class="fold"
+          onclick={() => (overridesOpen = !overridesOpen)}
+          aria-expanded={overridesOpen}
+          data-testid="hooks-overrides"
+        >
+          <span class="chevron">{overridesOpen ? "▾" : "▸"}</span>
+          Project overrides{overridden > 0 ? ` (${overridden})` : ""}
+        </button>
       {/if}
-      <div class="projects">
-        {#each workspace.open as project (project.path)}
+      {#if overridesOpen}
+        <div class="projects">
+          {#each workspace.open as project (project.path)}
           {@const own = overrideOf(project.path)}
           <div class="project" data-testid="hooks-row" data-project={project.path}>
             <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
@@ -227,7 +248,8 @@
             </div>
           </div>
         {/each}
-      </div>
+        </div>
+      {/if}
       {#if hook.error}
         <p class="error" data-testid="hook-error">{hook.error}</p>
       {/if}
@@ -354,7 +376,6 @@
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--ink-2);
-    max-width: 64ch;
   }
 
   .note code {
@@ -370,6 +391,27 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    margin-top: 6px;
+  }
+
+  .fold {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 12px 0 0;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 0;
+  }
+
+  .fold:hover {
+    color: var(--ink);
   }
 
   .project {
