@@ -11,6 +11,7 @@
   import Resume from "$lib/components/Resume.svelte";
   import { resume } from "$lib/resume.svelte";
   import { core } from "$lib/core";
+  import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
@@ -59,6 +60,11 @@
 
   let viewport = $state(1200);
   let stack = $state(800);
+
+  // Every project opened is brought to the hooks answer, once.
+  $effect(() => {
+    for (const project of workspace.open) ensureHooks(project.path);
+  });
 
   // Every pty ends through one event, agent or shell. Whichever store has the
   // row takes it; an exit that beat its own spawn result waits to be claimed.

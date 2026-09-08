@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/svelte";
 import Settings from "$lib/components/Settings.svelte";
 import { chordFor, keys, resetKeys } from "$lib/keys.svelte";
 import { closeSettings, openSettings, settings } from "$lib/settings.svelte";
@@ -48,37 +54,54 @@ beforeEach(() => {
 });
 
 describe("the settings", () => {
-  // Off by default: the hooks edit the project's own settings, so nobody
-  // gets them for merely opening a folder.
-  it("offers the agent hooks per open project, off, and turns them on when asked", async () => {
+  it("has one answer for every project, and lets a project say otherwise", async () => {
     workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
     workspace.active = "/repo";
 
     render(Settings);
+    const everywhere = within(screen.getByTestId("hooks-everywhere"));
+    expect(everywhere.getByTestId("hooks-everywhere-off")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     const rows = screen.getAllByTestId("hooks-row");
     expect(rows).toHaveLength(2);
-    expect(screen.queryByTestId("hooks-none")).toBeNull();
     const first = within(rows[0]);
-    await waitFor(() => expect(first.getByTestId("hooks-off")).toHaveAttribute("aria-checked", "true"));
+    expect(first.getByTestId("hooks-default")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
 
-    await fireEvent.click(first.getByTestId("hooks-on"));
-    await waitFor(() => expect(first.getByTestId("hooks-on")).toHaveAttribute("aria-checked", "true"));
-    expect(fake.hooks["/repo"]).toBe(true);
-    // The other project is untouched.
-    expect(within(rows[1]).getByTestId("hooks-off")).toHaveAttribute("aria-checked", "true");
+    // The answer for all, applied to both open projects at once.
+    await fireEvent.click(everywhere.getByTestId("hooks-everywhere-on"));
+    await waitFor(() => expect(fake.hooks["/repo"]).toBe(true));
+    await waitFor(() => expect(fake.hooks["/other"]).toBe(true));
+    expect(everywhere.getByTestId("hooks-everywhere-on")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
 
-    // Asking for what it already has is nothing; asking for the other turns it off.
-    await fireEvent.click(first.getByTestId("hooks-on"));
-    expect(fake.hooks["/repo"]).toBe(true);
+    // One project says otherwise; the other is untouched.
     await fireEvent.click(first.getByTestId("hooks-off"));
-    await waitFor(() => expect(first.getByTestId("hooks-off")).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(fake.hooks["/repo"]).toBe(false));
+    expect(first.getByTestId("hooks-off")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(fake.hooks["/other"]).toBe(true);
+
+    // Asking for what it has is nothing; following the rest again brings it back.
+    await fireEvent.click(first.getByTestId("hooks-off"));
     expect(fake.hooks["/repo"]).toBe(false);
+    await fireEvent.click(first.getByTestId("hooks-default"));
+    await waitFor(() => expect(fake.hooks["/repo"]).toBe(true));
   });
 
   it("says so when there is no project to choose for", () => {
     render(Settings);
     expect(screen.getByTestId("hooks-none")).toBeInTheDocument();
     expect(screen.queryByTestId("hooks-row")).toBeNull();
+    expect(screen.getByTestId("hooks-everywhere")).toBeInTheDocument();
   });
 
   it("picks a theme", async () => {
@@ -86,18 +109,26 @@ describe("the settings", () => {
     await fireEvent.click(screen.getByTestId("theme-dark"));
     expect(theme.choice).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(screen.getByTestId("theme-dark")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("theme-dark")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     await fireEvent.click(screen.getByTestId("theme-system"));
     expect(document.documentElement.dataset.theme).toBeUndefined();
   });
 
   it("picks a colour palette", async () => {
     render(Settings);
-    expect(screen.getAllByRole("radio", { name: /indigo|amber|rose|mono|teal/i })).toHaveLength(5);
+    expect(
+      screen.getAllByRole("radio", { name: /indigo|amber|rose|mono|teal/i }),
+    ).toHaveLength(5);
     await fireEvent.click(screen.getByTestId("palette-indigo"));
     expect(theme.palette).toBe("indigo");
     expect(document.documentElement.dataset.palette).toBe("indigo");
-    expect(screen.getByTestId("palette-indigo")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("palette-indigo")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     await fireEvent.click(screen.getByTestId("palette-teal"));
     expect(document.documentElement.dataset.palette).toBeUndefined();
   });
@@ -108,7 +139,10 @@ describe("the settings", () => {
     await fireEvent.click(screen.getByTestId("preset-vim"));
     expect(keys.preset).toBe("vim");
     expect(screen.getByTestId("chord-focus.sessions")).toHaveTextContent("⌘H");
-    expect(screen.getByTestId("preset-vim")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("preset-vim")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   // Click a chord, press the new one: recorded, and the table is custom.
@@ -116,7 +150,10 @@ describe("the settings", () => {
     render(Settings);
     await fireEvent.click(screen.getByTestId("chord-review"));
     expect(screen.getByTestId("chord-review")).toHaveTextContent("Press keys");
-    await fireEvent.keyDown(screen.getByTestId("settings"), { key: "g", metaKey: true });
+    await fireEvent.keyDown(screen.getByTestId("settings"), {
+      key: "g",
+      metaKey: true,
+    });
     expect(chordFor("review")).toEqual({ key: "g", shift: false, alt: false });
     expect(screen.getByTestId("chord-review")).toHaveTextContent("⌘G");
     expect(screen.getByTestId("preset-custom")).toBeInTheDocument();
@@ -125,8 +162,13 @@ describe("the settings", () => {
   it("says why a chord was refused, and keeps the old one", async () => {
     render(Settings);
     await fireEvent.click(screen.getByTestId("chord-review"));
-    await fireEvent.keyDown(screen.getByTestId("settings"), { key: "e", metaKey: true });
-    expect(screen.getByTestId("chord-problem")).toHaveTextContent("Diff or whole file");
+    await fireEvent.keyDown(screen.getByTestId("settings"), {
+      key: "e",
+      metaKey: true,
+    });
+    expect(screen.getByTestId("chord-problem")).toHaveTextContent(
+      "Diff or whole file",
+    );
     expect(chordFor("review")).toEqual({ key: "d", shift: false, alt: false });
   });
 
@@ -144,7 +186,11 @@ describe("the settings", () => {
     render(Settings);
     await fireEvent.click(screen.getByTestId("preset-vim"));
     await fireEvent.click(screen.getByTestId("reset-focus.sessions"));
-    expect(chordFor("focus.sessions")).toEqual({ key: "1", shift: false, alt: false });
+    expect(chordFor("focus.sessions")).toEqual({
+      key: "1",
+      shift: false,
+      alt: false,
+    });
     expect(screen.getByTestId("preset-custom")).toBeInTheDocument();
   });
 

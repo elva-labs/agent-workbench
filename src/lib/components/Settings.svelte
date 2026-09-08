@@ -14,7 +14,7 @@
     type PresetName,
   } from "$lib/keys.svelte";
   import { closeSettings } from "$lib/settings.svelte";
-  import { check, hook, isInstalled, isKnown, toggle } from "$lib/hook.svelte";
+  import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import {
     PALETTES,
@@ -46,16 +46,19 @@
 
   onMount(() => dialog.focus());
 
-  // Each open project's hooks are read once, when the settings can show them.
-  $effect(() => {
-    for (const project of workspace.open) {
-      if (!isKnown(project.path)) check(project.path);
+  /** The answer for every project, applied to the open ones at once. */
+  function setHooksEverywhere(on: boolean) {
+    if (hook.everywhere !== on) {
+      void setEverywhere(
+        on,
+        workspace.open.map((project) => project.path),
+      );
     }
-  });
+  }
 
-  /** Sets a project's hooks to on or off; asking for the state it has is nothing. */
-  function setHooks(path: string, on: boolean) {
-    if (isInstalled(path) !== on) toggle(path);
+  /** A project's own word, or none to follow the rest; asking for what it has is nothing. */
+  function setHooks(path: string, value: boolean | null) {
+    if (overrideOf(path) !== value) void setOverride(path, value);
   }
 
   function record(action: ActionKey) {
@@ -162,29 +165,61 @@
       <h3>Live updates</h3>
       <p class="note">
         The watcher sees every change in the project. Agent hooks, written into the project's
-        <code>.claude</code> and <code>.codex</code> settings, also report edits the moment they
-        happen and say exactly when a session is working, waiting or asking for permission.
+        <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
+        also report edits the moment they happen and say exactly when a session is working,
+        waiting or asking for permission. One answer for every project; a project can say
+        otherwise below.
       </p>
+      <div class="project" data-testid="hooks-everywhere">
+        <span class="project-name">Every project</span>
+        <div class="seg" role="radiogroup" aria-label="Live updates in every project">
+          <button
+            role="radio"
+            aria-checked={!hook.everywhere}
+            class:on={!hook.everywhere}
+            onclick={() => setHooksEverywhere(false)}
+            disabled={hook.busy}
+            data-testid="hooks-everywhere-off">Watcher only</button
+          >
+          <button
+            role="radio"
+            aria-checked={hook.everywhere}
+            class:on={hook.everywhere}
+            onclick={() => setHooksEverywhere(true)}
+            disabled={hook.busy}
+            data-testid="hooks-everywhere-on">Agent hooks</button
+          >
+        </div>
+      </div>
       {#if workspace.open.length === 0}
-        <p class="note quiet" data-testid="hooks-none">Open a project to choose for it.</p>
+        <p class="note quiet" data-testid="hooks-none">Every project you open follows that.</p>
       {/if}
       <div class="projects">
         {#each workspace.open as project (project.path)}
+          {@const own = overrideOf(project.path)}
           <div class="project" data-testid="hooks-row" data-project={project.path}>
             <span class="project-name" title={project.path}>{project.name}</span>
             <div class="seg" role="radiogroup" aria-label="Live updates for {project.name}">
               <button
                 role="radio"
-                aria-checked={!isInstalled(project.path)}
-                class:on={!isInstalled(project.path)}
+                aria-checked={own === null}
+                class:on={own === null}
+                onclick={() => setHooks(project.path, null)}
+                disabled={hook.busy}
+                data-testid="hooks-default">As every project</button
+              >
+              <button
+                role="radio"
+                aria-checked={own === false}
+                class:on={own === false}
                 onclick={() => setHooks(project.path, false)}
                 disabled={hook.busy}
                 data-testid="hooks-off">Watcher only</button
               >
               <button
                 role="radio"
-                aria-checked={isInstalled(project.path)}
-                class:on={isInstalled(project.path)}
+                aria-checked={own === true}
+                class:on={own === true}
                 onclick={() => setHooks(project.path, true)}
                 disabled={hook.busy}
                 data-testid="hooks-on">Agent hooks</button

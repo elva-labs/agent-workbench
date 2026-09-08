@@ -2,9 +2,11 @@
 
 Both agents can run commands of the user's at points in a session: when a
 tool finishes, when a prompt is sent, when a turn ends, when permission is
-asked. The app can install a few of its own, per project, from the settings.
-They are off until asked for, because they write into the project's own
-agent configuration.
+asked. The app can install a few of its own, chosen once in the settings for
+every project, with a word for any project that should go the other way.
+Each project is brought to that choice as it is opened. A fresh install has
+them on; a setup from before the choice keeps them off until asked, since
+they write into the project's own agent configuration.
 
 ## What is installed
 
