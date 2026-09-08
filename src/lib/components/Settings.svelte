@@ -15,7 +15,7 @@
   } from "$lib/keys.svelte";
   import { closeSettings } from "$lib/settings.svelte";
   import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
-  import { workspace } from "$lib/workspace.svelte";
+  import { workspace, projectLabel } from "$lib/workspace.svelte";
   import {
     PALETTES,
     resolvedTheme,
@@ -198,8 +198,8 @@
         {#each workspace.open as project (project.path)}
           {@const own = overrideOf(project.path)}
           <div class="project" data-testid="hooks-row" data-project={project.path}>
-            <span class="project-name" title={project.path}>{project.name}</span>
-            <div class="seg" role="radiogroup" aria-label="Live updates for {project.name}">
+            <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
+            <div class="seg" role="radiogroup" aria-label="Live updates for {projectLabel(project.path)}">
               <button
                 role="radio"
                 aria-checked={own === null}

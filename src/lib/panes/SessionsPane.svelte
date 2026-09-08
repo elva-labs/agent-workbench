@@ -21,7 +21,7 @@
     statusLabel,
     disown,
   } from "$lib/sessions.svelte";
-  import { activate, close as closeProject, openPath, pick, workspace } from "$lib/workspace.svelte";
+  import { activate, close as closeProject, openPath, pick, projectLabel, workspace } from "$lib/workspace.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -298,7 +298,7 @@
         data-row="project:{project.path}"
       >
         <button class="row project-row" tabindex="-1" onclick={() => activate(project.path)} title={project.path}>
-          <span class="name">{project.name}</span>
+          <span class="name">{projectLabel(project.path)}</span>
           {#if hostOf(project.path) !== null}<span class="host" data-testid="project-host">{hostOf(project.path)}</span>{/if}
           {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
         </button>
@@ -306,7 +306,7 @@
           class="icon"
           tabindex="-1"
           onclick={() => closeProject(project.path)}
-          aria-label="Close {project.name}"
+          aria-label="Close {projectLabel(project.path)}"
           data-testid="close-project">×</button
         >
       </div>

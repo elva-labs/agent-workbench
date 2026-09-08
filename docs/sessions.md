@@ -52,6 +52,10 @@ permission prompt means it was granted and the agent went on.
 
 ## Names
 
+A project is its folder's name. Two open projects with the same name each
+take as much of the path above them as tells them apart, so two checkouts
+of `main-truck` read `work/main-truck` and `spike/main-truck`.
+
 A row is `session N` until the agent says otherwise. Claude Code writes the
 session's name into the terminal title, with a status glyph in front and its
 own name around it; both are stripped, and a title that was only ever the

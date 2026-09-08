@@ -1,6 +1,11 @@
 import { core, type ProjectInfo } from "$lib/core";
 import { lastSegment } from "$lib/paths";
-import { activeSession, closeProject, forProject, sessions } from "$lib/sessions.svelte";
+import {
+  activeSession,
+  closeProject,
+  forProject,
+  sessions,
+} from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
 
 /**
@@ -26,7 +31,9 @@ export const workspace = $state({
 });
 
 export function activeProject(): ProjectInfo | null {
-  return workspace.open.find((project) => project.path === workspace.active) ?? null;
+  return (
+    workspace.open.find((project) => project.path === workspace.active) ?? null
+  );
 }
 
 export function projectName(): string {
@@ -55,6 +62,34 @@ export function followedWorktree(): string | null {
   const own = project.repository ?? project.path;
   if (worktree === own) return null;
   return lastSegment(worktree);
+}
+
+/**
+ * What a project is called in the pane: its folder's name, and as much of
+ * the path above it as it takes to tell it from another open project with
+ * the same name, so two `main-truck` checkouts read `work/main-truck` and
+ * `spike/main-truck`.
+ */
+export function projectLabel(path: string): string {
+  const project = workspace.open.find((candidate) => candidate.path === path);
+  if (project === undefined) return lastSegment(path);
+  const others = workspace.open.filter(
+    (candidate) => candidate.path !== path && candidate.name === project.name,
+  );
+  if (others.length === 0) return project.name;
+  const segments = (of: string) =>
+    of
+      .replace(/^ssh:\/\/[^/]+/, "")
+      .split(/[\\/]+/)
+      .filter((segment) => segment !== "");
+  const own = segments(path);
+  const rest = others.map((other) => segments(other.path));
+  for (let depth = 2; depth <= own.length; depth += 1) {
+    const tail = own.slice(-depth).join("/");
+    if (rest.every((other) => other.slice(-depth).join("/") !== tail))
+      return tail;
+  }
+  return own.join("/");
 }
 
 export function isOpen(path: string): boolean {
@@ -104,7 +139,7 @@ export function activate(path: string) {
   const project = workspace.open.find((candidate) => candidate.path === path);
   if (project !== undefined) {
     core()
-      .setWindowTitle(`${project.name} — Agent Workbench`)
+      .setWindowTitle(`${projectLabel(project.path)} — Agent Workbench`)
       .catch(() => {});
   }
 }
@@ -138,7 +173,10 @@ export function close(path: string) {
 }
 
 function remember(path: string) {
-  workspace.recent = [path, ...workspace.recent.filter((p) => p !== path)].slice(0, RECENT_LIMIT);
+  workspace.recent = [
+    path,
+    ...workspace.recent.filter((p) => p !== path),
+  ].slice(0, RECENT_LIMIT);
 }
 
 function save() {
@@ -180,7 +218,9 @@ export async function restore() {
   }
 
   if (Array.isArray(stored.recent)) {
-    workspace.recent = stored.recent.filter((path): path is string => typeof path === "string");
+    workspace.recent = stored.recent.filter(
+      (path): path is string => typeof path === "string",
+    );
   }
 
   const paths = Array.isArray(stored.open)
@@ -197,7 +237,9 @@ export async function restore() {
   }
 
   const wanted = typeof stored.active === "string" ? stored.active : null;
-  const target = workspace.open.find((project) => project.path === wanted) ?? workspace.open[0];
+  const target =
+    workspace.open.find((project) => project.path === wanted) ??
+    workspace.open[0];
   if (target !== undefined) activate(target.path);
 }
 
