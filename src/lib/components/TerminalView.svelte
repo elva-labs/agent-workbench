@@ -279,10 +279,17 @@
   // Focus by key or by click on the list lands in the terminal itself, so
   // typing goes where the status bar says it does. Read so a request to take
   // the keyboard again re-runs this: a dialog closing leaves the document's
-  // focus on nothing.
+  // focus on nothing. Another control of the same pane, a splitter or a
+  // button, keeps the keyboard it was given; the terminal takes it from
+  // anywhere else.
   $effect(() => {
     layout.focusRequest;
-    if (focused && active && shown && terminal) untrack(() => terminal!.focus());
+    if (!focused || !active || !shown || !terminal || !host) return;
+    const owner = document.activeElement;
+    if (owner !== null && owner !== document.body && !host.contains(owner)) {
+      if (host.closest("section[data-pane]")?.contains(owner)) return;
+    }
+    untrack(() => terminal!.focus());
   });
 
   // Live setter: the TUI recolours without a respawn.
