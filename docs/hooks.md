@@ -62,10 +62,13 @@ a note above, for when the agent points at what changed rather than at a
 line. A file git has not changed opens as it is.
 
 The third tool, `present`, is for what the agent made or found to look at:
-one or more images, PDFs or Markdown documents, with a caption. The call
-opens in the changes pane's viewer, where a file would: every file of it
-down the viewer under its name, an image at width, a PDF in its own frame,
-a document rendered, the caption in the bar above. Escape closes it as it
+one or more images, PDFs, Markdown documents, HTML pages or Mermaid
+diagrams, with a caption. The call opens in the changes pane's viewer,
+where a file would: every file of it down the viewer under its name, an
+image at width, a PDF in its own frame, a document rendered, a page in a
+frame of its own that can run its scripts but reach nothing of the app or
+the machine, a diagram drawn, a mermaid fence in a document drawn too, the
+caption in the bar above. Escape closes it as it
 closes a file. A link in a document opens outside the app; HTML written
 into a document shows as the text it is. What was presented stays on the media
 list of the session it came from, a section under the file tree with a

@@ -24,7 +24,8 @@ pub const DIFF_REQUEST: &str = "diff_request";
 /// The kinds the `present` tool takes, by extension: images, PDFs, and
 /// Markdown, which the window renders. Video is not among them yet.
 pub const MEDIA_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "pdf", "md", "markdown",
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "pdf", "md", "markdown", "html", "htm",
+    "mmd", "mermaid",
 ];
 
 /// The MIME type a file is served to the window as, by extension; None
@@ -40,6 +41,8 @@ pub fn media_type(path: &Path) -> Option<&'static str> {
         "bmp" => "image/bmp",
         "pdf" => "application/pdf",
         "md" | "markdown" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "mmd" | "mermaid" => "text/vnd.mermaid",
         _ => return None,
     })
 }
@@ -190,8 +193,8 @@ pub struct Media {
 
 pub fn read_media(path: &Path) -> Result<Media, String> {
     use base64::Engine;
-    let mime =
-        media_type(path).ok_or_else(|| format!("{} is not an image or a PDF", path.display()))?;
+    let mime = media_type(path)
+        .ok_or_else(|| format!("{} is not an image, a PDF or a document", path.display()))?;
     let size = std::fs::metadata(path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?
         .len();
@@ -278,6 +281,8 @@ mod tests {
         assert_eq!(media.data, "iVBORw==");
         assert_eq!(media_type(Path::new("x.pdf")), Some("application/pdf"));
         assert_eq!(media_type(Path::new("notes.md")), Some("text/markdown"));
+        assert_eq!(media_type(Path::new("page.html")), Some("text/html"));
+        assert_eq!(media_type(Path::new("flow.mmd")), Some("text/vnd.mermaid"));
         assert_eq!(media_type(Path::new("x.mp4")), None);
         let text = dir.join("a.txt");
         std::fs::write(&text, "hello").unwrap();

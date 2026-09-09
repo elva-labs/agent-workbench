@@ -1,11 +1,14 @@
 <script lang="ts">
   import { load, type Loaded, type MediaItem } from "$lib/media.svelte";
   import { core } from "$lib/core";
+  import { fences, renderDiagram } from "$lib/mermaid";
   import { lastSegment } from "$lib/paths";
+  import MediaPage from "$lib/components/MediaPage.svelte";
 
   /**
    * What one `present` call brought, down the viewer: each file under its
-   * name, an image at width, a PDF in its own frame, a document rendered.
+   * name, an image at width, a PDF in its own frame, a document rendered,
+   * a page in a frame of its own, a diagram drawn.
    */
 
   interface Props {
@@ -17,12 +20,20 @@
   /** What each file loaded as, by path. */
   let loaded = $state<Record<string, Loaded>>({});
 
+  /** Diagrams drawn, by path: the SVG, or why not. */
+  let drawn = $state<Record<string, { svg: string } | { error: string }>>({});
+
   $effect(() => {
     for (const file of item.files) {
       if (file in loaded) continue;
       loaded[file] = { error: "" };
       void load(file).then((result) => {
         loaded[file] = result;
+        if ("diagram" in result) {
+          void renderDiagram(result.diagram).then((picture) => {
+            drawn[file] = picture;
+          });
+        }
       });
     }
   });
@@ -49,9 +60,20 @@
       {:else if "html" in current}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="document" onclick={onDocumentClick} data-testid="media-document">
+        <div class="document" onclick={onDocumentClick} use:fences={current.html} data-testid="media-document">
           {@html current.html}
         </div>
+      {:else if "page" in current}
+        <MediaPage html={current.page} title={lastSegment(file)} />
+      {:else if "diagram" in current}
+        {@const picture = drawn[file] ?? null}
+        {#if picture === null}
+          <p class="empty">Drawing…</p>
+        {:else if "error" in picture}
+          <p class="empty" data-testid="media-error">{picture.error}</p>
+        {:else}
+          <figure class="diagram" data-testid="media-diagram">{@html picture.svg}</figure>
+        {/if}
       {:else if current.mime === "application/pdf"}
         <embed src={current.url} type="application/pdf" title={lastSegment(file)} />
       {:else}
@@ -195,5 +217,16 @@
 
   .document :global(img) {
     max-width: 100%;
+  }
+  .diagram,
+  .document :global(figure.diagram) {
+    margin: 0;
+    overflow: auto;
+  }
+
+  .diagram :global(svg),
+  .document :global(figure.diagram svg) {
+    max-width: 100%;
+    height: auto;
   }
 </style>

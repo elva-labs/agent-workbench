@@ -18,7 +18,7 @@ use crate::show::{self, DiffRequest, PresentRequest, Request, ShowRequest, MEDIA
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// What the agent is told when it connects.
-pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF or a Markdown document for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted.";
+pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted.";
 
 /// The tools as the agent sees them.
 pub fn tools() -> Vec<Value> {
@@ -53,7 +53,7 @@ pub fn selection_tool() -> Value {
 pub fn present_tool() -> Value {
     json!({
         "name": "present",
-        "description": "Opens one or more images, PDFs or Markdown documents in front of the user in Agent Workbench, rendered, the first on screen and the rest as previews to click through, with a caption, and keeps them on this session's media list. Use it when the user asks to see a screenshot, a diagram, a rendering or a document you drafted, or when you have made one for them. Files must exist; give them in the order to look at them.",
+        "description": "Opens one or more images, PDFs, Markdown documents, HTML pages or Mermaid diagrams in front of the user in Agent Workbench, rendered, one under the other with a caption, and keeps them on this session's media list. Use it when the user asks to see a screenshot, a diagram, a rendering or a document you drafted, or when you have made one for them. An HTML page runs in a frame of its own with no access to anything; a Mermaid file or a mermaid fence in a document is drawn. Files must exist; give them in the order to look at them.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -62,7 +62,7 @@ pub fn present_tool() -> Value {
                     "items": { "type": "string" },
                     "minItems": 1,
                     "maxItems": 12,
-                    "description": "The files, relative to the working directory or absolute: png, jpg, gif, webp, svg, bmp, pdf or md."
+                    "description": "The files, relative to the working directory or absolute: png, jpg, gif, webp, svg, bmp, pdf, md, html or mmd."
                 },
                 "caption": { "type": "string", "description": "One sentence on what the files show." }
             },

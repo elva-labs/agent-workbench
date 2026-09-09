@@ -316,6 +316,36 @@ test.describe("the file viewer", () => {
     await expect(marked.first().locator(".num")).toHaveText("2");
   });
 
+  // A page runs in a frame with no origin; a diagram is drawn in the window.
+  test("presents an HTML page in a frame of its own and a Mermaid diagram drawn", async ({
+    page,
+  }) => {
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as { __presentRequest: (request: unknown) => void }
+        ).__presentRequest({
+          files: [`${project}/out/report.html`, `${project}/out/flow.mmd`],
+          caption: "The report and the flow.",
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    const frame = page.getByTestId("media-page");
+    await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+    const inner = page.frameLocator("[data-testid='media-page']");
+    await expect(inner.locator("#page")).toHaveText("A page");
+    await expect(inner.locator("#ran")).toHaveText("ran");
+    // The frame grew to the page's height, from what the page reported.
+    await expect
+      .poll(async () => (await frame.boundingBox())!.height)
+      .toBeLessThan(300);
+    await expect(
+      page.getByTestId("media-diagram").locator("svg"),
+    ).toBeVisible();
+    await expect(page.getByTestId("media-diagram")).toContainText("Start");
+  });
+
   // The agent's diff tool: the file's diff opens with the note above it.
   test("opens a file's diff where the agent asked, with the note", async ({
     page,

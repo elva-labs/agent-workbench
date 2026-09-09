@@ -35,6 +35,14 @@ vi.mock("$lib/core", () => ({
       if (path.includes("missing")) throw new Error(`could not read ${path}`);
       if (path.endsWith(".md"))
         return { mime: "text/markdown", data: btoa("# Draft"), size: 7 };
+      if (path.endsWith(".html"))
+        return { mime: "text/html", data: btoa("<h1>Page</h1>"), size: 13 };
+      if (path.endsWith(".mmd"))
+        return {
+          mime: "text/vnd.mermaid",
+          data: btoa("graph TD; A-->B"),
+          size: 15,
+        };
       return {
         mime: path.endsWith(".pdf") ? "application/pdf" : "image/png",
         data: "AAAA",
@@ -176,6 +184,17 @@ describe("presenting", () => {
     expect(html).toContain('href="mailto:a@b.c"');
     expect(html).toContain('<img src="https://example.com/y.png" alt="y">');
     expect(html).toContain("x");
+  });
+
+  it("hands a page and a diagram over as their source", async () => {
+    expect(await load("/one/page.html")).toEqual({
+      mime: "text/html",
+      page: "<h1>Page</h1>",
+    });
+    expect(await load("/one/flow.mmd")).toEqual({
+      mime: "text/vnd.mermaid",
+      diagram: "graph TD; A-->B",
+    });
   });
 
   it("reads a file as a data URL, or says why it cannot", async () => {

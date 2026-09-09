@@ -1,5 +1,5 @@
 /**
- * Media the agent presented: images, PDFs and documents, kept per session
+ * Media the agent presented: images, PDFs, documents, pages and diagrams, kept per session
  * as one item per call and opened in the changes pane's viewer, every file
  * of the call down the page.
  *
@@ -152,6 +152,10 @@ export function openItem(item: MediaItem) {
 export type Loaded =
   | { mime: string; url: string }
   | { mime: string; html: string }
+  /** An HTML page, shown in a frame of its own. */
+  | { mime: string; page: string }
+  /** A Mermaid diagram's source, drawn in the window. */
+  | { mime: string; diagram: string }
   | { error: string };
 
 /** Where a link or an image in a document may point: the web, mail, or a
@@ -203,6 +207,12 @@ export async function load(path: string): Promise<Loaded> {
     const found: Media = await core().readMedia(path);
     if (found.mime === "text/markdown") {
       return { mime: found.mime, html: render(decode(found.data)) };
+    }
+    if (found.mime === "text/html") {
+      return { mime: found.mime, page: decode(found.data) };
+    }
+    if (found.mime === "text/vnd.mermaid") {
+      return { mime: found.mime, diagram: decode(found.data) };
     }
     return { mime: found.mime, url: `data:${found.mime};base64,${found.data}` };
   } catch (error) {

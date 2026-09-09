@@ -154,6 +154,20 @@ export async function installFakeCore(
               data: btoa("# Draft\n\nHello *there*, <b>plain</b>.\n"),
               size: 30,
             };
+          if (path.endsWith(".html"))
+            return {
+              mime: "text/html",
+              data: btoa(
+                "<h1 id='page'>A page</h1><script>document.body.appendChild(Object.assign(document.createElement('p'),{id:'ran',textContent:'ran'}))</script>",
+              ),
+              size: 100,
+            };
+          if (path.endsWith(".mmd"))
+            return {
+              mime: "text/vnd.mermaid",
+              data: btoa("graph TD; A[Start] --> B[End]"),
+              size: 28,
+            };
           return {
             mime: "image/png",
             data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
