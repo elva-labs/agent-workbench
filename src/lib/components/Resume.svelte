@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { agentTag } from "$lib/agent.svelte";
   import { lastSegment } from "$lib/paths";
+  import { returnFocus } from "$lib/layout.svelte";
   import { closeResume, offered, pickResume, resume } from "$lib/resume.svelte";
   import { ago, historyLabel } from "$lib/sessions.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -16,9 +17,12 @@
   let field = $state<HTMLInputElement | null>(null);
   let cursor = $state(0);
 
+  // The keyboard is taken on the way in and handed back on the way out,
+  // whichever way the dialog closed.
   onMount(() => {
     dialog.focus();
     field?.focus();
+    return returnFocus;
   });
 
   let rows = $derived(offered());

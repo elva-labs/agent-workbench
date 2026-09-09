@@ -83,6 +83,11 @@ Focusing a pane by key puts the keyboard where that pane takes it:
 and <kbd>Cmd</kbd><kbd>1</kbd> and <kbd>Cmd</kbd><kbd>3</kbd> on the list
 panes' own cursors.
 
+A dialog, the settings, the remote picker or the sessions to resume, holds
+the keyboard while it is up. When it closes, the pane that had the keyboard
+takes it back where it was: the cursor in a list pane stays on its row, and
+typing goes into the terminal again without a click.
+
 ## The list panes are one tab stop each
 
 The sessions pane and the file tree are each a single tab stop with a cursor

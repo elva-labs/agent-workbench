@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tick } from "svelte";
 import {
   render,
   screen,
@@ -8,7 +9,7 @@ import {
 } from "@testing-library/svelte";
 import SessionsPane from "$lib/panes/SessionsPane.svelte";
 import ChangesPane from "$lib/panes/ChangesPane.svelte";
-import { DEFAULT, layout, togglePane } from "$lib/layout.svelte";
+import { DEFAULT, focusPane, layout, returnFocus, togglePane } from "$lib/layout.svelte";
 import { files, refresh, clear as clearFiles } from "$lib/files.svelte";
 
 /** Stands in for git. Reassigned per test rather than mocked per call. */
@@ -419,6 +420,67 @@ describe("SessionsPane", () => {
     expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(resume.open).toBe(true);
+  });
+
+  // A dialog takes the document's focus and leaves it on nothing when it
+  // closes. The pane takes the keyboard back on the row the dialog opened
+  // from, so the next arrow carries on from there and Enter still works.
+  it("takes the keyboard back on the same row when a dialog closes", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    fake.transcripts = [
+      { id: "abc-123", title: "from a terminal", modified: 1000, size: 400 },
+    ];
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    await waitFor(() =>
+      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+    );
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(resume.open).toBe(true);
+
+    // The dialog had the keyboard; its going leaves the document on nothing.
+    nav.blur();
+    expect(document.activeElement).toBe(document.body);
+    returnFocus();
+    await waitFor(() => expect(document.activeElement).toBe(nav));
+    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
+      "cursor",
+    );
+  });
+
+  // Coming in from another pane is different: the cursor starts over from
+  // the session you are in, whatever a click left it on.
+  it("starts the cursor over when entered from another pane", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const only = create("/repo");
+    started(only.key, "pty-1", "session-1");
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    const nav = screen.getByTestId("sessions-nav");
+    await waitFor(() => expect(document.activeElement).toBe(nav));
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
+      "cursor",
+    );
+
+    focusPane("agent");
+    nav.blur();
+    await tick();
+    focusPane("sessions");
+    await waitFor(() => expect(document.activeElement).toBe(nav));
+    expect(screen.getByTestId("session-row").closest("[data-row]")).toHaveClass(
+      "cursor",
+    );
   });
 
   // Nothing in the pane needs the mouse: the way in sits on the same

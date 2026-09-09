@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { returnFocus } from "$lib/layout.svelte";
   import { browse, choose, closeRemote, connect, pair, parentOf, pathOn, remote } from "$lib/remote.svelte";
 
   /**
@@ -11,9 +12,12 @@
   let dialog: HTMLDivElement;
   let tokenField = $state<HTMLTextAreaElement | null>(null);
 
+  // The keyboard is taken on the way in and handed back on the way out,
+  // whichever way the dialog closed.
   onMount(() => {
     dialog.focus();
     tokenField?.focus();
+    return returnFocus;
   });
 
   function onKeydown(e: KeyboardEvent) {

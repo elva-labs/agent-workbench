@@ -282,6 +282,13 @@ const spawnCount = (page: Page) =>
 const killed = (page: Page) => page.evaluate(() => window.__fake.killed);
 /** A running session in the project you are looking at, started if there
     is none: nothing starts by itself any more. */
+/** The width of the bar the sessions pane draws beside the row under its
+    cursor: 3px while the keyboard is in the pane, nothing otherwise. */
+const cursorBar = (page: Page) =>
+  page.evaluate(() => {
+    const row = document.querySelector("[data-testid='sessions-nav'] .cursor");
+    return row === null ? null : getComputedStyle(row, "::before").width;
+  });
 const running = async (page: Page) => {
   if ((await spawnCount(page)) === 0)
     await page.getByTestId("new-session").click();
@@ -976,6 +983,60 @@ test.describe("with codex installed too", () => {
       agent: "codex",
       session: "old",
     });
+  });
+});
+
+test.describe("when a dialog closes", () => {
+  // The dialog had the keyboard. Once it is gone, the pane it opened from
+  // has the keyboard again, on the row it was on: the cursor shows, the
+  // arrows move it, and Enter does what it did before.
+  test("the sessions pane takes the keyboard back where it was", async ({
+    page,
+  }) => {
+    await open(page, {
+      open: [ONE, TWO],
+      codex: "/usr/local/bin/codex",
+      codexTranscripts: [
+        { id: "old", title: "Old thread", modified: 900, size: 10 },
+      ],
+    });
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(page.getByTestId("sessions-nav")).toBeFocused();
+    const fold = page.getByTestId("outside-fold");
+    await expect(fold).toHaveText(/1 codex session to resume/);
+    await page.keyboard.press("End");
+    await page.keyboard.press("ArrowUp");
+    await expect(fold).toHaveClass(/cursor/);
+    await expect.poll(() => cursorBar(page)).toBe("3px");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("resume-filter")).toBeFocused();
+    await expect.poll(() => cursorBar(page)).not.toBe("3px");
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("resume")).toHaveCount(0);
+    await expect(page.getByTestId("sessions-nav")).toBeFocused();
+    await expect(fold).toHaveClass(/cursor/);
+    await expect.poll(() => cursorBar(page)).toBe("3px");
+
+    // Down to the other project, and Enter brings it forward.
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator(".project.cursor")).toContainText("two");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".project.on")).toContainText("two");
+  });
+
+  test("typing reaches the agent again after the settings close", async ({
+    page,
+  }) => {
+    await open(page, { open: [ONE] });
+    await running(page);
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("settings")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("settings")).toHaveCount(0);
+    await expect(page.locator(KEYBOARD)).toBeFocused();
+    await page.keyboard.type("x");
+    await expect.poll(() => typed(page)).toContain("x");
   });
 });
 

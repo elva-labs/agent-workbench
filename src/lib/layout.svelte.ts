@@ -299,6 +299,16 @@ export function focusPane(id: PaneId) {
   layout.focusRequest += 1;
 }
 
+/**
+ * Hands the keyboard back to the pane that has the focus state. A dialog
+ * takes the document's focus while it is up and leaves it on nothing when it
+ * goes; without this the pane would still be named as focused while its keys
+ * went nowhere.
+ */
+export function returnFocus() {
+  layout.focusRequest += 1;
+}
+
 export function loadLayout() {
   let raw: string | null = null;
   try {

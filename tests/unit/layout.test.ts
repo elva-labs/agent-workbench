@@ -18,6 +18,7 @@ import {
   layout,
   leftmost,
   loadLayout,
+  returnFocus,
   rightmost,
   saveLayout,
   sessionsVisible,
@@ -278,6 +279,14 @@ describe("focusPane", () => {
     layout.focus = "changes";
     focusPane("agent");
     expect(layout.focus).toBe("changes");
+  });
+
+  it("hands the keyboard back to the pane that has it", () => {
+    focusPane("sessions");
+    const asked = layout.focusRequest;
+    returnFocus();
+    expect(layout.focus).toBe("sessions");
+    expect(layout.focusRequest).toBe(asked + 1);
   });
 });
 

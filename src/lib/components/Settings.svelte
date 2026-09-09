@@ -13,6 +13,7 @@
     type ActionKey,
     type PresetName,
   } from "$lib/keys.svelte";
+  import { returnFocus } from "$lib/layout.svelte";
   import { closeSettings } from "$lib/settings.svelte";
   import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
@@ -44,7 +45,12 @@
   let recording = $state<ActionKey | null>(null);
   let problem = $state<{ action: ActionKey; text: string } | null>(null);
 
-  onMount(() => dialog.focus());
+  // The keyboard is taken on the way in and handed back on the way out,
+  // whichever way the dialog closed.
+  onMount(() => {
+    dialog.focus();
+    return returnFocus;
+  });
 
   /** How many open projects have a word of their own. */
   let overridden = $derived(

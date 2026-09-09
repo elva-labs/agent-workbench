@@ -25,7 +25,7 @@
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
-  import { focusPane, layout } from "$lib/layout.svelte";
+  import { focusPane, layout, type PaneId } from "$lib/layout.svelte";
 
   let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
 
@@ -129,15 +129,23 @@
     }
   }
 
+  /** The pane the focus state named last time this was looked at, so an
+      arrival from another pane can be told from the keyboard coming back. */
+  let previous: PaneId = layout.focus;
+
   // Focusing the pane by key puts the keyboard here, so the arrows work at
-  // once, and starts the cursor over from the session you are in rather than
-  // from whatever a click left it on. A click inside already has the keyboard.
+  // once. Arriving from another pane starts the cursor over from the session
+  // you are in rather than from whatever a click left it on; the keyboard
+  // coming back from a dialog finds the cursor where it was. A click inside
+  // already has the keyboard.
   $effect(() => {
     layout.focusRequest;
-    if (layout.focus === "sessions" && nav && !nav.contains(document.activeElement)) {
-      cursor = null;
-      nav.focus();
-    }
+    const here = layout.focus === "sessions";
+    const arrived = here && previous !== "sessions";
+    previous = layout.focus;
+    if (!here || !nav || nav.contains(document.activeElement)) return;
+    if (arrived) cursor = null;
+    nav.focus();
   });
 
   /** Picking a session is wanting to type into it, and to see its project:

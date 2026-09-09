@@ -277,8 +277,11 @@
   }
 
   // Focus by key or by click on the list lands in the terminal itself, so
-  // typing goes where the status bar says it does.
+  // typing goes where the status bar says it does. Read so a request to take
+  // the keyboard again re-runs this: a dialog closing leaves the document's
+  // focus on nothing.
   $effect(() => {
+    layout.focusRequest;
     if (focused && active && shown && terminal) untrack(() => terminal!.focus());
   });
 
