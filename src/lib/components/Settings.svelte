@@ -14,7 +14,7 @@
     type PresetName,
   } from "$lib/keys.svelte";
   import { returnFocus } from "$lib/layout.svelte";
-  import { closeSettings } from "$lib/settings.svelte";
+  import { closeSettings, settings } from "$lib/settings.svelte";
   import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import {
@@ -50,6 +50,19 @@
   onMount(() => {
     dialog.focus();
     return returnFocus;
+  });
+
+  /** The live updates section, lit for a moment when the dialog was opened
+      to point at it. */
+  let live: HTMLElement;
+  let lit = $state(false);
+  onMount(() => {
+    if (settings.highlight !== "hooks") return;
+    settings.highlight = null;
+    live.scrollIntoView({ block: "center" });
+    lit = true;
+    const timer = setTimeout(() => (lit = false), 2600);
+    return () => clearTimeout(timer);
   });
 
   /** How many open projects have a word of their own. */
@@ -178,6 +191,7 @@
         {/each}
       </div>
 
+      <section class="live" class:lit bind:this={live} data-testid="settings-live">
       <h3>Live updates</h3>
       <p class="note">
         The watcher sees every change in the project. Agent hooks, written into the project's
@@ -260,6 +274,7 @@
       {#if hook.error}
         <p class="error" data-testid="hook-error">{hook.error}</p>
       {/if}
+      </section>
 
       <h3>Keys</h3>
       <p class="note">
@@ -376,6 +391,33 @@
     text-transform: uppercase;
     font-weight: 500;
     color: var(--ink-3);
+  }
+
+  /* The section keeps the rhythm of the rest, with room around it for the
+     line that lights up when the dialog was opened to point at it. */
+  .live {
+    margin: 22px -10px 0;
+    padding: 10px 10px 10px;
+    outline: 1px solid transparent;
+    outline-offset: -1px;
+  }
+
+  .live h3 {
+    margin-top: 0;
+  }
+
+  .live.lit {
+    animation: lit 2.6s ease-out forwards;
+  }
+
+  @keyframes lit {
+    0%,
+    45% {
+      outline-color: var(--accent);
+    }
+    100% {
+      outline-color: transparent;
+    }
   }
 
   .note {

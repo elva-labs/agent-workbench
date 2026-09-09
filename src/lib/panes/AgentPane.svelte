@@ -1,4 +1,5 @@
 <script lang="ts">
+  import HooksNotice from "$lib/components/HooksNotice.svelte";
   import { onMount, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
@@ -54,6 +55,7 @@
 
 <Pane id="agent" {title} meta={statusLabel(current)}>
   <div class="wrap">
+    <HooksNotice />
     <!-- Every session stays mounted. Only the active one is visible, so its
          PTY keeps its size and coming back to it costs no reflow. -->
     {#each sessions.all as session (session.key)}

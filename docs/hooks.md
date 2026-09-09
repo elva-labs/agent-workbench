@@ -6,7 +6,10 @@ asked. The app can install a few of its own, chosen once in the settings for
 every project, with a word for any project that should go the other way.
 Each project is brought to that choice as it is opened. A fresh install has
 them on; a setup from before the choice keeps them off until asked, since
-they write into the project's own agent configuration.
+they write into the project's own agent configuration. Such a setup is
+told once, in a word over the agent pane, what turning them on gives; its
+link opens the settings at the section, and the word goes for good when it
+is dismissed or when hooks are turned on.
 
 ## What is installed
 

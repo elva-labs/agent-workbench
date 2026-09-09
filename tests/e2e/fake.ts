@@ -68,6 +68,16 @@ export async function installFakeCore(
       } else {
         localStorage.removeItem("workbench.workspace");
       }
+      // A workspace on record with no hooks choice reads as a setup from
+      // before the choice, which is told about hooks once: taken as read
+      // here, unless a test or the app has said, so the word does not sit
+      // over the agent pane in every test.
+      if (localStorage.getItem("workbench.notices") === null) {
+        localStorage.setItem(
+          "workbench.notices",
+          JSON.stringify({ hooks: "dismissed" }),
+        );
+      }
 
       let ptyCount = 0;
       (

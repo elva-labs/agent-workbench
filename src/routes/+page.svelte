@@ -14,6 +14,7 @@
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { showRequested } from "$lib/show.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
+  import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
@@ -63,8 +64,10 @@
   let viewport = $state(1200);
   let stack = $state(800);
 
-  // What the agent presented before this window opened, back on the lists.
+  // What the agent presented before this window opened, back on the lists,
+  // and which words to the user were already taken.
   loadMedia();
+  loadNotices();
 
   // Every project opened is brought to the hooks answer, once.
   $effect(() => {
