@@ -5,6 +5,7 @@ import {
   NEEDS_AGENT_WHILE_REVIEWING,
   NEEDS_CHANGES,
   MIN_REVIEW,
+  REVIEW_SHARE,
   NEEDS_SESSIONS,
   NEEDS_TERMINAL,
   SPLITTER,
@@ -204,20 +205,28 @@ describe("review mode", () => {
     expect(layout.review).toBeGreaterThanOrEqual(MIN_REVIEW);
   });
 
-  // The pane holds a tree beside the content now, so it opens at a width that
-  // fits both rather than at whatever the sessions pane happened to free.
-  it("opens wide enough for a tree and a diff side by side", () => {
+  // The pane holds a tree beside the content, and opens at its share of the
+  // window rather than at whatever the sessions pane happened to free.
+  it("opens at its share of the window, with room for a tree and a diff", () => {
     applyLayout(1600);
     enterReview();
+    expect(layout.review).toBe(Math.round(1600 * REVIEW_SHARE));
+    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(
+      MIN.viewer,
+    );
+  });
+
+  it("opens no narrower than its floor in a small window", () => {
+    applyLayout(1100);
+    enterReview();
     expect(layout.review).toBe(DEFAULT.review);
-    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(MIN.viewer);
   });
 
   it("takes more than that when the changes pane was already wide", () => {
     applyLayout(1600);
-    layout.changes = 900;
+    layout.changes = 1200;
     enterReview();
-    expect(layout.review).toBeGreaterThan(DEFAULT.review);
+    expect(layout.review).toBeGreaterThan(Math.round(1600 * REVIEW_SHARE));
   });
 
   it("stops sizing itself once you have dragged the splitter", () => {
@@ -251,7 +260,9 @@ describe("review mode", () => {
   it("is not persisted: the app does not reopen mid-review", () => {
     applyLayout(1600);
     enterReview();
-    expect(JSON.parse(localStorage.getItem("workbench.layout")!)).not.toHaveProperty("mode");
+    expect(
+      JSON.parse(localStorage.getItem("workbench.layout")!),
+    ).not.toHaveProperty("mode");
   });
 });
 
@@ -310,7 +321,9 @@ describe("persistence", () => {
   it("does not persist focus", () => {
     layout.focus = "changes";
     saveLayout();
-    expect(JSON.parse(localStorage.getItem("workbench.layout")!)).not.toHaveProperty("focus");
+    expect(
+      JSON.parse(localStorage.getItem("workbench.layout")!),
+    ).not.toHaveProperty("focus");
   });
 
   it("keeps defaults when nothing is stored", () => {
@@ -359,7 +372,9 @@ describe("the tree column", () => {
     enterReview();
     layout.tree = 900;
     applyLayout(1600);
-    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(MIN.viewer);
+    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(
+      MIN.viewer,
+    );
   });
 
   it("never drops below its own minimum", () => {
@@ -375,7 +390,9 @@ describe("the tree column", () => {
     enterReview();
     layout.tree = 260;
     saveLayout();
-    expect(JSON.parse(localStorage.getItem("workbench.layout")!).tree).toBe(260);
+    expect(JSON.parse(localStorage.getItem("workbench.layout")!).tree).toBe(
+      260,
+    );
   });
 });
 
@@ -492,7 +509,9 @@ describe("the terminal list", () => {
   it("gives way before the shells do", () => {
     layout.terminalList = 900;
     applyLayout(1000, 900);
-    expect(1000 - SPLITTER - layout.terminalList).toBeGreaterThanOrEqual(MIN.shells);
+    expect(1000 - SPLITTER - layout.terminalList).toBeGreaterThanOrEqual(
+      MIN.shells,
+    );
   });
 
   it("never drops below its own minimum", () => {

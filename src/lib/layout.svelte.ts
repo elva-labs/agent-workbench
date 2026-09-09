@@ -48,10 +48,15 @@ export const MIN = {
 /** The review pane holds a tree and the content side by side. */
 export const MIN_REVIEW = MIN.tree + SPLITTER + MIN.viewer;
 
+/** The share of the content width the viewer's pane opens at: the file is
+    what is being read, the agent is glanced at beside it. */
+export const REVIEW_SHARE = 0.6;
+
 export const DEFAULT = {
   sessions: 232,
   changes: 340,
   tree: 220,
+  /** The least the viewer's pane opens at, whatever the window's width. */
   review: 700,
   terminal: 260,
   terminalList: 200,
@@ -231,14 +236,19 @@ export function applyLayout(width: number, height: number = layout.height) {
 export function enterReview() {
   if (layout.mode === "reviewing") return;
 
-  // The pane now holds a tree beside the content, so what the sessions pane
-  // vacates is no longer enough on its own: at default widths that is 578px,
-  // which would leave the tree at its minimum. Opening the viewer therefore
-  // costs the agent one resize, on a deliberate mode change rather than on
-  // every file, and it gets the width straight back on exit.
+  // The pane holds a tree beside the content, and the content is what is
+  // being read: it opens at its share of the window, or wider when the
+  // changes pane and what the sessions pane vacates already come to more.
+  // Opening the viewer therefore costs the agent one resize, on a deliberate
+  // mode change rather than on every file, and it gets the width straight
+  // back on exit.
   if (!layout.reviewTouched) {
     const freed = sessionsVisible() ? layout.sessions + SPLITTER : 0;
-    layout.review = Math.max(DEFAULT.review, layout.changes + freed);
+    layout.review = Math.max(
+      DEFAULT.review,
+      layout.changes + freed,
+      Math.round(layout.width * REVIEW_SHARE),
+    );
   }
 
   layout.mode = "reviewing";

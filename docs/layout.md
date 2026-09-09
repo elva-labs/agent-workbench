@@ -19,9 +19,10 @@ focus and hides what you were watching; a pane takes its room from somewhere
 real. The tree is the same component in both shapes, so it keeps its scroll
 position, open folders and selection across the transition.
 
-Opening a file costs the agent one resize: the pane opens wider than the
-sessions pane vacated, and the agent gives up the difference. Clicking
-through files after that reflows nothing. Drag the viewer's splitter and the
+Opening a file costs the agent one resize: the pane opens at six tenths of
+the window, or wider when it and the sessions pane already came to more, and
+the agent gives up the difference. Clicking through files after that reflows
+nothing. Drag the viewer's splitter and the
 app stops sizing it for you; working and reviewing widths, and the tree
 column, are remembered separately.
 
@@ -31,11 +32,11 @@ The agent pane is a character grid, and below a certain width a TUI stops
 being usable. It is the last pane to lose room and the only one that can
 never be closed.
 
-| Content width | Layout |
-| --- | --- |
-| 812 and up | All three panes |
-| 626 to 812 | Sessions folds away |
-| Under 626 | Changes folds away too, agent alone |
+| Content width | Layout                              |
+| ------------- | ----------------------------------- |
+| 812 and up    | All three panes                     |
+| 626 to 812    | Sessions folds away                 |
+| Under 626     | Changes folds away too, agent alone |
 
 The window's minimum width is that 626 plus the frame's padding, which stays
 under half of a 1440-wide display so macOS split-screen still accepts the
@@ -122,7 +123,7 @@ window, so padding is never counted as usable width. Scrollback wrapped at
 the old width stays wrapped that way, as in every terminal.
 
 The process is told one column fewer than the grid has. A glyph can overhang
-its cell to the right, an italic *d* most of all, and the renderer clips at
+its cell to the right, an italic _d_ most of all, and the renderer clips at
 the last column; with that column never written, the overhang always has
 room.
 
