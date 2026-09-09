@@ -196,10 +196,8 @@
       <p class="note">
         The watcher sees every change in the project. Agent hooks, written into the project's
         <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
-        also report edits the moment they happen, say exactly when a session is working,
-        waiting or asking for permission, and give the agent tools to open a file in the
-        viewer at the lines it means and to present images it made. The choice for every project applies to each one you
-        open, and a project can say otherwise under the overrides.
+        let the agent do more: say when it is working or waiting, point at code in the viewer,
+        present images and documents, and more.
       </p>
       <div class="project" data-testid="hooks-everywhere">
         <span class="project-name">Every project</span>
