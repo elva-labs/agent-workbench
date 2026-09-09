@@ -15,6 +15,7 @@ import {
   closeProject,
   create,
   TYPE_AFTER,
+  printable,
   cycle,
   ended,
   equalize,
@@ -96,6 +97,17 @@ describe("a command typed by the agent", () => {
     expect(written).toEqual([]);
     await vi.advanceTimersByTimeAsync(TYPE_AFTER);
     expect(written).toEqual([["pty-9", "npm run dev"]]);
+    vi.useRealTimers();
+  });
+
+  it("loses every control character on the way, a carriage return above all", async () => {
+    vi.useFakeTimers();
+    expect(printable("npm test\r\n")).toBe("npm test");
+    expect(printable("echo \u001b[2Jhi\u0007")).toBe("echo [2Jhi");
+    const shell = create(A, "\r\n");
+    started(shell.key, "pty-9");
+    await vi.advanceTimersByTimeAsync(TYPE_AFTER);
+    expect(written).toEqual([]);
     vi.useRealTimers();
   });
 

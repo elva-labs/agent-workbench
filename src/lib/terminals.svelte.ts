@@ -44,6 +44,13 @@ export interface Shell {
 /** How long a shell gets to draw its prompt before a command is typed. */
 export const TYPE_AFTER = 300;
 
+/** The text with every control character dropped: a carriage return would
+    run the command, and an escape sequence could drive the terminal. */
+export function printable(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+}
+
 /** Narrower than this and a split shell shows a prompt and little else. */
 export const MIN_SPLIT = 200;
 
@@ -242,9 +249,10 @@ export function started(key: string, ptyId: string): boolean {
   shell.status = "running";
 
   // Typed, not sent: no newline, so the user reads it and presses Enter.
-  const typed = shell.typed;
-  if (typed !== null) {
-    shell.typed = null;
+  // Nothing that is not printable reaches the pty, whatever asked.
+  const typed = shell.typed === null ? null : printable(shell.typed);
+  shell.typed = null;
+  if (typed !== null && typed !== "") {
     setTimeout(() => {
       if (shell.ptyId === ptyId && shell.status === "running") {
         core()

@@ -356,8 +356,10 @@ fn terminal_call(
         .map(str::trim)
         .filter(|command| !command.is_empty())
         .ok_or("terminal needs a command")?;
-    if command.contains('\n') {
-        return Err("terminal takes one line".to_string());
+    // Typed, not run: a carriage return would run it, and an escape
+    // sequence could drive the terminal. Only printable text goes in.
+    if command.chars().any(char::is_control) {
+        return Err("terminal takes one line of printable text".to_string());
     }
     show::append(
         home,
@@ -574,8 +576,10 @@ mod tests {
         };
         assert_eq!(request.command, "npm run dev");
         assert_eq!(request.session.as_deref(), Some("s-8"));
-        let lines = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal","arguments":{"command":"a\nb"}}}"#).unwrap();
-        assert_eq!(lines["result"]["isError"], true);
+        for command in ["a\nb", "npm\rtest", "echo \u{001b}[2J", "a\tb"] {
+            let refused = handle(&home, &cwd, None, &format!(r#"{{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{{"name":"terminal","arguments":{{"command":{}}}}}}}"#, serde_json::to_string(command).unwrap())).unwrap();
+            assert_eq!(refused["result"]["isError"], true, "{command:?}");
+        }
 
         let home = self::home("workbench-mcp-notify");
         let noted = handle(&home, &cwd, Some("s-9"), r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"notify","arguments":{"text":"Tests green,\n  ready to merge."}}}"#).unwrap();
