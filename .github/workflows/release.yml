@@ -1,7 +1,8 @@
 name: Release
 
-# A version tag builds the app for every platform and opens a draft release
-# with the bundles attached. Publishing the draft is a person's decision.
+# A version tag runs every check on every platform, then builds the app for
+# each and opens a draft release with the bundles attached. A red check on
+# any platform stops the build. Publishing the draft is a person's decision.
 on:
   push:
     tags: ["v*"]
@@ -14,12 +15,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The checks first, with the Windows and macOS jobs that a push does not
+  # run: nothing is built from a tree that fails anywhere it ships to.
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+    with:
+      other: true
+
   # The draft release for the tag, made once before anything is built, so
   # every job that attaches to it finds the same one. Jobs making it as
   # they went left two drafts for a tag when two of them looked at once.
   draft:
     name: Draft release
     runs-on: ubuntu-24.04
+    needs: checks
     steps:
       - if: startsWith(github.ref, 'refs/tags/v')
         env:

@@ -6,8 +6,9 @@ Every push and pull request runs on Linux: the frontend checks with the unit
 and browser tiers, the core's format, lint and tests, and the real app
 through the driver tier, with a screenshot of the window kept as an
 artifact. The core's tests on Windows and macOS and the driver tier on
-Windows run nightly, only on a day main moved, or on request from the
-Actions tab, because those runners cost two and ten Linux minutes a minute.
+Windows run before every release, where a failure on any of them stops the
+build, or on request from the Actions tab; those runners cost two and ten
+Linux minutes a minute, so a push does not run them.
 [Testing](testing.md) says what each tier covers.
 
 ## Cutting a release

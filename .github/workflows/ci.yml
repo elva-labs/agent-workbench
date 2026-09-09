@@ -2,15 +2,20 @@ name: CI
 
 # Every push and pull request runs on Linux only: the frontend, the core and
 # the real app. Windows and macOS runners cost two and ten Linux minutes a
-# minute, so their jobs run nightly, and only when main moved that day, or
-# on request from the Actions tab.
+# minute, so their jobs run when the release workflow calls this one before
+# it builds, where a failure blocks the release, or on request from the
+# Actions tab.
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "0 3 * * *"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      other:
+        description: Run the Windows and macOS jobs too
+        type: boolean
+        default: true
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -20,23 +25,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Whether the Windows and macOS jobs run this time: yes when asked, on the
-  # nightly only if main has a commit from the last day, never for a push
-  # or a pull request.
+  # Whether the Windows and macOS jobs run this time: yes when asked, and
+  # when another workflow calls this one and says so; never for a push or
+  # a pull request.
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     outputs:
       other: ${{ steps.decide.outputs.other }}
     steps:
-      - uses: actions/checkout@v4
       - id: decide
         run: |
-          case "${{ github.event_name }}" in
-            workflow_dispatch) other=true ;;
-            schedule) if [ -n "$(git log -1 --since='24 hours ago' --format=%H)" ]; then other=true; else other=false; fi ;;
-            *) other=false ;;
-          esac
+          if [ "${{ inputs.other }}" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            other=true
+          else
+            other=false
+          fi
           echo "other=$other" >> "$GITHUB_OUTPUT"
           echo "Windows and macOS jobs: $other"
 
@@ -67,7 +71,7 @@ jobs:
 
   # The core on every platform it ships to: formatted, lint-clean, and its
   # own tests green. Nothing here needs a display. Linux every time; the
-  # other two behind the gate.
+  # other two behind the gate, so before every release.
   core:
     name: Core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
