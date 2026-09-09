@@ -108,6 +108,10 @@
       convertEol: false,
       cursorBlink: false,
       fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
+      // The weights the app ships. Without the bold face the browser
+      // thickens the regular one, and the glyphs no longer fit their cells.
+      fontWeight: 400,
+      fontWeightBold: 700,
       fontSize: 12,
       lineHeight: 1.35,
       scrollback: 10_000,
