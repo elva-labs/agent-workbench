@@ -143,6 +143,21 @@ describe("presenting", () => {
     expect("html" in loaded && loaded.html).toContain("<h1>");
   });
 
+  // A document is the agent's, or came with a repository from anywhere.
+  it("lets a link point only at the web, and an image only at the web or data", () => {
+    const html = render(
+      '[run](javascript:alert(1)) [site](https://example.com "Ex") [mail](mailto:a@b.c)\n\n![x](javascript:alert(2)) ![y](https://example.com/y.png)',
+    );
+    expect(html).not.toContain("javascript:");
+    expect(html).toMatch(/<p>run <a /);
+    expect(html).toContain(
+      'href="https://example.com" title="Ex" rel="noopener noreferrer"',
+    );
+    expect(html).toContain('href="mailto:a@b.c"');
+    expect(html).toContain('<img src="https://example.com/y.png" alt="y">');
+    expect(html).toContain("x");
+  });
+
   it("reads a file as a data URL, or says why it cannot", async () => {
     expect(await load("/one/a.png")).toEqual({
       url: "data:image/png;base64,AAAA",

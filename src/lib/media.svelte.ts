@@ -171,12 +171,43 @@ export type Loaded =
   | { mime: string; html: string }
   | { error: string };
 
+/** Where a link or an image in a document may point: the web, mail, or a
+    place in the document. Anything else, a `javascript:` link above all,
+    is rendered as its text. */
+const LINK = /^(?:https?:|mailto:|#)/i;
+const IMAGE = /^(?:https?:|data:image\/)/i;
+
+const renderer = new marked.Renderer();
+renderer.link = ({ href, title, tokens }) => {
+  const text = renderer.parser.parseInline(tokens);
+  if (!LINK.test(href)) return text;
+  const named = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<a href="${escapeAttribute(href)}"${named} rel="noopener noreferrer">${text}</a>`;
+};
+renderer.image = ({ href, title, text }) => {
+  if (!IMAGE.test(href)) return escapeText(text);
+  const named = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(text)}"${named}>`;
+};
+
+function escapeText(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeAttribute(text: string): string {
+  return escapeText(text).replace(/"/g, "&quot;");
+}
+
 /** Markdown rendered for the modal. Raw HTML in the document is shown as
-    the text it is, since the document is the agent's and the window is
-    the app's. */
+    the text it is, and a link or an image may point only where `LINK` and
+    `IMAGE` allow, since the document is the agent's and the window is the
+    app's. */
 export function render(markdown: string): string {
   const escaped = markdown.replace(/</g, "&lt;");
-  return marked.parse(escaped, { async: false, gfm: true }) as string;
+  return marked.parse(escaped, { async: false, gfm: true, renderer }) as string;
 }
 
 function decode(base64: string): string {
