@@ -188,10 +188,19 @@ async fn project_info(
 
 #[tauri::command]
 async fn hook_status(
+    app: tauri::AppHandle,
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
 ) -> Result<Value, String> {
+    // The daemon is put in place before the status is read, so a project
+    // with hooks from before there was a server reads as wanting one.
+    if let Route::Local(_) = route(&project) {
+        if let Some(home) = core.home() {
+            let resources = app.path().resource_dir().ok();
+            let _ = ssh::ensure_local_daemon(home, resources.as_deref());
+        }
+    }
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),

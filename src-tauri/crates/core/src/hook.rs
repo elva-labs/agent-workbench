@@ -223,10 +223,14 @@ fn session_entry(home: &Path) -> Value {
 pub fn status(home: &Path, project: &Path) -> HookStatus {
     let settings = settings_path(project);
     let read = read_settings(&settings);
-    let installed = has_ours(&read, "PostToolUse", home)
+    let hooks = has_ours(&read, "PostToolUse", home)
         && CLAUDE_SESSION_EVENTS
             .iter()
             .all(|event| has_ours(&read, event, home));
+    // With a daemon here the server is part of what is installed: a project
+    // that got the hooks before there was a server is brought up to date
+    // by the next install.
+    let installed = hooks && (!daemon_path(home).is_file() || server_installed(home, project));
     HookStatus {
         installed,
         settings: settings.to_string_lossy().to_string(),
@@ -270,6 +274,23 @@ pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
     }
     exclude_from_git(project);
     Ok(status(home, project))
+}
+
+/// Whether Claude Code is pointed at the daemon here for the project.
+fn server_installed(home: &Path, project: &Path) -> bool {
+    let key = dunce::canonicalize(project)
+        .unwrap_or_else(|_| project.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let daemon = daemon_path(home).to_string_lossy().to_string();
+    read_settings(&claude_json_path(home))
+        .get("projects")
+        .and_then(|projects| projects.get(&key))
+        .and_then(|project| project.get("mcpServers"))
+        .and_then(|servers| servers.get(SERVER_NAME))
+        .and_then(|server| server.get("command"))
+        .and_then(Value::as_str)
+        == Some(daemon.as_str())
 }
 
 /// Points both agents at the daemon as an MCP server for the project:
@@ -589,6 +610,19 @@ mod tests {
         install(&home, &project).unwrap();
         assert!(!claude_json_path(&home).exists());
         assert!(!project.join(".codex/config.toml").exists());
+        assert!(status(&home, &project).installed);
+    }
+
+    // Hooks from before there was a server: once a daemon is here, they
+    // read as not installed until the server is put in with them.
+    #[test]
+    fn a_daemon_arriving_later_asks_for_the_server() {
+        let (home, project) = fixture("daemon-later");
+        install(&home, &project).unwrap();
+        with_daemon(&home);
+        assert!(!status(&home, &project).installed);
+        install(&home, &project).unwrap();
+        assert!(status(&home, &project).installed);
     }
 
     #[test]
