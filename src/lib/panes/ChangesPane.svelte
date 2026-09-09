@@ -1,6 +1,6 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
-  import FileTree from "$lib/components/FileTree.svelte";
+  import FileTree, { type Beyond } from "$lib/components/FileTree.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
   import SearchResults from "$lib/components/SearchResults.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
@@ -45,6 +45,41 @@
   let presented = $derived(presentedFor());
   /** The tree's column, for turning a drag into a share of it. */
   let columnHeight = $state(0);
+
+  /** The media section's rows as the tree's cursor sees them: the header
+      first, then each call while the section is open. */
+  let mediaCursor = $state(-1);
+  const FOLD_ID = "media-fold";
+  const rowIdOf = (id: string) => `media-${id}`;
+  let beyond: Beyond | undefined = $derived(
+    presented.length === 0
+      ? undefined
+      : {
+          ids: [FOLD_ID, ...(layout.mediaOpen ? presented.map((item) => rowIdOf(item.id)) : [])],
+          cursor: mediaCursor,
+          onCursor: (index) => (mediaCursor = index),
+          activate: (index) => {
+            if (index === 0) toggleMedia();
+            else openItem(presented[index - 1]);
+          },
+          fold: (index, open) => {
+            if (open === layout.mediaOpen) return;
+            layout.mediaOpen = open;
+            saveLayout();
+            // Folding from a call leaves the cursor on the header.
+            if (!open && index > 0) mediaCursor = 0;
+          },
+        },
+  );
+
+  // What the agent presents opens by itself: the cursor follows it onto
+  // its row, so Escape lands the keyboard there.
+  $effect(() => {
+    const open = files.media;
+    if (open === null) return;
+    const at = presented.findIndex((item) => item.id === open.id);
+    if (at !== -1 && layout.mediaOpen) mediaCursor = at + 1;
+  });
 
   function resizeMedia(dy: number) {
     if (columnHeight === 0) return;
@@ -296,7 +331,7 @@
         {#if searchingLines()}
           <SearchResults onOpen={openHit} />
         {:else}
-          <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} />
+          <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
         {/if}
       </div>
       {#if presented.length > 0}
@@ -309,15 +344,26 @@
             onCommit={saveLayout}
           />
         {/if}
+        <!-- The rows here are the tree's cursor's to walk, so a click keeps
+             the keyboard on the tree rather than moving it to the row, and
+             Tab does not stop on each of them. -->
         <div
           class="media"
           class:open={layout.mediaOpen}
+          class:keyed={layout.focus === "changes"}
           style:--media-h="{Math.round(layout.mediaShare * 100)}%"
           data-testid="media-section"
         >
           <button
+            id={FOLD_ID}
             class="fold"
-            onclick={toggleMedia}
+            class:cursor={mediaCursor === 0}
+            tabindex="-1"
+            onpointerdown={(e) => e.preventDefault()}
+            onclick={() => {
+              mediaCursor = 0;
+              toggleMedia();
+            }}
             aria-expanded={layout.mediaOpen}
             data-testid="media-fold"
           >
@@ -326,12 +372,19 @@
           </button>
           {#if layout.mediaOpen}
             <ul class="media-list">
-              {#each presented as item (item.id)}
+              {#each presented as item, index (item.id)}
                 <li>
                   <button
+                    id={rowIdOf(item.id)}
                     class="media-row"
                     class:on={files.media?.id === item.id}
-                    onclick={() => openItem(item)}
+                    class:cursor={mediaCursor === index + 1}
+                    tabindex="-1"
+                    onpointerdown={(e) => e.preventDefault()}
+                    onclick={() => {
+                      mediaCursor = index + 1;
+                      openItem(item);
+                    }}
                     title={item.files.join("\n")}
                     data-testid="media-item"
                   >
@@ -427,6 +480,13 @@
   .media-row:hover,
   .media-row.on {
     background: var(--surface-2);
+  }
+
+  /* The tree's cursor, drawn here as it is drawn on the tree's rows, while
+     the keyboard is in the pane. */
+  .media.keyed .fold.cursor,
+  .media.keyed .media-row.cursor {
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .media-caption {

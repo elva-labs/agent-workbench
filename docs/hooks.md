@@ -63,7 +63,10 @@ closes a file. A link in a document opens outside the app; HTML written
 into a document shows as the text it is. What was presented stays on the media
 list of the session it came from, a section under the file tree with a
 divider to drag and a header that folds it away, one row per call under
-its caption, to open again after a restart too;
+its caption, to open again after a restart too. The rows are the file
+tree's to walk: the arrows run off the end of the tree onto them, Enter
+opens a call, and Left and Right fold and unfold the section as they close
+and open a folder;
 the list names the files where they are rather than keeping copies, so one
 the agent later removes shows as gone. Files are read where the agent runs,
 a remote included, up to eight megabytes each. Video is not among the kinds

@@ -374,6 +374,55 @@ test.describe("the file viewer", () => {
     await expect(section).toBeVisible();
   });
 
+  // One cursor for the column: the arrows walk off the end of the tree
+  // onto the media rows, and the keys there are the folder's.
+  test("walks the tree's cursor into the media rows and drives them by key", async ({
+    page,
+  }) => {
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as {
+            __presentRequest: (request: unknown) => void;
+          }
+        ).__presentRequest({
+          files: [`${project}/shots/one.png`, `${project}/shots/two.png`],
+          caption: "Two shots.",
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    await expect(page.getByTestId("media-file")).toHaveCount(2);
+    // Opening put the cursor on the call's row; Escape leaves the keyboard
+    // on the tree with the cursor still there.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("file-tree")).toBeFocused();
+    await expect(page.getByTestId("media-item")).toHaveClass(/cursor/);
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("media-file")).toHaveCount(2);
+    await page.keyboard.press("Escape");
+
+    // Left folds the section and lands on its header; Right opens it again.
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByTestId("media-item")).toHaveCount(0);
+    await expect(page.getByTestId("media-fold")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("media-item")).toHaveCount(1);
+
+    // Home is the top of the tree; End is the last media row.
+    await page.keyboard.press("Home");
+    await expect(page.getByTestId("media-fold")).not.toHaveClass(/cursor/);
+    await expect(page.getByTestId("file-tree")).toHaveAttribute(
+      "aria-activedescendant",
+      /^tree-/,
+    );
+    await page.keyboard.press("End");
+    await expect(page.getByTestId("media-item")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowUp");
+    await expect(page.getByTestId("media-fold")).toHaveClass(/cursor/);
+  });
+
   test("resizes the media section by its divider and keeps the size", async ({
     page,
   }) => {

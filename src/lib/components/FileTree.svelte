@@ -2,6 +2,22 @@
   import { buildTree, flatten, parentOf, type Row, type TreeNode } from "$lib/tree";
   import { files, isOpen, toggleDir, visible } from "$lib/files.svelte";
   import { layout } from "$lib/layout.svelte";
+  import { untrack } from "svelte";
+
+  /** Rows that follow the tree's own in the same column, the media section
+      under it, which the tree's one cursor runs on into: the keyboard stays
+      on the tree, and these are driven from here. */
+  export interface Beyond {
+    /** The rows' element ids, in order. */
+    ids: string[];
+    /** Which of them the cursor is on, or -1 when it is in the tree. */
+    cursor: number;
+    onCursor: (index: number) => void;
+    /** Enter or Space on one. */
+    activate: (index: number) => void;
+    /** Left folds, Right unfolds, as they close and open a folder. */
+    fold: (index: number, open: boolean) => void;
+  }
 
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
@@ -11,9 +27,10 @@
     /** The pane has focus: the keyboard belongs on the tree, so the arrows
         work without a click first. */
     focused?: boolean;
+    beyond?: Beyond;
   }
 
-  let { onOpen, onBlank, focused = false }: Props = $props();
+  let { onOpen, onBlank, focused = false, beyond }: Props = $props();
 
   let root: HTMLDivElement;
 
@@ -44,10 +61,37 @@
     if (at !== -1) cursor = at;
   });
 
-  let active = $derived(rows[Math.min(cursor, rows.length - 1)]);
+  let total = $derived(rows.length + (beyond?.ids.length ?? 0));
+
+  // The rows shrink under the cursor when a folder or the section under
+  // the tree folds: the cursor stays on the last row there is.
+  $effect(() => {
+    if (cursor > total - 1) cursor = Math.max(0, total - 1);
+  });
+
+  /** The tree's row under the cursor, none when the cursor is beyond. */
+  let active = $derived(cursor < rows.length ? rows[cursor] : undefined);
+  /** Which of the rows beyond the cursor is on, -1 in the tree. */
+  let beyondAt = $derived(cursor >= rows.length ? cursor - rows.length : -1);
+
+  // The pane moves the cursor onto a row beyond, when what the agent
+  // presented opens; the cursor's own moves are told back the same way.
+  $effect(() => {
+    const want = beyond?.cursor ?? -1;
+    if (want >= 0) untrack(() => moveTo(rows.length + want));
+  });
+  $effect(() => {
+    const at = beyondAt;
+    untrack(() => beyond?.onCursor(at));
+  });
 
   function rowId(row: Row) {
     return `tree-${row.node.path}`;
+  }
+
+  function idAt(index: number): string | undefined {
+    if (index < rows.length) return rowId(rows[index]);
+    return beyond?.ids[index - rows.length];
   }
 
   function activate(node: TreeNode) {
@@ -56,12 +100,45 @@
   }
 
   function moveTo(index: number) {
-    cursor = Math.max(0, Math.min(index, rows.length - 1));
-    document.getElementById(rowId(rows[cursor]))?.scrollIntoView({ block: "nearest" });
+    cursor = Math.max(0, Math.min(index, total - 1));
+    const id = idAt(cursor);
+    if (id !== undefined) document.getElementById(id)?.scrollIntoView({ block: "nearest" });
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (!active) return;
+    if (!active) {
+      if (beyond === undefined || beyondAt < 0) return;
+      // On a row beyond the tree: the arrows still walk, Home comes back
+      // up, and Enter, Left and Right are the section's own.
+      switch (e.key) {
+        case "ArrowDown":
+          moveTo(cursor + 1);
+          break;
+        case "ArrowUp":
+          moveTo(cursor - 1);
+          break;
+        case "Home":
+          moveTo(0);
+          break;
+        case "End":
+          moveTo(total - 1);
+          break;
+        case "Enter":
+        case " ":
+          beyond.activate(beyondAt);
+          break;
+        case "ArrowLeft":
+          beyond.fold(beyondAt, false);
+          break;
+        case "ArrowRight":
+          beyond.fold(beyondAt, true);
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+      return;
+    }
     const node = active.node;
 
     switch (e.key) {
@@ -93,7 +170,7 @@
         moveTo(0);
         break;
       case "End":
-        moveTo(rows.length - 1);
+        moveTo(total - 1);
         break;
       case "Enter":
       case " ":
@@ -110,7 +187,8 @@
   class="tree no-select"
   role="tree"
   aria-label="Files"
-  aria-activedescendant={active ? rowId(active) : undefined}
+  aria-activedescendant={idAt(cursor)}
+  aria-owns={beyond?.ids.join(" ")}
   tabindex="0"
   bind:this={root}
   onkeydown={onKeydown}
