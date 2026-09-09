@@ -126,6 +126,12 @@ export async function installFakeCore(
             throw new Error(`could not read ${path}: No such file`);
           if (path.endsWith(".pdf"))
             return { mime: "application/pdf", data: "JVBERi0=", size: 5 };
+          if (path.endsWith(".md"))
+            return {
+              mime: "text/markdown",
+              data: btoa("# Draft\n\nHello *there*, <b>plain</b>.\n"),
+              size: 30,
+            };
           return {
             mime: "image/png",
             data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",

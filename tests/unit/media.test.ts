@@ -9,6 +9,7 @@ import {
   openItem,
   ownerFor,
   presented,
+  render,
   resetMedia,
   step,
 } from "$lib/media.svelte";
@@ -32,6 +33,8 @@ vi.mock("$lib/core", () => ({
     },
     async readMedia(path: string) {
       if (path.includes("missing")) throw new Error(`could not read ${path}`);
+      if (path.endsWith(".md"))
+        return { mime: "text/markdown", data: btoa("# Draft"), size: 7 };
       return {
         mime: path.endsWith(".pdf") ? "application/pdf" : "image/png",
         data: "AAAA",
@@ -128,6 +131,16 @@ describe("presenting", () => {
     expect(media.open).toBeNull();
     openItem(media.items[0], 7);
     expect(media.open?.index).toBe(2);
+  });
+
+  it("renders a Markdown document, its own HTML as text", async () => {
+    const html = render("# Draft\n\nHello *there*, <b>plain</b>.");
+    expect(html).toContain("<h1>Draft</h1>");
+    expect(html).toContain("<em>there</em>");
+    expect(html).not.toContain("<b>");
+    expect(html).toContain("&lt;b");
+    const loaded = await load("/one/draft.md");
+    expect("html" in loaded && loaded.html).toContain("<h1>");
   });
 
   it("reads a file as a data URL, or says why it cannot", async () => {

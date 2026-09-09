@@ -55,10 +55,12 @@ A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
 
 The second tool, `present`, is for what the agent made or found to look at:
-one or more images or PDFs, with a caption. The first opens over the
-workbench with the caption, and every file of the call sits beneath it as
-a preview, the one on screen marked; the arrow keys and a click move
-between them, Escape closes. What was presented stays on the session's
+one or more images, PDFs or Markdown documents, with a caption. The first
+opens over the workbench with the caption, a document rendered, and every
+file of the call sits beneath it as a preview, the one on screen marked;
+the arrow keys and a click move between them, Escape closes. A link in a
+document opens outside the app; HTML written into a document shows as the
+text it is. What was presented stays on the session's
 media list, a fold above the file tree in the changes pane, to open again;
 the list names the files where they are rather than keeping copies, so one
 the agent later removes shows as gone. Files are read where the agent runs,

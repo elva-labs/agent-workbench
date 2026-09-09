@@ -20,9 +20,11 @@ use crate::events::Sink;
 pub const SHOW_REQUEST: &str = "show_request";
 pub const PRESENT_REQUEST: &str = "present_request";
 
-/// The kinds of media the `present` tool takes, by extension. Video is
-/// not among them yet.
-pub const MEDIA_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "pdf"];
+/// The kinds the `present` tool takes, by extension: images, PDFs, and
+/// Markdown, which the window renders. Video is not among them yet.
+pub const MEDIA_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "pdf", "md", "markdown",
+];
 
 /// The MIME type a file is served to the window as, by extension; None
 /// for a file that is not media the window shows.
@@ -36,6 +38,7 @@ pub fn media_type(path: &Path) -> Option<&'static str> {
         "svg" => "image/svg+xml",
         "bmp" => "image/bmp",
         "pdf" => "application/pdf",
+        "md" | "markdown" => "text/markdown",
         _ => return None,
     })
 }
@@ -240,6 +243,7 @@ mod tests {
         assert_eq!(media.size, 4);
         assert_eq!(media.data, "iVBORw==");
         assert_eq!(media_type(Path::new("x.pdf")), Some("application/pdf"));
+        assert_eq!(media_type(Path::new("notes.md")), Some("text/markdown"));
         assert_eq!(media_type(Path::new("x.mp4")), None);
         let text = dir.join("a.txt");
         std::fs::write(&text, "hello").unwrap();

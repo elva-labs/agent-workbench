@@ -370,6 +370,28 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("media-count")).toHaveText("1 of 3");
   });
 
+  // A document the agent drafted, rendered, with its own HTML shown as text.
+  test("presents a Markdown document rendered", async ({ page }) => {
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as {
+            __presentRequest: (request: unknown) => void;
+          }
+        ).__presentRequest({
+          files: [`${project}/docs/draft.md`],
+          caption: "The draft.",
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    const document = page.getByTestId("media-document");
+    await expect(document.locator("h1")).toHaveText("Draft");
+    await expect(document.locator("em")).toHaveText("there");
+    await expect(document).toContainText("<b>plain</b>");
+    await expect(document.locator("b")).toHaveCount(0);
+  });
+
   test("opens by clicking a file, and the changes pane grows", async ({
     page,
   }) => {

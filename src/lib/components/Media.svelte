@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { closeMedia, load, media, step } from "$lib/media.svelte";
+  import { closeMedia, load, media, step, type Loaded } from "$lib/media.svelte";
+  import { core } from "$lib/core";
   import { lastSegment } from "$lib/paths";
 
   /**
@@ -17,7 +18,7 @@
   let path = $derived(item?.files[index] ?? null);
 
   /** Data URLs by path, as they are read. */
-  let loaded = $state<Record<string, { url: string; mime: string } | { error: string }>>({});
+  let loaded = $state<Record<string, Loaded>>({});
 
   onMount(() => dialog?.focus());
 
@@ -36,6 +37,15 @@
   });
 
   let current = $derived(path === null ? null : (loaded[path] ?? null));
+
+  /** A link in a rendered document opens outside, never in this window. */
+  function onDocumentClick(e: MouseEvent) {
+    const anchor = (e.target as HTMLElement | null)?.closest("a");
+    if (anchor === null || anchor === undefined) return;
+    e.preventDefault();
+    const href = anchor.getAttribute("href") ?? "";
+    if (/^https?:\/\//.test(href)) core().openUrl(href).catch(() => {});
+  }
 
   function onKeydown(e: KeyboardEvent) {
     switch (e.key) {
@@ -90,6 +100,12 @@
           <p class="empty">Reading…</p>
         {:else if "error" in current}
           <p class="empty" data-testid="media-error">{current.error}</p>
+        {:else if "html" in current}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="document" onclick={onDocumentClick} data-testid="media-document">
+            {@html current.html}
+          </div>
         {:else if current.mime === "application/pdf"}
           <embed src={current.url} type="application/pdf" title={lastSegment(path)} />
         {:else}
@@ -221,6 +237,92 @@
   .stage embed {
     width: 100%;
     height: calc(100vh - 220px);
+  }
+
+  .document {
+    align-self: flex-start;
+    width: 100%;
+    max-width: 78ch;
+    margin: 0 auto;
+    padding: 20px 28px 32px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .document :global(h1),
+  .document :global(h2),
+  .document :global(h3),
+  .document :global(h4) {
+    line-height: 1.25;
+    margin: 1.2em 0 0.5em;
+  }
+
+  .document :global(h1) {
+    font-size: 1.5em;
+    margin-top: 0.2em;
+  }
+
+  .document :global(h2) {
+    font-size: 1.25em;
+  }
+
+  .document :global(p),
+  .document :global(ul),
+  .document :global(ol),
+  .document :global(blockquote),
+  .document :global(table) {
+    margin: 0 0 0.9em;
+  }
+
+  .document :global(pre),
+  .document :global(code) {
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .document :global(pre) {
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    overflow-x: auto;
+    margin: 0 0 0.9em;
+  }
+
+  .document :global(code) {
+    background: var(--surface-2);
+    padding: 1px 4px;
+  }
+
+  .document :global(pre code) {
+    background: none;
+    padding: 0;
+  }
+
+  .document :global(blockquote) {
+    border-left: 3px solid var(--rule-strong);
+    padding-left: 12px;
+    color: var(--ink-2);
+  }
+
+  .document :global(table) {
+    border-collapse: collapse;
+  }
+
+  .document :global(th),
+  .document :global(td) {
+    border: 1px solid var(--rule);
+    padding: 4px 8px;
+    text-align: left;
+  }
+
+  .document :global(a) {
+    color: var(--accent);
+  }
+
+  .document :global(img) {
+    max-width: 100%;
   }
 
   .empty {

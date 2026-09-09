@@ -11,6 +11,7 @@
  * names do.
  */
 
+import { marked } from "marked";
 import { core, type Media, type PresentRequest } from "$lib/core";
 import { forProject, sessions } from "$lib/sessions.svelte";
 import { projectFor, within } from "$lib/show.svelte";
@@ -163,14 +164,33 @@ export function step(direction: 1 | -1) {
   media.open = { item: media.open.item, index };
 }
 
-/** A file's bytes as a data URL for an img or an embed, or the reason it
-    cannot be shown. */
-export async function load(
-  path: string,
-): Promise<{ url: string; mime: string } | { error: string }> {
+/** What the modal shows for a file: an image or a PDF as a data URL, a
+    Markdown document rendered to HTML, or the reason it cannot be shown. */
+export type Loaded =
+  | { mime: string; url: string }
+  | { mime: string; html: string }
+  | { error: string };
+
+/** Markdown rendered for the modal. Raw HTML in the document is shown as
+    the text it is, since the document is the agent's and the window is
+    the app's. */
+export function render(markdown: string): string {
+  const escaped = markdown.replace(/</g, "&lt;");
+  return marked.parse(escaped, { async: false, gfm: true }) as string;
+}
+
+function decode(base64: string): string {
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+export async function load(path: string): Promise<Loaded> {
   try {
     const found: Media = await core().readMedia(path);
-    return { url: `data:${found.mime};base64,${found.data}`, mime: found.mime };
+    if (found.mime === "text/markdown") {
+      return { mime: found.mime, html: render(decode(found.data)) };
+    }
+    return { mime: found.mime, url: `data:${found.mime};base64,${found.data}` };
   } catch (error) {
     return { error: String(error) };
   }
