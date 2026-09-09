@@ -36,7 +36,7 @@ place of the reading off its output. [Sessions](sessions.md) describes both.
 The session log holds a line per event and is trimmed once it grows past
 half a megabyte; nothing in it is needed after the window has seen it.
 
-## The show tool
+## The show and present tools
 
 With the hooks goes a tool for the agent: `show`, offered over MCP by the
 daemon, which the app puts on the machine alongside. Called with a file, a
@@ -53,6 +53,17 @@ tool.
 
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
+
+The second tool, `present`, is for what the agent made or found to look at:
+one or more images or PDFs, with a caption. The first opens over the
+workbench with the caption, and every file of the call sits beneath it as
+a preview, the one on screen marked; the arrow keys and a click move
+between them, Escape closes. What was presented stays on the session's
+media list, a fold above the file tree in the changes pane, to open again;
+the list names the files where they are rather than keeping copies, so one
+the agent later removes shows as gone. Files are read where the agent runs,
+a remote included, up to eight megabytes each. Video is not among the kinds
+taken yet.
 
 ## Removing them
 

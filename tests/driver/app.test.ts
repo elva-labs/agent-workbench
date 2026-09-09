@@ -238,6 +238,67 @@ describe("the real app", () => {
     await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
 
+  // The present tool the same way: a real PNG in the repository, presented
+  // through the daemon, opens in the modal and lands on the media list.
+  it("opens the modal where the agent's present tool pointed", async () => {
+    const { driver } = app;
+    writeFileSync(
+      join(repo, "shot.png"),
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        "base64",
+      ),
+    );
+    const messages = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "present",
+          arguments: { files: ["shot.png"], caption: "One pixel." },
+        },
+      },
+    ];
+    const said = execFileSync(DAEMON, ["mcp"], {
+      cwd: repo,
+      env: { ...process.env, HOME: app.home },
+      input:
+        messages.map((message) => JSON.stringify(message)).join("\n") + "\n",
+    }).toString();
+    expect(said).toContain("Presented 1 file.");
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='media']")),
+      10_000,
+    );
+    expect(await textOf(driver, "[data-testid='media-caption']")).toBe(
+      "One pixel.",
+    );
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='media-stage'] img")),
+      10_000,
+    );
+    await driver.findElement(By.css("[data-testid='media-close']")).click();
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='media-fold']")),
+      5_000,
+    );
+    expect(await textOf(driver, "[data-testid='media-fold']")).toContain(
+      "Media (1)",
+    );
+  });
+
   // A project on another machine: the path names the host, the app runs
   // the daemon there (here, the daemon itself) and everything else is the
   // same. The agent starts on the remote, its bytes come back, the watcher

@@ -1,0 +1,141 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  closeMedia,
+  itemsFor,
+  listed,
+  load,
+  loadMedia,
+  media,
+  openItem,
+  ownerFor,
+  presented,
+  resetMedia,
+  step,
+} from "$lib/media.svelte";
+import {
+  create,
+  located,
+  reset as resetSessions,
+  select,
+  started,
+} from "$lib/sessions.svelte";
+import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+
+vi.mock("$lib/core", () => ({
+  core: () => ({
+    async setWindowTitle() {},
+    async projectInfo(path: string) {
+      return { path, name: path, repository: path, isGit: true };
+    },
+    async ptyCwd() {
+      return null;
+    },
+    async readMedia(path: string) {
+      if (path.includes("missing")) throw new Error(`could not read ${path}`);
+      return {
+        mime: path.endsWith(".pdf") ? "application/pdf" : "image/png",
+        data: "AAAA",
+        size: 3,
+      };
+    },
+  }),
+}));
+
+const repo = (path: string) => ({
+  path,
+  name: path.split("/").pop()!,
+  repository: path,
+  isGit: true,
+});
+const request = (
+  files: string[],
+  cwd = "/one",
+  caption: string | null = "Shots.",
+) => ({ files, caption, cwd });
+
+beforeEach(() => {
+  localStorage.clear();
+  resetMedia();
+  resetWorkspace();
+  resetSessions();
+  workspace.open.push(repo("/one"), repo("/two"));
+  workspace.active = "/one";
+});
+
+describe("whose media it is", () => {
+  it("is the session running where the agent runs, else the project", async () => {
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    await located(b.key, "/one/.claude/worktrees/w");
+    expect(
+      ownerFor(request(["/one/x.png"], "/one/.claude/worktrees/w"), "/one"),
+    ).toBe(b.key);
+    expect(
+      ownerFor(request(["/one/x.png"], "/one/.claude/worktrees/w/sub"), "/one"),
+    ).toBe(b.key);
+    // The active session in the project when none is at that directory.
+    select(a.key);
+    expect(ownerFor(request(["/one/x.png"], "/elsewhere"), "/one")).toBe(a.key);
+    resetSessions();
+    expect(ownerFor(request(["/one/x.png"]), "/one")).toBe("project:/one");
+  });
+});
+
+describe("presenting", () => {
+  it("keeps the files on the session, brings the project forward and opens the first", () => {
+    workspace.active = "/two";
+    const session = create("/one");
+    started(session.key, "pty-1", "s1");
+    presented(request(["/one/a.png", "/one/b.pdf"]), 1_700_000_000_000);
+    expect(workspace.active).toBe("/one");
+    expect(media.open?.index).toBe(0);
+    expect(media.open?.item.files).toEqual(["/one/a.png", "/one/b.pdf"]);
+    expect(itemsFor(session.key)).toHaveLength(1);
+    expect(itemsFor(session.key)[0].caption).toBe("Shots.");
+    expect(listed()).toHaveLength(1);
+  });
+
+  it("does nothing for files outside every open project", () => {
+    presented(request(["/nowhere/a.png"], "/nowhere"));
+    expect(media.open).toBeNull();
+    expect(media.items).toEqual([]);
+  });
+
+  it("survives a restart, newest first, and keeps fifty per owner", () => {
+    for (let i = 0; i < 55; i += 1) {
+      presented(request([`/one/${i}.png`]), 1_700_000_000_000 + i * 1000);
+    }
+    resetMedia();
+    loadMedia();
+    const mine = itemsFor("project:/one");
+    expect(mine).toHaveLength(50);
+    expect(mine[0].files).toEqual(["/one/54.png"]);
+    expect(mine[49].files).toEqual(["/one/5.png"]);
+  });
+
+  it("steps through the files and stops at the ends", () => {
+    presented(request(["/one/a.png", "/one/b.png", "/one/c.png"]));
+    step(-1);
+    expect(media.open?.index).toBe(0);
+    step(1);
+    step(1);
+    expect(media.open?.index).toBe(2);
+    step(1);
+    expect(media.open?.index).toBe(2);
+    closeMedia();
+    expect(media.open).toBeNull();
+    openItem(media.items[0], 7);
+    expect(media.open?.index).toBe(2);
+  });
+
+  it("reads a file as a data URL, or says why it cannot", async () => {
+    expect(await load("/one/a.png")).toEqual({
+      url: "data:image/png;base64,AAAA",
+      mime: "image/png",
+    });
+    const gone = await load("/one/missing.png");
+    expect("error" in gone && gone.error).toContain("could not read");
+  });
+});

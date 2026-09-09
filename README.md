@@ -79,7 +79,8 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Focus](docs/focus-model.md): who owns the keyboard.
 - [Settings](docs/settings.md): appearance, palettes, keys, live updates.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
-  what it gives, the agent's tool to show you a place in a file among it.
+  what it gives, the agent's tools to show you a place in a file and to
+  present what it made among it.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
 - [Remote](docs/remote.md): projects on other machines.
 - [Platforms](docs/platforms.md): what differs on each.

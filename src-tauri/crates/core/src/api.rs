@@ -262,6 +262,11 @@ impl Core {
         git::content(root, file)
     }
 
+    /// An image or a PDF for the window to show, encoded.
+    pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {
+        crate::show::read_media(path)
+    }
+
     /// Starts watching a worktree, replacing whatever was being watched
     /// before. One window looks at one project's changes at a time. Calling
     /// it again for the same root is how the hook's file joins the watch once

@@ -66,6 +66,22 @@ export interface ShowRequest {
   cwd: string;
 }
 
+/** Media the agent asked to present: files, absolute, in the order to look
+    at them, a caption, and where the agent runs. */
+export interface PresentRequest {
+  files: string[];
+  caption: string | null;
+  cwd: string;
+}
+
+/** An image or a PDF, read where it is and encoded for the window. */
+export interface Media {
+  mime: string;
+  /** Base64. */
+  data: string;
+  size: number;
+}
+
 export interface SessionIdentified {
   ptyId: string;
   sessionId: string;
@@ -221,6 +237,12 @@ export interface Core {
   onSessionEvent(handler: (event: SessionEvent) => void): Promise<() => void>;
   /** The agent asked to show the user a place in a file. */
   onShowRequest(handler: (request: ShowRequest) => void): Promise<() => void>;
+  /** The agent asked to present media. */
+  onPresentRequest(
+    handler: (request: PresentRequest) => void,
+  ): Promise<() => void>;
+  /** Reads an image or a PDF for the window, wherever the path is. */
+  readMedia(path: string): Promise<Media>;
   /** Files dragged over and dropped on the window. The webview never gets
       the DOM events for these; the window takes them and reports paths. */
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
@@ -357,6 +379,12 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onPresentRequest(handler) {
+    return listen<PresentRequest>("present_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  readMedia: (path) => invoke<Media>("read_media", { path }),
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -455,6 +483,12 @@ const detachedCore: Core = {
   },
   async onShowRequest() {
     return () => {};
+  },
+  async onPresentRequest() {
+    return () => {};
+  },
+  async readMedia() {
+    throw new Error("no core");
   },
   async onFileDrag() {
     return () => {};

@@ -13,6 +13,8 @@
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { showRequested } from "$lib/show.svelte";
+  import Media from "$lib/components/Media.svelte";
+  import { loadMedia, media, presented } from "$lib/media.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
@@ -62,6 +64,9 @@
   let viewport = $state(1200);
   let stack = $state(800);
 
+  // What the agent presented before this window opened, back on the lists.
+  loadMedia();
+
   // Every project opened is brought to the hooks answer, once.
   $effect(() => {
     for (const project of workspace.open) ensureHooks(project.path);
@@ -84,6 +89,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onShowRequest((request) => void showRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPresentRequest((request) => presented(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)
@@ -324,6 +332,9 @@
 {/if}
 {#if resume.open}
   <Resume />
+{/if}
+{#if media.open !== null}
+  <Media />
 {/if}
 
 <footer class="status no-select">

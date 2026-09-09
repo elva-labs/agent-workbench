@@ -13,14 +13,40 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::show::{self, ShowRequest};
+use crate::show::{self, PresentRequest, Request, ShowRequest, MEDIA_EXTENSIONS};
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// What the agent is told when it connects.
-pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking.";
+pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image or a PDF for them, call the present tool with the files so they open in front of them; several files go in one call.";
 
-/// The tool as the agent sees it.
+/// The tools as the agent sees them.
+pub fn tools() -> Vec<Value> {
+    vec![tool(), present_tool()]
+}
+
+pub fn present_tool() -> Value {
+    json!({
+        "name": "present",
+        "description": "Opens one or more images or PDFs in front of the user in Agent Workbench, the first on screen and the rest as previews to click through, with a caption, and keeps them on this session's media list. Use it when the user asks to see a screenshot, a diagram or a rendering, or when you have made one for them. Files must exist; give them in the order to look at them.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "description": "The files, relative to the working directory or absolute: png, jpg, gif, webp, svg, bmp or pdf."
+                },
+                "caption": { "type": "string", "description": "One sentence on what the files show." }
+            },
+            "required": ["files"]
+        }
+    })
+}
+
+/// The show tool as the agent sees it.
 pub fn tool() -> Value {
     json!({
         "name": "show",
@@ -79,7 +105,7 @@ pub fn handle(home: &Path, cwd: &Path, line: &str) -> Option<Value> {
             "instructions": INSTRUCTIONS,
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": [tool()] })),
+        "tools/list" => Ok(json!({ "tools": tools() })),
         "tools/call" => call(home, cwd, &params),
         _ => return Some(error(id, -32601, &format!("no such method: {method}"))),
     };
@@ -97,14 +123,74 @@ fn error(id: Value, code: i64, text: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": text } })
 }
 
-/// The one tool. A path is taken as the agent gave it, resolved against
+/// A tool call. A path is taken as the agent gave it, resolved against
 /// where the agent runs when relative.
 fn call(home: &Path, cwd: &Path, params: &Value) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-    if name != "show" {
-        return Err(format!("no such tool: {name}"));
-    }
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+    match name {
+        "show" => show_call(home, cwd, &arguments),
+        "present" => present_call(home, cwd, &arguments),
+        _ => Err(format!("no such tool: {name}")),
+    }
+}
+
+/// Media, checked to be there and to be a kind the window shows, so the
+/// agent hears about a wrong path now rather than the user seeing a gap.
+fn present_call(home: &Path, cwd: &Path, arguments: &Value) -> Result<Value, String> {
+    let given: Vec<String> = arguments
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|file| !file.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if given.is_empty() {
+        return Err("present needs at least one file".into());
+    }
+    if given.len() > 12 {
+        return Err("present takes twelve files at most".into());
+    }
+    let mut files = Vec::new();
+    for file in &given {
+        let absolute = resolve(cwd, file);
+        if show::media_type(&absolute).is_none() {
+            return Err(format!(
+                "{file} is not a kind the workbench shows; it takes {}",
+                MEDIA_EXTENSIONS.join(", ")
+            ));
+        }
+        if !absolute.is_file() {
+            return Err(format!("{file} is not there, at {}", absolute.display()));
+        }
+        files.push(absolute.to_string_lossy().to_string());
+    }
+    let caption = arguments
+        .get("caption")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|caption| !caption.is_empty())
+        .map(str::to_string);
+    let count = files.len();
+    show::append(
+        home,
+        &Request::Present(PresentRequest {
+            files,
+            caption,
+            cwd: cwd.to_string_lossy().to_string(),
+        }),
+    )?;
+    let noun = if count == 1 { "file" } else { "files" };
+    Ok(json!({ "content": [{ "type": "text", "text": format!("Presented {count} {noun}.") }] }))
+}
+
+fn show_call(home: &Path, cwd: &Path, arguments: &Value) -> Result<Value, String> {
     let path = arguments
         .get("path")
         .and_then(Value::as_str)
@@ -135,10 +221,9 @@ fn call(home: &Path, cwd: &Path, params: &Value) -> Result<Value, String> {
         note,
         cwd: cwd.to_string_lossy().to_string(),
     };
-    show::append(home, &request)?;
-    Ok(json!({
-        "content": [{ "type": "text", "text": format!("Shown: {} lines {from} to {to}.", request.path) }]
-    }))
+    let text = format!("Shown: {} lines {from} to {to}.", request.path);
+    show::append(home, &Request::Show(request))?;
+    Ok(json!({ "content": [{ "type": "text", "text": text }] }))
 }
 
 fn resolve(cwd: &Path, path: &str) -> PathBuf {
@@ -162,16 +247,20 @@ mod tests {
         dir
     }
 
+    fn first(home: &Path) -> Request {
+        let text = std::fs::read_to_string(show::requests_path(home)).unwrap();
+        show::classify(text.lines().next().unwrap()).unwrap()
+    }
+
     #[test]
-    fn introduces_itself_with_the_tool_and_the_instructions() {
+    fn introduces_itself_with_the_tools_and_the_instructions() {
         let home = home("hello");
         let answer = handle(&home, Path::new("/p"), r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#).unwrap();
         assert_eq!(answer["id"], 1);
         assert_eq!(answer["result"]["protocolVersion"], PROTOCOL_VERSION);
-        assert!(answer["result"]["instructions"]
-            .as_str()
-            .unwrap()
-            .contains("show tool"));
+        let instructions = answer["result"]["instructions"].as_str().unwrap();
+        assert!(instructions.contains("show tool"));
+        assert!(instructions.contains("present tool"));
         assert!(handle(
             &home,
             Path::new("/p"),
@@ -185,6 +274,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tools["result"]["tools"][0]["name"], "show");
+        assert_eq!(tools["result"]["tools"][1]["name"], "present");
     }
 
     #[test]
@@ -198,8 +288,9 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("Shown:"));
-        let text = std::fs::read_to_string(show::requests_path(&home)).unwrap();
-        let request = show::classify(text.lines().next().unwrap()).unwrap();
+        let Request::Show(request) = first(&home) else {
+            panic!("a show request");
+        };
         assert!(request.path.ends_with("infra/variables.tf"));
         assert!(Path::new(&request.path).is_absolute());
         assert_eq!((request.from, request.to), (2, 3));
@@ -208,6 +299,37 @@ mod tests {
             request.cwd,
             dunce::canonicalize(&cwd).unwrap().to_string_lossy()
         );
+    }
+
+    #[test]
+    fn presents_files_that_are_there_and_refuses_the_rest() {
+        let home = home("present");
+        let cwd = home.join("project");
+        std::fs::create_dir_all(cwd.join("shots")).unwrap();
+        std::fs::write(cwd.join("shots/one.png"), [1]).unwrap();
+        std::fs::write(cwd.join("shots/two.pdf"), [1]).unwrap();
+        let answer = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/one.png","shots/two.pdf"],"caption":"Both."}}}"#).unwrap();
+        assert_eq!(answer["result"]["content"][0]["text"], "Presented 2 files.");
+        let Request::Present(request) = first(&home) else {
+            panic!("a present request");
+        };
+        assert_eq!(request.files.len(), 2);
+        assert!(request.files[0].ends_with("shots/one.png"));
+        assert_eq!(request.caption.as_deref(), Some("Both."));
+
+        let missing = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/three.png"]}}}"#).unwrap();
+        assert_eq!(missing["result"]["isError"], true);
+        assert!(missing["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not there"));
+        let kind = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/clip.mp4"]}}}"#).unwrap();
+        assert!(kind["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not a kind"));
+        let none = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"present","arguments":{"files":[]}}}"#).unwrap();
+        assert_eq!(none["result"]["isError"], true);
     }
 
     #[test]

@@ -110,8 +110,27 @@ export async function installFakeCore(
         onSessionIdentified: async () => () => {},
         onSessionEvent: async () => () => {},
         onShowRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__showRequest = handler;
+          (window as unknown as Record<string, unknown>).__showRequest =
+            handler;
           return () => {};
+        },
+        onPresentRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__presentRequest =
+            handler;
+          return () => {};
+        },
+        // One pixel of PNG for any image asked for; a PDF as itself; a
+        // path with "missing" in it is not there.
+        readMedia: async (path: string) => {
+          if (path.includes("missing"))
+            throw new Error(`could not read ${path}: No such file`);
+          if (path.endsWith(".pdf"))
+            return { mime: "application/pdf", data: "JVBERi0=", size: 5 };
+          return {
+            mime: "image/png",
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+            size: 70,
+          };
         },
 
         // Two ways in: `lab`, which the user's own ssh setup reaches, and a

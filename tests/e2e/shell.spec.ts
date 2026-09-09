@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installFakeCore } from "./fake";
+import { PROJECT, installFakeCore } from "./fake";
 
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
@@ -314,6 +314,60 @@ test.describe("the file viewer", () => {
     const marked = page.getByTestId("viewer").locator("tr.target");
     await expect(marked).toHaveCount(2);
     await expect(marked.first().locator(".num")).toHaveText("2");
+  });
+
+  // The agent's present tool: the first file on screen with the caption,
+  // every file as a preview beneath, arrows and clicks to move, and the
+  // item kept on the pane's media list to open again.
+  test("presents the agent's files in a modal and keeps them on the list", async ({
+    page,
+  }) => {
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as {
+            __presentRequest: (request: unknown) => void;
+          }
+        ).__presentRequest({
+          files: [
+            `${project}/shots/one.png`,
+            `${project}/shots/two.png`,
+            `${project}/docs/plan.pdf`,
+          ],
+          caption: "Before, after, and the plan.",
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    const modal = page.getByTestId("media");
+    await expect(modal).toBeVisible();
+    await expect(page.getByTestId("media-caption")).toHaveText(
+      "Before, after, and the plan.",
+    );
+    await expect(page.getByTestId("media-count")).toHaveText("1 of 3");
+    await expect(modal.locator(".stage img")).toBeVisible();
+    await expect(page.getByTestId("media-preview")).toHaveCount(3);
+
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("media-count")).toHaveText("2 of 3");
+    await page.getByTestId("media-preview").nth(2).click();
+    await expect(page.getByTestId("media-count")).toHaveText("3 of 3");
+    await expect(modal.locator(".stage embed")).toHaveAttribute(
+      "type",
+      "application/pdf",
+    );
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("media-count")).toHaveText("3 of 3");
+
+    await page.keyboard.press("Escape");
+    await expect(modal).toHaveCount(0);
+    await expect(page.getByTestId("media-fold")).toContainText("Media (1)");
+    await expect(page.getByTestId("media-item")).toContainText(
+      "Before, after, and the plan.",
+    );
+    await page.getByTestId("media-item").click();
+    await expect(page.getByTestId("media")).toBeVisible();
+    await expect(page.getByTestId("media-count")).toHaveText("1 of 3");
   });
 
   test("opens by clicking a file, and the changes pane grows", async ({

@@ -297,6 +297,10 @@ pub fn dispatch(
             let p: DirsParams = parse(params)?;
             value(core.list_dirs(&p.path)?)
         }
+        "read_media" => {
+            let p: PathParams = parse(params)?;
+            value(core.read_media(&p.path)?)
+        }
         other => Err(format!("no such method: {other}")),
     }
 }

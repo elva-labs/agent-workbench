@@ -365,6 +365,24 @@ async fn git_diff(
     .await
 }
 
+/// An image or a PDF the agent presented, read where it is.
+#[tauri::command]
+async fn read_media(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    path: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&path),
+        "read_media",
+        |rest| json!({ "path": rest }),
+        |core, path| core.read_media(Path::new(path)),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn git_content(
     core: State<'_, Arc<Core>>,
@@ -623,6 +641,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             agent_detect,
+            read_media,
             project_info,
             sessions_list,
             session_title,

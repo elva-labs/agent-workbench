@@ -27,6 +27,9 @@
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
   import { isInstalled } from "$lib/hook.svelte";
+  import { listed as presentedFor, openItem } from "$lib/media.svelte";
+  import { lastSegment } from "$lib/paths";
+  import { ago } from "$lib/sessions.svelte";
   import { activeProject, followedWorktree, watchRoot, workspace } from "$lib/workspace.svelte";
   import { DEFAULT, MIN, applyLayout, enterReview, layout, saveLayout } from "$lib/layout.svelte";
 
@@ -39,6 +42,8 @@
 
   let field: HTMLInputElement;
   let menuOpen = $state(false);
+  let presented = $derived(presentedFor());
+  let mediaOpen = $state(true);
 
   // A chord asked for the field: put the keyboard in it, whatever had it.
   $effect(() => {
@@ -262,6 +267,35 @@
     </p>
   {/if}
 
+  <!-- What the agent presented for the session on screen, a fold above the
+       tree: nothing at all until there is something, then a list to open
+       any of it again. -->
+  {#if presented.length > 0}
+    <div class="media">
+      <button
+        class="fold"
+        onclick={() => (mediaOpen = !mediaOpen)}
+        aria-expanded={mediaOpen}
+        data-testid="media-fold"
+      >
+        <span class="chevron">{mediaOpen ? "▾" : "▸"}</span>
+        Media ({presented.length})
+      </button>
+      {#if mediaOpen}
+        <ul class="media-list">
+          {#each presented as item (item.id)}
+            <li>
+              <button class="media-row" onclick={() => openItem(item)} title={item.files.join("\n")} data-testid="media-item">
+                <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
+                <span class="media-meta">{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+
   <!-- The tree is the same component in both shapes. Working, it has the pane
        to itself; reviewing, it becomes the left column and keeps its scroll
        position, its open folders and its selection. -->
@@ -279,6 +313,70 @@
 </Pane>
 
 <style>
+  .media {
+    flex: none;
+    border-bottom: 1px solid var(--rule);
+    padding: 4px 0 6px;
+  }
+
+  .fold {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 4px var(--pane-pad);
+  }
+
+  .fold:hover {
+    color: var(--ink);
+  }
+
+  .media-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .media-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    width: 100%;
+    border: 0;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    padding: 3px var(--pane-pad) 3px 26px;
+    color: var(--ink);
+  }
+
+  .media-row:hover {
+    background: var(--surface-2);
+  }
+
+  .media-caption {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .media-meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+  }
+
   .head {
     display: flex;
     align-items: center;
