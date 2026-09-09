@@ -475,15 +475,21 @@ describe("the real app", () => {
 
   it("offers codex too, and runs it", async () => {
     const { driver } = app;
+    // A claude session first, so the tags have two kinds to tell apart
+    // whatever the tests before left in the list.
     await driver.findElement(By.css("[data-testid='new-session']")).click();
-    const options = await driver.findElements(
+    let options = await driver.findElements(
       By.css("[data-testid='agent-option']"),
     );
     expect(options).toHaveLength(2);
+    await options[0].click();
+    await waitForText(driver, "FAKE CLAUDE");
+    await driver.findElement(By.css("[data-testid='new-session']")).click();
+    options = await driver.findElements(By.css("[data-testid='agent-option']"));
     await options[1].click();
     await waitForText(driver, "FAKE CODEX");
     const tags = await driver.findElements(By.css("[data-testid='agent-tag']"));
     const texts = await Promise.all(tags.map((tag) => tag.getText()));
-    expect(texts).toEqual(["claude", "codex"]);
+    expect(texts.slice(-2)).toEqual(["claude", "codex"]);
   });
 });

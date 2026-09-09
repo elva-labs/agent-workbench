@@ -425,10 +425,13 @@ pub fn describe_selection(selection: Option<&crate::selection::Selection>, cwd: 
             selection.project
         );
     }
+    // A file is named as the window named it, under the project as the
+    // window named that, or under its canonical form.
+    let recorded = Path::new(&selection.project);
     let relative = |path: &str| {
-        dunce::canonicalize(path)
-            .unwrap_or_else(|_| PathBuf::from(path))
-            .strip_prefix(&project)
+        let file = Path::new(path);
+        file.strip_prefix(recorded)
+            .or_else(|_| file.strip_prefix(&project))
             .map(|rest| rest.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| path.to_string())
     };
