@@ -46,8 +46,12 @@ let spawnError: string | null = null;
 vi.mock("$lib/core", () => ({
   core: () => ({
     // Tauri rejects with the command's string, not an Error.
-    spawnShell: async () => {
+    spawnShell: async (
+      _options: unknown,
+      onOutput: (bytes: Uint8Array) => void,
+    ) => {
       if (spawnError !== null) throw spawnError;
+      outputs.push(onOutput);
       return `pty-${++spawned}`;
     },
     kill: async (id: string) => {
@@ -59,6 +63,8 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 const written: [string, string][] = [];
+/** Each spawned shell's output callback, to play a prompt into. */
+const outputs: ((bytes: Uint8Array) => void)[] = [];
 
 const noOutput = () => {};
 
@@ -82,21 +88,31 @@ beforeEach(() => {
   resetExits();
   killed.length = 0;
   written.length = 0;
+  outputs.length = 0;
   spawned = 0;
   spawnError = null;
   open();
 });
 
 describe("a command typed by the agent", () => {
-  it("is written to the pty once the shell has drawn its prompt, without a newline", async () => {
+  const prompt = () => outputs.at(-1)?.(new TextEncoder().encode("$ "));
+
+  it("is written to the pty a moment after the shell's first output, without a newline", async () => {
     vi.useFakeTimers();
     const shell = create(A, "npm run dev");
     expect(shell.typed).toBe("npm run dev");
-    started(shell.key, "pty-9");
-    expect(shell.typed).toBeNull();
+    await launch(shell.key, 80, 24, noOutput);
+    await vi.advanceTimersByTimeAsync(TYPE_AFTER * 2);
+    expect(written).toEqual([]);
+    prompt();
     expect(written).toEqual([]);
     await vi.advanceTimersByTimeAsync(TYPE_AFTER);
-    expect(written).toEqual([["pty-9", "npm run dev"]]);
+    expect(written).toEqual([["pty-1", "npm run dev"]]);
+    expect(shell.typed).toBeNull();
+    // Later output types nothing more.
+    prompt();
+    await vi.advanceTimersByTimeAsync(TYPE_AFTER);
+    expect(written).toHaveLength(1);
     vi.useRealTimers();
   });
 
@@ -105,7 +121,8 @@ describe("a command typed by the agent", () => {
     expect(printable("npm test\r\n")).toBe("npm test");
     expect(printable("echo \u001b[2Jhi\u0007")).toBe("echo [2Jhi");
     const shell = create(A, "\r\n");
-    started(shell.key, "pty-9");
+    await launch(shell.key, 80, 24, noOutput);
+    prompt();
     await vi.advanceTimersByTimeAsync(TYPE_AFTER);
     expect(written).toEqual([]);
     vi.useRealTimers();
@@ -114,7 +131,8 @@ describe("a command typed by the agent", () => {
   it("is dropped when the shell went before it could be typed", async () => {
     vi.useFakeTimers();
     const shell = create(A, "npm run dev");
-    started(shell.key, "pty-9");
+    await launch(shell.key, 80, 24, noOutput);
+    prompt();
     close(shell.key);
     await vi.advanceTimersByTimeAsync(TYPE_AFTER);
     expect(written).toEqual([]);

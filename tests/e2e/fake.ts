@@ -111,7 +111,14 @@ export async function installFakeCore(
           ptyId: `pty-${++ptyCount}`,
           sessionId: spawnOptions.session ?? `session-${ptyCount}`,
         }),
-        spawnShell: async () => `pty-${++ptyCount}`,
+        // A shell draws its prompt a moment after it is up.
+        spawnShell: async (
+          _options: unknown,
+          onOutput: (bytes: Uint8Array) => void,
+        ) => {
+          setTimeout(() => onOutput(new TextEncoder().encode("$ ")), 20);
+          return `pty-${++ptyCount}`;
+        },
         // What was written to a pty, for a test to read back.
         write: async (id: string, data: string) => {
           const w = window as unknown as { __written?: [string, string][] };

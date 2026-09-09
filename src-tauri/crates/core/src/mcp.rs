@@ -155,6 +155,10 @@ pub fn serve(home: &Path) {
 
 /// One message in, at most one out: a notification gets no answer.
 pub fn handle(home: &Path, cwd: &Path, session: Option<&str>, line: &str) -> Option<Value> {
+    // The directory as the window names it: a temporary directory's link
+    // on macOS and a short name on Windows would not match the project.
+    let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let cwd = cwd.as_path();
     let message: Value = match serde_json::from_str(line) {
         Ok(message) => message,
         Err(_) => return Some(error(Value::Null, -32700, "not JSON")),
@@ -412,17 +416,20 @@ pub fn describe_selection(selection: Option<&crate::selection::Selection>, cwd: 
     let Some(selection) = selection else {
         return "The user has nothing open in the viewer.".to_string();
     };
-    let project = Path::new(&selection.project);
-    if !cwd.starts_with(project) && !project.starts_with(cwd) {
+    let project = dunce::canonicalize(&selection.project)
+        .unwrap_or_else(|_| PathBuf::from(&selection.project));
+    let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    if !cwd.starts_with(&project) && !project.starts_with(&cwd) {
         return format!(
             "The user is looking at another project, {}, not this one.",
             selection.project
         );
     }
     let relative = |path: &str| {
-        Path::new(path)
-            .strip_prefix(project)
-            .map(|rest| rest.to_string_lossy().to_string())
+        dunce::canonicalize(path)
+            .unwrap_or_else(|_| PathBuf::from(path))
+            .strip_prefix(&project)
+            .map(|rest| rest.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| path.to_string())
     };
     if let Some(media) = &selection.media {
@@ -530,7 +537,10 @@ mod tests {
         let Request::Show(request) = first(&home) else {
             panic!("a show request");
         };
-        assert!(request.path.ends_with("infra/variables.tf"));
+        assert!(request
+            .path
+            .replace('\\', "/")
+            .ends_with("infra/variables.tf"));
         assert!(Path::new(&request.path).is_absolute());
         assert_eq!((request.from, request.to), (2, 3));
         assert_eq!(request.note.as_deref(), Some("The group."));
@@ -674,7 +684,9 @@ mod tests {
             panic!("a present request");
         };
         assert_eq!(request.files.len(), 2);
-        assert!(request.files[0].ends_with("shots/one.png"));
+        assert!(request.files[0]
+            .replace('\\', "/")
+            .ends_with("shots/one.png"));
         assert_eq!(request.caption.as_deref(), Some("Both."));
         assert_eq!(request.session.as_deref(), Some("s-7"));
 

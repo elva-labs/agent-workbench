@@ -41,7 +41,8 @@ export interface Shell {
   typed: string | null;
 }
 
-/** How long a shell gets to draw its prompt before a command is typed. */
+/** How long after its first output a shell gets to finish its prompt
+    before a command is typed. */
 export const TYPE_AFTER = 300;
 
 /** The text with every control character dropped: a carriage return would
@@ -225,10 +226,19 @@ export async function launch(
 ): Promise<boolean> {
   const shell = byKey(key);
   if (shell === null) return false;
+  // A command the agent asked to have typed goes in once the shell has
+  // drawn something, its prompt: typed earlier, a slow shell may lose it.
+  let primed = false;
+  const output = (bytes: Uint8Array) => {
+    onOutput(bytes);
+    if (primed) return;
+    primed = true;
+    setTimeout(() => typePending(shell), TYPE_AFTER);
+  };
   try {
     const ptyId = await core().spawnShell(
       { project: shell.project, cols, rows },
-      onOutput,
+      output,
     );
     if (started(key, ptyId)) return true;
     // Closed while it was coming up: nothing owns it, so it must not run on.
@@ -242,25 +252,24 @@ export async function launch(
   }
 }
 
+/** Types what the agent asked for at the shell's prompt: not sent, no
+    newline, so the user reads it and presses Enter. Nothing that is not
+    printable reaches the pty, whatever asked. */
+function typePending(shell: Shell) {
+  const typed = shell.typed === null ? null : printable(shell.typed);
+  shell.typed = null;
+  if (typed === null || typed === "") return;
+  if (shell.ptyId === null || shell.status !== "running") return;
+  core()
+    .write(shell.ptyId, typed)
+    .catch(() => {});
+}
+
 export function started(key: string, ptyId: string): boolean {
   const shell = byKey(key);
   if (shell === null) return false;
   shell.ptyId = ptyId;
   shell.status = "running";
-
-  // Typed, not sent: no newline, so the user reads it and presses Enter.
-  // Nothing that is not printable reaches the pty, whatever asked.
-  const typed = shell.typed === null ? null : printable(shell.typed);
-  shell.typed = null;
-  if (typed !== null && typed !== "") {
-    setTimeout(() => {
-      if (shell.ptyId === ptyId && shell.status === "running") {
-        core()
-          .write(ptyId, typed)
-          .catch(() => {});
-      }
-    }, TYPE_AFTER);
-  }
 
   const early = claim(ptyId);
   if (early !== undefined) ended(early);
