@@ -125,18 +125,23 @@ impl Core {
         let environment = env::environment();
         let project = cwd.unwrap_or(project);
 
+        // A resumed session's id is known, and a fresh one's when the
+        // workbench mints it; an agent that mints its own is found later.
+        let resumed = session.is_some();
+        let session_id = match session {
+            Some(id) => Some(id),
+            None if adapter.mints_id() => Some(new_session_id()),
+            None => None,
+        };
         let ctx = LaunchCtx {
             project,
             env: &environment.vars,
+            session: session_id.as_deref(),
         };
-
-        let (surface, session_id) = match session {
-            Some(id) => (adapter.resume(&ctx, &id)?, Some(id)),
-            None if adapter.mints_id() => {
-                let id = new_session_id();
-                (adapter.launch(&ctx, &id)?, Some(id))
-            }
-            None => (adapter.launch(&ctx, "")?, None),
+        let surface = match &session_id {
+            Some(id) if resumed => adapter.resume(&ctx, id)?,
+            Some(id) => adapter.launch(&ctx, id)?,
+            None => adapter.launch(&ctx, "")?,
         };
         let Surface::Pty(command) = surface;
 

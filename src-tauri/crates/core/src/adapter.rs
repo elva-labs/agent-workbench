@@ -38,7 +38,15 @@ pub enum Surface {
 pub struct LaunchCtx<'a> {
     pub project: &'a Path,
     pub env: &'a HashMap<String, String>,
+    /// The session's id when the workbench knows it before the process is
+    /// up: given to the agent's environment as `WORKBENCH_SESSION`, which
+    /// the agent passes on to the MCP server it starts, so a request the
+    /// server logs names the session it came from.
+    pub session: Option<&'a str>,
 }
+
+/// The variable that names the session to the tools the agent starts.
+pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
 
 pub trait AgentAdapter: Send + Sync {
     fn id(&self) -> &'static str;
@@ -147,8 +155,16 @@ impl ClaudeCode {
 
         let mut command = program(binary, args, ctx.env);
         prepare(&mut command, ctx.project, ctx.env);
+        name_session(&mut command, ctx);
 
         Ok(Surface::Pty(command))
+    }
+}
+
+/// Puts the session's id in the agent's environment when it is known.
+fn name_session(command: &mut CommandBuilder, ctx: &LaunchCtx) {
+    if let Some(session) = ctx.session {
+        command.env(SESSION_VAR, session);
     }
 }
 
@@ -192,6 +208,7 @@ impl Codex {
 
         let mut command = program(binary, args, ctx.env);
         prepare(&mut command, ctx.project, ctx.env);
+        name_session(&mut command, ctx);
 
         Ok(Surface::Pty(command))
     }
@@ -287,6 +304,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -321,11 +339,37 @@ mod tests {
     }
 
     #[test]
+    fn names_the_session_to_the_agent_when_it_is_known() {
+        let dir = fake_claude("workbench-adapter-session");
+        let vars = vars_with_path(&dir);
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            session: Some("abc-123"),
+        };
+        let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
+        assert_eq!(
+            command
+                .get_env(SESSION_VAR)
+                .map(|v| v.to_string_lossy().to_string()),
+            Some("abc-123".to_string())
+        );
+        let unnamed = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            session: None,
+        };
+        let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
+        assert!(command.get_env(SESSION_VAR).is_none());
+    }
+
+    #[test]
     fn launching_without_the_binary_explains_itself() {
         let vars = HashMap::from([("PATH".to_string(), "/nowhere".to_string())]);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -339,6 +383,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -358,6 +403,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -383,6 +429,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -405,6 +452,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -422,6 +470,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            session: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

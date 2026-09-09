@@ -61,6 +61,9 @@ pub struct ShowRequest {
     pub note: Option<String>,
     /// Where the agent runs, which says which project the request is for.
     pub cwd: String,
+    /// The session the agent runs as, when its environment named one.
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 /// Media the agent wants the user to see, one or several files, the first
@@ -72,8 +75,12 @@ pub struct PresentRequest {
     pub files: Vec<String>,
     #[serde(default)]
     pub caption: Option<String>,
-    /// Where the agent runs, which says which project and session.
+    /// Where the agent runs, which says which project, and which session
+    /// when none is named.
     pub cwd: String,
+    /// The session the agent runs as, when its environment named one.
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 /// A line of the log, whichever tool wrote it.
@@ -215,11 +222,13 @@ mod tests {
             to: 5,
             note: None,
             cwd: "/p".into(),
+            session: Some("s-1".into()),
         });
         let media = Request::Present(PresentRequest {
             files: vec!["/p/shot.png".into(), "/p/plan.pdf".into()],
             caption: Some("Before and after.".into()),
             cwd: "/p".into(),
+            session: None,
         });
         append(&home, &request).unwrap();
         append(&home, &media).unwrap();

@@ -20,7 +20,8 @@ import { showMedia } from "$lib/files.svelte";
 
 export interface MediaItem {
   id: string;
-  /** The session's key, or `project:<path>` when no session was found. */
+  /** The agent's session id, which is the same after a restart, or
+      `project:<path>` when no session with an id was found. */
   owner: string;
   project: string;
   files: string[];
@@ -66,11 +67,15 @@ function save() {
   }
 }
 
-/** The session the request is for: the one running deepest in the
-    directory the agent runs in, in the project the request is under; then
-    the active session there; then the project itself. */
+/** The session the request is for, by its agent's id: the one the request
+    names, when it is running in the project; else the one running deepest
+    in the directory the agent runs in; then the active session there; then
+    the project itself. A session whose id is not known yet cannot own
+    anything, since the id is what the list is kept by. */
 export function ownerFor(request: PresentRequest, project: string): string {
-  const own = forProject(project);
+  const own = forProject(project).filter((session) => session.id !== null);
+  const named = own.find((session) => session.id === request.session);
+  if (named !== undefined) return named.id!;
   const at = (session: {
     cwd: string | null;
     startIn: string | null;
@@ -79,13 +84,9 @@ export function ownerFor(request: PresentRequest, project: string): string {
   const under = own
     .filter((session) => within(request.cwd, at(session)))
     .sort((a, b) => at(b).length - at(a).length);
-  if (under.length > 0) return under[0].key;
-  if (
-    sessions.active !== null &&
-    own.some((session) => session.key === sessions.active)
-  ) {
-    return sessions.active;
-  }
+  if (under.length > 0) return under[0].id!;
+  const active = own.find((session) => session.key === sessions.active);
+  if (active !== undefined) return active.id!;
   return `project:${project}`;
 }
 
@@ -100,13 +101,10 @@ export function itemsFor(owner: string): MediaItem[] {
 export function listed(): MediaItem[] {
   const project = workspace.active;
   if (project === null) return [];
-  const active = sessions.active;
-  if (
-    active !== null &&
-    forProject(project).some((session) => session.key === active)
-  ) {
-    return itemsFor(active);
-  }
+  const active = forProject(project).find(
+    (session) => session.key === sessions.active,
+  );
+  if (active !== undefined && active.id !== null) return itemsFor(active.id);
   return itemsFor(`project:${project}`);
 }
 

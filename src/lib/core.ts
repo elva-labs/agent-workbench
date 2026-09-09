@@ -64,6 +64,8 @@ export interface ShowRequest {
   to: number;
   note: string | null;
   cwd: string;
+  /** The agent's session id, when the agent's environment named one. */
+  session: string | null;
 }
 
 /** Media the agent asked to present: files, absolute, in the order to look
@@ -72,6 +74,8 @@ export interface PresentRequest {
   files: string[];
   caption: string | null;
   cwd: string;
+  /** The agent's session id, when the agent's environment named one. */
+  session: string | null;
 }
 
 /** An image or a PDF, read where it is and encoded for the window. */

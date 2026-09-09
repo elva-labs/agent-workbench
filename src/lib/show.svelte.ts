@@ -67,5 +67,6 @@ export function referenced(key: string, path: string, line: number) {
     to: line,
     note: null,
     cwd: base,
+    session: session.id,
   });
 }

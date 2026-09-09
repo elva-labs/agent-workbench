@@ -54,7 +54,8 @@ const request = (
   files: string[],
   cwd = "/one",
   caption: string | null = "Shots.",
-) => ({ files, caption, cwd });
+  session: string | null = null,
+) => ({ files, caption, cwd, session });
 
 beforeEach(() => {
   localStorage.clear();
@@ -67,6 +68,24 @@ beforeEach(() => {
 });
 
 describe("whose media it is", () => {
+  it("is the session the request names, by the agent's id", () => {
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    // Two sessions in one directory: the request says which.
+    expect(ownerFor(request(["/one/x.png"], "/one", null, "s2"), "/one")).toBe(
+      "s2",
+    );
+    expect(ownerFor(request(["/one/x.png"], "/one", null, "s1"), "/one")).toBe(
+      "s1",
+    );
+    // A session of another project is not the owner, whatever it is named.
+    expect(ownerFor(request(["/one/x.png"], "/one", null, "s9"), "/one")).toBe(
+      "s1",
+    );
+  });
+
   it("is the session running where the agent runs, else the project", async () => {
     const a = create("/one");
     started(a.key, "pty-1", "s1");
@@ -75,14 +94,20 @@ describe("whose media it is", () => {
     await located(b.key, "/one/.claude/worktrees/w");
     expect(
       ownerFor(request(["/one/x.png"], "/one/.claude/worktrees/w"), "/one"),
-    ).toBe(b.key);
+    ).toBe("s2");
     expect(
       ownerFor(request(["/one/x.png"], "/one/.claude/worktrees/w/sub"), "/one"),
-    ).toBe(b.key);
+    ).toBe("s2");
     // The active session in the project when none is at that directory.
     select(a.key);
-    expect(ownerFor(request(["/one/x.png"], "/elsewhere"), "/one")).toBe(a.key);
+    expect(ownerFor(request(["/one/x.png"], "/elsewhere"), "/one")).toBe("s1");
     resetSessions();
+    expect(ownerFor(request(["/one/x.png"]), "/one")).toBe("project:/one");
+  });
+
+  it("falls to the project while the session's id is not known", () => {
+    const fresh = create("/one");
+    select(fresh.key);
     expect(ownerFor(request(["/one/x.png"]), "/one")).toBe("project:/one");
   });
 });
@@ -96,8 +121,8 @@ describe("presenting", () => {
     expect(workspace.active).toBe("/one");
     expect(files.media?.files).toEqual(["/one/a.png", "/one/b.pdf"]);
     expect(layout.mode).toBe("reviewing");
-    expect(itemsFor(session.key)).toHaveLength(1);
-    expect(itemsFor(session.key)[0].caption).toBe("Shots.");
+    expect(itemsFor("s1")).toHaveLength(1);
+    expect(itemsFor("s1")[0].caption).toBe("Shots.");
     expect(listed()).toHaveLength(1);
   });
 

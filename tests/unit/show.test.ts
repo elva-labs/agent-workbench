@@ -68,6 +68,7 @@ describe("where a place is", () => {
       to: 1,
       note: null,
       cwd: "/home/ada/dev/demo",
+      session: null,
     };
     expect(projectFor(request)).toBe("/home/ada/dev/demo");
     expect(
@@ -86,6 +87,7 @@ describe("showing a place", () => {
       to: 5,
       note: "Here.",
       cwd: "/two",
+      session: null,
     });
     expect(workspace.active).toBe("/two");
     expect(shown).toEqual([["src/a.rs", 3, 5, "Here."]]);
@@ -99,6 +101,7 @@ describe("showing a place", () => {
       to: 1,
       note: null,
       cwd: "/elsewhere",
+      session: null,
     });
     expect(shown).toEqual([]);
   });

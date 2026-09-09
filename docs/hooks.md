@@ -60,10 +60,10 @@ opens in the changes pane's viewer, where a file would: every file of it
 down the viewer under its name, an image at width, a PDF in its own frame,
 a document rendered, the caption in the bar above. Escape closes it as it
 closes a file. A link in a document opens outside the app; HTML written
-into a document shows as the text it is. What was presented stays on the session's
-media list, a section under the file tree with a divider to drag and a
-header that folds it away, one row per call under its caption, to open
-again;
+into a document shows as the text it is. What was presented stays on the media
+list of the session it came from, a section under the file tree with a
+divider to drag and a header that folds it away, one row per call under
+its caption, to open again after a restart too;
 the list names the files where they are rather than keeping copies, so one
 the agent later removes shows as gone. Files are read where the agent runs,
 a remote included, up to eight megabytes each. Video is not among the kinds

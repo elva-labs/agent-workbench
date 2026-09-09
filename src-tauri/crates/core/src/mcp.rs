@@ -69,12 +69,17 @@ pub fn serve(home: &Path) {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // The agent passes its environment on, and the workbench named the
+    // session there when it started the agent.
+    let session = std::env::var(crate::adapter::SESSION_VAR)
+        .ok()
+        .filter(|id| !id.trim().is_empty());
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
             continue;
         }
-        let Some(answer) = handle(home, &cwd, &line) else {
+        let Some(answer) = handle(home, &cwd, session.as_deref(), &line) else {
             continue;
         };
         let mut out = stdout.lock();
@@ -84,7 +89,7 @@ pub fn serve(home: &Path) {
 }
 
 /// One message in, at most one out: a notification gets no answer.
-pub fn handle(home: &Path, cwd: &Path, line: &str) -> Option<Value> {
+pub fn handle(home: &Path, cwd: &Path, session: Option<&str>, line: &str) -> Option<Value> {
     let message: Value = match serde_json::from_str(line) {
         Ok(message) => message,
         Err(_) => return Some(error(Value::Null, -32700, "not JSON")),
@@ -106,7 +111,7 @@ pub fn handle(home: &Path, cwd: &Path, line: &str) -> Option<Value> {
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": tools() })),
-        "tools/call" => call(home, cwd, &params),
+        "tools/call" => call(home, cwd, session, &params),
         _ => return Some(error(id, -32601, &format!("no such method: {method}"))),
     };
     Some(match result {
@@ -125,19 +130,24 @@ fn error(id: Value, code: i64, text: &str) -> Value {
 
 /// A tool call. A path is taken as the agent gave it, resolved against
 /// where the agent runs when relative.
-fn call(home: &Path, cwd: &Path, params: &Value) -> Result<Value, String> {
+fn call(home: &Path, cwd: &Path, session: Option<&str>, params: &Value) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
     match name {
-        "show" => show_call(home, cwd, &arguments),
-        "present" => present_call(home, cwd, &arguments),
+        "show" => show_call(home, cwd, session, &arguments),
+        "present" => present_call(home, cwd, session, &arguments),
         _ => Err(format!("no such tool: {name}")),
     }
 }
 
 /// Media, checked to be there and to be a kind the window shows, so the
 /// agent hears about a wrong path now rather than the user seeing a gap.
-fn present_call(home: &Path, cwd: &Path, arguments: &Value) -> Result<Value, String> {
+fn present_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    arguments: &Value,
+) -> Result<Value, String> {
     let given: Vec<String> = arguments
         .get("files")
         .and_then(Value::as_array)
@@ -184,13 +194,19 @@ fn present_call(home: &Path, cwd: &Path, arguments: &Value) -> Result<Value, Str
             files,
             caption,
             cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
         }),
     )?;
     let noun = if count == 1 { "file" } else { "files" };
     Ok(json!({ "content": [{ "type": "text", "text": format!("Presented {count} {noun}.") }] }))
 }
 
-fn show_call(home: &Path, cwd: &Path, arguments: &Value) -> Result<Value, String> {
+fn show_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    arguments: &Value,
+) -> Result<Value, String> {
     let path = arguments
         .get("path")
         .and_then(Value::as_str)
@@ -220,6 +236,7 @@ fn show_call(home: &Path, cwd: &Path, arguments: &Value) -> Result<Value, String
         to,
         note,
         cwd: cwd.to_string_lossy().to_string(),
+        session: session.map(str::to_string),
     };
     let text = format!("Shown: {} lines {from} to {to}.", request.path);
     show::append(home, &Request::Show(request))?;
@@ -255,7 +272,7 @@ mod tests {
     #[test]
     fn introduces_itself_with_the_tools_and_the_instructions() {
         let home = home("hello");
-        let answer = handle(&home, Path::new("/p"), r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#).unwrap();
+        let answer = handle(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#).unwrap();
         assert_eq!(answer["id"], 1);
         assert_eq!(answer["result"]["protocolVersion"], PROTOCOL_VERSION);
         let instructions = answer["result"]["instructions"].as_str().unwrap();
@@ -264,12 +281,14 @@ mod tests {
         assert!(handle(
             &home,
             Path::new("/p"),
+            None,
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#
         )
         .is_none());
         let tools = handle(
             &home,
             Path::new("/p"),
+            None,
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         )
         .unwrap();
@@ -283,7 +302,7 @@ mod tests {
         let cwd = home.join("project");
         std::fs::create_dir_all(cwd.join("infra")).unwrap();
         std::fs::write(cwd.join("infra/variables.tf"), "a\nb\nc\n").unwrap();
-        let answer = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"show","arguments":{"path":"infra/variables.tf","from":2,"to":3,"note":"The group."}}}"#).unwrap();
+        let answer = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"show","arguments":{"path":"infra/variables.tf","from":2,"to":3,"note":"The group."}}}"#).unwrap();
         assert!(answer["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
@@ -308,7 +327,7 @@ mod tests {
         std::fs::create_dir_all(cwd.join("shots")).unwrap();
         std::fs::write(cwd.join("shots/one.png"), [1]).unwrap();
         std::fs::write(cwd.join("shots/two.pdf"), [1]).unwrap();
-        let answer = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/one.png","shots/two.pdf"],"caption":"Both."}}}"#).unwrap();
+        let answer = handle(&home, &cwd, Some("s-7"), r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/one.png","shots/two.pdf"],"caption":"Both."}}}"#).unwrap();
         assert_eq!(answer["result"]["content"][0]["text"], "Presented 2 files.");
         let Request::Present(request) = first(&home) else {
             panic!("a present request");
@@ -316,28 +335,29 @@ mod tests {
         assert_eq!(request.files.len(), 2);
         assert!(request.files[0].ends_with("shots/one.png"));
         assert_eq!(request.caption.as_deref(), Some("Both."));
+        assert_eq!(request.session.as_deref(), Some("s-7"));
 
-        let missing = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/three.png"]}}}"#).unwrap();
+        let missing = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/three.png"]}}}"#).unwrap();
         assert_eq!(missing["result"]["isError"], true);
         assert!(missing["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
             .contains("not there"));
-        let kind = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/clip.mp4"]}}}"#).unwrap();
+        let kind = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"present","arguments":{"files":["shots/clip.mp4"]}}}"#).unwrap();
         assert!(kind["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
             .contains("not a kind"));
-        let none = handle(&home, &cwd, r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"present","arguments":{"files":[]}}}"#).unwrap();
+        let none = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"present","arguments":{"files":[]}}}"#).unwrap();
         assert_eq!(none["result"]["isError"], true);
     }
 
     #[test]
     fn says_what_is_wrong_with_a_call() {
         let home = home("wrong");
-        let missing = handle(&home, Path::new("/p"), r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"show","arguments":{"path":"a.rs"}}}"#).unwrap();
+        let missing = handle(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"show","arguments":{"path":"a.rs"}}}"#).unwrap();
         assert_eq!(missing["result"]["isError"], true);
-        let unknown = handle(&home, Path::new("/p"), r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"hide","arguments":{}}}"#).unwrap();
+        let unknown = handle(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"hide","arguments":{}}}"#).unwrap();
         assert!(unknown["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
@@ -345,6 +365,7 @@ mod tests {
         let method = handle(
             &home,
             Path::new("/p"),
+            None,
             r#"{"jsonrpc":"2.0","id":6,"method":"resources/list"}"#,
         )
         .unwrap();
