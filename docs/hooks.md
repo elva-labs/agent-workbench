@@ -57,7 +57,11 @@ tool. An app run from the source uses the daemon built beside it.
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
 
-The second tool, `present`, is for what the agent made or found to look at:
+A second, `diff`, opens a file's changes in the viewer the same way, with
+a note above, for when the agent points at what changed rather than at a
+line. A file git has not changed opens as it is.
+
+The third tool, `present`, is for what the agent made or found to look at:
 one or more images, PDFs or Markdown documents, with a caption. The call
 opens in the changes pane's viewer, where a file would: every file of it
 down the viewer under its name, an image at width, a PDF in its own frame,
@@ -74,6 +78,13 @@ the list names the files where they are rather than keeping copies, so one
 the agent later removes shows as gone. Files are read where the agent runs,
 a remote included, up to eight megabytes each. Video is not among the kinds
 taken yet.
+
+The last tool, `selection`, runs the other way: the agent asks what the
+user is looking at, and is told the file open in the viewer, whether as its
+diff or as it is, the lines highlighted in it, or what was presented, in
+words. "Explain this" then needs no path. The app keeps that on record on
+the project's machine, under the same directory as the request log, and
+clears it when nothing is open.
 
 ## Removing them
 

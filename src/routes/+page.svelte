@@ -12,7 +12,8 @@
   import { resume } from "$lib/resume.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
-  import { showRequested } from "$lib/show.svelte";
+  import { diffRequested, showRequested } from "$lib/show.svelte";
+  import { watchSelection } from "$lib/selection.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -69,6 +70,9 @@
   loadMedia();
   loadNotices();
 
+  // What is on screen, on record for the agent's tools.
+  watchSelection();
+
   // Every project opened is brought to the hooks answer, once.
   $effect(() => {
     for (const project of workspace.open) ensureHooks(project.path);
@@ -94,6 +98,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPresentRequest((request) => presented(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onDiffRequest((request) => void diffRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

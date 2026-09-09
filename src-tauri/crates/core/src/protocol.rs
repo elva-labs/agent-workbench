@@ -117,6 +117,11 @@ struct PathParams {
 }
 
 #[derive(Deserialize)]
+struct SelectionParams {
+    selection: Option<crate::selection::Selection>,
+}
+
+#[derive(Deserialize)]
 struct ProjectParams {
     project: PathBuf,
 }
@@ -300,6 +305,11 @@ pub fn dispatch(
         "read_media" => {
             let p: PathParams = parse(params)?;
             value(core.read_media(&p.path)?)
+        }
+        "set_selection" => {
+            let p: SelectionParams = parse(params)?;
+            core.set_selection(p.selection)?;
+            Ok(Value::Null)
         }
         other => Err(format!("no such method: {other}")),
     }

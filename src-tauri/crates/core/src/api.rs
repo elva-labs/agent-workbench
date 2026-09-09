@@ -268,6 +268,15 @@ impl Core {
     }
 
     /// An image or a PDF for the window to show, encoded.
+    /// What the user is looking at, on record for the tool server to read.
+    pub fn set_selection(
+        &self,
+        selection: Option<crate::selection::Selection>,
+    ) -> Result<(), String> {
+        let home = self.home.as_deref().ok_or("no home directory")?;
+        crate::selection::write(home, selection.as_ref())
+    }
+
     pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {
         crate::show::read_media(path)
     }

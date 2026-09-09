@@ -3,6 +3,7 @@ import {
   projectFor,
   referenced,
   relativeTo,
+  diffRequested,
   showRequested,
   within,
 } from "$lib/show.svelte";
@@ -15,9 +16,13 @@ import {
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const shown: unknown[][] = [];
+const diffed: unknown[][] = [];
 vi.mock("$lib/files.svelte", () => ({
   showRange: async (...args: unknown[]) => {
     shown.push(args);
+  },
+  showDiff: async (...args: unknown[]) => {
+    diffed.push(args);
   },
 }));
 vi.mock("$lib/core", () => ({
@@ -41,6 +46,7 @@ const repo = (path: string) => ({
 
 beforeEach(() => {
   shown.length = 0;
+  diffed.length = 0;
   resetWorkspace();
   resetSessions();
 });
@@ -91,6 +97,26 @@ describe("showing a place", () => {
     });
     expect(workspace.active).toBe("/two");
     expect(shown).toEqual([["src/a.rs", 3, 5, "Here."]]);
+  });
+
+  it("opens a diff the same way, relative to the project", async () => {
+    workspace.open.push(repo("/one"), repo("/two"));
+    workspace.active = "/one";
+    await diffRequested({
+      path: "/two/src/a.rs",
+      note: "The rename.",
+      cwd: "/two",
+      session: null,
+    });
+    expect(workspace.active).toBe("/two");
+    expect(diffed).toEqual([["src/a.rs", "The rename."]]);
+    await diffRequested({
+      path: "/elsewhere/a.rs",
+      note: null,
+      cwd: "/elsewhere",
+      session: null,
+    });
+    expect(diffed).toHaveLength(1);
   });
 
   it("does nothing for a file outside every open project", async () => {

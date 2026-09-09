@@ -129,6 +129,18 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        onDiffRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__diffRequest =
+            handler;
+          return () => {};
+        },
+        // The record of what is on screen, for a test to read back.
+        setSelection: async (project: string, selection: unknown) => {
+          (window as unknown as Record<string, unknown>).__selection = {
+            project,
+            selection,
+          };
+        },
         // One pixel of PNG for any image asked for; a PDF as itself; a
         // path with "missing" in it is not there.
         readMedia: async (path: string) => {

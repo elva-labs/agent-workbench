@@ -235,6 +235,70 @@ describe("the real app", () => {
           .length === 2,
       10_000,
     );
+
+    // The selection tool reads back what the show tool put on screen, from
+    // the record the app keeps where the daemon looks.
+    const asked = execFileSync(DAEMON, ["mcp"], {
+      cwd: repo,
+      env: { ...process.env, HOME: app.home },
+      input:
+        [
+          messages[0],
+          messages[1],
+          {
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "selection", arguments: {} },
+          },
+        ]
+          .map((message) => JSON.stringify(message))
+          .join("\n") + "\n",
+    }).toString();
+    expect(asked).toContain(
+      "The user is looking at README.md in the viewer, the file as it is, lines 1 to 2 highlighted.",
+    );
+    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+  });
+
+  it("opens the diff where the agent's diff tool pointed", async () => {
+    const { driver } = app;
+    const messages = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "diff",
+          arguments: { path: "lib.rs", note: "It says hi now." },
+        },
+      },
+    ];
+    const said = execFileSync(DAEMON, ["mcp"], {
+      cwd: repo,
+      env: { ...process.env, HOME: app.home },
+      input:
+        messages.map((message) => JSON.stringify(message)).join("\n") + "\n",
+    }).toString();
+    expect(said).toContain("Opened the diff of");
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='viewer'][data-view='diff']")),
+      10_000,
+    );
+    expect(await textOf(driver, "[data-testid='viewer-note']")).toBe(
+      "It says hi now.",
+    );
     await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
 

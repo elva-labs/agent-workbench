@@ -221,6 +221,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         },
         onShowRequest: async () => () => {},
         onPresentRequest: async () => () => {},
+        onDiffRequest: async () => () => {},
+        setSelection: async () => {},
         onOpenSettings: async () => () => {},
         onRemoteClosed: async () => () => {},
         remoteHosts: async () => ({ configured: [], saved: [] }),

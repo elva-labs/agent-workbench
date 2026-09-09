@@ -311,6 +311,22 @@ export async function showRange(
   enterReview();
 }
 
+/** Opens a file's diff in the viewer with a note above it: what the agent
+    asked to show of its changes. A file git has not changed opens as it is,
+    which is what the viewer does with an empty diff. */
+export async function showDiff(path: string, note: string | null) {
+  if (
+    files.scope !== "all" &&
+    !files.changed.some((file) => file.path === path)
+  ) {
+    await setScope("all");
+  }
+  files.target = { path, line: 0, note };
+  files.view = "diff";
+  await select(path);
+  enterReview();
+}
+
 export function changedCount() {
   return files.changed.length;
 }

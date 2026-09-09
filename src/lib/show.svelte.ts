@@ -9,8 +9,8 @@
  * into.
  */
 
-import type { ShowRequest } from "$lib/core";
-import { showRange } from "$lib/files.svelte";
+import type { DiffRequest, ShowRequest } from "$lib/core";
+import { showDiff, showRange } from "$lib/files.svelte";
 import { byKey } from "$lib/sessions.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
 
@@ -48,6 +48,19 @@ export async function showRequested(request: ShowRequest) {
     relativeTo(request.path, root) ?? relativeTo(request.path, project);
   if (relative === null) return;
   await showRange(relative, request.from, request.to, request.note);
+}
+
+/** Opens the file's diff, or does nothing for a file outside every open
+    project. */
+export async function diffRequested(request: DiffRequest) {
+  const project = projectFor({ ...request, from: 1, to: 1 });
+  if (project === null) return;
+  if (workspace.active !== project) activate(project);
+  const root = watchRoot() ?? project;
+  const relative =
+    relativeTo(request.path, root) ?? relativeTo(request.path, project);
+  if (relative === null) return;
+  await showDiff(relative, request.note);
 }
 
 /** A reference in a session's output was clicked: a path the agent wrote,

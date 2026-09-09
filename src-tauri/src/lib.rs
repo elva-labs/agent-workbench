@@ -392,6 +392,28 @@ async fn read_media(
     .await
 }
 
+/// What the user is looking at, put on record on the project's machine
+/// for the agent's tool server to read. The paths carry no host: the
+/// window strips it, and the project names the machine.
+#[tauri::command]
+async fn set_selection(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    selection: Option<workbench_core::selection::Selection>,
+) -> Result<Value, String> {
+    let sent = selection.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "set_selection",
+        move |_| json!({ "selection": sent }),
+        move |core, _| core.set_selection(selection),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn git_content(
     core: State<'_, Arc<Core>>,
@@ -651,6 +673,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
+            set_selection,
             project_info,
             sessions_list,
             session_title,

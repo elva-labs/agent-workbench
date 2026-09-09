@@ -19,6 +19,7 @@ use crate::events::Sink;
 
 pub const SHOW_REQUEST: &str = "show_request";
 pub const PRESENT_REQUEST: &str = "present_request";
+pub const DIFF_REQUEST: &str = "diff_request";
 
 /// The kinds the `present` tool takes, by extension: images, PDFs, and
 /// Markdown, which the window renders. Video is not among them yet.
@@ -83,12 +84,27 @@ pub struct PresentRequest {
     pub session: Option<String>,
 }
 
+/// A file whose changes the agent wants the user to see: its diff in the
+/// viewer, with a note above.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffRequest {
+    /// The file, absolute.
+    pub path: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    pub cwd: String,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// A line of the log, whichever tool wrote it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Request {
     Show(ShowRequest),
     Present(PresentRequest),
+    Diff(DiffRequest),
 }
 
 pub fn requests_path(home: &Path) -> PathBuf {
@@ -117,6 +133,12 @@ pub fn classify(line: &str) -> Option<Request> {
                 return None;
             }
             Some(Request::Present(present))
+        }
+        Request::Diff(diff) => {
+            if diff.path.is_empty() {
+                return None;
+            }
+            Some(Request::Diff(diff))
         }
     }
 }
@@ -147,6 +169,9 @@ pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
             Request::Present(present) => serde_json::to_value(present)
                 .ok()
                 .map(|value| (PRESENT_REQUEST.to_string(), value)),
+            Request::Diff(diff) => serde_json::to_value(diff)
+                .ok()
+                .map(|value| (DIFF_REQUEST.to_string(), value)),
         })
     })
 }
@@ -194,7 +219,7 @@ mod tests {
     fn show(line: &str) -> Option<ShowRequest> {
         match classify(line)? {
             Request::Show(show) => Some(show),
-            Request::Present(_) => None,
+            Request::Present(_) | Request::Diff(_) => None,
         }
     }
 

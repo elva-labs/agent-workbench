@@ -85,6 +85,10 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
             put_back(&mut payload, "path", |path| with_host(host, path));
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
+        workbench_core::show::DIFF_REQUEST => {
+            put_back(&mut payload, "path", |path| with_host(host, path));
+            put_back(&mut payload, "cwd", |path| with_host(host, path));
+        }
         workbench_core::show::PRESENT_REQUEST => {
             if let Some(files) = payload.get_mut("files").and_then(Value::as_array_mut) {
                 for file in files.iter_mut() {

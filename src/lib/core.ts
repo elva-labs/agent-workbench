@@ -68,6 +68,25 @@ export interface ShowRequest {
   session: string | null;
 }
 
+/** A file whose diff the agent asked to open, absolute, with a note. */
+export interface DiffRequest {
+  path: string;
+  note: string | null;
+  cwd: string;
+  session: string | null;
+}
+
+/** What the user is looking at, as put on record for the agent's tools.
+    Paths are as the project's machine sees them. */
+export interface Selection {
+  project: string;
+  file: string | null;
+  view: "diff" | "file" | null;
+  from: number | null;
+  to: number | null;
+  media: { files: string[]; caption: string | null } | null;
+}
+
 /** Media the agent asked to present: files, absolute, in the order to look
     at them, a caption, and where the agent runs. */
 export interface PresentRequest {
@@ -247,6 +266,10 @@ export interface Core {
   ): Promise<() => void>;
   /** Reads an image or a PDF for the window, wherever the path is. */
   readMedia(path: string): Promise<Media>;
+  onDiffRequest(handler: (request: DiffRequest) => void): Promise<() => void>;
+  /** Puts what the user is looking at on record on the project's machine,
+      or clears it there with null. */
+  setSelection(project: string, selection: Selection | null): Promise<void>;
   /** Files dragged over and dropped on the window. The webview never gets
       the DOM events for these; the window takes them and reports paths. */
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
@@ -389,6 +412,13 @@ const tauriCore: Core = {
     );
   },
   readMedia: (path) => invoke<Media>("read_media", { path }),
+  async onDiffRequest(handler) {
+    return listen<DiffRequest>("diff_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  setSelection: (project, selection) =>
+    invoke<void>("set_selection", { project, selection }),
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -494,6 +524,10 @@ const detachedCore: Core = {
   async readMedia() {
     throw new Error("no core");
   },
+  async onDiffRequest() {
+    return () => {};
+  },
+  async setSelection() {},
   async onFileDrag() {
     return () => {};
   },

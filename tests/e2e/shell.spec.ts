@@ -316,6 +316,99 @@ test.describe("the file viewer", () => {
     await expect(marked.first().locator(".num")).toHaveText("2");
   });
 
+  // The agent's diff tool: the file's diff opens with the note above it.
+  test("opens a file's diff where the agent asked, with the note", async ({
+    page,
+  }) => {
+    await page.evaluate(() =>
+      (
+        window as unknown as { __diffRequest: (request: unknown) => void }
+      ).__diffRequest({
+        path: "/home/ada/dev/demo/src/cache/mod.rs",
+        note: "The cache keeps its keys now.",
+        cwd: "/home/ada/dev/demo",
+      }),
+    );
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "diff",
+    );
+    await expect(page.getByTestId("viewer-note")).toHaveText(
+      "The cache keeps its keys now.",
+    );
+    await expect(page.getByTestId("viewer").locator("tr.target")).toHaveCount(
+      0,
+    );
+  });
+
+  // What the agent's selection tool reads: the record follows the viewer.
+  test("keeps what is on screen on record for the agent", async ({ page }) => {
+    const record = () =>
+      page.evaluate(
+        () => (window as unknown as { __selection: unknown }).__selection,
+      );
+    await expect
+      .poll(record)
+      .toEqual({ project: "/home/ada/dev/demo", selection: null });
+
+    await page.getByTestId("file-tree").getByText("mod.rs").click();
+    await expect.poll(record).toEqual({
+      project: "/home/ada/dev/demo",
+      selection: {
+        project: "/home/ada/dev/demo",
+        file: "/home/ada/dev/demo/src/cache/mod.rs",
+        view: "diff",
+        from: null,
+        to: null,
+        media: null,
+      },
+    });
+
+    await page.evaluate(() =>
+      (
+        window as unknown as { __showRequest: (request: unknown) => void }
+      ).__showRequest({
+        path: "/home/ada/dev/demo/src/main.rs",
+        from: 2,
+        to: 3,
+        note: "The entry point.",
+        cwd: "/home/ada/dev/demo",
+      }),
+    );
+    await expect.poll(record).toMatchObject({
+      selection: {
+        file: "/home/ada/dev/demo/src/main.rs",
+        view: "file",
+        from: 2,
+        to: 3,
+      },
+    });
+
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as { __presentRequest: (request: unknown) => void }
+        ).__presentRequest({
+          files: [`${project}/shots/one.png`],
+          caption: "One.",
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    await expect.poll(record).toMatchObject({
+      selection: {
+        file: null,
+        media: { files: [`${PROJECT}/shots/one.png`], caption: "One." },
+      },
+    });
+
+    await page.keyboard.press("Escape");
+    await expect
+      .poll(record)
+      .toEqual({ project: "/home/ada/dev/demo", selection: null });
+  });
+
   // The agent's present tool: one row per call under the tree, with the
   // caption; opening it shows every file of the call down the viewer.
   test("presents the agent's files in the viewer, from a section under the tree", async ({
