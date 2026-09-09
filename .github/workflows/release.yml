@@ -14,11 +14,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The draft release for the tag, made once before anything is built, so
+  # every job that attaches to it finds the same one. Jobs making it as
+  # they went left two drafts for a tag when two of them looked at once.
+  draft:
+    name: Draft release
+    runs-on: ubuntu-24.04
+    steps:
+      - if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --draft --title "Agent Workbench ${GITHUB_REF_NAME}" --notes ""
+
   # The daemon for the machines a project can be on, built first so every
   # app can carry them and put one on a machine that has none.
   daemon:
     name: Daemon (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +104,6 @@ jobs:
         shell: bash
         run: |
           cp "src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote" "agent-workbench-remote-${{ matrix.name }}"
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --draft --title "Agent Workbench ${GITHUB_REF_NAME}" --notes ""
           gh release upload "${GITHUB_REF_NAME}" "agent-workbench-remote-${{ matrix.name }}" --clobber
 
   build:
