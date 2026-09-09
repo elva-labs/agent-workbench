@@ -341,6 +341,9 @@
                  screen reader and for anything reading the row's text. -->
             <span class="state told">{statusLabel(session)}</span>
           </button>
+          {#if session.note !== null}
+            <p class="note" title={session.note} data-testid="session-note">{session.note}</p>
+          {/if}
           <!-- Over the row's end rather than beside it, so a name is never
                squeezed to make room for it. -->
           <span class="actions">
@@ -824,6 +827,21 @@
   .label.unread {
     color: var(--ink);
     font-weight: 500;
+  }
+
+  /* What the agent left for the row: under the name, in from the dot,
+     two lines at most. */
+  .note {
+    margin: -2px 0 4px;
+    padding: 0 var(--pane-pad) 0 calc(var(--pane-pad) + 13px);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--ink-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* Asking: a hollow accent ring, whatever else the dot was. */

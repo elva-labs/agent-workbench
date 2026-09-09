@@ -85,6 +85,9 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
             put_back(&mut payload, "path", |path| with_host(host, path));
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
+        workbench_core::show::TERMINAL_REQUEST | workbench_core::show::NOTIFY_REQUEST => {
+            put_back(&mut payload, "cwd", |path| with_host(host, path));
+        }
         workbench_core::show::DIFF_REQUEST => {
             put_back(&mut payload, "path", |path| with_host(host, path));
             put_back(&mut payload, "cwd", |path| with_host(host, path));

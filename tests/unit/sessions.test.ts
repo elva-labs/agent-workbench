@@ -16,6 +16,7 @@ import {
   output,
   QUIET_MS,
   rang,
+  noted,
   unreadCount,
   typed,
   GRACE_MS,
@@ -878,6 +879,22 @@ describe("working, and waiting for you", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the agent's line on the row until someone looks", () => {
+    const heard = live(A, "pty-1");
+    const behind = live(A, "pty-2");
+    select(heard.key);
+    noted(behind.key, "Tests green, ready to merge.");
+    expect(behind.note).toBe("Tests green, ready to merge.");
+    expect(behind.unread).toBe(true);
+    viewed(behind.key);
+    expect(behind.note).toBeNull();
+    expect(behind.unread).toBe(false);
+    // On screen already: the line shows, but nothing rings.
+    noted(heard.key, "Done.");
+    expect(heard.note).toBe("Done.");
+    expect(heard.unread).toBe(false);
   });
 
   it("marks a ring for attention at once, unless it was heard on screen", () => {

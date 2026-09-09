@@ -69,6 +69,9 @@ export interface Session {
   /** The agent stopped, or asked for attention, while nobody was looking.
       Cleared by looking. */
   unread: boolean;
+  /** A line the agent left for the row, through its notify tool. Cleared
+      by looking. */
+  note: string | null;
   /** The agent's own hooks are reporting this session, so its transitions
       are exact and the pty heuristic stands down. */
   exact: boolean;
@@ -469,6 +472,7 @@ export function create(
     engaged: false,
     startedAt: null,
     unread: false,
+    note: null,
     exact: false,
     needs: null,
     exitCode: null,
@@ -793,7 +797,18 @@ export function rang(key: string) {
 /** The user looked: the session is on screen in a focused window. */
 export function viewed(key: string) {
   const session = byKey(key);
-  if (session !== null) session.unread = false;
+  if (session === null) return;
+  session.unread = false;
+  session.note = null;
+}
+
+/** The agent left a line for the row: shown under the name, and the row
+    wants attention, until someone looks. */
+export function noted(key: string, text: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  session.note = text;
+  if (!isViewed(session)) session.unread = true;
 }
 
 /**

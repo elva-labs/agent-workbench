@@ -13,16 +13,56 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::show::{self, DiffRequest, PresentRequest, Request, ShowRequest, MEDIA_EXTENSIONS};
+use crate::show::{
+    self, DiffRequest, NotifyRequest, PresentRequest, Request, ShowRequest, TerminalRequest,
+    MEDIA_EXTENSIONS,
+};
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// What the agent is told when it connects.
-pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted.";
+pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress.";
 
 /// The tools as the agent sees them.
 pub fn tools() -> Vec<Value> {
-    vec![tool(), diff_tool(), present_tool(), selection_tool()]
+    vec![
+        tool(),
+        diff_tool(),
+        present_tool(),
+        selection_tool(),
+        terminal_tool(),
+        notify_tool(),
+    ]
+}
+
+/// The terminal tool as the agent sees it.
+pub fn terminal_tool() -> Value {
+    json!({
+        "name": "terminal",
+        "description": "Opens a new terminal in the user's Agent Workbench with a command typed into it, not run: the user reads it and presses Enter. Only for a command the user will want to run themselves and keep an eye on, a dev server, a watch, a script they asked to try. Never for a command you need the output of: run those with your own tools. One call, when they ask for it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "The command line, as the user would type it." }
+            },
+            "required": ["command"]
+        }
+    })
+}
+
+/// The notify tool as the agent sees it.
+pub fn notify_tool() -> Value {
+    json!({
+        "name": "notify",
+        "description": "Leaves one line of text on this session's row in the user's sessions list, and marks the row as wanting attention. For when the user may be working in another session: why you stopped, what you need from them, what is done. One short sentence, at most once per turn, and only when you stop. Not for progress, and not when you are still working.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": { "type": "string", "description": "One sentence, under 120 characters." }
+            },
+            "required": ["text"]
+        }
+    })
 }
 
 /// The diff tool as the agent sees it.
@@ -163,6 +203,8 @@ fn call(home: &Path, cwd: &Path, session: Option<&str>, params: &Value) -> Resul
         "diff" => diff_call(home, cwd, session, &arguments),
         "present" => present_call(home, cwd, session, &arguments),
         "selection" => selection_call(home, cwd),
+        "terminal" => terminal_call(home, cwd, session, &arguments),
+        "notify" => notify_call(home, cwd, session, &arguments),
         _ => Err(format!("no such tool: {name}")),
     }
 }
@@ -302,6 +344,62 @@ fn diff_call(
     Ok(json!({ "content": [{ "type": "text", "text": text }] }))
 }
 
+fn terminal_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let command = arguments
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+        .ok_or("terminal needs a command")?;
+    if command.contains('\n') {
+        return Err("terminal takes one line".to_string());
+    }
+    show::append(
+        home,
+        &Request::Terminal(TerminalRequest {
+            command: command.to_string(),
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
+    Ok(
+        json!({ "content": [{ "type": "text", "text": format!("Typed into a new terminal, for the user to run: {command}") }] }),
+    )
+}
+
+/// How much of a note the row shows: one line, so the rest is dropped.
+const NOTE_CAP: usize = 160;
+
+fn notify_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let text = arguments
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or("notify needs a text")?;
+    let line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line: String = line.chars().take(NOTE_CAP).collect();
+    show::append(
+        home,
+        &Request::Notify(NotifyRequest {
+            text: line,
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
+    Ok(json!({ "content": [{ "type": "text", "text": "Left on the session's row." }] }))
+}
+
 /// What the user is looking at, in words, when it is in this project.
 fn selection_call(home: &Path, cwd: &Path) -> Result<Value, String> {
     let text = describe_selection(crate::selection::read(home).as_ref(), cwd);
@@ -410,7 +508,10 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["show", "diff", "present", "selection"]);
+        assert_eq!(
+            names,
+            ["show", "diff", "present", "selection", "terminal", "notify"]
+        );
     }
 
     #[test]
@@ -456,6 +557,39 @@ mod tests {
         assert_eq!(request.session.as_deref(), Some("s-4"));
         let missing = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"diff","arguments":{"path":"src/b.rs"}}}"#).unwrap();
         assert_eq!(missing["result"]["isError"], true);
+    }
+
+    #[test]
+    fn a_terminal_call_and_a_notify_call_land_in_the_log() {
+        let home = home("workbench-mcp-terminal");
+        let cwd = home.join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let said = handle(&home, &cwd, Some("s-8"), r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"terminal","arguments":{"command":"  npm run dev "}}}"#).unwrap();
+        assert_eq!(
+            said["result"]["content"][0]["text"],
+            "Typed into a new terminal, for the user to run: npm run dev"
+        );
+        let Request::Terminal(request) = first(&home) else {
+            panic!("not a terminal request");
+        };
+        assert_eq!(request.command, "npm run dev");
+        assert_eq!(request.session.as_deref(), Some("s-8"));
+        let lines = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"terminal","arguments":{"command":"a\nb"}}}"#).unwrap();
+        assert_eq!(lines["result"]["isError"], true);
+
+        let home = self::home("workbench-mcp-notify");
+        let noted = handle(&home, &cwd, Some("s-9"), r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"notify","arguments":{"text":"Tests green,\n  ready to merge."}}}"#).unwrap();
+        assert_eq!(
+            noted["result"]["content"][0]["text"],
+            "Left on the session's row."
+        );
+        let Request::Notify(request) = first(&home) else {
+            panic!("not a notify request");
+        };
+        assert_eq!(request.text, "Tests green, ready to merge.");
+        assert_eq!(request.session.as_deref(), Some("s-9"));
+        let empty = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"notify","arguments":{"text":"  "}}}"#).unwrap();
+        assert_eq!(empty["result"]["isError"], true);
     }
 
     #[test]

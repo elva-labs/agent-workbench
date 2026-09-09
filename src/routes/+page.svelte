@@ -12,7 +12,7 @@
   import { resume } from "$lib/resume.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
-  import { diffRequested, showRequested } from "$lib/show.svelte";
+  import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import { loadNotices } from "$lib/notice.svelte";
@@ -101,6 +101,12 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onDiffRequest((request) => void diffRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onTerminalRequest((request) => terminalRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onNotifyRequest((request) => notified(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

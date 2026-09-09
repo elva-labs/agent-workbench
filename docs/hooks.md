@@ -82,12 +82,22 @@ the agent later removes shows as gone. Files are read where the agent runs,
 a remote included, up to eight megabytes each. Video is not among the kinds
 taken yet.
 
-The last tool, `selection`, runs the other way: the agent asks what the
+The fourth tool, `selection`, runs the other way: the agent asks what the
 user is looking at, and is told the file open in the viewer, whether as its
 diff or as it is, the lines highlighted in it, or what was presented, in
 words. "Explain this" then needs no path. The app keeps that on record on
 the project's machine, under the same directory as the request log, and
 clears it when nothing is open.
+
+Two more are for the agent to hand something over rather than show it.
+`terminal` opens a new terminal in the panel with a command typed at the
+prompt and not run, from the directory the agent works in: a dev server or
+a watch the user asked for, which they start with Enter and keep. The
+agent is told to run its own commands itself. `notify` leaves one line
+under the session's name in the sessions pane and marks the row as wanting
+attention, for when the user is in another session: why the agent stopped,
+what it needs, what is done. Looking at the session clears it. The agent is
+told to use it once, when it stops, and not for progress.
 
 ## Removing them
 

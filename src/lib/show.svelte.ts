@@ -9,9 +9,16 @@
  * into.
  */
 
-import type { DiffRequest, ShowRequest } from "$lib/core";
+import type {
+  DiffRequest,
+  NotifyRequest,
+  ShowRequest,
+  TerminalRequest,
+} from "$lib/core";
 import { showDiff, showRange } from "$lib/files.svelte";
-import { byKey } from "$lib/sessions.svelte";
+import { focusPane, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
+import { byKey, forProject, noted, sessions } from "$lib/sessions.svelte";
+import { create as createShell } from "$lib/terminals.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
 
 /** Whether `path` is `root` or under it. */
@@ -61,6 +68,66 @@ export async function diffRequested(request: DiffRequest) {
     relativeTo(request.path, root) ?? relativeTo(request.path, project);
   if (relative === null) return;
   await showDiff(relative, request.note);
+}
+
+/** The open project a request with only a directory is for. */
+function projectOf(cwd: string): string | null {
+  return projectFor({
+    path: cwd,
+    from: 1,
+    to: 1,
+    note: null,
+    cwd,
+    session: null,
+  });
+}
+
+/** Opens a terminal in the project with the command typed at the prompt,
+    from the directory the agent runs in when that is not the project. */
+export function terminalRequested(request: TerminalRequest) {
+  const project = projectOf(request.cwd);
+  if (project === null) return;
+  if (workspace.active !== project) activate(project);
+  const inside = relativeTo(request.cwd, project);
+  const command =
+    inside === null || inside === ""
+      ? request.command
+      : `cd '${inside.replace(/'/g, "'\\''")}' && ${request.command}`;
+  createShell(project, command);
+  if (!terminalVisible()) toggleTerminal();
+  else focusPane("terminal");
+}
+
+/** The session a request is from: the one it names, else the one running
+    deepest where the agent runs, else the project's active one. */
+function sessionFor(
+  request: { cwd: string; session: string | null },
+  project: string,
+) {
+  const own = forProject(project);
+  const named = own.find(
+    (session) => session.id !== null && session.id === request.session,
+  );
+  if (named !== undefined) return named;
+  const at = (session: {
+    cwd: string | null;
+    startIn: string | null;
+    project: string;
+  }) => session.cwd ?? session.startIn ?? session.project;
+  const under = own
+    .filter((session) => within(request.cwd, at(session)))
+    .sort((a, b) => at(b).length - at(a).length);
+  if (under.length > 0) return under[0];
+  return own.find((session) => session.key === sessions.active) ?? null;
+}
+
+/** Leaves the agent's line on its session's row. */
+export function notified(request: NotifyRequest) {
+  const project = projectOf(request.cwd);
+  if (project === null) return;
+  const session = sessionFor(request, project);
+  if (session === null) return;
+  noted(session.key, request.text);
 }
 
 /** A reference in a session's output was clicked: a path the agent wrote,

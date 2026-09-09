@@ -316,6 +316,66 @@ test.describe("the file viewer", () => {
     await expect(marked.first().locator(".num")).toHaveText("2");
   });
 
+  // The agent's terminal tool: a shell opens with the command at the prompt,
+  // typed and not run.
+  test("opens a terminal with the agent's command typed, not run", async ({
+    page,
+  }) => {
+    await page.evaluate(() =>
+      (
+        window as unknown as { __terminalRequest: (request: unknown) => void }
+      ).__terminalRequest({
+        command: "npm run dev",
+        cwd: "/home/ada/dev/demo/packages/web",
+      }),
+    );
+    await expect(page.locator("section[data-pane='terminal']")).toBeVisible();
+    await expect(page.locator("[data-testid='terminal-slot'].on")).toHaveCount(
+      1,
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __written?: [string, string][] })
+              .__written ?? [],
+        ),
+      )
+      .toContainEqual([
+        expect.stringMatching(/^pty-/),
+        "cd 'packages/web' && npm run dev",
+      ]);
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  });
+
+  // The agent's notify tool: its line sits under the session's name, and
+  // the row wants attention, until the session is looked at.
+  test("leaves the agent's line on its session's row until it is looked at", async ({
+    page,
+  }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
+    // The first session, by its id, while the second is on screen.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __notifyRequest: (request: unknown) => void }
+      ).__notifyRequest({
+        text: "Tests green, ready to merge.",
+        cwd: "/home/ada/dev/demo",
+        session: "session-1",
+      }),
+    );
+    const note = page.getByTestId("session-note");
+    await expect(note).toHaveText("Tests green, ready to merge.");
+    const first = page.locator("[data-testid='session-row']").first();
+    await expect(first.locator(".dot")).toHaveClass(/unread/);
+    await first.click();
+    await expect(note).toHaveCount(0);
+    await expect(first.locator(".dot")).not.toHaveClass(/unread/);
+  });
+
   // A page runs in a frame with no origin; a diagram is drawn in the window.
   test("presents an HTML page in a frame of its own and a Mermaid diagram drawn", async ({
     page,

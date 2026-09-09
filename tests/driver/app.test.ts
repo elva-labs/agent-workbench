@@ -261,6 +261,63 @@ describe("the real app", () => {
     await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
 
+  it("types the agent's command into a new terminal", async () => {
+    const { driver } = app;
+    const messages = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "terminal",
+          arguments: { command: "echo workbench-typed" },
+        },
+      },
+    ];
+    const said = execFileSync(DAEMON, ["mcp"], {
+      cwd: repo,
+      env: { ...process.env, HOME: app.home },
+      input:
+        messages.map((message) => JSON.stringify(message)).join("\n") + "\n",
+    }).toString();
+    expect(said).toContain("Typed into a new terminal");
+    await driver.wait(
+      until.elementLocated(By.css("section[data-pane='terminal']")),
+      10_000,
+    );
+    // The shell echoes what was typed at its prompt; nothing ran.
+    await waitForText(driver, "echo workbench-typed");
+    expect(await screenText(driver)).not.toMatch(/^workbench-typed$/m);
+    // Leave things as they were: the shell closed, the panel hidden. The
+    // row's close button shows on hover, which the driver does not do.
+    for (const id of ["close-terminal", "hide-terminal"]) {
+      await driver.executeScript(
+        (id: string) =>
+          document
+            .querySelector<HTMLButtonElement>(`[data-testid='${id}']`)
+            ?.click(),
+        id,
+      );
+    }
+    await driver.wait(
+      async () =>
+        (await driver.findElements(By.css("[data-testid='close-terminal']")))
+          .length === 0,
+      10_000,
+    );
+  });
+
   it("opens the diff where the agent's diff tool pointed", async () => {
     const { driver } = app;
     const messages = [

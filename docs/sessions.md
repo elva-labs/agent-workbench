@@ -41,6 +41,9 @@ name in ink, `waiting for you` in the agent pane, a count in the status bar,
 and the same count on the app's icon. Having it on
 screen in a focused window reads it. Attention comes through the pty for
 both agents, as the bell or a terminal notification, with nothing installed.
+With hooks on, the agent can also leave a line under the row's name, why it
+stopped or what it needs, which marks the row the same way and goes when
+the session is looked at.
 
 With the project's hooks on (Live updates, in the settings) the transitions
 are exact instead. Both agents' prompt, stop and permission hooks append to

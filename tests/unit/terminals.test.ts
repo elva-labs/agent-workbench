@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetExits, stash } from "$lib/exits";
-import { DEFAULT, applyLayout, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
+import {
+  DEFAULT,
+  applyLayout,
+  layout,
+  terminalVisible,
+  toggleTerminal,
+} from "$lib/layout.svelte";
 import {
   MIN_SPLIT,
   activeShell,
@@ -8,6 +14,7 @@ import {
   close,
   closeProject,
   create,
+  TYPE_AFTER,
   cycle,
   ended,
   equalize,
@@ -45,8 +52,12 @@ vi.mock("$lib/core", () => ({
     kill: async (id: string) => {
       killed.push(id);
     },
+    write: async (id: string, data: string) => {
+      written.push([id, data]);
+    },
   }),
 }));
+const written: [string, string][] = [];
 
 const noOutput = () => {};
 
@@ -69,9 +80,34 @@ beforeEach(() => {
   reset();
   resetExits();
   killed.length = 0;
+  written.length = 0;
   spawned = 0;
   spawnError = null;
   open();
+});
+
+describe("a command typed by the agent", () => {
+  it("is written to the pty once the shell has drawn its prompt, without a newline", async () => {
+    vi.useFakeTimers();
+    const shell = create(A, "npm run dev");
+    expect(shell.typed).toBe("npm run dev");
+    started(shell.key, "pty-9");
+    expect(shell.typed).toBeNull();
+    expect(written).toEqual([]);
+    await vi.advanceTimersByTimeAsync(TYPE_AFTER);
+    expect(written).toEqual([["pty-9", "npm run dev"]]);
+    vi.useRealTimers();
+  });
+
+  it("is dropped when the shell went before it could be typed", async () => {
+    vi.useFakeTimers();
+    const shell = create(A, "npm run dev");
+    started(shell.key, "pty-9");
+    close(shell.key);
+    await vi.advanceTimersByTimeAsync(TYPE_AFTER);
+    expect(written).toEqual([]);
+    vi.useRealTimers();
+  });
 });
 
 describe("shells", () => {
@@ -152,7 +188,10 @@ describe("splitting", () => {
     const other = create(A);
     const beside = split(first.key)!;
     expect(beside.group).toBe(first.group);
-    expect(groupOf(first.key).map((shell) => shell.key)).toEqual([first.key, beside.key]);
+    expect(groupOf(first.key).map((shell) => shell.key)).toEqual([
+      first.key,
+      beside.key,
+    ]);
     expect(groupsFor(A)).toHaveLength(2);
     expect(terminals.active).toBe(beside.key);
     expect(shownGroup()).toBe(first.group);

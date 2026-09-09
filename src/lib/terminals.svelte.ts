@@ -36,7 +36,13 @@ export interface Shell {
   weight: number;
   exitCode: number | null;
   error: string | null;
+  /** A command to type at the prompt once the shell is up, not run: what
+      the agent's terminal tool asked for. */
+  typed: string | null;
 }
+
+/** How long a shell gets to draw its prompt before a command is typed. */
+export const TYPE_AFTER = 300;
 
 /** Narrower than this and a split shell shows a prompt and little else. */
 export const MIN_SPLIT = 200;
@@ -117,8 +123,10 @@ export function follow(project: string | null) {
 
 /** Adds a shell in a group of its own and makes it the one shown. The process
     starts when the shell's terminal mounts and knows its size. */
-export function create(project: string): Shell {
-  return add(project, `g${++groups}`, terminals.all.length, 1);
+export function create(project: string, typed: string | null = null): Shell {
+  const shell = add(project, `g${++groups}`, terminals.all.length, 1);
+  shell.typed = typed;
+  return shell;
 }
 
 /**
@@ -130,10 +138,20 @@ export function split(key: string): Shell | null {
   const source = byKey(key);
   if (source === null) return null;
   source.weight /= 2;
-  return add(source.project, source.group, terminals.all.indexOf(source) + 1, source.weight);
+  return add(
+    source.project,
+    source.group,
+    terminals.all.indexOf(source) + 1,
+    source.weight,
+  );
 }
 
-function add(project: string, group: string, at: number, weight: number): Shell {
+function add(
+  project: string,
+  group: string,
+  at: number,
+  weight: number,
+): Shell {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   const shell: Shell = {
     key: `t${++counter}`,
@@ -145,6 +163,7 @@ function add(project: string, group: string, at: number, weight: number): Shell 
     weight,
     exitCode: null,
     error: null,
+    typed: null,
   };
   terminals.all.splice(at, 0, shell);
   const live = terminals.all[at];
@@ -167,7 +186,10 @@ export function resizeSplit(key: string, dx: number, width: number) {
   const total = group.reduce((sum, shell) => sum + shell.weight, 0);
   const perPixel = total / width;
   const floor = MIN_SPLIT * perPixel;
-  const delta = Math.max(floor - left.weight, Math.min(dx * perPixel, right.weight - floor));
+  const delta = Math.max(
+    floor - left.weight,
+    Math.min(dx * perPixel, right.weight - floor),
+  );
   if (delta === 0) return;
   left.weight += delta;
   right.weight -= delta;
@@ -181,7 +203,10 @@ export function equalize(key: string) {
 /** This shell's fraction of its group's width. Always sums to one across the
     group, so a group fills its row whatever a closed sibling took with it. */
 export function share(shell: Shell): number {
-  const total = groupOf(shell.key).reduce((sum, sibling) => sum + sibling.weight, 0);
+  const total = groupOf(shell.key).reduce(
+    (sum, sibling) => sum + sibling.weight,
+    0,
+  );
   return total > 0 ? shell.weight / total : 1;
 }
 
@@ -215,6 +240,19 @@ export function started(key: string, ptyId: string): boolean {
   if (shell === null) return false;
   shell.ptyId = ptyId;
   shell.status = "running";
+
+  // Typed, not sent: no newline, so the user reads it and presses Enter.
+  const typed = shell.typed;
+  if (typed !== null) {
+    shell.typed = null;
+    setTimeout(() => {
+      if (shell.ptyId === ptyId && shell.status === "running") {
+        core()
+          .write(ptyId, typed)
+          .catch(() => {});
+      }
+    }, TYPE_AFTER);
+  }
 
   const early = claim(ptyId);
   if (early !== undefined) ended(early);

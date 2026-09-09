@@ -76,6 +76,20 @@ export interface DiffRequest {
   session: string | null;
 }
 
+/** A command the agent asked to have typed into a new terminal. */
+export interface TerminalRequest {
+  command: string;
+  cwd: string;
+  session: string | null;
+}
+
+/** A line the agent left for its session's row. */
+export interface NotifyRequest {
+  text: string;
+  cwd: string;
+  session: string | null;
+}
+
 /** What the user is looking at, as put on record for the agent's tools.
     Paths are as the project's machine sees them. */
 export interface Selection {
@@ -267,6 +281,12 @@ export interface Core {
   /** Reads an image or a PDF for the window, wherever the path is. */
   readMedia(path: string): Promise<Media>;
   onDiffRequest(handler: (request: DiffRequest) => void): Promise<() => void>;
+  onTerminalRequest(
+    handler: (request: TerminalRequest) => void,
+  ): Promise<() => void>;
+  onNotifyRequest(
+    handler: (request: NotifyRequest) => void,
+  ): Promise<() => void>;
   /** Puts what the user is looking at on record on the project's machine,
       or clears it there with null. */
   setSelection(project: string, selection: Selection | null): Promise<void>;
@@ -419,6 +439,16 @@ const tauriCore: Core = {
   },
   setSelection: (project, selection) =>
     invoke<void>("set_selection", { project, selection }),
+  async onTerminalRequest(handler) {
+    return listen<TerminalRequest>("terminal_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  async onNotifyRequest(handler) {
+    return listen<NotifyRequest>("notify_request", (event) =>
+      handler(event.payload),
+    );
+  },
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -528,6 +558,12 @@ const detachedCore: Core = {
     return () => {};
   },
   async setSelection() {},
+  async onTerminalRequest() {
+    return () => {};
+  },
+  async onNotifyRequest() {
+    return () => {};
+  },
   async onFileDrag() {
     return () => {};
   },

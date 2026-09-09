@@ -20,6 +20,8 @@ use crate::events::Sink;
 pub const SHOW_REQUEST: &str = "show_request";
 pub const PRESENT_REQUEST: &str = "present_request";
 pub const DIFF_REQUEST: &str = "diff_request";
+pub const TERMINAL_REQUEST: &str = "terminal_request";
+pub const NOTIFY_REQUEST: &str = "notify_request";
 
 /// The kinds the `present` tool takes, by extension: images, PDFs, and
 /// Markdown, which the window renders. Video is not among them yet.
@@ -101,6 +103,27 @@ pub struct DiffRequest {
     pub session: Option<String>,
 }
 
+/// A command the agent wants typed into a new terminal for the user to
+/// run, not run by itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalRequest {
+    pub command: String,
+    pub cwd: String,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+/// A line the agent leaves on its session's row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyRequest {
+    pub text: String,
+    pub cwd: String,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// A line of the log, whichever tool wrote it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -108,6 +131,8 @@ pub enum Request {
     Show(ShowRequest),
     Present(PresentRequest),
     Diff(DiffRequest),
+    Terminal(TerminalRequest),
+    Notify(NotifyRequest),
 }
 
 pub fn requests_path(home: &Path) -> PathBuf {
@@ -143,6 +168,18 @@ pub fn classify(line: &str) -> Option<Request> {
             }
             Some(Request::Diff(diff))
         }
+        Request::Terminal(terminal) => {
+            if terminal.command.trim().is_empty() {
+                return None;
+            }
+            Some(Request::Terminal(terminal))
+        }
+        Request::Notify(notify) => {
+            if notify.text.trim().is_empty() {
+                return None;
+            }
+            Some(Request::Notify(notify))
+        }
     }
 }
 
@@ -175,6 +212,12 @@ pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
             Request::Diff(diff) => serde_json::to_value(diff)
                 .ok()
                 .map(|value| (DIFF_REQUEST.to_string(), value)),
+            Request::Terminal(terminal) => serde_json::to_value(terminal)
+                .ok()
+                .map(|value| (TERMINAL_REQUEST.to_string(), value)),
+            Request::Notify(notify) => serde_json::to_value(notify)
+                .ok()
+                .map(|value| (NOTIFY_REQUEST.to_string(), value)),
         })
     })
 }
@@ -222,7 +265,9 @@ mod tests {
     fn show(line: &str) -> Option<ShowRequest> {
         match classify(line)? {
             Request::Show(show) => Some(show),
-            Request::Present(_) | Request::Diff(_) => None,
+            Request::Present(_) | Request::Diff(_) | Request::Terminal(_) | Request::Notify(_) => {
+                None
+            }
         }
     }
 

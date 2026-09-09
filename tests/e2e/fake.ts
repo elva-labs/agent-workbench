@@ -112,7 +112,11 @@ export async function installFakeCore(
           sessionId: spawnOptions.session ?? `session-${ptyCount}`,
         }),
         spawnShell: async () => `pty-${++ptyCount}`,
-        write: async () => {},
+        // What was written to a pty, for a test to read back.
+        write: async (id: string, data: string) => {
+          const w = window as unknown as { __written?: [string, string][] };
+          (w.__written ??= []).push([id, data]);
+        },
         resize: async () => {},
         kill: async () => {},
         ptyCwd: async () => null,
@@ -131,6 +135,16 @@ export async function installFakeCore(
         },
         onDiffRequest: async (handler: (request: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__diffRequest =
+            handler;
+          return () => {};
+        },
+        onTerminalRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__terminalRequest =
+            handler;
+          return () => {};
+        },
+        onNotifyRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__notifyRequest =
             handler;
           return () => {};
         },
