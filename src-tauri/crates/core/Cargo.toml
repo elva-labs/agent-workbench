@@ -1,6 +1,6 @@
 [package]
 name = "workbench-core"
-version = "0.1.3"
+version = "0.2.0"
 license = "MIT"
 description = "Agent Workbench core: ptys, git, watching, transcripts and hooks, with no window attached"
 edition = "2021"
