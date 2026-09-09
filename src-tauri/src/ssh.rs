@@ -408,8 +408,19 @@ pub fn daemon_build(target: &str, resources: Option<&Path>) -> Option<PathBuf> {
             return Some(named);
         }
     }
-    let bundled = resources?.join("remote").join(target).join(DAEMON_NAME);
-    bundled.is_file().then_some(bundled)
+    let bundled = resources.map(|dir| dir.join("remote").join(target).join(DAEMON_NAME));
+    if let Some(bundled) = bundled.filter(|path| path.is_file()) {
+        return Some(bundled);
+    }
+    // A development run carries no bundle; the daemon built beside the app
+    // is this machine's own build.
+    if Some(target) == local_daemon_target() {
+        let beside = std::env::current_exe().ok()?.parent()?.join(DAEMON_NAME);
+        if beside.is_file() {
+            return Some(beside);
+        }
+    }
+    None
 }
 
 /// The daemon build for this machine, by the names the bundle uses.

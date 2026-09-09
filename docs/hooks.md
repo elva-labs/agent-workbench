@@ -49,7 +49,7 @@ for the place being talked about. Claude Code is pointed at the server in
 its own per-project state under the user's home; Codex in the project's
 `.codex/config.toml`, kept out of the repository like the hooks file. A
 machine kind the app has no daemon build for gets the hooks without the
-tool.
+tool. An app run from the source uses the daemon built beside it.
 
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
