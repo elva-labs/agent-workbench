@@ -13,8 +13,7 @@
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { showRequested } from "$lib/show.svelte";
-  import Media from "$lib/components/Media.svelte";
-  import { loadMedia, media, presented } from "$lib/media.svelte";
+  import { loadMedia, presented } from "$lib/media.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
@@ -333,9 +332,7 @@
 {#if resume.open}
   <Resume />
 {/if}
-{#if media.open !== null}
-  <Media />
-{/if}
+
 
 <footer class="status no-select">
   <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>

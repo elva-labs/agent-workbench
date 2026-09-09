@@ -89,6 +89,10 @@ export const layout = $state({
   agentHidden: false,
   /** Set once you drag the viewer's splitter, so we stop sizing it for you. */
   reviewTouched: false,
+  /** The media section's share of the changes pane's height, and whether
+      it is open at all rather than folded to its header. */
+  mediaShare: 0.3,
+  mediaOpen: true,
   mode: "working" as Mode,
   focus: "agent" as PaneId,
   /** Counts every request to focus a pane by key, so a pane that already
@@ -328,6 +332,13 @@ export function loadLayout() {
       layout.terminalList = v.terminalList;
     if (typeof v.reviewTouched === "boolean")
       layout.reviewTouched = v.reviewTouched;
+    if (
+      typeof v.mediaShare === "number" &&
+      v.mediaShare > 0 &&
+      v.mediaShare < 1
+    )
+      layout.mediaShare = v.mediaShare;
+    if (typeof v.mediaOpen === "boolean") layout.mediaOpen = v.mediaOpen;
     if (typeof v.sessionsChosen === "boolean")
       layout.sessionsChosen = v.sessionsChosen;
     if (typeof v.changesChosen === "boolean")
@@ -356,6 +367,8 @@ export function saveLayout() {
         terminal: layout.terminal,
         terminalList: layout.terminalList,
         reviewTouched: layout.reviewTouched,
+        mediaShare: layout.mediaShare,
+        mediaOpen: layout.mediaOpen,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,
         terminalChosen: layout.terminalChosen,

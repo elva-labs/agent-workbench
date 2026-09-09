@@ -239,7 +239,7 @@ describe("the real app", () => {
   });
 
   // The present tool the same way: a real PNG in the repository, presented
-  // through the daemon, opens in the modal and lands on the media list.
+  // through the daemon, opens in the viewer and lands on the media list.
   it("opens the modal where the agent's present tool pointed", async () => {
     const { driver } = app;
     writeFileSync(
@@ -279,25 +279,21 @@ describe("the real app", () => {
     }).toString();
     expect(said).toContain("Presented 1 file.");
     await driver.wait(
-      until.elementLocated(By.css("[data-testid='media']")),
+      until.elementLocated(By.css("[data-testid='media-stack']")),
       10_000,
     );
     expect(await textOf(driver, "[data-testid='media-caption']")).toBe(
       "One pixel.",
     );
     await driver.wait(
-      until.elementLocated(By.css("[data-testid='media-stage'] img")),
+      until.elementLocated(By.css("[data-testid='media-file'] img")),
       10_000,
-    );
-    await driver.findElement(By.css("[data-testid='media-close']")).click();
-    await driver.wait(
-      until.elementLocated(By.css("[data-testid='media-fold']")),
-      5_000,
     );
     // Rendered text, which the fold's style sets in capitals.
     expect(
       (await textOf(driver, "[data-testid='media-fold']")).toLowerCase(),
     ).toContain("media (1)");
+    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
 
   // A project on another machine: the path names the host, the app runs

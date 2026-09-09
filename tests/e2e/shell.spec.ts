@@ -316,10 +316,9 @@ test.describe("the file viewer", () => {
     await expect(marked.first().locator(".num")).toHaveText("2");
   });
 
-  // The agent's present tool: the first file on screen with the caption,
-  // every file as a preview beneath, arrows and clicks to move, and the
-  // item kept on the pane's media list to open again.
-  test("presents the agent's files in a modal and keeps them on the list", async ({
+  // The agent's present tool: one row per call under the tree, with the
+  // caption; opening it shows every file of the call down the viewer.
+  test("presents the agent's files in the viewer, from a section under the tree", async ({
     page,
   }) => {
     await page.evaluate(
@@ -339,35 +338,77 @@ test.describe("the file viewer", () => {
         }),
       PROJECT,
     );
-    const modal = page.getByTestId("media");
-    await expect(modal).toBeVisible();
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "media",
+    );
     await expect(page.getByTestId("media-caption")).toHaveText(
       "Before, after, and the plan.",
     );
-    await expect(page.getByTestId("media-count")).toHaveText("1 of 3");
-    await expect(modal.locator(".stage img")).toBeVisible();
-    await expect(page.getByTestId("media-preview")).toHaveCount(3);
-
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByTestId("media-count")).toHaveText("2 of 3");
-    await page.getByTestId("media-preview").nth(2).click();
-    await expect(page.getByTestId("media-count")).toHaveText("3 of 3");
-    await expect(modal.locator(".stage embed")).toHaveAttribute(
+    const files = page.getByTestId("media-file");
+    await expect(files).toHaveCount(3);
+    await expect(files.nth(0).locator("img")).toBeVisible();
+    await expect(files.nth(2).locator("embed")).toHaveAttribute(
       "type",
       "application/pdf",
     );
-    await page.keyboard.press("ArrowRight");
-    await expect(page.getByTestId("media-count")).toHaveText("3 of 3");
 
-    await page.keyboard.press("Escape");
-    await expect(modal).toHaveCount(0);
+    // The section under the tree lists the call, and folds away.
+    const section = page.getByTestId("media-section");
     await expect(page.getByTestId("media-fold")).toContainText("Media (1)");
     await expect(page.getByTestId("media-item")).toContainText(
       "Before, after, and the plan.",
     );
+    await expect(page.getByTestId("media-item")).toContainText("3 files");
+    await page.getByTestId("media-fold").click();
+    await expect(page.getByTestId("media-item")).toHaveCount(0);
+    await page.getByTestId("media-fold").click();
+    await expect(page.getByTestId("media-item")).toHaveCount(1);
+
+    // Escape closes the viewer as it closes a file; the row opens it again.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await page.getByTestId("media-item").click();
-    await expect(page.getByTestId("media")).toBeVisible();
-    await expect(page.getByTestId("media-count")).toHaveText("1 of 3");
+    await expect(page.getByTestId("media-file")).toHaveCount(3);
+    await expect(section).toBeVisible();
+  });
+
+  test("resizes the media section by its divider and keeps the size", async ({
+    page,
+  }) => {
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as {
+            __presentRequest: (request: unknown) => void;
+          }
+        ).__presentRequest({
+          files: [`${project}/shots/one.png`],
+          caption: null,
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    const section = page.getByTestId("media-section");
+    const before = (await section.boundingBox())!.height;
+    const handle = page.getByRole("separator", {
+      name: "Resize the media section",
+    });
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 80, {
+      steps: 8,
+    });
+    await page.mouse.up();
+    const after = (await section.boundingBox())!.height;
+    expect(after).toBeGreaterThan(before + 40);
+    const stored = await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("workbench.layout") ?? "{}").mediaShare,
+    );
+    expect(stored).toBeGreaterThan(0.3);
   });
 
   // A document the agent drafted, rendered, with its own HTML shown as text.
@@ -386,6 +427,10 @@ test.describe("the file viewer", () => {
       PROJECT,
     );
     const document = page.getByTestId("media-document");
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "media",
+    );
     await expect(document.locator("h1")).toHaveText("Draft");
     await expect(document.locator("em")).toHaveText("there");
     await expect(document).toContainText("<b>plain</b>");

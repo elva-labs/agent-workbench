@@ -43,7 +43,24 @@
   let field: HTMLInputElement;
   let menuOpen = $state(false);
   let presented = $derived(presentedFor());
-  let mediaOpen = $state(true);
+  /** The tree's column, for turning a drag into a share of it. */
+  let columnHeight = $state(0);
+
+  function resizeMedia(dy: number) {
+    if (columnHeight === 0) return;
+    const share = layout.mediaShare - dy / columnHeight;
+    layout.mediaShare = Math.max(0.12, Math.min(0.8, share));
+  }
+
+  function resetMedia() {
+    layout.mediaShare = 0.3;
+    saveLayout();
+  }
+
+  function toggleMedia() {
+    layout.mediaOpen = !layout.mediaOpen;
+    saveLayout();
+  }
 
   // A chord asked for the field: put the keyboard in it, whatever had it.
   $effect(() => {
@@ -267,44 +284,69 @@
     </p>
   {/if}
 
-  <!-- What the agent presented for the session on screen, a fold above the
-       tree: nothing at all until there is something, then a list to open
-       any of it again. -->
-  {#if presented.length > 0}
-    <div class="media">
-      <button
-        class="fold"
-        onclick={() => (mediaOpen = !mediaOpen)}
-        aria-expanded={mediaOpen}
-        data-testid="media-fold"
-      >
-        <span class="chevron">{mediaOpen ? "▾" : "▸"}</span>
-        Media ({presented.length})
-      </button>
-      {#if mediaOpen}
-        <ul class="media-list">
-          {#each presented as item (item.id)}
-            <li>
-              <button class="media-row" onclick={() => openItem(item)} title={item.files.join("\n")} data-testid="media-item">
-                <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
-                <span class="media-meta">{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-  {/if}
-
   <!-- The tree is the same component in both shapes. Working, it has the pane
        to itself; reviewing, it becomes the left column and keeps its scroll
        position, its open folders and its selection. -->
   <div class="split" class:reviewing style:--tree-w="{layout.tree}px">
-    {#if searchingLines()}
-      <SearchResults onOpen={openHit} />
-    {:else}
-      <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} />
-    {/if}
+    <!-- The tree's column: the tree, and beneath it what the agent
+         presented for the session on screen, a section of its own with a
+         divider to drag, folded to its header when asked. -->
+    <div class="column" bind:clientHeight={columnHeight}>
+      <div class="tree-slot">
+        {#if searchingLines()}
+          <SearchResults onOpen={openHit} />
+        {:else}
+          <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} />
+        {/if}
+      </div>
+      {#if presented.length > 0}
+        {#if layout.mediaOpen}
+          <Splitter
+            label="Resize the media section"
+            orientation="horizontal"
+            onDelta={resizeMedia}
+            onReset={resetMedia}
+            onCommit={saveLayout}
+          />
+        {/if}
+        <div
+          class="media"
+          class:open={layout.mediaOpen}
+          style:--media-h="{Math.round(layout.mediaShare * 100)}%"
+          data-testid="media-section"
+        >
+          <button
+            class="fold"
+            onclick={toggleMedia}
+            aria-expanded={layout.mediaOpen}
+            data-testid="media-fold"
+          >
+            <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
+            Media ({presented.length})
+          </button>
+          {#if layout.mediaOpen}
+            <ul class="media-list">
+              {#each presented as item (item.id)}
+                <li>
+                  <button
+                    class="media-row"
+                    class:on={files.media?.id === item.id}
+                    onclick={() => openItem(item)}
+                    title={item.files.join("\n")}
+                    data-testid="media-item"
+                  >
+                    <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
+                    <span class="media-meta"
+                      >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
+                    >
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
+    </div>
     {#if reviewing}
       <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
       <FileViewer />
@@ -313,10 +355,30 @@
 </Pane>
 
 <style>
+  .column {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .tree-slot {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
   .media {
     flex: none;
-    border-bottom: 1px solid var(--rule);
-    padding: 4px 0 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .media.open {
+    flex: 0 0 var(--media-h);
   }
 
   .fold {
@@ -324,6 +386,7 @@
     align-items: center;
     gap: 5px;
     width: 100%;
+    flex: none;
     border: 0;
     background: none;
     font-family: var(--mono);
@@ -332,7 +395,7 @@
     text-transform: uppercase;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 4px var(--pane-pad);
+    padding: 6px var(--pane-pad);
   }
 
   .fold:hover {
@@ -342,7 +405,9 @@
   .media-list {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 0 0 6px;
+    overflow: auto;
+    min-height: 0;
   }
 
   .media-row {
@@ -359,7 +424,8 @@
     color: var(--ink);
   }
 
-  .media-row:hover {
+  .media-row:hover,
+  .media-row.on {
     background: var(--surface-2);
   }
 

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  closeMedia,
   itemsFor,
   listed,
   load,
@@ -11,8 +10,9 @@ import {
   presented,
   render,
   resetMedia,
-  step,
 } from "$lib/media.svelte";
+import { closeViewer, files } from "$lib/files.svelte";
+import { layout } from "$lib/layout.svelte";
 import {
   create,
   located,
@@ -59,6 +59,7 @@ const request = (
 beforeEach(() => {
   localStorage.clear();
   resetMedia();
+  closeViewer();
   resetWorkspace();
   resetSessions();
   workspace.open.push(repo("/one"), repo("/two"));
@@ -87,14 +88,14 @@ describe("whose media it is", () => {
 });
 
 describe("presenting", () => {
-  it("keeps the files on the session, brings the project forward and opens the first", () => {
+  it("keeps the files on the session, brings the project forward and opens them in the viewer", () => {
     workspace.active = "/two";
     const session = create("/one");
     started(session.key, "pty-1", "s1");
     presented(request(["/one/a.png", "/one/b.pdf"]), 1_700_000_000_000);
     expect(workspace.active).toBe("/one");
-    expect(media.open?.index).toBe(0);
-    expect(media.open?.item.files).toEqual(["/one/a.png", "/one/b.pdf"]);
+    expect(files.media?.files).toEqual(["/one/a.png", "/one/b.pdf"]);
+    expect(layout.mode).toBe("reviewing");
     expect(itemsFor(session.key)).toHaveLength(1);
     expect(itemsFor(session.key)[0].caption).toBe("Shots.");
     expect(listed()).toHaveLength(1);
@@ -102,7 +103,7 @@ describe("presenting", () => {
 
   it("does nothing for files outside every open project", () => {
     presented(request(["/nowhere/a.png"], "/nowhere"));
-    expect(media.open).toBeNull();
+    expect(files.media).toBeNull();
     expect(media.items).toEqual([]);
   });
 
@@ -118,19 +119,13 @@ describe("presenting", () => {
     expect(mine[49].files).toEqual(["/one/5.png"]);
   });
 
-  it("steps through the files and stops at the ends", () => {
+  it("opens a call again from the list, and closes with the viewer", () => {
     presented(request(["/one/a.png", "/one/b.png", "/one/c.png"]));
-    step(-1);
-    expect(media.open?.index).toBe(0);
-    step(1);
-    step(1);
-    expect(media.open?.index).toBe(2);
-    step(1);
-    expect(media.open?.index).toBe(2);
-    closeMedia();
-    expect(media.open).toBeNull();
-    openItem(media.items[0], 7);
-    expect(media.open?.index).toBe(2);
+    closeViewer();
+    expect(files.media).toBeNull();
+    openItem(media.items[0]);
+    expect(files.media?.id).toBe(media.items[0].id);
+    expect(layout.mode).toBe("reviewing");
   });
 
   it("renders a Markdown document, its own HTML as text", async () => {

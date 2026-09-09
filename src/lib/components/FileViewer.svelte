@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MediaStack from "$lib/components/MediaStack.svelte";
   import { closeViewer, effectiveView, files, selectedEntry } from "$lib/files.svelte";
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
@@ -36,8 +37,15 @@
   });
 </script>
 
-<div class="viewer" data-testid="viewer" data-view={view} bind:this={viewer}>
-  {#if entry !== null}
+<div class="viewer" data-testid="viewer" data-view={files.media !== null ? "media" : view} bind:this={viewer}>
+  {#if files.media !== null}
+    <div class="bar">
+      <span class="path" title={files.media.files.join("\n")} data-testid="media-caption"
+        >{files.media.caption ?? `${files.media.files.length} ${files.media.files.length === 1 ? "file" : "files"}`}</span
+      >
+      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
+    </div>
+  {:else if entry !== null}
     <div class="bar">
       <span class="path" title={entry.path}>{entry.path}</span>
       <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
@@ -46,7 +54,9 @@
   {#if target?.note}
     <p class="note" data-testid="viewer-note">{target.note}</p>
   {/if}
-  {#if entry === null}
+  {#if files.media !== null}
+    <MediaStack item={files.media} />
+  {:else if entry === null}
     <p class="empty">Pick a file to read it.</p>
   {:else if entry.binary}
     <p class="empty">Binary file, not shown.</p>

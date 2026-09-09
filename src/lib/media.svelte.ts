@@ -1,7 +1,7 @@
 /**
- * Media the agent presented: images and PDFs, kept per session and opened
- * in a modal, the first file on screen and the rest as previews to click
- * through.
+ * Media the agent presented: images, PDFs and documents, kept per session
+ * as one item per call and opened in the changes pane's viewer, every file
+ * of the call down the page.
  *
  * The agent's request names files and where the agent runs; the session on
  * that directory, in the project it is under, is the one the files belong
@@ -16,6 +16,7 @@ import { core, type Media, type PresentRequest } from "$lib/core";
 import { forProject, sessions } from "$lib/sessions.svelte";
 import { projectFor, within } from "$lib/show.svelte";
 import { activate, workspace } from "$lib/workspace.svelte";
+import { showMedia } from "$lib/files.svelte";
 
 export interface MediaItem {
   id: string;
@@ -34,8 +35,6 @@ const KEEP = 50;
 
 export const media = $state({
   items: [] as MediaItem[],
-  /** What the modal shows: an item and which of its files. */
-  open: null as { item: MediaItem; index: number } | null,
 });
 
 let loaded = false;
@@ -142,29 +141,15 @@ export function presented(request: PresentRequest, now = Date.now()) {
     media.items = media.items.filter((candidate) => !drop.has(candidate.id));
   }
   save();
-  media.open = { item, index: 0 };
+  showMedia(item);
 }
 
-export function openItem(item: MediaItem, index = 0) {
-  media.open = {
-    item,
-    index: Math.max(0, Math.min(index, item.files.length - 1)),
-  };
+/** A call from the list, opened in the viewer again. */
+export function openItem(item: MediaItem) {
+  showMedia(item);
 }
 
-export function closeMedia() {
-  media.open = null;
-}
-
-/** The next or previous file of what is open, stopping at the ends. */
-export function step(direction: 1 | -1) {
-  if (media.open === null) return;
-  const index = media.open.index + direction;
-  if (index < 0 || index >= media.open.item.files.length) return;
-  media.open = { item: media.open.item, index };
-}
-
-/** What the modal shows for a file: an image or a PDF as a data URL, a
+/** What the viewer shows for a file: an image or a PDF as a data URL, a
     Markdown document rendered to HTML, or the reason it cannot be shown. */
 export type Loaded =
   | { mime: string; url: string }
@@ -201,7 +186,7 @@ function escapeAttribute(text: string): string {
   return escapeText(text).replace(/"/g, "&quot;");
 }
 
-/** Markdown rendered for the modal. Raw HTML in the document is shown as
+/** Markdown rendered for the viewer. Raw HTML in the document is shown as
     the text it is, and a link or an image may point only where `LINK` and
     `IMAGE` allow, since the document is the agent's and the window is the
     app's. */
@@ -231,5 +216,4 @@ export async function load(path: string): Promise<Loaded> {
 export function resetMedia() {
   loaded = true;
   media.items = [];
-  media.open = null;
 }

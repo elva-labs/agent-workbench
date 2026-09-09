@@ -1,5 +1,6 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine, type GrepHit } from "$lib/core";
+import type { MediaItem } from "$lib/media.svelte";
 import { enterReview, exitReview } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
@@ -45,6 +46,9 @@ export const files = $state({
   scope: "changed" as Scope,
   view: "diff" as View,
   selected: null as string | null,
+  /** What the agent presented, when the viewer holds that rather than a
+      file: every file of one call, down the viewer. */
+  media: null as MediaItem | null,
 
   /**
    * The search field. In files mode the query narrows the tree to paths
@@ -359,6 +363,7 @@ async function loadSelected() {
 
 export async function select(path: string) {
   if (files.target !== null && files.target.path !== path) files.target = null;
+  files.media = null;
   files.selected = path;
   reveal(path);
   await loadSelected();
@@ -367,11 +372,19 @@ export async function select(path: string) {
 /** Nothing chosen: the tree shows no highlight and the viewer has nothing. */
 export function deselect() {
   files.target = null;
+  files.media = null;
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;
   files.content = null;
   fileRead += 1;
+}
+
+/** Shows what the agent presented in the viewer, in place of any file. */
+export function showMedia(item: MediaItem) {
+  deselect();
+  files.media = item;
+  enterReview();
 }
 
 /** Done reading: the file is let go and the viewer closes, if it was open. */
