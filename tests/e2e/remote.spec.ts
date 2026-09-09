@@ -101,7 +101,7 @@ test.describe("a remote project", () => {
     await installFakeCore(page, { open: [] });
     await page.goto("/");
     await expect(page.getByTestId("open-project")).toBeVisible();
-    await page.keyboard.press("Control+1");
+    await page.keyboard.press("ControlOrMeta+1");
     await page.keyboard.press("Home");
     await expect(page.getByTestId("open-project")).toHaveClass(/cursor/);
     await page.keyboard.press("ArrowDown");
