@@ -294,9 +294,10 @@ describe("the real app", () => {
       until.elementLocated(By.css("[data-testid='media-fold']")),
       5_000,
     );
-    expect(await textOf(driver, "[data-testid='media-fold']")).toContain(
-      "Media (1)",
-    );
+    // Rendered text, which the fold's style sets in capitals.
+    expect(
+      (await textOf(driver, "[data-testid='media-fold']")).toLowerCase(),
+    ).toContain("media (1)");
   });
 
   // A project on another machine: the path names the host, the app runs
