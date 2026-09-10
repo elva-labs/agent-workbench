@@ -613,6 +613,8 @@ describe("titles", () => {
       "fix-activity-tracking-bugs",
     ],
     ["fix-activity-tracking-bugs - Claude Code", "fix-activity-tracking-bugs"],
+    ["Retry delay \u2013 Claude Code", "Retry delay"],
+    ["Retry delay \u2014 Claude Code", "Retry delay"],
     ["Claude Code · rename the cache", "rename the cache"],
     ["  rename the cache  ", "rename the cache"],
   ])("reads the session's name out of %j", (raw, expected) => {

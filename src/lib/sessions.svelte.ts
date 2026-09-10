@@ -332,8 +332,8 @@ export function sessionTitle(raw: string): string | null {
   let title = raw.trim();
   // Leading status marks: anything before the first letter or digit.
   title = title.replace(/^[^\p{L}\p{N}]+/u, "");
-  title = title.replace(/\s*[-·|:]\s*claude(\s+code)?\s*$/iu, "");
-  title = title.replace(/^claude(\s+code)?\s*[-·|:]\s*/iu, "");
+  title = title.replace(/\s*[-\u2013\u2014·|:]\s*claude(\s+code)?\s*$/iu, "");
+  title = title.replace(/^claude(\s+code)?\s*[-\u2013\u2014·|:]\s*/iu, "");
   title = title.trim();
   if (title === "" || /^claude(\s+code)?$/iu.test(title)) return null;
   return title;
