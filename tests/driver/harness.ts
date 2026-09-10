@@ -510,6 +510,10 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
             recent: paths,
           }),
         );
+        // The DOM renderer for the terminals: WebKit names every GPU
+        // "Apple GPU", and the software one behind a headless X server
+        // paints a third WebGL terminal late or never.
+        localStorage.setItem("workbench.renderer", "dom");
         location.reload();
       }, paths);
       break;

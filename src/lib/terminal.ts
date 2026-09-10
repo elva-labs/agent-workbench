@@ -98,7 +98,8 @@ export class WriteQueue {
     // Wrapped rather than passed by reference: requestAnimationFrame must be
     // called with window as its receiver, and holding it on a field would call
     // it with the queue instead.
-    private readonly schedule: (cb: () => void) => number = (cb) => requestAnimationFrame(cb),
+    private readonly schedule: (cb: () => void) => number = (cb) =>
+      requestAnimationFrame(cb),
     private readonly cancel: (handle: number) => void = (handle) =>
       cancelAnimationFrame(handle),
   ) {}
@@ -113,7 +114,8 @@ export class WriteQueue {
     this.frame = null;
     if (this.pending.length === 0) return;
 
-    const joined = this.pending.length === 1 ? this.pending[0] : concat(this.pending);
+    const joined =
+      this.pending.length === 1 ? this.pending[0] : concat(this.pending);
     this.pending = [];
     this.write(joined);
   }
@@ -142,9 +144,15 @@ function concat(chunks: Uint8Array[]): Uint8Array {
  * null when the sequence is not a query. xterm.js does not answer these by
  * itself, and Codex waits on the answer before drawing its first screen.
  */
-export function colorReply(osc: 10 | 11, data: string, theme: ITheme): string | null {
+export function colorReply(
+  osc: 10 | 11,
+  data: string,
+  theme: ITheme,
+): string | null {
   if (data.trim() !== "?") return null;
-  const hex = (osc === 10 ? theme.foreground : theme.background) ?? (osc === 10 ? "#000000" : "#ffffff");
+  const hex =
+    (osc === 10 ? theme.foreground : theme.background) ??
+    (osc === 10 ? "#000000" : "#ffffff");
   const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
   if (match === null) return null;
   const [, r, g, b] = match;
@@ -160,4 +168,18 @@ export function colorReply(osc: 10 | 11, data: string, theme: ITheme): string | 
 export function softwareGl(renderer: string | null): boolean {
   if (renderer === null) return false;
   return /llvmpipe|softpipe|swiftshader|swrast|software/i.test(renderer);
+}
+
+/** The renderer name a browser hides behind, WebKit's "Apple GPU" on any
+    machine, says nothing about the GPU. Under a headless X server the
+    software rasteriser behind it presents a third context late or never,
+    so a run that knows it is headless asks for the DOM renderer here. */
+export const RENDERER_KEY = "workbench.renderer";
+
+export function domRendererChosen(): boolean {
+  try {
+    return localStorage.getItem(RENDERER_KEY) === "dom";
+  } catch {
+    return false;
+  }
 }

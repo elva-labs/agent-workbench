@@ -11,7 +11,14 @@
   import { references } from "$lib/refs";
   import { layout } from "$lib/layout.svelte";
   import { typed } from "$lib/sessions.svelte";
-  import { WriteQueue, buildTheme, colorReply, softwareGl, tokenReader } from "$lib/terminal";
+  import {
+    WriteQueue,
+    buildTheme,
+    colorReply,
+    domRendererChosen,
+    softwareGl,
+    tokenReader,
+  } from "$lib/terminal";
   import { theme } from "$lib/theme.svelte";
 
   /**
@@ -151,7 +158,7 @@
     // context that presents late or not at all, and a headless X server may
     // give none; the DOM renderer is the fallback for both: slower under a
     // flood of output, identical to look at.
-    if (!softwareGl(glRenderer())) {
+    if (!softwareGl(glRenderer()) && !domRendererChosen()) {
       try {
         const webgl = new WebglAddon();
         webgl.onContextLoss(() => webgl.dispose());

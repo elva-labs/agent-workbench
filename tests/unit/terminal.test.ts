@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { WriteQueue, buildTheme, colorReply, softwareGl, withAlpha } from "$lib/terminal";
+import {
+  WriteQueue,
+  buildTheme,
+  colorReply,
+  domRendererChosen,
+  softwareGl,
+  withAlpha,
+} from "$lib/terminal";
 import { toBytes } from "$lib/core";
 
 describe("toBytes", () => {
@@ -122,7 +129,9 @@ describe("buildTheme", () => {
 
   it("gives every slot a distinct colour except the deliberate cyan match", () => {
     const values = Object.entries(theme)
-      .filter(([key]) => key !== "cursor" && key !== "cyan" && key !== "cursorAccent")
+      .filter(
+        ([key]) => key !== "cursor" && key !== "cyan" && key !== "cursorAccent",
+      )
       .map(([, value]) => value);
     expect(new Set(values).size).toBeGreaterThan(15);
   });
@@ -167,7 +176,11 @@ describe("WriteQueue", () => {
 
   it("schedules only one frame per batch", () => {
     const schedule = vi.fn(() => 1);
-    const queue = new WriteQueue(() => {}, schedule, () => {});
+    const queue = new WriteQueue(
+      () => {},
+      schedule,
+      () => {},
+    );
     queue.push(bytes("a"));
     queue.push(bytes("b"));
     expect(schedule).toHaveBeenCalledTimes(1);
@@ -184,7 +197,11 @@ describe("WriteQueue", () => {
 
   it("ignores empty chunks", () => {
     const schedule = vi.fn(() => 1);
-    const queue = new WriteQueue(() => {}, schedule, () => {});
+    const queue = new WriteQueue(
+      () => {},
+      schedule,
+      () => {},
+    );
     queue.push(new Uint8Array());
     expect(schedule).not.toHaveBeenCalled();
   });
@@ -211,10 +228,14 @@ describe("WriteQueue", () => {
   // with the wrong receiver throws "Illegal invocation" only at runtime.
   it("works with its own default scheduler", async () => {
     const written: string[] = [];
-    const queue = new WriteQueue((data) => written.push(new TextDecoder().decode(data)));
+    const queue = new WriteQueue((data) =>
+      written.push(new TextDecoder().decode(data)),
+    );
 
     expect(() => queue.push(bytes("real frame"))).not.toThrow();
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
     expect(written).toEqual(["real frame"]);
 
     expect(() => queue.dispose()).not.toThrow();
@@ -260,9 +281,21 @@ describe("colorReply", () => {
   });
 });
 
+describe("domRendererChosen", () => {
+  it("is what the window's storage says, and nothing when it says nothing", () => {
+    localStorage.removeItem("workbench.renderer");
+    expect(domRendererChosen()).toBe(false);
+    localStorage.setItem("workbench.renderer", "dom");
+    expect(domRendererChosen()).toBe(true);
+    localStorage.removeItem("workbench.renderer");
+  });
+});
+
 describe("softwareGl", () => {
   it("knows a software rasteriser by name", () => {
-    expect(softwareGl("Mesa/X.org, llvmpipe (LLVM 15.0.7, 256 bits)")).toBe(true);
+    expect(softwareGl("Mesa/X.org, llvmpipe (LLVM 15.0.7, 256 bits)")).toBe(
+      true,
+    );
     expect(softwareGl("Google SwiftShader")).toBe(true);
     expect(softwareGl("ANGLE (Apple, Apple M2, OpenGL 4.1)")).toBe(false);
     expect(softwareGl("WebKit WebGL")).toBe(false);
