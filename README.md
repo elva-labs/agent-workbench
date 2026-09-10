@@ -22,6 +22,11 @@ state at a glance, and projects on other machines over ssh.
 - **Changes.** The changed files and their diffs, refreshed as the agent
   edits, with a file viewer and search over the tree. A session that moves
   into a git worktree takes the pane with it.
+- **Tools for the agent.** With hooks on, the agent can point at a place in
+  a file or at a file's changes, put images, PDFs, documents, pages and
+  diagrams in front of you, ask what you are looking at, type a command
+  into a terminal for you to run, and leave a line on its session's row.
+  See [hooks](docs/hooks.md).
 - **Terminal.** Plain shells under the panes, per project, split if you like.
 - **Remote projects.** Pair a machine with one pasted token, or name a host
   your ssh already reaches, and work in a folder there. The agent, the
@@ -79,8 +84,7 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Focus](docs/focus-model.md): who owns the keyboard.
 - [Settings](docs/settings.md): appearance, palettes, keys, live updates.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
-  what it gives, the agent's tools to show you a place in a file and to
-  present what it made among it.
+  what it gives, the agent's tools among it.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
 - [Remote](docs/remote.md): projects on other machines.
 - [Platforms](docs/platforms.md): what differs on each.

@@ -39,10 +39,11 @@ place of the reading off its output. [Sessions](sessions.md) describes both.
 The session log holds a line per event and is trimmed once it grows past
 half a megabyte; nothing in it is needed after the window has seen it.
 
-## The show and present tools
+## The agent's tools
 
-With the hooks goes a tool for the agent: `show`, offered over MCP by the
-daemon, which the app puts on the machine alongside. Called with a file, a
+With the hooks go six tools for the agent, offered over MCP by the daemon,
+which the app puts on the machine alongside. The first, `show`, is the
+pattern for the rest. Called with a file, a
 range of lines and a note, it opens the file in the changes pane's viewer,
 scrolled to the lines with them highlighted and the note above, in the
 project the agent runs in, brought forward if it was not on screen. The
@@ -57,6 +58,8 @@ tool. An app run from the source uses the daemon built beside it.
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
 
+![The agent answers where the retry delay is set and opens the file at the lines, with its note above them; the user selects three other lines, asks about them, and the agent reads the selection back before explaining.](tools-show.gif)
+
 A second, `diff`, opens a file's changes in the viewer the same way, with
 a note above, for when the agent points at what changed rather than at a
 line. A file git has not changed opens as it is.
@@ -69,7 +72,9 @@ image at width, a PDF in its own frame, a document rendered, a page in a
 frame of its own that can run its scripts but reach nothing of the app or
 the machine, a diagram drawn, a mermaid fence in a document drawn too, the
 caption in the bar above. Escape closes it as it
-closes a file. A link in a document opens outside the app; HTML written
+closes a file.
+
+![The agent draws the request flow: a Mermaid diagram and a latency chart open in the viewer, one under the other, with the caption above and the call on the media list under the tree.](tools-present.gif) A link in a document opens outside the app; HTML written
 into a document shows as the text it is. What was presented stays on the media
 list of the session it came from, a section under the file tree with a
 divider to drag and a header that folds it away, one row per call under
@@ -95,13 +100,18 @@ Two more are for the agent to hand something over rather than show it.
 `terminal` opens a new terminal in the panel with a command typed at the
 prompt and not run, from the directory the agent works in: a dev server or
 a watch the user asked for, which they start with Enter and keep. The
-agent is told to run its own commands itself. `notify` leaves one line
-under the session's name in the sessions pane and marks the row as wanting
-attention, for when the user is in another session: why the agent stopped,
-what it needs, what is done. The row has room for a few words on one line
-and cuts the rest off, which the agent is told. Looking at the session
-clears it. The agent is told to use it once, when it stops, and not for
-progress.
+agent is told to run its own commands itself.
+
+![The agent types npm run dev into a new terminal; the user presses Enter and the server comes up under the panes.](tools-terminal.gif)
+
+`notify` leaves one line under the session's name in the sessions pane and
+marks the row as wanting attention, for when the user is in another
+session: why the agent stopped, what it needs, what is done. The row has
+room for a few words on one line and cuts the rest off, which the agent is
+told. Looking at the session clears it. The agent is told to use it once,
+when it stops, and not for progress.
+
+![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 
 ## Removing them
 

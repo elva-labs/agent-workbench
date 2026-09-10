@@ -27,6 +27,8 @@ may claim and why is in [focus](focus-model.md).
 Watcher only, or agent hooks, chosen once for every project; each project
 you open follows it, and a project that should go the other way can say so
 under it. A fresh install starts with the hooks on; a setup from before the
-choice existed starts with them off. What each means for the changes pane
-and for a session's row is in [sessions](sessions.md); what the hooks write
-and where is in [hooks](hooks.md).
+choice existed starts with them off, and is told once, in a word over the
+agent pane, what turning them on gives; the word's link opens the settings
+at this section. What each means for the changes pane and for a session's
+row is in [sessions](sessions.md); what the hooks write and where, and the
+tools they bring the agent, is in [hooks](hooks.md).

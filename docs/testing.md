@@ -67,7 +67,9 @@ On Linux the tier needs `tauri-driver` and the `webkit2gtk-driver` package,
 and brings up Xvfb and a window manager on a headless machine. The binary
 loads the built frontend served static rather than from the dev server,
 whose on-demand compile can hand the first request a component's source as
-its stylesheet.
+its stylesheet, and asks the terminals for the DOM renderer, since the
+software GL behind a headless X server paints a third WebGL terminal late
+or never and WebKit names every GPU the same.
 
 On Windows the harness starts the binary itself with the debugger open and
 attaches Edge WebDriver to it, because WebView2 never writes the file Edge

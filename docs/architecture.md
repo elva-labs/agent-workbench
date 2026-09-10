@@ -11,7 +11,8 @@ it persists for the window: which projects are open, pane widths, names.
 
 The frontend talks to Rust through one seam: a small interface of commands,
 one output channel per pty, and a handful of events (a session ended, a
-session got its id, the tree moved, a hook fired, a connection closed).
+session got its id, the tree moved, a hook fired, a request came from one
+of the agent's tools, a connection closed).
 Tests install a fake behind that seam and drive the real frontend without
 Tauri, which is how the browser tier works.
 
@@ -27,7 +28,12 @@ here or to the same core on another machine.
 The same core crate builds a daemon that speaks the core's commands as JSON
 lines over stdio. The app runs it on a remote machine over ssh and drives it
 exactly as it drives its own core, with a path's `ssh://host` prefix deciding
-where a command goes. [Remote](remote.md) has the whole of it.
+where a command goes. [Remote](remote.md) has the whole of it. The same
+binary is the tool server the agent talks to over MCP: a call lands in a
+log under the app's directory in the user's home, which the core tails and
+hands to the window as an event, and the one call that runs the other way,
+what the user is looking at, reads a record the window keeps beside the
+log. [Hooks](hooks.md) has the tools.
 
 ## Agents
 
@@ -38,9 +44,12 @@ session, sit behind one seam. [Agents](adapters.md) lists them.
 
 ## What is persisted
 
-The core keeps nothing across restarts but what the agents themselves write.
-The window remembers the workspace, the layout, its chords, theme and
-palette, which sessions were the app's own, and the names it knew sessions
-by, all in the webview's local storage, keyed by the real project path. Hooks
-the user turns on are written into the project's own agent configuration,
-and only there.
+The core keeps nothing across restarts but what the agents themselves write
+and what the tools need: the request log, and the record of what is on
+screen, both under the app's directory in the user's home. The window
+remembers the workspace, the layout, its chords, theme and palette, which
+sessions were the app's own, the names it knew sessions by, what each
+session presented, and which words to the user were taken, all in the
+webview's local storage, keyed by the real project path. Hooks the user
+turns on are written into the project's own agent configuration, and only
+there.

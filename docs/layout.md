@@ -163,3 +163,25 @@ the cursor. The cursor is drawn separately from the open file, so you can
 walk the tree without changing what the viewer shows. Escape, the Esc
 button, or a click on the empty part of the tree closes the viewer and
 clears the selection together; the keyboard stays in the tree.
+
+## Under the tree
+
+What the agent has presented for the session on screen sits in a section
+at the bottom of the tree's column, one row per call under its caption,
+with a divider to drag between the two and a header that folds the section
+to itself; the share and the fold are remembered. The tree's cursor walks
+on into the rows: <kbd>Down</kbd> past the last file lands on the header,
+<kbd>Enter</kbd> opens a call in the viewer, <kbd>Left</kbd> and
+<kbd>Right</kbd> fold and unfold the section as they close and open a
+folder, and <kbd>End</kbd> is the last row of the column. The rows are not
+tab stops, and a click on one keeps the keyboard on the tree.
+
+## Inside the viewer
+
+A file opens as its diff or as it is, with a line or a range a tool pointed
+at highlighted and the tool's note above. Lines selected with the mouse
+stay marked once the keyboard has moved on, to the agent above all, so they
+are still the answer to "this" while the question is typed; a click in the
+viewer lets them go, and the line numbers are never part of a selection.
+What the agent presented opens in the same place, every file of the call
+down the viewer.
