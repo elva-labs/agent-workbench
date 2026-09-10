@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Agent Workbench",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.elva-labs.agent-workbench",
   "build": {
     "beforeDevCommand": "cargo build --manifest-path src-tauri/Cargo.toml -p workbench-core --bin agent-workbench-remote && npm run dev",
