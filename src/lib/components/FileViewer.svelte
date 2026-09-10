@@ -1,6 +1,6 @@
 <script lang="ts">
   import MediaStack from "$lib/components/MediaStack.svelte";
-  import { closeViewer, effectiveView, files, selectedEntry } from "$lib/files.svelte";
+  import { closeViewer, effectiveView, files, pick, selectedEntry } from "$lib/files.svelte";
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
   // read-only EditorView on content, which is also where side-by-side comes
@@ -23,6 +23,46 @@
     line !== undefined &&
     line >= target.line &&
     line <= (target.to ?? target.line);
+
+  /** The lines the user selected, when they are this file's. */
+  let picked = $derived(
+    entry !== null && files.picked?.path === entry.path ? files.picked : null,
+  );
+  const inPick = (line: number | null | undefined) =>
+    picked !== null && line !== null && line !== undefined && line >= picked.from && line <= picked.to;
+
+  // The mouse selection, read off the document: the rows it touches make
+  // the pick, which outlives the selection itself. A click in the viewer
+  // lets the pick go; a click anywhere else, the agent above all, keeps it.
+  $effect(() => {
+    const onSelectionChange = () => {
+      const selection = document.getSelection();
+      if (!viewer || selection === null || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (range.collapsed) {
+        if (viewer.contains(range.startContainer)) pick(null);
+        return;
+      }
+      let from: number | null = null;
+      let to: number | null = null;
+      for (const row of viewer.querySelectorAll<HTMLTableRowElement>("tr[data-line]")) {
+        const own = document.createRange();
+        own.selectNodeContents(row);
+        // Touched with some of its text, not met at an edge: the selection
+        // starts before the row ends and ends after the row starts.
+        const touched =
+          range.compareBoundaryPoints(Range.END_TO_START, own) === -1 &&
+          range.compareBoundaryPoints(Range.START_TO_END, own) === 1;
+        if (!touched) continue;
+        const line = Number(row.dataset.line);
+        from = from === null ? line : Math.min(from, line);
+        to = to === null ? line : Math.max(to, line);
+      }
+      if (from !== null && to !== null) pick({ from, to });
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  });
 
   // Once the lines are there, bring the target into view. Bound to what is
   // rendered, so it runs again when the content arrives after the target.
@@ -64,7 +104,12 @@
     <table class="lines diff">
       <tbody>
         {#each diff!.lines as line, i (i)}
-          <tr class={line.kind} class:target={marked(line.new)}>
+          <tr
+            class={line.kind}
+            class:target={marked(line.new)}
+            class:picked={inPick(line.new)}
+            data-line={line.new ?? undefined}
+          >
             <td class="num">{line.old ?? ""}</td>
             <td class="num">{line.new ?? ""}</td>
             <td class="sign">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</td>
@@ -77,7 +122,7 @@
     <table class="lines">
       <tbody>
         {#each content!.lines as line, i (i)}
-          <tr class:target={marked(i + 1)}>
+          <tr class:target={marked(i + 1)} class:picked={inPick(i + 1)} data-line={i + 1}>
             <td class="num">{i + 1}</td>
             <td class="text">{line}</td>
           </tr>
@@ -145,6 +190,12 @@
     background: var(--accent-soft);
   }
 
+  /* The lines the user selected, kept marked after the selection itself
+     has gone with the keyboard. */
+  tr.picked td {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
   .note {
     margin: 0;
     padding: 8px 12px;
@@ -179,6 +230,7 @@
     width: 1%;
     text-align: right;
     color: var(--ink-3);
+    -webkit-user-select: none;
     user-select: none;
     font-variant-numeric: tabular-nums;
   }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { currentSelection } from "$lib/selection.svelte";
-import { clear, files } from "$lib/files.svelte";
+import { clear, files, pick } from "$lib/files.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 vi.mock("$lib/core", () => ({
@@ -63,6 +63,23 @@ describe("what is on record", () => {
       to: null,
     });
     files.target = { path: "src/a.rs", line: 0, note: "The rename." };
+    expect(currentSelection()?.selection).toMatchObject({
+      from: null,
+      to: null,
+    });
+  });
+
+  it("prefers the lines the user selected to the ones pointed at", () => {
+    files.selected = "src/a.rs";
+    files.target = { path: "src/a.rs", line: 3, to: 5, note: "Here." };
+    pick({ from: 12, to: 8 });
+    expect(currentSelection()?.selection).toMatchObject({ from: 8, to: 12 });
+    pick(null);
+    expect(currentSelection()?.selection).toMatchObject({ from: 3, to: 5 });
+    // A pick belongs to its file: choosing another drops it.
+    pick({ from: 1, to: 1 });
+    files.selected = "src/b.rs";
+    expect(files.picked?.path).toBe("src/a.rs");
     expect(currentSelection()?.selection).toMatchObject({
       from: null,
       to: null,

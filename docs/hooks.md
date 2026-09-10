@@ -84,8 +84,10 @@ taken yet.
 
 The fourth tool, `selection`, runs the other way: the agent asks what the
 user is looking at, and is told the file open in the viewer, whether as its
-diff or as it is, the lines highlighted in it, or what was presented, in
-words. "Explain this" then needs no path. The app keeps that on record on
+diff or as it is, the lines selected in it with the mouse or pointed at by
+a tool, or what was presented, in words. "Explain this" then needs no path,
+and lines selected in the viewer stay marked when the keyboard moves to the
+agent, so they are still the answer while the question is typed. The app keeps that on record on
 the project's machine, under the same directory as the request log, and
 clears it when nothing is open.
 
@@ -96,8 +98,10 @@ a watch the user asked for, which they start with Enter and keep. The
 agent is told to run its own commands itself. `notify` leaves one line
 under the session's name in the sessions pane and marks the row as wanting
 attention, for when the user is in another session: why the agent stopped,
-what it needs, what is done. Looking at the session clears it. The agent is
-told to use it once, when it stops, and not for progress.
+what it needs, what is done. The row has room for a few words on one line
+and cuts the rest off, which the agent is told. Looking at the session
+clears it. The agent is told to use it once, when it stops, and not for
+progress.
 
 ## Removing them
 

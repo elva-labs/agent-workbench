@@ -335,15 +335,19 @@
               class:permission={session.needs === "permission"}
               title={statusLabel(session)}
             ></span>
-            <span class="label" class:unread={session.unread}>{label(session)}</span>
+            <!-- The name, and under it what the agent left for the row, if
+                 anything: the rest of the row centres on the two. -->
+            <span class="text">
+              <span class="label" class:unread={session.unread}>{label(session)}</span>
+              {#if session.note !== null}
+                <span class="note" title={session.note} data-testid="session-note">{session.note}</span>
+              {/if}
+            </span>
             {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
             <!-- The dot says what the agent is doing; the words are for a
                  screen reader and for anything reading the row's text. -->
             <span class="state told">{statusLabel(session)}</span>
           </button>
-          {#if session.note !== null}
-            <p class="note" title={session.note} data-testid="session-note">{session.note}</p>
-          {/if}
           <!-- Over the row's end rather than beside it, so a name is never
                squeezed to make room for it. -->
           <span class="actions">
@@ -623,7 +627,7 @@
     flex: 1;
     min-width: 0;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 7px;
     text-align: left;
     padding: 4px var(--pane-pad);
@@ -694,12 +698,28 @@
 
   /* The name keeps a few characters whatever the state says; past that the
      state is what gives way. */
-  .label {
+  .text {
     flex: 1;
     min-width: 5ch;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .label,
+  .note {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* What the agent left for the row: a line under the name, in the same
+     hand, quieter. */
+  .note {
+    font-size: 10.5px;
+    line-height: 1.35;
+    color: var(--ink-3);
   }
 
   .state {
@@ -829,20 +849,6 @@
     font-weight: 500;
   }
 
-  /* What the agent left for the row: under the name, in from the dot,
-     two lines at most. */
-  .note {
-    margin: -2px 0 4px;
-    padding: 0 var(--pane-pad) 0 calc(var(--pane-pad) + 13px);
-    font-size: 11px;
-    line-height: 1.4;
-    color: var(--ink-2);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
 
   /* Asking: a hollow accent ring, whatever else the dot was. */
   .dot.permission {

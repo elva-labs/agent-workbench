@@ -73,6 +73,10 @@ export const files = $state({
     to?: number;
     note?: string | null;
   } | null,
+  /** The lines the user selected with the mouse in the viewer. Kept, and
+      drawn, after the keyboard has gone elsewhere, so what was pointed at
+      is still on screen when the agent is asked about it. */
+  picked: null as { path: string; from: number; to: number } | null,
 
   changed: [] as FileEntry[],
   everything: [] as FileEntry[],
@@ -379,6 +383,7 @@ async function loadSelected() {
 
 export async function select(path: string) {
   if (files.target !== null && files.target.path !== path) files.target = null;
+  if (files.picked !== null && files.picked.path !== path) files.picked = null;
   files.media = null;
   files.selected = path;
   reveal(path);
@@ -388,12 +393,27 @@ export async function select(path: string) {
 /** Nothing chosen: the tree shows no highlight and the viewer has nothing. */
 export function deselect() {
   files.target = null;
+  files.picked = null;
   files.media = null;
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;
   files.content = null;
   fileRead += 1;
+}
+
+/** The user selected lines of the open file with the mouse, or let the
+    selection go with a click in the viewer. */
+export function pick(range: { from: number; to: number } | null) {
+  if (files.selected === null || range === null) {
+    files.picked = null;
+    return;
+  }
+  files.picked = {
+    path: files.selected,
+    from: Math.min(range.from, range.to),
+    to: Math.max(range.from, range.to),
+  };
 }
 
 /** Shows what the agent presented in the viewer, in place of any file. */

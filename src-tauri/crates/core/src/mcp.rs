@@ -54,11 +54,11 @@ pub fn terminal_tool() -> Value {
 pub fn notify_tool() -> Value {
     json!({
         "name": "notify",
-        "description": "Leaves one line of text on this session's row in the user's sessions list, and marks the row as wanting attention. For when the user may be working in another session: why you stopped, what you need from them, what is done. One short sentence, at most once per turn, and only when you stop. Not for progress, and not when you are still working.",
+        "description": "Leaves a few words on this session's row in the user's sessions list, and marks the row as wanting attention. For when the user may be working in another session: why you stopped, what you need from them, what is done. The row has room for about forty characters on one line and cuts the rest off, so write it like a commit subject: 'Tests green, ready to merge', 'Need the API key'. At most once per turn, and only when you stop. Not for progress, and not when you are still working.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "One sentence, under 120 characters." }
+                "text": { "type": "string", "description": "A few words, under 60 characters; the row shows about forty." }
             },
             "required": ["text"]
         }
@@ -85,7 +85,7 @@ pub fn diff_tool() -> Value {
 pub fn selection_tool() -> Value {
     json!({
         "name": "selection",
-        "description": "Says what the user is looking at in Agent Workbench right now: the file open in the viewer, whether as its diff or as it is, the lines highlighted in it, or the images and documents presented to them. Call it when the user refers to this, here, that, or these lines without naming a file. It takes no arguments.",
+        "description": "Says what the user is looking at in Agent Workbench right now: the file open in the viewer, whether as its diff or as it is, the lines they selected in it or that were pointed at, or the images and documents presented to them. Call it when the user refers to this, here, that, or these lines without naming a file. It takes no arguments.",
         "inputSchema": { "type": "object", "properties": {} }
     })
 }
@@ -378,8 +378,9 @@ fn terminal_call(
     )
 }
 
-/// How much of a note the row shows: one line, so the rest is dropped.
-const NOTE_CAP: usize = 160;
+/// How much of a note is kept: the row shows one line and cuts the rest,
+/// so a long one is of no use past this.
+const NOTE_CAP: usize = 120;
 
 fn notify_call(
     home: &Path,

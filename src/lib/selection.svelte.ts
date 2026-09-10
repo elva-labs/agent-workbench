@@ -38,7 +38,22 @@ export function currentSelection(): {
   }
   if (files.selected === null) return { project, selection: null };
   const root = watchRoot() ?? project;
+  // What the user selected with the mouse, else what the agent pointed at.
+  const picked = files.picked?.path === files.selected ? files.picked : null;
   const target = files.target?.path === files.selected ? files.target : null;
+  if (picked !== null) {
+    return {
+      project,
+      selection: {
+        project: on,
+        file: `${pathOn(root).replace(/[\\/]+$/, "")}/${files.selected}`,
+        view: files.view === "diff" ? "diff" : "file",
+        from: picked.from,
+        to: picked.to,
+        media: null,
+      },
+    };
+  }
   const from = target !== null && target.line > 0 ? target.line : null;
   return {
     project,

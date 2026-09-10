@@ -406,6 +406,54 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("media-diagram")).toContainText("Start");
   });
 
+  // Lines selected with the mouse stay marked once the keyboard has gone to
+  // the agent, and are what the selection tool is told; a click in the
+  // viewer lets them go.
+  test("keeps the lines selected in the viewer marked, and on record, after focus leaves", async ({
+    page,
+  }) => {
+    await page.getByTestId("file-tree").getByText("mod.rs").click();
+    const row = (line: number) =>
+      page.locator(`[data-testid='viewer'] tr[data-line='${line}'] td.text`);
+    await expect(row(6)).toBeVisible();
+    const start = (await row(1).boundingBox())!;
+    const end = (await row(6).boundingBox())!;
+    await page.mouse.move(start.x + 4, start.y + start.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(end.x + end.width - 4, end.y + end.height / 2, {
+      steps: 6,
+    });
+    await page.mouse.up();
+    // The numbers are not part of what was selected.
+    expect(
+      await page.evaluate(() => document.getSelection()?.toString() ?? ""),
+    ).not.toMatch(/^\s*1\b/);
+    await expect(page.locator("[data-testid='viewer'] tr.picked")).toHaveCount(
+      3,
+    );
+    const record = () =>
+      page.evaluate(
+        () => (window as unknown as { __selection: unknown }).__selection,
+      );
+    await expect.poll(record).toMatchObject({ selection: { from: 1, to: 6 } });
+
+    // To the agent, and the marks and the record stay.
+    await page.locator(AGENT).click();
+    await expect(page.locator("[data-testid='viewer'] tr.picked")).toHaveCount(
+      3,
+    );
+    await expect.poll(record).toMatchObject({ selection: { from: 1, to: 6 } });
+
+    // A click in the viewer lets the selection go.
+    await row(5).click();
+    await expect(page.locator("[data-testid='viewer'] tr.picked")).toHaveCount(
+      0,
+    );
+    await expect
+      .poll(record)
+      .toMatchObject({ selection: { from: null, to: null } });
+  });
+
   // The agent's diff tool: the file's diff opens with the note above it.
   test("opens a file's diff where the agent asked, with the note", async ({
     page,
