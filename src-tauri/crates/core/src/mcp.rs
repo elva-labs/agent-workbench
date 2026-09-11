@@ -2,20 +2,25 @@
 //! place in a file.
 //!
 //! `agent-workbench-remote mcp` speaks the Model Context Protocol over
-//! stdin and stdout, one JSON-RPC message a line, and offers one tool,
-//! `show`. A call appends a request to the log the core tails; the window
-//! does the rest. The server also hands the agent a few lines of
-//! instruction when it starts, so nothing needs writing into the user's
-//! own instruction files for the tool to be used at the right moment.
+//! stdin and stdout, one JSON-RPC message a line, and offers the app's
+//! own tools and the tools of the plugins running here. A call appends a
+//! request to the log the core tails; the window does the rest, or, for a
+//! plugin's tool, the plugin's process does, and the call waits here for
+//! the answer the core leaves it. The server also hands the agent a few
+//! lines of instruction when it starts, so nothing needs writing into the
+//! user's own instruction files for the tool to be used at the right
+//! moment.
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::plugins::{self, PublishedTool};
 use crate::show::{
-    self, DiffRequest, NotifyRequest, PresentRequest, Request, ShowRequest, TerminalRequest,
-    MEDIA_EXTENSIONS,
+    self, Answer, DiffRequest, NotifyRequest, PresentRequest, Request, ShowRequest,
+    TerminalRequest, ToolRequest, MEDIA_EXTENSIONS,
 };
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -23,7 +28,7 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 /// What the agent is told when it connects.
 pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress.";
 
-/// The tools as the agent sees them.
+/// The app's own tools, as the agent sees them.
 pub fn tools() -> Vec<Value> {
     vec![
         tool(),
@@ -33,6 +38,35 @@ pub fn tools() -> Vec<Value> {
         terminal_tool(),
         notify_tool(),
     ]
+}
+
+/// How long a plugin has to answer a call before the agent is told it did
+/// not. A call that is over is over: the answer is dropped if it lands.
+pub const ANSWER_WAIT: Duration = Duration::from_secs(60);
+
+/// How often the answer is looked for while the call waits.
+const POLL: Duration = Duration::from_millis(50);
+
+/// The tools of the plugins running here, as the core published them. No
+/// file means no plugin is running.
+fn plugin_tools(home: &Path) -> Vec<PublishedTool> {
+    std::fs::read_to_string(plugins::tools_path(home))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Every tool the agent may call: the app's own first, the plugins' after.
+fn all_tools(home: &Path) -> Vec<Value> {
+    let mut listed = tools();
+    for tool in plugin_tools(home) {
+        listed.push(json!({
+            "name": tool.name,
+            "description": tool.description,
+            "inputSchema": tool.input_schema,
+        }));
+    }
+    listed
 }
 
 /// The terminal tool as the agent sees it.
@@ -155,6 +189,17 @@ pub fn serve(home: &Path) {
 
 /// One message in, at most one out: a notification gets no answer.
 pub fn handle(home: &Path, cwd: &Path, session: Option<&str>, line: &str) -> Option<Value> {
+    handle_within(home, cwd, session, line, ANSWER_WAIT)
+}
+
+/// One message in, with how long a plugin's tool has to answer.
+pub fn handle_within(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    line: &str,
+    wait: Duration,
+) -> Option<Value> {
     // The directory as the window names it: a temporary directory's link
     // on macOS and a short name on Windows would not match the project.
     let cwd = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
@@ -179,8 +224,8 @@ pub fn handle(home: &Path, cwd: &Path, session: Option<&str>, line: &str) -> Opt
             "instructions": INSTRUCTIONS,
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools() })),
-        "tools/call" => call(home, cwd, session, &params),
+        "tools/list" => Ok(json!({ "tools": all_tools(home) })),
+        "tools/call" => call(home, cwd, session, &params, wait),
         _ => return Some(error(id, -32601, &format!("no such method: {method}"))),
     };
     Some(match result {
@@ -199,7 +244,13 @@ fn error(id: Value, code: i64, text: &str) -> Value {
 
 /// A tool call. A path is taken as the agent gave it, resolved against
 /// where the agent runs when relative.
-fn call(home: &Path, cwd: &Path, session: Option<&str>, params: &Value) -> Result<Value, String> {
+fn call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    params: &Value,
+    wait: Duration,
+) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
     match name {
@@ -209,7 +260,62 @@ fn call(home: &Path, cwd: &Path, session: Option<&str>, params: &Value) -> Resul
         "selection" => selection_call(home, cwd),
         "terminal" => terminal_call(home, cwd, session, &arguments),
         "notify" => notify_call(home, cwd, session, &arguments),
-        _ => Err(format!("no such tool: {name}")),
+        _ => plugin_call(home, cwd, session, name, &arguments, wait),
+    }
+}
+
+/// A plugin's tool: the call goes in the log for the core to hand to the
+/// plugin, and the answer comes back as a file named after the call.
+fn plugin_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    name: &str,
+    arguments: &Value,
+    wait: Duration,
+) -> Result<Value, String> {
+    let found = plugin_tools(home)
+        .into_iter()
+        .find(|tool| tool.name == name)
+        .ok_or_else(|| format!("no such tool: {name}"))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    show::append(
+        home,
+        &Request::Tool(ToolRequest {
+            id: id.clone(),
+            source: found.source,
+            plugin: found.plugin,
+            tool: found.tool,
+            arguments: arguments.clone(),
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
+    let Some(answer) = await_answer(home, &id, wait) else {
+        return Err(format!("the {name} tool did not answer within a minute"));
+    };
+    if let Some(error) = answer.error {
+        return Err(error);
+    }
+    Ok(json!({ "content": [{ "type": "text", "text": answer.content.unwrap_or_default() }] }))
+}
+
+/// Waits for the plugin's answer, and takes it away once it is read.
+fn await_answer(home: &Path, id: &str, wait: Duration) -> Option<Answer> {
+    let path = show::answer_path(home, id);
+    let until = Instant::now() + wait;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            let _ = std::fs::remove_file(&path);
+            return serde_json::from_str(&text).ok().or(Some(Answer {
+                content: None,
+                error: Some("the plugin answered with something unreadable".to_string()),
+            }));
+        }
+        if Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(POLL);
     }
 }
 
@@ -490,6 +596,149 @@ mod tests {
     fn first(home: &Path) -> Request {
         let text = std::fs::read_to_string(show::requests_path(home)).unwrap();
         show::classify(text.lines().next().unwrap()).unwrap()
+    }
+
+    /// One plugin tool published, as a running plugin's greeting leaves it.
+    fn publish_a_tool(home: &Path) {
+        let path = plugins::tools_path(home);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let tools = json!([{
+            "name": "github_pr",
+            "description": "The branch's pull request.",
+            "inputSchema": { "type": "object", "properties": { "state": { "type": "string" } } },
+            "source": "workbench-plugins-1",
+            "plugin": "github",
+            "tool": "pr",
+        }]);
+        std::fs::write(&path, serde_json::to_string(&tools).unwrap()).unwrap();
+    }
+
+    /// Answers the tool call as it lands, the way the core does once the
+    /// plugin has spoken.
+    fn answer_the_call(home: &Path, answer: Answer) {
+        let home = home.to_path_buf();
+        std::thread::spawn(move || {
+            for _ in 0..200 {
+                let text = std::fs::read_to_string(show::requests_path(&home)).unwrap_or_default();
+                let call = text
+                    .lines()
+                    .rev()
+                    .find_map(|line| match show::classify(line) {
+                        Some(Request::Tool(call)) => Some(call),
+                        _ => None,
+                    });
+                if let Some(call) = call {
+                    show::write_answer(&home, &call.id, &answer).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+    }
+
+    #[test]
+    fn lists_a_plugin_tool_after_the_app_s_own() {
+        let home = home("plugin-list");
+        let ask = |home: &Path| {
+            let listed = handle(
+                home,
+                Path::new("/p"),
+                None,
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            )
+            .unwrap();
+            listed["result"]["tools"].as_array().unwrap().clone()
+        };
+        assert_eq!(ask(&home).len(), 6);
+        publish_a_tool(&home);
+        let listed = ask(&home);
+        let names: Vec<&str> = listed
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "show",
+                "diff",
+                "present",
+                "selection",
+                "terminal",
+                "notify",
+                "github_pr"
+            ]
+        );
+        assert_eq!(listed[6]["description"], "The branch's pull request.");
+        assert_eq!(
+            listed[6]["inputSchema"]["properties"]["state"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn a_plugin_call_lands_in_the_log_and_answers_with_what_the_plugin_said() {
+        let home = home("plugin-call");
+        publish_a_tool(&home);
+        answer_the_call(
+            &home,
+            Answer {
+                content: Some("#42 Retry with jitter".into()),
+                error: None,
+            },
+        );
+        let answer = handle_within(&home, Path::new("/p"), Some("s-1"), r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"github_pr","arguments":{"state":"open"}}}"#, Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "#42 Retry with jitter"
+        );
+        assert!(answer["result"]["isError"].is_null());
+        let Request::Tool(call) = first(&home) else {
+            panic!("not a tool request");
+        };
+        assert!(!call.id.is_empty());
+        assert_eq!(call.source, "workbench-plugins-1");
+        assert_eq!(call.plugin, "github");
+        assert_eq!(call.tool, "pr");
+        assert_eq!(call.arguments["state"], "open");
+        assert_eq!(call.session.as_deref(), Some("s-1"));
+        // The answer is taken away once it has been read.
+        assert!(!show::answer_path(&home, &call.id).exists());
+    }
+
+    #[test]
+    fn a_plugin_s_error_comes_back_as_a_tool_error() {
+        let home = home("plugin-error");
+        publish_a_tool(&home);
+        answer_the_call(
+            &home,
+            Answer {
+                content: None,
+                error: Some("gh is not logged in".into()),
+            },
+        );
+        let answer = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"github_pr","arguments":{}}}"#, Duration::from_secs(10)).unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "gh is not logged in"
+        );
+    }
+
+    #[test]
+    fn a_plugin_that_does_not_answer_is_reported_to_the_agent() {
+        let home = home("plugin-silent");
+        publish_a_tool(&home);
+        let answer = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"github_pr","arguments":{}}}"#, Duration::from_millis(150)).unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "the github_pr tool did not answer within a minute"
+        );
+        let unknown = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"github_issues","arguments":{}}}"#, Duration::from_millis(150)).unwrap();
+        assert!(unknown["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no such tool"));
     }
 
     #[test]

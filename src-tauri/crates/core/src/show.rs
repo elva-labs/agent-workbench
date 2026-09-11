@@ -5,9 +5,12 @@
 //! and the core tails that log the way it tails the hooks' session log:
 //! one event to the window per line. For `show` the window opens the file
 //! in its viewer at the lines and shows the note; for `present` it opens
-//! the images in a modal and keeps them on the session's list. The log is
-//! the agent's word, quarantined like the session log: a line that does
-//! not parse is skipped.
+//! the images in a modal and keeps them on the session's list. A call on
+//! a plugin's tool goes down the same log and is the one kind the window
+//! has no part in: the core hands it to the plugin's process and leaves
+//! the plugin's answer in a file named after the call, where the tool
+//! server is waiting for it. The log is the agent's word, quarantined
+//! like the session log: a line that does not parse is skipped.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -124,8 +127,29 @@ pub struct NotifyRequest {
     pub session: Option<String>,
 }
 
+/// A call the agent made on a plugin's tool. The core hands it to the
+/// plugin's process and writes the answer where the tool server waits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolRequest {
+    /// What the answer file is named after, unique to this call.
+    pub id: String,
+    /// The source the plugin came from, and the plugin itself.
+    pub source: String,
+    pub plugin: String,
+    /// The tool as the plugin calls it, without the plugin's name.
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// Where the agent runs, which says which project the call is for.
+    #[serde(default)]
+    pub cwd: String,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// A line of the log, whichever tool wrote it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Request {
     Show(ShowRequest),
@@ -133,10 +157,60 @@ pub enum Request {
     Diff(DiffRequest),
     Terminal(TerminalRequest),
     Notify(NotifyRequest),
+    Tool(ToolRequest),
+}
+
+/// What a plugin answered a tool call with: the text for the agent, or
+/// why there is none.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Answer {
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 pub fn requests_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("requests.jsonl")
+}
+
+/// Where a call's answer is left for the tool server to pick up.
+pub fn answers_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("answers")
+}
+
+pub fn answer_path(home: &Path, id: &str) -> PathBuf {
+    answers_path(home).join(format!("{id}.json"))
+}
+
+/// An id names a file, so it holds the characters a uuid holds and no
+/// others: a plugin's word never reaches beyond the answers directory.
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Writes the answer to a call, for whoever is waiting on it. Written
+/// whole and moved into place, so the waiter reads an answer or nothing.
+pub fn write_answer(home: &Path, id: &str, answer: &Answer) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err(format!("{id:?} is not a call id"));
+    }
+    let path = answer_path(home, id);
+    let directory = answers_path(home);
+    std::fs::create_dir_all(&directory)
+        .map_err(|e| format!("could not create {}: {e}", directory.display()))?;
+    let text = serde_json::to_string(answer).map_err(|e| e.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text)
+        .map_err(|e| format!("could not write {}: {e}", temporary.display()))?;
+    std::fs::rename(&temporary, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&temporary);
+        format!("could not write {}: {e}", path.display())
+    })
 }
 
 /// One line of the log as a request, if it is one. A line without a kind
@@ -180,6 +254,16 @@ pub fn classify(line: &str) -> Option<Request> {
             }
             Some(Request::Notify(notify))
         }
+        Request::Tool(tool) => {
+            if !valid_id(&tool.id)
+                || tool.source.is_empty()
+                || tool.plugin.is_empty()
+                || tool.tool.is_empty()
+            {
+                return None;
+            }
+            Some(Request::Tool(tool))
+        }
     }
 }
 
@@ -199,9 +283,15 @@ pub fn append(home: &Path, request: &Request) -> Result<(), String> {
     writeln!(file, "{line}").map_err(|e| e.to_string())
 }
 
-/// Watches the request log for the life of the core.
-pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
-    activity::watch_log(sink, path, ROTATE_AT, |line| {
+/// Watches the request log for the life of the core. A tool call is the
+/// one kind the window has no part in: it goes to `on_tool`, which hands
+/// it to the plugin that owns the tool.
+pub fn watch(
+    sink: Arc<dyn Sink>,
+    path: PathBuf,
+    on_tool: impl Fn(ToolRequest) + Send + Sync + 'static,
+) -> Result<(), String> {
+    activity::watch_log(sink, path, ROTATE_AT, move |line| {
         classify(line).and_then(|request| match request {
             Request::Show(show) => serde_json::to_value(show)
                 .ok()
@@ -218,6 +308,10 @@ pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
             Request::Notify(notify) => serde_json::to_value(notify)
                 .ok()
                 .map(|value| (NOTIFY_REQUEST.to_string(), value)),
+            Request::Tool(tool) => {
+                on_tool(tool);
+                None
+            }
         })
     })
 }
@@ -265,9 +359,11 @@ mod tests {
     fn show(line: &str) -> Option<ShowRequest> {
         match classify(line)? {
             Request::Show(show) => Some(show),
-            Request::Present(_) | Request::Diff(_) | Request::Terminal(_) | Request::Notify(_) => {
-                None
-            }
+            Request::Present(_)
+            | Request::Diff(_)
+            | Request::Terminal(_)
+            | Request::Notify(_)
+            | Request::Tool(_) => None,
         }
     }
 
@@ -311,6 +407,45 @@ mod tests {
         assert_eq!(classify(lines.next().unwrap()).unwrap(), request);
         assert_eq!(classify(lines.next().unwrap()).unwrap(), media);
         assert!(classify(r#"{"kind":"present","files":[],"cwd":"/p"}"#).is_none());
+    }
+
+    #[test]
+    fn reads_a_tool_call_and_refuses_one_without_an_id() {
+        let line = r#"{"kind":"tool","id":"c-1","source":"src-1","plugin":"github","tool":"pr","arguments":{"state":"open"},"cwd":"/p","session":"s-1"}"#;
+        let Some(Request::Tool(request)) = classify(line) else {
+            panic!("not a tool request");
+        };
+        assert_eq!(request.id, "c-1");
+        assert_eq!(request.plugin, "github");
+        assert_eq!(request.tool, "pr");
+        assert_eq!(request.arguments["state"], "open");
+        assert_eq!(request.session.as_deref(), Some("s-1"));
+        assert!(classify(
+            r#"{"kind":"tool","id":"","source":"src-1","plugin":"github","tool":"pr","cwd":"/p"}"#
+        )
+        .is_none());
+        assert!(classify(
+            r#"{"kind":"tool","id":"../out","source":"src-1","plugin":"github","tool":"pr","cwd":"/p"}"#
+        )
+        .is_none());
+        assert!(classify(
+            r#"{"kind":"tool","id":"c-2","source":"src-1","plugin":"","tool":"pr","cwd":"/p"}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn writes_an_answer_where_the_tool_server_waits() {
+        let home = std::env::temp_dir().join("workbench-show-answer");
+        let _ = std::fs::remove_dir_all(&home);
+        let answer = Answer {
+            content: Some("pong".into()),
+            error: None,
+        };
+        write_answer(&home, "c-1", &answer).unwrap();
+        let text = std::fs::read_to_string(answer_path(&home, "c-1")).unwrap();
+        assert_eq!(serde_json::from_str::<Answer>(&text).unwrap(), answer);
+        assert!(write_answer(&home, "../escape", &answer).is_err());
     }
 
     #[test]

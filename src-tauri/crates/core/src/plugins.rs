@@ -9,6 +9,7 @@
 //! plugin that is, and tells the window as each changes state.
 
 use crate::events::Sink;
+use crate::show::{Answer, ToolRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -64,6 +65,33 @@ pub struct Hello {
     pub sections: Vec<serde_json::Value>,
     #[serde(default)]
     pub view: Option<serde_json::Value>,
+}
+
+/// A running plugin's tool, as the tool server offers it to the agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishedTool {
+    /// The plugin's name, an underscore and the tool's, so nothing
+    /// collides with the app's tools or another plugin's.
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    /// Where a call goes: the source, the plugin, and the tool as the
+    /// plugin calls it.
+    pub source: String,
+    pub plugin: String,
+    pub tool: String,
+}
+
+/// The file the running plugins' tools are listed in, which the tool
+/// server reads as the agent asks.
+pub fn tools_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("plugin-tools.json")
+}
+
+/// A schema for a tool that declared none: arguments of any shape.
+fn any_object() -> serde_json::Value {
+    serde_json::json!({ "type": "object", "properties": {} })
 }
 
 /// A plugin as the window lists it: the manifest's word plus what is on
@@ -139,6 +167,7 @@ struct Running {
 type Key = (String, String);
 
 struct Inner {
+    home: PathBuf,
     root: PathBuf,
     sink: Arc<dyn Sink>,
     stored: Mutex<Stored>,
@@ -357,6 +386,7 @@ impl Plugins {
             .unwrap_or_default();
         Self {
             inner: Arc::new(Inner {
+                home: home.to_path_buf(),
                 root,
                 sink,
                 stored: Mutex::new(stored),
@@ -411,6 +441,20 @@ impl Plugins {
         message: &serde_json::Value,
     ) -> Result<(), String> {
         self.inner.send(source_id, name, message)
+    }
+
+    /// Hands a tool call to the plugin that owns the tool. The answer
+    /// comes back on the plugin's output, and is written where the tool
+    /// server waits for it; a plugin that is not running is answered here
+    /// and now.
+    pub fn call(&self, request: ToolRequest) {
+        self.inner.call(request);
+    }
+
+    /// The tools of every plugin that is running, as the tool server
+    /// offers them.
+    pub fn tools(&self) -> Vec<PublishedTool> {
+        self.inner.tools()
     }
 }
 
@@ -789,7 +833,8 @@ impl Inner {
                 let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
                     continue;
                 };
-                if !greeted && message.get("type").and_then(|t| t.as_str()) == Some("hello") {
+                let kind = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                if kind == "hello" && !greeted {
                     greeted = true;
                     let hello: Option<Hello> = serde_json::from_value(message.clone()).ok();
                     {
@@ -801,7 +846,10 @@ impl Inner {
                             live.detail = None;
                         }
                     }
+                    plugins.publish();
                     plugins.tell(&source_id, &plugin, State::Running, None, hello);
+                } else if kind == "result" {
+                    plugins.answered(&message);
                 }
             }
             plugins.exited(&source_id, &plugin, greeted);
@@ -838,6 +886,7 @@ impl Inner {
             }
             out
         };
+        self.publish();
         if !still_on {
             self.tell(source_id, name, State::Off, None, None);
             return;
@@ -870,6 +919,7 @@ impl Inner {
             live.state = State::Off;
             Arc::clone(&live.stdin)
         };
+        self.publish();
         if let Ok(mut stdin) = stdin.lock() {
             let _ = writeln!(stdin, r#"{{"type":"stop"}}"#);
             let _ = stdin.flush();
@@ -892,6 +942,118 @@ impl Inner {
             let _ = live.child.kill();
             let _ = live.child.wait();
         }
+    }
+
+    /// The tools of the plugins that are running, in a fixed order so the
+    /// agent sees the same list twice running.
+    fn tools(&self) -> Vec<PublishedTool> {
+        let running = self.running.lock().expect("plugins lock");
+        let mut tools = Vec::new();
+        for ((source, plugin), live) in running.iter() {
+            if live.state != State::Running {
+                continue;
+            }
+            let Some(hello) = &live.hello else {
+                continue;
+            };
+            for declared in &hello.tools {
+                let Some(tool) = declared.get("name").and_then(|name| name.as_str()) else {
+                    continue;
+                };
+                if tool.is_empty() {
+                    continue;
+                }
+                tools.push(PublishedTool {
+                    name: format!("{plugin}_{tool}"),
+                    description: declared
+                        .get("description")
+                        .and_then(|text| text.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    input_schema: declared
+                        .get("inputSchema")
+                        .cloned()
+                        .unwrap_or_else(any_object),
+                    source: source.clone(),
+                    plugin: plugin.clone(),
+                    tool: tool.to_string(),
+                });
+            }
+        }
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        tools
+    }
+
+    /// Writes the tools out for the tool server, which reads the file as
+    /// the agent asks. Written whole and moved into place, so a reader
+    /// sees one list or the other and never half of one.
+    fn publish(&self) {
+        let Ok(text) = serde_json::to_string(&self.tools()) else {
+            return;
+        };
+        let path = tools_path(&self.home);
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        let temporary = path.with_extension("json.tmp");
+        if std::fs::write(&temporary, text).is_err() {
+            return;
+        }
+        if std::fs::rename(&temporary, &path).is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+    }
+
+    fn call(&self, request: ToolRequest) {
+        let message = serde_json::json!({
+            "type": "tool",
+            "id": request.id,
+            "name": request.tool,
+            "arguments": request.arguments,
+            "project": request.cwd,
+            "session": request.session,
+        });
+        if let Err(error) = self.send(&request.source, &request.plugin, &message) {
+            let _ = crate::show::write_answer(
+                &self.home,
+                &request.id,
+                &Answer {
+                    content: None,
+                    error: Some(error),
+                },
+            );
+        }
+    }
+
+    /// A plugin's answer to a call, written where the tool server waits.
+    fn answered(&self, message: &serde_json::Value) {
+        let Some(id) = message.get("id").and_then(|id| id.as_str()) else {
+            return;
+        };
+        // Content of any shape reaches the agent as text: a string as it
+        // is, anything else as the JSON the plugin wrote.
+        let text = |value: &serde_json::Value| match value.as_str() {
+            Some(text) => text.to_string(),
+            None => serde_json::to_string(value).unwrap_or_default(),
+        };
+        let content = match message.get("content") {
+            Some(content) if !content.is_null() => text(content),
+            _ => String::new(),
+        };
+        let answer = match message.get("error") {
+            Some(error) if !error.is_null() => Answer {
+                content: None,
+                error: Some(text(error)),
+            },
+            _ => Answer {
+                content: Some(content),
+                error: None,
+            },
+        };
+        let _ = crate::show::write_answer(&self.home, id, &answer);
     }
 
     fn send(&self, source_id: &str, name: &str, message: &serde_json::Value) -> Result<(), String> {
@@ -1050,6 +1212,101 @@ tools = ["ping"]
         again.remove(&added.id).unwrap();
         assert!(again.list().is_empty());
         assert!(Plugins::new(&home, recorder).list().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publishes_a_running_plugin_s_tools_and_carries_a_call_to_it() {
+        let home = std::env::temp_dir().join("workbench-plugins-tools-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "echo"
+path = "github"
+description = "Says hello."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+tools = ["ping"]
+"#,
+            "tools",
+        );
+        std::fs::write(
+            dir.join("github/main.sh"),
+            r#"#!/bin/sh
+echo '{"type":"hello","name":"echo","version":"1.0.0","tools":[{"name":"ping","description":"Answers.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
+    *'"type":"tool"'*)
+      id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+      printf '{"type":"result","id":"%s","content":"pong"}\n' "$id"
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+        plugins.enable(&added.id, "echo", true).unwrap();
+
+        let published = || -> Vec<PublishedTool> {
+            let text = std::fs::read_to_string(tools_path(&home)).unwrap_or_default();
+            serde_json::from_str(&text).unwrap_or_default()
+        };
+        let mut listed = Vec::new();
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(100));
+            listed = published();
+            if !listed.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(listed.len(), 1, "{:?}", plugins.list());
+        assert_eq!(listed[0].name, "echo_ping");
+        assert_eq!(listed[0].description, "Answers.");
+        assert_eq!(
+            listed[0].input_schema["properties"]["text"]["type"],
+            "string"
+        );
+        assert_eq!(listed[0].source, added.id);
+        assert_eq!(listed[0].plugin, "echo");
+        assert_eq!(listed[0].tool, "ping");
+        assert_eq!(plugins.tools(), listed);
+
+        let call = |id: &str, plugin: &str| ToolRequest {
+            id: id.to_string(),
+            source: added.id.clone(),
+            plugin: plugin.to_string(),
+            tool: "ping".to_string(),
+            arguments: serde_json::json!({ "text": "hi" }),
+            cwd: "/p".to_string(),
+            session: Some("s-1".to_string()),
+        };
+        plugins.call(call("call-1", "echo"));
+        let answer = |id: &str| -> Option<Answer> {
+            for _ in 0..50 {
+                if let Ok(text) = std::fs::read_to_string(crate::show::answer_path(&home, id)) {
+                    return serde_json::from_str(&text).ok();
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            None
+        };
+        let answered = answer("call-1").expect("the plugin answered");
+        assert_eq!(answered.content.as_deref(), Some("pong"));
+        assert_eq!(answered.error, None);
+
+        // A plugin that is not running is answered at once.
+        plugins.call(call("call-2", "missing"));
+        let refused = answer("call-2").expect("an answer either way");
+        assert_eq!(refused.error.as_deref(), Some("the plugin is not running"));
+
+        // Off, and the tools go with it.
+        plugins.enable(&added.id, "echo", false).unwrap();
+        assert!(published().is_empty());
+        assert!(plugins.tools().is_empty());
     }
 
     #[test]

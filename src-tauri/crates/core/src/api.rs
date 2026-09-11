@@ -137,7 +137,18 @@ impl Core {
         match &self.home {
             Some(home) => {
                 activity::watch(Arc::clone(&self.sink), hook::activity_path(home))?;
-                crate::show::watch(Arc::clone(&self.sink), crate::show::requests_path(home))?;
+                // A tool call in the log belongs to a plugin, not to the
+                // window: it goes to the process that owns the tool.
+                let plugins = self.plugins.clone();
+                crate::show::watch(
+                    Arc::clone(&self.sink),
+                    crate::show::requests_path(home),
+                    move |request| {
+                        if let Some(plugins) = &plugins {
+                            plugins.call(request);
+                        }
+                    },
+                )?;
                 if let Some(plugins) = &self.plugins {
                     plugins.start_enabled();
                 }
