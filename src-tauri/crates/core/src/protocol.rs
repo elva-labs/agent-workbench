@@ -156,6 +156,11 @@ struct PluginEnableParams {
 }
 
 #[derive(Deserialize)]
+struct PluginProjectsParams {
+    paths: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct PluginActionParams {
     source: String,
     plugin: String,
@@ -361,6 +366,11 @@ pub fn dispatch(
             let p: PluginEnableParams = parse(params)?;
             value(core.plugin_enable(&p.id, &p.name, p.on)?)
         }
+        "plugin_projects" => {
+            let p: PluginProjectsParams = parse(params)?;
+            core.plugin_projects(p.paths)?;
+            Ok(Value::Null)
+        }
         "plugin_action" => {
             let p: PluginActionParams = parse(params)?;
             core.plugin_action(
@@ -474,6 +484,31 @@ mod tests {
         )
         .expect_err("an action needs every name");
         assert!(error.contains("bad parameters"), "{error}");
+    }
+
+    #[test]
+    fn takes_the_projects_open_on_the_machine() {
+        let core = core();
+        let error = dispatch(
+            &core,
+            "plugin_projects",
+            json!({ "paths": "/one" }),
+            no_output,
+        )
+        .expect_err("the projects are a list");
+        assert!(error.contains("bad parameters"), "{error}");
+        let sent = dispatch(
+            &core,
+            "plugin_projects",
+            json!({ "paths": ["/one", "/two"] }),
+            no_output,
+        );
+        // Without a home directory there is nowhere to keep plugins, and
+        // the core says so rather than taking the projects.
+        match core.home() {
+            Some(_) => assert_eq!(sent.unwrap(), Value::Null),
+            None => assert!(sent.is_err()),
+        }
     }
 
     #[test]

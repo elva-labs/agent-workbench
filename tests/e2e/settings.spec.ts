@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installFakeCore } from "./fake";
+import { PROJECT, installFakeCore } from "./fake";
 
 const MOD = "ControlOrMeta";
 const AGENT = "section[data-pane='agent']";
@@ -255,5 +255,20 @@ test.describe("plugins", () => {
 
     await page.getByTestId("plugin-remove").click();
     await expect(page.getByTestId("plugin-source")).toHaveCount(0);
+  });
+
+  // The projects open reach the core, so the plugins on the machine know
+  // which ones they serve.
+  test("tells the core which projects are open", async ({ page }) => {
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as { __pluginProjects?: string[][] }
+            ).__pluginProjects?.at(-1) ?? null,
+        ),
+      )
+      .toEqual([PROJECT]);
   });
 });

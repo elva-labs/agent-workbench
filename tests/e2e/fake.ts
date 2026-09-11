@@ -196,6 +196,12 @@ export async function installFakeCore(
           plugin.state = on ? "starting" : "off";
           return source;
         },
+        // Every set of open projects the window sent, for a test to read
+        // back.
+        pluginProjects: async (paths: string[]) => {
+          const w = window as unknown as { __pluginProjects?: string[][] };
+          (w.__pluginProjects ??= []).push(paths);
+        },
         onPluginState: async (handler: (event: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__pluginState =
             handler;

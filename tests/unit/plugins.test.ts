@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PluginInfo, PluginSource } from "$lib/core";
+import type { PluginInfo, PluginSource, ProjectInfo } from "$lib/core";
 import {
   addSource,
   checkSource,
   enablePlugin,
   loadPlugins,
   plugins,
+  projectsToSend,
   removeSource,
   resetPlugins,
   stateChanged,
@@ -108,6 +109,21 @@ describe("the sources", () => {
     await removeSource("src-1");
     expect(plugins.sources).toEqual([]);
     expect(calls).toEqual(["check:src-1", "update:src-1", "remove:src-1"]);
+  });
+});
+
+describe("the open projects", () => {
+  it("go to the core as the paths they are, host and all", () => {
+    const project = (path: string): ProjectInfo => ({
+      path,
+      name: path.split("/").pop()!,
+      repository: path,
+      isGit: true,
+    });
+    expect(projectsToSend([])).toEqual([]);
+    expect(
+      projectsToSend([project("/one"), project("ssh://lab/srv/two")]),
+    ).toEqual(["/one", "ssh://lab/srv/two"]);
   });
 });
 

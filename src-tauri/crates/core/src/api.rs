@@ -70,12 +70,52 @@ pub struct Core {
     plugins: Option<crate::plugins::Plugins>,
 }
 
+/// The sink the core hands to the ptys and the watcher: everything reaches
+/// the window as it would, and the three events the plugins follow reach
+/// them on the way past.
+struct Overheard {
+    inner: Arc<dyn Sink>,
+    plugins: crate::plugins::Plugins,
+}
+
+impl Sink for Overheard {
+    fn emit(&self, event: &str, payload: serde_json::Value) {
+        let text = |key: &str| payload.get(key).and_then(|value| value.as_str());
+        match event {
+            watch::GIT_CHANGED => {
+                if let Some(root) = payload.as_str() {
+                    self.plugins.tree_moved(root);
+                }
+            }
+            SESSION_IDENTIFIED => {
+                if let (Some(pty), Some(session)) = (text("ptyId"), text("sessionId")) {
+                    self.plugins.session_identified(pty, session);
+                }
+            }
+            pty::SESSION_ENDED => {
+                if let Some(id) = text("id") {
+                    self.plugins.session_ended(id);
+                }
+            }
+            _ => {}
+        }
+        self.inner.emit(event, payload);
+    }
+}
+
 impl Core {
     pub fn new(sink: Arc<dyn Sink>) -> Self {
         let home = home_directory();
         let plugins = home
             .as_deref()
             .map(|home| crate::plugins::Plugins::new(home, Arc::clone(&sink)));
+        let sink: Arc<dyn Sink> = match plugins.clone() {
+            Some(plugins) => Arc::new(Overheard {
+                inner: sink,
+                plugins,
+            }),
+            None => sink,
+        };
         Self {
             sessions: Arc::new(Sessions::default()),
             processes: crate::processes::Processes::default(),
@@ -124,6 +164,13 @@ impl Core {
         on: bool,
     ) -> Result<crate::plugins::SourceInfo, String> {
         self.plugins()?.enable(id, name, on)
+    }
+
+    /// The projects open on this machine, for the running plugins to be
+    /// told as the set changes.
+    pub fn plugin_projects(&self, paths: Vec<String>) -> Result<(), String> {
+        self.plugins()?.set_projects(paths);
+        Ok(())
     }
 
     /// Runs an action of a plugin's section, on a row or on the header.
@@ -205,6 +252,10 @@ impl Core {
     ) -> Result<Spawned, String> {
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let environment = env::environment();
+        // The project a session belongs to is the one that is open, which
+        // is what the plugins know it by, and not the worktree under it
+        // the agent may run in.
+        let opened = project.to_string_lossy().to_string();
         let project = cwd.unwrap_or(project);
 
         // A resumed session's id is known, and a fresh one's when the
@@ -235,6 +286,9 @@ impl Core {
             size(cols, rows),
             output,
         )?;
+        if let Some(plugins) = &self.plugins {
+            plugins.session_started(&pty_id, session_id.as_deref(), &opened);
+        }
         if session_id.is_none() {
             if let Some(home) = &self.home {
                 identify_later(

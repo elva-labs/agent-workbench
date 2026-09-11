@@ -221,6 +221,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         pluginEnable: async () => {
           throw new Error("no plugins here");
         },
+        pluginProjects: async () => {},
         onPluginState: async () => () => {},
         onPluginSection: async () => () => {},
         onPluginNotice: async () => () => {},

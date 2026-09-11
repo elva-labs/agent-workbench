@@ -10,7 +10,9 @@ import {
   type PluginInfo,
   type PluginSource,
   type PluginStateEvent,
+  type ProjectInfo,
 } from "$lib/core";
+import { workspace } from "$lib/workspace.svelte";
 
 export const plugins = $state({
   sources: [] as PluginSource[],
@@ -171,6 +173,28 @@ export function stateLabel(plugin: PluginInfo): string {
     default:
       return "off";
   }
+}
+
+/** The paths of the open projects, as the core is told them. */
+export function projectsToSend(open: ProjectInfo[]): string[] {
+  return open.map((project) => project.path);
+}
+
+/** Tells the core which projects are open whenever the set changes, so the
+    plugins on each machine know the projects there. Runs in an effect
+    root: call once, from the page. */
+export function watchPluginProjects() {
+  let sent: string | null = null;
+  $effect(() => {
+    const paths = projectsToSend(workspace.open);
+    const now = paths.join("\n");
+    if (now === sent) return;
+    sent = now;
+    // A machine that could not be told hears the next change.
+    void core()
+      .pluginProjects(paths)
+      .catch(() => {});
+  });
 }
 
 /** Checks the sources once a day while the app runs. Runs in an effect

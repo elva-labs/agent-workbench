@@ -180,6 +180,17 @@ impl Remotes {
         }
     }
 
+    /// The hosts with a live connection, for what every machine is told.
+    pub fn hosts(&self) -> Vec<String> {
+        self.connections
+            .lock()
+            .expect("connections lock")
+            .iter()
+            .filter(|(_, connection)| connection.is_alive())
+            .map(|(host, _)| host.clone())
+            .collect()
+    }
+
     /// Every live connection, for what has no path to route by.
     pub fn all(&self) -> Vec<Arc<Connection>> {
         self.connections

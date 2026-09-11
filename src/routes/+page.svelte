@@ -15,7 +15,11 @@
   import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
-  import { stateChanged as pluginStateChanged, watchPluginUpdates } from "$lib/plugins.svelte";
+  import {
+    stateChanged as pluginStateChanged,
+    watchPluginProjects,
+    watchPluginUpdates,
+  } from "$lib/plugins.svelte";
   import ActionInput from "$lib/components/ActionInput.svelte";
   import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
@@ -79,6 +83,9 @@
   watchSelection();
   watchProcesses();
   watchPluginUpdates();
+  // Which projects are open, told to the core of each machine they are on,
+  // so the plugins running there know them.
+  watchPluginProjects();
 
   // Every project opened is brought to the hooks answer, once.
   $effect(() => {

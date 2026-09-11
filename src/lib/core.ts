@@ -393,6 +393,9 @@ export interface Core {
   pluginCheck(id: string): Promise<string | null>;
   pluginUpdate(id: string): Promise<PluginSource>;
   pluginEnable(id: string, name: string, on: boolean): Promise<PluginSource>;
+  /** The projects open, each machine told the ones on it, so the plugins
+      running there know which projects they serve. */
+  pluginProjects(paths: string[]): Promise<void>;
   onPluginState(
     handler: (event: PluginStateEvent) => void,
   ): Promise<() => void>;
@@ -555,6 +558,7 @@ const tauriCore: Core = {
   pluginUpdate: (id) => invoke<PluginSource>("plugin_update", { id }),
   pluginEnable: (id, name, on) =>
     invoke<PluginSource>("plugin_enable", { id, name, on }),
+  pluginProjects: (paths) => invoke<void>("plugin_projects", { paths }),
   async onPluginState(handler) {
     return listen<PluginStateEvent>("plugin_state", (event) =>
       handler(event.payload),
@@ -721,6 +725,7 @@ const detachedCore: Core = {
   async pluginEnable() {
     throw new Error("no core");
   },
+  async pluginProjects() {},
   async onPluginState() {
     return () => {};
   },

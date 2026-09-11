@@ -13,6 +13,7 @@ mod menu;
 pub mod remote;
 pub mod ssh;
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -643,6 +644,42 @@ async fn plugin_enable(
     blocking(move || core.plugin_enable(&id, &name, on).and_then(value)).await
 }
 
+/// The projects open in the window, each machine told the ones on it: a
+/// plugin runs where its project is, so the paths are split by host and go
+/// on without it. A host whose last project closed is told so too.
+#[tauri::command]
+async fn plugin_projects(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        let mut here: Vec<String> = Vec::new();
+        let mut elsewhere: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for host in remotes.hosts() {
+            elsewhere.entry(host).or_default();
+        }
+        for path in paths {
+            match route(&path) {
+                Route::Local(path) => here.push(path),
+                Route::Remote { host, rest } => elsewhere.entry(host).or_default().push(rest),
+            }
+        }
+        core.plugin_projects(here)?;
+        for (host, paths) in elsewhere {
+            // Saying which projects are open is news, not a request: a
+            // machine that cannot be reached hears it the next time.
+            let _ = remotes.connection(&host).and_then(|connection| {
+                connection.call("plugin_projects", json!({ "paths": paths }))
+            });
+        }
+        Ok(())
+    })
+    .await
+}
+
 /// An action on a plugin's row or its section's header, run by the plugin
 /// where the project is.
 #[allow(clippy::too_many_arguments)]
@@ -823,6 +860,7 @@ pub fn run() {
             plugin_check,
             plugin_update,
             plugin_enable,
+            plugin_projects,
             plugin_action,
             remote_connect,
             remote_disconnect,

@@ -248,6 +248,13 @@ struct Running {
 
 type Key = (String, String);
 
+/// An agent's pty as the runtime follows it: the session it runs, known at
+/// the spawn or found afterwards, and the project it belongs to.
+struct Pty {
+    session: Option<String>,
+    project: String,
+}
+
 /// A source, a plugin, a section of that plugin, and the project the rows
 /// are for: what one set of rows is kept under.
 type SectionKey = (String, String, String, String);
@@ -266,6 +273,11 @@ struct Inner {
     /// The actions waiting for an answer, which tells an action's result
     /// from a tool call's.
     pending: Mutex<HashSet<String>>,
+    /// The projects open on this machine, as the window last said.
+    projects: Mutex<Vec<String>>,
+    /// The agents' ptys, by pty id, so a session that ends is named by the
+    /// session it ran. A shell has no entry.
+    ptys: Mutex<HashMap<String, Pty>>,
 }
 
 /// The sources and their processes. Shared with the threads that read a
@@ -509,6 +521,8 @@ impl Plugins {
                 newer: Mutex::new(HashMap::new()),
                 sections: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashSet::new()),
+                projects: Mutex::new(Vec::new()),
+                ptys: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -548,6 +562,34 @@ impl Plugins {
     /// Starts every plugin that is on: what a core does as it comes up.
     pub fn start_enabled(&self) {
         self.inner.start_enabled();
+    }
+
+    /// The projects open on this machine, replacing what was known. Every
+    /// running plugin hears about the ones opened and the ones closed.
+    pub fn set_projects(&self, paths: Vec<String>) {
+        self.inner.set_projects(paths);
+    }
+
+    /// The tree moved under a watched root: every open project the root is
+    /// in hears about it.
+    pub fn tree_moved(&self, root: &str) {
+        self.inner.tree_moved(root);
+    }
+
+    /// An agent's pty started in a project. The session is None for an
+    /// agent that mints its own id, which `session_identified` brings.
+    pub fn session_started(&self, pty_id: &str, session: Option<&str>, project: &str) {
+        self.inner.session_started(pty_id, session, project);
+    }
+
+    /// The id an agent minted for a session of its own, once it is known.
+    pub fn session_identified(&self, pty_id: &str, session: &str) {
+        self.inner.session_identified(pty_id, session);
+    }
+
+    /// A pty ended. One with no session on it, a shell's, says nothing.
+    pub fn session_ended(&self, pty_id: &str) {
+        self.inner.session_ended(pty_id);
     }
 
     /// Writes a line to a running plugin.
@@ -591,6 +633,16 @@ impl Plugins {
         self.inner
             .action(source_id, name, section, action, row, input, project)
     }
+}
+
+/// Whether a watched root is in a project, or is the project itself.
+fn inside(root: &str, project: &str) -> bool {
+    let root = root.trim_end_matches(['/', '\\']);
+    let project = project.trim_end_matches(['/', '\\']);
+    root == project
+        || root
+            .strip_prefix(project)
+            .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('\\'))
 }
 
 /// A field of an action's input, as far as the window needs it to be one.
@@ -1047,6 +1099,18 @@ impl Inner {
         };
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = child.stdout.take().expect("piped stdout");
+        // The greeting comes before anything else the plugin is told: the
+        // app's version and the projects open on this machine.
+        let projects = self.projects.lock().expect("plugins lock").clone();
+        let hello = serde_json::json!({
+            "type": "hello",
+            "app": env!("CARGO_PKG_VERSION"),
+            "projects": projects,
+        });
+        if let Ok(mut pipe) = stdin.lock() {
+            let _ = writeln!(pipe, "{hello}");
+            let _ = pipe.flush();
+        }
         {
             let mut running = self.running.lock().expect("plugins lock");
             running.insert(
@@ -1517,6 +1581,106 @@ impl Inner {
         Ok(())
     }
 
+    fn set_projects(&self, paths: Vec<String>) {
+        let changes: Vec<(&str, String)> = {
+            let mut projects = self.projects.lock().expect("plugins lock");
+            let mut changes = Vec::new();
+            for path in &paths {
+                if !projects.contains(path) {
+                    changes.push(("opened", path.clone()));
+                }
+            }
+            for path in projects.iter() {
+                if !paths.contains(path) {
+                    changes.push(("closed", path.clone()));
+                }
+            }
+            *projects = paths;
+            changes
+        };
+        for (event, path) in changes {
+            self.broadcast(&serde_json::json!({
+                "type": "project",
+                "event": event,
+                "path": path,
+            }));
+        }
+    }
+
+    fn tree_moved(&self, root: &str) {
+        let projects = self.projects.lock().expect("plugins lock").clone();
+        for project in projects.into_iter().filter(|project| inside(root, project)) {
+            self.broadcast(&serde_json::json!({ "type": "tree", "project": project }));
+        }
+    }
+
+    fn session_started(&self, pty_id: &str, session: Option<&str>, project: &str) {
+        self.ptys.lock().expect("plugins lock").insert(
+            pty_id.to_string(),
+            Pty {
+                session: session.map(str::to_string),
+                project: project.to_string(),
+            },
+        );
+        if let Some(session) = session {
+            self.session_line("started", session, project);
+        }
+    }
+
+    fn session_identified(&self, pty_id: &str, session: &str) {
+        let project = {
+            let mut ptys = self.ptys.lock().expect("plugins lock");
+            let Some(pty) = ptys.get_mut(pty_id) else {
+                return;
+            };
+            if pty.session.is_some() {
+                return;
+            }
+            pty.session = Some(session.to_string());
+            pty.project.clone()
+        };
+        self.session_line("started", session, &project);
+    }
+
+    fn session_ended(&self, pty_id: &str) {
+        let gone = self.ptys.lock().expect("plugins lock").remove(pty_id);
+        let Some(Pty {
+            session: Some(session),
+            project,
+        }) = gone
+        else {
+            return;
+        };
+        self.session_line("ended", &session, &project);
+    }
+
+    fn session_line(&self, event: &str, session: &str, project: &str) {
+        self.broadcast(&serde_json::json!({
+            "type": "session",
+            "event": event,
+            "id": session,
+            "project": project,
+        }));
+    }
+
+    /// Writes a line to every plugin whose process is up.
+    fn broadcast(&self, message: &serde_json::Value) {
+        let stdins: Vec<Arc<Mutex<ChildStdin>>> = {
+            let running = self.running.lock().expect("plugins lock");
+            running
+                .values()
+                .filter(|live| matches!(live.state, State::Starting | State::Running))
+                .map(|live| Arc::clone(&live.stdin))
+                .collect()
+        };
+        for stdin in stdins {
+            if let Ok(mut stdin) = stdin.lock() {
+                let _ = writeln!(stdin, "{message}");
+                let _ = stdin.flush();
+            }
+        }
+    }
+
     fn send(&self, source_id: &str, name: &str, message: &serde_json::Value) -> Result<(), String> {
         let stdin = {
             let running = self.running.lock().expect("plugins lock");
@@ -1567,6 +1731,17 @@ while IFS= read -r line; do
       id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
       printf '{"type":"result","id":"%s","error":"gh is not logged in"}\n' "$id"
       ;;
+  esac
+done
+"#;
+
+    /// A plugin that writes down every line it is told, and answers `stop`.
+    const RECORDS: &str = r#"#!/bin/sh
+echo '{"type":"hello","name":"ears","version":"1.0.0"}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> received.txt
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
   esac
 done
 "#;
@@ -2079,5 +2254,111 @@ sections = ["Pull request"]
             .unwrap_err();
         assert!(error.contains("no directory"), "{error}");
         assert_eq!(plugins.list().len(), 1);
+    }
+
+    #[test]
+    fn a_root_is_in_a_project_when_it_is_the_project_or_under_it() {
+        assert!(inside("/srv/orbit", "/srv/orbit"));
+        assert!(inside("/srv/orbit/", "/srv/orbit"));
+        assert!(inside("/srv/orbit/src/cache", "/srv/orbit"));
+        assert!(inside(r"C:\work\app\src", r"C:\work\app"));
+        assert!(!inside("/srv/orbit-api", "/srv/orbit"));
+        assert!(!inside("/srv", "/srv/orbit"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tells_a_plugin_the_app_the_projects_the_sessions_and_the_tree() {
+        let home = std::env::temp_dir().join("workbench-plugins-told-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "ears"
+path = "github"
+description = "Listens."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+"#,
+            "told",
+        );
+        std::fs::write(dir.join("github/main.sh"), RECORDS).unwrap();
+        let received = dir.join("github/received.txt");
+
+        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        plugins.set_projects(vec!["/one".to_string(), "/two".to_string()]);
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+        plugins.enable(&added.id, "ears", true).unwrap();
+
+        let told = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&received)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect()
+        };
+        // The plugin writes each line down on its own time.
+        let wait = |count: usize| -> Vec<serde_json::Value> {
+            for _ in 0..50 {
+                let lines = told();
+                if lines.len() >= count {
+                    return lines;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            told()
+        };
+
+        // The greeting comes first, with the app and the projects open.
+        let greeting = wait(1);
+        assert_eq!(greeting.len(), 1, "{greeting:?}");
+        assert_eq!(greeting[0]["type"], "hello");
+        assert_eq!(greeting[0]["app"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(greeting[0]["projects"][0], "/one");
+        assert_eq!(greeting[0]["projects"][1], "/two");
+
+        // One project opened, one closed, and nothing of the one that
+        // stayed open.
+        plugins.set_projects(vec!["/two".to_string(), "/three".to_string()]);
+        let projects = wait(3);
+        assert_eq!(projects.len(), 3, "{projects:?}");
+        assert_eq!(projects[1]["type"], "project");
+        assert_eq!(projects[1]["event"], "opened");
+        assert_eq!(projects[1]["path"], "/three");
+        assert_eq!(projects[2]["event"], "closed");
+        assert_eq!(projects[2]["path"], "/one");
+
+        // The tree moved under an open project, and then somewhere no
+        // project is.
+        plugins.tree_moved("/two/src");
+        plugins.tree_moved("/elsewhere");
+        let tree = wait(4);
+        assert_eq!(tree[3]["type"], "tree");
+        assert_eq!(tree[3]["project"], "/two");
+
+        // A session whose id is known at the spawn, one whose agent minted
+        // its own, and a shell, which is no session at all.
+        plugins.session_started("pty-1", Some("s-1"), "/two");
+        plugins.session_ended("pty-1");
+        plugins.session_started("pty-2", None, "/three");
+        plugins.session_identified("pty-2", "s-2");
+        plugins.session_ended("pty-3");
+        let sessions = wait(7);
+        // Seven lines in all: nothing was said of the tree outside the
+        // projects, of the pty that had no session, or of the project that
+        // stayed open.
+        assert_eq!(sessions.len(), 7, "{sessions:?}");
+        assert_eq!(sessions[4]["type"], "session");
+        assert_eq!(sessions[4]["event"], "started");
+        assert_eq!(sessions[4]["id"], "s-1");
+        assert_eq!(sessions[4]["project"], "/two");
+        assert_eq!(sessions[5]["event"], "ended");
+        assert_eq!(sessions[5]["id"], "s-1");
+        assert_eq!(sessions[5]["project"], "/two");
+        assert_eq!(sessions[6]["event"], "started");
+        assert_eq!(sessions[6]["id"], "s-2");
+        assert_eq!(sessions[6]["project"], "/three");
+
+        plugins.enable(&added.id, "ears", false).unwrap();
     }
 }
