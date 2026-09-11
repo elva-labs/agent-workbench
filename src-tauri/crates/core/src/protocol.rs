@@ -174,6 +174,15 @@ struct PluginActionParams {
 }
 
 #[derive(Deserialize)]
+struct PluginViewMessageParams {
+    source: String,
+    plugin: String,
+    project: String,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[derive(Deserialize)]
 struct AgentParams {
     id: String,
 }
@@ -384,6 +393,11 @@ pub fn dispatch(
             )?;
             Ok(Value::Null)
         }
+        "plugin_view_message" => {
+            let p: PluginViewMessageParams = parse(params)?;
+            core.plugin_view_message(&p.source, &p.plugin, &p.project, &p.payload)?;
+            Ok(Value::Null)
+        }
         "list_dirs" => {
             let p: DirsParams = parse(params)?;
             value(core.list_dirs(&p.path)?)
@@ -484,6 +498,30 @@ mod tests {
         )
         .expect_err("an action needs every name");
         assert!(error.contains("bad parameters"), "{error}");
+    }
+
+    #[test]
+    fn a_message_for_a_plugin_s_page_is_a_method_of_its_own() {
+        let core = core();
+        let error = dispatch(
+            &core,
+            "plugin_view_message",
+            json!({ "source": "s", "plugin": "p" }),
+            no_output,
+        )
+        .expect_err("a message names the project too");
+        assert!(error.contains("bad parameters"), "{error}");
+        let sent = dispatch(
+            &core,
+            "plugin_view_message",
+            json!({ "source": "s", "plugin": "p", "project": "/one", "payload": { "want": "rows" } }),
+            no_output,
+        )
+        .expect_err("no such plugin is running");
+        assert!(
+            sent.contains("not running") || sent.contains("no home directory"),
+            "{sent}"
+        );
     }
 
     #[test]

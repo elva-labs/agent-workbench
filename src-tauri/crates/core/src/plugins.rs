@@ -31,6 +31,12 @@ pub const PLUGIN_SECTION: &str = "plugin_section";
 /// The event an action's error is told by.
 pub const PLUGIN_NOTICE: &str = "plugin_notice";
 
+/// The event a plugin's page is told by, one project at a time.
+pub const PLUGIN_VIEW: &str = "plugin_view";
+
+/// The event a message for an open page is told by.
+pub const PLUGIN_VIEW_DATA: &str = "plugin_view_data";
+
 /// The manifest at a source's root.
 pub const MANIFEST: &str = "workbench-plugins.toml";
 
@@ -209,6 +215,30 @@ pub struct SectionEvent {
     pub actions: Vec<Action>,
 }
 
+/// A plugin's page for one project, as told to the window. No html and
+/// not open is the page gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ViewEvent {
+    pub source: String,
+    pub plugin: String,
+    pub project: String,
+    /// "wide" or "full", the room the manifest's view asks for.
+    pub width: String,
+    pub html: String,
+    /// Whether the window shows the page now.
+    pub open: bool,
+}
+
+/// A message from a plugin to its page, which is of use while the page is
+/// open and is kept nowhere.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ViewData {
+    pub source: String,
+    pub plugin: String,
+    pub project: String,
+    pub data: serde_json::Value,
+}
+
 /// What a plugin said went wrong with an action, for the window to show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Notice {
@@ -259,6 +289,10 @@ struct Pty {
 /// are for: what one set of rows is kept under.
 type SectionKey = (String, String, String, String);
 
+/// A source, a plugin, and the project a page is for: what one page is
+/// kept under.
+type ViewKey = (String, String, String);
+
 struct Inner {
     home: PathBuf,
     root: PathBuf,
@@ -270,6 +304,9 @@ struct Inner {
     /// The rows each section last sent, so what a plugin leaves behind can
     /// be taken off the tree when it goes.
     sections: Mutex<HashMap<SectionKey, SectionEvent>>,
+    /// The page each plugin last sent for a project, so what a plugin
+    /// leaves in the viewer can be taken out of it when it goes.
+    views: Mutex<HashMap<ViewKey, ViewEvent>>,
     /// The actions waiting for an answer, which tells an action's result
     /// from a tool call's.
     pending: Mutex<HashSet<String>>,
@@ -520,6 +557,7 @@ impl Plugins {
                 running: Mutex::new(HashMap::new()),
                 newer: Mutex::new(HashMap::new()),
                 sections: Mutex::new(HashMap::new()),
+                views: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashSet::new()),
                 projects: Mutex::new(Vec::new()),
                 ptys: Mutex::new(HashMap::new()),
@@ -633,6 +671,26 @@ impl Plugins {
         self.inner
             .action(source_id, name, section, action, row, input, project)
     }
+
+    /// Hands a plugin's page's message to the plugin and comes back at
+    /// once: whatever the plugin makes of it arrives as its own line.
+    pub fn view_message(
+        &self,
+        source_id: &str,
+        name: &str,
+        project: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.inner.send(
+            source_id,
+            name,
+            &serde_json::json!({
+                "type": "view_message",
+                "project": project,
+                "payload": payload,
+            }),
+        )
+    }
 }
 
 /// Whether a watched root is in a project, or is the project itself.
@@ -737,6 +795,23 @@ fn checked_section(
         rows,
         actions: checked_actions(message.get("actions")),
     })
+}
+
+/// A page of the plugin's own directory: the path stays under it, as a
+/// manifest's paths do, and a link out of it is no page of the plugin's
+/// either. None for anything else.
+fn page_path(dir: &Path, path: &str) -> Option<PathBuf> {
+    let relative = Path::new(path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    let file = dunce::canonicalize(dir.join(relative)).ok()?;
+    let root = dunce::canonicalize(dir).ok()?;
+    file.starts_with(&root).then_some(file)
 }
 
 impl Inner {
@@ -1197,6 +1272,7 @@ impl Inner {
         };
         self.publish();
         self.forget_sections(source_id, name);
+        self.forget_views(source_id, name);
         if !still_on {
             self.tell(source_id, name, State::Off, None, None);
             return;
@@ -1231,6 +1307,7 @@ impl Inner {
         };
         self.publish();
         self.forget_sections(source_id, name);
+        self.forget_views(source_id, name);
         if let Ok(mut stdin) = stdin.lock() {
             let _ = writeln!(stdin, r#"{{"type":"stop"}}"#);
             let _ = stdin.flush();
@@ -1405,8 +1482,132 @@ impl Inner {
                     .insert(key, section.clone());
                 self.tell_section(&section);
             }
+            "view" => self.viewed(source_id, name, message),
+            "view_data" => self.view_data(source_id, name, message),
             "open" | "diff" | "present" | "notify" => self.requested(kind, message),
             _ => {}
+        }
+    }
+
+    /// The room a plugin's view asks for and the directory its pages come
+    /// from, or None when the manifest declares no view.
+    fn declared_view(&self, source_id: &str, name: &str) -> Option<(PathBuf, String)> {
+        let source = self.stored_source(source_id).ok()?;
+        let dir = self.dir_of(&source);
+        let declared = read_manifest(&dir, &Self::vars())
+            .ok()?
+            .into_iter()
+            .find(|declared| declared.name == name)?;
+        let width = match declared.view.as_deref() {
+            Some("full") => "full",
+            Some(_) => "wide",
+            None => return None,
+        };
+        Some((dir.join(&declared.path), width.to_string()))
+    }
+
+    /// One `view` line from a plugin: the page for one project, inline or
+    /// from a file of the plugin's own directory. The latest page per
+    /// project is kept, so what the plugin leaves in the viewer goes with
+    /// it.
+    fn viewed(&self, source_id: &str, name: &str, message: &serde_json::Value) {
+        let text = |key: &str| {
+            message
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        };
+        let Some(project) = text("project") else {
+            return;
+        };
+        let Some((dir, width)) = self.declared_view(source_id, name) else {
+            return;
+        };
+        let html = match message.get("html").and_then(|value| value.as_str()) {
+            Some(html) => html.to_string(),
+            None => {
+                let Some(path) = text("path").and_then(|path| page_path(&dir, path)) else {
+                    return;
+                };
+                let Ok(html) = std::fs::read_to_string(path) else {
+                    return;
+                };
+                html
+            }
+        };
+        let view = ViewEvent {
+            source: source_id.to_string(),
+            plugin: name.to_string(),
+            project: project.to_string(),
+            width,
+            html,
+            open: message
+                .get("open")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+        };
+        let key: ViewKey = (
+            source_id.to_string(),
+            name.to_string(),
+            view.project.clone(),
+        );
+        self.views
+            .lock()
+            .expect("plugins lock")
+            .insert(key, view.clone());
+        crate::events::emit(&self.sink, PLUGIN_VIEW, &view);
+    }
+
+    /// One `view_data` line from a plugin: a message for the page it has
+    /// for a project, which is of use while the page is open and is kept
+    /// nowhere.
+    fn view_data(&self, source_id: &str, name: &str, message: &serde_json::Value) {
+        let project = message
+            .get("project")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .unwrap_or_default();
+        if project.is_empty() {
+            return;
+        }
+        crate::events::emit(
+            &self.sink,
+            PLUGIN_VIEW_DATA,
+            &ViewData {
+                source: source_id.to_string(),
+                plugin: name.to_string(),
+                project: project.to_string(),
+                data: message
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            },
+        );
+    }
+
+    /// The page a plugin left in the viewer goes with it: every project it
+    /// had one for is told of an empty page and forgotten.
+    fn forget_views(&self, source_id: &str, name: &str) {
+        let gone: Vec<ViewEvent> = {
+            let mut views = self.views.lock().expect("plugins lock");
+            let keys: Vec<ViewKey> = views
+                .keys()
+                .filter(|(source, plugin, _)| source == source_id && plugin == name)
+                .cloned()
+                .collect();
+            keys.iter().filter_map(|key| views.remove(key)).collect()
+        };
+        for view in gone {
+            crate::events::emit(
+                &self.sink,
+                PLUGIN_VIEW,
+                &ViewEvent {
+                    html: String::new(),
+                    open: false,
+                    ..view
+                },
+            );
         }
     }
 
@@ -1731,6 +1932,39 @@ while IFS= read -r line; do
       id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
       printf '{"type":"result","id":"%s","error":"gh is not logged in"}\n' "$id"
       ;;
+  esac
+done
+"#;
+
+    /// A plugin with a view: a page of its own, inline and from a file,
+    /// one from outside its directory, data for the page, and whatever the
+    /// page sends back.
+    const PAGES: &str = r#"#!/bin/sh
+echo '{"type":"hello","name":"pages","version":"1.0.0"}'
+echo '{"type":"view","project":"PROJECT","html":"<h1>Board</h1>","open":true}'
+echo '{"type":"view_data","project":"PROJECT","data":{"rows":2}}'
+echo '{"type":"view","project":"PROJECT","path":"view.html"}'
+echo '{"type":"view","project":"PROJECT","path":"../escape.html"}'
+echo '{"type":"view","project":"PROJECT","html":"<p>last</p>"}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
+    *'"type":"view_message"'*)
+      echo '{"type":"view_data","project":"PROJECT","data":{"got":"pong"}}'
+      ;;
+  esac
+done
+"#;
+
+    /// A plugin whose manifest declares no view, and which sends a page
+    /// anyway before saying something that is heard.
+    const UNSEEN: &str = r#"#!/bin/sh
+echo '{"type":"hello","name":"quiet","version":"1.0.0"}'
+echo '{"type":"view","project":"PROJECT","html":"<h1>Nothing</h1>","open":true}'
+echo '{"type":"notify","project":"PROJECT","text":"no view here"}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
   esac
 done
 "#;
@@ -2095,6 +2329,155 @@ sections = ["Pull request"]
         assert_eq!(gone["section"], "pull-request");
         assert_eq!(gone["project"], here);
         assert!(gone["actions"].as_array().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shows_a_plugin_s_page_and_carries_what_goes_either_way() {
+        let home = std::env::temp_dir().join("workbench-plugins-view-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "pages"
+path = "github"
+description = "A page."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+view = "full"
+
+[[plugin]]
+name = "quiet"
+path = "quiet"
+description = "No page."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+"#,
+            "view",
+        );
+        std::fs::create_dir_all(dir.join("quiet")).unwrap();
+        let project = dunce::canonicalize(&dir).unwrap();
+        let here = project.to_string_lossy().to_string();
+        std::fs::write(dir.join("github/main.sh"), PAGES.replace("PROJECT", &here)).unwrap();
+        std::fs::write(dir.join("quiet/main.sh"), UNSEEN.replace("PROJECT", &here)).unwrap();
+        std::fs::write(dir.join("github/view.html"), "<p>from disk</p>").unwrap();
+        std::fs::write(dir.join("escape.html"), "<p>escaped</p>").unwrap();
+
+        let recorder = Arc::new(Recorder::default());
+        let plugins = Plugins::new(&home, recorder.clone());
+        let added = plugins.add(&here, None).unwrap();
+        plugins.enable(&added.id, "pages", true).unwrap();
+        plugins.enable(&added.id, "quiet", true).unwrap();
+
+        let wait = |event: &'static str, ok: &dyn Fn(&serde_json::Value) -> bool| {
+            for _ in 0..50 {
+                let found = recorder
+                    .events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|(name, payload)| name == event && ok(payload))
+                    .map(|(_, payload)| payload.clone());
+                if let Some(payload) = found {
+                    return payload;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("nothing said {event}");
+        };
+        let pages = || -> Vec<serde_json::Value> {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, payload)| name == PLUGIN_VIEW && payload["plugin"] == "pages")
+                .map(|(_, payload)| payload.clone())
+                .collect()
+        };
+
+        // The page it sent as it came up, in the room its manifest asks
+        // for, and shown at once.
+        let first = wait(PLUGIN_VIEW, &|payload| payload["open"] == true);
+        assert_eq!(first["source"], added.id);
+        assert_eq!(first["plugin"], "pages");
+        assert_eq!(first["project"], here);
+        assert_eq!(first["width"], "full");
+        assert_eq!(first["html"], "<h1>Board</h1>");
+
+        // Data for the page, which is kept nowhere.
+        let data = wait(PLUGIN_VIEW_DATA, &|payload| {
+            !payload["data"]["rows"].is_null()
+        });
+        assert_eq!(data["source"], added.id);
+        assert_eq!(data["plugin"], "pages");
+        assert_eq!(data["project"], here);
+        assert_eq!(data["data"]["rows"], 2);
+
+        // The last page it sent, once the one from a file and the one from
+        // outside its directory have both been through.
+        let last = wait(PLUGIN_VIEW, &|payload| payload["html"] == "<p>last</p>");
+        assert_eq!(last["open"], false);
+        let sent = pages();
+        assert_eq!(
+            sent.len(),
+            3,
+            "the page outside the directory is no page: {sent:?}"
+        );
+        assert_eq!(sent[1]["html"], "<p>from disk</p>");
+        assert_eq!(sent[1]["width"], "full");
+        assert!(
+            !sent.iter().any(|page| page["html"] == "<p>escaped</p>"),
+            "{sent:?}"
+        );
+
+        // A plugin whose manifest declares no view has no page, whatever
+        // it sends; what it says otherwise is heard.
+        let notify = wait(NOTIFY_REQUEST, &|payload| payload["text"] == "no view here");
+        assert_eq!(notify["cwd"], here);
+        assert!(
+            !recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(name, payload)| name == PLUGIN_VIEW && payload["plugin"] == "quiet"),
+            "a plugin with no view in its manifest shows no page"
+        );
+
+        // A message from the page reaches the plugin, which answers the
+        // page.
+        plugins
+            .view_message(
+                &added.id,
+                "pages",
+                &here,
+                &serde_json::json!({ "want": "rows" }),
+            )
+            .unwrap();
+        let answer = wait(PLUGIN_VIEW_DATA, &|payload| {
+            payload["data"]["got"] == "pong"
+        });
+        assert_eq!(answer["plugin"], "pages");
+        let refused = plugins
+            .view_message(&added.id, "missing", &here, &serde_json::json!({}))
+            .unwrap_err();
+        assert_eq!(refused, "the plugin is not running");
+
+        // Off, and the page it left goes with it.
+        plugins.enable(&added.id, "pages", false).unwrap();
+        let gone = wait(PLUGIN_VIEW, &|payload| payload["html"] == "");
+        assert_eq!(gone["plugin"], "pages");
+        assert_eq!(gone["project"], here);
+        assert_eq!(gone["width"], "full");
+        assert_eq!(gone["open"], false);
+        // Nothing is left to say a second time.
+        let count = pages().len();
+        plugins.enable(&added.id, "pages", false).unwrap();
+        assert_eq!(pages().len(), count);
+
+        plugins.enable(&added.id, "quiet", false).unwrap();
     }
 
     #[test]

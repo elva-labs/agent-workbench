@@ -57,6 +57,61 @@ async function pushSection(
   );
 }
 
+/** A page as a plugin sends one, for the project the fixture opens. */
+async function pushView(
+  page: Page,
+  sent: { html: string; width?: "wide" | "full"; open?: boolean },
+) {
+  await page.evaluate(
+    ({ project, sent }) =>
+      (
+        window as unknown as { __pluginView: (event: unknown) => void }
+      ).__pluginView({
+        source: "src-1",
+        plugin: "github",
+        project,
+        width: sent.width ?? "wide",
+        html: sent.html,
+        open: sent.open ?? false,
+      }),
+    { project: PROJECT, sent },
+  );
+}
+
+/** A message a plugin sends its page. */
+async function pushViewData(page: Page, data: unknown) {
+  await page.evaluate(
+    ({ project, data }) =>
+      (
+        window as unknown as { __pluginViewData: (event: unknown) => void }
+      ).__pluginViewData({ source: "src-1", plugin: "github", project, data }),
+    { project: PROJECT, data },
+  );
+}
+
+/** Every message the fake core took from a plugin's page. */
+function messagesSent(page: Page) {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __pluginViewMessages?: unknown[] })
+        .__pluginViewMessages ?? [],
+  );
+}
+
+/** A page that reaches past its plugin: a place for the viewer, a line for
+    the agent. */
+const REACHING =
+  "<button id='place' onclick=\"window.workbench.open('src/lib.rs',2,3,'look here')\">place</button>" +
+  "<button id='ask' onclick=\"window.workbench.agent('run the tests')\">ask</button>";
+
+/** A page that talks to its plugin as it loads, and shows what comes back. */
+const PAGE =
+  "<h1 id='branch'>The branch</h1><p id='said'>nothing yet</p>" +
+  "<script>window.workbench.send({hello:1});" +
+  "window.workbench.onData(function(d){" +
+  "document.getElementById('said').textContent='checks: '+d.checks})" +
+  "</script>";
+
 /** Every action the fake core was asked for, as action and row. */
 function actionsTaken(page: Page) {
   return page.evaluate(
@@ -931,6 +986,105 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("plugin-notice")).toContainText(
       "the plugin is not running",
     );
+  });
+
+  // A plugin's page, opened from its section's header, and the bridge either
+  // way: what the page sends reaches the plugin, what the plugin sends
+  // reaches the page.
+  test("opens a plugin's page and carries messages both ways", async ({
+    page,
+  }) => {
+    await pushSection(page, { rows: CHECKS });
+    await pushView(page, { html: PAGE });
+    await page.getByTestId("plugin-view-open").click();
+
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "plugin",
+    );
+    await expect(page.getByTestId("plugin-view-name")).toHaveText("github");
+    const frame = page.getByTestId("plugin-page");
+    await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+    const inner = page.frameLocator("[data-testid='plugin-page']");
+    await expect(inner.locator("#branch")).toHaveText("The branch");
+
+    await expect
+      .poll(() => messagesSent(page))
+      .toEqual([
+        {
+          source: "src-1",
+          plugin: "github",
+          project: PROJECT,
+          payload: { hello: 1 },
+        },
+      ]);
+
+    await pushViewData(page, { checks: 2 });
+    await expect(inner.locator("#said")).toHaveText("checks: 2");
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("viewer")).toHaveCount(0);
+  });
+
+  // Wide is the viewer as a file opens it, beside the tree; full is the
+  // whole pane, the tree away while the page shows.
+  test("gives the whole pane to a page that asked for it", async ({ page }) => {
+    await pushView(page, { html: PAGE, open: true });
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "plugin",
+    );
+    await expect(page.locator(TREE)).toHaveCount(1);
+
+    await pushView(page, { html: PAGE, width: "full", open: true });
+    await expect(page.locator(TREE)).toHaveCount(0);
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.locator(TREE)).toHaveCount(1);
+  });
+
+  // The rest of the bridge: the page asks for a place in a file, which the
+  // viewer takes over from it, and for a line at the agent's prompt, typed
+  // and not sent.
+  test("opens a place and types for the agent from a plugin's page", async ({
+    page,
+  }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await pushView(page, { html: REACHING, open: true });
+    const inner = page.frameLocator("[data-testid='plugin-page']");
+
+    await inner.locator("#ask").click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __written?: [string, string][] })
+              .__written ?? [],
+        ),
+      )
+      .toContainEqual([expect.stringMatching(/^pty-/), "run the tests"]);
+
+    await inner.locator("#place").click();
+    await expect(page.getByTestId("viewer")).toHaveAttribute(
+      "data-view",
+      "content",
+    );
+    await expect(page.getByTestId("viewer-note")).toHaveText("look here");
+    await expect(page.getByTestId("plugin-page")).toHaveCount(0);
+  });
+
+  test("lets a plugin's page go when the plugin stops", async ({ page }) => {
+    await pushSection(page, { rows: CHECKS });
+    await pushView(page, { html: PAGE, open: true });
+    await expect(page.getByTestId("plugin-page")).toBeVisible();
+
+    await pushView(page, { html: "" });
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("viewer")).toHaveCount(0);
+    await expect(page.getByTestId("plugin-view-open")).toHaveCount(0);
   });
 
   test("resizes the media section by its divider and keeps the size", async ({

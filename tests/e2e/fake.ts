@@ -217,6 +217,20 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        onPluginView: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginView = handler;
+          return () => {};
+        },
+        onPluginViewData: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginViewData =
+            handler;
+          return () => {};
+        },
+        // Every message a plugin's page sent, for a test to read back.
+        pluginViewMessage: async (request: unknown) => {
+          const w = window as unknown as { __pluginViewMessages?: unknown[] };
+          (w.__pluginViewMessages ??= []).push(request);
+        },
         // Every action taken, for a test to read back. "explode" is the one
         // a plugin is never running for.
         pluginAction: async (request: { action: string }) => {

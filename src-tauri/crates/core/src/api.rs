@@ -191,6 +191,20 @@ impl Core {
             .action(source, plugin, section, action, row, input, project)
     }
 
+    /// A message from a plugin's page to the plugin. It comes back as soon
+    /// as the plugin has the line: an answer, if there is one, arrives as
+    /// the plugin's own event.
+    pub fn plugin_view_message(
+        &self,
+        source: &str,
+        plugin: &str,
+        project: &str,
+        payload: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.plugins()?
+            .view_message(source, plugin, project, payload)
+    }
+
     pub fn home(&self) -> Option<&Path> {
         self.home.as_deref()
     }

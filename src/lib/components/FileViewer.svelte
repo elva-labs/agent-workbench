@@ -1,5 +1,6 @@
 <script lang="ts">
   import MediaStack from "$lib/components/MediaStack.svelte";
+  import PluginView from "$lib/components/PluginView.svelte";
   import { closeViewer, effectiveView, files, pick, selectedEntry } from "$lib/files.svelte";
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
@@ -77,8 +78,18 @@
   });
 </script>
 
-<div class="viewer" data-testid="viewer" data-view={files.media !== null ? "media" : view} bind:this={viewer}>
-  {#if files.media !== null}
+<div
+  class="viewer"
+  data-testid="viewer"
+  data-view={files.pluginView !== null ? "plugin" : files.media !== null ? "media" : view}
+  bind:this={viewer}
+>
+  {#if files.pluginView !== null}
+    <div class="bar">
+      <span class="path" title={files.pluginView.plugin} data-testid="plugin-view-name">{files.pluginView.plugin}</span>
+      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
+    </div>
+  {:else if files.media !== null}
     <div class="bar">
       <span class="path" title={files.media.files.join("\n")} data-testid="media-caption"
         >{files.media.caption ?? `${files.media.files.length} ${files.media.files.length === 1 ? "file" : "files"}`}</span
@@ -94,7 +105,9 @@
   {#if target?.note}
     <p class="note" data-testid="viewer-note">{target.note}</p>
   {/if}
-  {#if files.media !== null}
+  {#if files.pluginView !== null}
+    <PluginView page={files.pluginView} />
+  {:else if files.media !== null}
     <MediaStack item={files.media} />
   {:else if entry === null}
     <p class="empty">Pick a file to read it.</p>

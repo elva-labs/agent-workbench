@@ -22,6 +22,7 @@
   } from "$lib/plugins.svelte";
   import ActionInput from "$lib/components/ActionInput.svelte";
   import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
+  import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -130,6 +131,12 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginNotice((event) => pluginNoticed(event))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginView((event) => pluginViewChanged(event))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginViewData((event) => pluginViewData(event))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

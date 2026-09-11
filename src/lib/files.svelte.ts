@@ -49,6 +49,16 @@ export const files = $state({
   /** What the agent presented, when the viewer holds that rather than a
       file: every file of one call, down the viewer. */
   media: null as MediaItem | null,
+  /** A plugin's own page, when the viewer holds that: the page as the
+      plugin last sent it, and how much room it asks for. */
+  pluginView: null as {
+    key: string;
+    source: string;
+    plugin: string;
+    project: string;
+    width: "wide" | "full";
+    html: string;
+  } | null,
 
   /**
    * The search field. In files mode the query narrows the tree to paths
@@ -385,6 +395,7 @@ export async function select(path: string) {
   if (files.target !== null && files.target.path !== path) files.target = null;
   if (files.picked !== null && files.picked.path !== path) files.picked = null;
   files.media = null;
+  files.pluginView = null;
   files.selected = path;
   reveal(path);
   await loadSelected();
@@ -395,6 +406,7 @@ export function deselect() {
   files.target = null;
   files.picked = null;
   files.media = null;
+  files.pluginView = null;
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;
@@ -420,6 +432,13 @@ export function pick(range: { from: number; to: number } | null) {
 export function showMedia(item: MediaItem) {
   deselect();
   files.media = item;
+  enterReview();
+}
+
+/** Shows a plugin's page in the viewer, in place of any file. */
+export function showPluginView(page: NonNullable<typeof files.pluginView>) {
+  deselect();
+  files.pluginView = page;
   enterReview();
 }
 
@@ -514,6 +533,7 @@ export function clear() {
   files.hitsTruncated = false;
   files.searching = false;
   files.target = null;
+  files.pluginView = null;
   files.expanded.clear();
   files.collapsed.clear();
 }

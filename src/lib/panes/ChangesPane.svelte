@@ -36,6 +36,7 @@
     run as runAction,
     type PluginSection,
   } from "$lib/pluginSections.svelte";
+  import { open as openPluginView, viewOf as pluginViewOf } from "$lib/pluginView.svelte";
   import type { PluginAction, PluginRow } from "$lib/core";
   import { lastSegment } from "$lib/paths";
   import { ago } from "$lib/sessions.svelte";
@@ -44,6 +45,9 @@
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
+  /** A page that asked for the whole pane has it: the tree stands down
+      while it shows, and comes back with its folds and its selection. */
+  let fullView = $derived(files.pluginView?.width === "full");
   let diffable = $derived(canDiff(selectedEntry()));
   let root = $derived(watchRoot());
   let worktree = $derived(followedWorktree());
@@ -426,229 +430,243 @@
   <!-- The tree is the same component in both shapes. Working, it has the pane
        to itself; reviewing, it becomes the left column and keeps its scroll
        position, its open folders and its selection. -->
-  <div class="split" class:reviewing style:--tree-w="{layout.tree}px">
+  <div class="split" class:reviewing class:full={fullView} style:--tree-w="{layout.tree}px">
     <!-- The tree's column: the tree, and beneath it what the agent
          presented for the session on screen, a section of its own with a
          divider to drag, folded to its header when asked. -->
-    <div class="column" bind:clientHeight={columnHeight}>
-      <div class="tree-slot">
-        {#if searchingLines()}
-          <SearchResults onOpen={openHit} />
-        {:else}
-          <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
-        {/if}
-      </div>
-      {#if anyOpen}
-        <Splitter
-          label="Resize the sections under the tree"
-          orientation="horizontal"
-          onDelta={resizeMedia}
-          onReset={resetMedia}
-          onCommit={saveLayout}
-        />
-      {/if}
-      <!-- The rows here are the tree's cursor's to walk, so a click keeps
-           the keyboard on the tree rather than moving it to the row, and
-           Tab does not stop on each of them. Two sections share the
-           height when both are open. -->
-      <div
-        class="sections"
-        class:open={anyOpen}
-        class:keyed={layout.focus === "changes"}
-        style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
-        data-testid="sections"
-      >
-        {#if presented.length > 0}
-          <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
-            <button
-              id={FOLD_ID}
-              class="fold"
-              class:cursor={cursorId === FOLD_ID}
-              tabindex="-1"
-              onpointerdown={(e) => e.preventDefault()}
-              onclick={() => {
-                sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
-                toggleMedia();
-              }}
-              aria-expanded={layout.mediaOpen}
-              data-testid="media-fold"
-            >
-              <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
-              Media ({presented.length})
-            </button>
-            {#if layout.mediaOpen}
-              <ul class="rows">
-                {#each presented as item (item.id)}
-                  <li>
-                    <button
-                      id={rowIdOf(item.id)}
-                      class="media-row"
-                      class:on={files.media?.id === item.id}
-                      class:cursor={cursorId === rowIdOf(item.id)}
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => {
-                        sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
-                        openItem(item);
-                      }}
-                      title={item.files.join("\n")}
-                      data-testid="media-item"
-                    >
-                      <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
-                      <span class="media-meta"
-                        >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
-                      >
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </section>
-        {/if}
-        <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
-          <button
-            id={PROCESSES_FOLD_ID}
-            class="fold"
-            class:cursor={cursorId === PROCESSES_FOLD_ID}
-            tabindex="-1"
-            onpointerdown={(e) => e.preventDefault()}
-            onclick={() => {
-              sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
-              toggleProcesses();
-            }}
-            aria-expanded={layout.processesOpen}
-            data-testid="processes-fold"
-          >
-            <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
-            Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
-          </button>
-          {#if layout.processesOpen}
-            {#if processes.rows.length === 0}
-              <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
-            {:else}
-              <ul class="rows">
-                {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
-                  <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
-                    <button
-                      class="media-row"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
-                      title={row.command}
-                    >
-                      <span class="media-caption">{row.command || row.name}</span>
-                      <span class="media-meta"
-                        >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
-                      >
-                    </button>
-                    <button
-                      class="stop"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => void stopProcess(row)}
-                      aria-label="Stop {row.name}"
-                      title="Stop"
-                      data-testid="process-stop">×</button
-                    >
-                  </li>
-                {/each}
-              </ul>
-            {/if}
+    {#if !fullView}
+      <div class="column" bind:clientHeight={columnHeight}>
+        <div class="tree-slot">
+          {#if searchingLines()}
+            <SearchResults onOpen={openHit} />
+          {:else}
+            <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
           {/if}
-        </section>
-        <!-- A plugin's section: the same shape, with the rows and the
-             actions the plugin sent for the project on screen. -->
-        {#each pluginList as section (section.key)}
-          {@const open = sectionOpen(section.key)}
-          {@const notice = noticeOf(section)}
-          <section class="section" class:open data-section={section.key} data-testid="plugin-section">
-            <div class="section-head">
+        </div>
+        {#if anyOpen}
+          <Splitter
+            label="Resize the sections under the tree"
+            orientation="horizontal"
+            onDelta={resizeMedia}
+            onReset={resetMedia}
+            onCommit={saveLayout}
+          />
+        {/if}
+        <!-- The rows here are the tree's cursor's to walk, so a click keeps
+             the keyboard on the tree rather than moving it to the row, and
+             Tab does not stop on each of them. Two sections share the
+             height when both are open. -->
+        <div
+          class="sections"
+          class:open={anyOpen}
+          class:keyed={layout.focus === "changes"}
+          style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
+          data-testid="sections"
+        >
+          {#if presented.length > 0}
+            <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
               <button
-                id={pluginFoldId(section.key)}
+                id={FOLD_ID}
                 class="fold"
-                class:cursor={cursorId === pluginFoldId(section.key)}
+                class:cursor={cursorId === FOLD_ID}
                 tabindex="-1"
                 onpointerdown={(e) => e.preventDefault()}
                 onclick={() => {
-                  sectionCursor = sectionEntries.findIndex(
-                    (entry) => entry.kind === "plugin-head" && entry.key === section.key,
-                  );
-                  toggleSection(section.key);
+                  sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
+                  toggleMedia();
                 }}
-                aria-expanded={open}
-                data-testid="plugin-fold"
+                aria-expanded={layout.mediaOpen}
+                data-testid="media-fold"
               >
-                <span class="chevron">{open ? "▾" : "▸"}</span>
-                {section.title}{section.rows.length > 0 ? ` (${section.rows.length})` : ""}
+                <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
+                Media ({presented.length})
               </button>
-              <span class="head-actions">
-                {#each section.actions as action (action.id)}
-                  <button
-                    class="head-action"
-                    tabindex="-1"
-                    onpointerdown={(e) => e.preventDefault()}
-                    onclick={() => act(section, action, null)}
-                    data-action={action.id}
-                    data-testid="plugin-section-action">{action.label}</button
-                  >
-                {/each}
-              </span>
-            </div>
-            {#if notice !== null}
-              <p class="section-notice" data-testid="plugin-notice">{notice}</p>
-            {/if}
-            {#if open}
-              <ul class="rows">
-                {#each section.rows as row (row.id)}
-                  <li
-                    id={pluginRowId(section.key, row)}
-                    class="plugin"
-                    class:cursor={cursorId === pluginRowId(section.key, row)}
-                    data-row={row.id}
-                    data-testid="plugin-row"
-                  >
-                    <button
-                      class="media-row"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => {
-                        sectionCursor = sectionEntries.findIndex(
-                          (entry) => entry.id === pluginRowId(section.key, row),
-                        );
-                        runDefault(section, row);
-                      }}
-                      title={row.detail ?? row.label}
-                    >
-                      <span class="row-line">
-                        <span class="dot" data-state={row.state ?? "none"}></span>
-                        <span class="media-caption">{row.label}</span>
-                      </span>
-                      {#if row.detail !== null}
-                        <span class="media-meta">{row.detail}</span>
-                      {/if}
-                    </button>
-                    <span class="row-actions">
-                      {#each row.actions ?? [] as action (action.id)}
-                        <button
-                          class="row-action"
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => act(section, action, row.id)}
-                          data-action={action.id}
-                          data-testid="plugin-row-action">{action.label}</button
+              {#if layout.mediaOpen}
+                <ul class="rows">
+                  {#each presented as item (item.id)}
+                    <li>
+                      <button
+                        id={rowIdOf(item.id)}
+                        class="media-row"
+                        class:on={files.media?.id === item.id}
+                        class:cursor={cursorId === rowIdOf(item.id)}
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => {
+                          sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
+                          openItem(item);
+                        }}
+                        title={item.files.join("\n")}
+                        data-testid="media-item"
+                      >
+                        <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
+                        <span class="media-meta"
+                          >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
                         >
-                      {/each}
-                    </span>
-                  </li>
-                {/each}
-              </ul>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/if}
+          <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
+            <button
+              id={PROCESSES_FOLD_ID}
+              class="fold"
+              class:cursor={cursorId === PROCESSES_FOLD_ID}
+              tabindex="-1"
+              onpointerdown={(e) => e.preventDefault()}
+              onclick={() => {
+                sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
+                toggleProcesses();
+              }}
+              aria-expanded={layout.processesOpen}
+              data-testid="processes-fold"
+            >
+              <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
+              Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
+            </button>
+            {#if layout.processesOpen}
+              {#if processes.rows.length === 0}
+                <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
+              {:else}
+                <ul class="rows">
+                  {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
+                    <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
+                      <button
+                        class="media-row"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
+                        title={row.command}
+                      >
+                        <span class="media-caption">{row.command || row.name}</span>
+                        <span class="media-meta"
+                          >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
+                        >
+                      </button>
+                      <button
+                        class="stop"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => void stopProcess(row)}
+                        aria-label="Stop {row.name}"
+                        title="Stop"
+                        data-testid="process-stop">×</button
+                      >
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             {/if}
           </section>
-        {/each}
+          <!-- A plugin's section: the same shape, with the rows and the
+               actions the plugin sent for the project on screen. -->
+          {#each pluginList as section (section.key)}
+            {@const open = sectionOpen(section.key)}
+            {@const notice = noticeOf(section)}
+            {@const page = pluginViewOf(`${section.source}/${section.plugin}`)}
+            <section class="section" class:open data-section={section.key} data-testid="plugin-section">
+              <div class="section-head">
+                <button
+                  id={pluginFoldId(section.key)}
+                  class="fold"
+                  class:cursor={cursorId === pluginFoldId(section.key)}
+                  tabindex="-1"
+                  onpointerdown={(e) => e.preventDefault()}
+                  onclick={() => {
+                    sectionCursor = sectionEntries.findIndex(
+                      (entry) => entry.kind === "plugin-head" && entry.key === section.key,
+                    );
+                    toggleSection(section.key);
+                  }}
+                  aria-expanded={open}
+                  data-testid="plugin-fold"
+                >
+                  <span class="chevron">{open ? "▾" : "▸"}</span>
+                  {section.title}{section.rows.length > 0 ? ` (${section.rows.length})` : ""}
+                </button>
+                <span class="head-actions">
+                  {#if page !== null}
+                    <button
+                      class="head-action"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => openPluginView(page.key, page.project)}
+                      data-testid="plugin-view-open">View</button
+                    >
+                  {/if}
+                  {#each section.actions as action (action.id)}
+                    <button
+                      class="head-action"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => act(section, action, null)}
+                      data-action={action.id}
+                      data-testid="plugin-section-action">{action.label}</button
+                    >
+                  {/each}
+                </span>
+              </div>
+              {#if notice !== null}
+                <p class="section-notice" data-testid="plugin-notice">{notice}</p>
+              {/if}
+              {#if open}
+                <ul class="rows">
+                  {#each section.rows as row (row.id)}
+                    <li
+                      id={pluginRowId(section.key, row)}
+                      class="plugin"
+                      class:cursor={cursorId === pluginRowId(section.key, row)}
+                      data-row={row.id}
+                      data-testid="plugin-row"
+                    >
+                      <button
+                        class="media-row"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => {
+                          sectionCursor = sectionEntries.findIndex(
+                            (entry) => entry.id === pluginRowId(section.key, row),
+                          );
+                          runDefault(section, row);
+                        }}
+                        title={row.detail ?? row.label}
+                      >
+                        <span class="row-line">
+                          <span class="dot" data-state={row.state ?? "none"}></span>
+                          <span class="media-caption">{row.label}</span>
+                        </span>
+                        {#if row.detail !== null}
+                          <span class="media-meta">{row.detail}</span>
+                        {/if}
+                      </button>
+                      <span class="row-actions">
+                        {#each row.actions ?? [] as action (action.id)}
+                          <button
+                            class="row-action"
+                            tabindex="-1"
+                            onpointerdown={(e) => e.preventDefault()}
+                            onclick={() => act(section, action, row.id)}
+                            data-action={action.id}
+                            data-testid="plugin-row-action">{action.label}</button
+                          >
+                        {/each}
+                      </span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/each}
+        </div>
       </div>
-    </div>
+    {/if}
     {#if reviewing}
-      <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
+      {#if !fullView}
+        <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
+      {/if}
       <FileViewer />
     {/if}
   </div>
@@ -1103,5 +1121,10 @@
 
   .split.reviewing {
     grid-template-columns: var(--tree-w) var(--splitter-w) 1fr;
+  }
+
+  /* A page that asked for the whole pane: the viewer is the only column. */
+  .split.full {
+    grid-template-columns: 1fr;
   }
 </style>

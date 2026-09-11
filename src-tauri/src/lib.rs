@@ -716,6 +716,31 @@ async fn plugin_action(
     .await
 }
 
+/// A message from a plugin's page to the plugin, which runs where the
+/// project is.
+#[tauri::command]
+async fn plugin_view_message(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    source: String,
+    plugin: String,
+    project: String,
+    payload: Value,
+) -> Result<Value, String> {
+    let (s, p, d) = (source.clone(), plugin.clone(), payload.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "plugin_view_message",
+        move |rest| {
+            json!({ "source": source, "plugin": plugin, "project": rest, "payload": payload })
+        },
+        move |core, project| core.plugin_view_message(&s, &p, project, &d),
+    )
+    .await
+}
+
 /// Opens the connection to a host, or says why it cannot.
 #[tauri::command]
 async fn remote_connect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<Value, String> {
@@ -862,6 +887,7 @@ pub fn run() {
             plugin_enable,
             plugin_projects,
             plugin_action,
+            plugin_view_message,
             remote_connect,
             remote_disconnect,
             remote_dirs,

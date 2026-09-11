@@ -102,7 +102,9 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
             }
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
-        workbench_core::plugins::PLUGIN_SECTION => {
+        workbench_core::plugins::PLUGIN_SECTION
+        | workbench_core::plugins::PLUGIN_VIEW
+        | workbench_core::plugins::PLUGIN_VIEW_DATA => {
             put_back(&mut payload, "project", |path| with_host(host, path));
         }
         _ => {}
@@ -443,6 +445,39 @@ mod tests {
         assert_eq!(section["project"], "ssh://lab/srv/api");
         assert_eq!(section["section"], "pull-request");
         assert_eq!(section["rows"][0]["id"], "lint");
+    }
+
+    #[test]
+    fn a_plugin_s_page_and_its_data_come_home_the_same_way() {
+        let view = homeward(
+            "lab",
+            workbench_core::plugins::PLUGIN_VIEW,
+            json!({
+                "source": "src-1",
+                "plugin": "graph",
+                "project": "/srv/api",
+                "width": "full",
+                "html": "<h1>Graph</h1>",
+                "open": true
+            }),
+        );
+        assert_eq!(view["project"], "ssh://lab/srv/api");
+        assert_eq!(view["width"], "full");
+        assert_eq!(view["html"], "<h1>Graph</h1>");
+        assert_eq!(view["open"], true);
+
+        let data = homeward(
+            "lab",
+            workbench_core::plugins::PLUGIN_VIEW_DATA,
+            json!({
+                "source": "src-1",
+                "plugin": "graph",
+                "project": "/srv/api",
+                "data": { "rows": 2 }
+            }),
+        );
+        assert_eq!(data["project"], "ssh://lab/srv/api");
+        assert_eq!(data["data"]["rows"], 2);
     }
 
     #[test]

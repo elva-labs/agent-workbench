@@ -193,6 +193,34 @@ export interface PluginActionRequest {
   project: string;
 }
 
+/** A plugin's own page for a project, as the changes pane's viewer shows
+    it. The width says how much room it wants; no html at all means the
+    page is gone, and `open` means show it now. */
+export interface PluginViewEvent {
+  source: string;
+  plugin: string;
+  project: string;
+  width: "wide" | "full";
+  html: string;
+  open: boolean;
+}
+
+/** A message from a plugin for its page, while the page is open. */
+export interface PluginViewDataEvent {
+  source: string;
+  plugin: string;
+  project: string;
+  data: unknown;
+}
+
+/** A message from a plugin's page for the plugin. */
+export interface PluginViewMessageRequest {
+  source: string;
+  plugin: string;
+  project: string;
+  payload: unknown;
+}
+
 /** A process running under a session's or a shell's own. */
 export interface Process {
   pid: number;
@@ -410,6 +438,14 @@ export interface Core {
   /** Takes an action on a section's header or row. Rejects with the reason
       when the plugin is not running. */
   pluginAction(request: PluginActionRequest): Promise<void>;
+  /** A plugin's page for a project, new or gone. */
+  onPluginView(handler: (event: PluginViewEvent) => void): Promise<() => void>;
+  /** A message from a plugin for its open page. */
+  onPluginViewData(
+    handler: (event: PluginViewDataEvent) => void,
+  ): Promise<() => void>;
+  /** Carries a message from a plugin's page to the plugin. */
+  pluginViewMessage(request: PluginViewMessageRequest): Promise<void>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
   /** An agent that mints its own ids has written one down for a session. */
   onSessionIdentified(
@@ -575,6 +611,18 @@ const tauriCore: Core = {
     );
   },
   pluginAction: (request) => invoke<void>("plugin_action", { ...request }),
+  async onPluginView(handler) {
+    return listen<PluginViewEvent>("plugin_view", (event) =>
+      handler(event.payload),
+    );
+  },
+  async onPluginViewData(handler) {
+    return listen<PluginViewDataEvent>("plugin_view_data", (event) =>
+      handler(event.payload),
+    );
+  },
+  pluginViewMessage: (request) =>
+    invoke<void>("plugin_view_message", { ...request }),
 
   async onSessionEnded(handler) {
     return listen<SessionEnded>("session_ended", (event) =>
@@ -736,6 +784,15 @@ const detachedCore: Core = {
     return () => {};
   },
   async pluginAction() {
+    throw new Error("no core");
+  },
+  async onPluginView() {
+    return () => {};
+  },
+  async onPluginViewData() {
+    return () => {};
+  },
+  async pluginViewMessage() {
     throw new Error("no core");
   },
   async ptyCwd() {
