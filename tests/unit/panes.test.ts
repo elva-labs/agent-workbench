@@ -9,7 +9,13 @@ import {
 } from "@testing-library/svelte";
 import SessionsPane from "$lib/panes/SessionsPane.svelte";
 import ChangesPane from "$lib/panes/ChangesPane.svelte";
-import { DEFAULT, focusPane, layout, returnFocus, togglePane } from "$lib/layout.svelte";
+import {
+  DEFAULT,
+  focusPane,
+  layout,
+  returnFocus,
+  togglePane,
+} from "$lib/layout.svelte";
 import { files, refresh, clear as clearFiles } from "$lib/files.svelte";
 
 /** Stands in for git. Reassigned per test rather than mocked per call. */
@@ -989,12 +995,17 @@ describe("tree keyboard navigation", () => {
     expect(cursorName()).toBe("src");
   });
 
+  // The column runs on past the last file into the sections' headers, and
+  // stops there rather than wrapping.
   it("stops at the ends rather than wrapping", async () => {
     await renderChanges();
     await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(cursorName()).toBe("src");
     await fireEvent.keyDown(tree(), { key: "End" });
+    expect(tree().getAttribute("aria-activedescendant")).toBe("processes-fold");
     await fireEvent.keyDown(tree(), { key: "ArrowDown" });
+    expect(tree().getAttribute("aria-activedescendant")).toBe("processes-fold");
+    await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(cursorName()).toBe("token_cache.rs");
   });
 
@@ -1015,6 +1026,7 @@ describe("tree keyboard navigation", () => {
   it("climbs to the parent with left from a file", async () => {
     await renderChanges();
     await fireEvent.keyDown(tree(), { key: "End" });
+    await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(cursorName()).toBe("token_cache.rs");
     await fireEvent.keyDown(tree(), { key: "ArrowLeft" });
     expect(cursorName()).toBe("src");

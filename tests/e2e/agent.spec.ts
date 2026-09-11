@@ -207,6 +207,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           fake.killed.push(id);
         },
         ptyCwd: async () => fake.cwd,
+        ptyProcesses: async () => [],
+        stopProcess: async () => {},
         onSessionEnded: async (handler: (ended: unknown) => void) => {
           fake.enders.push(handler);
           return () => {};

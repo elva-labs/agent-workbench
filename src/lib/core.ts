@@ -90,6 +90,20 @@ export interface NotifyRequest {
   session: string | null;
 }
 
+/** A process running under a session's or a shell's own. */
+export interface Process {
+  pid: number;
+  parent: number;
+  name: string;
+  command: string;
+  /** Share of one CPU, in percent, since the reading before. */
+  cpu: number;
+  /** Resident memory, in bytes. */
+  memory: number;
+  /** When it started, in seconds since the epoch. */
+  started: number;
+}
+
 /** What the user is looking at, as put on record for the agent's tools.
     Paths are as the project's machine sees them. */
 export interface Selection {
@@ -265,6 +279,9 @@ export interface Core {
   kill(id: string): Promise<void>;
   /** Where the process is working now. Null when the OS will not say. */
   ptyCwd(id: string): Promise<string | null>;
+  /** What runs under a pty's process, the process itself left out. */
+  ptyProcesses(id: string): Promise<Process[]>;
+  stopProcess(id: string, pid: number): Promise<void>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
   /** An agent that mints its own ids has written one down for a session. */
   onSessionIdentified(
@@ -403,6 +420,8 @@ const tauriCore: Core = {
   resize: (id, cols, rows) => invoke("pty_resize", { id, cols, rows }),
   kill: (id) => invoke("pty_kill", { id }),
   ptyCwd: (id) => invoke<string | null>("pty_cwd", { id }),
+  ptyProcesses: (id) => invoke<Process[]>("pty_processes", { id }),
+  stopProcess: (id, pid) => invoke<void>("pty_stop_process", { id, pid }),
 
   async onSessionEnded(handler) {
     return listen<SessionEnded>("session_ended", (event) =>
@@ -533,6 +552,10 @@ const detachedCore: Core = {
   async write() {},
   async resize() {},
   async kill() {},
+  async ptyProcesses() {
+    return [];
+  },
+  async stopProcess() {},
   async ptyCwd() {
     return null;
   },

@@ -28,6 +28,7 @@
   import { core } from "$lib/core";
   import { isInstalled } from "$lib/hook.svelte";
   import { listed as presentedFor, openItem } from "$lib/media.svelte";
+  import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
   import { lastSegment } from "$lib/paths";
   import { ago } from "$lib/sessions.svelte";
   import { activeProject, followedWorktree, watchRoot, workspace } from "$lib/workspace.svelte";
@@ -46,40 +47,72 @@
   /** The tree's column, for turning a drag into a share of it. */
   let columnHeight = $state(0);
 
-  /** The media section's rows as the tree's cursor sees them: the header
-      first, then each call while the section is open. */
-  let mediaCursor = $state(-1);
+  /** The sections' rows as the tree's cursor sees them: each section's
+      header, then its rows while it is open, media first, processes after. */
+  let sectionCursor = $state(-1);
   const FOLD_ID = "media-fold";
+  const PROCESSES_FOLD_ID = "processes-fold";
   const rowIdOf = (id: string) => `media-${id}`;
-  let beyond: Beyond | undefined = $derived(
-    presented.length === 0
-      ? undefined
-      : {
-          ids: [FOLD_ID, ...(layout.mediaOpen ? presented.map((item) => rowIdOf(item.id)) : [])],
-          cursor: mediaCursor,
-          onCursor: (index) => (mediaCursor = index),
-          activate: (index) => {
-            if (index === 0) toggleMedia();
-            else openItem(presented[index - 1]);
-          },
-          fold: (index, open) => {
-            if (open === layout.mediaOpen) return;
-            layout.mediaOpen = open;
-            saveLayout();
-            // Folding from a call leaves the cursor on the header.
-            if (!open && index > 0) mediaCursor = 0;
-          },
-        },
-  );
+  const processRowId = (row: ProcessRow) => `process-${row.pid}`;
+  type Entry =
+    | { id: string; kind: "media-head" }
+    | { id: string; kind: "media"; index: number }
+    | { id: string; kind: "processes-head" }
+    | { id: string; kind: "process"; index: number };
+  let sectionEntries: Entry[] = $derived.by(() => {
+    const list: Entry[] = [];
+    if (presented.length > 0) {
+      list.push({ id: FOLD_ID, kind: "media-head" });
+      if (layout.mediaOpen) {
+        presented.forEach((item, index) => list.push({ id: rowIdOf(item.id), kind: "media", index }));
+      }
+    }
+    list.push({ id: PROCESSES_FOLD_ID, kind: "processes-head" });
+    if (layout.processesOpen) {
+      processes.rows.forEach((row, index) => list.push({ id: processRowId(row), kind: "process", index }));
+    }
+    return list;
+  });
+  let cursorId = $derived(sectionEntries[sectionCursor]?.id ?? null);
+  let beyond: Beyond = $derived({
+    ids: sectionEntries.map((entry) => entry.id),
+    cursor: sectionCursor,
+    onCursor: (index) => (sectionCursor = index),
+    activate: (index) => {
+      const entry = sectionEntries[index];
+      if (entry === undefined) return;
+      if (entry.kind === "media-head") toggleMedia();
+      else if (entry.kind === "media") openItem(presented[entry.index]);
+      else if (entry.kind === "processes-head") toggleProcesses();
+    },
+    fold: (index, open) => {
+      const entry = sectionEntries[index];
+      if (entry === undefined) return;
+      const media = entry.kind === "media-head" || entry.kind === "media";
+      const head = sectionEntries.findIndex((candidate) => candidate.kind === (media ? "media-head" : "processes-head"));
+      if (media) {
+        if (open === layout.mediaOpen) return;
+        layout.mediaOpen = open;
+      } else {
+        if (open === layout.processesOpen) return;
+        layout.processesOpen = open;
+      }
+      saveLayout();
+      // Folding from a row leaves the cursor on the section's header.
+      if (!open) sectionCursor = head;
+    },
+  });
 
   // What the agent presents opens by itself: the cursor follows it onto
-  // its row, so Escape lands the keyboard there.
+  // its row while the section is open, so Escape lands the keyboard there.
   $effect(() => {
     const open = files.media;
     if (open === null) return;
-    const at = presented.findIndex((item) => item.id === open.id);
-    if (at !== -1 && layout.mediaOpen) mediaCursor = at + 1;
+    const at = sectionEntries.findIndex((entry) => entry.kind === "media" && presented[entry.index]?.id === open.id);
+    if (at !== -1) sectionCursor = at;
   });
+
+  let anyOpen = $derived((presented.length > 0 && layout.mediaOpen) || layout.processesOpen);
 
   function resizeMedia(dy: number) {
     if (columnHeight === 0) return;
@@ -94,6 +127,11 @@
 
   function toggleMedia() {
     layout.mediaOpen = !layout.mediaOpen;
+    saveLayout();
+  }
+
+  function toggleProcesses() {
+    layout.processesOpen = !layout.processesOpen;
     saveLayout();
   }
 
@@ -334,71 +372,125 @@
           <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
         {/if}
       </div>
-      {#if presented.length > 0}
-        {#if layout.mediaOpen}
-          <Splitter
-            label="Resize the media section"
-            orientation="horizontal"
-            onDelta={resizeMedia}
-            onReset={resetMedia}
-            onCommit={saveLayout}
-          />
+      {#if anyOpen}
+        <Splitter
+          label="Resize the sections under the tree"
+          orientation="horizontal"
+          onDelta={resizeMedia}
+          onReset={resetMedia}
+          onCommit={saveLayout}
+        />
+      {/if}
+      <!-- The rows here are the tree's cursor's to walk, so a click keeps
+           the keyboard on the tree rather than moving it to the row, and
+           Tab does not stop on each of them. Two sections share the
+           height when both are open. -->
+      <div
+        class="sections"
+        class:open={anyOpen}
+        class:keyed={layout.focus === "changes"}
+        style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
+        data-testid="sections"
+      >
+        {#if presented.length > 0}
+          <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
+            <button
+              id={FOLD_ID}
+              class="fold"
+              class:cursor={cursorId === FOLD_ID}
+              tabindex="-1"
+              onpointerdown={(e) => e.preventDefault()}
+              onclick={() => {
+                sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
+                toggleMedia();
+              }}
+              aria-expanded={layout.mediaOpen}
+              data-testid="media-fold"
+            >
+              <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
+              Media ({presented.length})
+            </button>
+            {#if layout.mediaOpen}
+              <ul class="rows">
+                {#each presented as item (item.id)}
+                  <li>
+                    <button
+                      id={rowIdOf(item.id)}
+                      class="media-row"
+                      class:on={files.media?.id === item.id}
+                      class:cursor={cursorId === rowIdOf(item.id)}
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => {
+                        sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
+                        openItem(item);
+                      }}
+                      title={item.files.join("\n")}
+                      data-testid="media-item"
+                    >
+                      <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
+                      <span class="media-meta"
+                        >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
+                      >
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
         {/if}
-        <!-- The rows here are the tree's cursor's to walk, so a click keeps
-             the keyboard on the tree rather than moving it to the row, and
-             Tab does not stop on each of them. -->
-        <div
-          class="media"
-          class:open={layout.mediaOpen}
-          class:keyed={layout.focus === "changes"}
-          style:--media-h="{Math.round(layout.mediaShare * 100)}%"
-          data-testid="media-section"
-        >
+        <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
           <button
-            id={FOLD_ID}
+            id={PROCESSES_FOLD_ID}
             class="fold"
-            class:cursor={mediaCursor === 0}
+            class:cursor={cursorId === PROCESSES_FOLD_ID}
             tabindex="-1"
             onpointerdown={(e) => e.preventDefault()}
             onclick={() => {
-              mediaCursor = 0;
-              toggleMedia();
+              sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
+              toggleProcesses();
             }}
-            aria-expanded={layout.mediaOpen}
-            data-testid="media-fold"
+            aria-expanded={layout.processesOpen}
+            data-testid="processes-fold"
           >
-            <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
-            Media ({presented.length})
+            <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
+            Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
           </button>
-          {#if layout.mediaOpen}
-            <ul class="media-list">
-              {#each presented as item, index (item.id)}
-                <li>
-                  <button
-                    id={rowIdOf(item.id)}
-                    class="media-row"
-                    class:on={files.media?.id === item.id}
-                    class:cursor={mediaCursor === index + 1}
-                    tabindex="-1"
-                    onpointerdown={(e) => e.preventDefault()}
-                    onclick={() => {
-                      mediaCursor = index + 1;
-                      openItem(item);
-                    }}
-                    title={item.files.join("\n")}
-                    data-testid="media-item"
-                  >
-                    <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
-                    <span class="media-meta"
-                      >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
+          {#if layout.processesOpen}
+            {#if processes.rows.length === 0}
+              <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
+            {:else}
+              <ul class="rows">
+                {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
+                  <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
+                    <button
+                      class="media-row"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
+                      title={row.command}
                     >
-                  </button>
-                </li>
-              {/each}
-            </ul>
+                      <span class="media-caption">{row.command || row.name}</span>
+                      <span class="media-meta"
+                        >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
+                      >
+                    </button>
+                    <button
+                      class="stop"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => void stopProcess(row)}
+                      aria-label="Stop {row.name}"
+                      title="Stop"
+                      data-testid="process-stop">×</button
+                    >
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           {/if}
-        </div>
-      {/if}
+        </section>
+      </div>
     </div>
     {#if reviewing}
       <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
@@ -422,7 +514,7 @@
     flex-direction: column;
   }
 
-  .media {
+  .sections {
     flex: none;
     display: flex;
     flex-direction: column;
@@ -430,8 +522,23 @@
     border-top: 1px solid var(--rule);
   }
 
-  .media.open {
-    flex: 0 0 var(--media-h);
+  .sections.open {
+    flex: 0 0 var(--sections-h);
+  }
+
+  .section {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .section + .section {
+    border-top: 1px solid var(--rule);
+  }
+
+  .section.open {
+    flex: 1 1 0;
   }
 
   .fold {
@@ -455,12 +562,47 @@
     color: var(--ink);
   }
 
-  .media-list {
+  .rows {
     list-style: none;
     margin: 0;
     padding: 0 0 6px;
     overflow: auto;
     min-height: 0;
+  }
+
+  .section-empty {
+    margin: 0;
+    padding: 2px var(--pane-pad) 8px 26px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+
+  /* A process row: the text, and a stop button over its end on hover. */
+  .process {
+    position: relative;
+  }
+
+  .stop {
+    position: absolute;
+    top: 0;
+    right: 6px;
+    bottom: 0;
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    font-size: 13px;
+    padding: 0 6px;
+    cursor: pointer;
+    opacity: 0;
+  }
+
+  .process:hover .stop,
+  .process.cursor .stop {
+    opacity: 1;
+  }
+
+  .stop:hover {
+    color: var(--del);
   }
 
   .media-row {
@@ -484,8 +626,9 @@
 
   /* The tree's cursor, drawn here as it is drawn on the tree's rows, while
      the keyboard is in the pane. */
-  .media.keyed .fold.cursor,
-  .media.keyed .media-row.cursor {
+  .sections.keyed .fold.cursor,
+  .sections.keyed .media-row.cursor,
+  .sections.keyed .process.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 

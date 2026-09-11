@@ -557,6 +557,42 @@ async fn pty_cwd(
     }
 }
 
+/// What runs under a session's process, on whichever machine it is.
+#[tauri::command]
+async fn pty_processes(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "pty_processes",
+        |rest| json!({ "id": rest }),
+        |core, id| core.pty_processes(id),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn pty_stop_process(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    pid: u32,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "pty_stop_process",
+        move |rest| json!({ "id": rest, "pid": pid }),
+        move |core, id| core.pty_stop_process(id, pid),
+    )
+    .await
+}
+
 /// Opens the connection to a host, or says why it cannot.
 #[tauri::command]
 async fn remote_connect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<Value, String> {
@@ -693,6 +729,8 @@ pub fn run() {
             pty_resize,
             pty_kill,
             pty_cwd,
+            pty_processes,
+            pty_stop_process,
             remote_connect,
             remote_disconnect,
             remote_dirs,

@@ -14,6 +14,7 @@
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
+  import { watchProcesses } from "$lib/processes.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -70,8 +71,10 @@
   loadMedia();
   loadNotices();
 
-  // What is on screen, on record for the agent's tools.
+  // What is on screen, on record for the agent's tools, and what runs
+  // under the sessions, for the section under the tree.
   watchSelection();
+  watchProcesses();
 
   // Every project opened is brought to the hooks answer, once.
   $effect(() => {

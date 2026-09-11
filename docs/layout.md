@@ -166,15 +166,27 @@ clears the selection together; the keyboard stays in the tree.
 
 ## Under the tree
 
-What the agent has presented for the session on screen sits in a section
-at the bottom of the tree's column, one row per call under its caption,
-with a divider to drag between the two and a header that folds the section
-to itself; the share and the fold are remembered. The tree's cursor walks
-on into the rows: <kbd>Down</kbd> past the last file lands on the header,
-<kbd>Enter</kbd> opens a call in the viewer, <kbd>Left</kbd> and
-<kbd>Right</kbd> fold and unfold the section as they close and open a
-folder, and <kbd>End</kbd> is the last row of the column. The rows are not
-tab stops, and a click on one keeps the keyboard on the tree.
+Two sections sit at the bottom of the tree's column, each folded to its
+header until asked, with a count in the header when there is anything to
+count, and a divider to drag above them when one is open; the share and
+the folds are remembered, and two open sections share the height.
+
+**Media** is what the agent has presented for the session on screen, one
+row per call under its caption, opening in the viewer. **Processes** is
+what runs under the project's sessions and shells: the dev server the agent
+typed for you, the test run it started, each with what it runs under, how
+long it has run, its share of a CPU and its memory, read every couple of
+seconds while the section is open and less often while it is folded. A
+stop button on the row ends the process, and nothing outside a session's
+own tree can be reached from there.
+
+The tree's cursor walks on into the sections: <kbd>Down</kbd> past the
+last file lands on the first header, <kbd>Enter</kbd> opens a media call
+in the viewer or folds and unfolds a header, <kbd>Left</kbd> and
+<kbd>Right</kbd> fold and unfold the section the cursor is in as they close
+and open a folder, and <kbd>End</kbd> is the last row of the column. The
+rows are not tab stops, and a click on one keeps the keyboard on the
+tree.
 
 ## Inside the viewer
 

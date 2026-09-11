@@ -189,6 +189,13 @@ pub fn cwd(sessions: &Sessions, id: &str) -> Result<Option<String>, String> {
         .map(|path| path.to_string_lossy().to_string()))
 }
 
+/// The child's pid, for listing what runs under it.
+pub fn pid(sessions: &Sessions, id: &str) -> Result<Option<u32>, String> {
+    let guard = sessions.inner.lock().expect("sessions lock");
+    let session = guard.get(id).ok_or("no such session")?;
+    Ok(session.pid)
+}
+
 pub fn kill(sessions: &Sessions, id: &str) -> Result<(), String> {
     let mut guard = sessions.inner.lock().expect("sessions lock");
     let session = guard.get_mut(id).ok_or("no such session")?;

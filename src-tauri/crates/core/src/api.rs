@@ -65,12 +65,14 @@ pub struct Core {
     pub watchers: Arc<Watchers>,
     pub sink: Arc<dyn Sink>,
     home: Option<PathBuf>,
+    processes: crate::processes::Processes,
 }
 
 impl Core {
     pub fn new(sink: Arc<dyn Sink>) -> Self {
         Self {
             sessions: Arc::new(Sessions::default()),
+            processes: crate::processes::Processes::default(),
             watchers: Arc::new(Watchers::default()),
             sink,
             home: home_directory(),
@@ -309,6 +311,20 @@ impl Core {
 
     pub fn pty_cwd(&self, id: &str) -> Result<Option<String>, String> {
         pty::cwd(&self.sessions, id)
+    }
+
+    /// What runs under the session's process, the process itself left out.
+    pub fn pty_processes(&self, id: &str) -> Result<Vec<crate::processes::Process>, String> {
+        let root = pty::pid(&self.sessions, id)?;
+        Ok(root
+            .map(|root| self.processes.under(root))
+            .unwrap_or_default())
+    }
+
+    /// Stops a process running under the session.
+    pub fn pty_stop_process(&self, id: &str, pid: u32) -> Result<(), String> {
+        let root = pty::pid(&self.sessions, id)?.ok_or("the session has no process")?;
+        self.processes.stop(root, pid)
     }
 
     /// The directories directly under a path, by name, hidden ones left out.

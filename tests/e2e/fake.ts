@@ -127,6 +127,22 @@ export async function installFakeCore(
         resize: async () => {},
         kill: async () => {},
         ptyCwd: async () => null,
+        // What runs under a pty: whatever a test put there.
+        ptyProcesses: async (id: string) => {
+          const w = window as unknown as {
+            __processes?: Record<string, unknown[]>;
+          };
+          return w.__processes?.[id] ?? [];
+        },
+        stopProcess: async (id: string, pid: number) => {
+          const w = window as unknown as {
+            __processes?: Record<string, { pid: number }[]>;
+            __stopped?: [string, number][];
+          };
+          (w.__stopped ??= []).push([id, pid]);
+          if (w.__processes?.[id])
+            w.__processes[id] = w.__processes[id].filter((p) => p.pid !== pid);
+        },
         onSessionEnded: async () => () => {},
         onSessionIdentified: async () => () => {},
         onSessionEvent: async () => () => {},

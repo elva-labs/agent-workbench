@@ -585,9 +585,12 @@ test.describe("the file viewer", () => {
       "application/pdf",
     );
 
-    // The section under the tree lists the call, and folds away.
+    // The section under the tree counts the call in its header, folded
+    // until asked, and lists it when opened.
     const section = page.getByTestId("media-section");
     await expect(page.getByTestId("media-fold")).toContainText("Media (1)");
+    await expect(page.getByTestId("media-item")).toHaveCount(0);
+    await page.getByTestId("media-fold").click();
     await expect(page.getByTestId("media-item")).toContainText(
       "Before, after, and the plan.",
     );
@@ -624,8 +627,11 @@ test.describe("the file viewer", () => {
       PROJECT,
     );
     await expect(page.getByTestId("media-file")).toHaveCount(2);
-    // Opening put the cursor on the call's row; Escape leaves the keyboard
-    // on the tree with the cursor still there.
+    // The section is folded until asked: open it, then a call that opens
+    // puts the cursor on its row, and Escape leaves the keyboard on the
+    // tree with the cursor still there.
+    await page.getByTestId("media-fold").click();
+    await page.getByTestId("media-item").click();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await expect(page.getByTestId("file-tree")).toBeFocused();
@@ -641,7 +647,8 @@ test.describe("the file viewer", () => {
     await page.keyboard.press("ArrowRight");
     await expect(page.getByTestId("media-item")).toHaveCount(1);
 
-    // Home is the top of the tree; End is the last media row.
+    // Home is the top of the tree; End is the processes header, the last
+    // row of the column, with the media row just above it.
     await page.keyboard.press("Home");
     await expect(page.getByTestId("media-fold")).not.toHaveClass(/cursor/);
     await expect(page.getByTestId("file-tree")).toHaveAttribute(
@@ -649,9 +656,84 @@ test.describe("the file viewer", () => {
       /^tree-/,
     );
     await page.keyboard.press("End");
+    await expect(page.getByTestId("processes-fold")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowUp");
     await expect(page.getByTestId("media-item")).toHaveClass(/cursor/);
     await page.keyboard.press("ArrowUp");
     await expect(page.getByTestId("media-fold")).toHaveClass(/cursor/);
+  });
+
+  // What runs under the sessions: counted in the header while folded,
+  // listed when opened, and stopped from the row.
+  test("lists what runs under the sessions, folded to a count until opened", async ({
+    page,
+  }) => {
+    await expect(page.getByTestId("processes-fold")).toHaveText(
+      /^\s*▸\s*Processes\s*$/,
+    );
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.evaluate(() => {
+      const now = Math.floor(Date.now() / 1000);
+      (window as unknown as { __processes: unknown }).__processes = {
+        "pty-1": [
+          {
+            pid: 4242,
+            parent: 4000,
+            name: "node",
+            command: "node server.js",
+            cpu: 3.5,
+            memory: 52428800,
+            started: now - 125,
+          },
+          {
+            pid: 4243,
+            parent: 4242,
+            name: "esbuild",
+            command: "esbuild --watch",
+            cpu: 0.2,
+            memory: 10485760,
+            started: now - 120,
+          },
+        ],
+      };
+    });
+    // Counted at the next reading, which comes slower while folded.
+    await expect(page.getByTestId("processes-fold")).toContainText(
+      "Processes (2)",
+      { timeout: 10_000 },
+    );
+    await expect(page.getByTestId("process-row")).toHaveCount(0);
+    await page.getByTestId("processes-fold").click();
+    const rows = page.getByTestId("process-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText("node server.js");
+    await expect(rows.first()).toContainText("session 1");
+    await expect(rows.first()).toContainText("2m");
+    await expect(rows.first()).toContainText("50 MB");
+    // The keyboard reaches the rows from the tree; End is the last one.
+    await page.getByTestId("file-tree").focus();
+    await page.keyboard.press("End");
+    await expect(rows.last()).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByTestId("process-row")).toHaveCount(0);
+    await expect(page.getByTestId("processes-fold")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowRight");
+    await expect(rows).toHaveCount(2);
+    // Stopping one asks the core for that pid under that pty.
+    await rows.first().hover();
+    await rows.first().getByTestId("process-stop").click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __stopped?: unknown }).__stopped,
+        ),
+      )
+      .toEqual([["pty-1", 4242]]);
+    await expect(rows).toHaveCount(1);
+    await expect(page.getByTestId("processes-fold")).toContainText(
+      "Processes (1)",
+    );
   });
 
   test("resizes the media section by its divider and keeps the size", async ({
@@ -670,10 +752,11 @@ test.describe("the file viewer", () => {
         }),
       PROJECT,
     );
+    await page.getByTestId("media-fold").click();
     const section = page.getByTestId("media-section");
     const before = (await section.boundingBox())!.height;
     const handle = page.getByRole("separator", {
-      name: "Resize the media section",
+      name: "Resize the sections under the tree",
     });
     const box = (await handle.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

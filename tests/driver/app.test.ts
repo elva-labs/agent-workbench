@@ -299,6 +299,40 @@ describe("the real app", () => {
     // The shell echoes what was typed at its prompt; nothing ran.
     await waitForText(driver, "echo workbench-typed");
     expect(await screenText(driver)).not.toMatch(/^workbench-typed$/m);
+    // Run it, then start something that stays: the processes section
+    // counts it under the shell and lists it when opened.
+    await type(driver, "\n");
+    await type(driver, "sleep 30 &\n");
+    await driver.wait(
+      async () =>
+        /\(\d+\)/.test(await textOf(driver, "[data-testid='processes-fold']")),
+      15_000,
+    );
+    await driver.executeScript(() =>
+      document
+        .querySelector<HTMLButtonElement>("[data-testid='processes-fold']")
+        ?.click(),
+    );
+    // Read through the page: WebDriver's own text reader leaves out a
+    // row's caption, as it leaves out the tree.
+    await driver.wait(
+      async () =>
+        (
+          (await driver.executeScript(() =>
+            [
+              ...document.querySelectorAll<HTMLElement>(
+                "[data-testid='process-row']",
+              ),
+            ].map((row) => row.innerText),
+          )) as string[]
+        ).some((text) => text.includes("sleep")),
+      10_000,
+    );
+    await driver.executeScript(() =>
+      document
+        .querySelector<HTMLButtonElement>("[data-testid='processes-fold']")
+        ?.click(),
+    );
     // Leave things as they were: the shell closed, the panel hidden. The
     // row's close button shows on hover, which the driver does not do.
     for (const id of ["close-terminal", "hide-terminal"]) {

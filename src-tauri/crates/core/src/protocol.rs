@@ -137,6 +137,12 @@ struct IdParams {
 }
 
 #[derive(Deserialize)]
+struct ProcessParams {
+    id: String,
+    pid: u32,
+}
+
+#[derive(Deserialize)]
 struct AgentParams {
     id: String,
 }
@@ -297,6 +303,15 @@ pub fn dispatch(
         "pty_cwd" => {
             let p: IdParams = parse(params)?;
             value(core.pty_cwd(&p.id)?)
+        }
+        "pty_processes" => {
+            let p: IdParams = parse(params)?;
+            value(core.pty_processes(&p.id)?)
+        }
+        "pty_stop_process" => {
+            let p: ProcessParams = parse(params)?;
+            core.pty_stop_process(&p.id, p.pid)?;
+            Ok(Value::Null)
         }
         "list_dirs" => {
             let p: DirsParams = parse(params)?;
