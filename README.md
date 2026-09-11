@@ -85,6 +85,8 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Settings](docs/settings.md): appearance, palettes, keys, live updates.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
   what it gives, the agent's tools among it.
+- [Plugins](docs/plugins.md): where they come from, what one may add to the
+  workbench, and how one is written.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
 - [Remote](docs/remote.md): projects on other machines.
 - [Platforms](docs/platforms.md): what differs on each.
