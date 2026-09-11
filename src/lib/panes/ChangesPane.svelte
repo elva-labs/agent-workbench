@@ -29,6 +29,14 @@
   import { isInstalled } from "$lib/hook.svelte";
   import { listed as presentedFor, openItem } from "$lib/media.svelte";
   import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
+  import {
+    askFor,
+    listed as listedSections,
+    noticeOf,
+    run as runAction,
+    type PluginSection,
+  } from "$lib/pluginSections.svelte";
+  import type { PluginAction, PluginRow } from "$lib/core";
   import { lastSegment } from "$lib/paths";
   import { ago } from "$lib/sessions.svelte";
   import { activeProject, followedWorktree, watchRoot, workspace } from "$lib/workspace.svelte";
@@ -54,11 +62,16 @@
   const PROCESSES_FOLD_ID = "processes-fold";
   const rowIdOf = (id: string) => `media-${id}`;
   const processRowId = (row: ProcessRow) => `process-${row.pid}`;
+  const pluginFoldId = (key: string) => `plugin-fold-${key}`;
+  const pluginRowId = (key: string, row: PluginRow) => `plugin-row-${key}-${row.id}`;
   type Entry =
     | { id: string; kind: "media-head" }
     | { id: string; kind: "media"; index: number }
     | { id: string; kind: "processes-head" }
-    | { id: string; kind: "process"; index: number };
+    | { id: string; kind: "process"; index: number }
+    | { id: string; kind: "plugin-head"; key: string }
+    | { id: string; kind: "plugin-row"; key: string; index: number };
+  let pluginList = $derived(listedSections());
   let sectionEntries: Entry[] = $derived.by(() => {
     const list: Entry[] = [];
     if (presented.length > 0) {
@@ -70,6 +83,14 @@
     list.push({ id: PROCESSES_FOLD_ID, kind: "processes-head" });
     if (layout.processesOpen) {
       processes.rows.forEach((row, index) => list.push({ id: processRowId(row), kind: "process", index }));
+    }
+    for (const section of pluginList) {
+      list.push({ id: pluginFoldId(section.key), kind: "plugin-head", key: section.key });
+      if (sectionOpen(section.key)) {
+        section.rows.forEach((row, index) =>
+          list.push({ id: pluginRowId(section.key, row), kind: "plugin-row", key: section.key, index }),
+        );
+      }
     }
     return list;
   });
@@ -84,10 +105,24 @@
       if (entry.kind === "media-head") toggleMedia();
       else if (entry.kind === "media") openItem(presented[entry.index]);
       else if (entry.kind === "processes-head") toggleProcesses();
+      else if (entry.kind === "plugin-head") toggleSection(entry.key);
+      else if (entry.kind === "plugin-row") {
+        const section = pluginList.find((candidate) => candidate.key === entry.key);
+        if (section !== undefined) runDefault(section, section.rows[entry.index]);
+      }
     },
     fold: (index, open) => {
       const entry = sectionEntries[index];
       if (entry === undefined) return;
+      if (entry.kind === "plugin-head" || entry.kind === "plugin-row") {
+        if (open === sectionOpen(entry.key)) return;
+        const head = sectionEntries.findIndex(
+          (candidate) => candidate.kind === "plugin-head" && candidate.key === entry.key,
+        );
+        setSectionOpen(entry.key, open);
+        if (!open) sectionCursor = head;
+        return;
+      }
       const media = entry.kind === "media-head" || entry.kind === "media";
       const head = sectionEntries.findIndex((candidate) => candidate.kind === (media ? "media-head" : "processes-head"));
       if (media) {
@@ -112,7 +147,38 @@
     if (at !== -1) sectionCursor = at;
   });
 
-  let anyOpen = $derived((presented.length > 0 && layout.mediaOpen) || layout.processesOpen);
+  let anyOpen = $derived(
+    (presented.length > 0 && layout.mediaOpen) ||
+      layout.processesOpen ||
+      pluginList.some((section) => sectionOpen(section.key)),
+  );
+
+  /** A plugin's section is folded until it is asked for, and the answer is
+      remembered by its key. */
+  function sectionOpen(key: string) {
+    return layout.sectionsOpen[key] === true;
+  }
+
+  function setSectionOpen(key: string, open: boolean) {
+    layout.sectionsOpen[key] = open;
+    saveLayout();
+  }
+
+  function toggleSection(key: string) {
+    setSectionOpen(key, !sectionOpen(key));
+  }
+
+  /** An action with fields to fill in is asked about first; the rest run. */
+  function act(section: PluginSection, action: PluginAction, row: string | null) {
+    if (action.input !== null && action.input.length > 0) askFor(section, action, row);
+    else void runAction(section, action, row);
+  }
+
+  function runDefault(section: PluginSection, row: PluginRow | undefined) {
+    if (row === undefined || row.default === null) return;
+    const action = row.actions?.find((candidate) => candidate.id === row.default);
+    if (action !== undefined) act(section, action, row.id);
+  }
 
   function resizeMedia(dy: number) {
     if (columnHeight === 0) return;
@@ -490,6 +556,95 @@
             {/if}
           {/if}
         </section>
+        <!-- A plugin's section: the same shape, with the rows and the
+             actions the plugin sent for the project on screen. -->
+        {#each pluginList as section (section.key)}
+          {@const open = sectionOpen(section.key)}
+          {@const notice = noticeOf(section)}
+          <section class="section" class:open data-section={section.key} data-testid="plugin-section">
+            <div class="section-head">
+              <button
+                id={pluginFoldId(section.key)}
+                class="fold"
+                class:cursor={cursorId === pluginFoldId(section.key)}
+                tabindex="-1"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => {
+                  sectionCursor = sectionEntries.findIndex(
+                    (entry) => entry.kind === "plugin-head" && entry.key === section.key,
+                  );
+                  toggleSection(section.key);
+                }}
+                aria-expanded={open}
+                data-testid="plugin-fold"
+              >
+                <span class="chevron">{open ? "▾" : "▸"}</span>
+                {section.title}{section.rows.length > 0 ? ` (${section.rows.length})` : ""}
+              </button>
+              <span class="head-actions">
+                {#each section.actions as action (action.id)}
+                  <button
+                    class="head-action"
+                    tabindex="-1"
+                    onpointerdown={(e) => e.preventDefault()}
+                    onclick={() => act(section, action, null)}
+                    data-action={action.id}
+                    data-testid="plugin-section-action">{action.label}</button
+                  >
+                {/each}
+              </span>
+            </div>
+            {#if notice !== null}
+              <p class="section-notice" data-testid="plugin-notice">{notice}</p>
+            {/if}
+            {#if open}
+              <ul class="rows">
+                {#each section.rows as row (row.id)}
+                  <li
+                    id={pluginRowId(section.key, row)}
+                    class="plugin"
+                    class:cursor={cursorId === pluginRowId(section.key, row)}
+                    data-row={row.id}
+                    data-testid="plugin-row"
+                  >
+                    <button
+                      class="media-row"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => {
+                        sectionCursor = sectionEntries.findIndex(
+                          (entry) => entry.id === pluginRowId(section.key, row),
+                        );
+                        runDefault(section, row);
+                      }}
+                      title={row.detail ?? row.label}
+                    >
+                      <span class="row-line">
+                        <span class="dot" data-state={row.state ?? "none"}></span>
+                        <span class="media-caption">{row.label}</span>
+                      </span>
+                      {#if row.detail !== null}
+                        <span class="media-meta">{row.detail}</span>
+                      {/if}
+                    </button>
+                    <span class="row-actions">
+                      {#each row.actions ?? [] as action (action.id)}
+                        <button
+                          class="row-action"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => act(section, action, row.id)}
+                          data-action={action.id}
+                          data-testid="plugin-row-action">{action.label}</button
+                        >
+                      {/each}
+                    </span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        {/each}
       </div>
     </div>
     {#if reviewing}
@@ -577,32 +732,149 @@
     color: var(--ink-3);
   }
 
-  /* A process row: the text, and a stop button over its end on hover. */
-  .process {
+  /* A process row: the text, and a stop button over its end on hover. A
+     plugin's row carries its actions the same way. */
+  .process,
+  .plugin {
     position: relative;
   }
 
-  .stop {
+  .stop,
+  .row-actions {
     position: absolute;
     top: 0;
     right: 6px;
     bottom: 0;
+    opacity: 0;
+  }
+
+  .stop {
     border: 0;
     background: none;
     color: var(--ink-3);
     font-size: 13px;
     padding: 0 6px;
     cursor: pointer;
-    opacity: 0;
   }
 
   .process:hover .stop,
-  .process.cursor .stop {
+  .process.cursor .stop,
+  .plugin:hover .row-actions,
+  .plugin.cursor .row-actions {
     opacity: 1;
   }
 
   .stop:hover {
     color: var(--del);
+  }
+
+  /* A section a plugin sent: its header carries the plugin's own actions,
+     and a word from it sits under the header until it goes. */
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+  }
+
+  .section-head .fold {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .head-actions,
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .head-actions {
+    flex: none;
+    padding-right: 6px;
+  }
+
+  .head-action,
+  .row-action {
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 5px;
+    white-space: nowrap;
+  }
+
+  .head-action:hover,
+  .row-action:hover {
+    color: var(--accent);
+    background: var(--surface-2);
+  }
+
+  .section-notice {
+    margin: 0;
+    padding: 0 var(--pane-pad) 6px 26px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--del);
+  }
+
+  .row-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+  }
+
+  /* The row's state, drawn as a session's is: filled while something is
+     happening, hollow when the plugin said nothing. */
+  .dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border: 1px solid var(--ink-3);
+    border-radius: 50%;
+  }
+
+  .dot[data-state="ok"] {
+    background: var(--add);
+    border-color: var(--add);
+  }
+
+  .dot[data-state="busy"] {
+    background: var(--ink-3);
+    animation: breathe 1.2s ease-in-out infinite;
+  }
+
+  .dot[data-state="waiting"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+
+  .dot[data-state="failed"] {
+    background: var(--del);
+    border-color: var(--del);
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot[data-state="busy"] {
+      animation: none;
+    }
   }
 
   .media-row {
@@ -628,7 +900,8 @@
      the keyboard is in the pane. */
   .sections.keyed .fold.cursor,
   .sections.keyed .media-row.cursor,
-  .sections.keyed .process.cursor {
+  .sections.keyed .process.cursor,
+  .sections.keyed .plugin.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 

@@ -201,6 +201,24 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        onPluginSection: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginSection =
+            handler;
+          return () => {};
+        },
+        onPluginNotice: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginNotice =
+            handler;
+          return () => {};
+        },
+        // Every action taken, for a test to read back. "explode" is the one
+        // a plugin is never running for.
+        pluginAction: async (request: { action: string }) => {
+          const w = window as unknown as { __pluginActions?: unknown[] };
+          (w.__pluginActions ??= []).push(request);
+          if (request.action === "explode")
+            throw new Error("the plugin is not running");
+        },
         // What runs under a pty: whatever a test put there.
         ptyProcesses: async (id: string) => {
           const w = window as unknown as {

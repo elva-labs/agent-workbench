@@ -117,6 +117,30 @@ pub struct TerminalRequest {
     pub session: Option<String>,
 }
 
+/// How much of a note is kept: the row shows one line and cuts the rest,
+/// so a long one is of no use past this.
+const NOTE_CAP: usize = 120;
+
+/// A note as a session's row takes it: its whitespace collapsed to one
+/// line, and no longer than the row keeps.
+pub fn one_line(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    line.chars().take(NOTE_CAP).collect()
+}
+
+/// A path as it was given, absolute: one that is relative is taken from
+/// the directory the caller works in, and a link is followed where the
+/// file is there to follow.
+pub fn resolve(cwd: &Path, path: &str) -> PathBuf {
+    let given = Path::new(path);
+    let joined = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        cwd.join(given)
+    };
+    dunce::canonicalize(&joined).unwrap_or(joined)
+}
+
 /// A line the agent leaves on its session's row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

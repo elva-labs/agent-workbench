@@ -9,9 +9,12 @@
 //! plugin that is, and tells the window as each changes state.
 
 use crate::events::Sink;
-use crate::show::{Answer, ToolRequest};
+use crate::show::{
+    Answer, DiffRequest, NotifyRequest, PresentRequest, ShowRequest, ToolRequest, DIFF_REQUEST,
+    NOTIFY_REQUEST, PRESENT_REQUEST, SHOW_REQUEST,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -20,6 +23,13 @@ use std::time::Duration;
 
 /// The event a plugin's state change is told by.
 pub const PLUGIN_STATE: &str = "plugin_state";
+
+/// The event a section's rows are told by, one section of one project at
+/// a time.
+pub const PLUGIN_SECTION: &str = "plugin_section";
+
+/// The event an action's error is told by.
+pub const PLUGIN_NOTICE: &str = "plugin_notice";
 
 /// The manifest at a source's root.
 pub const MANIFEST: &str = "workbench-plugins.toml";
@@ -138,6 +148,78 @@ pub struct StateEvent {
     pub hello: Option<Hello>,
 }
 
+/// One of the named options a choice offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Choice {
+    pub id: String,
+    pub label: String,
+}
+
+/// What an action asks for before it runs: a line of text, or a choice
+/// among named options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Field {
+    pub id: String,
+    pub label: String,
+    /// "text" or "choice".
+    pub kind: String,
+    #[serde(default)]
+    pub options: Option<Vec<Choice>>,
+    #[serde(default)]
+    pub placeholder: Option<String>,
+}
+
+/// Something the user can have a plugin do, on a row or on a section's
+/// header. An action with fields is asked about first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Action {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub input: Option<Vec<Field>>,
+}
+
+/// A line of a section, as the tree draws it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Row {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// "ok", "busy", "waiting" or "failed", drawn as a session's dot is.
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub actions: Option<Vec<Action>>,
+    /// Which of the row's actions Enter runs.
+    #[serde(default)]
+    pub default: Option<String>,
+}
+
+/// A section's rows for one project, as told to the window. Empty rows
+/// and no actions is the section gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SectionEvent {
+    pub source: String,
+    pub plugin: String,
+    pub section: String,
+    pub title: String,
+    pub project: String,
+    pub rows: Vec<Row>,
+    pub actions: Vec<Action>,
+}
+
+/// What a plugin said went wrong with an action, for the window to show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Notice {
+    pub source: String,
+    pub plugin: String,
+    pub text: String,
+}
+
+/// The states a row may be in.
+const STATES: [&str; 4] = ["ok", "busy", "waiting", "failed"];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSource {
     id: String,
@@ -166,6 +248,10 @@ struct Running {
 
 type Key = (String, String);
 
+/// A source, a plugin, a section of that plugin, and the project the rows
+/// are for: what one set of rows is kept under.
+type SectionKey = (String, String, String, String);
+
 struct Inner {
     home: PathBuf,
     root: PathBuf,
@@ -174,6 +260,12 @@ struct Inner {
     running: Mutex<HashMap<Key, Running>>,
     /// Newer commits found by a check, by source id.
     newer: Mutex<HashMap<String, String>>,
+    /// The rows each section last sent, so what a plugin leaves behind can
+    /// be taken off the tree when it goes.
+    sections: Mutex<HashMap<SectionKey, SectionEvent>>,
+    /// The actions waiting for an answer, which tells an action's result
+    /// from a tool call's.
+    pending: Mutex<HashSet<String>>,
 }
 
 /// The sources and their processes. Shared with the threads that read a
@@ -221,6 +313,16 @@ fn valid_name(name: &str) -> bool {
     matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
         && name.len() <= 40
+}
+
+/// A ref names a branch or a tag: letters, digits and the few marks a
+/// name holds, so it is never read as an option.
+fn plain_reference(reference: &str) -> bool {
+    !reference.is_empty()
+        && !reference.starts_with('-')
+        && reference
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
 }
 
 /// Reads and checks a source's manifest: every path under the source,
@@ -349,8 +451,11 @@ pub fn read_manifest(
     Ok(declared)
 }
 
+/// Every git call the plugins make. The ext transport runs whatever a
+/// URL names, so it is off; what the caller passes is arguments alone.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
+        .args(["-c", "protocol.ext.allow=never"])
         .args(args)
         .current_dir(dir)
         .output()
@@ -365,6 +470,16 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
             .to_string());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The commit a revision names. `--end-of-options` keeps the revision a
+/// revision, and `--verify` has git print the one object name and nothing
+/// else.
+fn commit_at(dir: &Path, revision: &str) -> Result<String, String> {
+    git(
+        dir,
+        &["rev-parse", "--verify", "--end-of-options", revision],
+    )
 }
 
 /// What a location is: a directory here, or a repository to clone.
@@ -392,6 +507,8 @@ impl Plugins {
                 stored: Mutex::new(stored),
                 running: Mutex::new(HashMap::new()),
                 newer: Mutex::new(HashMap::new()),
+                sections: Mutex::new(HashMap::new()),
+                pending: Mutex::new(HashSet::new()),
             }),
         }
     }
@@ -456,6 +573,118 @@ impl Plugins {
     pub fn tools(&self) -> Vec<PublishedTool> {
         self.inner.tools()
     }
+
+    /// Runs an action of a section, on a row or on the header, and comes
+    /// back at once: what it does shows up as rows, a place, a diff, media
+    /// or a line, and what went wrong as a notice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn action(
+        &self,
+        source_id: &str,
+        name: &str,
+        section: &str,
+        action: &str,
+        row: Option<&str>,
+        input: &serde_json::Value,
+        project: &str,
+    ) -> Result<(), String> {
+        self.inner
+            .action(source_id, name, section, action, row, input, project)
+    }
+}
+
+/// A field of an action's input, as far as the window needs it to be one.
+fn sound_field(field: &Field) -> bool {
+    !field.id.is_empty() && matches!(field.kind.as_str(), "text" | "choice")
+}
+
+/// An action with an id and a label, its fields kept where they are whole.
+fn checked_action(mut action: Action) -> Option<Action> {
+    if action.id.is_empty() || action.label.is_empty() {
+        return None;
+    }
+    action.input = action
+        .input
+        .map(|fields| fields.into_iter().filter(sound_field).collect());
+    Some(action)
+}
+
+fn checked_actions(value: Option<&serde_json::Value>) -> Vec<Action> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| serde_json::from_value::<Action>(item.clone()).ok())
+                .filter_map(checked_action)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A row with an id, a label and a state that is one of the four. Its
+/// default names one of its own actions or nothing at all.
+fn checked_row(mut row: Row) -> Option<Row> {
+    if row.id.is_empty() || row.label.is_empty() {
+        return None;
+    }
+    if let Some(state) = &row.state {
+        if !STATES.contains(&state.as_str()) {
+            return None;
+        }
+    }
+    row.actions = row
+        .actions
+        .map(|actions| actions.into_iter().filter_map(checked_action).collect());
+    let named = |id: &String| {
+        row.actions
+            .as_ref()
+            .is_some_and(|actions| actions.iter().any(|action| &action.id == id))
+    };
+    if !row.default.as_ref().is_some_and(named) {
+        row.default = None;
+    }
+    Some(row)
+}
+
+/// One `section` line from a plugin: the section's rows for one project,
+/// or None when the line names no section of a project. A row that is not
+/// a row is dropped and the rest stand.
+fn checked_section(
+    source_id: &str,
+    name: &str,
+    message: &serde_json::Value,
+) -> Option<SectionEvent> {
+    let text = |key: &str| message.get(key).and_then(|value| value.as_str());
+    let section = text("id").unwrap_or_default();
+    if !valid_name(section) {
+        return None;
+    }
+    let project = text("project").unwrap_or_default();
+    if project.is_empty() {
+        return None;
+    }
+    let rows = message
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| serde_json::from_value::<Row>(row.clone()).ok())
+                .filter_map(checked_row)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(SectionEvent {
+        source: source_id.to_string(),
+        plugin: name.to_string(),
+        section: section.to_string(),
+        title: text("title")
+            .filter(|title| !title.is_empty())
+            .unwrap_or(section)
+            .to_string(),
+        project: project.to_string(),
+        rows,
+        actions: checked_actions(message.get("actions")),
+    })
 }
 
 impl Inner {
@@ -483,7 +712,7 @@ impl Inner {
     fn describe(&self, source: &StoredSource) -> SourceInfo {
         let dir = self.dir_of(source);
         let commit = if source.kind == "git" {
-            git(&dir, &["rev-parse", "HEAD"]).ok()
+            commit_at(&dir, "HEAD").ok()
         } else {
             None
         };
@@ -541,6 +770,21 @@ impl Inner {
         if location.is_empty() {
             return Err("a repository URL or a directory is needed".to_string());
         }
+        // The location and the ref reach git as arguments, so neither may
+        // be one of git's own options.
+        if location.starts_with('-') {
+            return Err("a repository URL or a directory may not start with a dash".to_string());
+        }
+        let reference = reference
+            .map(str::trim)
+            .filter(|reference| !reference.is_empty());
+        if let Some(reference) = reference {
+            if !plain_reference(reference) {
+                return Err(
+                    "the ref may hold letters, digits, dot, slash, dash and underscore".to_string(),
+                );
+            }
+        }
         let kind = kind_of(location);
         let location = if kind == "dir" {
             dunce::canonicalize(location)
@@ -561,9 +805,7 @@ impl Inner {
             id: id.clone(),
             kind: kind.to_string(),
             location: location.clone(),
-            reference: reference
-                .map(str::to_string)
-                .filter(|r| !r.trim().is_empty()),
+            reference: reference.map(str::to_string),
             enabled: Vec::new(),
         };
         let dir = self.dir_of(&source);
@@ -576,6 +818,7 @@ impl Inner {
             if let Some(reference) = source.reference.as_deref() {
                 args.extend(["--branch", reference]);
             }
+            args.push("--");
             let target = dir.to_string_lossy().to_string();
             args.extend([location.as_str(), target.as_str()]);
             if let Err(error) = git(&self.root, &args) {
@@ -635,10 +878,10 @@ impl Inner {
         }
         let dir = self.dir_of(&source);
         git(&dir, &["fetch", "--quiet", "--depth", "1", "origin"])?;
-        let head = git(&dir, &["rev-parse", "HEAD"])?;
+        let head = commit_at(&dir, "HEAD")?;
         let upstream = match source.reference.as_deref() {
-            Some(reference) => git(&dir, &["rev-parse", &format!("origin/{reference}")])?,
-            None => git(&dir, &["rev-parse", "FETCH_HEAD"])?,
+            Some(reference) => commit_at(&dir, &format!("origin/{reference}"))?,
+            None => commit_at(&dir, "FETCH_HEAD")?,
         };
         let newer = if upstream != head {
             Some(upstream)
@@ -666,7 +909,7 @@ impl Inner {
                 Some(reference) => format!("origin/{reference}"),
                 None => "FETCH_HEAD".to_string(),
             };
-            git(&dir, &["reset", "--quiet", "--hard", &target])?;
+            git(&dir, &["reset", "--quiet", "--hard", &target, "--"])?;
         }
         self.newer.lock().expect("plugins lock").remove(id);
         for name in &source.enabled {
@@ -849,7 +1092,9 @@ impl Inner {
                     plugins.publish();
                     plugins.tell(&source_id, &plugin, State::Running, None, hello);
                 } else if kind == "result" {
-                    plugins.answered(&message);
+                    plugins.answered(&source_id, &plugin, &message);
+                } else {
+                    plugins.said(&source_id, &plugin, kind, &message);
                 }
             }
             plugins.exited(&source_id, &plugin, greeted);
@@ -887,6 +1132,7 @@ impl Inner {
             out
         };
         self.publish();
+        self.forget_sections(source_id, name);
         if !still_on {
             self.tell(source_id, name, State::Off, None, None);
             return;
@@ -920,6 +1166,7 @@ impl Inner {
             Arc::clone(&live.stdin)
         };
         self.publish();
+        self.forget_sections(source_id, name);
         if let Ok(mut stdin) = stdin.lock() {
             let _ = writeln!(stdin, r#"{{"type":"stop"}}"#);
             let _ = stdin.flush();
@@ -1029,7 +1276,10 @@ impl Inner {
     }
 
     /// A plugin's answer to a call, written where the tool server waits.
-    fn answered(&self, message: &serde_json::Value) {
+    /// An action's answer is not a tool's: the window hears what went
+    /// wrong and nothing else, since an action that has something to show
+    /// shows it as rows, a place, a diff, media or a line.
+    fn answered(&self, source_id: &str, name: &str, message: &serde_json::Value) {
         let Some(id) = message.get("id").and_then(|id| id.as_str()) else {
             return;
         };
@@ -1039,6 +1289,20 @@ impl Inner {
             Some(text) => text.to_string(),
             None => serde_json::to_string(value).unwrap_or_default(),
         };
+        if self.pending.lock().expect("plugins lock").remove(id) {
+            if let Some(error) = message.get("error").filter(|error| !error.is_null()) {
+                crate::events::emit(
+                    &self.sink,
+                    PLUGIN_NOTICE,
+                    &Notice {
+                        source: source_id.to_string(),
+                        plugin: name.to_string(),
+                        text: text(error),
+                    },
+                );
+            }
+            return;
+        }
         let content = match message.get("content") {
             Some(content) if !content.is_null() => text(content),
             _ => String::new(),
@@ -1054,6 +1318,203 @@ impl Inner {
             },
         };
         let _ = crate::show::write_answer(&self.home, id, &answer);
+    }
+
+    /// A line from a plugin that is neither its greeting nor an answer:
+    /// rows for a section, or one of the asks the agent's own tools make.
+    /// A kind nobody knows is left alone.
+    fn said(&self, source_id: &str, name: &str, kind: &str, message: &serde_json::Value) {
+        match kind {
+            "section" => {
+                let Some(section) = checked_section(source_id, name, message) else {
+                    return;
+                };
+                let key: SectionKey = (
+                    source_id.to_string(),
+                    name.to_string(),
+                    section.section.clone(),
+                    section.project.clone(),
+                );
+                self.sections
+                    .lock()
+                    .expect("plugins lock")
+                    .insert(key, section.clone());
+                self.tell_section(&section);
+            }
+            "open" | "diff" | "present" | "notify" => self.requested(kind, message),
+            _ => {}
+        }
+    }
+
+    fn tell_section(&self, section: &SectionEvent) {
+        crate::events::emit(&self.sink, PLUGIN_SECTION, section);
+    }
+
+    /// The rows a plugin left on the tree go with it: every section it had
+    /// is told empty and forgotten.
+    fn forget_sections(&self, source_id: &str, name: &str) {
+        let gone: Vec<SectionEvent> = {
+            let mut sections = self.sections.lock().expect("plugins lock");
+            let keys: Vec<SectionKey> = sections
+                .keys()
+                .filter(|(source, plugin, _, _)| source == source_id && plugin == name)
+                .cloned()
+                .collect();
+            keys.iter().filter_map(|key| sections.remove(key)).collect()
+        };
+        for section in gone {
+            self.tell_section(&SectionEvent {
+                rows: Vec::new(),
+                actions: Vec::new(),
+                ..section
+            });
+        }
+    }
+
+    /// What the agent's own tools ask for, asked for by a plugin: a place
+    /// to open, a file's diff, media, or a line for a session's row. A
+    /// path is taken from the project, which is where the plugin looks.
+    fn requested(&self, kind: &str, message: &serde_json::Value) {
+        let text = |key: &str| {
+            message
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        let Some(project) = text("project") else {
+            return;
+        };
+        let root = PathBuf::from(&project);
+        let absolute = |path: &str| {
+            crate::show::resolve(&root, path)
+                .to_string_lossy()
+                .to_string()
+        };
+        match kind {
+            "open" => {
+                let Some(path) = text("path") else {
+                    return;
+                };
+                let line = |key: &str, fallback: u64| {
+                    message
+                        .get(key)
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or(fallback)
+                        .clamp(1, u32::MAX as u64) as u32
+                };
+                let from = line("from", 1);
+                crate::events::emit(
+                    &self.sink,
+                    SHOW_REQUEST,
+                    &ShowRequest {
+                        path: absolute(&path),
+                        from,
+                        to: line("to", from as u64).max(from),
+                        note: text("note"),
+                        cwd: project,
+                        session: None,
+                    },
+                );
+            }
+            "diff" => {
+                let Some(path) = text("path") else {
+                    return;
+                };
+                crate::events::emit(
+                    &self.sink,
+                    DIFF_REQUEST,
+                    &DiffRequest {
+                        path: absolute(&path),
+                        note: text("note"),
+                        cwd: project,
+                        session: None,
+                    },
+                );
+            }
+            "present" => {
+                let files: Vec<String> = message
+                    .get("files")
+                    .and_then(|files| files.as_array())
+                    .map(|files| {
+                        files
+                            .iter()
+                            .filter_map(|file| file.as_str())
+                            .map(str::trim)
+                            .filter(|file| !file.is_empty())
+                            .map(absolute)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if files.is_empty() {
+                    return;
+                }
+                crate::events::emit(
+                    &self.sink,
+                    PRESENT_REQUEST,
+                    &PresentRequest {
+                        files,
+                        caption: text("caption"),
+                        cwd: project,
+                        session: None,
+                    },
+                );
+            }
+            "notify" => {
+                let Some(said) = text("text") else {
+                    return;
+                };
+                let line = crate::show::one_line(&said);
+                if line.is_empty() {
+                    return;
+                }
+                crate::events::emit(
+                    &self.sink,
+                    NOTIFY_REQUEST,
+                    &NotifyRequest {
+                        text: line,
+                        cwd: project,
+                        session: text("session"),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// Hands an action to the plugin and comes back: the answer, if it is
+    /// an error, reaches the window as a notice.
+    #[allow(clippy::too_many_arguments)]
+    fn action(
+        &self,
+        source_id: &str,
+        name: &str,
+        section: &str,
+        action: &str,
+        row: Option<&str>,
+        input: &serde_json::Value,
+        project: &str,
+    ) -> Result<(), String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let message = serde_json::json!({
+            "type": "action",
+            "id": id,
+            "section": section,
+            "action": action,
+            "row": row,
+            "input": input,
+            "project": project,
+        });
+        self.pending
+            .lock()
+            .expect("plugins lock")
+            .insert(id.clone());
+        if let Err(error) = self.send(source_id, name, &message) {
+            self.pending.lock().expect("plugins lock").remove(&id);
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn send(&self, source_id: &str, name: &str, message: &serde_json::Value) -> Result<(), String> {
@@ -1090,6 +1551,25 @@ mod tests {
         std::fs::write(dir.join(MANIFEST), manifest).unwrap();
         dir
     }
+
+    /// A plugin that says its rows, points at a place, leaves a line, and
+    /// answers an action with what went wrong.
+    const SECTIONS: &str = r#"#!/bin/sh
+echo '{"type":"hello","name":"board","version":"1.0.0"}'
+echo '{"type":"section","id":"pull-request","title":"Pull request","project":"PROJECT","rows":[{"id":"lint","label":"lint","detail":"3 of 4","state":"ok","actions":[{"id":"open","label":"Open"}],"default":"open"},{"id":"","label":"nothing"}],"actions":[{"id":"refresh","label":"Refresh","input":[{"id":"branch","label":"Branch","kind":"text"}]}]}'
+echo '{"type":"open","project":"PROJECT","path":"github/main.sh","from":3,"to":5,"note":"here"}'
+echo '{"type":"notify","project":"PROJECT","session":"s-1","text":"   needs   a   key   "}'
+echo '{"type":"whatever","project":"PROJECT"}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
+    *'"type":"action"'*)
+      id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+      printf '{"type":"result","id":"%s","error":"gh is not logged in"}\n' "$id"
+      ;;
+  esac
+done
+"#;
 
     const GOOD: &str = r#"
 [[plugin]]
@@ -1307,6 +1787,246 @@ done
         plugins.enable(&added.id, "echo", false).unwrap();
         assert!(published().is_empty());
         assert!(plugins.tools().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn carries_a_plugin_s_rows_places_and_lines_and_takes_an_action_back() {
+        let home = std::env::temp_dir().join("workbench-plugins-rows-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "board"
+path = "github"
+description = "Rows."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+sections = ["Pull request"]
+"#,
+            "rows",
+        );
+        let project = dunce::canonicalize(&dir).unwrap();
+        let here = project.to_string_lossy().to_string();
+        std::fs::write(
+            dir.join("github/main.sh"),
+            SECTIONS.replace("PROJECT", &here),
+        )
+        .unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let plugins = Plugins::new(&home, recorder.clone());
+        let added = plugins.add(&here, None).unwrap();
+        plugins.enable(&added.id, "board", true).unwrap();
+
+        // Everything the plugin says arrives on its reader thread.
+        let wait = |event: &'static str, ok: &dyn Fn(&serde_json::Value) -> bool| {
+            for _ in 0..50 {
+                let found = recorder
+                    .events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|(name, payload)| name == event && ok(payload))
+                    .map(|(_, payload)| payload.clone());
+                if let Some(payload) = found {
+                    return payload;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("nothing said {event}");
+        };
+        let any = |_: &serde_json::Value| true;
+
+        let section = wait(PLUGIN_SECTION, &|payload| {
+            payload["rows"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+        });
+        assert_eq!(section["source"], added.id);
+        assert_eq!(section["plugin"], "board");
+        assert_eq!(section["section"], "pull-request");
+        assert_eq!(section["title"], "Pull request");
+        assert_eq!(section["project"], here);
+        let rows = section["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "the row without an id is dropped: {section}");
+        assert_eq!(rows[0]["id"], "lint");
+        assert_eq!(rows[0]["detail"], "3 of 4");
+        assert_eq!(rows[0]["state"], "ok");
+        assert_eq!(rows[0]["default"], "open");
+        assert_eq!(rows[0]["actions"][0]["label"], "Open");
+        assert_eq!(section["actions"][0]["id"], "refresh");
+        assert_eq!(section["actions"][0]["input"][0]["kind"], "text");
+
+        let show = wait(SHOW_REQUEST, &any);
+        assert_eq!(
+            show["path"],
+            project
+                .join("github")
+                .join("main.sh")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(show["cwd"], here);
+        assert_eq!(show["from"], 3);
+        assert_eq!(show["to"], 5);
+        assert_eq!(show["note"], "here");
+        assert_eq!(show["session"], serde_json::Value::Null);
+
+        let notify = wait(NOTIFY_REQUEST, &any);
+        assert_eq!(notify["text"], "needs a key");
+        assert_eq!(notify["cwd"], here);
+        assert_eq!(notify["session"], "s-1");
+
+        plugins
+            .action(
+                &added.id,
+                "board",
+                "pull-request",
+                "open",
+                Some("lint"),
+                &serde_json::json!({}),
+                &here,
+            )
+            .unwrap();
+        let notice = wait(PLUGIN_NOTICE, &any);
+        assert_eq!(notice["source"], added.id);
+        assert_eq!(notice["plugin"], "board");
+        assert_eq!(notice["text"], "gh is not logged in");
+        // The action's answer is the window's alone: nothing was left for
+        // the tool server.
+        assert!(!crate::show::answers_path(&home).exists());
+
+        let refused = plugins
+            .action(
+                &added.id,
+                "missing",
+                "pull-request",
+                "open",
+                None,
+                &serde_json::json!({}),
+                &here,
+            )
+            .unwrap_err();
+        assert_eq!(refused, "the plugin is not running");
+
+        // Off, and the rows it left go with it.
+        plugins.enable(&added.id, "board", false).unwrap();
+        let gone = wait(PLUGIN_SECTION, &|payload| {
+            payload["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.is_empty())
+        });
+        assert_eq!(gone["section"], "pull-request");
+        assert_eq!(gone["project"], here);
+        assert!(gone["actions"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn takes_a_section_apart_and_drops_what_is_not_a_row() {
+        let message = serde_json::json!({
+            "type": "section",
+            "id": "pull-request",
+            "title": "Pull request",
+            "project": "/p",
+            "rows": [
+                {
+                    "id": "a",
+                    "label": "A",
+                    "state": "waiting",
+                    "actions": [{ "id": "open", "label": "Open" }, { "id": "", "label": "No" }],
+                    "default": "nowhere"
+                },
+                { "id": "b", "label": "B", "state": "unsure" },
+                { "id": "c" },
+                "not a row",
+                {
+                    "id": "d",
+                    "label": "D",
+                    "actions": [{
+                        "id": "run",
+                        "label": "Run",
+                        "input": [
+                            { "id": "m", "label": "M", "kind": "choice", "options": [{ "id": "x", "label": "X" }] },
+                            { "id": "n", "label": "N", "kind": "odd" }
+                        ]
+                    }],
+                    "default": "run"
+                }
+            ],
+            "actions": [{ "id": "refresh", "label": "Refresh" }, { "id": "nameless" }]
+        });
+        let section = checked_section("src-1", "board", &message).unwrap();
+        assert_eq!(section.source, "src-1");
+        assert_eq!(section.plugin, "board");
+        assert_eq!(section.section, "pull-request");
+        assert_eq!(
+            section
+                .rows
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "d"]
+        );
+        assert_eq!(section.rows[0].state.as_deref(), Some("waiting"));
+        assert_eq!(section.rows[0].actions.as_ref().unwrap().len(), 1);
+        assert_eq!(section.rows[0].default, None);
+        assert_eq!(section.rows[1].default.as_deref(), Some("run"));
+        let fields = section.rows[1].actions.as_ref().unwrap()[0]
+            .input
+            .as_ref()
+            .unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].options.as_ref().unwrap()[0].id, "x");
+        assert_eq!(section.actions.len(), 1);
+        assert_eq!(section.actions[0].id, "refresh");
+
+        // A section is named as a tool is, and is for one project.
+        let named = |id: &str| serde_json::json!({ "id": id, "project": "/p", "rows": [] });
+        assert!(checked_section("src-1", "board", &named("Pull request")).is_none());
+        assert!(checked_section("src-1", "board", &named("")).is_none());
+        assert!(checked_section("src-1", "board", &named("pull-request")).is_some());
+        assert!(
+            checked_section("src-1", "board", &serde_json::json!({ "id": "checks" })).is_none()
+        );
+
+        // A section that says nothing else is itself, and empty.
+        let untitled = checked_section(
+            "src-1",
+            "board",
+            &serde_json::json!({ "id": "checks", "project": "/p" }),
+        )
+        .unwrap();
+        assert_eq!(untitled.title, "checks");
+        assert!(untitled.rows.is_empty());
+        assert!(untitled.actions.is_empty());
+    }
+
+    #[test]
+    fn refuses_a_location_or_a_ref_that_git_would_read_as_an_option() {
+        let home = std::env::temp_dir().join("workbench-plugins-arguments-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let root = home.join(".agent-workbench").join("plugins");
+
+        let smuggled = "--upload-pack=touch /tmp/workbench-never-written";
+        let refused = plugins.add(smuggled, None).unwrap_err();
+        assert!(refused.contains("may not start with a dash"), "{refused}");
+        assert!(!root.join(source_id(smuggled)).exists(), "nothing was run");
+
+        let url = "file:///srv/plugins.git";
+        assert_eq!(
+            plugins.add(url, Some("-x")).unwrap_err(),
+            "the ref may hold letters, digits, dot, slash, dash and underscore"
+        );
+        let refused = plugins.add(url, Some("main;touch x")).unwrap_err();
+        assert!(refused.contains("the ref may hold"), "{refused}");
+        assert!(!root.join(source_id(url)).exists(), "nothing was cloned");
+        assert!(plugins.list().is_empty());
+
+        assert!(plain_reference("release/1.2.x"));
+        assert!(!plain_reference("--upload-pack=x"));
+        assert!(!plain_reference(""));
     }
 
     #[test]

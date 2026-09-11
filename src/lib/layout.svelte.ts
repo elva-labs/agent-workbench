@@ -100,6 +100,9 @@ export const layout = $state({
   mediaShare: 0.3,
   mediaOpen: false,
   processesOpen: false,
+  /** A plugin's section, by source, plugin and section: open rather than
+      folded. Absent is folded, which is how one first appears. */
+  sectionsOpen: {} as Record<string, boolean>,
   mode: "working" as Mode,
   focus: "agent" as PaneId,
   /** Counts every request to focus a pane by key, so a pane that already
@@ -353,6 +356,13 @@ export function loadLayout() {
     if (typeof v.mediaOpen === "boolean") layout.mediaOpen = v.mediaOpen;
     if (typeof v.processesOpen === "boolean")
       layout.processesOpen = v.processesOpen;
+    if (v.sectionsOpen !== null && typeof v.sectionsOpen === "object") {
+      const open: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(v.sectionsOpen)) {
+        if (typeof value === "boolean") open[key] = value;
+      }
+      layout.sectionsOpen = open;
+    }
     if (typeof v.sessionsChosen === "boolean")
       layout.sessionsChosen = v.sessionsChosen;
     if (typeof v.changesChosen === "boolean")
@@ -384,6 +394,7 @@ export function saveLayout() {
         mediaShare: layout.mediaShare,
         mediaOpen: layout.mediaOpen,
         processesOpen: layout.processesOpen,
+        sectionsOpen: layout.sectionsOpen,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,
         terminalChosen: layout.terminalChosen,

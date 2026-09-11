@@ -102,6 +102,9 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
             }
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
+        workbench_core::plugins::PLUGIN_SECTION => {
+            put_back(&mut payload, "project", |path| with_host(host, path));
+        }
         _ => {}
     }
     payload
@@ -409,6 +412,26 @@ mod tests {
             json!({"sessionId": "s", "kind": "stop"}),
         );
         assert_eq!(other["sessionId"], "s");
+    }
+
+    #[test]
+    fn a_plugin_s_rows_come_home_with_their_project_s_host_on() {
+        let section = homeward(
+            "lab",
+            workbench_core::plugins::PLUGIN_SECTION,
+            json!({
+                "source": "src-1",
+                "plugin": "github",
+                "section": "pull-request",
+                "title": "Pull request",
+                "project": "/srv/api",
+                "rows": [{"id": "lint", "label": "lint"}],
+                "actions": []
+            }),
+        );
+        assert_eq!(section["project"], "ssh://lab/srv/api");
+        assert_eq!(section["section"], "pull-request");
+        assert_eq!(section["rows"][0]["id"], "lint");
     }
 
     #[test]

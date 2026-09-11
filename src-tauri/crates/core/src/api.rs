@@ -126,6 +126,24 @@ impl Core {
         self.plugins()?.enable(id, name, on)
     }
 
+    /// Runs an action of a plugin's section, on a row or on the header.
+    /// It comes back as soon as the plugin has the line: what the action
+    /// does arrives as its own event.
+    #[allow(clippy::too_many_arguments)]
+    pub fn plugin_action(
+        &self,
+        source: &str,
+        plugin: &str,
+        section: &str,
+        action: &str,
+        row: Option<&str>,
+        input: &serde_json::Value,
+        project: &str,
+    ) -> Result<(), String> {
+        self.plugins()?
+            .action(source, plugin, section, action, row, input, project)
+    }
+
     pub fn home(&self) -> Option<&Path> {
         self.home.as_deref()
     }

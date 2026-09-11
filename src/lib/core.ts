@@ -132,6 +132,67 @@ export interface PluginStateEvent {
   hello: PluginInfo["hello"];
 }
 
+/** One thing an action asks for before it runs: a line of text, or a
+    choice among named options. */
+export interface PluginField {
+  id: string;
+  label: string;
+  kind: "text" | "choice";
+  /** The options to choose among, for a choice. */
+  options: { id: string; label: string }[] | null;
+  placeholder: string | null;
+}
+
+/** Something a section's header or one of its rows offers to do. An action
+    with fields is asked about in a dialog before it runs. */
+export interface PluginAction {
+  id: string;
+  label: string;
+  input: PluginField[] | null;
+}
+
+/** A line in a plugin's section: what it is, how it is doing, and what can
+    be done to it. */
+export interface PluginRow {
+  id: string;
+  label: string;
+  detail: string | null;
+  state: "ok" | "busy" | "waiting" | "failed" | null;
+  actions: PluginAction[] | null;
+  /** The action Enter or a click on the row runs, by id. */
+  default: string | null;
+}
+
+/** A section's rows for one project, as the plugin has them now. No rows
+    means the section is gone for that project. */
+export interface PluginSectionEvent {
+  source: string;
+  plugin: string;
+  section: string;
+  title: string;
+  project: string;
+  rows: PluginRow[];
+  actions: PluginAction[];
+}
+
+/** What went wrong when an action ran, for the plugin's sections to say. */
+export interface PluginNoticeEvent {
+  source: string;
+  plugin: string;
+  text: string;
+}
+
+/** An action taken on a section's header or on one of its rows. */
+export interface PluginActionRequest {
+  source: string;
+  plugin: string;
+  section: string;
+  action: string;
+  row: string | null;
+  input: Record<string, string>;
+  project: string;
+}
+
 /** A process running under a session's or a shell's own. */
 export interface Process {
   pid: number;
@@ -335,6 +396,17 @@ export interface Core {
   onPluginState(
     handler: (event: PluginStateEvent) => void,
   ): Promise<() => void>;
+  /** A plugin's section has rows for a project, or none left. */
+  onPluginSection(
+    handler: (event: PluginSectionEvent) => void,
+  ): Promise<() => void>;
+  /** An action went wrong, for the plugin's sections to say. */
+  onPluginNotice(
+    handler: (event: PluginNoticeEvent) => void,
+  ): Promise<() => void>;
+  /** Takes an action on a section's header or row. Rejects with the reason
+      when the plugin is not running. */
+  pluginAction(request: PluginActionRequest): Promise<void>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
   /** An agent that mints its own ids has written one down for a session. */
   onSessionIdentified(
@@ -488,6 +560,17 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onPluginSection(handler) {
+    return listen<PluginSectionEvent>("plugin_section", (event) =>
+      handler(event.payload),
+    );
+  },
+  async onPluginNotice(handler) {
+    return listen<PluginNoticeEvent>("plugin_notice", (event) =>
+      handler(event.payload),
+    );
+  },
+  pluginAction: (request) => invoke<void>("plugin_action", { ...request }),
 
   async onSessionEnded(handler) {
     return listen<SessionEnded>("session_ended", (event) =>
@@ -640,6 +723,15 @@ const detachedCore: Core = {
   },
   async onPluginState() {
     return () => {};
+  },
+  async onPluginSection() {
+    return () => {};
+  },
+  async onPluginNotice() {
+    return () => {};
+  },
+  async pluginAction() {
+    throw new Error("no core");
   },
   async ptyCwd() {
     return null;

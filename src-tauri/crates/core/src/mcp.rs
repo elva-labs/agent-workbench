@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use crate::plugins::{self, PublishedTool};
 use crate::show::{
-    self, Answer, DiffRequest, NotifyRequest, PresentRequest, Request, ShowRequest,
+    self, resolve, Answer, DiffRequest, NotifyRequest, PresentRequest, Request, ShowRequest,
     TerminalRequest, ToolRequest, MEDIA_EXTENSIONS,
 };
 
@@ -484,10 +484,6 @@ fn terminal_call(
     )
 }
 
-/// How much of a note is kept: the row shows one line and cuts the rest,
-/// so a long one is of no use past this.
-const NOTE_CAP: usize = 120;
-
 fn notify_call(
     home: &Path,
     cwd: &Path,
@@ -500,8 +496,7 @@ fn notify_call(
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .ok_or("notify needs a text")?;
-    let line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let line: String = line.chars().take(NOTE_CAP).collect();
+    let line = show::one_line(text);
     show::append(
         home,
         &Request::Notify(NotifyRequest {
@@ -570,16 +565,6 @@ pub fn describe_selection(selection: Option<&crate::selection::Selection>, cwd: 
         "The user is looking at {} in the viewer, {what}{lines}.",
         relative(file)
     )
-}
-
-fn resolve(cwd: &Path, path: &str) -> PathBuf {
-    let given = Path::new(path);
-    let joined = if given.is_absolute() {
-        given.to_path_buf()
-    } else {
-        cwd.join(given)
-    };
-    dunce::canonicalize(&joined).unwrap_or(joined)
 }
 
 #[cfg(test)]

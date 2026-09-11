@@ -35,6 +35,59 @@ function rowNames(page: Page) {
   return page.locator(`${TREE} [role='treeitem'] .name`).allTextContents();
 }
 
+/** A section as a plugin sends one, for the project the fixture opens. */
+async function pushSection(
+  page: Page,
+  sent: { rows: unknown[]; actions?: unknown[] },
+) {
+  await page.evaluate(
+    ({ project, sent }) =>
+      (
+        window as unknown as { __pluginSection: (event: unknown) => void }
+      ).__pluginSection({
+        source: "src-1",
+        plugin: "github",
+        section: "Pull request",
+        title: "Pull request",
+        project,
+        rows: sent.rows,
+        actions: sent.actions ?? [],
+      }),
+    { project: PROJECT, sent },
+  );
+}
+
+/** Every action the fake core was asked for, as action and row. */
+function actionsTaken(page: Page) {
+  return page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __pluginActions?: { action: string; row: string | null }[];
+        }
+      ).__pluginActions?.map((call) => [call.action, call.row]) ?? [],
+  );
+}
+
+const CHECKS = [
+  {
+    id: "lint",
+    label: "lint",
+    detail: "passed in 42s",
+    state: "ok",
+    actions: [{ id: "open", label: "Open", input: null }],
+    default: "open",
+  },
+  {
+    id: "test",
+    label: "test",
+    detail: "running on ubuntu",
+    state: "busy",
+    actions: [{ id: "rerun", label: "Rerun", input: null }],
+    default: null,
+  },
+];
+
 test.beforeEach(async ({ page }) => {
   // A repository to look at, so the tree and the viewer have real shapes.
   await installFakeCore(page);
@@ -733,6 +786,150 @@ test.describe("the file viewer", () => {
     await expect(rows).toHaveCount(1);
     await expect(page.getByTestId("processes-fold")).toContainText(
       "Processes (1)",
+    );
+  });
+
+  // A plugin's section: counted in its header while folded, its rows with
+  // their states and details when opened, and its actions taken from the
+  // header, from a row, and by opening the row itself.
+  test("lists a plugin's section under the tree and takes its actions", async ({
+    page,
+  }) => {
+    await pushSection(page, {
+      rows: CHECKS,
+      actions: [
+        { id: "refresh", label: "Refresh", input: null },
+        {
+          id: "comment",
+          label: "Comment",
+          input: [
+            {
+              id: "body",
+              label: "Body",
+              kind: "text",
+              options: null,
+              placeholder: "a line",
+            },
+            {
+              id: "as",
+              label: "As",
+              kind: "choice",
+              options: [
+                { id: "me", label: "Me" },
+                { id: "bot", label: "The bot" },
+              ],
+              placeholder: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    const fold = page.getByTestId("plugin-fold");
+    await expect(fold).toContainText("Pull request (2)");
+    await expect(page.getByTestId("plugin-row")).toHaveCount(0);
+    await fold.click();
+    const rows = page.getByTestId("plugin-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText("lint");
+    await expect(rows.first()).toContainText("passed in 42s");
+    await expect(rows.first().locator(".dot")).toHaveAttribute(
+      "data-state",
+      "ok",
+    );
+    await expect(rows.nth(1).locator(".dot")).toHaveAttribute(
+      "data-state",
+      "busy",
+    );
+
+    // A row's own action, the header's, and the row itself, which runs the
+    // action the plugin made its default.
+    await rows.nth(1).hover();
+    await rows.nth(1).getByTestId("plugin-row-action").click();
+    await page.getByTestId("plugin-section-action").first().click();
+    await rows.first().click();
+    await expect
+      .poll(() => actionsTaken(page))
+      .toEqual([
+        ["rerun", "test"],
+        ["refresh", null],
+        ["open", "lint"],
+      ]);
+
+    // An action with fields asks in a dialog of its own first.
+    await page.getByTestId("plugin-section-action").nth(1).click();
+    const dialog = page.getByTestId("action-input");
+    await expect(dialog).toContainText("Comment");
+    await expect(page.getByTestId("action-text")).toBeFocused();
+    await expect(page.getByTestId("action-text")).toHaveAttribute(
+      "placeholder",
+      "a line",
+    );
+    await page.getByTestId("action-text").fill("looks good to me");
+    await page.getByTestId("action-choice").selectOption("bot");
+    await page.getByTestId("action-run").click();
+    await expect(dialog).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const calls = (
+            window as unknown as { __pluginActions: Record<string, unknown>[] }
+          ).__pluginActions;
+          return calls[calls.length - 1];
+        }),
+      )
+      .toMatchObject({
+        action: "comment",
+        row: null,
+        input: { body: "looks good to me", as: "bot" },
+        project: PROJECT,
+      });
+
+    // The plugin stopped: no rows left, and the section goes with them.
+    await pushSection(page, { rows: [] });
+    await expect(page.getByTestId("plugin-section")).toHaveCount(0);
+  });
+
+  test("walks the tree's cursor onto a plugin's rows and folds them", async ({
+    page,
+  }) => {
+    await pushSection(page, { rows: CHECKS });
+    await page.getByTestId("plugin-fold").click();
+    const rows = page.getByTestId("plugin-row");
+    await expect(rows).toHaveCount(2);
+
+    // The column ends on the last of the plugin's rows; Left folds the
+    // section and leaves the cursor on its header.
+    await page.getByTestId("file-tree").focus();
+    await page.keyboard.press("End");
+    await expect(rows.last()).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByTestId("plugin-row")).toHaveCount(0);
+    await expect(page.getByTestId("plugin-fold")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowRight");
+    await expect(rows).toHaveCount(2);
+
+    // Enter on the header folds it too; on a row it runs the row's default.
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("plugin-row")).toHaveCount(0);
+    await page.keyboard.press("Enter");
+    await expect(rows).toHaveCount(2);
+    await page.keyboard.press("ArrowDown");
+    await expect(rows.first()).toHaveClass(/cursor/);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => actionsTaken(page)).toEqual([["open", "lint"]]);
+  });
+
+  test("says what a plugin refused, under its section's header", async ({
+    page,
+  }) => {
+    await pushSection(page, {
+      rows: CHECKS,
+      actions: [{ id: "explode", label: "Boom", input: null }],
+    });
+    await page.getByTestId("plugin-section-action").click();
+    await expect(page.getByTestId("plugin-notice")).toContainText(
+      "the plugin is not running",
     );
   });
 

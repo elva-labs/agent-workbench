@@ -643,6 +643,42 @@ async fn plugin_enable(
     blocking(move || core.plugin_enable(&id, &name, on).and_then(value)).await
 }
 
+/// An action on a plugin's row or its section's header, run by the plugin
+/// where the project is.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn plugin_action(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    source: String,
+    plugin: String,
+    section: String,
+    action: String,
+    row: Option<String>,
+    input: Value,
+    project: String,
+) -> Result<Value, String> {
+    let (s, p, c, a, r, i) = (
+        source.clone(),
+        plugin.clone(),
+        section.clone(),
+        action.clone(),
+        row.clone(),
+        input.clone(),
+    );
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "plugin_action",
+        move |rest| {
+            json!({ "source": source, "plugin": plugin, "section": section, "action": action, "row": row, "input": input, "project": rest })
+        },
+        move |core, project| core.plugin_action(&s, &p, &c, &a, r.as_deref(), &i, project),
+    )
+    .await
+}
+
 /// Opens the connection to a host, or says why it cannot.
 #[tauri::command]
 async fn remote_connect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<Value, String> {
@@ -787,6 +823,7 @@ pub fn run() {
             plugin_check,
             plugin_update,
             plugin_enable,
+            plugin_action,
             remote_connect,
             remote_disconnect,
             remote_dirs,

@@ -156,6 +156,19 @@ struct PluginEnableParams {
 }
 
 #[derive(Deserialize)]
+struct PluginActionParams {
+    source: String,
+    plugin: String,
+    section: String,
+    action: String,
+    #[serde(default)]
+    row: Option<String>,
+    #[serde(default)]
+    input: Value,
+    project: String,
+}
+
+#[derive(Deserialize)]
 struct AgentParams {
     id: String,
 }
@@ -348,6 +361,19 @@ pub fn dispatch(
             let p: PluginEnableParams = parse(params)?;
             value(core.plugin_enable(&p.id, &p.name, p.on)?)
         }
+        "plugin_action" => {
+            let p: PluginActionParams = parse(params)?;
+            core.plugin_action(
+                &p.source,
+                &p.plugin,
+                &p.section,
+                &p.action,
+                p.row.as_deref(),
+                &p.input,
+                &p.project,
+            )?;
+            Ok(Value::Null)
+        }
         "list_dirs" => {
             let p: DirsParams = parse(params)?;
             value(core.list_dirs(&p.path)?)
@@ -436,6 +462,18 @@ mod tests {
     fn bad_parameters_are_an_error_not_a_panic() {
         let error = dispatch(&core(), "git_status", json!({"nope": 1}), no_output).unwrap_err();
         assert!(error.contains("bad parameters"));
+    }
+
+    #[test]
+    fn an_action_on_a_plugin_is_a_method_of_its_own() {
+        let error = dispatch(
+            &core(),
+            "plugin_action",
+            json!({ "source": "s" }),
+            no_output,
+        )
+        .expect_err("an action needs every name");
+        assert!(error.contains("bad parameters"), "{error}");
     }
 
     #[test]

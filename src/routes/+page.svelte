@@ -16,6 +16,8 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import { stateChanged as pluginStateChanged, watchPluginUpdates } from "$lib/plugins.svelte";
+  import ActionInput from "$lib/components/ActionInput.svelte";
+  import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -115,6 +117,12 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginState((event) => pluginStateChanged(event))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginSection((event) => sectionChanged(event))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginNotice((event) => pluginNoticed(event))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)
@@ -355,6 +363,9 @@
 {/if}
 {#if resume.open}
   <Resume />
+{/if}
+{#if pluginSections.pending !== null}
+  <ActionInput />
 {/if}
 
 

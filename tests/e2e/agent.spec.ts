@@ -222,6 +222,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           throw new Error("no plugins here");
         },
         onPluginState: async () => () => {},
+        onPluginSection: async () => () => {},
+        onPluginNotice: async () => () => {},
+        pluginAction: async () => {},
         onSessionEnded: async (handler: (ended: unknown) => void) => {
           fake.enders.push(handler);
           return () => {};
