@@ -1396,6 +1396,12 @@ impl Inner {
     }
 
     fn call(&self, request: ToolRequest) {
+        // A call for a source this core has never heard of belongs to
+        // another core reading the same log, an app and a daemon sharing a
+        // home above all: theirs to answer, and nothing to say here.
+        if !self.knows(&request.source) {
+            return;
+        }
         let message = serde_json::json!({
             "type": "tool",
             "id": request.id,
@@ -1414,6 +1420,16 @@ impl Inner {
                 },
             );
         }
+    }
+
+    /// Whether a source is one of this core's own.
+    fn knows(&self, source_id: &str) -> bool {
+        self.stored
+            .lock()
+            .expect("plugins lock")
+            .sources
+            .iter()
+            .any(|source| source.id == source_id)
     }
 
     /// A plugin's answer to a call, written where the tool server waits.
@@ -2101,6 +2117,27 @@ tools = ["ping"]
         again.remove(&added.id).unwrap();
         assert!(again.list().is_empty());
         assert!(Plugins::new(&home, recorder).list().is_empty());
+    }
+
+    #[test]
+    fn leaves_a_call_for_a_source_it_has_never_heard_of_alone() {
+        // An app and a daemon can share a home, and both tail the log. A
+        // core answers only for the sources it holds, so the one that has
+        // the plugin is the one that answers.
+        let home = std::env::temp_dir().join("workbench-plugins-other-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let request = crate::show::ToolRequest {
+            id: "call-1".into(),
+            source: "someone-elses-source".into(),
+            plugin: "echo".into(),
+            tool: "ping".into(),
+            arguments: serde_json::json!({}),
+            cwd: "/p".into(),
+            session: None,
+        };
+        plugins.call(request);
+        assert!(!crate::show::answer_path(&home, "call-1").exists());
     }
 
     #[cfg(unix)]

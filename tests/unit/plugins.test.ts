@@ -168,6 +168,33 @@ describe("a plugin", () => {
     expect(plugins.sources).toHaveLength(1);
   });
 
+  // The core tells the window what a plugin's process is doing through
+  // events, which can arrive before the answer that started it.
+  it("keeps the state the events told, over the answer that starts it", async () => {
+    await loadPlugins();
+    const running = enablePlugin("src-1", "github", true);
+    expect(plugins.sources[0].plugins[0].state).toBe("starting");
+    stateChanged({
+      source: "src-1",
+      name: "github",
+      state: "running",
+      detail: null,
+      hello: {
+        name: "github",
+        version: "0.2.0",
+        tools: [],
+        sections: [],
+        view: null,
+      },
+    });
+    await running;
+    expect(plugins.sources[0].plugins[0].state).toBe("running");
+    expect(plugins.sources[0].plugins[0].enabled).toBe(true);
+    // Loading afresh takes the core's word for everything.
+    await loadPlugins();
+    expect(plugins.sources[0].plugins[0].state).toBe("off");
+  });
+
   it("says what enabling it means, in a few words", () => {
     expect(summary(github())).toBe(
       "2 tools, 1 section, a wide view, runs node",

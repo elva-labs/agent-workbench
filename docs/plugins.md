@@ -212,21 +212,24 @@ splitter is remembered.
 
 ## Projects on other machines
 
-A plugin runs where the project is. When a plugin is enabled and a project
-on another machine is open, the daemon there clones the source at the
-pinned commit, validates it as the app did, and runs it; the settings row
-says so per machine, and a plugin that cannot run there, its runtime
-missing, say, shows the reason on that machine's line and nothing else
-changes.
+A plugin runs on the machine the app does, and hears about every project
+open there, a project on another machine among them. Its rows and its page
+come home the way everything else from a remote does, with the host put
+back on the paths it names, and what it runs to find them out runs here.
+A plugin of the remote machine's own, cloned and run by the daemon there,
+is the next piece of this and is not built.
 
 ## Writing one
 
-A source can be a directory on the machine, added by path, with no clone.
-The app watches it and starts the plugin's process again when a file under
-it changes, so a plugin can be written against the running app. A small
-package carries the protocol's types and a helper that reads and writes
-the lines, so a plugin in TypeScript is a manifest, a `main.js`, and the
-handful of messages it cares about.
+A source can be a directory on the machine, added by path, with no clone,
+so a plugin is written against the running app: build it, turn it off and
+on again in the settings, and the next process is the new one. The
+manifest is read afresh each time, so a tool or a section added to it
+needs no more than that.
+
+The `@elva-labs/workbench-plugin` package carries the protocol's types and
+the loop, so a plugin in TypeScript is a manifest, a handler per tool,
+section and action, and a line to run it.
 
 ## Settings
 

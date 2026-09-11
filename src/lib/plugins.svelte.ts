@@ -51,10 +51,34 @@ async function act<T>(work: () => Promise<T>): Promise<T | null> {
   }
 }
 
+/**
+ * A source the core answered with, kept beside what the window already
+ * knows. What a plugin declares and whether it is on come from the
+ * answer; what its process is doing comes from the events, which can
+ * arrive before the answer that started it does, so the answer never
+ * writes a state over one the events have already moved on.
+ */
 function put(source: PluginSource) {
   const at = plugins.sources.findIndex((s) => s.id === source.id);
-  if (at === -1) plugins.sources.push(source);
-  else plugins.sources[at] = source;
+  if (at === -1) {
+    plugins.sources.push(source);
+    return;
+  }
+  const known = plugins.sources[at];
+  plugins.sources[at] = {
+    ...source,
+    plugins: source.plugins.map((plugin) => {
+      const before = known.plugins.find((p) => p.name === plugin.name);
+      return before === undefined
+        ? plugin
+        : {
+            ...plugin,
+            state: before.state,
+            detail: before.detail,
+            hello: before.hello,
+          };
+    }),
+  };
 }
 
 /** Adds a repository or a directory. False when it could not be added,
@@ -98,8 +122,21 @@ export async function updateSource(id: string) {
 }
 
 export async function enablePlugin(id: string, name: string, on: boolean) {
+  awaiting(id, name, on);
   const updated = await act(() => core().pluginEnable(id, name, on));
   if (updated !== null) put(updated);
+}
+
+/** What a plugin's row says while the core has not spoken yet: a plugin
+    just turned on is on its way up, and one turned off is down. */
+function awaiting(id: string, name: string, on: boolean) {
+  const plugin = plugins.sources
+    .find((source) => source.id === id)
+    ?.plugins.find((p) => p.name === name);
+  if (plugin === undefined) return;
+  plugin.state = on ? "starting" : "off";
+  plugin.detail = null;
+  if (!on) plugin.hello = null;
 }
 
 /** A plugin's state changed on the core's side: the row follows. */

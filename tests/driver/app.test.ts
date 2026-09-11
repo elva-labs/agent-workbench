@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { By, Key, until } from "selenium-webdriver";
 import {
@@ -18,6 +18,14 @@ import {
 
 const SESSIONS = "section[data-pane='sessions']";
 const TREE = "[data-testid='file-tree']";
+const CHANGES = "section[data-pane='changes']";
+/** The plugin source the tier adds: a directory with one plugin in it,
+    kept here as the fixture it is. */
+const PLUGIN_SOURCE = resolve(__dirname, "plugin");
+/** The plugin's row in the settings. `plugin-row` is the pane's word for a
+    row of a section too, so every locator says which it means. */
+const SETTINGS_PLUGIN =
+  "[data-testid='settings'] [data-testid='plugin-row'][data-plugin='driverboard']";
 
 /**
  * The real binary, driven. Each `it` builds on the last: one app, one
@@ -450,6 +458,277 @@ describe("the real app", () => {
     ).toContain("media (1)");
     await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
   });
+
+  // The whole of the plugin system, end to end: a directory added as a
+  // source in the settings, its plugin turned on and running as a process
+  // of node's, the rows it sends drawn under the tree, its actions taken
+  // from a row and from a section's header, the page it sends opened, its
+  // tool offered to the agent through the daemon and answered by the
+  // process, and everything of its gone when it is turned off.
+  //
+  // Before the remote: the remote here is the daemon on this machine, with
+  // this home, and both cores read the same log of tool calls. A call is
+  // answered by whichever reaches it first, and only one of them has the
+  // plugin.
+  it("runs a plugin, draws its rows and offers its tool to the agent", async () => {
+    const { driver } = app;
+    // The project on screen, whose rows these are.
+    await openProjects(driver, [repo]);
+    await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
+
+    const chord = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+    // The chord opens the settings and never closes them, so one that
+    // landed while the page was still coming back from the reload costs a
+    // second press and nothing else.
+    const openSettings = async () => {
+      for (let attempt = 0; ; attempt += 1) {
+        await driver
+          .actions()
+          .keyDown(chord)
+          .sendKeys(",")
+          .keyUp(chord)
+          .perform();
+        try {
+          await driver.wait(
+            until.elementLocated(By.css("[data-testid='settings']")),
+            5_000,
+          );
+          return;
+        } catch (failure) {
+          if (attempt >= 3) throw failure;
+        }
+      }
+    };
+    const closeSettings = async () => {
+      await driver
+        .findElement(By.css("[data-testid='settings-close']"))
+        .click();
+      await driver.wait(
+        async () =>
+          (await driver.findElements(By.css("[data-testid='settings']")))
+            .length === 0,
+        10_000,
+      );
+    };
+    const pluginState = () =>
+      textOf(driver, `${SETTINGS_PLUGIN} [data-testid='plugin-state']`);
+    // The rows of the section under the tree, read through the page: the
+    // driver's own text reader leaves out a row's caption, as it leaves
+    // out the tree.
+    const sectionRows = () =>
+      driver.executeScript(
+        (selector: string) =>
+          [...document.querySelectorAll<HTMLElement>(selector)].map((row) => ({
+            text: row.innerText,
+            state: row.querySelector<HTMLElement>(".dot")?.dataset.state ?? "",
+          })),
+        `${CHANGES} [data-testid='plugin-row']`,
+      ) as Promise<{ text: string; state: string }[]>;
+    const waitForRow = (needle: string) =>
+      driver.wait(
+        async () =>
+          (await sectionRows()).some((row) => row.text.includes(needle)),
+        15_000,
+        `no row saying "${needle}"`,
+      );
+    const click = (selector: string) =>
+      driver.executeScript(
+        (selector: string) =>
+          document.querySelector<HTMLButtonElement>(selector)?.click(),
+        selector,
+      );
+
+    // The source: a directory on this machine, added by path.
+    await openSettings();
+    await driver
+      .findElement(By.css("[data-testid='plugin-location']"))
+      .sendKeys(PLUGIN_SOURCE);
+    await driver.findElement(By.css("[data-testid='plugin-add']")).click();
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='plugin-source']")),
+      20_000,
+    );
+    expect(await textOf(driver, "[data-testid='plugin-source']")).toContain(
+      "directory",
+    );
+    await driver.wait(
+      async () => (await textOf(driver, SETTINGS_PLUGIN)).includes("1.2.3"),
+      10_000,
+      "the source listed no plugin",
+    );
+    // What turning it on would mean, before it has run.
+    expect(await pluginState()).toContain(
+      "1 tool, 1 section, a wide view, runs node",
+    );
+
+    // On, after the question that comes with it, and started.
+    await driver
+      .findElement(By.css(`${SETTINGS_PLUGIN} [data-testid='plugin-on']`))
+      .click();
+    await driver.findElement(By.css("[data-testid='plugin-agree']")).click();
+    await driver.wait(
+      async () => {
+        const state = await pluginState();
+        return state.includes("starting") || state.includes("running");
+      },
+      30_000,
+      "the plugin was never started",
+    );
+    await closeSettings();
+
+    // The plugin's own word that it is up: its section under the tree,
+    // counted in the header while folded.
+    await driver.wait(
+      async () =>
+        (await textOf(driver, `${CHANGES} [data-testid='plugin-fold']`))
+          .toLowerCase()
+          .includes("driver board (2)"),
+      60_000,
+      "the plugin's section never arrived",
+    );
+    expect(await sectionRows()).toHaveLength(0);
+    await click(`${CHANGES} [data-testid='plugin-fold']`);
+    await driver.wait(
+      async () => (await sectionRows()).length === 2,
+      10_000,
+      "the section did not open on its rows",
+    );
+    const rows = await sectionRows();
+    expect(rows[0].text).toContain("ready");
+    expect(rows[0].text).toContain("the fixture is up");
+    expect(rows[0].state).toBe("ok");
+    expect(rows[1].text).toContain("notes");
+    expect(rows[1].state).toBe("waiting");
+
+    // A row's own action, echoed back as the row's label. The actions
+    // show on hover, which the driver does not do.
+    await click(
+      `${CHANGES} [data-testid='plugin-row'][data-row='notes']` +
+        " [data-testid='plugin-row-action'][data-action='echo']",
+    );
+    await waitForRow("did echo on notes with nothing");
+
+    // The header's action, which asks for a line before it runs.
+    await click(
+      `${CHANGES} [data-testid='plugin-section-action'][data-action='note']`,
+    );
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='action-input']")),
+      10_000,
+    );
+    expect(
+      (await textOf(driver, "[data-testid='action-input']")).toLowerCase(),
+    ).toContain("note");
+    await driver
+      .findElement(By.css("[data-testid='action-text']"))
+      .sendKeys("from the dialog");
+    await driver.findElement(By.css("[data-testid='action-run']")).click();
+    await driver.wait(
+      async () =>
+        (await driver.findElements(By.css("[data-testid='action-input']")))
+          .length === 0,
+      10_000,
+    );
+    await waitForRow("did note on the header with from the dialog");
+
+    // The page the plugin sends, in the viewer beside the tree.
+    await click(
+      `${CHANGES} [data-testid='plugin-section-action'][data-action='page']`,
+    );
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='plugin-view-open']")),
+      15_000,
+    );
+    await driver
+      .findElement(By.css("[data-testid='plugin-view-open']"))
+      .click();
+    await driver.wait(
+      until.elementLocated(
+        By.css("[data-testid='viewer'][data-view='plugin']"),
+      ),
+      10_000,
+    );
+    expect(await textOf(driver, "[data-testid='plugin-view-name']")).toBe(
+      "driverboard",
+    );
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='plugin-page']")),
+      10_000,
+    );
+    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+
+    // The tool, as the agent meets it: under the plugin's name on the
+    // tool server, and answered by the process a call away.
+    const handshake = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+    ];
+    const ask = (message: unknown) =>
+      execFileSync(DAEMON, ["mcp"], {
+        cwd: repo,
+        env: { ...process.env, HOME: app.home },
+        input:
+          [...handshake, message]
+            .map((message) => JSON.stringify(message))
+            .join("\n") + "\n",
+      }).toString();
+    const listed = ask({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    });
+    expect(listed).toContain("driverboard_ping");
+    expect(listed).toContain("Answers with what it was given.");
+    const answered = ask({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "driverboard_ping",
+        arguments: { text: "over the wire" },
+      },
+    });
+    expect(answered).toContain("pong: over the wire");
+
+    // Off again. The settings ask the core for its sources as they open,
+    // so the row is its latest word: the process is up, at the version it
+    // greeted with.
+    await openSettings();
+    await driver.wait(
+      async () => (await pluginState()).includes("running 1.2.3"),
+      30_000,
+      "the settings never said the plugin was running",
+    );
+    await driver
+      .findElement(By.css(`${SETTINGS_PLUGIN} [data-testid='plugin-off']`))
+      .click();
+    await driver.wait(
+      async () => (await pluginState()).includes("off"),
+      30_000,
+      "the plugin never went off",
+    );
+    await closeSettings();
+    await driver.wait(
+      async () =>
+        (
+          await driver.findElements(
+            By.css(`${CHANGES} [data-testid='plugin-section']`),
+          )
+        ).length === 0,
+      20_000,
+      "the section stayed under the tree",
+    );
+  }, 120_000);
 
   // A project on another machine: the path names the host, the app runs
   // the daemon there (here, the daemon itself) and everything else is the

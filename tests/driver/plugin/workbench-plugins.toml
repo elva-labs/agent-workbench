@@ -1,0 +1,12 @@
+# The source the driver tier adds as a directory: one plugin, run by node
+# with nothing installed.
+
+[[plugin]]
+name = "driverboard"
+path = "board"
+description = "A fixture for the driver tier: one tool, one section, one page."
+version = "1.2.3"
+run = ["node", "main.js"]
+tools = ["ping"]
+sections = ["Driver board"]
+view = "wide"

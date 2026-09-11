@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Builder, Key, type WebDriver } from "selenium-webdriver";
 
 /**
@@ -85,9 +85,11 @@ goto loop
 `;
 
 /** Stands in for the user's login shell: the same shell, with the fake
-    agents first on PATH, whatever the real profile does to it. */
+    agents and the node these tests run on first on PATH, whatever the real
+    profile does to it. A plugin's runtime is looked for on this PATH, so
+    the node here is the one a plugin runs on. */
 const FAKE_SHELL = (bin: string) => `#!/bin/sh
-PATH="${bin}:$PATH"
+PATH="${bin}:${dirname(process.execPath)}:$PATH"
 export PATH
 exec /bin/sh "$@"
 `;
