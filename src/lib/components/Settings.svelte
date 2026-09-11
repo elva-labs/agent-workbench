@@ -15,6 +15,21 @@
   } from "$lib/keys.svelte";
   import { returnFocus } from "$lib/layout.svelte";
   import { closeSettings, settings } from "$lib/settings.svelte";
+  import {
+    addSource,
+    checkAll,
+    checkSource,
+    enablePlugin,
+    loadPlugins,
+    plugins,
+    removeSource,
+    stateLabel,
+    summary,
+    trust,
+    trusted,
+    updateSource,
+  } from "$lib/plugins.svelte";
+  import { lastSegment } from "$lib/paths";
   import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import {
@@ -51,6 +66,47 @@
     dialog.focus();
     return returnFocus;
   });
+
+  /** The plugin sources, read when the dialog opens. */
+  onMount(() => {
+    void loadPlugins();
+  });
+
+  let sourceLocation = $state("");
+  let sourceReference = $state("");
+  /** The plugin whose question is on screen: enabling it means agreeing
+      to what it declares. Asked once per plugin. */
+  let asking = $state<{ id: string; name: string } | null>(null);
+
+  async function add(e: SubmitEvent) {
+    e.preventDefault();
+    const location = sourceLocation.trim();
+    if (location === "" || plugins.busy) return;
+    const added = await addSource(location, sourceReference.trim() || null);
+    if (added) {
+      sourceLocation = "";
+      sourceReference = "";
+    }
+  }
+
+  function turn(id: string, name: string, on: boolean) {
+    if (!on) {
+      asking = null;
+      void enablePlugin(id, name, false);
+      return;
+    }
+    if (trusted(id, name)) {
+      void enablePlugin(id, name, true);
+      return;
+    }
+    asking = { id, name };
+  }
+
+  function agree(id: string, name: string) {
+    trust(id, name);
+    asking = null;
+    void enablePlugin(id, name, true);
+  }
 
   /** The live updates section, lit for a moment when the dialog was opened
       to point at it. */
@@ -273,6 +329,110 @@
         <p class="error" data-testid="hook-error">{hook.error}</p>
       {/if}
       </section>
+
+      <h3>Plugins</h3>
+      <p class="note">
+        A plugin comes from a git repository or a directory on this machine, runs with your
+        privileges where the project is, and adds tools for the agent, a section under the tree,
+        or a view. Add a source and turn its plugins on one by one.
+      </p>
+      <form class="add-source" onsubmit={add}>
+        <input
+          type="text"
+          placeholder="Repository URL or directory"
+          bind:value={sourceLocation}
+          disabled={plugins.busy}
+          data-testid="plugin-location"
+        />
+        <input
+          type="text"
+          class="reference"
+          placeholder="ref"
+          bind:value={sourceReference}
+          disabled={plugins.busy}
+          data-testid="plugin-reference"
+        />
+        <button type="submit" disabled={plugins.busy || sourceLocation.trim() === ""} data-testid="plugin-add"
+          >{plugins.busy ? "Working…" : "Add"}</button
+        >
+      </form>
+      {#if plugins.error}
+        <p class="error" data-testid="plugin-error">{plugins.error}</p>
+      {/if}
+      {#if plugins.sources.length > 0}
+        <div class="sources-tools">
+          <button class="tool" onclick={() => void checkAll()} disabled={plugins.busy} data-testid="plugins-check-all"
+            >Check for updates</button
+          >
+        </div>
+      {/if}
+      {#each plugins.sources as source (source.id)}
+        <div class="source" data-testid="plugin-source" data-source={source.id}>
+          <div class="source-head">
+            <span class="source-name" title={source.location}>{lastSegment(source.location)}</span>
+            <span class="source-meta">
+              {source.kind === "dir" ? "directory" : (source.commit?.slice(0, 7) ?? "")}{source.reference
+                ? ` · ${source.reference}`
+                : ""}
+            </span>
+            {#if source.newer}
+              <button class="tool accent" onclick={() => void updateSource(source.id)} disabled={plugins.busy} data-testid="plugin-update"
+                >Update to {source.newer.slice(0, 7)}</button
+              >
+            {/if}
+            {#if source.kind === "git"}
+              <button class="tool" onclick={() => void checkSource(source.id)} disabled={plugins.busy} data-testid="plugin-check"
+                >Check</button
+              >
+            {/if}
+            <button class="tool" onclick={() => void removeSource(source.id)} disabled={plugins.busy} data-testid="plugin-remove"
+              >Remove</button
+            >
+          </div>
+          {#if source.error}
+            <p class="error">{source.error}</p>
+          {/if}
+          {#each source.plugins as plugin (plugin.name)}
+            <div class="project plugin" data-testid="plugin-row" data-plugin={plugin.name}>
+              <div class="plugin-text">
+                <span class="project-name">{plugin.name} <span class="version">{plugin.version}</span></span>
+                {#if plugin.description}<span class="plugin-desc">{plugin.description}</span>{/if}
+                <span class="plugin-meta" data-testid="plugin-state">{summary(plugin)} · {stateLabel(plugin)}</span>
+              </div>
+              <div class="seg" role="radiogroup" aria-label="{plugin.name} on or off">
+                <button
+                  role="radio"
+                  aria-checked={!plugin.enabled}
+                  class:on={!plugin.enabled}
+                  onclick={() => turn(source.id, plugin.name, false)}
+                  disabled={plugins.busy}
+                  data-testid="plugin-off">Off</button
+                >
+                <button
+                  role="radio"
+                  aria-checked={plugin.enabled}
+                  class:on={plugin.enabled}
+                  onclick={() => turn(source.id, plugin.name, true)}
+                  disabled={plugins.busy}
+                  data-testid="plugin-on">On</button
+                >
+              </div>
+            </div>
+            {#if asking !== null && asking.id === source.id && asking.name === plugin.name}
+              <div class="ask" data-testid="plugin-ask">
+                <p>
+                  {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.
+                  Turn it on?
+                </p>
+                <div class="ask-actions">
+                  <button class="go" onclick={() => agree(source.id, plugin.name)} data-testid="plugin-agree">Turn on</button>
+                  <button class="tool" onclick={() => (asking = null)} data-testid="plugin-cancel">Not now</button>
+                </div>
+              </div>
+            {/if}
+          {/each}
+        </div>
+      {/each}
 
       <h3>Keys</h3>
       <p class="note">
@@ -628,5 +788,137 @@
     padding: 0 0 6px;
     font-size: 12px;
     color: var(--del);
+  }
+  /* Plugin sources: a form to add one, then each source with its plugins. */
+  .add-source {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 8px;
+  }
+
+  .add-source input {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 5px 8px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    color: var(--ink);
+  }
+
+  .add-source input.reference {
+    flex: 0 0 80px;
+  }
+
+  .add-source button,
+  .sources-tools .tool,
+  .source-head .tool,
+  .ask .tool,
+  .ask .go {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border: 1px solid var(--rule);
+    background: none;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .add-source button:disabled,
+  .source-head .tool:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .source-head .tool.accent,
+  .ask .go {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .sources-tools {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0 0 6px;
+  }
+
+  .source {
+    border-top: 1px solid var(--rule);
+    padding: 8px 0 4px;
+  }
+
+  .source-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 4px;
+  }
+
+  .source-name {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .source-meta {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  .plugin {
+    align-items: flex-start;
+  }
+
+  .plugin-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .plugin-text .version {
+    font-size: 10.5px;
+    color: var(--ink-3);
+    font-weight: 400;
+  }
+
+  .plugin-desc {
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+
+  .plugin-meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+  }
+
+  .ask {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--accent);
+  }
+
+  .ask p {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    color: var(--ink);
+  }
+
+  .ask-actions {
+    display: flex;
+    gap: 6px;
   }
 </style>

@@ -15,6 +15,7 @@
   import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
+  import { stateChanged as pluginStateChanged, watchPluginUpdates } from "$lib/plugins.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -75,6 +76,7 @@
   // under the sessions, for the section under the tree.
   watchSelection();
   watchProcesses();
+  watchPluginUpdates();
 
   // Every project opened is brought to the hooks answer, once.
   $effect(() => {
@@ -110,6 +112,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onNotifyRequest((request) => notified(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginState((event) => pluginStateChanged(event))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFileDrag(handleDrag)

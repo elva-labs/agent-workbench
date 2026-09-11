@@ -66,17 +66,64 @@ pub struct Core {
     pub sink: Arc<dyn Sink>,
     home: Option<PathBuf>,
     processes: crate::processes::Processes,
+    /// None without a home directory, where there is nowhere to keep them.
+    plugins: Option<crate::plugins::Plugins>,
 }
 
 impl Core {
     pub fn new(sink: Arc<dyn Sink>) -> Self {
+        let home = home_directory();
+        let plugins = home
+            .as_deref()
+            .map(|home| crate::plugins::Plugins::new(home, Arc::clone(&sink)));
         Self {
             sessions: Arc::new(Sessions::default()),
             processes: crate::processes::Processes::default(),
             watchers: Arc::new(Watchers::default()),
             sink,
-            home: home_directory(),
+            home,
+            plugins,
         }
+    }
+
+    fn plugins(&self) -> Result<&crate::plugins::Plugins, String> {
+        self.plugins
+            .as_ref()
+            .ok_or_else(|| "no home directory".to_string())
+    }
+
+    /// Every plugin source, with its plugins and their states.
+    pub fn plugin_sources(&self) -> Result<Vec<crate::plugins::SourceInfo>, String> {
+        Ok(self.plugins()?.list())
+    }
+
+    pub fn plugin_add(
+        &self,
+        location: &str,
+        reference: Option<&str>,
+    ) -> Result<crate::plugins::SourceInfo, String> {
+        self.plugins()?.add(location, reference)
+    }
+
+    pub fn plugin_remove(&self, id: &str) -> Result<(), String> {
+        self.plugins()?.remove(id)
+    }
+
+    pub fn plugin_check(&self, id: &str) -> Result<Option<String>, String> {
+        self.plugins()?.check(id)
+    }
+
+    pub fn plugin_update(&self, id: &str) -> Result<crate::plugins::SourceInfo, String> {
+        self.plugins()?.update(id)
+    }
+
+    pub fn plugin_enable(
+        &self,
+        id: &str,
+        name: &str,
+        on: bool,
+    ) -> Result<crate::plugins::SourceInfo, String> {
+        self.plugins()?.enable(id, name, on)
     }
 
     pub fn home(&self) -> Option<&Path> {
@@ -90,7 +137,11 @@ impl Core {
         match &self.home {
             Some(home) => {
                 activity::watch(Arc::clone(&self.sink), hook::activity_path(home))?;
-                crate::show::watch(Arc::clone(&self.sink), crate::show::requests_path(home))
+                crate::show::watch(Arc::clone(&self.sink), crate::show::requests_path(home))?;
+                if let Some(plugins) = &self.plugins {
+                    plugins.start_enabled();
+                }
+                Ok(())
             }
             None => Ok(()),
         }

@@ -143,6 +143,19 @@ struct ProcessParams {
 }
 
 #[derive(Deserialize)]
+struct PluginAddParams {
+    location: String,
+    reference: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PluginEnableParams {
+    id: String,
+    name: String,
+    on: bool,
+}
+
+#[derive(Deserialize)]
 struct AgentParams {
     id: String,
 }
@@ -312,6 +325,28 @@ pub fn dispatch(
             let p: ProcessParams = parse(params)?;
             core.pty_stop_process(&p.id, p.pid)?;
             Ok(Value::Null)
+        }
+        "plugin_sources" => value(core.plugin_sources()?),
+        "plugin_add" => {
+            let p: PluginAddParams = parse(params)?;
+            value(core.plugin_add(&p.location, p.reference.as_deref())?)
+        }
+        "plugin_remove" => {
+            let p: IdParams = parse(params)?;
+            core.plugin_remove(&p.id)?;
+            Ok(Value::Null)
+        }
+        "plugin_check" => {
+            let p: IdParams = parse(params)?;
+            value(core.plugin_check(&p.id)?)
+        }
+        "plugin_update" => {
+            let p: IdParams = parse(params)?;
+            value(core.plugin_update(&p.id)?)
+        }
+        "plugin_enable" => {
+            let p: PluginEnableParams = parse(params)?;
+            value(core.plugin_enable(&p.id, &p.name, p.on)?)
         }
         "list_dirs" => {
             let p: DirsParams = parse(params)?;

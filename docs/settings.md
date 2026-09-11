@@ -22,6 +22,17 @@ sits in the palette rather than beside it.
 The whole chord table, with two presets and room for your own. What the app
 may claim and why is in [focus](focus-model.md).
 
+## Plugins
+
+Sources of plugins, each a git repository or a directory on this machine,
+with the plugins each names and a switch per plugin. Adding a source clones
+it, pins the commit, reads its manifest and lists its plugins off; turning
+one on asks once what it declares and that it runs with your privileges,
+then starts it, and the row says whether it is running, starting again
+after it went, or could not be started and why. A source is checked for a
+newer commit once a day and on request, and updated only when asked.
+[Plugins](plugins.md) has the whole of it.
+
 ## Live updates
 
 Watcher only, or agent hooks, chosen once for every project; each project

@@ -593,6 +593,56 @@ async fn pty_stop_process(
     .await
 }
 
+/// The plugin sources on this machine, with their plugins and states.
+#[tauri::command]
+async fn plugin_sources(core: State<'_, Arc<Core>>) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.plugin_sources().and_then(value)).await
+}
+
+#[tauri::command]
+async fn plugin_add(
+    core: State<'_, Arc<Core>>,
+    location: String,
+    reference: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || {
+        core.plugin_add(&location, reference.as_deref())
+            .and_then(value)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plugin_remove(core: State<'_, Arc<Core>>, id: String) -> Result<(), String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.plugin_remove(&id)).await
+}
+
+#[tauri::command]
+async fn plugin_check(core: State<'_, Arc<Core>>, id: String) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.plugin_check(&id).and_then(value)).await
+}
+
+#[tauri::command]
+async fn plugin_update(core: State<'_, Arc<Core>>, id: String) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.plugin_update(&id).and_then(value)).await
+}
+
+#[tauri::command]
+async fn plugin_enable(
+    core: State<'_, Arc<Core>>,
+    id: String,
+    name: String,
+    on: bool,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.plugin_enable(&id, &name, on).and_then(value)).await
+}
+
 /// Opens the connection to a host, or says why it cannot.
 #[tauri::command]
 async fn remote_connect(remotes: State<'_, Arc<Remotes>>, host: String) -> Result<Value, String> {
@@ -731,6 +781,12 @@ pub fn run() {
             pty_cwd,
             pty_processes,
             pty_stop_process,
+            plugin_sources,
+            plugin_add,
+            plugin_remove,
+            plugin_check,
+            plugin_update,
+            plugin_enable,
             remote_connect,
             remote_disconnect,
             remote_dirs,

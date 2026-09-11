@@ -164,3 +164,96 @@ test.describe("the hooks notice", () => {
     await expect(page.getByTestId("hooks-notice")).toHaveCount(0);
   });
 });
+
+// Plugin sources: added by URL, listed with their plugins off, turned on
+// after the question, and removed.
+test.describe("plugins", () => {
+  test("adds a source, turns a plugin on after the question, and removes it", async ({
+    page,
+  }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("settings")).toBeVisible();
+    await page
+      .getByTestId("plugin-location")
+      .fill("https://example.com/bad.git");
+    await page.getByTestId("plugin-add").click();
+    await expect(page.getByTestId("plugin-error")).toContainText(
+      "could not clone",
+    );
+    await expect(page.getByTestId("plugin-source")).toHaveCount(0);
+
+    await page
+      .getByTestId("plugin-location")
+      .fill("https://example.com/good-plugins.git");
+    await page.getByTestId("plugin-add").click();
+    const source = page.getByTestId("plugin-source");
+    await expect(source).toHaveCount(1);
+    await expect(source).toContainText("good-plugins.git");
+    await expect(source).toContainText("0123456");
+    const row = page.getByTestId("plugin-row");
+    await expect(row).toContainText("github");
+    await expect(page.getByTestId("plugin-state")).toContainText(
+      "2 tools, 1 section, a wide view, runs node · off",
+    );
+
+    // On asks once, and says what it means.
+    await row.getByTestId("plugin-on").click();
+    await expect(page.getByTestId("plugin-ask")).toContainText(
+      "runs node with your privileges",
+    );
+    await page.getByTestId("plugin-cancel").click();
+    await expect(page.getByTestId("plugin-ask")).toHaveCount(0);
+    await expect(row.getByTestId("plugin-on")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await row.getByTestId("plugin-on").click();
+    await page.getByTestId("plugin-agree").click();
+    await expect(row.getByTestId("plugin-on")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(page.getByTestId("plugin-state")).toContainText("starting");
+    // The core's word arrives: running, with the greeting's version.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __pluginState: (event: unknown) => void }
+      ).__pluginState({
+        source: "src-1",
+        name: "github",
+        state: "running",
+        detail: null,
+        hello: {
+          name: "github",
+          version: "0.2.0",
+          tools: [{ name: "pr" }],
+          sections: [],
+          view: null,
+        },
+      }),
+    );
+    await expect(page.getByTestId("plugin-state")).toContainText(
+      "running 0.2.0",
+    );
+
+    // Off, then on again: no question the second time.
+    await row.getByTestId("plugin-off").click();
+    await expect(page.getByTestId("plugin-state")).toContainText("off");
+    await row.getByTestId("plugin-on").click();
+    await expect(page.getByTestId("plugin-ask")).toHaveCount(0);
+    await expect(row.getByTestId("plugin-on")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    // A check finds a newer commit; the update takes it.
+    await page.getByTestId("plugin-check").click();
+    await expect(page.getByTestId("plugin-update")).toContainText("fedcba9");
+    await page.getByTestId("plugin-update").click();
+    await expect(page.getByTestId("plugin-update")).toHaveCount(0);
+    await expect(source).toContainText("fedcba9");
+
+    await page.getByTestId("plugin-remove").click();
+    await expect(page.getByTestId("plugin-source")).toHaveCount(0);
+  });
+});

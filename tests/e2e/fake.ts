@@ -127,6 +127,80 @@ export async function installFakeCore(
         resize: async () => {},
         kill: async () => {},
         ptyCwd: async () => null,
+        // Plugin sources, kept here: a URL with "good" in it adds a source
+        // with one plugin, anything else is refused.
+        pluginSources: async () => {
+          const w = window as unknown as { __pluginSources?: unknown[] };
+          return w.__pluginSources ?? [];
+        },
+        pluginAdd: async (location: string, reference: string | null) => {
+          const w = window as unknown as {
+            __pluginSources?: Record<string, unknown>[];
+          };
+          if (!location.includes("good"))
+            throw new Error("could not clone: repository not found");
+          const source = {
+            id: `src-${(w.__pluginSources ?? []).length + 1}`,
+            kind: location.startsWith("/") ? "dir" : "git",
+            location,
+            reference,
+            commit: "0123456789abcdef",
+            newer: null,
+            error: null,
+            plugins: [
+              {
+                name: "github",
+                path: "github",
+                description: "Pull requests, checks and review comments.",
+                version: "0.2.0",
+                run: ["node", "main.js"],
+                tools: ["pr", "checks"],
+                sections: ["Pull request"],
+                view: "wide",
+                enabled: false,
+                state: "off",
+                detail: null,
+                hello: null,
+              },
+            ],
+          };
+          (w.__pluginSources ??= []).push(source);
+          return source;
+        },
+        pluginRemove: async (id: string) => {
+          const w = window as unknown as { __pluginSources?: { id: string }[] };
+          w.__pluginSources = (w.__pluginSources ?? []).filter(
+            (s) => s.id !== id,
+          );
+        },
+        pluginCheck: async () => "fedcba9876543210",
+        pluginUpdate: async (id: string) => {
+          const w = window as unknown as {
+            __pluginSources?: Record<string, unknown>[];
+          };
+          const source = (w.__pluginSources ?? []).find((s) => s.id === id)!;
+          source.commit = "fedcba9876543210";
+          source.newer = null;
+          return source;
+        },
+        pluginEnable: async (id: string, name: string, on: boolean) => {
+          const w = window as unknown as {
+            __pluginSources?: {
+              id: string;
+              plugins: Record<string, unknown>[];
+            }[];
+          };
+          const source = (w.__pluginSources ?? []).find((s) => s.id === id)!;
+          const plugin = source.plugins.find((p) => p.name === name)!;
+          plugin.enabled = on;
+          plugin.state = on ? "starting" : "off";
+          return source;
+        },
+        onPluginState: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginState =
+            handler;
+          return () => {};
+        },
         // What runs under a pty: whatever a test put there.
         ptyProcesses: async (id: string) => {
           const w = window as unknown as {

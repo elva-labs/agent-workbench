@@ -209,6 +209,19 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         ptyCwd: async () => fake.cwd,
         ptyProcesses: async () => [],
         stopProcess: async () => {},
+        pluginSources: async () => [],
+        pluginAdd: async () => {
+          throw new Error("no plugins here");
+        },
+        pluginRemove: async () => {},
+        pluginCheck: async () => null,
+        pluginUpdate: async () => {
+          throw new Error("no plugins here");
+        },
+        pluginEnable: async () => {
+          throw new Error("no plugins here");
+        },
+        onPluginState: async () => () => {},
         onSessionEnded: async (handler: (ended: unknown) => void) => {
           fake.enders.push(handler);
           return () => {};

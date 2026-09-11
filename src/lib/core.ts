@@ -90,6 +90,48 @@ export interface NotifyRequest {
   session: string | null;
 }
 
+/** A plugin as its manifest declares it, plus what is on and running. */
+export interface PluginInfo {
+  name: string;
+  path: string;
+  description: string;
+  version: string;
+  run: string[];
+  tools: string[];
+  sections: string[];
+  view: "wide" | "full" | null;
+  enabled: boolean;
+  state: "off" | "starting" | "running" | "stopped" | "failed";
+  detail: string | null;
+  hello: {
+    name: string;
+    version: string;
+    tools: unknown[];
+    sections: unknown[];
+    view: unknown | null;
+  } | null;
+}
+
+/** A plugin source: a repository cloned, or a directory on the machine. */
+export interface PluginSource {
+  id: string;
+  kind: "git" | "dir";
+  location: string;
+  reference: string | null;
+  commit: string | null;
+  newer: string | null;
+  error: string | null;
+  plugins: PluginInfo[];
+}
+
+export interface PluginStateEvent {
+  source: string;
+  name: string;
+  state: PluginInfo["state"];
+  detail: string | null;
+  hello: PluginInfo["hello"];
+}
+
 /** A process running under a session's or a shell's own. */
 export interface Process {
   pid: number;
@@ -282,6 +324,17 @@ export interface Core {
   /** What runs under a pty's process, the process itself left out. */
   ptyProcesses(id: string): Promise<Process[]>;
   stopProcess(id: string, pid: number): Promise<void>;
+  /** The plugin sources on this machine, with their plugins and states. */
+  pluginSources(): Promise<PluginSource[]>;
+  pluginAdd(location: string, reference: string | null): Promise<PluginSource>;
+  pluginRemove(id: string): Promise<void>;
+  /** A newer commit on the source's ref, or null when there is none. */
+  pluginCheck(id: string): Promise<string | null>;
+  pluginUpdate(id: string): Promise<PluginSource>;
+  pluginEnable(id: string, name: string, on: boolean): Promise<PluginSource>;
+  onPluginState(
+    handler: (event: PluginStateEvent) => void,
+  ): Promise<() => void>;
   onSessionEnded(handler: (ended: SessionEnded) => void): Promise<() => void>;
   /** An agent that mints its own ids has written one down for a session. */
   onSessionIdentified(
@@ -422,6 +475,19 @@ const tauriCore: Core = {
   ptyCwd: (id) => invoke<string | null>("pty_cwd", { id }),
   ptyProcesses: (id) => invoke<Process[]>("pty_processes", { id }),
   stopProcess: (id, pid) => invoke<void>("pty_stop_process", { id, pid }),
+  pluginSources: () => invoke<PluginSource[]>("plugin_sources"),
+  pluginAdd: (location, reference) =>
+    invoke<PluginSource>("plugin_add", { location, reference }),
+  pluginRemove: (id) => invoke<void>("plugin_remove", { id }),
+  pluginCheck: (id) => invoke<string | null>("plugin_check", { id }),
+  pluginUpdate: (id) => invoke<PluginSource>("plugin_update", { id }),
+  pluginEnable: (id, name, on) =>
+    invoke<PluginSource>("plugin_enable", { id, name, on }),
+  async onPluginState(handler) {
+    return listen<PluginStateEvent>("plugin_state", (event) =>
+      handler(event.payload),
+    );
+  },
 
   async onSessionEnded(handler) {
     return listen<SessionEnded>("session_ended", (event) =>
@@ -556,6 +622,25 @@ const detachedCore: Core = {
     return [];
   },
   async stopProcess() {},
+  async pluginSources() {
+    return [];
+  },
+  async pluginAdd() {
+    throw new Error("no core");
+  },
+  async pluginRemove() {},
+  async pluginCheck() {
+    return null;
+  },
+  async pluginUpdate() {
+    throw new Error("no core");
+  },
+  async pluginEnable() {
+    throw new Error("no core");
+  },
+  async onPluginState() {
+    return () => {};
+  },
   async ptyCwd() {
     return null;
   },
