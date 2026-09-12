@@ -2214,7 +2214,12 @@ run = ["sh", "main.sh"]
             }
         }
         let failed = failed.expect("gave up");
-        assert!(failed.starts_with("stopped after 5 tries: exited with code 3: Error: cannot find module ./board"), "{failed}");
+        assert!(
+            failed.starts_with(
+                "stopped after 5 tries: exited with code 3: Error: cannot find module ./board"
+            ),
+            "{failed}"
+        );
         let events = recorder.events.lock().unwrap();
         let stopped = events
             .iter()
@@ -2229,7 +2234,10 @@ run = ["sh", "main.sh"]
         // Off and on again is a fresh start.
         plugins.enable(&added.id, "brief", false).unwrap();
         let on = plugins.enable(&added.id, "brief", true).unwrap();
-        assert!(matches!(on.plugins[0].state, State::Starting | State::Stopped | State::Running));
+        assert!(matches!(
+            on.plugins[0].state,
+            State::Starting | State::Stopped | State::Running
+        ));
         plugins.enable(&added.id, "brief", false).unwrap();
     }
 

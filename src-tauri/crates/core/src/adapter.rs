@@ -369,9 +369,20 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let claude = argv(ClaudeCode.launch(&ctx, "abc").unwrap());
-        assert_eq!(&claude[1..], ["--session-id", "abc", "--", "--dangerously-skip-permissions and fix it"]);
+        assert_eq!(
+            &claude[1..],
+            [
+                "--session-id",
+                "abc",
+                "--",
+                "--dangerously-skip-permissions and fix it"
+            ]
+        );
         let codex = argv(Codex.launch(&ctx, "").unwrap());
-        assert_eq!(&codex[1..], ["--", "--dangerously-skip-permissions and fix it"]);
+        assert_eq!(
+            &codex[1..],
+            ["--", "--dangerously-skip-permissions and fix it"]
+        );
     }
 
     #[test]

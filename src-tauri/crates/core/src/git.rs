@@ -467,7 +467,17 @@ fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
 fn free_worktree_name(project: &Path, name: &str) -> Result<String, String> {
     let taken = |candidate: &str| {
         project.join(WORKTREES).join(candidate).exists()
-            || run(project, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("refs/heads/{candidate}")]).is_ok()
+            || run(
+                project,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    "--end-of-options",
+                    &format!("refs/heads/{candidate}"),
+                ],
+            )
+            .is_ok()
     };
     if !taken(name) {
         return Ok(name.to_string());
@@ -831,7 +841,12 @@ mod tests {
 
         // The same name again is the next number up, as a path and a branch.
         let again = worktree_add(&dir, "review-42").unwrap();
-        assert!(again.replace('\\', "/").ends_with(".claude/worktrees/review-42-2"), "{again}");
+        assert!(
+            again
+                .replace('\\', "/")
+                .ends_with(".claude/worktrees/review-42-2"),
+            "{again}"
+        );
         let third = worktree_add(&dir, "review-42").unwrap();
         assert!(third.ends_with("review-42-3"), "{third}");
     }
