@@ -209,18 +209,19 @@
     align-items: baseline;
     gap: 2px;
     padding: 9px var(--pane-pad) 8px;
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
 
   .title {
     flex: 1;
     min-width: 0;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    color: var(--ink-3);
+    font-family: var(--chrome);
+    font-size: var(--title-size);
+    font-weight: var(--title-weight);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
+    color: var(--title-color);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -233,11 +234,12 @@
   .tool {
     flex: none;
     border: 0;
+    border-radius: var(--radius);
     background: none;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 0 5px;
@@ -265,6 +267,7 @@
     min-width: 0;
     display: flex;
     align-items: stretch;
+    padding: var(--term-air);
   }
 
   .slot {
@@ -332,11 +335,11 @@
     align-items: center;
     gap: 7px;
     text-align: left;
-    padding: 4px var(--pane-pad);
+    padding: var(--row-pad-y) var(--row-pad-x);
     border: 0;
     background: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
     color: var(--ink-2);
     cursor: pointer;
   }
@@ -353,8 +356,8 @@
   }
 
   .dot {
-    width: 6px;
-    height: 6px;
+    width: var(--dot);
+    height: var(--dot);
     flex: none;
     border: 1px solid var(--ink-3);
     border-radius: 50%;
@@ -418,12 +421,14 @@
 
   .overlay button {
     margin-left: auto;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 12px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;

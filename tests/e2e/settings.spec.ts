@@ -58,6 +58,87 @@ test("changes the colour palette, which repaints the panes, and keeps it", async
   await expect(page.locator("html")).toHaveAttribute("data-palette", "indigo");
 });
 
+test("changes the theme's look and keeps it", async ({ page }) => {
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("look-modern").click();
+  await expect(page.locator("html")).toHaveAttribute("data-look", "modern");
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await expect(page.locator(AGENT)).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-look", "modern");
+
+  // Back to terminal, which is the look the tokens are written in and
+  // carries no stamp at all.
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("look-terminal").click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-look", /.*/);
+});
+
+// The face the terminal draws in follows the choice without a restart: the
+// open terminals are told the new family as the stamp lands.
+test("changes the terminal font, which the open terminals take at once, and keeps it", async ({
+  page,
+}) => {
+  const fontOf = () =>
+    page.evaluate(() => {
+      const registry =
+        (
+          window as unknown as {
+            __WORKBENCH_TERMINALS__?: Record<
+              string,
+              { options: { fontFamily?: string } }
+            >;
+          }
+        ).__WORKBENCH_TERMINALS__ ?? {};
+      return Object.values(registry)[0]?.options.fontFamily ?? null;
+    });
+  // A session, so there is a terminal to change under us.
+  const terminal = async () => {
+    if ((await fontOf()) === null)
+      await page.getByTestId("new-session").click();
+    await expect.poll(fontOf).not.toBeNull();
+  };
+
+  await terminal();
+  expect(await fontOf()).toContain("IBM Plex Mono");
+
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("mono-jetbrains").click();
+  await expect(page.locator("html")).toHaveAttribute("data-mono", "jetbrains");
+  await expect.poll(fontOf).toContain("JetBrains Mono");
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await expect(page.locator(AGENT)).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-mono", "jetbrains");
+  await terminal();
+  expect(await fontOf()).toContain("JetBrains Mono");
+});
+
+test("changes the interface font, which repaints the chrome, and keeps it", async ({
+  page,
+}) => {
+  const sansOf = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--sans")
+        .trim(),
+    );
+  expect(await sansOf()).toContain("IBM Plex Sans");
+
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("sans-system").click();
+  await expect(page.locator("html")).toHaveAttribute("data-sans", "system");
+  expect(await sansOf()).toMatch(/^-apple-system/);
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await expect(page.locator(AGENT)).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-sans", "system");
+  expect(await sansOf()).toMatch(/^-apple-system/);
+});
+
 // The vim preset moves between panes on h, j, k and l. The status bar and the
 // keys themselves follow at once, and the choice survives a reload.
 test("switches to the vim preset and the keys follow", async ({ page }) => {

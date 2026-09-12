@@ -8,6 +8,22 @@ them is kept by the window and applies at once.
 
 System, light or dark. System follows the desktop and changes with it.
 
+## Theme
+
+Terminal or modern. Terminal is mono chrome, small capitals, square corners
+and panes drawn as boxes. Modern sets the chrome in the sans, in sentence
+case, with soft corners and the panes as cards on one canvas. Both use the
+same colours, so the appearance and the palette hold across either.
+
+## Font
+
+Two families, chosen apart: the one the terminal draws in and the one the
+rest of the app is set in. The terminal has IBM Plex Mono, JetBrains Mono
+or the machine's own monospace; the interface has IBM Plex Sans, Inter or
+the machine's own. Each name is shown in its own face. A change reaches
+every open terminal at once, which measures its grid again and tells the
+process the size it now has, so there is nothing to restart.
+
 ## Colour
 
 Five palettes: teal, indigo, amber, rose and mono. Every colour in the app

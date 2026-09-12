@@ -1,0 +1,102 @@
+/*
+ * Looks.
+ *
+ * tokens.css holds the terminal look, which is what no stamp on <html>
+ * means: one hand for everything, small capitals with wide tracking, square
+ * corners, hairlines, and panes drawn as bordered boxes edge to edge.
+ *
+ * The modern look restates those same tokens. It speaks the sans, sets its
+ * labels in sentence case, rounds its corners, and lifts the agent and the
+ * changes off the canvas as cards while the sessions pane stays on it. A few
+ * decisions have no token of their own because they belong to one control;
+ * those rules follow the token block, each scoped to the pane that owns it.
+ */
+
+:root[data-look="modern"] {
+  --chrome: var(--sans);
+
+  --label-case: none;
+  --label-track: 0;
+  --label-track-tight: 0;
+  --label-track-fine: 0;
+  --label-size: 11.5px;
+
+  --pane-pad: 14px;
+
+  --radius: 7px;
+  --radius-sm: 6px;
+  --radius-tag: 6px;
+  --radius-pane: 10px;
+
+  --pane-margin: 6px;
+  --pane-shadow-on: 0 0 0 1px var(--accent);
+
+  --splitter: transparent;
+  --splitter-hover: var(--rule-strong);
+
+  --title-align: flex-start;
+  --title-size: 13px;
+  --title-weight: 600;
+  --title-color: var(--ink);
+  --title-color-on: var(--ink);
+  --meta-size: 12px;
+
+  --row-pad-x: 10px;
+  --row-pad-y: 5px;
+  --row-size: 12.5px;
+  --row-inset: 8px;
+  --row-indent: 20px;
+  --project-weight: 600;
+  --dot: 7px;
+
+  --btn-size: 12.5px;
+  --btn-weight: 500;
+  --fold-size: 12px;
+
+  --field-border: transparent;
+  --field-size: 12.5px;
+
+  --term-air: 6px 4px;
+
+  --status-rule: transparent;
+  --status-bg: transparent;
+  --status-size: 11.5px;
+}
+
+/* The sessions pane is the canvas the cards sit on rather than a card of its
+   own: it paints the window's own ground, carries no edge, and says it has
+   the keyboard with its title alone. The ground is painted rather than left
+   transparent so the fade behind a row's buttons has a colour to reach. */
+:root[data-look="modern"] [data-pane="sessions"] {
+  --pane-bg: var(--bg);
+  --pane-border: transparent;
+  --pane-border-on: transparent;
+  --pane-shadow-on: none;
+  --pane-margin: 0px;
+  --radius-pane: 0px;
+  --head-rule: transparent;
+  --title-color-on: var(--accent);
+}
+
+/* Files against lines is one control with two halves, so the pair sits on a
+   surface of its own, clear of the field beside it, and the half in force is
+   filled rather than outlined. */
+:root[data-look="modern"] [data-pane="changes"] .modes {
+  gap: 0;
+  padding: 2px;
+  background: var(--surface);
+}
+
+:root[data-look="modern"] [data-pane="changes"] .modes button.on {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+/* A header that leads the window with the menu button, a title and its
+   meta, which is the agent's while the sessions pane is away: the title
+   sits by the menu and the meta keeps the far end, rather than the title
+   floating between them. */
+:root[data-look="modern"] header.leads:not(.lone) .title {
+  flex: 1;
+  text-align: left;
+}

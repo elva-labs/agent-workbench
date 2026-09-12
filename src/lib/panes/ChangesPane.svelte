@@ -1091,10 +1091,11 @@
     flex: none;
     border: 0;
     background: none;
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--fold-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-fine);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 6px var(--pane-pad);
@@ -1114,7 +1115,7 @@
 
   .section-empty {
     margin: 0;
-    padding: 2px var(--pane-pad) 8px 26px;
+    padding: 2px var(--pane-pad) 8px var(--row-indent);
     font-size: 11.5px;
     color: var(--ink-3);
   }
@@ -1185,11 +1186,12 @@
   .head-action,
   .row-action {
     border: 0;
+    border-radius: var(--radius);
     background: none;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track-fine);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px 5px;
@@ -1204,7 +1206,7 @@
 
   .section-notice {
     margin: 0;
-    padding: 0 var(--pane-pad) 6px 26px;
+    padding: 0 var(--pane-pad) 6px var(--row-indent);
     font-size: 11.5px;
     line-height: 1.4;
     color: var(--del);
@@ -1220,8 +1222,8 @@
   /* The row's state, drawn as a session's is: filled while something is
      happening, hollow when the plugin said nothing. */
   .dot {
-    width: 6px;
-    height: 6px;
+    width: var(--dot);
+    height: var(--dot);
     flex: none;
     border: 1px solid var(--ink-3);
     border-radius: 50%;
@@ -1274,7 +1276,8 @@
     background: none;
     text-align: left;
     cursor: pointer;
-    padding: 3px var(--pane-pad) 3px 26px;
+    padding: 3px var(--row-pad-x) 3px var(--row-indent);
+    border-radius: var(--radius);
     color: var(--ink);
   }
 
@@ -1301,7 +1304,7 @@
   }
 
   .media-meta {
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
     color: var(--ink-3);
   }
@@ -1371,10 +1374,10 @@
   }
 
   .icon.word {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track-fine);
+    text-transform: var(--label-case);
   }
 
   .icon:hover:not(:disabled) {
@@ -1389,13 +1392,14 @@
   /* The line to type into a session, under the row it goes to. */
   .send {
     display: block;
-    width: calc(100% - 26px - var(--pane-pad));
-    margin: 2px var(--pane-pad) 5px 26px;
+    width: calc(100% - var(--row-indent) - var(--pane-pad));
+    margin: 2px var(--pane-pad) 5px var(--row-indent);
     padding: 3px 6px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     background: var(--surface-2);
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--field-size);
     color: var(--ink);
     outline: none;
   }
@@ -1411,7 +1415,7 @@
     flex-wrap: wrap;
     gap: 4px;
     margin: 0;
-    padding: 4px var(--pane-pad) 6px 26px;
+    padding: 4px var(--pane-pad) 6px var(--row-indent);
     font-size: 11.5px;
     line-height: 1.4;
     color: var(--ink-3);
@@ -1447,7 +1451,7 @@
     gap: 10px;
     flex-wrap: wrap;
     padding: 8px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
 
@@ -1458,8 +1462,9 @@
     align-items: center;
     gap: 6px;
     padding: 0 6px 0 8px;
-    border: 1px solid var(--rule);
-    background: var(--surface-2);
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
+    background: var(--field-bg);
   }
 
   .field:focus-within {
@@ -1482,8 +1487,8 @@
     padding: 4px 0;
     border: 0;
     background: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--field-size);
     color: var(--ink);
     outline: none;
   }
@@ -1500,16 +1505,18 @@
     flex: none;
     display: inline-flex;
     gap: 2px;
+    border-radius: var(--radius-sm);
   }
 
   .modes button,
   .tool {
     border: 0;
+    border-radius: var(--radius-sm);
     background: none;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px 5px;
@@ -1553,6 +1560,7 @@
     padding: 4px 0;
     background: var(--surface);
     border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
     box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
   }
 
@@ -1597,7 +1605,7 @@
   }
 
   .menu kbd {
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
     color: var(--ink-3);
   }
@@ -1605,7 +1613,7 @@
   .notice {
     margin: 0;
     padding: 10px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--ink-3);

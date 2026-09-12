@@ -248,8 +248,8 @@
     min-width: 0;
     overflow: auto;
     padding: 6px 0;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
     line-height: 1.5;
   }
 
@@ -257,12 +257,16 @@
     outline: none;
   }
 
+  /* The first column is the twist or the status letter, at a width of its
+     own so no letter ever reaches the name beside it. */
   .row {
     display: grid;
-    grid-template-columns: 14px 1fr auto;
+    grid-template-columns: var(--tree-glyph) 1fr auto;
     gap: 6px;
     align-items: baseline;
-    padding-right: var(--pane-pad);
+    margin: 0 var(--row-inset);
+    padding-right: var(--row-pad-x);
+    border-radius: var(--radius);
     color: var(--ink-2);
     cursor: pointer;
     white-space: nowrap;
@@ -296,26 +300,27 @@
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
+  .twist,
+  .status {
+    text-align: center;
+  }
+
   .twist {
     color: var(--ink-3);
-    text-align: center;
   }
 
   .status[data-status="M"],
   .status[data-status="A"] {
     color: var(--add);
-    text-align: center;
   }
 
   .status[data-status="D"] {
     color: var(--del);
-    text-align: center;
   }
 
   .status[data-status="R"],
   .status[data-status="-"] {
     color: var(--ink-3);
-    text-align: center;
   }
 
   .name {

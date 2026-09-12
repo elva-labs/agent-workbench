@@ -47,6 +47,7 @@
   iframe {
     width: 100%;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
     background: white;
   }
 </style>

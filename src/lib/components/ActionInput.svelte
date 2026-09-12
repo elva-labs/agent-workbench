@@ -127,22 +127,23 @@
     flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
     outline: none;
   }
 
   header {
     padding: 9px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
 
   h2 {
     margin: 0;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--title-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     font-weight: 500;
     color: var(--accent);
   }
@@ -161,10 +162,10 @@
   }
 
   .name {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     color: var(--ink-3);
   }
 
@@ -172,10 +173,11 @@
   select {
     width: 100%;
     padding: 5px 7px;
-    border: 1px solid var(--rule);
-    background: var(--surface-2);
-    font-family: var(--mono);
-    font-size: 11.5px;
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
+    background: var(--field-bg);
+    font-family: var(--chrome);
+    font-size: var(--field-size);
     color: var(--ink);
   }
 
@@ -194,11 +196,13 @@
 
   footer button {
     border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
     background: var(--surface);
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-2);
     cursor: pointer;
     padding: 4px 10px;

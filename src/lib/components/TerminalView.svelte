@@ -313,6 +313,20 @@
     });
   });
 
+  // The terminal is drawn in the family the settings chose. The cell is a
+  // different size in another face, so the grid is measured again and the
+  // process told what it now has.
+  $effect(() => {
+    theme.mono;
+    if (!terminal) return;
+    untrack(() => {
+      terminal!.options.fontFamily = getComputedStyle(document.body)
+        .getPropertyValue("--mono")
+        .trim();
+      queueMicrotask(() => measure());
+    });
+  });
+
   // Coming back into view after being hidden, or after the panes moved, needs
   // a fresh measurement rather than a stale fit.
   $effect(() => {

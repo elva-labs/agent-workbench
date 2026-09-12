@@ -33,9 +33,15 @@
   import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import {
+    INTERFACE_FONTS,
+    LOOKS,
     PALETTES,
+    TERMINAL_FONTS,
     resolvedTheme,
+    setLook,
+    setMono,
     setPalette,
+    setSans,
     setTheme,
     theme,
     type ThemeChoice,
@@ -225,6 +231,63 @@
             data-testid="theme-{option.choice}">{option.label}</button
           >
         {/each}
+      </div>
+
+      <h3>Theme</h3>
+      <div class="looks" role="radiogroup" aria-label="Theme">
+        {#each LOOKS as look (look.name)}
+          <button
+            class="look"
+            role="radio"
+            aria-checked={theme.look === look.name}
+            class:on={theme.look === look.name}
+            onclick={() => setLook(look.name)}
+            data-testid="look-{look.name}"
+          >
+            <span class="look-name">{look.label}</span>
+            <span class="look-hint">{look.hint}</span>
+          </button>
+        {/each}
+      </div>
+
+      <h3>Font</h3>
+      <div class="fonts">
+        <div class="font-row">
+          <span class="font-what">Terminal</span>
+          <div class="swatches" role="radiogroup" aria-label="Terminal font">
+            {#each TERMINAL_FONTS as font (font.name)}
+              <button
+                class="swatch face"
+                role="radio"
+                aria-checked={theme.mono === font.name}
+                class:on={theme.mono === font.name}
+                onclick={() => setMono(font.name)}
+                data-testid="mono-{font.name}"
+              >
+                <span style:font-family={font.family}>{font.label}</span>
+                {#if font.hint}<span class="face-hint">{font.hint}</span>{/if}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <div class="font-row">
+          <span class="font-what">Interface</span>
+          <div class="swatches" role="radiogroup" aria-label="Interface font">
+            {#each INTERFACE_FONTS as font (font.name)}
+              <button
+                class="swatch face"
+                role="radio"
+                aria-checked={theme.sans === font.name}
+                class:on={theme.sans === font.name}
+                onclick={() => setSans(font.name)}
+                data-testid="sans-{font.name}"
+              >
+                <span style:font-family={font.family}>{font.label}</span>
+                {#if font.hint}<span class="face-hint">{font.hint}</span>{/if}
+              </button>
+            {/each}
+          </div>
+        </div>
       </div>
 
       <h3>Colour</h3>
@@ -672,6 +735,90 @@
   .seg button.on {
     background: var(--accent-soft);
     color: var(--accent);
+  }
+
+  /* A look is a choice with a sentence under it, so it takes a box of its
+     own rather than a place in a segmented control. */
+  .looks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .look {
+    flex: 1 1 240px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    text-align: left;
+    padding: 6px 10px 7px;
+    border: 1px solid var(--rule);
+    background: none;
+    cursor: pointer;
+  }
+
+  .look-name {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .look-hint {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--ink-3);
+  }
+
+  .look.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .look.on .look-name {
+    color: var(--accent);
+  }
+
+  .look.on .look-hint {
+    color: var(--ink-2);
+  }
+
+  .fonts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .font-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .font-what {
+    flex: 0 0 68px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* The name of a family is set in that family, so the choice can be seen. */
+  .swatch.face {
+    gap: 6px;
+    font-size: 12px;
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 4px 10px;
+  }
+
+  .face-hint {
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--ink-3);
   }
 
   .swatches {

@@ -100,10 +100,10 @@
 
   h3 {
     margin: 0;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     font-weight: 500;
     color: var(--ink-3);
     overflow: hidden;
@@ -115,6 +115,7 @@
     max-width: 100%;
     height: auto;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
     background: var(--bg);
   }
 
@@ -122,6 +123,7 @@
     width: 100%;
     height: 70vh;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
   }
 
   .empty {

@@ -187,6 +187,7 @@
     flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
     outline: none;
   }
@@ -196,16 +197,16 @@
     align-items: baseline;
     justify-content: space-between;
     padding: 9px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
 
   h2 {
     margin: 0;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--title-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     font-weight: 500;
     color: var(--accent);
     overflow: hidden;
@@ -244,10 +245,10 @@
     grid-template-columns: 8ch 1fr;
     align-items: center;
     gap: 8px;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-3);
   }
 
@@ -265,7 +266,8 @@
     font-size: 11.5px;
     line-height: 1.4;
     padding: 6px 8px;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
     background: var(--bg);
     color: var(--ink);
     outline: none;
@@ -277,10 +279,11 @@
   }
 
   input {
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 12.5px;
     padding: 5px 8px;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
     background: var(--bg);
     color: var(--ink);
     outline: none;
@@ -297,12 +300,14 @@
   }
 
   .primary {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 10px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;
@@ -315,11 +320,12 @@
 
   .tool {
     border: 0;
+    border-radius: var(--radius);
     background: none;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px 6px;
@@ -331,7 +337,7 @@
 
   .path {
     margin: 0;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 11.5px;
     color: var(--ink);
     overflow: hidden;
@@ -345,6 +351,7 @@
     max-height: 40vh;
     overflow-y: auto;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
   }
 
   .dir {
@@ -353,7 +360,7 @@
     border: 0;
     border-bottom: 1px solid var(--rule);
     background: none;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 12px;
     color: var(--ink-2);
     cursor: pointer;

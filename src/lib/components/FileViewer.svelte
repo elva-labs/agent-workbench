@@ -163,7 +163,7 @@
     align-items: baseline;
     gap: 10px;
     padding: 6px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     position: sticky;
     top: 0;
     background: var(--surface);
@@ -176,19 +176,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 11px;
     color: var(--ink-2);
   }
 
   .close {
     flex: none;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 2px 8px;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
     background: none;
     color: var(--ink-3);
     cursor: pointer;
@@ -216,7 +218,7 @@
     line-height: 1.5;
     color: var(--ink);
     background: var(--accent-soft);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
   }
 
   .viewer {

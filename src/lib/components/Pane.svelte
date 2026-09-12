@@ -61,7 +61,7 @@
   onfocusin={() => focusPane(id)}
 >
   {#if !bare}
-    <header class:inset class:leads={appMenu} data-tauri-drag-region>
+    <header class:inset class:leads={appMenu} class:lone={!head && !meta} data-tauri-drag-region>
       {#if appMenu}
         <button class="app-menu" onclick={openAppMenu} aria-label="Menu" title="Menu" data-testid="app-menu">
           <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M0 1h12M0 5h12M0 9h12" /></svg>
@@ -96,13 +96,17 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
-    border: 1px solid var(--rule);
+    margin: var(--pane-margin);
+    background: var(--pane-bg);
+    border: 1px solid var(--pane-border);
+    border-radius: var(--radius-pane);
+    box-shadow: var(--pane-shadow);
     overflow: hidden;
   }
 
   .pane.focused {
-    border-color: var(--accent);
+    border-color: var(--pane-border-on);
+    box-shadow: var(--pane-shadow-on);
   }
 
   header {
@@ -111,8 +115,15 @@
     justify-content: space-between;
     gap: 10px;
     padding: 9px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
+  }
+
+  /* A header carrying nothing but the menu button and its own title has
+     nothing to spread itself against, so where the title lands is the look's
+     to say. */
+  header.leads.lone {
+    justify-content: var(--title-align);
   }
 
   /* The frame's padding and the pane's border are already part of the inset. */
@@ -187,18 +198,27 @@
 
   .title,
   .meta {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
+  .title {
+    font-size: var(--title-size);
+    font-weight: var(--title-weight);
+    color: var(--title-color);
+  }
+
+  .meta {
+    font-size: var(--meta-size);
+  }
+
   .pane.focused .title {
-    color: var(--accent);
+    color: var(--title-color-on);
   }
 
   .head {

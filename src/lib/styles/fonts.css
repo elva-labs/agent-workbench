@@ -1,0 +1,32 @@
+/* The families a choice in the settings can put the app in. Each stack is
+   named once here, so the settings can show a choice in its own face, and
+   the stamp on <html> restates --mono or --sans from it. The Plex pair is
+   what the tokens are written in and stamps nothing. */
+
+:root {
+  --mono-plex: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --mono-jetbrains: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --mono-system: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --sans-plex:
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --sans-inter:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --sans-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+:root[data-mono="jetbrains"] {
+  --mono: var(--mono-jetbrains);
+}
+
+:root[data-mono="system"] {
+  --mono: var(--mono-system);
+}
+
+:root[data-sans="inter"] {
+  --sans: var(--sans-inter);
+}
+
+:root[data-sans="system"] {
+  --sans: var(--sans-system);
+}

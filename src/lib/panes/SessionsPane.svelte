@@ -442,7 +442,7 @@
       <div class="choice-head">
         <span>new session with</span>
         <button class="cancel" tabindex="-1" onclick={dismiss} aria-label="Cancel" data-testid="choice-cancel"
-          >esc</button
+          >Esc</button
         >
       </div>
       {#each installed() as id (id)}
@@ -751,19 +751,21 @@
     display: flex;
     gap: 6px;
     padding: 8px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
 
   .head > button {
     flex: 1;
     min-width: 0;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 9px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;
@@ -793,8 +795,9 @@
 
   .tool {
     border: 0;
+    border-radius: var(--radius);
     background: none;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 14px;
     line-height: 1;
     color: var(--ink-3);
@@ -823,6 +826,7 @@
     padding: 4px 0;
     background: var(--surface);
     border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
     box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
   }
 
@@ -858,9 +862,9 @@
     margin-left: 6px;
     padding: 0 4px;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-tag);
     font-size: 9.5px;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--label-track-fine);
     color: var(--ink-3);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -905,10 +909,17 @@
 
   .project,
   .session {
-    --row-bg: var(--surface);
+    --row-bg: var(--pane-bg);
     position: relative;
     display: flex;
     align-items: center;
+    margin: 0 var(--row-inset);
+    border-radius: var(--radius);
+  }
+
+  .new-row {
+    margin: 0 var(--row-inset);
+    border-radius: var(--radius);
   }
 
   .session:hover {
@@ -946,17 +957,18 @@
     align-items: center;
     gap: 7px;
     text-align: left;
-    padding: 4px var(--pane-pad);
+    padding: var(--row-pad-y) var(--row-pad-x);
     border: 0;
     background: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
     color: var(--ink-2);
     cursor: pointer;
   }
 
   .project-row .name {
     color: var(--ink);
+    font-weight: var(--project-weight);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -974,7 +986,7 @@
 
   .session .row,
   .past {
-    padding-left: 26px;
+    padding-left: var(--row-indent);
   }
 
   /* Past sessions are history until you open one, so they sit back from the
@@ -985,13 +997,14 @@
     align-items: baseline;
     gap: 7px;
     border: 0;
+    border-radius: var(--radius);
     background: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
     color: var(--ink-3);
     cursor: pointer;
     text-align: left;
-    padding-right: var(--pane-pad);
+    padding-right: var(--row-pad-x);
   }
 
   .past:hover:not(:disabled) {
@@ -1070,10 +1083,10 @@
   .tag {
     flex: none;
     font-size: 9.5px;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--label-track-fine);
     color: var(--ink-3);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-tag);
     padding: 0 4px;
     line-height: 1.4;
   }
@@ -1086,9 +1099,9 @@
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    padding: 2px var(--pane-pad) 2px 26px;
-    font-family: var(--mono);
-    font-size: 10px;
+    padding: 2px var(--row-pad-x) 2px var(--row-indent);
+    font-family: var(--chrome);
+    font-size: var(--label-size);
     letter-spacing: 0.05em;
     color: var(--ink-3);
   }
@@ -1096,11 +1109,11 @@
   .cancel {
     padding: 0 5px;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-tag);
     background: none;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 9.5px;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--label-track-fine);
     color: var(--ink-3);
     cursor: pointer;
   }
@@ -1115,11 +1128,12 @@
     gap: 7px;
     width: 100%;
     text-align: left;
-    padding: 3px var(--pane-pad) 3px 26px;
+    padding: 3px var(--row-pad-x) 3px var(--row-indent);
     border: 0;
+    border-radius: var(--radius);
     background: none;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
     color: var(--ink-2);
     cursor: pointer;
   }
@@ -1136,8 +1150,8 @@
   /* A filled dot is a live process; hollow is a row you can still read but
      nothing is running behind. */
   .dot {
-    width: 6px;
-    height: 6px;
+    width: var(--dot);
+    height: var(--dot);
     flex: none;
     border: 1px solid var(--ink-3);
     border-radius: 50%;
@@ -1224,11 +1238,11 @@
     margin: 2px 0 10px;
     border: 0;
     background: none;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 11px;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 2px var(--pane-pad) 2px 26px;
+    padding: 2px var(--row-pad-x) 2px var(--row-indent);
   }
 
   .new:hover:not(:disabled) {
@@ -1249,20 +1263,21 @@
     margin: 0 0 4px;
     border: 0;
     background: none;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 11px;
     color: var(--ink-3);
     cursor: pointer;
-    padding: 2px var(--pane-pad) 2px 26px;
+    padding: 2px var(--row-pad-x) 2px var(--row-indent);
   }
 
   /* A fold and the button that stops what is behind it, on one row. */
   .fold-row {
-    --row-bg: var(--surface);
+    --row-bg: var(--pane-bg);
     position: relative;
     display: flex;
     align-items: center;
-    margin: 0 0 4px;
+    margin: 0 var(--row-inset) 4px;
+    border-radius: var(--radius);
   }
 
   .fold-row .fold {
@@ -1312,8 +1327,8 @@
   }
 
   .ring {
-    width: 6px;
-    height: 6px;
+    width: var(--dot);
+    height: var(--dot);
     flex: none;
     border: 1px solid var(--accent);
     border-radius: 50%;
@@ -1322,7 +1337,7 @@
   /* A session an orchestrator started, out from behind its fold: past the
      triangle, and quieter than a session of the project's own. */
   .session.started .row {
-    padding-left: 40px;
+    padding-left: calc(var(--row-indent) + 14px);
     font-size: 11px;
     color: var(--ink-3);
   }
@@ -1380,11 +1395,11 @@
   .section {
     margin: 0;
     padding: 8px var(--pane-pad) 4px;
-    border-top: 1px solid var(--rule);
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    border-top: 1px solid var(--head-rule);
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     flex: none;
   }
@@ -1400,12 +1415,14 @@
 
   .recent button {
     display: block;
-    width: 100%;
+    width: calc(100% - 2 * var(--row-inset));
+    margin: 0 var(--row-inset);
     text-align: left;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    padding: 4px var(--pane-pad);
+    font-family: var(--chrome);
+    font-size: var(--row-size);
+    padding: var(--row-pad-y) var(--row-pad-x);
     border: 0;
+    border-radius: var(--radius);
     background: none;
     color: var(--ink-2);
     cursor: pointer;

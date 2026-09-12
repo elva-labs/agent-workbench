@@ -31,16 +31,17 @@
     width: min(420px, calc(100vw - 48px));
     padding: 10px 12px 12px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     background: var(--surface-2);
     color: var(--ink);
   }
 
   .title {
     margin: 0 0 4px;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--accent);
   }
 
@@ -69,10 +70,12 @@
   }
 
   .actions button {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    border-radius: var(--radius);
     padding: 4px 12px;
     cursor: pointer;
   }

@@ -99,7 +99,7 @@
     content: "";
     position: absolute;
     inset: 0 calc(50% - 0.5px);
-    background: var(--rule);
+    background: var(--splitter);
     transition: background 90ms ease;
   }
 
@@ -110,7 +110,7 @@
   .splitter:hover::after,
   .splitter:focus-visible::after,
   .splitter.dragging::after {
-    background: var(--accent);
+    background: var(--splitter-hover);
   }
 
   .splitter:focus-visible {

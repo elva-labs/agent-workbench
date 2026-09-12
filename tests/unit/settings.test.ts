@@ -137,9 +137,8 @@ describe("the settings", () => {
 
   it("picks a colour palette", async () => {
     render(Settings);
-    expect(
-      screen.getAllByRole("radio", { name: /indigo|amber|rose|mono|teal/i }),
-    ).toHaveLength(5);
+    const colours = screen.getByRole("radiogroup", { name: "Colour" });
+    expect(within(colours).getAllByRole("radio")).toHaveLength(5);
     await fireEvent.click(screen.getByTestId("palette-indigo"));
     expect(theme.palette).toBe("indigo");
     expect(document.documentElement.dataset.palette).toBe("indigo");

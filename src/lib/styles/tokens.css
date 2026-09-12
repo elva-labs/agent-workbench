@@ -12,7 +12,8 @@
  *
  * This file is the teal palette. The others, chosen in Settings and stamped
  * as data-palette on <html>, restate the accent and the cast of the greys in
- * palettes.css.
+ * palettes.css. The look tokens below the rhythm are the terminal look; the
+ * other looks restate them in looks.css.
  */
 
 :root {
@@ -60,6 +61,63 @@
   --line-term: 1.35;
   --pane-pad: 12px;
   --splitter-w: 6px;
+
+  /* look: every decision a second look restates, in one place. The values
+     here are the terminal look, which is what no stamp on <html> means. */
+  --chrome: var(--mono);
+
+  --label-case: uppercase;
+  --label-track: 0.11em;
+  --label-track-tight: 0.08em;
+  --label-track-fine: 0.06em;
+  --label-size: 10px;
+
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-tag: 2px;
+  --radius-pane: 0px;
+
+  --pane-bg: var(--surface);
+  --pane-border: var(--rule);
+  --pane-border-on: var(--accent);
+  --pane-margin: 0px;
+  --pane-shadow: none;
+  --pane-shadow-on: none;
+
+  --splitter: var(--rule);
+  --splitter-hover: var(--accent);
+
+  --head-rule: var(--rule);
+
+  --title-align: space-between;
+  --title-size: 10.5px;
+  --title-weight: normal;
+  --title-color: var(--ink-3);
+  --title-color-on: var(--accent);
+  --meta-size: 10.5px;
+
+  --row-pad-x: var(--pane-pad);
+  --row-pad-y: 4px;
+  --row-size: 11.5px;
+  --row-inset: 0px;
+  --row-indent: 26px;
+  --project-weight: normal;
+  --dot: 6px;
+
+  --btn-size: 10.5px;
+  --btn-weight: normal;
+  --fold-size: 11px;
+
+  --field-bg: var(--surface-2);
+  --field-border: var(--rule);
+  --field-size: 11.5px;
+
+  --tree-glyph: 14px;
+  --term-air: 0px;
+
+  --status-rule: var(--rule);
+  --status-bg: var(--surface-2);
+  --status-size: 10.5px;
 }
 
 /* System preference wins when the user has made no explicit choice. */

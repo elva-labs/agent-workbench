@@ -107,6 +107,7 @@
     position: relative;
     flex: 1;
     min-height: 0;
+    padding: var(--term-air);
     background: var(--surface);
   }
 
@@ -134,12 +135,14 @@
 
   button {
     margin-left: auto;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 12px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;

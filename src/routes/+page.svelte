@@ -464,10 +464,10 @@
     gap: 14px;
     height: 26px;
     padding: 0 12px;
-    border-top: 1px solid var(--rule);
-    background: var(--surface-2);
-    font-family: var(--mono);
-    font-size: 10.5px;
+    border-top: 1px solid var(--status-rule);
+    background: var(--status-bg);
+    font-family: var(--chrome);
+    font-size: var(--status-size);
     color: var(--ink-3);
     white-space: nowrap;
     overflow: hidden;
