@@ -7,9 +7,13 @@ use std::process::{Command, Stdio};
 use serde_json::json;
 use serde_json::Value;
 
+/// The daemon under test, told to use the system shell. A login shell with a
+/// framework on it can greet an interactive session with a question, and a
+/// question reads the keys meant for the command.
 fn daemon() -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
         .arg("serve")
+        .env("SHELL", "/bin/sh")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -116,7 +120,9 @@ mod client {
 
     fn connect(events: Arc<Mutex<Vec<(String, Value)>>>) -> Arc<Connection> {
         Connection::open(
-            Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote")).arg("serve"),
+            Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
+                .arg("serve")
+                .env("SHELL", "/bin/sh"),
             Box::new(move |event, payload| {
                 events.lock().unwrap().push((event.to_string(), payload))
             }),
