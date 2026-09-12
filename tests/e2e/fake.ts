@@ -107,10 +107,24 @@ export async function installFakeCore(
           (w.__windowControls ??= []).push("menu");
         },
         setBadge: async () => {},
-        spawn: async (spawnOptions: { session?: string }) => ({
-          ptyId: `pty-${++ptyCount}`,
-          sessionId: spawnOptions.session ?? `session-${ptyCount}`,
-        }),
+        spawn: async (
+          spawnOptions: { session?: string },
+          onOutput: (bytes: Uint8Array) => void,
+        ) => {
+          const ptyId = `pty-${++ptyCount}`;
+          // A test puts bytes on a session's terminal with __say.
+          const w = window as unknown as {
+            __say?: (id: string, text: string) => void;
+            __outputs?: Record<string, (bytes: Uint8Array) => void>;
+          };
+          (w.__outputs ??= {})[ptyId] = onOutput;
+          w.__say ??= (id, text) =>
+            w.__outputs?.[id]?.(new TextEncoder().encode(text));
+          return {
+            ptyId,
+            sessionId: spawnOptions.session ?? `session-${ptyCount}`,
+          };
+        },
         // A shell draws its prompt a moment after it is up.
         spawnShell: async (
           _options: unknown,
@@ -292,14 +306,16 @@ export async function installFakeCore(
         },
         conductAnswer: async (
           id: string,
+          cwd: string,
           content: string | null,
           error: string | null,
         ) => {
           const w = window as unknown as { __conductAnswers?: unknown[] };
-          (w.__conductAnswers ??= []).push({ id, content, error });
+          (w.__conductAnswers ??= []).push({ id, cwd, content, error });
         },
         worktreeAdd: async (project: string, name: string) =>
           `${project}/.claude/worktrees/${name}`,
+        orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",
         // The record of what is on screen, for a test to read back.
         setSelection: async (project: string, selection: unknown) => {
           (window as unknown as Record<string, unknown>).__selection = {

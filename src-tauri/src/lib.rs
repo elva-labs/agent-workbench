@@ -416,21 +416,42 @@ async fn set_selection(
 }
 
 /// The window's answer to a call one of its agents made on a conductor's
-/// tool. The tool server waiting for it runs beside the core that asked,
-/// which is the core here.
+/// tool. The tool server waiting for it runs beside the core that took the
+/// call, which is the core on the machine the calling session runs on: the
+/// directory it called from says which.
 #[tauri::command]
 async fn conduct_answer(
     core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
     id: String,
+    cwd: String,
     content: Option<String>,
     error: Option<String>,
 ) -> Result<Value, String> {
-    let core = Arc::clone(&core);
-    blocking(move || {
-        core.conduct_answer(&id, content, error)?;
-        Ok(Value::Null)
-    })
+    let sent = (id.clone(), content.clone(), error.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&cwd),
+        "conduct_answer",
+        move |_| {
+            let (id, content, error) = sent;
+            json!({ "id": id, "content": content, "error": error })
+        },
+        move |core, _| {
+            core.conduct_answer(&id, content, error)?;
+            Ok(Value::Null)
+        },
+    )
     .await
+}
+
+/// Where an orchestrator session runs. It is on this machine whatever the
+/// projects it directs are on.
+#[tauri::command]
+async fn orchestrator_dir(core: State<'_, Arc<Core>>) -> Result<String, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.orchestrator_dir()).await
 }
 
 /// A worktree of the project, on a branch of the same name, made where the
@@ -928,6 +949,7 @@ pub fn run() {
             plugin_action,
             plugin_view_message,
             conduct_answer,
+            orchestrator_dir,
             worktree_add,
             remote_connect,
             remote_disconnect,

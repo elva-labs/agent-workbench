@@ -29,6 +29,7 @@ import {
   statusMessage,
   type Session,
 } from "$lib/sessions.svelte";
+import { screen } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { workspace } from "$lib/workspace.svelte";
@@ -42,6 +43,11 @@ export const WAIT_MAX = 1800;
 /** How long a start waits for the new session to come up and say its id.
     Inside the minute the core gives the window to answer. */
 export const START_WAIT = 30_000;
+/** How much of a session's screen the read tool answers with when the
+    call names no number, and the most it answers with whatever it names. */
+export const LINES = 40;
+export const LINES_MAX = 200;
+
 /** How long after a started session comes up its first prompt is typed:
     an agent still drawing its own start-up swallows a line sent into it. */
 export const PROMPT_AFTER = 400;
@@ -95,7 +101,7 @@ export async function handle(request: ConductRequest): Promise<void> {
     answered = refused(String(error));
   }
   await core()
-    .conductAnswer(request.id, answered.content, answered.error)
+    .conductAnswer(request.id, request.cwd, answered.content, answered.error)
     .catch(() => {
       // The core has gone, or the call had already given up. Nothing here
       // can tell the agent either way.
@@ -219,8 +225,13 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     }
   }
 
+  // A started session does not take the window: the user is in the session
+  // that started it, and that is where its questions are answered. The row
+  // appears folded under its project, and going to it is a click.
+  const looking = sessions.active;
   const session = create(project, null, agentOf(request, project), startIn);
   conductor.startedBy[session.key] = caller;
+  if (looking !== null && byKey(looking) !== null) sessions.active = looking;
   void typePrompt(session.key, prompt);
 
   const id = await idFor(session.key);
@@ -285,6 +296,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   if (line === null) return refused("Sending needs the text to send.");
   const session = byId(id);
   if (session === null) return refused(`The workbench has no session ${id}.`);
+  if (!mine(request, session)) return notMine(id);
   if (session.status !== "running" || session.ptyId === null)
     return refused(`Session ${id} is not running.`);
   await core().write(session.ptyId, `${oneLine(line)}\r`);
@@ -296,6 +308,7 @@ function stopSession(request: ConductRequest): Answered {
   if (id === null) return refused("Stopping needs a session to stop.");
   const session = byId(id);
   if (session === null) return refused(`The workbench has no session ${id}.`);
+  if (!mine(request, session)) return notMine(id);
   close(session.key);
   return said(`Stopped session ${id}.`);
 }
@@ -318,6 +331,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
   } else {
     const session = byId(id);
     if (session === null) return refused(`The workbench has no session ${id}.`);
+    if (!mine(request, session)) return notMine(id);
     watched = [session];
   }
 
@@ -368,19 +382,23 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
 }
 
 /**
- * The turns of a session. Nothing here can read them: an agent's
- * transcript is its own, in a format it documents as internal, and the
- * workbench reads only the names and dates of the files. So the answer is
- * the line the session left and a word about what it is not.
+ * What a session has on screen. An agent's transcript is its own, in a
+ * format it documents as internal, so what the workbench reads is what
+ * the user reads: the last lines of the session's terminal, as they are
+ * drawn, box drawing and all.
  */
 function readSession(request: ConductRequest): Answered {
   const id = text(request, "session");
   if (id === null) return refused("Reading needs a session to read.");
   const session = byId(id);
   if (session === null) return refused(`The workbench has no session ${id}.`);
-  return said(
-    `The workbench cannot read a session's turns: an agent's transcript is not readable from here. ${lastLine(session)} Send it a line to ask it something.`,
-  );
+  if (!mine(request, session)) return notMine(id);
+  const lines = number(request, "lines", LINES, LINES_MAX);
+  const drawn = screen(session.key, lines);
+  if (drawn === null || drawn === "") {
+    return said(`Session ${id} has drawn nothing yet. ${lastLine(session)}`);
+  }
+  return said(`Session ${id}, as it is on screen:\n${drawn}`);
 }
 
 /** A line as the agent's own keyboard would deliver it: one line, with
@@ -412,6 +430,23 @@ export function startedBy(sessionId: string): Session[] {
 /** Closes every session a session started. */
 export function stopAll(sessionId: string) {
   for (const session of startedBy(sessionId)) close(session.key);
+}
+
+/**
+ * Whether a call may act on a session: a caller acts on the sessions it
+ * started and on no others. The user allowed a caller to start sessions,
+ * which is not leave to type into the one they are working in themselves,
+ * and an agent takes its instructions from what it reads.
+ */
+function mine(request: ConductRequest, session: Session): boolean {
+  return startedFor(session.key) === callerOf(request);
+}
+
+/** What a caller is told about a session that is not its own. */
+function notMine(id: string): Answered {
+  return refused(
+    `Session ${id} was not started by you. Sending, stopping, reading and waiting are for the sessions you started; this one is the user's own.`,
+  );
 }
 
 /** Who is calling: the session it runs as, else the directory it runs in. */

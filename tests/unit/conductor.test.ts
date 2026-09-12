@@ -23,13 +23,18 @@ import {
   sessions,
   started,
 } from "$lib/sessions.svelte";
+import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
 
-const answers: { id: string; content: string | null; error: string | null }[] =
-  [];
+const answers: {
+  id: string;
+  cwd: string;
+  content: string | null;
+  error: string | null;
+}[] = [];
 const written: [string, string][] = [];
 const killed: string[] = [];
 const worktrees: [string, string][] = [];
@@ -39,10 +44,11 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     async conductAnswer(
       id: string,
+      cwd: string,
       content: string | null,
       error: string | null,
     ) {
-      answers.push({ id, content, error });
+      answers.push({ id, cwd, content, error });
     },
     async worktreeAdd(project: string, name: string) {
       worktrees.push([project, name]);
@@ -83,6 +89,18 @@ function call(
 }
 
 const last = () => answers[answers.length - 1];
+
+/** A terminal with these lines in its buffer. */
+function screenOf(lines: string[]): Screen {
+  return {
+    buffer: {
+      active: {
+        length: lines.length,
+        getLine: (index: number) => ({ translateToString: () => lines[index] }),
+      },
+    },
+  };
+}
 /** Lets every promise and every effect the store woke run to the end. */
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
@@ -98,6 +116,13 @@ function live(project: string, ptyId: string, id: string) {
   const session = create(project, null, "claude-code", null);
   started(session.key, ptyId, id);
   return session;
+}
+
+/** A session the caller started, which is what the tools may act on. */
+function own(project: string, ptyId: string, id: string, caller: string = A) {
+  const row = live(project, ptyId, id);
+  conductor.startedBy[row.key] = caller;
+  return row;
 }
 
 /** A start the user allows, answered once the new session reports its id. */
@@ -121,6 +146,7 @@ beforeEach(() => {
   resetWorkspace();
   resetSessions();
   resetConductor();
+  resetScreens();
   answers.length = 0;
   written.length = 0;
   killed.length = 0;
@@ -224,6 +250,17 @@ describe("starting a session", () => {
     expect(last().content).toContain("sid-new");
     expect(startedFor(row.key)).toBe("caller-1");
     expect(startedBy("caller-1")).toHaveLength(1);
+  });
+
+  it("leaves the window on the session that started it", async () => {
+    const caller = live(A, "pty-0", "caller-1");
+    sessions.active = caller.key;
+    await startAllowed(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+      "pty-1",
+      "sid-1",
+    );
+    expect(sessions.active).toBe(caller.key);
   });
 
   it("types the prompt into the session once it is up", async () => {
@@ -425,7 +462,7 @@ describe("the question", () => {
 
 describe("sending and stopping", () => {
   it("sends a line to a session as one typed line", async () => {
-    live(A, "pty-1", "sid-1");
+    own(A, "pty-1", "sid-1");
     await handle(call("send", { session: "sid-1", text: "yes\nplease" }));
     expect(written).toEqual([["pty-1", "yes please\r"]]);
     expect(last().error).toBeNull();
@@ -438,14 +475,14 @@ describe("sending and stopping", () => {
   });
 
   it("refuses a session that is not running", async () => {
-    const row = live(A, "pty-1", "sid-1");
+    const row = own(A, "pty-1", "sid-1");
     row.status = "exited";
     await handle(call("send", { session: "sid-1", text: "hello" }));
     expect(last().error).toBe("Session sid-1 is not running.");
   });
 
   it("stops a session the way the pane's close does", async () => {
-    const row = live(A, "pty-1", "sid-1");
+    const row = own(A, "pty-1", "sid-1");
     await handle(call("stop", { session: "sid-1" }));
     expect(killed).toEqual(["pty-1"]);
     expect(byKey(row.key)).toBeNull();
@@ -458,9 +495,50 @@ describe("sending and stopping", () => {
   });
 });
 
+describe("a session the caller did not start", () => {
+  /** The user's own session, running beside the caller. */
+  const theirs = () => live(A, "pty-9", "sid-9");
+
+  it("takes no line", async () => {
+    theirs();
+    await handle(call("send", { session: "sid-9", text: "rm -rf /" }));
+    expect(last().error).toContain("was not started by you");
+    expect(written).toHaveLength(0);
+  });
+
+  it("is not stopped", async () => {
+    const row = theirs();
+    await handle(call("stop", { session: "sid-9" }));
+    expect(last().error).toContain("was not started by you");
+    expect(killed).toHaveLength(0);
+    expect(byKey(row.key)).not.toBeNull();
+  });
+
+  it("is not read", async () => {
+    const row = theirs();
+    register(row.key, screenOf(["the user's own work"]));
+    await handle(call("read", { session: "sid-9" }));
+    expect(last().error).toContain("was not started by you");
+    expect(last().content).toBeNull();
+  });
+
+  it("is not waited on", async () => {
+    theirs();
+    await handle(call("wait", { session: "sid-9" }));
+    expect(last().error).toContain("was not started by you");
+  });
+
+  it("is still listed, so the caller knows what is running", async () => {
+    theirs();
+    await handle(call("sessions"));
+    expect(last().error).toBeNull();
+    expect(last().content).toContain("sid-9");
+  });
+});
+
 describe("waiting", () => {
   it("comes back when the session stops working", async () => {
-    const row = live(A, "pty-1", "sid-1");
+    const row = own(A, "pty-1", "sid-1");
     row.working = true;
     row.note = "the cache is fixed";
     const answering = handle(call("wait", { session: "sid-1" }));
@@ -474,7 +552,7 @@ describe("waiting", () => {
   });
 
   it("comes back when the session asks for permission", async () => {
-    const row = live(A, "pty-1", "sid-1");
+    const row = own(A, "pty-1", "sid-1");
     row.working = true;
     const answering = handle(call("wait", { session: "sid-1" }));
     await settle();
@@ -485,7 +563,7 @@ describe("waiting", () => {
   });
 
   it("comes back when the session ends", async () => {
-    const row = live(A, "pty-1", "sid-1");
+    const row = own(A, "pty-1", "sid-1");
     row.working = true;
     const answering = handle(call("wait", { session: "sid-1" }));
     await settle();
@@ -496,8 +574,7 @@ describe("waiting", () => {
   });
 
   it("waits on any of the caller's own when none is named", async () => {
-    const mine = live(A, "pty-1", "sid-1");
-    conductor.startedBy[mine.key] = "caller-1";
+    const mine = own(A, "pty-1", "sid-1", "caller-1");
     const other = live(A, "pty-2", "sid-2");
     mine.working = true;
     other.working = true;
@@ -514,7 +591,7 @@ describe("waiting", () => {
   });
 
   it("gives up after the seconds it was given", async () => {
-    live(A, "pty-1", "sid-1");
+    own(A, "pty-1", "sid-1");
     const answering = handle(call("wait", { session: "sid-1", seconds: 5 }));
     await vi.advanceTimersByTimeAsync(4000);
     expect(answers).toHaveLength(0);
@@ -535,12 +612,31 @@ describe("waiting", () => {
 });
 
 describe("reading", () => {
-  it("says the transcript is not readable, and gives the last line", async () => {
-    const row = live(A, "pty-1", "sid-1");
-    row.note = "waiting on the review";
-    await handle(call("read", { session: "sid-1", turns: 3 }));
+  it("answers with the last lines on the session's screen", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf(["> run the tests", "", "42 passed", "", ""]));
+    await handle(call("read", { session: "sid-1", lines: 3 }));
     expect(last().error).toBeNull();
-    expect(last().content).toContain("cannot read a session's turns");
+    expect(last().content).toBe(
+      "Session sid-1, as it is on screen:\n42 passed",
+    );
+  });
+
+  it("reads as far back as it was asked to, and no further", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf(["one", "two", "three", "four"]));
+    await handle(call("read", { session: "sid-1", lines: 2 }));
+    expect(last().content).toContain("three\nfour");
+    await handle(call("read", { session: "sid-1" }));
+    expect(last().content).toContain("one\ntwo\nthree\nfour");
+  });
+
+  it("says a session has drawn nothing, and gives the last line", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    row.note = "waiting on the review";
+    await handle(call("read", { session: "sid-1" }));
+    expect(last().error).toBeNull();
+    expect(last().content).toContain("has drawn nothing yet");
     expect(last().content).toContain("Its last line: waiting on the review");
   });
 
@@ -591,5 +687,17 @@ describe("naming a worktree", () => {
 
   it("falls back to a name for a prompt with no words in it", () => {
     expect(worktreeName("!!!")).toBe("session");
+  });
+});
+
+describe("the answer", () => {
+  it("goes back to the machine the call was made on", async () => {
+    await handle(call("projects", {}, { cwd: `${A}/src` }));
+    expect(last().cwd).toBe(`${A}/src`);
+
+    const remote = "ssh://lab/srv/api";
+    workspace.open.push(repo(remote));
+    await handle(call("projects", {}, { cwd: `${remote}/src` }));
+    expect(last().cwd).toBe(`${remote}/src`);
   });
 });

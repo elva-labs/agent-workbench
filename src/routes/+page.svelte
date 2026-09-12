@@ -12,6 +12,7 @@
   import { resume } from "$lib/resume.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
+  import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
@@ -167,6 +168,7 @@
         workspace.error = `${closed.host}: ${closed.reason}`;
       })
       .then((unlisten) => offs.push(unlisten));
+    void loadOrchestrator();
     offs.push(followCwd());
     offs.push(followFocus());
     return () => offs.forEach((off) => off());

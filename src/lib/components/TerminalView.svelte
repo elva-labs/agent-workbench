@@ -7,6 +7,7 @@
 
   import { core } from "$lib/core";
   import { drops, register, unregister } from "$lib/drops.svelte";
+  import { register as registerScreen } from "$lib/screens";
   import { isMac, resolveAction } from "$lib/keymap";
   import { references } from "$lib/refs";
   import { layout } from "$lib/layout.svelte";
@@ -231,6 +232,8 @@
       });
     }
     register(id, host, terminal);
+    // The lines it draws, for the conductor's read tool to answer with.
+    const forgetScreen = registerScreen(id, terminal);
 
     observer = new ResizeObserver(() => measure());
     observer.observe(host);
@@ -247,6 +250,7 @@
 
     return () => {
       unregister(id);
+      forgetScreen();
       observer?.disconnect();
       queue?.dispose();
       terminal?.dispose();

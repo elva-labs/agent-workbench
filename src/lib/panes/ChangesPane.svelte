@@ -26,8 +26,10 @@
     visible,
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
+  import { startedBy, stateOf, stopAll } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { listed as presentedFor, openItem } from "$lib/media.svelte";
+  import { isAsking, isConductor } from "$lib/orchestrator.svelte";
   import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
   import {
     askFor,
@@ -39,9 +41,16 @@
   import { open as openPluginView, viewOf as pluginViewOf } from "$lib/pluginView.svelte";
   import type { PluginAction, PluginRow } from "$lib/core";
   import { lastSegment } from "$lib/paths";
-  import { ago } from "$lib/sessions.svelte";
-  import { activeProject, followedWorktree, watchRoot, workspace } from "$lib/workspace.svelte";
-  import { DEFAULT, MIN, applyLayout, enterReview, layout, saveLayout } from "$lib/layout.svelte";
+  import {
+    activeSession,
+    ago,
+    isLive,
+    label,
+    select as selectSession,
+    type Session,
+  } from "$lib/sessions.svelte";
+  import { activate, activeProject, followedWorktree, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { DEFAULT, MIN, applyLayout, enterReview, focusPane, layout, saveLayout } from "$lib/layout.svelte";
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
@@ -53,7 +62,7 @@
   let worktree = $derived(followedWorktree());
   let notGit = $derived(activeProject() !== null && root === null);
 
-  let field: HTMLInputElement;
+  let field = $state<HTMLInputElement | null>(null);
   let menuOpen = $state(false);
   let presented = $derived(presentedFor());
   /** The tree's column, for turning a drag into a share of it. */
@@ -219,7 +228,7 @@
       // Once to clear, once more to leave, as the field's own convention.
       e.stopPropagation();
       if (files.query !== "") clearQuery();
-      else field.blur();
+      else field?.blur();
       return;
     }
     if (e.key === "Enter") {
@@ -234,7 +243,7 @@
     if (e.key === "ArrowDown") {
       // Down leaves the field for what it found.
       e.preventDefault();
-      const next = field.closest("section")?.querySelector<HTMLElement>(
+      const next = field?.closest("section")?.querySelector<HTMLElement>(
         "[data-testid='file-tree'], [data-testid='search-results'] button.hit",
       );
       next?.focus();
@@ -314,362 +323,540 @@
     applyLayout(layout.width);
     saveLayout();
   }
+
+  /**
+   * The board: what an orchestrator session has started.
+   *
+   * A session that directs others runs in a directory of its own with no
+   * repository behind it and nothing to diff, so while one is on screen the
+   * pane shows its sessions in place of the tree. The board is one tab stop
+   * with a cursor inside it, as the sessions pane is: Up and Down move the
+   * cursor, Enter goes to the session under it.
+   */
+  let conducting = $derived.by(() => {
+    const session = activeSession();
+    return session !== null && isConductor(session) ? session : null;
+  });
+  let started = $derived(conducting === null ? [] : startedBy(conducting.id ?? conducting.key));
+  let asking = $derived(started.filter(isAsking).length);
+  let boardMeta = $derived(
+    `${started.length} session${started.length === 1 ? "" : "s"}${asking === 0 ? "" : `, ${asking} asking`}`,
+  );
+  let paneMeta = $derived.by(() => {
+    if (conducting !== null) return boardMeta;
+    return worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`;
+  });
+
+  let startedOpen = $state(true);
+  let boardCursor = $state<string | null>(null);
+  let boardNav = $state<HTMLDivElement | null>(null);
+
+  /** The row under the cursor: the one it was put on while that session is
+      still there, else the first. */
+  let boardRow = $derived.by(() => {
+    if (boardCursor !== null && started.some((session) => session.key === boardCursor)) return boardCursor;
+    return started[0]?.key ?? null;
+  });
+
+  // Focusing the pane by key puts the keyboard on the board, so the arrows
+  // work at once. A click inside already has it.
+  $effect(() => {
+    layout.focusRequest;
+    if (conducting === null || layout.focus !== "changes") return;
+    if (!boardNav || boardNav.contains(document.activeElement)) return;
+    boardNav.focus();
+  });
+
+  function moveBoard(index: number) {
+    if (started.length === 0) return;
+    const at = Math.max(0, Math.min(index, started.length - 1));
+    boardCursor = started[at].key;
+    boardNav?.querySelector(`[data-row="${CSS.escape(boardCursor)}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  function onBoardKeydown(e: KeyboardEvent) {
+    const at = started.findIndex((session) => session.key === boardRow);
+    switch (e.key) {
+      case "ArrowDown":
+        moveBoard(at + 1);
+        break;
+      case "ArrowUp":
+        moveBoard(at - 1);
+        break;
+      case "Home":
+        moveBoard(0);
+        break;
+      case "End":
+        moveBoard(started.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        if (at === -1) return;
+        go(started[at]);
+        break;
+      default:
+        return;
+    }
+    // The arrows put the keyboard back on the board, so Enter is the row
+    // under the cursor and not a button a click left focused.
+    boardNav?.focus();
+    e.preventDefault();
+  }
+
+  /** Going to a started session is wanting to type into it, and to see its
+      project: one under another project brings that project forward first. */
+  function go(session: Session) {
+    if (session.project !== workspace.active) activate(session.project);
+    selectSession(session.key);
+    focusPane("agent");
+  }
+
+  function stopStarted() {
+    if (conducting !== null) stopAll(conducting.id ?? conducting.key);
+  }
+
+  /** The line under a started session's name: where it runs, what it is
+      doing, and how long it has been at it. */
+  function startedLine(session: Session): string {
+    const parts = [projectLabel(session.project)];
+    const tree = session.worktree ?? session.startIn;
+    if (tree !== null && tree !== session.project) parts.push(`worktree ${lastSegment(tree)}`);
+    // A session's start is a millisecond clock; `ago` reads one in seconds.
+    const since = session.startedAt === null ? null : ago(Math.floor(session.startedAt / 1000));
+    parts.push(since === null ? stateOf(session) : `${stateOf(session)}, ${since}`);
+    return parts.join(" · ");
+  }
+
+  /** The row's dot, as the pane draws a plugin row's: breathing while the
+      session works, the accent while it waits on you, hollow once it is
+      no longer running. */
+  function startedDot(session: Session): string {
+    if (!isLive(session)) return "none";
+    if (isAsking(session)) return "waiting";
+    return session.working ? "busy" : "ok";
+  }
 </script>
 
-<Pane
-  id="changes"
-  title="Changes"
-  meta={worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`}
->
-  <!-- The field is the toolbar: what you type narrows the tree, or searches
-       inside the files. Scope and view moved into the menu at the end, with
-       their chords beside them. -->
-  <div class="head">
-    <label class="field" class:lines={files.mode === "lines"}>
-      <span class="glyph" aria-hidden="true">⌕</span>
-      <input
-        type="search"
-        bind:this={field}
-        value={files.query}
-        oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
-        onkeydown={onFieldKeydown}
-        placeholder={files.mode === "lines" ? "search in files…" : "filter files…"}
-        aria-label={files.mode === "lines" ? "Search in files" : "Filter files"}
-        spellcheck="false"
-        autocomplete="off"
-        data-testid="search-field"
-      />
-      <span class="modes" role="radiogroup" aria-label="What to search">
-        <button
-          role="radio"
-          aria-checked={files.mode === "files"}
-          class:on={files.mode === "files"}
-          onclick={() => setMode("files")}
-          title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
-          data-testid="mode-files">files</button
-        >
-        <button
-          role="radio"
-          aria-checked={files.mode === "lines"}
-          class:on={files.mode === "lines"}
-          onclick={() => setMode("lines")}
-          title="Search inside the files ({describe(chordFor('findLines'))})"
-          data-testid="mode-lines">lines</button
-        >
-      </span>
-    </label>
+<Pane id="changes" title={conducting === null ? "Changes" : "Orchestrator"} meta={paneMeta}>
+  {#if conducting !== null}
+    <!-- The sessions an orchestrator started, in place of the tree. One tab
+         stop with a cursor inside it, the sessions pane's pattern: the rows
+         stay buttons for the mouse, and the keyboard goes through here. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="more" onkeydown={onMenuKeydown}>
-      <button
-        class="tool"
-        onclick={() => (menuOpen = !menuOpen)}
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        aria-label="More"
-        data-testid="changes-menu">⋯</button
-      >
-      {#if menuOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="scrim" onclick={() => (menuOpen = false)}></div>
-        <div class="menu" role="menu" data-testid="changes-menu-items">
-          <button
-            role="menuitemradio"
-            aria-checked={files.scope === "changed"}
-            onclick={() => choose(() => setScope("changed"))}
-            data-testid="menu-scope-changed"
-          >
-            <span>Changed files</span><kbd>{describe(chordFor("scope"))}</kbd>
-          </button>
-          <button
-            role="menuitemradio"
-            aria-checked={files.scope === "all"}
-            onclick={() => choose(() => setScope("all"))}
-            data-testid="menu-scope-all"
-          >
-            <span>All files</span><kbd>{describe(chordFor("scope"))}</kbd>
-          </button>
-          <hr />
-          <button
-            role="menuitemradio"
-            aria-checked={files.view === "diff" && diffable}
-            disabled={!diffable}
-            onclick={() => choose(() => setView("diff"))}
-            data-testid="menu-view-diff"
-          >
-            <span>Diff</span><kbd>{describe(chordFor("view"))}</kbd>
-          </button>
-          <button
-            role="menuitemradio"
-            aria-checked={files.view === "content" || !diffable}
-            disabled={files.selected === null}
-            onclick={() => choose(() => setView("content"))}
-            data-testid="menu-view-content"
-          >
-            <span>Whole file</span><kbd>{describe(chordFor("view"))}</kbd>
-          </button>
-          <hr />
-          <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
-            <span>Reload</span>
-          </button>
-        </div>
-      {/if}
-    </div>
-  </div>
-
-  {#if files.error}
-    <p class="notice error" data-testid="changes-error">{files.error}</p>
-  {/if}
-
-  {#if notGit}
-    <p class="notice" data-testid="not-git">
-      This folder is not a git repository, so there are no changes to show. Sessions still run in it.
-    </p>
-  {/if}
-
-  <!-- The tree is the same component in both shapes. Working, it has the pane
-       to itself; reviewing, it becomes the left column and keeps its scroll
-       position, its open folders and its selection. -->
-  <div class="split" class:reviewing class:full={fullView} style:--tree-w="{layout.tree}px">
-    <!-- The tree's column: the tree, and beneath it what the agent
-         presented for the session on screen, a section of its own with a
-         divider to drag, folded to its header when asked. -->
-    {#if !fullView}
-      <div class="column" bind:clientHeight={columnHeight}>
-        <div class="tree-slot">
-          {#if searchingLines()}
-            <SearchResults onOpen={openHit} />
-          {:else}
-            <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
-          {/if}
-        </div>
-        {#if anyOpen}
-          <Splitter
-            label="Resize the sections under the tree"
-            orientation="horizontal"
-            onDelta={resizeMedia}
-            onReset={resetMedia}
-            onCommit={saveLayout}
-          />
-        {/if}
-        <!-- The rows here are the tree's cursor's to walk, so a click keeps
-             the keyboard on the tree rather than moving it to the row, and
-             Tab does not stop on each of them. Two sections share the
-             height when both are open. -->
-        <div
-          class="sections"
-          class:open={anyOpen}
-          class:keyed={layout.focus === "changes"}
-          style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
-          data-testid="sections"
-        >
-          {#if presented.length > 0}
-            <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
-              <button
-                id={FOLD_ID}
-                class="fold"
-                class:cursor={cursorId === FOLD_ID}
-                tabindex="-1"
-                onpointerdown={(e) => e.preventDefault()}
-                onclick={() => {
-                  sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
-                  toggleMedia();
-                }}
-                aria-expanded={layout.mediaOpen}
-                data-testid="media-fold"
-              >
-                <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
-                Media ({presented.length})
-              </button>
-              {#if layout.mediaOpen}
-                <ul class="rows">
-                  {#each presented as item (item.id)}
-                    <li>
-                      <button
-                        id={rowIdOf(item.id)}
-                        class="media-row"
-                        class:on={files.media?.id === item.id}
-                        class:cursor={cursorId === rowIdOf(item.id)}
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => {
-                          sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
-                          openItem(item);
-                        }}
-                        title={item.files.join("\n")}
-                        data-testid="media-item"
-                      >
-                        <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
-                        <span class="media-meta"
-                          >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
-                        >
-                      </button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </section>
-          {/if}
-          <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
+    <div
+      class="board"
+      tabindex="0"
+      aria-label="Sessions it started"
+      bind:this={boardNav}
+      onkeydown={onBoardKeydown}
+      data-testid="started-board"
+    >
+      {#if started.length === 0}
+        <p class="notice" data-testid="started-empty">This session has started none of its own yet.</p>
+      {:else}
+        <section class="section open" data-testid="started-section">
+          <div class="section-head">
             <button
-              id={PROCESSES_FOLD_ID}
               class="fold"
-              class:cursor={cursorId === PROCESSES_FOLD_ID}
               tabindex="-1"
               onpointerdown={(e) => e.preventDefault()}
-              onclick={() => {
-                sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
-                toggleProcesses();
-              }}
-              aria-expanded={layout.processesOpen}
-              data-testid="processes-fold"
+              onclick={() => (startedOpen = !startedOpen)}
+              aria-expanded={startedOpen}
+              data-testid="started-head"
             >
-              <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
-              Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
+              <span class="chevron">{startedOpen ? "▾" : "▸"}</span>
+              Sessions it started ({started.length})
             </button>
-            {#if layout.processesOpen}
-              {#if processes.rows.length === 0}
-                <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
-              {:else}
-                <ul class="rows">
-                  {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
-                    <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
-                      <button
-                        class="media-row"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
-                        title={row.command}
-                      >
-                        <span class="media-caption">{row.command || row.name}</span>
-                        <span class="media-meta"
-                          >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
-                        >
-                      </button>
-                      <button
-                        class="stop"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => void stopProcess(row)}
-                        aria-label="Stop {row.name}"
-                        title="Stop"
-                        data-testid="process-stop">×</button
-                      >
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
+            <span class="head-actions">
+              <button
+                class="head-action"
+                tabindex="-1"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={stopStarted}
+                data-testid="stop-all">Stop all</button
+              >
+            </span>
+          </div>
+          {#if startedOpen}
+            <ul class="rows">
+              {#each started as session (session.key)}
+                <li class="started" class:cursor={boardRow === session.key} data-row={session.key}>
+                  <button
+                    class="media-row"
+                    tabindex="-1"
+                    onpointerdown={(e) => e.preventDefault()}
+                    onclick={() => {
+                      boardCursor = session.key;
+                      go(session);
+                    }}
+                    title={session.project}
+                    data-testid="started-row"
+                  >
+                    <span class="row-line">
+                      <span class="dot" data-state={startedDot(session)}></span>
+                      <span class="media-caption">{label(session)}</span>
+                    </span>
+                    <span class="media-meta">{startedLine(session)}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
+    </div>
+  {:else}
+    <!-- The field is the toolbar: what you type narrows the tree, or searches
+         inside the files. Scope and view moved into the menu at the end, with
+         their chords beside them. -->
+    <div class="head">
+      <label class="field" class:lines={files.mode === "lines"}>
+        <span class="glyph" aria-hidden="true">⌕</span>
+        <input
+          type="search"
+          bind:this={field}
+          value={files.query}
+          oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+          onkeydown={onFieldKeydown}
+          placeholder={files.mode === "lines" ? "search in files…" : "filter files…"}
+          aria-label={files.mode === "lines" ? "Search in files" : "Filter files"}
+          spellcheck="false"
+          autocomplete="off"
+          data-testid="search-field"
+        />
+        <span class="modes" role="radiogroup" aria-label="What to search">
+          <button
+            role="radio"
+            aria-checked={files.mode === "files"}
+            class:on={files.mode === "files"}
+            onclick={() => setMode("files")}
+            title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
+            data-testid="mode-files">files</button
+          >
+          <button
+            role="radio"
+            aria-checked={files.mode === "lines"}
+            class:on={files.mode === "lines"}
+            onclick={() => setMode("lines")}
+            title="Search inside the files ({describe(chordFor('findLines'))})"
+            data-testid="mode-lines">lines</button
+          >
+        </span>
+      </label>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="more" onkeydown={onMenuKeydown}>
+        <button
+          class="tool"
+          onclick={() => (menuOpen = !menuOpen)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="More"
+          data-testid="changes-menu">⋯</button
+        >
+        {#if menuOpen}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div class="scrim" onclick={() => (menuOpen = false)}></div>
+          <div class="menu" role="menu" data-testid="changes-menu-items">
+            <button
+              role="menuitemradio"
+              aria-checked={files.scope === "changed"}
+              onclick={() => choose(() => setScope("changed"))}
+              data-testid="menu-scope-changed"
+            >
+              <span>Changed files</span><kbd>{describe(chordFor("scope"))}</kbd>
+            </button>
+            <button
+              role="menuitemradio"
+              aria-checked={files.scope === "all"}
+              onclick={() => choose(() => setScope("all"))}
+              data-testid="menu-scope-all"
+            >
+              <span>All files</span><kbd>{describe(chordFor("scope"))}</kbd>
+            </button>
+            <hr />
+            <button
+              role="menuitemradio"
+              aria-checked={files.view === "diff" && diffable}
+              disabled={!diffable}
+              onclick={() => choose(() => setView("diff"))}
+              data-testid="menu-view-diff"
+            >
+              <span>Diff</span><kbd>{describe(chordFor("view"))}</kbd>
+            </button>
+            <button
+              role="menuitemradio"
+              aria-checked={files.view === "content" || !diffable}
+              disabled={files.selected === null}
+              onclick={() => choose(() => setView("content"))}
+              data-testid="menu-view-content"
+            >
+              <span>Whole file</span><kbd>{describe(chordFor("view"))}</kbd>
+            </button>
+            <hr />
+            <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
+              <span>Reload</span>
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    {#if files.error}
+      <p class="notice error" data-testid="changes-error">{files.error}</p>
+    {/if}
+
+    {#if notGit}
+      <p class="notice" data-testid="not-git">
+        This folder is not a git repository, so there are no changes to show. Sessions still run in it.
+      </p>
+    {/if}
+
+    <!-- The tree is the same component in both shapes. Working, it has the pane
+         to itself; reviewing, it becomes the left column and keeps its scroll
+         position, its open folders and its selection. -->
+    <div class="split" class:reviewing class:full={fullView} style:--tree-w="{layout.tree}px">
+      <!-- The tree's column: the tree, and beneath it what the agent
+           presented for the session on screen, a section of its own with a
+           divider to drag, folded to its header when asked. -->
+      {#if !fullView}
+        <div class="column" bind:clientHeight={columnHeight}>
+          <div class="tree-slot">
+            {#if searchingLines()}
+              <SearchResults onOpen={openHit} />
+            {:else}
+              <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
             {/if}
-          </section>
-          <!-- A plugin's section: the same shape, with the rows and the
-               actions the plugin sent for the project on screen. -->
-          {#each pluginList as section (section.key)}
-            {@const open = sectionOpen(section.key)}
-            {@const notice = noticeOf(section)}
-            {@const page = pluginViewOf(`${section.source}/${section.plugin}`)}
-            <section class="section" class:open data-section={section.key} data-testid="plugin-section">
-              <div class="section-head">
+          </div>
+          {#if anyOpen}
+            <Splitter
+              label="Resize the sections under the tree"
+              orientation="horizontal"
+              onDelta={resizeMedia}
+              onReset={resetMedia}
+              onCommit={saveLayout}
+            />
+          {/if}
+          <!-- The rows here are the tree's cursor's to walk, so a click keeps
+               the keyboard on the tree rather than moving it to the row, and
+               Tab does not stop on each of them. Two sections share the
+               height when both are open. -->
+          <div
+            class="sections"
+            class:open={anyOpen}
+            class:keyed={layout.focus === "changes"}
+            style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
+            data-testid="sections"
+          >
+            {#if presented.length > 0}
+              <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
                 <button
-                  id={pluginFoldId(section.key)}
+                  id={FOLD_ID}
                   class="fold"
-                  class:cursor={cursorId === pluginFoldId(section.key)}
+                  class:cursor={cursorId === FOLD_ID}
                   tabindex="-1"
                   onpointerdown={(e) => e.preventDefault()}
                   onclick={() => {
-                    sectionCursor = sectionEntries.findIndex(
-                      (entry) => entry.kind === "plugin-head" && entry.key === section.key,
-                    );
-                    toggleSection(section.key);
+                    sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
+                    toggleMedia();
                   }}
-                  aria-expanded={open}
-                  data-testid="plugin-fold"
+                  aria-expanded={layout.mediaOpen}
+                  data-testid="media-fold"
                 >
-                  <span class="chevron">{open ? "▾" : "▸"}</span>
-                  {section.title}{section.rows.length > 0 ? ` (${section.rows.length})` : ""}
+                  <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
+                  Media ({presented.length})
                 </button>
-                <span class="head-actions">
-                  {#if page !== null}
-                    <button
-                      class="head-action"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => openPluginView(page.key, page.project)}
-                      data-testid="plugin-view-open">View</button
-                    >
-                  {/if}
-                  {#each section.actions as action (action.id)}
-                    <button
-                      class="head-action"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => act(section, action, null)}
-                      data-action={action.id}
-                      data-testid="plugin-section-action">{action.label}</button
-                    >
-                  {/each}
-                </span>
-              </div>
-              {#if notice !== null}
-                <p class="section-notice" data-testid="plugin-notice">{notice}</p>
-              {/if}
-              {#if open}
-                <ul class="rows">
-                  {#each section.rows as row (row.id)}
-                    <li
-                      id={pluginRowId(section.key, row)}
-                      class="plugin"
-                      class:cursor={cursorId === pluginRowId(section.key, row)}
-                      data-row={row.id}
-                      data-testid="plugin-row"
-                    >
-                      <button
-                        class="media-row"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => {
-                          sectionCursor = sectionEntries.findIndex(
-                            (entry) => entry.id === pluginRowId(section.key, row),
-                          );
-                          runDefault(section, row);
-                        }}
-                        title={row.detail ?? row.label}
-                      >
-                        <span class="row-line">
-                          <span class="dot" data-state={row.state ?? "none"}></span>
-                          <span class="media-caption">{row.label}</span>
-                        </span>
-                        {#if row.detail !== null}
-                          <span class="media-meta">{row.detail}</span>
-                        {/if}
-                      </button>
-                      <span class="row-actions">
-                        {#each row.actions ?? [] as action (action.id)}
-                          <button
-                            class="row-action"
-                            tabindex="-1"
-                            onpointerdown={(e) => e.preventDefault()}
-                            onclick={() => act(section, action, row.id)}
-                            data-action={action.id}
-                            data-testid="plugin-row-action">{action.label}</button
+                {#if layout.mediaOpen}
+                  <ul class="rows">
+                    {#each presented as item (item.id)}
+                      <li>
+                        <button
+                          id={rowIdOf(item.id)}
+                          class="media-row"
+                          class:on={files.media?.id === item.id}
+                          class:cursor={cursorId === rowIdOf(item.id)}
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => {
+                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
+                            openItem(item);
+                          }}
+                          title={item.files.join("\n")}
+                          data-testid="media-item"
+                        >
+                          <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
+                          <span class="media-meta"
+                            >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
                           >
-                        {/each}
-                      </span>
-                    </li>
-                  {/each}
-                </ul>
+                        </button>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </section>
+            {/if}
+            <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
+              <button
+                id={PROCESSES_FOLD_ID}
+                class="fold"
+                class:cursor={cursorId === PROCESSES_FOLD_ID}
+                tabindex="-1"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => {
+                  sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
+                  toggleProcesses();
+                }}
+                aria-expanded={layout.processesOpen}
+                data-testid="processes-fold"
+              >
+                <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
+                Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
+              </button>
+              {#if layout.processesOpen}
+                {#if processes.rows.length === 0}
+                  <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
+                {:else}
+                  <ul class="rows">
+                    {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
+                      <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
+                        <button
+                          class="media-row"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
+                          title={row.command}
+                        >
+                          <span class="media-caption">{row.command || row.name}</span>
+                          <span class="media-meta"
+                            >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
+                          >
+                        </button>
+                        <button
+                          class="stop"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => void stopProcess(row)}
+                          aria-label="Stop {row.name}"
+                          title="Stop"
+                          data-testid="process-stop">×</button
+                        >
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
               {/if}
             </section>
-          {/each}
+            <!-- A plugin's section: the same shape, with the rows and the
+                 actions the plugin sent for the project on screen. -->
+            {#each pluginList as section (section.key)}
+              {@const open = sectionOpen(section.key)}
+              {@const notice = noticeOf(section)}
+              {@const page = pluginViewOf(`${section.source}/${section.plugin}`)}
+              <section class="section" class:open data-section={section.key} data-testid="plugin-section">
+                <div class="section-head">
+                  <button
+                    id={pluginFoldId(section.key)}
+                    class="fold"
+                    class:cursor={cursorId === pluginFoldId(section.key)}
+                    tabindex="-1"
+                    onpointerdown={(e) => e.preventDefault()}
+                    onclick={() => {
+                      sectionCursor = sectionEntries.findIndex(
+                        (entry) => entry.kind === "plugin-head" && entry.key === section.key,
+                      );
+                      toggleSection(section.key);
+                    }}
+                    aria-expanded={open}
+                    data-testid="plugin-fold"
+                  >
+                    <span class="chevron">{open ? "▾" : "▸"}</span>
+                    {section.title}{section.rows.length > 0 ? ` (${section.rows.length})` : ""}
+                  </button>
+                  <span class="head-actions">
+                    {#if page !== null}
+                      <button
+                        class="head-action"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => openPluginView(page.key, page.project)}
+                        data-testid="plugin-view-open">View</button
+                      >
+                    {/if}
+                    {#each section.actions as action (action.id)}
+                      <button
+                        class="head-action"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => act(section, action, null)}
+                        data-action={action.id}
+                        data-testid="plugin-section-action">{action.label}</button
+                      >
+                    {/each}
+                  </span>
+                </div>
+                {#if notice !== null}
+                  <p class="section-notice" data-testid="plugin-notice">{notice}</p>
+                {/if}
+                {#if open}
+                  <ul class="rows">
+                    {#each section.rows as row (row.id)}
+                      <li
+                        id={pluginRowId(section.key, row)}
+                        class="plugin"
+                        class:cursor={cursorId === pluginRowId(section.key, row)}
+                        data-row={row.id}
+                        data-testid="plugin-row"
+                      >
+                        <button
+                          class="media-row"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => {
+                            sectionCursor = sectionEntries.findIndex(
+                              (entry) => entry.id === pluginRowId(section.key, row),
+                            );
+                            runDefault(section, row);
+                          }}
+                          title={row.detail ?? row.label}
+                        >
+                          <span class="row-line">
+                            <span class="dot" data-state={row.state ?? "none"}></span>
+                            <span class="media-caption">{row.label}</span>
+                          </span>
+                          {#if row.detail !== null}
+                            <span class="media-meta">{row.detail}</span>
+                          {/if}
+                        </button>
+                        <span class="row-actions">
+                          {#each row.actions ?? [] as action (action.id)}
+                            <button
+                              class="row-action"
+                              tabindex="-1"
+                              onpointerdown={(e) => e.preventDefault()}
+                              onclick={() => act(section, action, row.id)}
+                              data-action={action.id}
+                              data-testid="plugin-row-action">{action.label}</button
+                            >
+                          {/each}
+                        </span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </section>
+            {/each}
+          </div>
         </div>
-      </div>
-    {/if}
-    {#if reviewing}
-      {#if !fullView}
-        <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
       {/if}
-      <FileViewer />
-    {/if}
-  </div>
+      {#if reviewing}
+        {#if !fullView}
+          <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
+        {/if}
+        <FileViewer />
+      {/if}
+    </div>
+  {/if}
 </Pane>
 
 <style>
@@ -935,6 +1122,26 @@
     font-family: var(--mono);
     font-size: 10.5px;
     color: var(--ink-3);
+  }
+
+  /* The board stands where the tree does while an orchestrator session is on
+     screen: one tab stop, with the cursor drawn on its rows as the sections
+     draw theirs. */
+  .board {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+    outline: none;
+  }
+
+  .started {
+    position: relative;
+  }
+
+  .board:focus-within .started.cursor {
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .head {

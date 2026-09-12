@@ -9,7 +9,6 @@
     close as closeSession,
     create,
     defaultAgent,
-    forProject,
     historyFor,
     historyLabel,
     isLive,
@@ -20,8 +19,20 @@
     sessions,
     statusLabel,
     disown,
+    type Session,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, projectLabel, workspace } from "$lib/workspace.svelte";
+  import {
+    LABEL,
+    conductors,
+    foldLabel,
+    groupsFor,
+    isConductor,
+    orchestrator,
+    ownFor,
+    summaryLine,
+    type Group,
+  } from "$lib/orchestrator.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -52,6 +63,21 @@
     start(path, agent);
   }
 
+  /** The projects under the orchestrator's own: opening the directory it
+      runs in is opening the project already pinned above them, and it is
+      drawn once. */
+  let projects = $derived(workspace.open.filter((project) => project.path !== orchestrator.dir));
+
+  /** The folds standing open, by the row id of the fold. A fold is where
+      the eye is right now, so nothing about it is remembered. */
+  let opened = $state<Record<string, boolean>>({});
+
+  const foldId = (project: string, group: Group) => `started:${project}:${group.id}`;
+
+  function toggle(id: string) {
+    opened[id] = !opened[id];
+  }
+
   /** Closes the choice, the cursor back on the row it opened from. */
   function dismiss(): boolean {
     if (choosing === null) return false;
@@ -75,11 +101,27 @@
       { id: "open", run: pick },
       { id: "remote", run: openRemote },
     ];
-    for (const project of workspace.open) {
+    const dir = orchestrator.dir;
+    if (dir !== null) {
+      out.push({ id: `project:${dir}`, run: () => activate(dir) });
+      for (const session of conductors()) {
+        out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
+      }
+      if (workspace.active === dir) out.push(...starting(dir));
+    }
+    for (const project of projects) {
       const path = project.path;
       out.push({ id: `project:${path}`, run: () => activate(path) });
-      for (const session of forProject(path)) {
+      for (const session of ownFor(path)) {
         out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
+      }
+      for (const group of groupsFor(path)) {
+        const id = foldId(path, group);
+        out.push({ id, run: () => toggle(id) });
+        if (!opened[id]) continue;
+        for (const session of group.sessions) {
+          out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
+        }
       }
       if (workspace.active !== path) continue;
       for (const transcript of historyFor(path)) {
@@ -88,15 +130,7 @@
           run: () => resume(path, transcript.id, transcript.agent, transcript.cwd ?? null),
         });
       }
-      if (isReady()) {
-        if (several && choosing === path) {
-          for (const agent of installed()) {
-            out.push({ id: `pick:${path}:${agent}`, run: () => startWith(path, agent) });
-          }
-        } else {
-          out.push({ id: `new:${path}`, run: () => offer(path) });
-        }
-      }
+      out.push(...starting(path));
       for (const agent of AGENTS) {
         if (outsideFor(path, agent).length === 0) continue;
         out.push({ id: `fold:${path}:${agent}`, run: () => openResume(path, agent) });
@@ -105,6 +139,19 @@
     for (const path of notOpen) out.push({ id: `recent:${path}`, run: () => openPath(path) });
     return out;
   });
+
+  /** The rows a project offers for starting a session: the choice of agent
+      while it is open, else the new-session row. */
+  function starting(path: string): Row[] {
+    if (!isReady()) return [];
+    if (several && choosing === path) {
+      return installed().map((agent) => ({
+        id: `pick:${path}:${agent}`,
+        run: () => startWith(path, agent),
+      }));
+    }
+    return [{ id: `new:${path}`, run: () => offer(path) }];
+  }
 
   let cursor = $state<string | null>(null);
   let nav: HTMLDivElement;
@@ -122,8 +169,12 @@
   /** What the button on the row under the cursor would do: × on a project
       or a live session, archive on a past one. */
   function remove(id: string) {
-    if (id.startsWith("project:")) closeProject(id.slice("project:".length));
-    else if (id.startsWith("session:")) closeSession(id.slice("session:".length));
+    if (id.startsWith("project:")) {
+      // The orchestrator's own project has no close button, and nothing
+      // here closes it either.
+      const path = id.slice("project:".length);
+      if (path !== orchestrator.dir) closeProject(path);
+    } else if (id.startsWith("session:")) closeSession(id.slice("session:".length));
     else if (id.startsWith("past:") && workspace.active !== null) {
       disown(workspace.active, id.slice("past:".length));
     }
@@ -237,6 +288,99 @@
 
 </script>
 
+<!-- A session's row, wherever it is drawn. Under the orchestrator's own
+     project the line beneath the name is what the session has out, when
+     it has anything out. -->
+{#snippet sessionRow(session: Session)}
+  {@const orchestrating = isConductor(session)}
+  {@const line = orchestrating ? (summaryLine(session) ?? session.note) : session.note}
+  <div
+    class="session"
+    class:on={sessions.active === session.key}
+    class:cursor={current === `session:${session.key}`}
+    data-row="session:{session.key}"
+  >
+    <button class="row" tabindex="-1" onclick={() => choose(session.key)} data-testid="session-row">
+      <span
+        class="dot"
+        class:live={isLive(session)}
+        class:working={session.working}
+        class:unread={session.unread}
+        class:permission={session.needs === "permission"}
+        title={statusLabel(session)}
+      ></span>
+      <!-- The name, and under it what the agent left for the row, if
+           anything: the rest of the row centres on the two. -->
+      <span class="text">
+        <span class="label" class:unread={session.unread}>{label(session)}</span>
+        {#if line !== null}
+          <span
+            class="note"
+            title={line}
+            data-testid={orchestrating ? "orchestrator-summary" : "session-note"}>{line}</span
+          >
+        {/if}
+      </span>
+      {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
+      <!-- The dot says what the agent is doing; the words are for a
+           screen reader and for anything reading the row's text. -->
+      <span class="state told">{statusLabel(session)}</span>
+    </button>
+    <!-- Over the row's end rather than beside it, so a name is never
+         squeezed to make room for it. -->
+    <span class="actions">
+      <button
+        class="icon"
+        tabindex="-1"
+        onclick={() => closeSession(session.key)}
+        aria-label="Close {label(session)}"
+        title="Stop"
+        data-testid="close-session">×</button
+      >
+    </span>
+  </div>
+{/snippet}
+
+<!-- With several agents the row opens, in place, into the choice of
+     agent; with one there is nothing to choose and it starts. -->
+{#snippet newSession(path: string)}
+  {#if several && choosing === path}
+    <div class="choice" role="group" aria-label="Agent for the new session" data-testid="agent-choice">
+      <div class="choice-head">
+        <span>new session with</span>
+        <button class="cancel" tabindex="-1" onclick={dismiss} aria-label="Cancel" data-testid="choice-cancel"
+          >esc</button
+        >
+      </div>
+      {#each installed() as id (id)}
+        <button
+          class="option"
+          class:cursor={current === `pick:${path}:${id}`}
+          tabindex="-1"
+          onclick={() => startWith(path, id)}
+          data-row="pick:{path}:{id}"
+          data-testid="agent-option"
+          data-agent={id}
+        >
+          <span class="mark">›</span>
+          <span class="label">{agentLabel(id)}</span>
+          {#if sessions.preferred[path] === id}<span class="state">last used</span>{/if}
+        </button>
+      {/each}
+    </div>
+  {:else}
+    <div class="new-row" class:cursor={current === `new:${path}`} data-row="new:{path}">
+      <button
+        class="new"
+        tabindex="-1"
+        onclick={() => offer(path)}
+        disabled={!isReady()}
+        data-testid="new-session">+ New session</button
+      >
+    </div>
+  {/if}
+{/snippet}
+
 <Pane id="sessions" title="Projects &amp; sessions" meta="">
   {#if workspace.error}
     <div class="error-row">
@@ -297,8 +441,38 @@
     </button>
   </div>
   <div class="tree">
-    {#each workspace.open as project (project.path)}
-      {@const own = forProject(project.path)}
+    <!-- The orchestrator's own project, above the ones you opened: a session
+         that directs others runs here, and starts here like any other. -->
+    {#if orchestrator.dir !== null}
+      {@const dir = orchestrator.dir}
+      <div
+        class="project"
+        class:on={workspace.active === dir}
+        class:cursor={current === `project:${dir}`}
+        data-row="project:{dir}"
+      >
+        <button
+          class="row project-row"
+          tabindex="-1"
+          onclick={() => activate(dir)}
+          title={dir}
+          data-testid="orchestrator-project"
+        >
+          <span class="name">{LABEL}</span>
+        </button>
+      </div>
+
+      {#each conductors() as session (session.key)}
+        {@render sessionRow(session)}
+      {/each}
+
+      {#if workspace.active === dir}
+        {@render newSession(dir)}
+      {/if}
+    {/if}
+
+    {#each projects as project (project.path)}
+      {@const own = ownFor(project.path)}
       <div
         class="project"
         class:on={workspace.active === project.path}
@@ -320,47 +494,66 @@
       </div>
 
       {#each own as session (session.key)}
-        <div
-          class="session"
-          class:on={sessions.active === session.key}
-          class:cursor={current === `session:${session.key}`}
-          data-row="session:{session.key}"
+        {@render sessionRow(session)}
+      {/each}
+
+      <!-- What an orchestrator started here stays in the project it runs in
+           and keeps out of the way: one line for each orchestrator, and the
+           sessions themselves behind it. -->
+      {#each groupsFor(project.path) as group (group.id)}
+        {@const id = foldId(project.path, group)}
+        <button
+          class="fold"
+          class:cursor={current === id}
+          tabindex="-1"
+          onclick={() => toggle(id)}
+          data-row={id}
+          data-testid="started-fold"
         >
-          <button class="row" tabindex="-1" onclick={() => choose(session.key)} data-testid="session-row">
-            <span
-              class="dot"
-              class:live={isLive(session)}
-              class:working={session.working}
-              class:unread={session.unread}
-              class:permission={session.needs === "permission"}
-              title={statusLabel(session)}
-            ></span>
-            <!-- The name, and under it what the agent left for the row, if
-                 anything: the rest of the row centres on the two. -->
-            <span class="text">
-              <span class="label" class:unread={session.unread}>{label(session)}</span>
-              {#if session.note !== null}
-                <span class="note" title={session.note} data-testid="session-note">{session.note}</span>
-              {/if}
-            </span>
-            {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
-            <!-- The dot says what the agent is doing; the words are for a
-                 screen reader and for anything reading the row's text. -->
-            <span class="state told">{statusLabel(session)}</span>
-          </button>
-          <!-- Over the row's end rather than beside it, so a name is never
-               squeezed to make room for it. -->
-          <span class="actions">
-            <button
-              class="icon"
-              tabindex="-1"
-              onclick={() => closeSession(session.key)}
-              aria-label="Close {label(session)}"
-              title="Stop"
-              data-testid="close-session">×</button
+          <span class="chevron" class:open={opened[id]}>▸</span>
+          <span class="fold-text">{foldLabel(group)}</span>
+          {#if group.asking > 0}
+            <span class="asking"><span class="ring"></span>{group.asking} asking</span>
+          {/if}
+        </button>
+        {#if opened[id]}
+          {#each group.sessions as session (session.key)}
+            <div
+              class="session started"
+              class:on={sessions.active === session.key}
+              class:cursor={current === `session:${session.key}`}
+              data-row="session:{session.key}"
             >
-          </span>
-        </div>
+              <button
+                class="row"
+                tabindex="-1"
+                onclick={() => choose(session.key)}
+                data-testid="started-session"
+              >
+                <span
+                  class="dot"
+                  class:live={isLive(session)}
+                  class:working={session.working}
+                  class:unread={session.unread}
+                  class:permission={session.needs === "permission"}
+                  title={statusLabel(session)}
+                ></span>
+                <span class="label" class:unread={session.unread}>{label(session)}</span>
+                <span class="state told">{statusLabel(session)}</span>
+              </button>
+              <span class="actions">
+                <button
+                  class="icon"
+                  tabindex="-1"
+                  onclick={() => closeSession(session.key)}
+                  aria-label="Close {label(session)}"
+                  title="Stop"
+                  data-testid="close-session">×</button
+                >
+              </span>
+            </div>
+          {/each}
+        {/if}
       {/each}
 
       {#if workspace.active === project.path}
@@ -397,47 +590,7 @@
           </div>
         {/each}
 
-        <!-- With several agents the row opens, in place, into the choice of
-             agent; with one there is nothing to choose and it starts. -->
-        {#if several && choosing === project.path}
-          <div class="choice" role="group" aria-label="Agent for the new session" data-testid="agent-choice">
-            <div class="choice-head">
-              <span>new session with</span>
-              <button class="cancel" tabindex="-1" onclick={dismiss} aria-label="Cancel" data-testid="choice-cancel"
-                >esc</button
-              >
-            </div>
-            {#each installed() as id (id)}
-              <button
-                class="option"
-                class:cursor={current === `pick:${project.path}:${id}`}
-                tabindex="-1"
-                onclick={() => startWith(project.path, id)}
-                data-row="pick:{project.path}:{id}"
-                data-testid="agent-option"
-                data-agent={id}
-              >
-                <span class="mark">›</span>
-                <span class="label">{agentLabel(id)}</span>
-                {#if sessions.preferred[project.path] === id}<span class="state">last used</span>{/if}
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <div
-            class="new-row"
-            class:cursor={current === `new:${project.path}`}
-            data-row="new:{project.path}"
-          >
-            <button
-              class="new"
-              tabindex="-1"
-              onclick={() => offer(project.path)}
-              disabled={!isReady()}
-              data-testid="new-session">+ New session</button
-            >
-          </div>
-        {/if}
+        {@render newSession(project.path)}
 
         <!-- An agent run in a plain terminal here leaves its sessions in the
              same place. They are resumable, so they are here, one row per
@@ -954,6 +1107,41 @@
     display: inline-block;
     font-size: 9px;
     transition: transform 90ms ease;
+  }
+
+  /* Closed, the triangle points at what it is holding; open, it points down
+     at the rows it let out. */
+  .chevron.open {
+    transform: rotate(90deg);
+  }
+
+  /* One of the sessions behind the fold is waiting on you. */
+  .asking {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--accent);
+  }
+
+  .ring {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border: 1px solid var(--accent);
+    border-radius: 50%;
+  }
+
+  /* A session an orchestrator started, out from behind its fold: past the
+     triangle, and quieter than a session of the project's own. */
+  .session.started .row {
+    padding-left: 40px;
+    font-size: 11px;
+    color: var(--ink-3);
+  }
+
+  .session.started .label {
+    flex: 1;
   }
 
 

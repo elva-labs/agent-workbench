@@ -447,6 +447,17 @@ impl Core {
         crate::show::write_answer(home, id, &crate::show::Answer { content, error })
     }
 
+    /// Where an orchestrator session runs: a directory of its own under the
+    /// workbench's home, made the first time it is asked for. A session
+    /// there is a session like any other; what it has is a place to keep
+    /// the notes of the work it is directing.
+    pub fn orchestrator_dir(&self) -> Result<String, String> {
+        let home = self.home.as_deref().ok_or("no home directory")?;
+        let dir = home.join(".agent-workbench").join("orchestrator");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(dir.to_string_lossy().to_string())
+    }
+
     /// A worktree of the project, on a branch of the same name, for a
     /// session to work in without touching the branch the user is on.
     /// Answers with where it is.

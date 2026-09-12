@@ -203,7 +203,7 @@ pub fn projects_tool() -> Value {
 pub fn sessions_tool() -> Value {
     json!({
         "name": "sessions",
-        "description": "The sessions in the user's Agent Workbench: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. The ids here are what send, stop, wait and read take. Call it to see what is already running before starting anything.",
+        "description": "The sessions in the user's Agent Workbench: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. Call it to see what is already running before starting anything. Send, stop, wait and read work on the sessions you started; the rest are the user's own, listed so you know what is going on and stay out of its way.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -235,7 +235,7 @@ pub fn start_tool() -> Value {
 pub fn send_tool() -> Value {
     json!({
         "name": "send",
-        "description": "Sends a line to a session, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Call wait afterwards to hear what it does next.",
+        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -251,7 +251,7 @@ pub fn send_tool() -> Value {
 pub fn stop_tool() -> Value {
     json!({
         "name": "stop",
-        "description": "Stops a session in the user's Agent Workbench. The session id is one the sessions or start tool answered with. For work that is finished or no longer wanted; a session that is merely waiting on a question is answered with send instead.",
+        "description": "Stops a session you started in the user's Agent Workbench. The session id is one the sessions or start tool answered with. For work that is finished or no longer wanted; a session that is merely waiting on a question is answered with send instead. The user's own sessions are theirs to stop.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -281,12 +281,12 @@ pub fn wait_tool() -> Value {
 pub fn read_tool() -> Value {
     json!({
         "name": "read",
-        "description": "The recent turns of a session, what it was told and what it said, oldest first. Use it to catch up on a session you started before answering for it or telling the user how it went. The session id is one the sessions or start tool answered with.",
+        "description": "What a session you started has on its screen, the last lines of its terminal as the user sees them, oldest first. Use it to catch up on a session you started before answering for it or telling the user how it went. It is a terminal, so the lines carry the agent's own boxes and spinners; read through them. The session id is one the sessions or start tool answered with.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "session": { "type": "string", "description": "The session's id, as sessions or start gives it." },
-                "turns": { "type": "integer", "minimum": 1, "description": "How many of the latest turns to read." }
+                "lines": { "type": "integer", "minimum": 1, "maximum": 200, "description": "How many of the last lines to read. Forty by default." }
             },
             "required": ["session"]
         }

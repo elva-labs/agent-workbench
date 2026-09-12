@@ -487,14 +487,18 @@ export interface Core {
     handler: (request: ConductRequest) => void,
   ): Promise<() => void>;
   /** The window's one answer to a conductor call: the text the agent
-      reads, or the reason it could not be done. */
+      reads, or the reason it could not be done. The directory the call
+      came from says which machine waits for it. */
   conductAnswer(
     id: string,
+    cwd: string,
     content: string | null,
     error: string | null,
   ): Promise<void>;
   /** Makes a worktree of the project, and answers with its absolute path. */
   worktreeAdd(project: string, name: string): Promise<string>;
+  /** Where an orchestrator session runs, made if it is not there yet. */
+  orchestratorDir(): Promise<string>;
   /** Puts what the user is looking at on record on the project's machine,
       or clears it there with null. */
   setSelection(project: string, selection: Selection | null): Promise<void>;
@@ -701,10 +705,11 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
-  conductAnswer: (id, content, error) =>
-    invoke<void>("conduct_answer", { id, content, error }),
+  conductAnswer: (id, cwd, content, error) =>
+    invoke<void>("conduct_answer", { id, cwd, content, error }),
   worktreeAdd: (project, name) =>
     invoke<string>("worktree_add", { project, name }),
+  orchestratorDir: () => invoke<string>("orchestrator_dir"),
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -867,6 +872,9 @@ const detachedCore: Core = {
   },
   async conductAnswer() {},
   async worktreeAdd() {
+    throw new Error("no core");
+  },
+  async orchestratorDir() {
     throw new Error("no core");
   },
   async onFileDrag() {

@@ -98,7 +98,12 @@ test.describe("the conductor", () => {
 
     await page.getByTestId("conduct-allow").click();
     await expect(ask).toHaveCount(0);
-    await expect(rows(page)).toHaveCount(2);
+    // The session belongs to whoever started it, so the pane folds it under
+    // that session rather than drawing it among the project's own.
+    await expect(rows(page)).toHaveCount(1);
+    await expect(page.getByTestId("started-fold")).toContainText(
+      "1 started by",
+    );
 
     await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
     const answer = (await answerTo(page, "c-1"))!;
@@ -118,6 +123,45 @@ test.describe("the conductor", () => {
     expect(listed).toContain("session-1");
     expect(listed).toContain("session-2");
     expect(listed).toContain(PROJECT);
+  });
+
+  test("reads what a session it started has on screen", async ({ page }) => {
+    await push(page, {
+      id: "c-4",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Run the tests" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-4")).not.toBeNull();
+
+    // The started session draws, as an agent does, and the read tool
+    // answers with what the user would see.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __say: (id: string, text: string) => void }
+      ).__say("pty-2", "\r\n42 tests passed\r\n"),
+    );
+    await push(page, {
+      id: "c-5",
+      tool: "read",
+      arguments: { session: "session-2" },
+      session: "session-1",
+    });
+    await expect.poll(() => answerTo(page, "c-5")).not.toBeNull();
+    expect((await answerTo(page, "c-5"))!.content).toContain("42 tests passed");
+
+    // The session the user started themselves is theirs alone.
+    await push(page, {
+      id: "c-6",
+      tool: "read",
+      arguments: { session: "session-1" },
+      session: "session-1",
+    });
+    await expect.poll(() => answerTo(page, "c-6")).not.toBeNull();
+    expect((await answerTo(page, "c-6"))!.error).toContain(
+      "not started by you",
+    );
   });
 
   test("starts nothing when the user says no", async ({ page }) => {
