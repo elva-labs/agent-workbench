@@ -462,6 +462,22 @@ fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
 /// Adds a worktree of the project under `.claude/worktrees`, on a new
 /// branch of the same name, and says where it is, absolute. The name is a
 /// plain identifier, and a worktree that is already there is left alone.
+/// The name itself when nothing has it, else the first of `name-2`,
+/// `name-3` and so on that is free, as a path and as a branch.
+fn free_worktree_name(project: &Path, name: &str) -> Result<String, String> {
+    let taken = |candidate: &str| {
+        project.join(WORKTREES).join(candidate).exists()
+            || run(project, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("refs/heads/{candidate}")]).is_ok()
+    };
+    if !taken(name) {
+        return Ok(name.to_string());
+    }
+    (2..100)
+        .map(|n| format!("{name}-{n}"))
+        .find(|candidate| !taken(candidate))
+        .ok_or_else(|| format!("a hundred worktrees are named after {name} already"))
+}
+
 pub fn worktree_add(project: &Path, name: &str) -> Result<String, String> {
     if !plain_worktree_name(name) {
         return Err(format!(
@@ -470,12 +486,12 @@ pub fn worktree_add(project: &Path, name: &str) -> Result<String, String> {
     }
     // Without a repository there is nothing to add a worktree to.
     open(project)?;
-    let path = project.join(WORKTREES).join(name);
-    if path.exists() {
-        return Err(format!("{} is already there", path.display()));
-    }
+    // The name is a wish: a worktree of that name already there, from an
+    // earlier run of the same work, makes this one the next number up.
+    let name = free_worktree_name(project, name)?;
+    let path = project.join(WORKTREES).join(&name);
     let target = path.to_string_lossy().to_string();
-    run(project, &["worktree", "add", "-b", name, "--", &target])?;
+    run(project, &["worktree", "add", "-b", &name, "--", &target])?;
     Ok(dunce::canonicalize(&path)
         .unwrap_or(path)
         .to_string_lossy()
@@ -813,8 +829,11 @@ mod tests {
             .unwrap();
         assert!(String::from_utf8_lossy(&branches.stdout).contains("review-42"));
 
-        let again = worktree_add(&dir, "review-42").unwrap_err();
-        assert!(again.contains("already there"), "{again}");
+        // The same name again is the next number up, as a path and a branch.
+        let again = worktree_add(&dir, "review-42").unwrap();
+        assert!(again.replace('\\', "/").ends_with(".claude/worktrees/review-42-2"), "{again}");
+        let third = worktree_add(&dir, "review-42").unwrap();
+        assert!(third.ends_with("review-42-3"), "{third}");
     }
 
     #[test]

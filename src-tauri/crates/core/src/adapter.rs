@@ -43,6 +43,10 @@ pub struct LaunchCtx<'a> {
     /// the agent passes on to the MCP server it starts, so a request the
     /// server logs names the session it came from.
     pub session: Option<&'a str>,
+    /// The first thing the user, or the session that started this one,
+    /// has to say: given on the command line, so the agent has it from
+    /// the start rather than typed at it while it is still coming up.
+    pub prompt: Option<&'a str>,
 }
 
 /// The variable that names the session to the tools the agent starts.
@@ -178,7 +182,9 @@ impl AgentAdapter for ClaudeCode {
     }
 
     fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        self.command(ctx, &["--session-id", session])
+        let mut args = vec!["--session-id", session];
+        args.extend(ctx.prompt);
+        self.command(ctx, &args)
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
@@ -224,7 +230,8 @@ impl AgentAdapter for Codex {
     }
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
-        self.command(ctx, &[])
+        let args: Vec<&str> = ctx.prompt.into_iter().collect();
+        self.command(ctx, &args)
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
@@ -305,6 +312,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -346,6 +354,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: Some("abc-123"),
+            prompt: None,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
         assert_eq!(
@@ -358,6 +367,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
@@ -370,6 +380,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -384,6 +395,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -404,6 +416,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -430,6 +443,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -453,6 +467,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -471,6 +486,7 @@ mod tests {
             project: Path::new("/tmp"),
             env: &vars,
             session: None,
+            prompt: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

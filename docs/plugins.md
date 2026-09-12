@@ -52,9 +52,8 @@ fails says why on its row, "needs node", "manifest invalid at line 12",
 "could not clone", and adds nothing.
 
 Enabling a plugin shows what it declares once more, "two tools, one
-section, a wide view, runs node", and that it runs with your privileges.
-That question is the whole of the trust model, and it is asked once.
-Enabling is per install: every project, every machine.
+section, a wide view, runs node", and that it runs with your privileges,
+and asks once. Enabling is per install: every project, every machine.
 
 A source stays at its pinned commit. The app checks each source for a
 newer commit once a day while it runs and on request from the settings,
@@ -69,7 +68,10 @@ project is and the window only draws. A plugin runs as one process per
 machine, started when it is turned on and when the app comes up, and
 stopped when it is turned off. A process that dies is started again, with
 a growing pause between tries; its sections and its page go while it is
-away, and the settings row says what happened to it.
+away, and the settings row says what happened to it, with the last line it
+wrote to its error output when it left one. One that dies five times in a
+row before greeting the app is broken rather than unlucky, and is left
+alone until it is turned off and on again.
 
 The process speaks JSON lines over its standard input and output, the
 same shape the daemon speaks. It is told about every open project on the
@@ -216,8 +218,7 @@ A plugin runs on the machine the app does, and hears about every project
 open there, a project on another machine among them. Its rows and its page
 come home the way everything else from a remote does, with the host put
 back on the paths it names, and what it runs to find them out runs here.
-A plugin of the remote machine's own, cloned and run by the daemon there,
-is the next piece of this and is not built.
+The daemon on the other machine runs no plugins of its own.
 
 ## Writing one
 
@@ -230,11 +231,3 @@ needs no more than that.
 The `@elva-labs/workbench-plugin` package carries the protocol's types and
 the loop, so a plugin in TypeScript is a manifest, a handler per tool,
 section and action, and a line to run it.
-
-## Settings
-
-The plugins section lists the sources, each with its URL or path, its
-pinned commit, its state and the actions to check for a newer commit,
-update and remove, and under each source its plugins, each with what it
-declares and a switch. A check across every source sits at the top of the
-section.

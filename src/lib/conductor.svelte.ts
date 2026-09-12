@@ -48,10 +48,6 @@ export const START_WAIT = 30_000;
 export const LINES = 40;
 export const LINES_MAX = 200;
 
-/** How long after a started session comes up its first prompt is typed:
-    an agent still drawing its own start-up swallows a line sent into it. */
-export const PROMPT_AFTER = 400;
-
 /** The question on screen: which call it holds, who asked, and what for. */
 export interface Ask {
   request: ConductRequest;
@@ -73,13 +69,15 @@ export const conductor = $state({
   startedBy: {} as Record<string, string>,
 });
 
+/** The ids of the calls handled lately, so a call delivered twice is
+    handled once. */
+const seen = new Set<string>();
+const SEEN = 500;
 /** Callers with a standing answer, by caller and project. */
 const allowed = new Set<string>();
 /** Questions waiting for the one on screen to be answered. */
 const queue: { ask: Ask; settle: (choice: Choice) => void }[] = [];
 let pending: ((choice: Choice) => void) | null = null;
-/** Worktree names this window has asked for, by project. */
-const named = new Map<string, string[]>();
 
 interface Answered {
   content: string | null;
@@ -94,6 +92,14 @@ const refused = (error: string): Answered => ({ content: null, error });
  * happens: the agent on the other side is blocked until it is.
  */
 export async function handle(request: ConductRequest): Promise<void> {
+  // An app and a daemon sharing a home both read the same log, and both
+  // deliver the call: the second copy is the same call, not another.
+  if (seen.has(request.id)) return;
+  seen.add(request.id);
+  if (seen.size > SEEN) {
+    const oldest = seen.values().next().value;
+    if (oldest !== undefined) seen.delete(oldest);
+  }
   let answered: Answered;
   try {
     answered = await run(request);
@@ -215,11 +221,10 @@ async function startSession(request: ConductRequest): Promise<Answered> {
 
   let startIn: string | null = null;
   if (wants) {
-    const taken = named.get(project) ?? [];
-    const name = worktreeName(prompt, taken);
-    named.set(project, [...taken, name]);
+    // The core numbers a name the project already has, so the path it
+    // answers with is the one to run in.
     try {
-      startIn = await core().worktreeAdd(project, name);
+      startIn = await core().worktreeAdd(project, worktreeName(prompt));
     } catch (error) {
       return refused(`The worktree could not be made: ${String(error)}`);
     }
@@ -229,10 +234,15 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
-  const session = create(project, null, agentOf(request, project), startIn);
+  const session = create(
+    project,
+    null,
+    agentOf(request, project),
+    startIn,
+    oneLine(prompt),
+  );
   conductor.startedBy[session.key] = caller;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
-  void typePrompt(session.key, prompt);
 
   const id = await idFor(session.key);
   if (id === null) {
@@ -251,10 +261,10 @@ async function startSession(request: ConductRequest): Promise<Answered> {
 
 /**
  * A worktree's name, from the prompt that asked for it: its words in
- * lowercase joined by dashes, cut to 40 characters, and a number on the
- * end when the window has asked for that name in the project before.
+ * lowercase joined by dashes, cut to 40 characters. The core numbers it
+ * when the project has one of that name already.
  */
-export function worktreeName(prompt: string, taken: string[] = []): string {
+export function worktreeName(prompt: string): string {
   const words = prompt
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -266,27 +276,7 @@ export function worktreeName(prompt: string, taken: string[] = []): string {
     const boundary = cut.lastIndexOf("-");
     if (boundary > 0) cut = cut.slice(0, boundary);
   }
-  const base = cut.replace(/-+$/, "") || "session";
-  if (!taken.includes(base)) return base;
-  let next = 2;
-  while (taken.includes(`${base}-${next}`)) next += 1;
-  return `${base}-${next}`;
-}
-
-/** The first prompt, typed into the session once it is up. */
-async function typePrompt(key: string, prompt: string) {
-  const line = oneLine(prompt);
-  if (line === "") return;
-  if (!(await upAndRunning(key))) return;
-  await pause(PROMPT_AFTER);
-  const session = byKey(key);
-  if (session === null || session.ptyId === null) return;
-  await core()
-    .write(session.ptyId, `${line}\r`)
-    .catch(() => {
-      // The session went while the prompt was on its way in. The caller
-      // hears that from wait, not from here.
-    });
+  return cut.replace(/-+$/, "") || "session";
 }
 
 async function sendText(request: ConductRequest): Promise<Answered> {
@@ -551,21 +541,6 @@ function idFor(key: string): Promise<string | null> {
   );
 }
 
-/** Whether a session came up at all. */
-function upAndRunning(key: string): Promise<boolean> {
-  return settles<boolean>(
-    (settle) => {
-      const session = byKey(key);
-      if (session === null) settle(false);
-      else if (session.status === "running" && session.ptyId !== null)
-        settle(true);
-      else if (session.status !== "starting") settle(false);
-    },
-    START_WAIT,
-    false,
-  );
-}
-
 /**
  * A promise the session rows settle. The test runs whenever anything it
  * read changes, so nothing here polls the store; the timer is only the
@@ -593,8 +568,6 @@ function settles<T>(
     });
   });
 }
-
-const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A string argument, trimmed. Null when it is missing or empty. */
 function text(request: ConductRequest, name: string): string | null {
@@ -635,5 +608,5 @@ export function resetConductor() {
   pending = null;
   queue.length = 0;
   allowed.clear();
-  named.clear();
+  seen.clear();
 }

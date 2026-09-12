@@ -14,7 +14,7 @@ use crate::show::{
     NOTIFY_REQUEST, PRESENT_REQUEST, SHOW_REQUEST,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -274,7 +274,18 @@ struct Running {
     hello: Option<Hello>,
     /// How many starts in a row went wrong, for the pause before the next.
     failures: u32,
+    /// The last lines the plugin wrote to its error output, for the row
+    /// to say why it went.
+    complaints: Arc<Mutex<VecDeque<String>>>,
 }
+
+/// How many lines of a plugin's error output are kept for its row.
+const COMPLAINTS: usize = 5;
+
+/// How many starts in a row may go wrong before the plugin is left alone:
+/// one that dies before it greets is broken, not unlucky, and is not
+/// started every half minute until the app closes.
+const TRIES: u32 = 5;
 
 type Key = (String, String);
 
@@ -1158,7 +1169,7 @@ impl Inner {
             .env("WORKBENCH_PLUGIN", name)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -1174,6 +1185,27 @@ impl Inner {
         };
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = child.stdout.take().expect("piped stdout");
+        let stderr = child.stderr.take().expect("piped stderr");
+        // What the plugin complains of is kept, the last few lines of it,
+        // so a plugin that dies can say why on its row.
+        let complaints = Arc::new(Mutex::new(VecDeque::new()));
+        {
+            let complaints = Arc::clone(&complaints);
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines() {
+                    let Ok(line) = line else { break };
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Ok(mut kept) = complaints.lock() {
+                        if kept.len() == COMPLAINTS {
+                            kept.pop_front();
+                        }
+                        kept.push_back(line);
+                    }
+                }
+            });
+        }
         // The greeting comes before anything else the plugin is told: the
         // app's version and the projects open on this machine.
         let projects = self.projects.lock().expect("plugins lock").clone();
@@ -1197,6 +1229,7 @@ impl Inner {
                     detail: None,
                     hello: None,
                     failures,
+                    complaints,
                 },
             );
         }
@@ -1256,14 +1289,33 @@ impl Inner {
             let Some(live) = running.get_mut(&key) else {
                 return;
             };
+            // Its output has ended, which is as gone as a plugin gets: a
+            // process that closed its output and stayed is ended here, or
+            // the wait would hold the lock for as long as it lived.
+            let _ = live.child.kill();
             let code = live.child.wait().ok().and_then(|status| status.code());
             live.failures = if greeted { 0 } else { live.failures + 1 };
-            live.state = if still_on { State::Stopped } else { State::Off };
-            live.detail = match code {
-                Some(0) | None => None,
-                Some(code) => Some(format!("exited with code {code}")),
+            let complaint = live
+                .complaints
+                .lock()
+                .ok()
+                .and_then(|kept| kept.back().cloned());
+            live.detail = match (code, complaint) {
+                (Some(0) | None, _) => None,
+                (Some(code), None) => Some(format!("exited with code {code}")),
+                (Some(code), Some(line)) => Some(format!("exited with code {code}: {line}")),
             };
             live.hello = None;
+            let gave_up = !greeted && live.failures >= TRIES;
+            if gave_up {
+                live.state = State::Failed;
+                live.detail = Some(match live.detail.take() {
+                    Some(why) => format!("stopped after {TRIES} tries: {why}"),
+                    None => format!("stopped after {TRIES} tries"),
+                });
+            } else {
+                live.state = if still_on { State::Stopped } else { State::Off };
+            }
             let out = (live.failures, live.detail.clone());
             if !still_on {
                 running.remove(&key);
@@ -1275,6 +1327,10 @@ impl Inner {
         self.forget_views(source_id, name);
         if !still_on {
             self.tell(source_id, name, State::Off, None, None);
+            return;
+        }
+        if !greeted && failures >= TRIES {
+            self.tell(source_id, name, State::Failed, detail, None);
             return;
         }
         self.tell(source_id, name, State::Stopped, detail, None);
@@ -1312,8 +1368,10 @@ impl Inner {
             let _ = writeln!(stdin, r#"{{"type":"stop"}}"#);
             let _ = stdin.flush();
         }
-        for _ in 0..20 {
-            std::thread::sleep(Duration::from_millis(100));
+        for tries in 0..20 {
+            if tries > 0 {
+                std::thread::sleep(Duration::from_millis(100));
+            }
             let mut running = self.running.lock().expect("plugins lock");
             match running.get_mut(&key) {
                 Some(live) => {
@@ -2117,6 +2175,62 @@ tools = ["ping"]
         again.remove(&added.id).unwrap();
         assert!(again.list().is_empty());
         assert!(Plugins::new(&home, recorder).list().is_empty());
+    }
+
+    #[test]
+    fn a_plugin_that_dies_before_greeting_says_why_and_is_left_alone_in_time() {
+        let home = std::env::temp_dir().join("workbench-plugins-home-dies");
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "brief"
+path = "github"
+description = "Dies at once."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+"#,
+            "dies",
+        );
+        std::fs::write(
+            dir.join("github/main.sh"),
+            "#!/bin/sh\necho 'Error: cannot find module ./board' >&2\nexit 3\n",
+        )
+        .unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let plugins = Plugins::new(&home, recorder.clone());
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+        plugins.enable(&added.id, "brief", true).unwrap();
+
+        // Each death is told with the code and the last line it wrote, and
+        // after the fifth the row reads failed and nothing starts it again.
+        let mut failed = None;
+        for _ in 0..600 {
+            std::thread::sleep(Duration::from_millis(100));
+            let listed = plugins.list();
+            if listed[0].plugins[0].state == State::Failed {
+                failed = listed[0].plugins[0].detail.clone();
+                break;
+            }
+        }
+        let failed = failed.expect("gave up");
+        assert!(failed.starts_with("stopped after 5 tries: exited with code 3: Error: cannot find module ./board"), "{failed}");
+        let events = recorder.events.lock().unwrap();
+        let stopped = events
+            .iter()
+            .filter(|(event, payload)| event == PLUGIN_STATE && payload["state"] == "stopped")
+            .count();
+        assert_eq!(stopped, 4, "four stops, then failed");
+        assert!(events.iter().any(|(event, payload)| event == PLUGIN_STATE
+            && payload["state"] == "stopped"
+            && payload["detail"] == "exited with code 3: Error: cannot find module ./board"));
+        drop(events);
+
+        // Off and on again is a fresh start.
+        plugins.enable(&added.id, "brief", false).unwrap();
+        let on = plugins.enable(&added.id, "brief", true).unwrap();
+        assert!(matches!(on.plugins[0].state, State::Starting | State::Stopped | State::Running));
+        plugins.enable(&added.id, "brief", false).unwrap();
     }
 
     #[test]

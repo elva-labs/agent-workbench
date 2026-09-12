@@ -34,6 +34,8 @@ export interface SpawnOptions {
   cwd?: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
+  /** The first prompt, for a fresh session started with one. */
+  prompt?: string;
   cols: number;
   rows: number;
 }

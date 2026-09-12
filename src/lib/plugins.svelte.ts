@@ -109,10 +109,14 @@ export async function checkSource(id: string) {
     source.newer = null;
 }
 
+/** Checks every git source at once: the fetches are independent, and one
+    slow host is no reason for the rest to wait on it. */
 export async function checkAll() {
-  for (const source of plugins.sources) {
-    if (source.kind === "git") await checkSource(source.id);
-  }
+  await Promise.all(
+    plugins.sources
+      .filter((source) => source.kind === "git")
+      .map((source) => checkSource(source.id)),
+  );
   plugins.checked = Date.now();
 }
 

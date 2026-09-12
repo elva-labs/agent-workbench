@@ -112,11 +112,14 @@ export async function installFakeCore(
           onOutput: (bytes: Uint8Array) => void,
         ) => {
           const ptyId = `pty-${++ptyCount}`;
-          // A test puts bytes on a session's terminal with __say.
+          // What each spawn asked for, and a way for a test to put bytes on
+          // a session's terminal, __say.
           const w = window as unknown as {
+            __spawns?: unknown[];
             __say?: (id: string, text: string) => void;
             __outputs?: Record<string, (bytes: Uint8Array) => void>;
           };
+          (w.__spawns ??= []).push({ ...spawnOptions, ptyId });
           (w.__outputs ??= {})[ptyId] = onOutput;
           w.__say ??= (id, text) =>
             w.__outputs?.[id]?.(new TextEncoder().encode(text));

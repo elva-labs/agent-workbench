@@ -53,12 +53,6 @@ const answers = (page: Page) =>
 const answerTo = async (page: Page, id: string) =>
   (await answers(page)).find((answer) => answer.id === id) ?? null;
 
-const written = (page: Page) =>
-  page.evaluate(
-    () =>
-      (window as unknown as { __written?: [string, string][] }).__written ?? [],
-  );
-
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
 
 test.describe("the conductor", () => {
@@ -110,10 +104,13 @@ test.describe("the conductor", () => {
     expect(answer.error).toBeNull();
     expect(answer.content).toContain("session-2");
 
-    // The prompt is typed into the new session once it is up.
-    await expect
-      .poll(async () => (await written(page)).map(([, data]) => data))
-      .toContain("Fix the flaky test\r");
+    // The new session is started with the prompt on its command line.
+    const spawns = await page.evaluate(
+      () =>
+        (window as unknown as { __spawns?: { prompt?: string }[] }).__spawns ??
+        [],
+    );
+    expect(spawns.at(-1)?.prompt).toBe("Fix the flaky test");
 
     // Both sessions are there to be listed, the new one included.
     await push(page, { id: "c-2", tool: "sessions", session: "session-1" });

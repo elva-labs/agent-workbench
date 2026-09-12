@@ -9,6 +9,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -31,20 +32,28 @@ pub struct Process {
 /// How much of a command line is kept.
 const COMMAND_CAP: usize = 160;
 
+/// How long one reading of the process table serves. The window asks once
+/// per pty on each tick, and the table is read once for all of them rather
+/// than once each.
+const FRESH: Duration = Duration::from_millis(750);
+
 pub struct Processes {
-    system: Mutex<System>,
+    system: Mutex<(System, Option<Instant>)>,
 }
 
 impl Default for Processes {
     fn default() -> Self {
         Self {
-            system: Mutex::new(System::new()),
+            system: Mutex::new((System::new(), None)),
         }
     }
 }
 
 impl Processes {
-    fn refresh(system: &mut System) {
+    fn refresh(system: &mut System, read: &mut Option<Instant>) {
+        if read.is_some_and(|at| at.elapsed() < FRESH) {
+            return;
+        }
         system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
@@ -53,13 +62,15 @@ impl Processes {
                 .with_memory()
                 .with_cmd(UpdateKind::OnlyIfNotSet),
         );
+        *read = Some(Instant::now());
     }
 
     /// Every process running under `root`, parents before children, the
     /// root itself left out.
     pub fn under(&self, root: u32) -> Vec<Process> {
-        let mut system = self.system.lock().expect("processes lock");
-        Self::refresh(&mut system);
+        let mut guard = self.system.lock().expect("processes lock");
+        let (system, read) = &mut *guard;
+        Self::refresh(system, read);
         let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
         for (pid, process) in system.processes() {
             if let Some(parent) = process.parent() {
@@ -108,11 +119,15 @@ impl Processes {
         if !self.under(root).iter().any(|process| process.pid == pid) {
             return Err(format!("{pid} is not running under this session"));
         }
-        let system = self.system.lock().expect("processes lock");
+        let mut guard = self.system.lock().expect("processes lock");
+        let (system, read) = &mut *guard;
         let process = system
             .process(Pid::from_u32(pid))
             .ok_or_else(|| format!("{pid} is gone"))?;
         if process.kill() {
+            // The table has changed by our own hand: the next listing reads
+            // it afresh rather than showing what was just stopped.
+            *read = None;
             Ok(())
         } else {
             Err(format!("could not stop {pid}"))

@@ -53,6 +53,9 @@ export interface Session {
   /** Where the agent was started when that is not the project: the
       worktree a resumed session belongs to. */
   startIn: string | null;
+  /** The first prompt, when the session was started with one: another
+      session's, given to the agent on its command line. */
+  prompt: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -451,6 +454,7 @@ export function create(
   resumedFrom: string | null = null,
   agent: AgentId = defaultAgent(project),
   startIn: string | null = null,
+  prompt: string | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   prefer(project, agent);
@@ -467,6 +471,7 @@ export function create(
     title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
     cwd: null,
     startIn,
+    prompt,
     worktree: null,
     working: false,
     engaged: false,
@@ -507,6 +512,7 @@ export async function launch(
         project: session.project,
         cwd: session.startIn ?? undefined,
         session: session.resumedFrom ?? undefined,
+        prompt: session.prompt ?? undefined,
         cols,
         rows,
       },

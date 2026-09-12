@@ -99,6 +99,8 @@ struct SpawnParams {
     cwd: Option<PathBuf>,
     #[serde(default)]
     session: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
     cols: u16,
     rows: u16,
 }
@@ -278,6 +280,7 @@ pub fn dispatch(
                 &p.project,
                 p.cwd.as_deref(),
                 p.session,
+                p.prompt.as_deref(),
                 p.cols,
                 p.rows,
                 make_output,

@@ -263,8 +263,8 @@ describe("starting a session", () => {
     expect(sessions.active).toBe(caller.key);
   });
 
-  it("types the prompt into the session once it is up", async () => {
-    await startAllowed(
+  it("gives the session its prompt to start with, as one line", async () => {
+    const row = await startAllowed(
       call(
         "start",
         { project: A, prompt: "Fix the flaky test\nin the cache" },
@@ -273,8 +273,8 @@ describe("starting a session", () => {
       "pty-1",
       "sid-new",
     );
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(written).toEqual([["pty-1", "Fix the flaky test in the cache\r"]]);
+    expect(row.prompt).toBe("Fix the flaky test in the cache");
+    expect(written).toHaveLength(0);
   });
 
   it("makes a worktree when one is asked for, and starts the session in it", async () => {
@@ -678,11 +678,6 @@ describe("naming a worktree", () => {
     );
     expect(name.length).toBeLessThanOrEqual(40);
     expect(name).toBe("fix-the-flaky-cache-test-that-keeps");
-  });
-
-  it("numbers a name the project already has", () => {
-    expect(worktreeName("Fix it", ["fix-it"])).toBe("fix-it-2");
-    expect(worktreeName("Fix it", ["fix-it", "fix-it-2"])).toBe("fix-it-3");
   });
 
   it("falls back to a name for a prompt with no words in it", () => {

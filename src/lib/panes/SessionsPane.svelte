@@ -19,6 +19,7 @@
     sessions,
     statusLabel,
     disown,
+    type HistoryEntry,
     type Session,
   } from "$lib/sessions.svelte";
   import { activate, close as closeProject, openPath, pick, projectLabel, workspace } from "$lib/workspace.svelte";
@@ -27,7 +28,6 @@
     conductors,
     foldLabel,
     groupsFor,
-    isConductor,
     orchestrator,
     ownFor,
     summaryLine,
@@ -107,7 +107,15 @@
       for (const session of conductors()) {
         out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
       }
-      if (workspace.active === dir) out.push(...starting(dir));
+      if (workspace.active === dir) {
+        for (const transcript of historyFor(dir)) {
+          out.push({
+            id: `past:${transcript.id}`,
+            run: () => resume(dir, transcript.id, transcript.agent, transcript.cwd ?? null),
+          });
+        }
+        out.push(...starting(dir));
+      }
     }
     for (const project of projects) {
       const path = project.path;
@@ -280,6 +288,8 @@
     for (const project of workspace.open) {
       if (sessions.history[project.path] === undefined) loadHistory(project.path);
     }
+    const dir = orchestrator.dir;
+    if (dir !== null && sessions.history[dir] === undefined) loadHistory(dir);
   });
 
   function isOpen(path: string) {
@@ -288,12 +298,12 @@
 
 </script>
 
-<!-- A session's row, wherever it is drawn. Under the orchestrator's own
-     project the line beneath the name is what the session has out, when
-     it has anything out. -->
+<!-- A session's row, wherever it is drawn. The line beneath the name is
+     what the session has out, for one that has started sessions, else what
+     the agent left for the row. -->
 {#snippet sessionRow(session: Session)}
-  {@const orchestrating = isConductor(session)}
-  {@const line = orchestrating ? (summaryLine(session) ?? session.note) : session.note}
+  {@const summary = summaryLine(session)}
+  {@const line = summary ?? session.note}
   <div
     class="session"
     class:on={sessions.active === session.key}
@@ -317,7 +327,7 @@
           <span
             class="note"
             title={line}
-            data-testid={orchestrating ? "orchestrator-summary" : "session-note"}>{line}</span
+            data-testid={summary !== null ? "orchestrator-summary" : "session-note"}>{line}</span
           >
         {/if}
       </span>
@@ -339,6 +349,40 @@
       >
     </span>
   </div>
+{/snippet}
+
+<!-- A past session, to resume where it ran. -->
+{#snippet pastRow(path: string, transcript: HistoryEntry)}
+    <div
+      class="session past-row"
+      class:cursor={current === `past:${transcript.id}`}
+      data-row="past:{transcript.id}"
+    >
+      <button
+        class="row past"
+        tabindex="-1"
+        onclick={() => resume(path, transcript.id, transcript.agent, transcript.cwd ?? null)}
+        disabled={!isReady()}
+        title={transcript.title ?? transcript.id}
+        data-testid="past-session"
+      >
+        <span class="dot"></span>
+        <span class="label">{historyLabel(transcript)}</span>
+        {#if transcript.cwd}<span class="tag where" title={transcript.cwd} data-testid="session-where">{lastSegment(transcript.cwd)}</span>{/if}
+        {#if several}<span class="tag">{agentTag(transcript.agent)}</span>{/if}
+        <span class="state">{ago(transcript.modified)}</span>
+      </button>
+      <span class="actions">
+        <button
+          class="icon"
+          tabindex="-1"
+          onclick={() => disown(path, transcript.id)}
+          aria-label="Archive {historyLabel(transcript)}"
+          title="File with the sessions to resume"
+          data-testid="archive-past">↧</button
+        >
+      </span>
+    </div>
 {/snippet}
 
 <!-- With several agents the row opens, in place, into the choice of
@@ -467,6 +511,9 @@
       {/each}
 
       {#if workspace.active === dir}
+        {#each historyFor(dir) as transcript (transcript.id)}
+          {@render pastRow(dir, transcript)}
+        {/each}
         {@render newSession(dir)}
       {/if}
     {/if}
@@ -558,36 +605,7 @@
 
       {#if workspace.active === project.path}
         {#each historyFor(project.path) as transcript (transcript.id)}
-          <div
-            class="session past-row"
-            class:cursor={current === `past:${transcript.id}`}
-            data-row="past:{transcript.id}"
-          >
-            <button
-              class="row past"
-              tabindex="-1"
-              onclick={() => resume(project.path, transcript.id, transcript.agent, transcript.cwd ?? null)}
-              disabled={!isReady()}
-              title={transcript.title ?? transcript.id}
-              data-testid="past-session"
-            >
-              <span class="dot"></span>
-              <span class="label">{historyLabel(transcript)}</span>
-              {#if transcript.cwd}<span class="tag where" title={transcript.cwd} data-testid="session-where">{lastSegment(transcript.cwd)}</span>{/if}
-              {#if several}<span class="tag">{agentTag(transcript.agent)}</span>{/if}
-              <span class="state">{ago(transcript.modified)}</span>
-            </button>
-            <span class="actions">
-              <button
-                class="icon"
-                tabindex="-1"
-                onclick={() => disown(project.path, transcript.id)}
-                aria-label="Archive {historyLabel(transcript)}"
-                title="File with the sessions to resume"
-                data-testid="archive-past">↧</button
-              >
-            </span>
-          </div>
+          {@render pastRow(project.path, transcript)}
         {/each}
 
         {@render newSession(project.path)}

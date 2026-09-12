@@ -232,8 +232,10 @@ impl Core {
                     },
                     move |request| events::emit(&sink, crate::show::CONDUCT_REQUEST, &request),
                 )?;
-                if let Some(plugins) = &self.plugins {
-                    plugins.start_enabled();
+                // Starting the plugins reads manifests and spawns runtimes,
+                // which is not for the thread the window is being drawn on.
+                if let Some(plugins) = self.plugins.clone() {
+                    std::thread::spawn(move || plugins.start_enabled());
                 }
                 Ok(())
             }
@@ -264,6 +266,7 @@ impl Core {
         project: &Path,
         cwd: Option<&Path>,
         session: Option<String>,
+        prompt: Option<&str>,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -288,6 +291,7 @@ impl Core {
             project,
             env: &environment.vars,
             session: session_id.as_deref(),
+            prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
