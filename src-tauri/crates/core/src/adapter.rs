@@ -182,8 +182,12 @@ impl AgentAdapter for ClaudeCode {
     }
 
     fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
+        // The prompt comes after `--`: it is the agent's text, whatever it
+        // starts with, and never one of the agent's flags.
         let mut args = vec!["--session-id", session];
-        args.extend(ctx.prompt);
+        if let Some(prompt) = ctx.prompt {
+            args.extend(["--", prompt]);
+        }
         self.command(ctx, &args)
     }
 
@@ -230,7 +234,10 @@ impl AgentAdapter for Codex {
     }
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
-        let args: Vec<&str> = ctx.prompt.into_iter().collect();
+        let args: Vec<&str> = match ctx.prompt {
+            Some(prompt) => vec!["--", prompt],
+            None => Vec::new(),
+        };
         self.command(ctx, &args)
     }
 
@@ -331,6 +338,40 @@ mod tests {
         assert!(caps.resumable);
         assert!(caps.titles);
         assert!(!caps.acp, "phase 5 turns this on, not before");
+    }
+
+    #[test]
+    fn a_first_prompt_follows_the_flags_and_cannot_be_one() {
+        let dir = std::env::temp_dir().join("workbench-adapter-prompt");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let vars = vars_with_path(&dir);
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            session: Some("abc"),
+            prompt: Some("--dangerously-skip-permissions and fix it"),
+        };
+        let argv = |surface: Surface| {
+            let Surface::Pty(command) = surface;
+            command
+                .get_argv()
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        };
+        let claude = argv(ClaudeCode.launch(&ctx, "abc").unwrap());
+        assert_eq!(&claude[1..], ["--session-id", "abc", "--", "--dangerously-skip-permissions and fix it"]);
+        let codex = argv(Codex.launch(&ctx, "").unwrap());
+        assert_eq!(&codex[1..], ["--", "--dangerously-skip-permissions and fix it"]);
     }
 
     #[test]
