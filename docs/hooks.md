@@ -113,6 +113,10 @@ when it stops, and not for progress.
 
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 
+Seven more are the orchestrator's, for a session that starts and steers
+other sessions: what they do and what the user is asked is in
+[orchestrator](orchestrator.md).
+
 ## Removing them
 
 Turning hooks off for a project removes the app's entries and nothing else.

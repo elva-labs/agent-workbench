@@ -27,6 +27,11 @@ state at a glance, and projects on other machines over ssh.
   diagrams in front of you, ask what you are looking at, type a command
   into a terminal for you to run, and leave a line on its session's row.
   See [hooks](docs/hooks.md).
+- **Orchestrator.** A session that starts and steers other sessions: it
+  opens one per piece of work, in any open project and on a worktree of its
+  own, waits on them and answers for them. The sessions it starts fold away
+  under their projects until one needs you. See
+  [orchestrator](docs/orchestrator.md).
 - **Terminal.** Plain shells under the panes, per project, split if you like.
 - **Remote projects.** Pair a machine with one pasted token, or name a host
   your ssh already reaches, and work in a folder there. The agent, the
@@ -85,6 +90,8 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Settings](docs/settings.md): appearance, palettes, keys, live updates.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
   what it gives, the agent's tools among it.
+- [Orchestrator](docs/orchestrator.md): a session that starts and steers
+  other sessions.
 - [Plugins](docs/plugins.md): where they come from, what one may add to the
   workbench, and how one is written.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
