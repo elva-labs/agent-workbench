@@ -43,8 +43,7 @@ caller is remembered for that project for as long as the app runs. A
 refusal is an answer the agent reads, not an error.
 
 A session started by another may not start any of its own, and no session
-may have more than eight running at a time. One level deep and a cap, so a
-loop of agents starting agents cannot run away with the machine.
+may have more than eight running at a time.
 
 ## In the panes
 
