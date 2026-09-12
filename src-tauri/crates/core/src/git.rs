@@ -3,8 +3,9 @@
 //! libgit2 rather than gix: its status and diff are boring and complete, which
 //! is exactly what you want underneath a UI. Almost everything here is a plain
 //! query against a path, with no state of its own, so the watcher can call it
-//! again whenever the tree moves and the pane simply re-renders. Adding a
-//! worktree is the one thing that changes the tree, and it runs git itself.
+//! again whenever the tree moves and the pane simply re-renders. The
+//! worktrees are the exception: adding one and taking one away change what
+//! is on disk, and they run git itself rather than libgit2.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -508,6 +509,154 @@ pub fn worktree_add(project: &Path, name: &str) -> Result<String, String> {
         .to_string())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Worktree {
+    /// Where it is, absolute.
+    pub path: String,
+    /// Its directory's name, which is also its branch's.
+    pub name: String,
+    /// The branch it is on, short, and empty for a tree on no branch.
+    pub branch: String,
+    /// True when the branch holds nothing the project's own checkout does
+    /// not, so taking the tree away loses no work.
+    pub merged: bool,
+    /// True when something in the tree is uncommitted.
+    pub dirty: bool,
+}
+
+/// The path as the window would name it, and the path itself when it
+/// cannot be resolved, which is what adding a worktree answers with.
+fn canonical(path: &Path) -> PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Whether the project's checked-out HEAD already has everything the
+/// reference does. A reference the project no longer knows holds nothing,
+/// so it counts as merged.
+fn merged_into_head(project: &Path, reference: &str) -> bool {
+    let known = run(
+        project,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            reference,
+        ],
+    )
+    .is_ok();
+    !known
+        || run(
+            project,
+            &[
+                "merge-base",
+                "--is-ancestor",
+                "--end-of-options",
+                reference,
+                "HEAD",
+            ],
+        )
+        .is_ok()
+}
+
+/// The worktrees the workbench has made for the project: those git knows
+/// about whose path is under `.claude/worktrees`, with enough about each
+/// to say whether it can go. A worktree the user made elsewhere is theirs
+/// and is not listed.
+pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
+    // Without a repository there are no worktrees, and saying so beats
+    // whatever git makes of a directory that is not there.
+    open(project)?;
+    // Nothing here is a caller's string: the listing takes no path, so
+    // there is no positional argument for one to reach.
+    let listed = run(project, &["worktree", "list", "--porcelain"])?;
+
+    // One entry per `worktree` line, the lines under it belonging to it.
+    let mut entries: Vec<(PathBuf, Option<String>, Option<String>)> = Vec::new();
+    for line in listed.lines() {
+        let line = line.trim_end();
+        if let Some(path) = line.strip_prefix("worktree ") {
+            entries.push((PathBuf::from(path), None, None));
+            continue;
+        }
+        let Some(entry) = entries.last_mut() else {
+            continue;
+        };
+        if let Some(head) = line.strip_prefix("HEAD ") {
+            entry.1 = Some(head.to_string());
+        } else if let Some(branch) = line.strip_prefix("branch ") {
+            entry.2 = Some(branch.to_string());
+        }
+    }
+
+    let base = canonical(&project.join(WORKTREES));
+    let mut trees: Vec<Worktree> = Vec::new();
+    for (path, head, reference) in entries {
+        let path = canonical(&path);
+        if !path.starts_with(&base) {
+            continue;
+        }
+        let Some(name) = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+        else {
+            continue;
+        };
+        // What the tree holds is its branch, or the commit it has checked
+        // out when it is on no branch.
+        let reference = reference.or(head).unwrap_or_default();
+        trees.push(Worktree {
+            merged: reference.is_empty() || merged_into_head(project, &reference),
+            // A status that cannot be read lists nothing. Git itself
+            // refuses to remove a tree with work in it, so the removal is
+            // guarded either way.
+            dirty: status(&path)
+                .map(|files| !files.is_empty())
+                .unwrap_or(false),
+            path: path.to_string_lossy().to_string(),
+            name,
+            branch: reference
+                .strip_prefix("refs/heads/")
+                .unwrap_or_default()
+                .to_string(),
+        });
+    }
+    trees.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(trees)
+}
+
+/// Takes a worktree of the project away, and the branch it was on with it.
+/// Only one of the project's own, and only when what is in it is safe to
+/// lose: work not committed, or committed and not in the project, is work
+/// the user has nowhere else.
+pub fn worktree_remove(project: &Path, name: &str) -> Result<(), String> {
+    if !plain_worktree_name(name) {
+        return Err(format!(
+            "{name:?} is not a name for a worktree: letters, digits, dashes and underscores"
+        ));
+    }
+    let tree = worktrees(project)?
+        .into_iter()
+        .find(|tree| tree.name == name)
+        .ok_or_else(|| format!("{name} is not a worktree of this project"))?;
+    if tree.dirty {
+        return Err(format!("{name} has uncommitted work"));
+    }
+    if !tree.merged {
+        return Err(format!("{name} has commits the project does not"));
+    }
+
+    run(project, &["worktree", "remove", "--", &tree.path])?;
+    // The tree is gone by here, which is what the call is for. A branch
+    // that will not delete is left standing rather than reported as a
+    // removal that did not happen.
+    if !tree.branch.is_empty() {
+        let _ = run(project, &["branch", "-d", "--", &tree.branch]);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,6 +1022,121 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let refused = worktree_add(&dir, "review").unwrap_err();
         assert!(refused.contains("not a git repository"), "{refused}");
+    }
+
+    /// Runs git in a directory and hands back what it said, for the parts
+    /// of a fixture the helpers above do not cover.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn lists_the_worktrees_it_made_and_nothing_else() {
+        let dir = repo("worktree-list");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+        worktree_add(&dir, "review").unwrap();
+        // One the user made somewhere else is theirs, not the workbench's.
+        let elsewhere = dir.join("aside");
+        git(
+            &dir,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "aside",
+                "--",
+                &elsewhere.to_string_lossy(),
+            ],
+        );
+
+        let trees = worktrees(&dir).unwrap();
+        assert_eq!(trees.len(), 1, "{trees:?}");
+        assert_eq!(trees[0].name, "review");
+        assert_eq!(trees[0].branch, "review");
+        assert!(Path::new(&trees[0].path).is_absolute());
+        assert!(trees[0]
+            .path
+            .replace('\\', "/")
+            .ends_with(".claude/worktrees/review"));
+        assert!(trees[0].merged, "a fresh worktree is where the project is");
+        assert!(!trees[0].dirty);
+    }
+
+    #[test]
+    fn a_worktree_with_commits_of_its_own_stays_until_they_are_merged() {
+        let dir = repo("worktree-unmerged");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+        let path = PathBuf::from(worktree_add(&dir, "work").unwrap());
+        write(&path, "b.txt", "two\n");
+        commit(&path);
+
+        let trees = worktrees(&dir).unwrap();
+        assert!(!trees[0].merged);
+        assert!(!trees[0].dirty);
+        let refused = worktree_remove(&dir, "work").unwrap_err();
+        assert!(
+            refused.contains("has commits the project does not"),
+            "{refused}"
+        );
+        assert!(path.exists());
+
+        git(&dir, &["merge", "-q", "--no-edit", "work"]);
+        assert!(worktrees(&dir).unwrap()[0].merged);
+        worktree_remove(&dir, "work").unwrap();
+        assert!(!path.exists(), "the tree is gone");
+        assert!(worktrees(&dir).unwrap().is_empty());
+        let branches = git(&dir, &["branch", "--list", "work"]);
+        assert!(branches.is_empty(), "the branch is gone too: {branches}");
+    }
+
+    #[test]
+    fn a_worktree_with_uncommitted_work_stays() {
+        let dir = repo("worktree-dirty");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+        let path = PathBuf::from(worktree_add(&dir, "busy").unwrap());
+        write(&path, "a.txt", "changed\n");
+
+        let trees = worktrees(&dir).unwrap();
+        assert!(trees[0].dirty);
+        assert!(trees[0].merged, "it has committed nothing");
+        let refused = worktree_remove(&dir, "busy").unwrap_err();
+        assert!(refused.contains("has uncommitted work"), "{refused}");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn removes_only_a_worktree_of_the_project_under_a_plain_name() {
+        let dir = repo("worktree-remove-names");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+        worktree_add(&dir, "review").unwrap();
+
+        for name in ["../escape", "one/two", "-f", ""] {
+            let refused = worktree_remove(&dir, name).unwrap_err();
+            assert!(
+                refused.contains("is not a name for a worktree"),
+                "{name}: {refused}"
+            );
+        }
+        let missing = worktree_remove(&dir, "nothing").unwrap_err();
+        assert!(
+            missing.contains("is not a worktree of this project"),
+            "{missing}"
+        );
+        assert_eq!(worktrees(&dir).unwrap().len(), 1);
     }
 
     #[test]

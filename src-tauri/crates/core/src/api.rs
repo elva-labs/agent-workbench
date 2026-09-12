@@ -277,6 +277,7 @@ impl Core {
         // is what the plugins know it by, and not the worktree under it
         // the agent may run in.
         let opened = project.to_string_lossy().to_string();
+        let orchestrator = self.is_orchestrator(project);
         let project = cwd.unwrap_or(project);
 
         // A resumed session's id is known, and a fresh one's when the
@@ -292,6 +293,7 @@ impl Core {
             env: &environment.vars,
             session: session_id.as_deref(),
             prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
+            orchestrator,
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
@@ -456,10 +458,26 @@ impl Core {
     /// there is a session like any other; what it has is a place to keep
     /// the notes of the work it is directing.
     pub fn orchestrator_dir(&self) -> Result<String, String> {
-        let home = self.home.as_deref().ok_or("no home directory")?;
-        let dir = home.join(".agent-workbench").join("orchestrator");
+        let dir = self
+            .home
+            .as_deref()
+            .map(orchestrator_path)
+            .ok_or("no home directory")?;
         std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
         Ok(dir.to_string_lossy().to_string())
+    }
+
+    /// Whether a session spawned in this project is the one that directs
+    /// the others. The comparison is between canonical paths, so a link on
+    /// the way to the home directory is the same place either way round.
+    fn is_orchestrator(&self, project: &Path) -> bool {
+        let Some(dir) = self.home.as_deref().map(orchestrator_path) else {
+            return false;
+        };
+        match (dunce::canonicalize(project), dunce::canonicalize(&dir)) {
+            (Ok(project), Ok(dir)) => project == dir,
+            _ => false,
+        }
     }
 
     /// A worktree of the project, on a branch of the same name, for a
@@ -467,6 +485,19 @@ impl Core {
     /// Answers with where it is.
     pub fn worktree_add(&self, project: &Path, name: &str) -> Result<String, String> {
         git::worktree_add(project, name)
+    }
+
+    /// The worktrees the workbench has made for the project, each saying
+    /// whether it holds work the project does not and whether anything in
+    /// it is uncommitted.
+    pub fn worktrees(&self, project: &Path) -> Result<Vec<git::Worktree>, String> {
+        git::worktrees(project)
+    }
+
+    /// Takes one of those worktrees away, and its branch with it. Refuses
+    /// one that still holds work.
+    pub fn worktree_remove(&self, project: &Path, name: &str) -> Result<(), String> {
+        git::worktree_remove(project, name)
     }
 
     /// Starts watching a worktree, replacing whatever was being watched
@@ -537,6 +568,11 @@ impl Core {
         dirs.sort_by_key(|dir| dir.name.to_lowercase());
         Ok(dirs)
     }
+}
+
+/// Where the orchestrator's own project sits under a home directory.
+fn orchestrator_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("orchestrator")
 }
 
 pub fn home_directory() -> Option<PathBuf> {

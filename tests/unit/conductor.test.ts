@@ -3,12 +3,15 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import {
   CAP,
+  OUTCOME_ASK,
   allow,
+  allowedProjects,
   conductor,
   handle,
   once,
   refuse,
   resetConductor,
+  revoke,
   startedBy,
   startedFor,
   stopAll,
@@ -263,7 +266,7 @@ describe("starting a session", () => {
     expect(sessions.active).toBe(caller.key);
   });
 
-  it("gives the session its prompt to start with, as one line", async () => {
+  it("gives the session its prompt as one line, and asks it to say how it went", async () => {
     const row = await startAllowed(
       call(
         "start",
@@ -273,7 +276,7 @@ describe("starting a session", () => {
       "pty-1",
       "sid-new",
     );
-    expect(row.prompt).toBe("Fix the flaky test in the cache");
+    expect(row.prompt).toBe(`Fix the flaky test in the cache ${OUTCOME_ASK}`);
     expect(written).toHaveLength(0);
   });
 
@@ -446,6 +449,37 @@ describe("the question", () => {
     refuse();
     await second;
     expect(answers).toHaveLength(2);
+  });
+
+  it("lists the projects a caller may start in, and asks again once one is taken back", async () => {
+    await startAllowed(
+      call("start", { project: A, prompt: "One" }, { session: "caller-1" }),
+      "pty-1",
+      "sid-1",
+    );
+    expect(allowedProjects("caller-1")).toEqual([A]);
+    // What one caller was allowed is not what another was.
+    expect(allowedProjects("caller-2")).toEqual([]);
+
+    await startAllowed(
+      call("start", { project: B, prompt: "Two" }, { session: "caller-1" }),
+      "pty-2",
+      "sid-2",
+    );
+    expect(allowedProjects("caller-1")).toEqual([A, B]);
+
+    revoke("caller-1", A);
+    expect(allowedProjects("caller-1")).toEqual([B]);
+    // Taking back one the caller never had leaves the rest alone.
+    revoke("caller-1", "/elsewhere");
+    expect(allowedProjects("caller-1")).toEqual([B]);
+
+    handle(
+      call("start", { project: A, prompt: "Three" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking?.project).toBe(A);
+    refuse();
+    await settle();
   });
 
   it("names the calling session", async () => {

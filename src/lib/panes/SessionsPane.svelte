@@ -33,6 +33,7 @@
     summaryLine,
     type Group,
   } from "$lib/orchestrator.svelte";
+  import { startedFor } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -72,10 +73,51 @@
       the eye is right now, so nothing about it is remembered. */
   let opened = $state<Record<string, boolean>>({});
 
+  /** The head's menu, holding the ways in that are not the everyday one. */
+  let menuOpen = $state(false);
+
+  /** An item runs and the menu closes behind it. */
+  function fromMenu(run: () => void) {
+    run();
+    menuOpen = false;
+  }
+
+  /** An open menu has the keyboard: Escape closes it, and the rest is the
+      menu's own rather than the cursor's. */
+  function onMenuKeydown(e: KeyboardEvent) {
+    if (!menuOpen) return;
+    if (e.key === "Escape") menuOpen = false;
+    e.stopPropagation();
+  }
+
+  /** A session in the orchestrator's own project, from the menu: the project
+      comes forward, and starting there is what the new-session row does. */
+  function startOrchestrator() {
+    const dir = orchestrator.dir;
+    if (dir === null) return;
+    activate(dir);
+    offer(dir);
+  }
+
+  /** The orchestrator's own project, while it has something to show: a
+      session of its own, or one to resume there. With neither it is not
+      drawn, and the menu is the way to the first one. */
+  let pinned = $derived.by(() => {
+    const dir = orchestrator.dir;
+    if (dir === null) return null;
+    return conductors().length > 0 || historyFor(dir).length > 0 ? dir : null;
+  });
+
   const foldId = (project: string, group: Group) => `started:${project}:${group.id}`;
 
   function toggle(id: string) {
     opened[id] = !opened[id];
+  }
+
+  /** The × on a fold: every session behind it stops, and the fold goes with
+      the last of them. */
+  function stopGroup(group: Group) {
+    for (const session of group.sessions) closeSession(session.key);
   }
 
   /** Closes the choice, the cursor back on the row it opened from. */
@@ -99,9 +141,9 @@
   let rows = $derived.by(() => {
     const out: Row[] = [
       { id: "open", run: pick },
-      { id: "remote", run: openRemote },
+      { id: "menu", run: () => (menuOpen = !menuOpen) },
     ];
-    const dir = orchestrator.dir;
+    const dir = pinned;
     if (dir !== null) {
       out.push({ id: `project:${dir}`, run: () => activate(dir) });
       for (const session of conductors()) {
@@ -182,8 +224,14 @@
       // here closes it either.
       const path = id.slice("project:".length);
       if (path !== orchestrator.dir) closeProject(path);
-    } else if (id.startsWith("session:")) closeSession(id.slice("session:".length));
-    else if (id.startsWith("past:") && workspace.active !== null) {
+    } else if (id.startsWith("session:")) {
+      // A session an orchestrator started is quiet under the fold: the
+      // cursor walks through those rows, and a key pressed on the way past
+      // is no reason to stop work the orchestrator is waiting on. Its own ×
+      // on hover stops it, and the fold's stops the group.
+      const key = id.slice("session:".length);
+      if (startedFor(key) === null) closeSession(key);
+    } else if (id.startsWith("past:") && workspace.active !== null) {
       disown(workspace.active, id.slice("past:".length));
     }
   }
@@ -251,9 +299,10 @@
         moveTo(rows.length - 1);
         break;
       case "Escape":
-        // Closes an open choice of agent, and goes no further: Escape
-        // elsewhere is the agent's.
-        if (!dismiss()) return;
+        // Closes the menu or an open choice of agent, and goes no further:
+        // Escape elsewhere is the agent's.
+        if (menuOpen) menuOpen = false;
+        else if (!dismiss()) return;
         e.stopPropagation();
         break;
       case "Enter":
@@ -471,24 +520,51 @@
     >
       Open project
     </button>
-    <button
-      class="remote"
-      class:cursor={current === "remote"}
-      tabindex="-1"
-      onclick={openRemote}
-      disabled={workspace.opening}
-      data-row="remote"
-      data-testid="open-remote"
-      title="A project on another machine, over ssh"
-    >
-      Remote…
-    </button>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="more" onkeydown={onMenuKeydown}>
+      <button
+        class="tool"
+        class:cursor={current === "menu"}
+        tabindex="-1"
+        onclick={() => (menuOpen = !menuOpen)}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="More"
+        title="More"
+        data-row="menu"
+        data-testid="sessions-menu">⋯</button
+      >
+      {#if menuOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div class="scrim" onclick={() => (menuOpen = false)}></div>
+        <div class="menu" role="menu" data-testid="sessions-menu-items">
+          <button
+            role="menuitem"
+            onclick={() => fromMenu(openRemote)}
+            disabled={workspace.opening}
+            title="A project on another machine, over ssh"
+            data-testid="open-remote"
+          >
+            <span>Remote…</span>
+          </button>
+          <button
+            role="menuitem"
+            onclick={() => fromMenu(startOrchestrator)}
+            disabled={orchestrator.dir === null || !isReady()}
+            data-testid="menu-orchestrator"
+          >
+            <span>New orchestrator session</span>
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
   <div class="tree">
     <!-- The orchestrator's own project, above the ones you opened: a session
          that directs others runs here, and starts here like any other. -->
-    {#if orchestrator.dir !== null}
-      {@const dir = orchestrator.dir}
+    {#if pinned !== null}
+      {@const dir = pinned}
       <div
         class="project"
         class:on={workspace.active === dir}
@@ -549,20 +625,33 @@
            sessions themselves behind it. -->
       {#each groupsFor(project.path) as group (group.id)}
         {@const id = foldId(project.path, group)}
-        <button
-          class="fold"
-          class:cursor={current === id}
-          tabindex="-1"
-          onclick={() => toggle(id)}
-          data-row={id}
-          data-testid="started-fold"
-        >
-          <span class="chevron" class:open={opened[id]}>▸</span>
-          <span class="fold-text">{foldLabel(group)}</span>
-          {#if group.asking > 0}
-            <span class="asking"><span class="ring"></span>{group.asking} asking</span>
-          {/if}
-        </button>
+        <div class="fold-row">
+          <button
+            class="fold"
+            class:cursor={current === id}
+            tabindex="-1"
+            onclick={() => toggle(id)}
+            data-row={id}
+            data-testid="started-fold"
+          >
+            <span class="chevron" class:open={opened[id]}>▸</span>
+            <span class="fold-text">{foldLabel(group)}</span>
+            {#if group.asking > 0}
+              <span class="asking"><span class="ring"></span>{group.asking} asking</span>
+            {/if}
+          </button>
+          <!-- Over the row's end, as a session's own × is. -->
+          <span class="actions">
+            <button
+              class="icon"
+              tabindex="-1"
+              onclick={() => stopGroup(group)}
+              aria-label="Stop the sessions {group.label} started"
+              title="Stop these"
+              data-testid="stop-started">×</button
+            >
+          </span>
+        </div>
         {#if opened[id]}
           {#each group.sessions as session (session.key)}
             <div
@@ -666,7 +755,7 @@
     flex: none;
   }
 
-  .head button {
+  .head > button {
     flex: 1;
     min-width: 0;
     font-family: var(--mono);
@@ -680,12 +769,13 @@
     cursor: pointer;
   }
 
-  .head button:disabled {
+  .head > button:disabled {
     opacity: 0.5;
     cursor: default;
   }
 
-  .head button.cursor {
+  .head > button.cursor,
+  .tool.cursor {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
@@ -694,17 +784,72 @@
     content: none;
   }
 
-  /* The way out is the accent; the way elsewhere is quieter. */
-  .head button.remote {
-    flex: 0 0 auto;
-    border-color: var(--rule);
-    background: none;
-    color: var(--ink-3);
+  /* The way in is the accent; everything else the head offers is behind the
+     quieter button beside it. */
+  .more {
+    position: relative;
+    flex: none;
   }
 
-  .head button.remote:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
+  .tool {
+    border: 0;
+    background: none;
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 6px;
+  }
+
+  .tool:hover {
+    color: var(--ink);
+  }
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+  }
+
+  /* Two short items, in a pane that can be narrower than the changes
+     pane's menu: sized to fit inside the pane rather than past its edge. */
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 5;
+    min-width: 184px;
+    padding: 4px 0;
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
+  }
+
+  .menu button {
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 5px var(--pane-pad);
+    border: 0;
+    background: none;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .menu button:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+
+  .menu button:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
 
   /* Where a project is, when it is not here. */
@@ -1059,6 +1204,7 @@
 
   .project:hover .icon,
   .session:hover .icon,
+  .fold-row:hover .icon,
   .icon:focus-visible {
     opacity: 1;
   }
@@ -1108,6 +1254,29 @@
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px var(--pane-pad) 2px 26px;
+  }
+
+  /* A fold and the button that stops what is behind it, on one row. */
+  .fold-row {
+    --row-bg: var(--surface);
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 0 0 4px;
+  }
+
+  .fold-row .fold {
+    margin: 0;
+  }
+
+  .fold-row:hover {
+    --row-bg: var(--surface-2);
+    background: var(--row-bg);
+  }
+
+  .fold-row:hover .actions,
+  .fold-row .actions:focus-within {
+    opacity: 1;
   }
 
   .fold-text {

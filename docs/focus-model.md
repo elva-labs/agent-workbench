@@ -14,20 +14,20 @@ into a bug report about the agent.
 Only <kbd>Cmd</kbd> chords (<kbd>Ctrl</kbd> on Windows and Linux). The
 default preset:
 
-| Keys | Does |
-| --- | --- |
-| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal |
-| <kbd>Cmd</kbd><kbd>B</kbd> | Show or hide the sessions pane |
-| <kbd>Cmd</kbd><kbd>\\</kbd> | Show or hide the changes pane |
-| <kbd>Cmd</kbd><kbd>J</kbd> | Show or hide the terminal panel |
-| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd> | Next or previous session, or shell when the panel has focus |
-| <kbd>Cmd</kbd><kbd>D</kbd> | Open or close the file viewer |
-| <kbd>Cmd</kbd><kbd>E</kbd> | Diff or whole file |
-| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd> | Changed files or all files |
-| <kbd>Cmd</kbd><kbd>F</kbd> | Filter files, when a list pane has focus |
-| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd> | Search in files |
-| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd> | Cycle theme: light, dark, system |
-| <kbd>Cmd</kbd><kbd>,</kbd> | Open the settings |
+| Keys                                                                    | Does                                                        |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------- |
+| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal                 |
+| <kbd>Cmd</kbd><kbd>B</kbd>                                              | Show or hide the sessions pane                              |
+| <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the changes pane                               |
+| <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd>               | Next or previous session, or shell when the panel has focus |
+| <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer                               |
+| <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff or whole file                                          |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
+| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus                    |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd>                              | Cycle theme: light, dark, system                            |
+| <kbd>Cmd</kbd><kbd>,</kbd>                                              | Open the settings                                           |
 
 Unbound <kbd>Cmd</kbd> chords pass through rather than being swallowed.
 
@@ -96,9 +96,10 @@ inside. <kbd>↑</kbd> and <kbd>↓</kbd> move the cursor, <kbd>Home</kbd> and
 the cursor only shows while the keyboard is in the pane. A click puts the
 cursor on what was clicked; focusing the pane by key starts it over from the
 session you are in, else your project, or the selected file. Everything in
-the sessions pane is on that cursor, the Open project and Remote buttons at
-the top included, and <kbd>Delete</kbd> does what the × on a project or
-session row does.
+the sessions pane is on that cursor, the Open project button and the menu
+beside it at the top included, and <kbd>Delete</kbd> does what the × on a
+project or session row does, except on a session another session started,
+which only its own × stops.
 
 Confirming a session moves the keyboard into the agent, so
 <kbd>Cmd</kbd><kbd>1</kbd>, <kbd>↓</kbd>, <kbd>Enter</kbd>, type is the whole

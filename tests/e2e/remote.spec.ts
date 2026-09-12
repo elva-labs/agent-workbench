@@ -12,6 +12,7 @@ const SESSIONS = "section[data-pane='sessions']";
 async function open(page: Page) {
   await installFakeCore(page, { open: [] });
   await page.goto("/");
+  await page.getByTestId("sessions-menu").click();
   await page.getByTestId("open-remote").click();
   await expect(page.getByTestId("remote")).toBeVisible();
 }
@@ -90,6 +91,7 @@ test.describe("a remote project", () => {
     );
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("remote")).toHaveCount(0);
+    await page.getByTestId("sessions-menu").click();
     await page.getByTestId("open-remote").click();
     await page.getByTestId("remote-scrim").click({ position: { x: 5, y: 5 } });
     await expect(page.getByTestId("remote")).toHaveCount(0);
@@ -105,8 +107,14 @@ test.describe("a remote project", () => {
     await page.keyboard.press("Home");
     await expect(page.getByTestId("open-project")).toHaveClass(/cursor/);
     await page.keyboard.press("ArrowDown");
-    await expect(page.getByTestId("open-remote")).toHaveClass(/cursor/);
+    await expect(page.getByTestId("sessions-menu")).toHaveClass(/cursor/);
+    // Enter opens the menu, and the items take the keyboard from there.
     await page.keyboard.press("Enter");
+    await expect(page.getByTestId("sessions-menu-items")).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("open-remote")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("sessions-menu-items")).toHaveCount(0);
     await expect(page.getByTestId("remote")).toBeVisible();
     await expect(page.getByTestId("remote-token")).toBeFocused();
   });

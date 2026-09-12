@@ -9,13 +9,16 @@
  * Starting a session is the one call the user is brought into. The first
  * time a caller asks to start one in a project the window puts the
  * question up and holds the call until it is answered, and an allowed
- * caller is remembered for that project for as long as the window lives.
- * Calls that arrive while a question is up wait their turn.
+ * caller is remembered for that project until the board takes it back or
+ * the window goes. Calls that arrive while a question is up wait their
+ * turn.
  *
  * A session may start others, and those may not start any of their own:
  * one level deep, and no more than the cap at a time, so a loop of agents
  * starting agents cannot run away with the machine.
  */
+
+import { SvelteSet } from "svelte/reactivity";
 
 import { core, type AgentId, type ConductRequest } from "$lib/core";
 import {
@@ -47,6 +50,10 @@ export const START_WAIT = 30_000;
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
 export const LINES_MAX = 200;
+/** The sentence every started session gets after the caller's own line, so
+    what became of it comes back on its row instead of being watched for. */
+export const OUTCOME_ASK =
+  "When you are done, or stuck, call the notify tool with one line saying which.";
 
 /** The question on screen: which call it holds, who asked, and what for. */
 export interface Ask {
@@ -74,7 +81,7 @@ export const conductor = $state({
 const seen = new Set<string>();
 const SEEN = 500;
 /** Callers with a standing answer, by caller and project. */
-const allowed = new Set<string>();
+const allowed = new SvelteSet<string>();
 /** Questions waiting for the one on screen to be answered. */
 const queue: { ask: Ask; settle: (choice: Choice) => void }[] = [];
 let pending: ((choice: Choice) => void) | null = null;
@@ -239,7 +246,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     null,
     agentOf(request, project),
     startIn,
-    oneLine(prompt),
+    `${oneLine(prompt)} ${OUTCOME_ASK}`,
   );
   conductor.startedBy[session.key] = caller;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
@@ -393,7 +400,7 @@ function readSession(request: ConductRequest): Answered {
 
 /** A line as the agent's own keyboard would deliver it: one line, with
     nothing in it that could drive the terminal instead of being read. */
-function oneLine(text: string): string {
+export function oneLine(text: string): string {
   return printable(text.replace(/[\r\n]+/g, " ")).trim();
 }
 
@@ -522,6 +529,20 @@ export function once() {
 /** No session, and the caller hears it as a refusal. */
 export function refuse() {
   answerAsk("no");
+}
+
+/** The projects a caller may start sessions in without being asked. */
+export function allowedProjects(callerId: string): string[] {
+  const prefix = `${callerId}\n`;
+  return [...allowed]
+    .filter((entry) => entry.startsWith(prefix))
+    .map((entry) => entry.slice(prefix.length));
+}
+
+/** Takes a standing answer back: the caller's next start in that project is
+    put to the user again. */
+export function revoke(callerId: string, project: string) {
+  allowed.delete(`${callerId}\n${project}`);
 }
 
 /** The id of a session once it has one, or null when it never came up. */

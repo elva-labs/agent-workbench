@@ -491,7 +491,7 @@ describe("SessionsPane", () => {
 
   // Nothing in the pane needs the mouse: the way in sits on the same
   // cursor as the rows, and Delete does what the × on a row does.
-  it("reaches Open project and Remote from the keyboard, and closes with Delete", async () => {
+  it("reaches Open project and the menu from the keyboard, and closes with Delete", async () => {
     workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
     workspace.active = "/repo";
     layout.focus = "sessions";
@@ -506,9 +506,12 @@ describe("SessionsPane", () => {
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(fake.picked).toBe(1);
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("open-remote")).toHaveClass("cursor");
+    expect(screen.getByTestId("sessions-menu")).toHaveClass("cursor");
+    // Enter opens the menu, and what it holds is a click away.
     await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.click(screen.getByTestId("open-remote"));
     expect(remote.open).toBe(true);
+    expect(screen.queryByTestId("sessions-menu-items")).toBeNull();
 
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "Delete" });

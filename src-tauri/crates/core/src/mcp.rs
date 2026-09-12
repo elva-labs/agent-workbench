@@ -25,8 +25,48 @@ use crate::show::{
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// What the agent is told when it connects.
-pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress. When the user asks for work across projects or for several things at once, start a session for each with the start tool and wait on them, rather than doing it all here.";
+/// The general instructions as a literal. A macro so that the
+/// orchestrator's, which are these and more, are one constant rather than
+/// something put together at run time.
+macro_rules! general_instructions {
+    () => {
+        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress."
+    };
+}
+
+/// What a session is told when it connects.
+pub const INSTRUCTIONS: &str = general_instructions!();
+
+/// What a session that directs the others is told: the general
+/// instructions and what directing work means here.
+pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
+    general_instructions!(),
+    " This session directs work rather than doing it here. When the user asks \
+     for work, start a session for each piece with the start tool, in the \
+     project that piece belongs to, on a worktree of its own when pieces touch \
+     the same files. Wait on those sessions with the wait tool rather than \
+     asking for the sessions in a loop. When a session asks a question, relay \
+     it to the user and answer it with the send tool. When you stop, whether \
+     to relay a question or to report, call the notify tool with one line \
+     saying why, so the user sees it on this session's row while they are in \
+     another one."
+);
+
+/// The instructions for a session with this role, which is the role the
+/// workbench put in the agent's environment and the agent passed on.
+pub fn instructions_for(role: Option<&str>) -> &'static str {
+    match role {
+        Some(crate::adapter::ORCHESTRATOR_ROLE) => ORCHESTRATOR_INSTRUCTIONS,
+        _ => INSTRUCTIONS,
+    }
+}
+
+/// Read when the agent asks rather than when the server starts, so what a
+/// session is told follows the environment it was started in.
+fn instructions() -> &'static str {
+    let role = std::env::var(crate::adapter::ROLE_VAR).ok();
+    instructions_for(role.as_deref())
+}
 
 /// The app's own tools, as the agent sees them.
 pub fn tools() -> Vec<Value> {
@@ -389,7 +429,7 @@ pub fn handle_with(
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "agent-workbench", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": INSTRUCTIONS,
+            "instructions": instructions(),
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": all_tools(home) })),
@@ -1024,7 +1064,34 @@ mod tests {
                 "read"
             ]
         );
-        assert!(instructions.contains("start tool"));
+    }
+
+    #[test]
+    fn only_a_session_that_directs_the_others_is_told_to_fan_out() {
+        // The role comes from the environment the workbench started the
+        // agent in, which a test cannot set without reaching into every
+        // other test running beside it, so the picking is what is checked.
+        let general = instructions_for(None);
+        assert!(general.contains("show tool"));
+        assert!(!general.contains("start tool"));
+        assert_eq!(instructions_for(Some("something else")), general);
+
+        let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE));
+        assert!(directing.starts_with(general));
+        for expected in [
+            "directs work rather than doing it here",
+            "start tool",
+            "worktree of its own",
+            "wait tool",
+            "send tool",
+            "notify tool",
+        ] {
+            assert!(directing.contains(expected), "{expected}");
+        }
+
+        let answer = handle(&home("role"), Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#).unwrap();
+        let handed = answer["result"]["instructions"].as_str().unwrap();
+        assert!(handed.starts_with(general));
     }
 
     #[test]

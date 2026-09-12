@@ -8,9 +8,16 @@ projects, start a session in one of them with a prompt, send a running
 session a line, wait until one of them stops or asks for something, read
 what one has on screen, and stop them.
 
-It runs in a project of its own, `orchestrator` under the workbench's home,
-pinned above the projects you opened. Starting a session there is starting
-an orchestrator; nothing else about it differs.
+It runs in a project of its own, `orchestrator` under the workbench's home.
+The first one starts from the menu beside Open project; from then on the
+project sits above the ones you opened, with its sessions and the past
+ones to resume, and a session started there is an orchestrator. Nothing
+else about it differs, except what it is told: an orchestrator is told to
+direct work rather than do it, to start a session per piece in the project
+it belongs to, on a worktree of its own when pieces touch the same files,
+to wait on them rather than ask after them in a loop, and to leave a line
+on its own row when it stops, whether to relay a question or to report.
+Every other session has the same tools and none of the nudge.
 
 ## The tools
 
@@ -27,6 +34,10 @@ new session's id. `send` types a line into a running session. `wait` sits
 until a session stops working, asks for permission or ends, or until the
 seconds it was given run out. `read` answers with the last lines on a
 session's screen, as you see them. `stop` stops a session.
+
+A session it starts is asked, at the end of its prompt, to leave a line on
+its row when it is done or stuck, so the fold, the board and the wait tool
+all say how it went.
 
 Those four act on the sessions the caller started and on no others. A
 session you started yourself is yours: another agent cannot type into it,
@@ -56,8 +67,16 @@ session it started.
 
 The orchestrator's own row says what it has out, "3 running, 1 asking", and
 its changes pane shows the sessions it started instead of a file tree:
-each with its project, its worktree, what it is doing and how long it has
-been at it, and Stop all on the section's header.
+each with its project, its worktree, what it is doing, how long it has
+been at it and the line it left, with Stop all on the section's header.
+Each row can be stopped on its own, or sent a line without leaving the
+orchestrator. Under the list, the projects the orchestrator has been
+allowed to start sessions in, each with a way to take that back, and the
+worktrees its starts have left behind, with Clean up for the ones whose
+work is merged and whose trees are clean; the rest say why they stay.
+
+The sessions it started keep out of the keyboard's way too: Delete on one
+of them does nothing, and a fold stops the lot from its own hover action.
 
 ## Where the work happens
 

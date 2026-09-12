@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Worktree } from "$lib/core";
 import {
+  cleanWorktrees,
   conductors,
   foldLabel,
   groupsFor,
   isAsking,
   isConductor,
+  leftBehind,
   load,
   orchestrator,
   ownFor,
+  readWorktrees,
+  removable,
   summary,
   summaryLine,
+  type LeftTree,
 } from "$lib/orchestrator.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import {
@@ -18,13 +24,19 @@ import {
   started,
   type Session,
 } from "$lib/sessions.svelte";
+import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const DIR = "/home/ada/.agent-workbench/orchestrator";
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
 
-/** Where the core says an orchestrator runs, or nothing it can say. */
-const fake = { dir: DIR as string | null };
+/** Where the core says an orchestrator runs, what worktrees each project
+    has, and what a test asked to be removed. */
+const fake = {
+  dir: DIR as string | null,
+  trees: {} as Record<string, Worktree[]>,
+  removed: [] as string[],
+};
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -32,8 +44,49 @@ vi.mock("$lib/core", () => ({
       if (fake.dir === null) throw new Error("no core");
       return fake.dir;
     },
+    async worktrees(project: string) {
+      const trees = fake.trees[project];
+      if (trees === undefined) throw new Error("not a repository");
+      return trees;
+    },
+    // The core parts with a tree that has nothing in it and nothing of its
+    // own, and refuses the rest.
+    async worktreeRemove(project: string, name: string) {
+      const trees = fake.trees[project] ?? [];
+      const tree = trees.find((candidate) => candidate.name === name);
+      if (tree === undefined || tree.dirty || !tree.merged)
+        throw new Error(`${name} has work in it`);
+      fake.removed.push(name);
+      fake.trees[project] = trees.filter(
+        (candidate) => candidate.name !== name,
+      );
+    },
   }),
 }));
+
+/** A worktree under a project, as the core answers with one. */
+function tree(
+  project: string,
+  name: string,
+  state: { merged?: boolean; dirty?: boolean } = {},
+): Worktree {
+  return {
+    path: `${project}/.worktrees/${name}`,
+    name,
+    branch: name,
+    merged: state.merged ?? true,
+    dirty: state.dirty ?? false,
+  };
+}
+
+const names = (trees: LeftTree[]) => trees.map((found) => found.name);
+
+const repo = (path: string) => ({
+  path,
+  name: path.split("/").pop()!,
+  repository: path,
+  isGit: true,
+});
 
 /** A session that has actually come up, as one does in practice. */
 function live(project: string, ptyId: string, id: string): Session {
@@ -59,7 +112,12 @@ const keys = (list: Session[]) => list.map((session) => session.key);
 beforeEach(() => {
   resetSessions();
   resetConductor();
+  resetWorkspace();
   fake.dir = DIR;
+  fake.trees = {};
+  fake.removed = [];
+  leftBehind.trees = [];
+  leftBehind.loading = false;
   orchestrator.dir = DIR;
 });
 
@@ -163,5 +221,61 @@ describe("what an orchestrator has out", () => {
     startedIn(A, two, "pty-5", "sid-5");
     expect(summaryLine(one)).toBe("1 running");
     expect(summaryLine(two)).toBe("2 running");
+  });
+});
+
+describe("the worktrees the starts left behind", () => {
+  it("keeps the ones that can go", () => {
+    const trees: LeftTree[] = [
+      { ...tree(A, "clean"), project: A },
+      { ...tree(A, "working", { dirty: true }), project: A },
+      { ...tree(A, "ahead", { merged: false }), project: A },
+    ];
+    expect(names(removable(trees))).toEqual(["clean"]);
+    expect(removable([])).toEqual([]);
+  });
+
+  it("reads every open project and leaves out the trees in use", async () => {
+    workspace.open.push(repo(A), repo(B));
+    fake.trees[A] = [tree(A, "one"), tree(A, "two")];
+    fake.trees[B] = [tree(B, "three")];
+    // A session running in one of them is a tree that is not left behind.
+    create(A, null, "claude-code", `${A}/.worktrees/one`);
+
+    await readWorktrees();
+
+    expect(names(leftBehind.trees)).toEqual(["two", "three"]);
+    expect(leftBehind.trees[0].project).toBe(A);
+    expect(leftBehind.trees[1].project).toBe(B);
+    expect(leftBehind.loading).toBe(false);
+
+    // A session that has ended holds nothing: its tree is left behind.
+    const gone = create(A, null, "claude-code", `${A}/.worktrees/two`);
+    gone.status = "exited";
+    await readWorktrees();
+    expect(names(leftBehind.trees)).toEqual(["two", "three"]);
+  });
+
+  it("passes over a project the core cannot answer for", async () => {
+    workspace.open.push(repo(A), repo(B));
+    fake.trees[B] = [tree(B, "three")];
+    await readWorktrees();
+    expect(names(leftBehind.trees)).toEqual(["three"]);
+  });
+
+  it("removes what can go and reads what is left", async () => {
+    workspace.open.push(repo(A));
+    fake.trees[A] = [
+      tree(A, "clean"),
+      tree(A, "working", { dirty: true }),
+      tree(A, "ahead", { merged: false }),
+    ];
+    await readWorktrees();
+    expect(leftBehind.trees).toHaveLength(3);
+
+    await cleanWorktrees();
+
+    expect(fake.removed).toEqual(["clean"]);
+    expect(names(leftBehind.trees)).toEqual(["working", "ahead"]);
   });
 });

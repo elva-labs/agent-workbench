@@ -319,6 +319,28 @@ export async function installFakeCore(
         worktreeAdd: async (project: string, name: string) =>
           `${project}/.claude/worktrees/${name}`,
         orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",
+        // The worktrees a test has put under a project, in __worktrees by
+        // project; removing one takes it out of the list.
+        worktrees: async (project: string) => {
+          const w = window as unknown as {
+            __worktrees?: Record<string, { name: string }[]>;
+          };
+          return w.__worktrees?.[project] ?? [];
+        },
+        worktreeRemove: async (project: string, name: string) => {
+          const w = window as unknown as {
+            __worktrees?: Record<
+              string,
+              { name: string; merged: boolean; dirty: boolean }[]
+            >;
+          };
+          const list = w.__worktrees?.[project] ?? [];
+          const tree = list.find((t) => t.name === name);
+          if (tree === undefined) throw new Error(`no worktree ${name}`);
+          if (tree.dirty || !tree.merged)
+            throw new Error(`${name} has work in it`);
+          w.__worktrees![project] = list.filter((t) => t.name !== name);
+        },
         // The record of what is on screen, for a test to read back.
         setSelection: async (project: string, selection: unknown) => {
           (window as unknown as Record<string, unknown>).__selection = {

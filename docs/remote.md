@@ -41,7 +41,7 @@ Two doors.
 half in the user's `authorized_keys` restricted to running the daemon and
 nothing else, no shell, no forwarding, and prints a token holding the
 private half, the machine's name and address, the user, and the machine's
-own host key. Pasted into the desktop under Remote, that is everything:
+own host key. Pasted into the desktop under Remote, in the menu beside Open project, that is everything:
 the key goes to a file only this user can read, the host key to the app's
 own known hosts, and the connection opens. The token carries every address
 the machine can find for itself, best first: the one a VPN such as

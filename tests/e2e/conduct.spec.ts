@@ -55,6 +55,32 @@ const answerTo = async (page: Page, id: string) =>
 
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
 
+/** Whether a session's terminal has the text in its buffer. The read tool
+    answers with what is on screen, and xterm draws on its own clock. */
+const drawn = (page: Page, text: string) =>
+  page.evaluate((wanted) => {
+    interface Buffer {
+      length: number;
+      getLine(index: number): { translateToString(): string } | undefined;
+    }
+    const registry =
+      (
+        window as unknown as {
+          __WORKBENCH_TERMINALS__?: Record<
+            string,
+            { buffer: { active: Buffer } }
+          >;
+        }
+      ).__WORKBENCH_TERMINALS__ ?? {};
+    return Object.values(registry).some((terminal) => {
+      const active = terminal.buffer.active;
+      for (let index = 0; index < active.length; index += 1)
+        if (active.getLine(index)?.translateToString().includes(wanted))
+          return true;
+      return false;
+    });
+  }, text);
+
 test.describe("the conductor", () => {
   test.beforeEach(async ({ page }) => {
     await installFakeCore(page);
@@ -104,13 +130,17 @@ test.describe("the conductor", () => {
     expect(answer.error).toBeNull();
     expect(answer.content).toContain("session-2");
 
-    // The new session is started with the prompt on its command line.
+    // The new session is started with the prompt on its command line, and
+    // with the sentence that asks it to say how it went.
     const spawns = await page.evaluate(
       () =>
         (window as unknown as { __spawns?: { prompt?: string }[] }).__spawns ??
         [],
     );
-    expect(spawns.at(-1)?.prompt).toBe("Fix the flaky test");
+    expect(spawns.at(-1)?.prompt).toContain("Fix the flaky test");
+    expect(spawns.at(-1)?.prompt).toContain(
+      "call the notify tool with one line saying which",
+    );
 
     // Both sessions are there to be listed, the new one included.
     await push(page, { id: "c-2", tool: "sessions", session: "session-1" });
@@ -139,6 +169,7 @@ test.describe("the conductor", () => {
         window as unknown as { __say: (id: string, text: string) => void }
       ).__say("pty-2", "\r\n42 tests passed\r\n"),
     );
+    await expect.poll(() => drawn(page, "42 tests passed")).toBe(true);
     await push(page, {
       id: "c-5",
       tool: "read",

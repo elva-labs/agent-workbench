@@ -438,6 +438,15 @@ pub fn dispatch(
             let p: WorktreeParams = parse(params)?;
             value(core.worktree_add(&p.project, &p.name)?)
         }
+        "worktrees" => {
+            let p: ProjectParams = parse(params)?;
+            value(core.worktrees(&p.project)?)
+        }
+        "worktree_remove" => {
+            let p: WorktreeParams = parse(params)?;
+            core.worktree_remove(&p.project, &p.name)?;
+            Ok(Value::Null)
+        }
         other => Err(format!("no such method: {other}")),
     }
 }
@@ -618,6 +627,41 @@ mod tests {
         let refused = dispatch(
             &core(),
             "worktree_add",
+            json!({ "project": "/definitely/not/here", "name": "one/two" }),
+            no_output,
+        )
+        .expect_err("a name is a plain one");
+        assert!(
+            refused.contains("is not a name for a worktree"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn listing_and_removing_worktrees_are_methods_too() {
+        let missing = dispatch(&core(), "worktrees", json!({}), no_output)
+            .expect_err("a listing names its project");
+        assert!(missing.contains("bad parameters"), "{missing}");
+        let nowhere = dispatch(
+            &core(),
+            "worktrees",
+            json!({ "project": "/definitely/not/here" }),
+            no_output,
+        )
+        .expect_err("there is no repository there");
+        assert!(nowhere.contains("not a git repository"), "{nowhere}");
+
+        let unnamed = dispatch(
+            &core(),
+            "worktree_remove",
+            json!({ "project": "/definitely/not/here" }),
+            no_output,
+        )
+        .expect_err("a removal names the worktree");
+        assert!(unnamed.contains("bad parameters"), "{unnamed}");
+        let refused = dispatch(
+            &core(),
+            "worktree_remove",
             json!({ "project": "/definitely/not/here", "name": "one/two" }),
             no_output,
         )

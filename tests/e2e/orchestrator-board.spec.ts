@@ -105,6 +105,44 @@ async function toOrchestrator(page: Page) {
 const rows = (page: Page) => page.getByTestId("started-row");
 const header = (page: Page) => page.locator(CHANGES).locator("header");
 
+/** What the pty was written to, as the fake core kept it. */
+const written = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as unknown as { __written?: [string, string][] }).__written ?? [],
+  );
+
+/** A worktree under a project, as the core answers with one. */
+function tree(name: string, state: { merged: boolean; dirty: boolean }) {
+  return {
+    path: `${PROJECT}/.worktrees/${name}`,
+    name,
+    branch: name,
+    merged: state.merged,
+    dirty: state.dirty,
+  };
+}
+
+/** Three worktrees under the demo project: one that can go, one with work
+    in it, and one with commits the project does not have. */
+async function putWorktrees(page: Page) {
+  await page.evaluate(
+    ({ project, trees }) => {
+      (window as unknown as { __worktrees: unknown }).__worktrees = {
+        [project]: trees,
+      };
+    },
+    {
+      project: PROJECT,
+      trees: [
+        tree("clean", { merged: true, dirty: false }),
+        tree("working", { merged: true, dirty: true }),
+        tree("ahead", { merged: false, dirty: false }),
+      ],
+    },
+  );
+}
+
 test.describe("the orchestrator's board", () => {
   test.beforeEach(async ({ page }) => {
     await installFakeCore(page, { open: [ORCHESTRATOR, PROJECT] });
@@ -201,5 +239,105 @@ test.describe("the orchestrator's board", () => {
     await expect(page.getByTestId("terminal")).toHaveCount(1);
     await expect(header(page)).toContainText("Orchestrator");
     await expect(header(page)).toContainText("0 sessions");
+  });
+
+  test("says which projects it may start in, and takes one back", async ({
+    page,
+  }) => {
+    // Nothing has been allowed yet, so the line is not there.
+    await expect(page.getByTestId("allowed-line")).toHaveCount(0);
+
+    await started(page, "c-1", "Fix the flaky test");
+    await toOrchestrator(page);
+
+    await expect(page.getByTestId("allowed-line")).toContainText(
+      "Allowed to start sessions in",
+    );
+    await expect(page.getByTestId("allowed-project")).toHaveText("demo");
+
+    await page.getByTestId("revoke-project").click();
+    await expect(page.getByTestId("allowed-line")).toHaveCount(0);
+
+    // The next start from the same caller is put to the user again.
+    await push(page, {
+      id: "c-9",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Once more" },
+      session: "session-1",
+    });
+    await expect(page.getByTestId("conduct-ask")).toBeVisible();
+    await page.getByTestId("conduct-no").click();
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+  });
+
+  test("stops one of them from its own row", async ({ page }) => {
+    await started(page, "c-1", "Fix the flaky test");
+    await started(page, "c-2", "Bump the client");
+    await toOrchestrator(page);
+    await expect(rows(page)).toHaveCount(2);
+
+    await page.getByTestId("stop-started-row").first().click();
+
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText("session 2");
+    // The orchestrator itself is untouched, and the other one still runs.
+    await expect(header(page)).toContainText("1 session");
+  });
+
+  test("types a line into one of them from its own row", async ({ page }) => {
+    await started(page, "c-1", "Fix the flaky test");
+    await toOrchestrator(page);
+
+    // The field is opened under the row, and it has the keyboard.
+    await expect(page.getByTestId("send-field")).toHaveCount(0);
+    await page.getByTestId("send-started-row").click();
+    const field = page.getByTestId("send-field");
+    await expect(field).toBeFocused();
+    const row = (await rows(page).first().boundingBox())!;
+    const box = (await field.boundingBox())!;
+    expect(box.y).toBeGreaterThan(row.y);
+
+    await field.fill("run the unit tests");
+    await field.press("Enter");
+
+    // The line reached the session's terminal as one typed line, and the
+    // field closed behind it.
+    await expect(field).toHaveCount(0);
+    expect((await written(page)).at(-1)).toEqual([
+      "pty-2",
+      "run the unit tests\r",
+    ]);
+
+    // Escape leaves the field without typing anything.
+    await page.getByTestId("send-started-row").click();
+    await expect(page.getByTestId("send-field")).toBeVisible();
+    await page.getByTestId("send-field").fill("never mind");
+    await page.getByTestId("send-field").press("Escape");
+    await expect(page.getByTestId("send-field")).toHaveCount(0);
+    expect(await written(page)).toHaveLength(1);
+  });
+
+  test("says what the starts left behind, and cleans up what can go", async ({
+    page,
+  }) => {
+    // Nothing is under the project yet, so the line is not there.
+    await expect(page.getByTestId("worktrees-left")).toHaveCount(0);
+
+    await putWorktrees(page);
+    await started(page, "c-1", "Fix the flaky test");
+    await toOrchestrator(page);
+
+    await expect(page.getByTestId("worktrees-left")).toContainText(
+      "3 worktrees left behind",
+    );
+
+    await page.getByTestId("clean-worktrees").click();
+
+    // The one with nothing in it is gone; the other two say why they stayed.
+    await expect(page.getByTestId("worktrees-left")).toContainText("2 kept");
+    await expect(page.getByTestId("worktrees-left")).toContainText(
+      "uncommitted work",
+    );
+    await expect(page.getByTestId("clean-worktrees")).toBeDisabled();
   });
 });

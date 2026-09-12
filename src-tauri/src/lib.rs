@@ -477,6 +477,45 @@ async fn worktree_add(
     .await
 }
 
+/// The worktrees the workbench has made for the project, with what is in
+/// each of them.
+#[tauri::command]
+async fn worktrees(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "worktrees",
+        move |rest| json!({ "project": rest }),
+        move |core, project| core.worktrees(Path::new(project)),
+    )
+    .await
+}
+
+/// Takes one of those worktrees away, and its branch with it.
+#[tauri::command]
+async fn worktree_remove(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    name: String,
+) -> Result<Value, String> {
+    let wanted = name.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "worktree_remove",
+        move |rest| json!({ "project": rest, "name": name }),
+        move |core, project| core.worktree_remove(Path::new(project), &wanted),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn git_content(
     core: State<'_, Arc<Core>>,
@@ -953,6 +992,8 @@ pub fn run() {
             conduct_answer,
             orchestrator_dir,
             worktree_add,
+            worktrees,
+            worktree_remove,
             remote_connect,
             remote_disconnect,
             remote_dirs,

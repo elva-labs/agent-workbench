@@ -12,9 +12,10 @@
  * The place to go is the orchestrator, not the session it started.
  */
 
-import { core } from "$lib/core";
+import { core, type Worktree } from "$lib/core";
 import { startedBy, startedFor } from "$lib/conductor.svelte";
 import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
+import { workspace } from "$lib/workspace.svelte";
 
 /** The name the pane gives the orchestrator's own project. */
 export const LABEL = "orchestrator";
@@ -118,4 +119,70 @@ function conductorLabel(id: string): string {
     (candidate) => candidate.id === id || candidate.key === id,
   );
   return session === undefined ? "an orchestrator" : label(session);
+}
+
+/** A worktree found under a project, with the project it is under. */
+export type LeftTree = Worktree & { project: string };
+
+/**
+ * The worktrees of the open projects that nothing is running in.
+ *
+ * A start that asked for a worktree leaves one behind when the session it
+ * was made for ends, so the board says how many are there and offers to
+ * take away the ones git will part with.
+ */
+export const leftBehind = $state<{ trees: LeftTree[]; loading: boolean }>({
+  trees: [],
+  loading: false,
+});
+
+/** The trees that can go: the branch holds nothing the project's own lacks,
+    and there is no uncommitted work in the tree. */
+export function removable(trees: LeftTree[]): LeftTree[] {
+  return trees.filter((tree) => tree.merged && !tree.dirty);
+}
+
+/** Asks every open project for its worktrees and keeps the ones no live
+    session is running in. A project that cannot say is passed over. */
+export async function readWorktrees(): Promise<void> {
+  const projects = workspace.open.map((project) => project.path);
+  leftBehind.loading = true;
+  try {
+    const found: LeftTree[] = [];
+    for (const project of projects) {
+      let trees: Worktree[];
+      try {
+        trees = await core().worktrees(project);
+      } catch {
+        continue;
+      }
+      for (const tree of trees)
+        if (!inUse(tree.path)) found.push({ ...tree, project });
+    }
+    leftBehind.trees = found;
+  } finally {
+    leftBehind.loading = false;
+  }
+}
+
+/** Removes the trees that can go, one at a time, and reads what is left. A
+    tree the core will not part with stays, and says why on the next read. */
+export async function cleanWorktrees(): Promise<void> {
+  for (const tree of removable(leftBehind.trees)) {
+    try {
+      await core().worktreeRemove(tree.project, tree.name);
+    } catch {
+      // The tree grew work between the read and the removal. It stays.
+    }
+  }
+  await readWorktrees();
+}
+
+/** Whether a live session is running in a directory. */
+function inUse(path: string): boolean {
+  return sessions.all.some(
+    (session) =>
+      isLive(session) &&
+      (session.worktree === path || session.startIn === path),
+  );
 }

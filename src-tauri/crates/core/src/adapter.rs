@@ -47,10 +47,21 @@ pub struct LaunchCtx<'a> {
     /// has to say: given on the command line, so the agent has it from
     /// the start rather than typed at it while it is still coming up.
     pub prompt: Option<&'a str>,
+    /// Whether this session is the one that directs the others. It runs in
+    /// the workbench's own orchestrator directory, and the tools it starts
+    /// tell it what directing work means.
+    pub orchestrator: bool,
 }
 
 /// The variable that names the session to the tools the agent starts.
 pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
+
+/// The variable that says what the session is for, when it is for anything
+/// in particular. Only the orchestrator has a role.
+pub const ROLE_VAR: &str = "WORKBENCH_ROLE";
+
+/// The one role there is.
+pub const ORCHESTRATOR_ROLE: &str = "orchestrator";
 
 pub trait AgentAdapter: Send + Sync {
     fn id(&self) -> &'static str;
@@ -165,10 +176,15 @@ impl ClaudeCode {
     }
 }
 
-/// Puts the session's id in the agent's environment when it is known.
+/// Puts the session's id in the agent's environment when it is known, and
+/// its role when it has one. The agent passes both on to the tool server it
+/// starts, which is where they are read.
 fn name_session(command: &mut CommandBuilder, ctx: &LaunchCtx) {
     if let Some(session) = ctx.session {
         command.env(SESSION_VAR, session);
+    }
+    if ctx.orchestrator {
+        command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
     }
 }
 
@@ -320,6 +336,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -359,6 +376,7 @@ mod tests {
             env: &vars,
             session: Some("abc"),
             prompt: Some("--dangerously-skip-permissions and fix it"),
+            orchestrator: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -407,6 +425,7 @@ mod tests {
             env: &vars,
             session: Some("abc-123"),
             prompt: None,
+            orchestrator: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
         assert_eq!(
@@ -420,9 +439,48 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
+    }
+
+    #[test]
+    fn tells_the_agent_its_role_only_when_it_directs_the_others() {
+        let dir = std::env::temp_dir().join("workbench-adapter-role");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let vars = vars_with_path(&dir);
+        let role = |orchestrator: bool, adapter: &dyn AgentAdapter| {
+            let ctx = LaunchCtx {
+                project: Path::new("/tmp"),
+                env: &vars,
+                session: Some("abc"),
+                prompt: None,
+                orchestrator,
+            };
+            let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
+            command
+                .get_env(ROLE_VAR)
+                .map(|value| value.to_string_lossy().to_string())
+        };
+        for adapter in [&ClaudeCode as &dyn AgentAdapter, &Codex] {
+            assert_eq!(
+                role(true, adapter),
+                Some(ORCHESTRATOR_ROLE.to_string()),
+                "{}",
+                adapter.id()
+            );
+            assert_eq!(role(false, adapter), None, "{}", adapter.id());
+        }
     }
 
     #[test]
@@ -433,6 +491,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -448,6 +507,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -469,6 +529,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -496,6 +557,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -520,6 +582,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -539,6 +602,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            orchestrator: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

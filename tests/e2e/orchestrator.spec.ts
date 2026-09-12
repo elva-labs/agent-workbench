@@ -70,8 +70,10 @@ async function orchestrate(page: Page) {
   await page.getByTestId("start-agent").click();
   await expect(page.locator(AGENT)).toContainText("running");
 
-  await page.getByTestId("orchestrator-project").click();
-  await page.getByTestId("new-session").click();
+  // The orchestrator's project has nothing to show yet, so the first
+  // session there is started from the head's menu.
+  await page.getByTestId("sessions-menu").click();
+  await page.getByTestId("menu-orchestrator").click();
   await expect(page.locator(AGENT)).toContainText("running");
 
   await push(page, {
@@ -97,9 +99,15 @@ test.describe("the orchestrator", () => {
   test("folds what it started into the project, and says what it has out", async ({
     page,
   }) => {
-    // Its project is pinned above the ones you opened, and has nothing to
-    // close: it is the workbench's own.
+    // Nothing runs there and nothing waits to be resumed, so the project is
+    // not drawn at all: the menu is the way to the first session.
     const pinned = page.getByTestId("orchestrator-project");
+    await expect(pinned).toHaveCount(0);
+
+    await orchestrate(page);
+
+    // With a session of its own it is pinned above the ones you opened, and
+    // has nothing to close: it is the workbench's own.
     await expect(pinned).toHaveText("orchestrator");
     const top = (await row(page, ORCHESTRATOR).boundingBox())!;
     const opened = (await row(page, PROJECT).boundingBox())!;
@@ -107,8 +115,6 @@ test.describe("the orchestrator", () => {
     await expect(
       row(page, ORCHESTRATOR).getByTestId("close-project"),
     ).toHaveCount(0);
-
-    await orchestrate(page);
 
     // A row each for the two sessions a user started, and none for what
     // the orchestrator started: that one is behind a fold in the project it
@@ -189,5 +195,62 @@ test.describe("the orchestrator", () => {
     await expect(page.getByTestId("orchestrator-summary")).toHaveText(
       "1 running",
     );
+  });
+
+  test("keeps a started session running when Delete lands on its row", async ({
+    page,
+  }) => {
+    await orchestrate(page);
+    await page.getByTestId("started-fold").click();
+    const started = page.getByTestId("started-session");
+    await expect(started).toHaveCount(1);
+
+    // Opening it puts the pane's cursor there, and the rows behind a fold
+    // are quiet: the key the cursor walks over does nothing.
+    await started.click();
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(page.locator(".session.started")).toHaveClass(/cursor/);
+    await page.keyboard.press("Delete");
+    await page.keyboard.press("Backspace");
+    await expect(started).toHaveCount(1);
+
+    // Its own × still stops it.
+    const stop = page.locator(".session.started").getByTestId("close-session");
+    await page.locator(".session.started").hover();
+    await expect(stop).toBeVisible();
+    await stop.click();
+    await expect(page.getByTestId("started-session")).toHaveCount(0);
+  });
+
+  test("stops everything behind a fold from the fold's own button", async ({
+    page,
+  }) => {
+    await orchestrate(page);
+    await push(page, {
+      id: "o-2",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "And the server" },
+      session: "session-2",
+    });
+    // The first start was allowed for good, so this one needs no answer.
+    await expect.poll(() => answerTo(page, "o-2")).not.toBeNull();
+    const fold = page.getByTestId("started-fold");
+    await expect(fold).toContainText("2 started by session 1");
+
+    // Over the fold's end, as a session's × is over its own.
+    const stop = page.getByTestId("stop-started");
+    await expect(stop).toHaveAttribute("title", "Stop these");
+    await fold.hover();
+    await expect(stop).toBeVisible();
+    const line = (await fold.boundingBox())!;
+    const button = (await stop.boundingBox())!;
+    expect(button.x).toBeGreaterThan(line.x + line.width / 2);
+    expect(button.x + button.width).toBeLessThanOrEqual(line.x + line.width);
+
+    // Both go, and the fold with them; the sessions a user started stay.
+    await stop.click();
+    await expect(page.getByTestId("started-fold")).toHaveCount(0);
+    await expect(page.getByTestId("started-session")).toHaveCount(0);
+    await expect(page.getByTestId("session-row")).toHaveCount(2);
   });
 });

@@ -237,6 +237,18 @@ export interface PluginViewMessageRequest {
   payload: unknown;
 }
 
+/** A worktree under a project's own, as the orchestrator's starts leave
+    them: where it is, its branch, and whether it can go. */
+export interface Worktree {
+  path: string;
+  name: string;
+  branch: string;
+  /** The branch has nothing the project's own branch lacks. */
+  merged: boolean;
+  /** Uncommitted work in the tree, which is a reason to keep it. */
+  dirty: boolean;
+}
+
 /** A process running under a session's or a shell's own. */
 export interface Process {
   pid: number;
@@ -501,6 +513,11 @@ export interface Core {
   worktreeAdd(project: string, name: string): Promise<string>;
   /** Where an orchestrator session runs, made if it is not there yet. */
   orchestratorDir(): Promise<string>;
+  /** The worktrees the app made under a project, with what is in them. */
+  worktrees(project: string): Promise<Worktree[]>;
+  /** Removes one of those and its branch. Refused for a tree with
+      uncommitted work or a branch with commits the project lacks. */
+  worktreeRemove(project: string, name: string): Promise<void>;
   /** Puts what the user is looking at on record on the project's machine,
       or clears it there with null. */
   setSelection(project: string, selection: Selection | null): Promise<void>;
@@ -712,6 +729,9 @@ const tauriCore: Core = {
   worktreeAdd: (project, name) =>
     invoke<string>("worktree_add", { project, name }),
   orchestratorDir: () => invoke<string>("orchestrator_dir"),
+  worktrees: (project) => invoke<Worktree[]>("worktrees", { project }),
+  worktreeRemove: (project, name) =>
+    invoke<void>("worktree_remove", { project, name }),
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -877,6 +897,12 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async orchestratorDir() {
+    throw new Error("no core");
+  },
+  async worktrees() {
+    return [];
+  },
+  async worktreeRemove() {
     throw new Error("no core");
   },
   async onFileDrag() {

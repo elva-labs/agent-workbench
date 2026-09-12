@@ -26,10 +26,17 @@
     visible,
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
-  import { startedBy, stateOf, stopAll } from "$lib/conductor.svelte";
+  import { allowedProjects, oneLine, revoke, startedBy, stateOf, stopAll } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { listed as presentedFor, openItem } from "$lib/media.svelte";
-  import { isAsking, isConductor } from "$lib/orchestrator.svelte";
+  import {
+    cleanWorktrees,
+    isAsking,
+    isConductor,
+    leftBehind,
+    readWorktrees,
+    removable,
+  } from "$lib/orchestrator.svelte";
   import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
   import {
     askFor,
@@ -44,6 +51,7 @@
   import {
     activeSession,
     ago,
+    close as closeSession,
     isLive,
     label,
     select as selectSession,
@@ -350,6 +358,18 @@
   let startedOpen = $state(true);
   let boardCursor = $state<string | null>(null);
   let boardNav = $state<HTMLDivElement | null>(null);
+  /** The projects this orchestrator may start sessions in without being
+      asked, each with the × that takes the standing answer back. */
+  let allowedHere = $derived(conducting === null ? [] : allowedProjects(conducting.id ?? conducting.key));
+  /** The row with the send field under it: one at a time, and only while
+      that session is running. */
+  let sending = $state<string | null>(null);
+  let sendLine = $state("");
+  let sendField = $state<HTMLInputElement | null>(null);
+  let liveStarted = $derived(started.filter(isLive).length);
+  let cleaning = $state(false);
+  /** Whether the line says what is left behind or why what is left stayed. */
+  let cleaned = $state(false);
 
   /** The row under the cursor: the one it was put on while that session is
       still there, else the first. */
@@ -416,7 +436,7 @@
   }
 
   /** The line under a started session's name: where it runs, what it is
-      doing, and how long it has been at it. */
+      doing, how long it has been at it, and the last line it left. */
   function startedLine(session: Session): string {
     const parts = [projectLabel(session.project)];
     const tree = session.worktree ?? session.startIn;
@@ -424,6 +444,7 @@
     // A session's start is a millisecond clock; `ago` reads one in seconds.
     const since = session.startedAt === null ? null : ago(Math.floor(session.startedAt / 1000));
     parts.push(since === null ? stateOf(session) : `${stateOf(session)}, ${since}`);
+    if (session.note !== null) parts.push(session.note);
     return parts.join(" · ");
   }
 
@@ -434,6 +455,97 @@
     if (!isLive(session)) return "none";
     if (isAsking(session)) return "waiting";
     return session.working ? "busy" : "ok";
+  }
+
+  /** The next start this caller makes in that project is put to the user. */
+  function revokeProject(project: string) {
+    if (conducting === null) return;
+    revoke(conducting.id ?? conducting.key, project);
+  }
+
+  function stopRow(session: Session) {
+    if (sending === session.key) sending = null;
+    closeSession(session.key);
+  }
+
+  /** A session with a terminal behind it is one there is somewhere to type. */
+  function canSend(session: Session): boolean {
+    return session.status === "running" && session.ptyId !== null;
+  }
+
+  function openSend(session: Session) {
+    if (!canSend(session)) return;
+    sending = sending === session.key ? null : session.key;
+    sendLine = "";
+  }
+
+  function closeSend() {
+    sending = null;
+    sendLine = "";
+  }
+
+  /** What the field holds, typed into the session as the conductor's own
+      send tool types a line: one line, and nothing that drives the terminal. */
+  function sendTo(session: Session) {
+    const line = oneLine(sendLine);
+    if (line !== "" && session.ptyId !== null) void core().write(session.ptyId, `${line}\r`);
+    closeSend();
+  }
+
+  function onSendKeydown(e: KeyboardEvent, session: Session) {
+    // The board reads the arrows and Enter for its cursor; while the field
+    // is open those keys are the field's.
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendTo(session);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeSend();
+    }
+  }
+
+  // The field is opened to be typed into, so it takes the keyboard.
+  $effect(() => {
+    if (sending !== null) sendField?.focus();
+  });
+
+  // What the starts left behind, read while the board is on screen and again
+  // whenever one of the sessions comes or goes.
+  $effect(() => {
+    if (conducting === null) return;
+    liveStarted;
+    untrack(() => {
+      cleaned = false;
+      void readWorktrees();
+    });
+  });
+
+  async function cleanUp() {
+    cleaning = true;
+    try {
+      await cleanWorktrees();
+    } finally {
+      cleaning = false;
+      cleaned = true;
+    }
+  }
+
+  /** The line under the board: how many worktrees the starts left behind,
+      and once they have been cleaned, why the rest are still there. */
+  function worktreeLine(): string {
+    const trees = leftBehind.trees;
+    if (!cleaned) return `${trees.length} worktree${trees.length === 1 ? "" : "s"} left behind`;
+    const dirty = trees.filter((tree) => tree.dirty).length;
+    const ahead = trees.filter((tree) => !tree.dirty && !tree.merged).length;
+    const why = [
+      dirty === 0 ? null : { count: dirty, said: "uncommitted work" },
+      ahead === 0 ? null : { count: ahead, said: "has commits the project does not" },
+    ].filter((part) => part !== null);
+    if (why.length === 0) return `${trees.length} kept`;
+    const said =
+      why.length === 1 ? why[0].said : why.map((part) => `${part.count} ${part.said}`).join(", ");
+    return `${trees.length} kept: ${said}`;
   }
 </script>
 
@@ -482,28 +594,98 @@
             <ul class="rows">
               {#each started as session (session.key)}
                 <li class="started" class:cursor={boardRow === session.key} data-row={session.key}>
-                  <button
-                    class="media-row"
-                    tabindex="-1"
-                    onpointerdown={(e) => e.preventDefault()}
-                    onclick={() => {
-                      boardCursor = session.key;
-                      go(session);
-                    }}
-                    title={session.project}
-                    data-testid="started-row"
-                  >
-                    <span class="row-line">
-                      <span class="dot" data-state={startedDot(session)}></span>
-                      <span class="media-caption">{label(session)}</span>
+                  <div class="row-box">
+                    <button
+                      class="media-row"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => {
+                        boardCursor = session.key;
+                        go(session);
+                      }}
+                      title={session.project}
+                      data-testid="started-row"
+                    >
+                      <span class="row-line">
+                        <span class="dot" data-state={startedDot(session)}></span>
+                        <span class="media-caption">{label(session)}</span>
+                      </span>
+                      <span class="media-meta">{startedLine(session)}</span>
+                    </button>
+                    <!-- Over the row's end rather than beside it, so a name is
+                         never squeezed to make room for them. -->
+                    <span class="actions">
+                      <button
+                        class="icon word"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => openSend(session)}
+                        disabled={!canSend(session)}
+                        title="Type a line into this session"
+                        data-testid="send-started-row">Send</button
+                      >
+                      <button
+                        class="icon"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => stopRow(session)}
+                        aria-label="Stop {label(session)}"
+                        title="Stop"
+                        data-testid="stop-started-row">×</button
+                      >
                     </span>
-                    <span class="media-meta">{startedLine(session)}</span>
-                  </button>
+                  </div>
+                  {#if sending === session.key}
+                    <input
+                      class="send"
+                      bind:this={sendField}
+                      bind:value={sendLine}
+                      onkeydown={(e) => onSendKeydown(e, session)}
+                      placeholder="a line to send…"
+                      aria-label="Send a line to {label(session)}"
+                      spellcheck="false"
+                      autocomplete="off"
+                      data-testid="send-field"
+                    />
+                  {/if}
                 </li>
               {/each}
             </ul>
           {/if}
         </section>
+      {/if}
+      <!-- What the orchestrator has been given, and what its starts left
+           behind: one muted line each, under the sessions themselves. -->
+      {#if allowedHere.length > 0}
+        <p class="board-line" data-testid="allowed-line">
+          <span>Allowed to start sessions in</span>
+          {#each allowedHere as project, index (project)}
+            <span class="allowed">
+              <span data-testid="allowed-project">{projectLabel(project)}</span><button
+                class="revoke"
+                tabindex="-1"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => revokeProject(project)}
+                aria-label="Ask again before starting a session in {projectLabel(project)}"
+                title="Ask again"
+                data-testid="revoke-project">×</button
+              >{index === allowedHere.length - 1 ? "" : ","}
+            </span>
+          {/each}
+        </p>
+      {/if}
+      {#if leftBehind.trees.length > 0}
+        <p class="board-line" data-testid="worktrees-left">
+          <span>{worktreeLine()}</span>
+          <button
+            class="head-action"
+            tabindex="-1"
+            onpointerdown={(e) => e.preventDefault()}
+            onclick={cleanUp}
+            disabled={cleaning || removable(leftBehind.trees).length === 0}
+            data-testid="clean-worktrees">Clean up</button
+          >
+        </p>
       {/if}
     </div>
   {:else}
@@ -1142,6 +1324,121 @@
 
   .board:focus-within .started.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  /* A row's own buttons, over its end on hover, on the row's own colour so
+     they read; the name runs under the fade. */
+  .row-box {
+    position: relative;
+    --row-bg: var(--surface);
+  }
+
+  .started:hover .row-box {
+    --row-bg: var(--surface-2);
+  }
+
+  .started:hover .media-row {
+    background: var(--surface-2);
+  }
+
+  .actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 4px 0 14px;
+    background: linear-gradient(to right, transparent, var(--row-bg) 12px);
+    opacity: 0;
+  }
+
+  .started:hover .actions,
+  .actions:focus-within {
+    opacity: 1;
+  }
+
+  .icon {
+    flex: none;
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 5px;
+    cursor: pointer;
+  }
+
+  .icon.word {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .icon:hover:not(:disabled) {
+    color: var(--accent);
+  }
+
+  .icon:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  /* The line to type into a session, under the row it goes to. */
+  .send {
+    display: block;
+    width: calc(100% - 26px - var(--pane-pad));
+    margin: 2px var(--pane-pad) 5px 26px;
+    padding: 3px 6px;
+    border: 1px solid var(--accent);
+    background: var(--surface-2);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink);
+    outline: none;
+  }
+
+  .send::placeholder {
+    color: var(--ink-3);
+  }
+
+  /* What the orchestrator has been given, and what its starts left behind. */
+  .board-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0;
+    padding: 4px var(--pane-pad) 6px 26px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--ink-3);
+  }
+
+  .board-line button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .allowed {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .revoke {
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 2px 0 4px;
+    cursor: pointer;
+  }
+
+  .revoke:hover {
+    color: var(--del);
   }
 
   .head {
