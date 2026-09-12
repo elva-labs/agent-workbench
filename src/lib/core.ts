@@ -90,6 +90,20 @@ export interface NotifyRequest {
   session: string | null;
 }
 
+/** A call an agent made on one of the conductor's tools: what one session
+    asks about the projects, the sessions, and the ones it starts. The
+    window answers every one, by id. */
+export interface ConductRequest {
+  /** What the answer is named after, unique to this call. */
+  id: string;
+  tool: "projects" | "sessions" | "start" | "send" | "stop" | "wait" | "read";
+  arguments: Record<string, unknown>;
+  /** Where the calling agent runs, which says which project it is in. */
+  cwd: string;
+  /** The session the calling agent runs as, when its environment named one. */
+  session: string | null;
+}
+
 /** A plugin as its manifest declares it, plus what is on and running. */
 export interface PluginInfo {
   name: string;
@@ -468,6 +482,19 @@ export interface Core {
   onNotifyRequest(
     handler: (request: NotifyRequest) => void,
   ): Promise<() => void>;
+  /** A session called one of the conductor's tools. */
+  onConductRequest(
+    handler: (request: ConductRequest) => void,
+  ): Promise<() => void>;
+  /** The window's one answer to a conductor call: the text the agent
+      reads, or the reason it could not be done. */
+  conductAnswer(
+    id: string,
+    content: string | null,
+    error: string | null,
+  ): Promise<void>;
+  /** Makes a worktree of the project, and answers with its absolute path. */
+  worktreeAdd(project: string, name: string): Promise<string>;
   /** Puts what the user is looking at on record on the project's machine,
       or clears it there with null. */
   setSelection(project: string, selection: Selection | null): Promise<void>;
@@ -669,6 +696,15 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onConductRequest(handler) {
+    return listen<ConductRequest>("conduct_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  conductAnswer: (id, content, error) =>
+    invoke<void>("conduct_answer", { id, content, error }),
+  worktreeAdd: (project, name) =>
+    invoke<string>("worktree_add", { project, name }),
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
@@ -825,6 +861,13 @@ const detachedCore: Core = {
   },
   async onNotifyRequest() {
     return () => {};
+  },
+  async onConductRequest() {
+    return () => {};
+  },
+  async conductAnswer() {},
+  async worktreeAdd() {
+    throw new Error("no core");
   },
   async onFileDrag() {
     return () => {};

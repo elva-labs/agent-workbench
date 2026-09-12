@@ -117,6 +117,21 @@ struct PathParams {
 }
 
 #[derive(Deserialize)]
+struct ConductAnswerParams {
+    id: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WorktreeParams {
+    project: PathBuf,
+    name: String,
+}
+
+#[derive(Deserialize)]
 struct SelectionParams {
     selection: Option<crate::selection::Selection>,
 }
@@ -411,6 +426,15 @@ pub fn dispatch(
             core.set_selection(p.selection)?;
             Ok(Value::Null)
         }
+        "conduct_answer" => {
+            let p: ConductAnswerParams = parse(params)?;
+            core.conduct_answer(&p.id, p.content, p.error)?;
+            Ok(Value::Null)
+        }
+        "worktree_add" => {
+            let p: WorktreeParams = parse(params)?;
+            value(core.worktree_add(&p.project, &p.name)?)
+        }
         other => Err(format!("no such method: {other}")),
     }
 }
@@ -547,6 +571,58 @@ mod tests {
             Some(_) => assert_eq!(sent.unwrap(), Value::Null),
             None => assert!(sent.is_err()),
         }
+    }
+
+    #[test]
+    fn answers_a_conduct_call_where_the_tool_server_waits() {
+        let core = core();
+        let Some(home) = core.home().map(|home| home.to_path_buf()) else {
+            return;
+        };
+        let sent = dispatch(
+            &core,
+            "conduct_answer",
+            json!({ "id": "workbench-protocol-conduct", "content": "Started session s-2." }),
+            no_output,
+        )
+        .unwrap();
+        assert_eq!(sent, Value::Null);
+        let path = crate::show::answer_path(&home, "workbench-protocol-conduct");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let answer: crate::show::Answer = serde_json::from_str(&text).unwrap();
+        assert_eq!(answer.content.as_deref(), Some("Started session s-2."));
+        assert_eq!(answer.error, None);
+        std::fs::remove_file(&path).unwrap();
+
+        let refused = dispatch(
+            &core,
+            "conduct_answer",
+            json!({ "id": "../escape", "error": "no" }),
+            no_output,
+        )
+        .expect_err("an id names a file and nothing else");
+        assert!(refused.contains("not a call id"), "{refused}");
+        let missing = dispatch(&core, "conduct_answer", json!({}), no_output)
+            .expect_err("an answer names its call");
+        assert!(missing.contains("bad parameters"), "{missing}");
+    }
+
+    #[test]
+    fn a_worktree_is_a_method_of_its_own() {
+        let error = dispatch(&core(), "worktree_add", json!({ "name": "x" }), no_output)
+            .expect_err("a worktree names its project");
+        assert!(error.contains("bad parameters"), "{error}");
+        let refused = dispatch(
+            &core(),
+            "worktree_add",
+            json!({ "project": "/definitely/not/here", "name": "one/two" }),
+            no_output,
+        )
+        .expect_err("a name is a plain one");
+        assert!(
+            refused.contains("is not a name for a worktree"),
+            "{refused}"
+        );
     }
 
     #[test]

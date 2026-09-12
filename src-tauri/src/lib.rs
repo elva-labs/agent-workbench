@@ -415,6 +415,45 @@ async fn set_selection(
     .await
 }
 
+/// The window's answer to a call one of its agents made on a conductor's
+/// tool. The tool server waiting for it runs beside the core that asked,
+/// which is the core here.
+#[tauri::command]
+async fn conduct_answer(
+    core: State<'_, Arc<Core>>,
+    id: String,
+    content: Option<String>,
+    error: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || {
+        core.conduct_answer(&id, content, error)?;
+        Ok(Value::Null)
+    })
+    .await
+}
+
+/// A worktree of the project, on a branch of the same name, made where the
+/// project is.
+#[tauri::command]
+async fn worktree_add(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    name: String,
+) -> Result<Value, String> {
+    let wanted = name.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "worktree_add",
+        move |rest| json!({ "project": rest, "name": name }),
+        move |core, project| core.worktree_add(Path::new(project), &wanted),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn git_content(
     core: State<'_, Arc<Core>>,
@@ -888,6 +927,8 @@ pub fn run() {
             plugin_projects,
             plugin_action,
             plugin_view_message,
+            conduct_answer,
+            worktree_add,
             remote_connect,
             remote_disconnect,
             remote_dirs,

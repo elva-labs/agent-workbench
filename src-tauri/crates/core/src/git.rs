@@ -1,9 +1,10 @@
 //! What the working tree looks like right now.
 //!
 //! libgit2 rather than gix: its status and diff are boring and complete, which
-//! is exactly what you want underneath a UI. Everything here is a plain query
-//! against a path, with no state of its own, so the watcher can call it again
-//! whenever the tree moves and the pane simply re-renders.
+//! is exactly what you want underneath a UI. Almost everything here is a plain
+//! query against a path, with no state of its own, so the watcher can call it
+//! again whenever the tree moves and the pane simply re-renders. Adding a
+//! worktree is the one thing that changes the tree, and it runs git itself.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -419,6 +420,68 @@ pub fn workdir(root: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| "a bare repository has no working tree".to_string())
 }
 
+/// Where a project keeps the worktrees the workbench makes for it.
+pub const WORKTREES: &str = ".claude/worktrees";
+
+/// A worktree's name, which is also a branch's and a directory's: letters,
+/// digits, dashes and underscores, and never one of git's own options.
+fn plain_worktree_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 60
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Runs git as a program, with what the caller passes as arguments alone
+/// and never as a line for a shell. The ext transport runs whatever a URL
+/// names, so it is off.
+fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(["-c", "protocol.ext.allow=never"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => "git is not installed".to_string(),
+            _ => format!("could not run git: {e}"),
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr
+            .lines()
+            .last()
+            .unwrap_or("git failed")
+            .trim()
+            .to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Adds a worktree of the project under `.claude/worktrees`, on a new
+/// branch of the same name, and says where it is, absolute. The name is a
+/// plain identifier, and a worktree that is already there is left alone.
+pub fn worktree_add(project: &Path, name: &str) -> Result<String, String> {
+    if !plain_worktree_name(name) {
+        return Err(format!(
+            "{name:?} is not a name for a worktree: letters, digits, dashes and underscores"
+        ));
+    }
+    // Without a repository there is nothing to add a worktree to.
+    open(project)?;
+    let path = project.join(WORKTREES).join(name);
+    if path.exists() {
+        return Err(format!("{} is already there", path.display()));
+    }
+    let target = path.to_string_lossy().to_string();
+    run(project, &["worktree", "add", "-b", name, "--", &target])?;
+    Ok(dunce::canonicalize(&path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -729,6 +792,53 @@ mod tests {
         commit(&dir);
         assert!(grep(&dir, "zzz-not-here", None).unwrap().hits.is_empty());
         assert!(grep(&dir, "   ", None).unwrap().hits.is_empty());
+    }
+
+    #[test]
+    fn adds_a_worktree_under_the_project_on_a_branch_of_its_own() {
+        let dir = repo("worktree");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+
+        let path = worktree_add(&dir, "review-42").unwrap();
+        assert!(path
+            .replace('\\', "/")
+            .ends_with(".claude/worktrees/review-42"));
+        assert!(Path::new(&path).is_absolute());
+        assert!(Path::new(&path).join("a.txt").is_file());
+        let branches = Command::new("git")
+            .args(["branch", "--list", "review-42"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&branches.stdout).contains("review-42"));
+
+        let again = worktree_add(&dir, "review-42").unwrap_err();
+        assert!(again.contains("already there"), "{again}");
+    }
+
+    #[test]
+    fn refuses_a_worktree_name_that_is_not_a_plain_one() {
+        let dir = repo("worktree-names");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+        for name in ["../escape", "one/two", "-b", "", "with space", "quote\"d"] {
+            let refused = worktree_add(&dir, name).unwrap_err();
+            assert!(
+                refused.contains("is not a name for a worktree"),
+                "{name}: {refused}"
+            );
+        }
+        assert!(!dir.join(".claude").exists());
+    }
+
+    #[test]
+    fn a_directory_that_is_no_repository_says_so() {
+        let dir = std::env::temp_dir().join("workbench-git-worktree-bare");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let refused = worktree_add(&dir, "review").unwrap_err();
+        assert!(refused.contains("not a git repository"), "{refused}");
     }
 
     #[test]

@@ -10,6 +10,8 @@
   import { remote } from "$lib/remote.svelte";
   import Resume from "$lib/components/Resume.svelte";
   import { resume } from "$lib/resume.svelte";
+  import ConductAsk from "$lib/components/ConductAsk.svelte";
+  import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
@@ -122,6 +124,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onNotifyRequest((request) => notified(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onConductRequest((request) => void conductRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginState((event) => pluginStateChanged(event))
@@ -380,6 +385,9 @@
 {/if}
 {#if pluginSections.pending !== null}
   <ActionInput />
+{/if}
+{#if conductor.asking !== null}
+  <ConductAsk />
 {/if}
 
 

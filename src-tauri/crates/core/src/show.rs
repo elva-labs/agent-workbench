@@ -9,8 +9,11 @@
 //! a plugin's tool goes down the same log and is the one kind the window
 //! has no part in: the core hands it to the plugin's process and leaves
 //! the plugin's answer in a file named after the call, where the tool
-//! server is waiting for it. The log is the agent's word, quarantined
-//! like the session log: a line that does not parse is skipped.
+//! server is waiting for it. A call on one of the conductor's tools goes
+//! the same way but the other way round: the window answers it, since the
+//! sessions are its, and the answer is left in the same kind of file. The
+//! log is the agent's word, quarantined like the session log: a line that
+//! does not parse is skipped.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +28,7 @@ pub const PRESENT_REQUEST: &str = "present_request";
 pub const DIFF_REQUEST: &str = "diff_request";
 pub const TERMINAL_REQUEST: &str = "terminal_request";
 pub const NOTIFY_REQUEST: &str = "notify_request";
+pub const CONDUCT_REQUEST: &str = "conduct_request";
 
 /// The kinds the `present` tool takes, by extension: images, PDFs, and
 /// Markdown, which the window renders. Video is not among them yet.
@@ -172,6 +176,32 @@ pub struct ToolRequest {
     pub session: Option<String>,
 }
 
+/// The tools an agent directs the other sessions with. The window owns
+/// what a session is, so each of these is a question for it.
+pub const CONDUCT_TOOLS: &[&str] = &[
+    "projects", "sessions", "start", "send", "stop", "wait", "read",
+];
+
+/// A call the agent made on one of the conductor's tools. The window
+/// answers it, and the answer goes where the tool server waits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConductRequest {
+    /// What the answer file is named after, unique to this call.
+    pub id: String,
+    /// One of [`CONDUCT_TOOLS`].
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// Where the calling agent runs, which says which project it is in.
+    #[serde(default)]
+    pub cwd: String,
+    /// The session the calling agent runs as, when its environment named
+    /// one.
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// A line of the log, whichever tool wrote it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -182,6 +212,7 @@ pub enum Request {
     Terminal(TerminalRequest),
     Notify(NotifyRequest),
     Tool(ToolRequest),
+    Conduct(ConductRequest),
 }
 
 /// What a plugin answered a tool call with: the text for the agent, or
@@ -288,6 +319,15 @@ pub fn classify(line: &str) -> Option<Request> {
             }
             Some(Request::Tool(tool))
         }
+        Request::Conduct(conduct) => {
+            if !valid_id(&conduct.id)
+                || !CONDUCT_TOOLS.contains(&conduct.tool.as_str())
+                || conduct.cwd.is_empty()
+            {
+                return None;
+            }
+            Some(Request::Conduct(conduct))
+        }
     }
 }
 
@@ -307,13 +347,15 @@ pub fn append(home: &Path, request: &Request) -> Result<(), String> {
     writeln!(file, "{line}").map_err(|e| e.to_string())
 }
 
-/// Watches the request log for the life of the core. A tool call is the
-/// one kind the window has no part in: it goes to `on_tool`, which hands
-/// it to the plugin that owns the tool.
+/// Watches the request log for the life of the core. Two kinds are not
+/// plain events: a plugin's tool call goes to `on_tool`, which hands it
+/// to the plugin that owns the tool, and a call on a conductor's tool
+/// goes to `on_conduct`, which asks whoever owns the sessions.
 pub fn watch(
     sink: Arc<dyn Sink>,
     path: PathBuf,
     on_tool: impl Fn(ToolRequest) + Send + Sync + 'static,
+    on_conduct: impl Fn(ConductRequest) + Send + Sync + 'static,
 ) -> Result<(), String> {
     activity::watch_log(sink, path, ROTATE_AT, move |line| {
         classify(line).and_then(|request| match request {
@@ -334,6 +376,10 @@ pub fn watch(
                 .map(|value| (NOTIFY_REQUEST.to_string(), value)),
             Request::Tool(tool) => {
                 on_tool(tool);
+                None
+            }
+            Request::Conduct(conduct) => {
+                on_conduct(conduct);
                 None
             }
         })
@@ -387,7 +433,8 @@ mod tests {
             | Request::Diff(_)
             | Request::Terminal(_)
             | Request::Notify(_)
-            | Request::Tool(_) => None,
+            | Request::Tool(_)
+            | Request::Conduct(_) => None,
         }
     }
 
@@ -456,6 +503,30 @@ mod tests {
             r#"{"kind":"tool","id":"c-2","source":"src-1","plugin":"","tool":"pr","cwd":"/p"}"#
         )
         .is_none());
+    }
+
+    #[test]
+    fn reads_a_conduct_call_and_refuses_a_tool_it_does_not_serve() {
+        let line = r#"{"kind":"conduct","id":"c-9","tool":"start","arguments":{"project":"/p","prompt":"Fix the flake"},"cwd":"/p","session":"s-1"}"#;
+        let Some(Request::Conduct(request)) = classify(line) else {
+            panic!("not a conduct request");
+        };
+        assert_eq!(request.id, "c-9");
+        assert_eq!(request.tool, "start");
+        assert_eq!(request.arguments["prompt"], "Fix the flake");
+        assert_eq!(request.cwd, "/p");
+        assert_eq!(request.session.as_deref(), Some("s-1"));
+        for tool in CONDUCT_TOOLS {
+            let line = format!(r#"{{"kind":"conduct","id":"c-1","tool":"{tool}","cwd":"/p"}}"#);
+            assert!(classify(&line).is_some(), "{tool}");
+        }
+        assert!(classify(r#"{"kind":"conduct","id":"c-1","tool":"delete","cwd":"/p"}"#).is_none());
+        assert!(classify(r#"{"kind":"conduct","id":"c-1","tool":"start","cwd":""}"#).is_none());
+        assert!(classify(r#"{"kind":"conduct","id":"c-1","tool":"start"}"#).is_none());
+        assert!(
+            classify(r#"{"kind":"conduct","id":"../out","tool":"start","cwd":"/p"}"#).is_none()
+        );
+        assert!(classify(r#"{"kind":"conduct","id":"","tool":"start","cwd":"/p"}"#).is_none());
     }
 
     #[test]

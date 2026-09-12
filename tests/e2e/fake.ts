@@ -283,6 +283,23 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        // The conductor's calls, pushed by a test through the handler, and
+        // the window's answers, read back from the list.
+        onConductRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__conductRequest =
+            handler;
+          return () => {};
+        },
+        conductAnswer: async (
+          id: string,
+          content: string | null,
+          error: string | null,
+        ) => {
+          const w = window as unknown as { __conductAnswers?: unknown[] };
+          (w.__conductAnswers ??= []).push({ id, content, error });
+        },
+        worktreeAdd: async (project: string, name: string) =>
+          `${project}/.claude/worktrees/${name}`,
         // The record of what is on screen, for a test to read back.
         setSelection: async (project: string, selection: unknown) => {
           (window as unknown as Record<string, unknown>).__selection = {

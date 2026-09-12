@@ -2,14 +2,14 @@
 //! place in a file.
 //!
 //! `agent-workbench-remote mcp` speaks the Model Context Protocol over
-//! stdin and stdout, one JSON-RPC message a line, and offers the app's
-//! own tools and the tools of the plugins running here. A call appends a
-//! request to the log the core tails; the window does the rest, or, for a
-//! plugin's tool, the plugin's process does, and the call waits here for
-//! the answer the core leaves it. The server also hands the agent a few
-//! lines of instruction when it starts, so nothing needs writing into the
-//! user's own instruction files for the tool to be used at the right
-//! moment.
+//! stdin and stdout, one JSON-RPC message a line, and offers the app's own
+//! tools, the tools one session starts and directs the others with, and
+//! the tools of the plugins running here. A call appends a request to the
+//! log the core tails; the window does the rest, or, for a plugin's tool,
+//! the plugin's process does, and the call waits here for the answer the
+//! core leaves it. The server also hands the agent a few lines of
+//! instruction when it starts, so nothing needs writing into the user's
+//! own instruction files for the tool to be used at the right moment.
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -19,14 +19,14 @@ use serde_json::{json, Value};
 
 use crate::plugins::{self, PublishedTool};
 use crate::show::{
-    self, resolve, Answer, DiffRequest, NotifyRequest, PresentRequest, Request, ShowRequest,
-    TerminalRequest, ToolRequest, MEDIA_EXTENSIONS,
+    self, resolve, Answer, ConductRequest, DiffRequest, NotifyRequest, PresentRequest, Request,
+    ShowRequest, TerminalRequest, ToolRequest, CONDUCT_TOOLS, MEDIA_EXTENSIONS,
 };
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// What the agent is told when it connects.
-pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress.";
+pub const INSTRUCTIONS: &str = "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress. When the user asks for work across projects or for several things at once, start a session for each with the start tool and wait on them, rather than doing it all here.";
 
 /// The app's own tools, as the agent sees them.
 pub fn tools() -> Vec<Value> {
@@ -40,9 +40,38 @@ pub fn tools() -> Vec<Value> {
     ]
 }
 
-/// How long a plugin has to answer a call before the agent is told it did
-/// not. A call that is over is over: the answer is dropped if it lands.
+/// How long a plugin or the app has to answer a call before the agent is
+/// told it did not. A call that is over is over: the answer is dropped if
+/// it lands.
 pub const ANSWER_WAIT: Duration = Duration::from_secs(60);
+
+/// How long the wait tool waits when the call names no seconds, and the
+/// most it waits whatever the call names.
+pub const WATCH_WAIT: Duration = Duration::from_secs(600);
+pub const WATCH_CAP: Duration = Duration::from_secs(1800);
+
+/// How long the waiting kinds of call may take. The wait tool is the one
+/// that sits there for as long as the agent asked; everything else is
+/// answered by something that is already running.
+#[derive(Debug, Clone, Copy)]
+pub struct Waits {
+    /// For a tool a plugin or the app answers.
+    pub answer: Duration,
+    /// For the wait tool, when the call names no seconds.
+    pub watching: Duration,
+    /// For the wait tool, the most it waits.
+    pub longest: Duration,
+}
+
+impl Default for Waits {
+    fn default() -> Self {
+        Self {
+            answer: ANSWER_WAIT,
+            watching: WATCH_WAIT,
+            longest: WATCH_CAP,
+        }
+    }
+}
 
 /// How often the answer is looked for while the call waits.
 const POLL: Duration = Duration::from_millis(50);
@@ -56,9 +85,11 @@ fn plugin_tools(home: &Path) -> Vec<PublishedTool> {
         .unwrap_or_default()
 }
 
-/// Every tool the agent may call: the app's own first, the plugins' after.
+/// Every tool the agent may call: the app's own first, the conductor's
+/// next, the plugins' after.
 fn all_tools(home: &Path) -> Vec<Value> {
     let mut listed = tools();
+    listed.extend(conductor_tools());
     for tool in plugin_tools(home) {
         listed.push(json!({
             "name": tool.name,
@@ -145,6 +176,123 @@ pub fn present_tool() -> Value {
     })
 }
 
+/// The conductor's tools, as the agent sees them: what one session calls
+/// to start and direct the others.
+pub fn conductor_tools() -> Vec<Value> {
+    vec![
+        projects_tool(),
+        sessions_tool(),
+        start_tool(),
+        send_tool(),
+        stop_tool(),
+        wait_tool(),
+        read_tool(),
+    ]
+}
+
+/// The projects tool as the agent sees it.
+pub fn projects_tool() -> Value {
+    json!({
+        "name": "projects",
+        "description": "The projects open in the user's Agent Workbench, each with its path and whether it is the one you are running in. Call it before starting a session somewhere else, so the project you name is one the app has open. It takes no arguments.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
+/// The sessions tool as the agent sees it.
+pub fn sessions_tool() -> Value {
+    json!({
+        "name": "sessions",
+        "description": "The sessions in the user's Agent Workbench: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. The ids here are what send, stop, wait and read take. Call it to see what is already running before starting anything.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": { "type": "string", "description": "A project's path, to list that project's sessions alone." }
+            }
+        }
+    })
+}
+
+/// The start tool as the agent sees it.
+pub fn start_tool() -> Value {
+    json!({
+        "name": "start",
+        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then call wait to hear how it went, and send to answer anything it asks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": { "type": "string", "description": "The project's path, as the projects tool gives it." },
+                "prompt": { "type": "string", "description": "What the session is to do, whole: it knows nothing of this conversation." },
+                "agent": { "type": "string", "enum": ["claude-code", "codex"], "description": "Which agent to run. The one this project last used when left out." },
+                "worktree": { "type": "boolean", "description": "True to run in a worktree of its own, on a branch named after it, so its changes stay off the branch the user is on." }
+            },
+            "required": ["project", "prompt"]
+        }
+    })
+}
+
+/// The send tool as the agent sees it.
+pub fn send_tool() -> Value {
+    json!({
+        "name": "send",
+        "description": "Sends a line to a session, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Call wait afterwards to hear what it does next.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "The session's id, as sessions or start gives it." },
+                "text": { "type": "string", "description": "The line to send." }
+            },
+            "required": ["session", "text"]
+        }
+    })
+}
+
+/// The stop tool as the agent sees it.
+pub fn stop_tool() -> Value {
+    json!({
+        "name": "stop",
+        "description": "Stops a session in the user's Agent Workbench. The session id is one the sessions or start tool answered with. For work that is finished or no longer wanted; a session that is merely waiting on a question is answered with send instead.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "The session's id, as sessions or start gives it." }
+            },
+            "required": ["session"]
+        }
+    })
+}
+
+/// The wait tool as the agent sees it.
+pub fn wait_tool() -> Value {
+    json!({
+        "name": "wait",
+        "description": "Waits until a session you started stops or asks a question, and says which one and what it said. It blocks and costs nothing while it waits, so wait rather than asking for the sessions again in a loop. With no session named it comes back for whichever of yours moves first. A question a session asks comes back here: relay it to the user, and answer it with the send tool. When nothing has happened by the time it gives up, it says so and you can call it again.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "One session to wait for. Any of the ones you started when left out." },
+                "seconds": { "type": "integer", "minimum": 1, "maximum": 1800, "description": "How long to wait before giving up. 600 when left out, 1800 at most." }
+            }
+        }
+    })
+}
+
+/// The read tool as the agent sees it.
+pub fn read_tool() -> Value {
+    json!({
+        "name": "read",
+        "description": "The recent turns of a session, what it was told and what it said, oldest first. Use it to catch up on a session you started before answering for it or telling the user how it went. The session id is one the sessions or start tool answered with.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "The session's id, as sessions or start gives it." },
+                "turns": { "type": "integer", "minimum": 1, "description": "How many of the latest turns to read." }
+            },
+            "required": ["session"]
+        }
+    })
+}
+
 /// The show tool as the agent sees it.
 pub fn tool() -> Value {
     json!({
@@ -189,16 +337,36 @@ pub fn serve(home: &Path) {
 
 /// One message in, at most one out: a notification gets no answer.
 pub fn handle(home: &Path, cwd: &Path, session: Option<&str>, line: &str) -> Option<Value> {
-    handle_within(home, cwd, session, line, ANSWER_WAIT)
+    handle_with(home, cwd, session, line, Waits::default())
 }
 
-/// One message in, with how long a plugin's tool has to answer.
+/// One message in, with how long a tool someone else answers has.
 pub fn handle_within(
     home: &Path,
     cwd: &Path,
     session: Option<&str>,
     line: &str,
     wait: Duration,
+) -> Option<Value> {
+    handle_with(
+        home,
+        cwd,
+        session,
+        line,
+        Waits {
+            answer: wait,
+            ..Waits::default()
+        },
+    )
+}
+
+/// One message in, with how long each kind of call may take.
+pub fn handle_with(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    line: &str,
+    waits: Waits,
 ) -> Option<Value> {
     // The directory as the window names it: a temporary directory's link
     // on macOS and a short name on Windows would not match the project.
@@ -225,7 +393,7 @@ pub fn handle_within(
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": all_tools(home) })),
-        "tools/call" => call(home, cwd, session, &params, wait),
+        "tools/call" => call(home, cwd, session, &params, waits),
         _ => return Some(error(id, -32601, &format!("no such method: {method}"))),
     };
     Some(match result {
@@ -249,7 +417,7 @@ fn call(
     cwd: &Path,
     session: Option<&str>,
     params: &Value,
-    wait: Duration,
+    waits: Waits,
 ) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -260,8 +428,61 @@ fn call(
         "selection" => selection_call(home, cwd),
         "terminal" => terminal_call(home, cwd, session, &arguments),
         "notify" => notify_call(home, cwd, session, &arguments),
-        _ => plugin_call(home, cwd, session, name, &arguments, wait),
+        _ if CONDUCT_TOOLS.contains(&name) => {
+            conduct_call(home, cwd, session, name, &arguments, waits)
+        }
+        _ => plugin_call(home, cwd, session, name, &arguments, waits.answer),
     }
+}
+
+/// How long a wait call waits: what it asked for, no longer than the most
+/// on offer, and the usual wait when it asked for nothing.
+fn waiting_for(arguments: &Value, waits: &Waits) -> Duration {
+    match arguments.get("seconds").and_then(Value::as_u64) {
+        Some(seconds) if seconds > 0 => Duration::from_secs(seconds).min(waits.longest),
+        _ => waits.watching,
+    }
+}
+
+/// One of the conductor's tools: the sessions are the app's, so the call
+/// goes in the log for the app to answer, and the answer comes back as a
+/// file named after the call.
+fn conduct_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    name: &str,
+    arguments: &Value,
+    waits: Waits,
+) -> Result<Value, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    show::append(
+        home,
+        &Request::Conduct(ConductRequest {
+            id: id.clone(),
+            tool: name.to_string(),
+            arguments: arguments.clone(),
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
+    let watching = name == "wait";
+    let wait = if watching {
+        waiting_for(arguments, &waits)
+    } else {
+        waits.answer
+    };
+    let Some(answer) = await_answer(home, &id, wait) else {
+        return Err(if watching {
+            "nothing happened within that time: no session stopped and none asked anything. Call wait again to go on waiting.".to_string()
+        } else {
+            format!("the app did not answer the {name} tool within a minute")
+        });
+    };
+    if let Some(error) = answer.error {
+        return Err(error);
+    }
+    Ok(json!({ "content": [{ "type": "text", "text": answer.content.unwrap_or_default() }] }))
 }
 
 /// A plugin's tool: the call goes in the log for the core to hand to the
@@ -621,6 +842,29 @@ mod tests {
         });
     }
 
+    /// Answers the conductor's call as it lands, the way the window does
+    /// once it has looked.
+    fn answer_the_conduct_call(home: &Path, answer: Answer) {
+        let home = home.to_path_buf();
+        std::thread::spawn(move || {
+            for _ in 0..200 {
+                let text = std::fs::read_to_string(show::requests_path(&home)).unwrap_or_default();
+                let call = text
+                    .lines()
+                    .rev()
+                    .find_map(|line| match show::classify(line) {
+                        Some(Request::Conduct(call)) => Some(call),
+                        _ => None,
+                    });
+                if let Some(call) = call {
+                    show::write_answer(&home, &call.id, &answer).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+    }
+
     #[test]
     fn lists_a_plugin_tool_after_the_app_s_own() {
         let home = home("plugin-list");
@@ -634,7 +878,7 @@ mod tests {
             .unwrap();
             listed["result"]["tools"].as_array().unwrap().clone()
         };
-        assert_eq!(ask(&home).len(), 6);
+        assert_eq!(ask(&home).len(), 13);
         publish_a_tool(&home);
         let listed = ask(&home);
         let names: Vec<&str> = listed
@@ -650,12 +894,19 @@ mod tests {
                 "selection",
                 "terminal",
                 "notify",
+                "projects",
+                "sessions",
+                "start",
+                "send",
+                "stop",
+                "wait",
+                "read",
                 "github_pr"
             ]
         );
-        assert_eq!(listed[6]["description"], "The branch's pull request.");
+        assert_eq!(listed[13]["description"], "The branch's pull request.");
         assert_eq!(
-            listed[6]["inputSchema"]["properties"]["state"]["type"],
+            listed[13]["inputSchema"]["properties"]["state"]["type"],
             "string"
         );
     }
@@ -757,7 +1008,77 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["show", "diff", "present", "selection", "terminal", "notify"]
+            [
+                "show",
+                "diff",
+                "present",
+                "selection",
+                "terminal",
+                "notify",
+                "projects",
+                "sessions",
+                "start",
+                "send",
+                "stop",
+                "wait",
+                "read"
+            ]
+        );
+        assert!(instructions.contains("start tool"));
+    }
+
+    #[test]
+    fn the_conductor_s_tools_come_after_the_app_s_own_and_say_what_they_take() {
+        let home = home("conductor-list");
+        let listed = handle(
+            &home,
+            Path::new("/p"),
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        )
+        .unwrap();
+        let listed = listed["result"]["tools"].as_array().unwrap().clone();
+        assert_eq!(listed.len(), 13);
+        let named = |name: &str| {
+            listed
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap()
+                .clone()
+        };
+        let start = named("start");
+        assert_eq!(
+            start["inputSchema"]["required"],
+            json!(["project", "prompt"])
+        );
+        assert_eq!(
+            start["inputSchema"]["properties"]["agent"]["enum"],
+            json!(["claude-code", "codex"])
+        );
+        assert_eq!(
+            start["inputSchema"]["properties"]["worktree"]["type"],
+            "boolean"
+        );
+        assert!(start["description"]
+            .as_str()
+            .unwrap()
+            .contains("on its own"));
+        let wait = named("wait");
+        assert_eq!(
+            wait["inputSchema"]["properties"]["seconds"]["maximum"],
+            1800
+        );
+        assert!(wait["description"].as_str().unwrap().contains("blocks"));
+        assert_eq!(
+            named("send")["inputSchema"]["required"],
+            json!(["session", "text"])
+        );
+        assert_eq!(named("stop")["inputSchema"]["required"], json!(["session"]));
+        assert_eq!(named("read")["inputSchema"]["required"], json!(["session"]));
+        assert_eq!(named("projects")["inputSchema"]["properties"], json!({}));
+        assert_eq!(
+            named("sessions")["inputSchema"]["properties"]["project"]["type"],
+            "string"
         );
     }
 
@@ -941,6 +1262,124 @@ mod tests {
             .contains("not a kind"));
         let none = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"present","arguments":{"files":[]}}}"#).unwrap();
         assert_eq!(none["result"]["isError"], true);
+    }
+
+    #[test]
+    fn a_start_call_lands_in_the_log_and_answers_with_what_the_app_said() {
+        let home = home("conduct-start");
+        answer_the_conduct_call(
+            &home,
+            Answer {
+                content: Some("Started session s-2.".into()),
+                error: None,
+            },
+        );
+        let answer = handle_within(&home, Path::new("/p"), Some("s-1"), r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"start","arguments":{"project":"/p","prompt":"Fix the flake","worktree":true}}}"#, Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "Started session s-2."
+        );
+        assert!(answer["result"]["isError"].is_null());
+        let Request::Conduct(call) = first(&home) else {
+            panic!("not a conduct request");
+        };
+        assert!(!call.id.is_empty());
+        assert_eq!(call.tool, "start");
+        assert_eq!(call.arguments["prompt"], "Fix the flake");
+        assert_eq!(call.arguments["worktree"], true);
+        assert_eq!(call.cwd, "/p");
+        assert_eq!(call.session.as_deref(), Some("s-1"));
+        // The answer is taken away once it has been read.
+        assert!(!show::answer_path(&home, &call.id).exists());
+    }
+
+    #[test]
+    fn the_app_s_error_on_a_conduct_call_comes_back_as_a_tool_error() {
+        let home = home("conduct-error");
+        answer_the_conduct_call(
+            &home,
+            Answer {
+                content: None,
+                error: Some("there is no project at /nowhere".into()),
+            },
+        );
+        let answer = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"start","arguments":{"project":"/nowhere","prompt":"go"}}}"#, Duration::from_secs(10)).unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "there is no project at /nowhere"
+        );
+    }
+
+    #[test]
+    fn an_app_that_does_not_answer_is_reported_to_the_agent() {
+        let home = home("conduct-silent");
+        let answer = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"sessions","arguments":{}}}"#, Duration::from_millis(150)).unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "the app did not answer the sessions tool within a minute"
+        );
+    }
+
+    #[test]
+    fn waiting_takes_the_seconds_the_call_names_and_says_when_nothing_happened() {
+        let home = home("conduct-wait");
+        let waits = Waits {
+            answer: Duration::from_millis(50),
+            watching: Duration::from_millis(60),
+            longest: Duration::from_millis(120),
+        };
+        // Half an hour asked for, and the cap is what it waits.
+        let started = Instant::now();
+        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"wait","arguments":{"seconds":1800}}}"#, waits).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(answer["result"]["isError"], true);
+        let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.starts_with("nothing happened within that time"),
+            "{text}"
+        );
+        let Request::Conduct(call) = first(&home) else {
+            panic!("not a conduct request");
+        };
+        assert_eq!(call.tool, "wait");
+        assert_eq!(call.arguments["seconds"], 1800);
+
+        // Asked for nothing, and the default is what it waits.
+        let home = self::home("conduct-wait-default");
+        let started = Instant::now();
+        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"wait","arguments":{}}}"#, waits).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(answer["result"]["isError"], true);
+
+        // A wait that is answered comes back with what the app said.
+        let home = self::home("conduct-wait-answered");
+        answer_the_conduct_call(
+            &home,
+            Answer {
+                content: Some("s-2 is asking: which branch?".into()),
+                error: None,
+            },
+        );
+        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"wait","arguments":{"seconds":9}}}"#, Waits::default()).unwrap();
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "s-2 is asking: which branch?"
+        );
+    }
+
+    #[test]
+    fn the_wait_is_what_the_call_asked_for_within_the_bounds() {
+        let waits = Waits::default();
+        assert_eq!(waiting_for(&json!({}), &waits), WATCH_WAIT);
+        assert_eq!(waiting_for(&json!({"seconds": 0}), &waits), WATCH_WAIT);
+        assert_eq!(waiting_for(&json!({"seconds": "ten"}), &waits), WATCH_WAIT);
+        assert_eq!(
+            waiting_for(&json!({"seconds": 30}), &waits),
+            Duration::from_secs(30)
+        );
+        assert_eq!(waiting_for(&json!({"seconds": 9000}), &waits), WATCH_CAP);
     }
 
     #[test]

@@ -217,8 +217,11 @@ impl Core {
             Some(home) => {
                 activity::watch(Arc::clone(&self.sink), hook::activity_path(home))?;
                 // A tool call in the log belongs to a plugin, not to the
-                // window: it goes to the process that owns the tool.
+                // window: it goes to the process that owns the tool. A
+                // conductor's call is the window's, which owns the
+                // sessions, and it answers through `conduct_answer`.
                 let plugins = self.plugins.clone();
+                let sink = Arc::clone(&self.sink);
                 crate::show::watch(
                     Arc::clone(&self.sink),
                     crate::show::requests_path(home),
@@ -227,6 +230,7 @@ impl Core {
                             plugins.call(request);
                         }
                     },
+                    move |request| events::emit(&sink, crate::show::CONDUCT_REQUEST, &request),
                 )?;
                 if let Some(plugins) = &self.plugins {
                     plugins.start_enabled();
@@ -429,6 +433,25 @@ impl Core {
 
     pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {
         crate::show::read_media(path)
+    }
+
+    /// The answer to a call on one of the conductor's tools, left where
+    /// the tool server that made the call is waiting for it.
+    pub fn conduct_answer(
+        &self,
+        id: &str,
+        content: Option<String>,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        let home = self.home.as_deref().ok_or("no home directory")?;
+        crate::show::write_answer(home, id, &crate::show::Answer { content, error })
+    }
+
+    /// A worktree of the project, on a branch of the same name, for a
+    /// session to work in without touching the branch the user is on.
+    /// Answers with where it is.
+    pub fn worktree_add(&self, project: &Path, name: &str) -> Result<String, String> {
+        git::worktree_add(project, name)
     }
 
     /// Starts watching a worktree, replacing whatever was being watched
