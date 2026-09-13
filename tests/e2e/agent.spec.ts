@@ -200,6 +200,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         write: async (_id: string, data: string) => {
           fake.writes.push(data);
         },
+        orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",
         resize: async (_id: string, cols: number, rows: number) => {
           fake.resizes.push({ cols, rows });
         },
@@ -950,6 +951,38 @@ test.describe("several projects", () => {
 test.describe("with codex installed too", () => {
   test.beforeEach(async ({ page }) => {
     await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
+  });
+
+  test("starts the first orchestrator session from the menu, agent chosen", async ({
+    page,
+  }) => {
+    // Nothing of the orchestrator's is drawn until it is asked for.
+    await expect(page.getByTestId("orchestrator-project")).toHaveCount(0);
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    // Its project appears with the choice of agent under it, and nothing
+    // has started until the choice is made.
+    await expect(page.getByTestId("orchestrator-project")).toBeVisible();
+    const options = page.getByTestId("agent-option");
+    await expect(options).toHaveCount(2);
+    expect(await spawns(page)).toHaveLength(0);
+    await options.nth(1).click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].agent).toBe("codex");
+    expect((await spawns(page))[0].project).toBe(
+      "/home/ada/.agent-workbench/orchestrator",
+    );
+  });
+
+  test("offers each agent from the agent pane when no session is open", async ({
+    page,
+  }) => {
+    const status = page.getByTestId("agent-status");
+    await expect(status).toContainText("start one with");
+    await expect(page.getByTestId("start-agent")).toHaveText("Claude Code");
+    await page.getByTestId("start-agent-codex").click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].agent).toBe("codex");
   });
 
   test("offers both agents and starts the one you pick", async ({ page }) => {

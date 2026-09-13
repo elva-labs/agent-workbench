@@ -107,7 +107,11 @@
   let pinned = $derived.by(() => {
     const dir = orchestrator.dir;
     if (dir === null) return null;
-    return conductors().length > 0 || historyFor(dir).length > 0 ? dir : null;
+    // Active counts too: choosing the agent for the first one happens
+    // under the project's own row, which has to be there to hold it.
+    const shows =
+      conductors().length > 0 || historyFor(dir).length > 0 || workspace.active === dir;
+    return shows ? dir : null;
   });
 
   const foldId = (project: string, group: Group) => `started:${project}:${group.id}`;

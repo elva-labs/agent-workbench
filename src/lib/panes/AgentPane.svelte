@@ -5,19 +5,21 @@
 
   import Pane from "$lib/components/Pane.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
-  import { core } from "$lib/core";
+  import { core, type AgentId } from "$lib/core";
   import {
     AGENTS,
     agent,
     agentLabel,
     applyDetect,
     detectFailed,
+    installed,
     unavailableReason,
   } from "$lib/agent.svelte";
   import { agentVisible, layout } from "$lib/layout.svelte";
   import {
     activeSession,
     create,
+    defaultAgent,
     launch,
     rang,
     sessions,
@@ -51,7 +53,32 @@
   function startAnother() {
     if (workspace.active !== null) create(workspace.active);
   }
+
+  function startWith(id: AgentId) {
+    if (workspace.active !== null) create(workspace.active, null, id);
+  }
+
+  /** The default agent for the active project, which is the one the plain
+      new-session button starts. */
+  let preferred = $derived(workspace.active === null ? null : defaultAgent(workspace.active));
 </script>
+
+<!-- The way to a session from here. With several agents installed the
+     choice is made on the spot, one button each, rather than the default
+     starting on its own; with one there is nothing to choose. -->
+{#snippet starters()}
+  {#if installed().length > 1}
+    {#each installed() as id (id)}
+      <button
+        onclick={() => startWith(id)}
+        data-testid={id === preferred ? "start-agent" : `start-agent-${id}`}
+        data-agent={id}>{agentLabel(id)}</button
+      >
+    {/each}
+  {:else}
+    <button onclick={startAnother} data-testid="start-agent">New session</button>
+  {/if}
+{/snippet}
 
 <Pane id="agent" {title} meta={statusLabel(current)}>
   <div class="wrap">
@@ -87,15 +114,17 @@
     {:else if current === null}
       <div class="overlay" data-testid="agent-status">
         <p class="message">
-          No session open. Resume a past one from the list, or start a new one.
+          {installed().length > 1
+            ? "No session open. Resume a past one from the list, or start one with"
+            : "No session open. Resume a past one from the list, or start a new one."}
         </p>
-        <button onclick={startAnother} data-testid="start-agent">New session</button>
+        {@render starters()}
       </div>
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{statusMessage(current)}</p>
         {#if current.status !== "starting"}
-          <button onclick={startAnother} data-testid="start-agent">New session</button>
+          {@render starters()}
         {/if}
       </div>
     {/if}
