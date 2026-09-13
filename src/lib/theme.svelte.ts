@@ -5,7 +5,7 @@
  * stamped as data-palette; teal is the one tokens.css is written in and
  * stamps nothing. Look: the shape of the chrome, stamped as data-look, with
  * terminal the one tokens.css is written in. Fonts: the terminal's family
- * and the interface's, stamped as data-mono and data-sans, with the Plex
+ * and the interface's, stamped as data-mono and data-sans, with the machine's own
  * pair the ones tokens.css is written in.
  */
 export type ThemeChoice = "light" | "dark" | "system";
@@ -62,16 +62,16 @@ export const LOOKS: LookInfo[] = [
 
 /** The families the terminal can draw with. */
 export const TERMINAL_FONTS: FontInfo<MonoName>[] = [
+  { name: "system", label: "System", family: "var(--mono-system)", hint: "what the machine has" },
   { name: "plex", label: "IBM Plex Mono", family: "var(--mono-plex)", hint: "" },
   { name: "jetbrains", label: "JetBrains Mono", family: "var(--mono-jetbrains)", hint: "" },
-  { name: "system", label: "System", family: "var(--mono-system)", hint: "what the machine has" },
 ];
 
 /** The families the chrome can be set in. */
 export const INTERFACE_FONTS: FontInfo<SansName>[] = [
+  { name: "system", label: "System", family: "var(--sans-system)", hint: "what the machine has" },
   { name: "plex", label: "IBM Plex Sans", family: "var(--sans-plex)", hint: "" },
   { name: "inter", label: "Inter", family: "var(--sans-inter)", hint: "" },
-  { name: "system", label: "System", family: "var(--sans-system)", hint: "what the machine has" },
 ];
 
 const KEY = "workbench.theme";
@@ -90,8 +90,8 @@ export const theme = $state<{
   choice: "system",
   palette: "teal",
   look: "terminal",
-  mono: "plex",
-  sans: "plex",
+  mono: "system",
+  sans: "system",
 });
 
 function isPalette(value: unknown): value is PaletteName {
@@ -197,12 +197,12 @@ function applyTheme() {
   } else {
     root.dataset.look = theme.look;
   }
-  if (theme.mono === "plex") {
+  if (theme.mono === "system") {
     delete root.dataset.mono;
   } else {
     root.dataset.mono = theme.mono;
   }
-  if (theme.sans === "plex") {
+  if (theme.sans === "system") {
     delete root.dataset.sans;
   } else {
     root.dataset.sans = theme.sans;

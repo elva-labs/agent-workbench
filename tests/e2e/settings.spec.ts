@@ -101,7 +101,7 @@ test("changes the terminal font, which the open terminals take at once, and keep
   };
 
   await terminal();
-  expect(await fontOf()).toContain("IBM Plex Mono");
+  expect(await fontOf()).toMatch(/^ui-monospace/);
 
   await page.keyboard.press(`${MOD}+,`);
   await page.getByTestId("mono-jetbrains").click();
@@ -125,18 +125,18 @@ test("changes the interface font, which repaints the chrome, and keeps it", asyn
         .getPropertyValue("--sans")
         .trim(),
     );
-  expect(await sansOf()).toContain("IBM Plex Sans");
+  expect(await sansOf()).toMatch(/^-apple-system/);
 
   await page.keyboard.press(`${MOD}+,`);
-  await page.getByTestId("sans-system").click();
-  await expect(page.locator("html")).toHaveAttribute("data-sans", "system");
-  expect(await sansOf()).toMatch(/^-apple-system/);
+  await page.getByTestId("sans-plex").click();
+  await expect(page.locator("html")).toHaveAttribute("data-sans", "plex");
+  expect(await sansOf()).toContain("IBM Plex Sans");
   await page.keyboard.press("Escape");
 
   await page.reload();
   await expect(page.locator(AGENT)).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute("data-sans", "system");
-  expect(await sansOf()).toMatch(/^-apple-system/);
+  await expect(page.locator("html")).toHaveAttribute("data-sans", "plex");
+  expect(await sansOf()).toContain("IBM Plex Sans");
 });
 
 // The vim preset moves between panes on h, j, k and l. The status bar and the

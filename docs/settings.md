@@ -19,9 +19,10 @@ same colours, so the appearance and the palette hold across either.
 ## Font
 
 Two families, chosen apart: the one the terminal draws in and the one the
-rest of the app is set in. The terminal has IBM Plex Mono, JetBrains Mono
-or the machine's own monospace; the interface has IBM Plex Sans, Inter or
-the machine's own. Each name is shown in its own face. A change reaches
+rest of the app is set in. Each starts on the machine's own, the monospace
+and the sans the system draws with; the terminal can have IBM Plex Mono or
+JetBrains Mono instead, and the interface IBM Plex Sans or Inter, all four
+shipped with the app. Each name is shown in its own face. A change reaches
 every open terminal at once, which measures its grid again and tells the
 process the size it now has, so there is nothing to restart.
 

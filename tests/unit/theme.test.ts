@@ -20,8 +20,8 @@ beforeEach(() => {
   theme.choice = "system";
   theme.palette = "teal";
   theme.look = "terminal";
-  theme.mono = "plex";
-  theme.sans = "plex";
+  theme.mono = "system";
+  theme.sans = "system";
   delete document.documentElement.dataset.theme;
   delete document.documentElement.dataset.palette;
   delete document.documentElement.dataset.look;
@@ -115,19 +115,19 @@ describe("setLook", () => {
 });
 
 describe("setMono", () => {
-  it("stamps data-mono for a family other than plex", () => {
+  it("stamps data-mono for a family other than the machine's", () => {
     setMono("jetbrains");
     expect(document.documentElement.dataset.mono).toBe("jetbrains");
-    setMono("system");
-    expect(document.documentElement.dataset.mono).toBe("system");
     setMono("plex");
+    expect(document.documentElement.dataset.mono).toBe("plex");
+    setMono("system");
     expect(document.documentElement.dataset.mono).toBeUndefined();
   });
 
   it("persists the family and restores it", () => {
     setMono("jetbrains");
     expect(localStorage.getItem("workbench.mono")).toBe("jetbrains");
-    theme.mono = "plex";
+    theme.mono = "system";
     loadTheme();
     expect(theme.mono).toBe("jetbrains");
     expect(document.documentElement.dataset.mono).toBe("jetbrains");
@@ -136,24 +136,24 @@ describe("setMono", () => {
   it("ignores a family it does not ship", () => {
     localStorage.setItem("workbench.mono", "comic");
     loadTheme();
-    expect(theme.mono).toBe("plex");
+    expect(theme.mono).toBe("system");
   });
 });
 
 describe("setSans", () => {
-  it("stamps data-sans for a family other than plex", () => {
+  it("stamps data-sans for a family other than the machine's", () => {
     setSans("inter");
     expect(document.documentElement.dataset.sans).toBe("inter");
-    setSans("system");
-    expect(document.documentElement.dataset.sans).toBe("system");
     setSans("plex");
+    expect(document.documentElement.dataset.sans).toBe("plex");
+    setSans("system");
     expect(document.documentElement.dataset.sans).toBeUndefined();
   });
 
   it("persists the family and restores it", () => {
     setSans("inter");
     expect(localStorage.getItem("workbench.sans")).toBe("inter");
-    theme.sans = "plex";
+    theme.sans = "system";
     loadTheme();
     expect(theme.sans).toBe("inter");
     expect(document.documentElement.dataset.sans).toBe("inter");
@@ -162,14 +162,14 @@ describe("setSans", () => {
   it("ignores a family it does not ship", () => {
     localStorage.setItem("workbench.sans", "comic");
     loadTheme();
-    expect(theme.sans).toBe("plex");
+    expect(theme.sans).toBe("system");
   });
 });
 
 describe("the font lists", () => {
   it("name every family and point at the stack it is set in", () => {
-    expect(TERMINAL_FONTS.map((font) => font.name)).toEqual(["plex", "jetbrains", "system"]);
-    expect(INTERFACE_FONTS.map((font) => font.name)).toEqual(["plex", "inter", "system"]);
+    expect(TERMINAL_FONTS.map((font) => font.name)).toEqual(["system", "plex", "jetbrains"]);
+    expect(INTERFACE_FONTS.map((font) => font.name)).toEqual(["system", "plex", "inter"]);
     for (const font of TERMINAL_FONTS) expect(font.family).toBe(`var(--mono-${font.name})`);
     for (const font of INTERFACE_FONTS) expect(font.family).toBe(`var(--sans-${font.name})`);
   });
