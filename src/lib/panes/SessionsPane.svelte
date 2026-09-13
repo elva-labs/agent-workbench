@@ -548,7 +548,7 @@
             title="A project on another machine, over ssh"
             data-testid="open-remote"
           >
-            <span>Remote…</span>
+            <span>Open remote project…</span>
           </button>
           <button
             role="menuitem"
