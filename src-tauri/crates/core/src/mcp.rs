@@ -243,7 +243,7 @@ pub fn projects_tool() -> Value {
 pub fn sessions_tool() -> Value {
     json!({
         "name": "sessions",
-        "description": "The sessions in the user's Agent Workbench: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. Call it to see what is already running before starting anything. Send, stop, wait and read work on the sessions you started; the rest are the user's own, listed so you know what is going on and stay out of its way.",
+        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
         "inputSchema": {
             "type": "object",
             "properties": {

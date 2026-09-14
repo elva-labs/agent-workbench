@@ -26,9 +26,9 @@ own tools use, so hooks must be on for the project the calling session runs
 in. See [hooks](hooks.md).
 
 `projects` lists the open projects, the caller's own marked, so a session
-names a project the app actually has. `sessions` lists the sessions, each
-with its id, its project and worktree, its agent, what it is doing and the
-last line it left. `start` starts a session in a project with a first
+names a project the app actually has. `sessions` lists the sessions the
+caller started, each with its id, its project and worktree, its agent, what
+it is doing and the last line it left. `start` starts a session in a project with a first
 prompt, on a worktree of its own if it asks for one, and answers with the
 new session's id. `send` types a line into a running session. `wait` sits
 until a session stops working, asks for permission or ends, or until the
@@ -39,11 +39,10 @@ A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the fold, the board and the wait tool
 all say how it went.
 
-Those four act on the sessions the caller started and on no others. A
-session you started yourself is yours: another agent cannot type into it,
-stop it or read it, whatever it has been told to do by something it read.
-They are all still listed, so an orchestrator knows what is running and
-keeps out of its way.
+The tools act on the sessions the caller started and on no others. A
+session you started yourself is yours, on a subject of your own: another
+agent cannot type into it, stop it, read it or so much as list it,
+whatever it has been told to do by something it read.
 
 ## What the user is asked
 

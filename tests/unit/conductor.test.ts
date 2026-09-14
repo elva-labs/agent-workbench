@@ -199,7 +199,7 @@ describe("the projects tool", () => {
 
 describe("the sessions tool", () => {
   it("gives each session its id, name, project, agent, state and line", async () => {
-    const session = live(A, "pty-1", "sid-1");
+    const session = own(A, "pty-1", "sid-1");
     session.title = "fix the cache";
     session.note = "which cache did you mean?";
     session.needs = "permission";
@@ -212,26 +212,36 @@ describe("the sessions tool", () => {
   it("names the worktree a session runs in", async () => {
     const session = create(A, null, "claude-code", `${A}/.worktrees/fix`);
     started(session.key, "pty-1", "sid-1");
+    conductor.startedBy[session.key] = A;
     await handle(call("sessions"));
     expect(last().content).toContain(`worktree ${A}/.worktrees/fix`);
   });
 
   it("leaves out a session with no id yet, since an id is how it is named", async () => {
-    create(A, null, "claude-code", null);
+    const row = create(A, null, "claude-code", null);
+    conductor.startedBy[row.key] = A;
     await handle(call("sessions"));
-    expect(last().content).toBe("No sessions are open in the workbench.");
+    expect(last().content).toBe("You have started no sessions.");
+  });
+
+  it("lists the sessions the caller started and none of the user's own", async () => {
+    own(A, "pty-1", "sid-1");
+    live(A, "pty-2", "sid-2");
+    await handle(call("sessions"));
+    expect(last().content).toContain("sid-1");
+    expect(last().content).not.toContain("sid-2");
   });
 
   it("lists one project's sessions when it is asked for one", async () => {
-    live(A, "pty-1", "sid-1");
-    live(B, "pty-2", "sid-2");
+    own(A, "pty-1", "sid-1");
+    own(B, "pty-2", "sid-2");
     await handle(call("sessions", { project: B }));
     expect(last().content).toContain("sid-2");
     expect(last().content).not.toContain("sid-1");
   });
 
   it("says what a session is doing", async () => {
-    const session = live(A, "pty-1", "sid-1");
+    const session = own(A, "pty-1", "sid-1");
     await handle(call("sessions"));
     expect(last().content).toContain("waiting");
     session.working = true;
@@ -573,11 +583,11 @@ describe("a session the caller did not start", () => {
     expect(last().error).toContain("was not started by you");
   });
 
-  it("is still listed, so the caller knows what is running", async () => {
+  it("is not even listed", async () => {
     theirs();
     await handle(call("sessions"));
     expect(last().error).toBeNull();
-    expect(last().content).toContain("sid-9");
+    expect(last().content).toBe("You have started no sessions.");
   });
 });
 

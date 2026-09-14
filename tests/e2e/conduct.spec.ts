@@ -142,13 +142,14 @@ test.describe("the conductor", () => {
       "call the notify tool with one line saying which",
     );
 
-    // Both sessions are there to be listed, the new one included.
+    // The new session is listed as the caller's own; the caller itself,
+    // which the user started, is not.
     await push(page, { id: "c-2", tool: "sessions", session: "session-1" });
     await expect.poll(() => answerTo(page, "c-2")).not.toBeNull();
     const listed = (await answerTo(page, "c-2"))!.content ?? "";
-    expect(listed.split("\n")).toHaveLength(2);
-    expect(listed).toContain("session-1");
+    expect(listed.split("\n")).toHaveLength(1);
     expect(listed).toContain("session-2");
+    expect(listed).not.toContain("session-1  ");
     expect(listed).toContain(PROJECT);
   });
 

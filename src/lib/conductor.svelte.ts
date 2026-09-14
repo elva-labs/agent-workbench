@@ -174,13 +174,18 @@ function projectOf(cwd: string): string | null {
 
 /** The sessions, one project's or all of them. A session with no id yet
     is left out: the id is how the agent names one. */
+/** The caller's own sessions, the ones it started: the user's own are on
+    their own subjects, and a session directing work has no business in
+    them, not even to know what they are. */
 function sessionLines(request: ConductRequest): string {
   const only = text(request, "project");
   const listed = sessions.all.filter(
     (session) =>
-      session.id !== null && (only === null || session.project === only),
+      session.id !== null &&
+      mine(request, session) &&
+      (only === null || session.project === only),
   );
-  if (listed.length === 0) return "No sessions are open in the workbench.";
+  if (listed.length === 0) return "You have started no sessions.";
   return listed.map(describe).join("\n");
 }
 
