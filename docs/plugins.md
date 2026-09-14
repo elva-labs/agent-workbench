@@ -231,10 +231,12 @@ the fields it needs, one or two, a line of text or a choice among named
 options, and the app asks in a small dialog of its own. A section can
 carry actions of its own too, "Commit", "Pull". A folded header shows
 nothing but the button to the plugin's page; the actions appear once it is
-open, and a group's appear once the group is. Enter on a row runs its
-default action; the rest show on hover and under the cursor, as the stop
-button on a process does. The tree's cursor walks a plugin's rows and its
-group lines as it walks the others.
+open, and a group's appear once the group is. The title and the detail
+beside it keep their text, so the actions a narrow pane has no room for
+are found under a "⋯" button at the end of the line. Enter on a row runs
+its default action; the rest show on hover and under the cursor, as the
+stop button on a process does. The tree's cursor walks a plugin's rows and
+its group lines as it walks the others.
 
 A section stands while it has rows, actions or a line of detail, so a
 clean tree still shows the branch and what can be done to it, and goes

@@ -1051,6 +1051,70 @@ test.describe("the file viewer", () => {
     await expect.poll(() => actionsTaken(page)).toEqual([["new", null]]);
   });
 
+  // A header with more actions than a narrow pane can hold: the label keeps
+  // all of its text and what is left over is found under a "⋯" at the end
+  // of the line, until the pane is wide enough to take them back.
+  test("moves the head actions a narrow pane cannot hold into a menu", async ({
+    page,
+  }) => {
+    await pushSection(page, {
+      section: "status",
+      title: "Git",
+      detail: "main, 2 ahead",
+      rows: CHECKS,
+      actions: [
+        { id: "commit", label: "Commit", input: null },
+        { id: "pull", label: "Pull", input: null },
+        { id: "push", label: "Push", input: null },
+        { id: "stash", label: "Stash", input: null },
+        { id: "fetch", label: "Fetch", input: null },
+        { id: "refresh", label: "Refresh", input: null },
+      ],
+    });
+    await page.setViewportSize({ width: 760, height: 720 });
+
+    const fold = page.getByTestId("plugin-fold");
+    await fold.click();
+    await expect(page.getByTestId("plugin-row")).toHaveCount(2);
+    // The label is not what gives way: it still says the branch.
+    await expect(fold).toContainText("Git · main, 2 ahead (2)");
+
+    const online = page.getByTestId("plugin-section-action");
+    const more = page.getByTestId("plugin-actions-more");
+    await expect(more).toBeVisible();
+    const fits = await online.count();
+    expect(fits).toBeGreaterThan(0);
+    expect(fits).toBeLessThan(6);
+
+    // The rest are in the menu the button opens, and Escape closes it.
+    await more.click();
+    const inMenu = page.getByTestId("plugin-menu-action");
+    await expect(inMenu).toHaveCount(6 - fits);
+    await page.keyboard.press("Escape");
+    await expect(inMenu).toHaveCount(0);
+
+    // Taking one reaches the plugin and closes the menu behind it.
+    await more.click();
+    await inMenu.last().click();
+    await expect(inMenu).toHaveCount(0);
+    await expect.poll(() => actionsTaken(page)).toEqual([["refresh", null]]);
+
+    // Room for every one of them: they go back on the line and the "⋯" goes.
+    await page.setViewportSize({ width: 1400, height: 900 });
+    const handle = page.getByRole("separator", { name: "Resize changes" });
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 400, box.y + box.height / 2, {
+      steps: 8,
+    });
+    await page.mouse.up();
+
+    await expect(online).toHaveCount(6);
+    await expect(more).toHaveCount(0);
+    await expect(fold).toContainText("Git · main, 2 ahead (2)");
+  });
+
   test("walks the cursor through a plugin's group lines", async ({ page }) => {
     await pushSection(page, {
       section: "status",

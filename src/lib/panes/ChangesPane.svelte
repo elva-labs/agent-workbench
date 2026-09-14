@@ -1,6 +1,7 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
   import FileTree, { type Beyond } from "$lib/components/FileTree.svelte";
+  import FoldHead from "$lib/components/FoldHead.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
   import SearchResults from "$lib/components/SearchResults.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
@@ -1019,48 +1020,35 @@
               {@const page = pluginViewOf(group.key)}
               {@const head = group.sections[0]}
               <section class="section" class:open data-plugin={group.key} data-testid="plugin-section">
-                <div class="section-head">
-                  <button
-                    id={pluginFoldId(group.key)}
-                    class="fold"
-                    class:cursor={cursorId === pluginFoldId(group.key)}
-                    tabindex="-1"
-                    onpointerdown={(e) => e.preventDefault()}
-                    onclick={() => {
-                      sectionCursor = sectionEntries.findIndex(
-                        (entry) => entry.kind === "plugin-head" && entry.group === group.key,
-                      );
-                      toggleSection(group.key);
-                    }}
-                    aria-expanded={open}
-                    data-testid="plugin-fold"
-                  >
-                    {@render foldLabel(open, group.title, group.detail, group.count)}
-                  </button>
-                  <span class="head-actions">
-                    {#if page !== null}
-                      <button
-                        class="head-action"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => openPluginView(page.key, page.project)}
-                        data-testid="plugin-view-open">View</button
-                      >
-                    {/if}
-                    {#if open}
-                      {#each head.actions as action (action.id)}
-                        <button
-                          class="head-action"
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => act(head, action, null)}
-                          data-action={action.id}
-                          data-testid="plugin-section-action">{action.label}</button
-                        >
-                      {/each}
-                    {/if}
-                  </span>
-                </div>
+                {#snippet viewButton()}
+                  {#if page !== null}
+                    <button
+                      class="head-action"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => openPluginView(page.key, page.project)}
+                      data-testid="plugin-view-open">View</button
+                    >
+                  {/if}
+                {/snippet}
+                <FoldHead
+                  {open}
+                  title={group.title}
+                  detail={group.detail}
+                  count={group.count}
+                  actions={head.actions}
+                  onToggle={() => {
+                    sectionCursor = sectionEntries.findIndex(
+                      (entry) => entry.kind === "plugin-head" && entry.group === group.key,
+                    );
+                    toggleSection(group.key);
+                  }}
+                  onAct={(action) => act(head, action, null)}
+                  foldId={pluginFoldId(group.key)}
+                  cursor={cursorId === pluginFoldId(group.key)}
+                  testId="plugin-fold"
+                  lead={page === null ? undefined : viewButton}
+                />
                 {#if notice !== null}
                   <p class="section-notice" data-testid="plugin-notice">{notice}</p>
                 {/if}
@@ -1076,35 +1064,22 @@
                         data-section={section.section}
                         data-testid="plugin-group"
                       >
-                        <button
-                          class="fold group-fold"
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => {
+                        <FoldHead
+                          open={lineIsOpen}
+                          title={section.title}
+                          detail={section.detail}
+                          count={section.rows.length}
+                          actions={section.actions}
+                          onToggle={() => {
                             sectionCursor = sectionEntries.findIndex(
                               (entry) => entry.id === pluginGroupId(section.key),
                             );
                             setSectionOpen(section.key, !lineIsOpen);
                           }}
-                          aria-expanded={lineIsOpen}
-                          data-testid="plugin-group-fold"
-                        >
-                          {@render foldLabel(lineIsOpen, section.title, section.detail, section.rows.length)}
-                        </button>
-                        {#if lineIsOpen}
-                          <span class="head-actions">
-                            {#each section.actions as action (action.id)}
-                              <button
-                                class="head-action"
-                                tabindex="-1"
-                                onpointerdown={(e) => e.preventDefault()}
-                                onclick={() => act(section, action, null)}
-                                data-action={action.id}
-                                data-testid="plugin-section-action">{action.label}</button
-                              >
-                            {/each}
-                          </span>
-                        {/if}
+                          onAct={(action) => act(section, action, null)}
+                          testId="plugin-group-fold"
+                          group
+                        />
                       </li>
                       {#if lineIsOpen}
                         {@render pluginRows(section, true)}
@@ -1127,19 +1102,6 @@
   {/if}
 </Pane>
 
-
-<!-- A fold's line: the chevron, the title, the detail beside it, and the
-     count. The title keeps its text; the detail is cut first. -->
-{#snippet foldLabel(open: boolean, title: string, detail: string | null, count: number)}
-  <span class="chevron">{open ? "▾" : "▸"}</span>
-  <span class="fold-title">{title}</span>
-  {#if detail !== null}
-    <span class="fold-detail">· {detail}</span>
-  {/if}
-  {#if count > 0}
-    <span class="fold-count">({count})</span>
-  {/if}
-{/snippet}
 
 <!-- One section's rows, on the fold itself or a step in under a group. -->
 {#snippet pluginRows(section: PluginSection, deep: boolean)}
@@ -1310,8 +1272,7 @@
     flex: none;
   }
 
-  .section-head .fold,
-  .group-fold {
+  .section-head .fold {
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -1319,35 +1280,10 @@
     white-space: nowrap;
   }
 
-  /* The title says which plugin or section this is, so it keeps its own
-     text and the detail beside it is what gives way in a narrow pane. */
-  .fold-title,
-  .fold-count {
-    flex: none;
-  }
-
-  .fold-detail {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--ink-3);
-  }
-
   /* A further section inside a plugin's fold: a line of its own, lighter
      than a row, with its rows a step in under it. */
   .group-line {
     position: relative;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .group-fold {
-    padding: 3px var(--row-pad-x) 3px var(--row-indent);
-    font-size: var(--label-size);
-    color: var(--ink-3);
   }
 
   .plugin.deep .media-row {
@@ -1455,6 +1391,7 @@
     align-items: flex-start;
     gap: 1px;
     width: 100%;
+    min-width: 0;
     border: 0;
     background: none;
     text-align: left;
@@ -1471,7 +1408,7 @@
 
   /* The tree's cursor, drawn here as it is drawn on the tree's rows, while
      the keyboard is in the pane. */
-  .sections.keyed .fold.cursor,
+  .sections.keyed :global(.fold.cursor),
   .sections.keyed .media-row.cursor,
   .sections.keyed .process.cursor,
   .sections.keyed .group-line.cursor,
@@ -1487,10 +1424,21 @@
     max-width: 100%;
   }
 
+  /* The line under a row's name, a path more often than not: it breaks
+     wherever it must rather than widen the list, and keeps to two lines,
+     with the whole of it on the row's tooltip. */
   .media-meta {
     font-family: var(--chrome);
-    font-size: 10.5px;
-    color: var(--ink-3);
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--ink-2);
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* The board stands where the tree does while an orchestrator session is on
