@@ -202,6 +202,22 @@
       );
     });
 
+    // The browser writes a shifted letter into xterm's hidden textarea and
+    // xterm sends it on, but empties the textarea only on Enter, so with
+    // Shift held the letters pile up there, Backspace never touches them,
+    // and a later composition flushes the pile into the pty a second time.
+    // Emptied after every key instead, except mid-composition, where the
+    // text there is the composition's own.
+    const textarea = terminal.textarea;
+    if (textarea) {
+      let composing = false;
+      textarea.addEventListener("compositionstart", () => (composing = true));
+      textarea.addEventListener("compositionend", () => (composing = false));
+      textarea.addEventListener("keyup", () => {
+        if (!composing && textarea.value !== "") textarea.value = "";
+      });
+    }
+
     terminal.onData((data) => {
       // A write that fails is a process that has gone; the exit event is what
       // reports that, not every keystroke after it.
