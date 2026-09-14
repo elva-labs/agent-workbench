@@ -34,9 +34,10 @@ to another project brings that project forward.
 A row says what its agent is doing. Read off the pty, an agent at work
 streams for seconds on end and an agent waiting shows a still screen, give
 or take a redraw, so more than a redraw's worth of bytes in each of three
-seconds running is **working**, with the dot breathing, and two seconds of
-quiet after that is waiting. A single burst, a clock ticking over in the
-footer, is not work, and nothing the agent draws while starting counts
+seconds running is **working**, with the dot breathing, and two seconds
+without another such second is waiting. A single burst, a clock ticking
+over in the footer or a cursor blinking, is not work and holds nothing
+back, and nothing the agent draws while starting counts
 until you have sent it a line or a minute has passed. The dot is the whole of it on the
 row, with the words on hover and for a screen reader; the agent pane's
 header spells the state out. A session that goes quiet, ends, or rings for
@@ -56,9 +57,9 @@ hooks: working from the prompt, needs permission while the agent asks,
 with a hollow ring on the dot, waiting for you from the stop. The pty
 heuristic stands down for that session, except for two things the hooks
 cannot say: output after a permission prompt means it was granted and the
-agent went on, and a screen that goes still for five seconds while the
-hooks still say working means the turn ended without them, which is what
-an Escape at the keyboard does.
+agent went on, and a screen that goes still, give or take a redraw, for
+five seconds while the hooks still say working means the turn ended
+without them, which is what an Escape at the keyboard does.
 
 ## Names
 

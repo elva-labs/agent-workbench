@@ -895,16 +895,37 @@ describe("working, and waiting for you", () => {
     }
   });
 
-  it("keeps working while bytes keep coming", () => {
+  it("keeps working while more than a redraw keeps coming", () => {
     vi.useFakeTimers();
     try {
       const session = live(A, "pty-1");
       spokenTo(session);
       streams(session, WORK_WINDOWS);
       vi.advanceTimersByTime(QUIET_MS / 2);
-      output(session.key, 10);
+      output(session.key, WORK_BYTES);
       vi.advanceTimersByTime(QUIET_MS / 2 + 10);
       expect(session.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // An agent that has stopped and blinks a cursor, or ticks a footer, under
+  // a still screen: a few bytes every second, none of them work, and the
+  // quiet clock runs out through them.
+  it("is waiting despite a redraw now and then", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      spokenTo(session);
+      streams(session, WORK_WINDOWS);
+      expect(session.working).toBe(true);
+      for (let i = 0; i < 4; i += 1) {
+        vi.advanceTimersByTime(QUIET_MS / 3);
+        output(session.key, 12);
+      }
+      expect(session.working).toBe(false);
+      expect(statusLabel(session)).toBe("running");
     } finally {
       vi.useRealTimers();
     }
@@ -993,7 +1014,11 @@ describe("working, and waiting for you", () => {
       const session = live(A, "pty-1");
       exact("session-pty-1", "prompt");
       output(session.key, WORK_BYTES);
-      vi.advanceTimersByTime(QUIET_EXACT_MS);
+      // A redraw's worth every so often does not keep the turn alive.
+      for (let i = 0; i < 4; i += 1) {
+        vi.advanceTimersByTime(QUIET_EXACT_MS / 4);
+        output(session.key, 12);
+      }
       expect(session.working).toBe(false);
       expect(session.exact).toBe(true);
       // The next prompt is the hooks' word again.

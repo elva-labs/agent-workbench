@@ -715,8 +715,8 @@ export function statusLabel(session: Session | null): string {
  * seconds on end. An agent waiting shows a still screen, give or take a
  * redraw, and a redraw is one burst: a footer's clock ticking over, a
  * status line changing. So "working" is more than a redraw's worth of bytes
- * in each of three seconds running, and "waiting" is two seconds of quiet
- * after that. Nothing counts until the user has sent the agent a line or a
+ * in each of three seconds running, and "waiting" is two seconds after the
+ * last such second, a redraw or two in them notwithstanding. Nothing counts until the user has sent the agent a line or a
  * minute has passed since it came up: an agent starting draws plenty, its
  * spinner while it connects most of all, and none of it is work. A session
  * that goes quiet while nobody is looking at it, or rings for attention,
@@ -765,47 +765,53 @@ export function typed(ptyId: string, data: string) {
 export function output(key: string, bytes: number, now = Date.now()) {
   const session = byKey(key);
   if (session === null) return;
+  if (!session.exact && !session.engaged) {
+    if (session.startedAt === null || now - session.startedAt < GRACE_MS)
+      return;
+    session.engaged = true;
+  }
+  const pulse = counted(key, bytes, now);
+  // This second holds more than a redraw. Only such a second says anything:
+  // a footer ticking over or a cursor blinking under a still screen is a
+  // few bytes now and then, and holds nothing back.
+  const work = pulse.bytes >= WORK_BYTES;
   if (session.exact) {
     // The hooks say when it starts and stops. Output still says two things
     // they do not: a permission was granted and the agent went on, and a
     // turn the user cut short is over, which is the screen going still
     // while the hooks still say working.
-    if (session.needs !== null && bytes >= WORK_BYTES) {
+    if (session.needs !== null && work) {
       session.needs = null;
       session.working = true;
     }
-    if (session.working) stillLater(session);
+    if (session.working && work) stillLater(session);
     return;
   }
-  if (!session.engaged) {
-    if (session.startedAt === null || now - session.startedAt < GRACE_MS)
-      return;
-    session.engaged = true;
+  if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working) {
+    session.working = true;
   }
+  if (!work) return;
+  if (pulse.quiet !== null) clearTimeout(pulse.quiet);
+  pulse.quiet = setTimeout(() => settle(key), QUIET_MS);
+}
+
+/** The bytes added to the second they fall in, and the second before
+    closed: a busy one followed directly by this one extends the run, and a
+    whole second of quiet between them ends it. */
+function counted(key: string, bytes: number, now: number): Pulse {
   let pulse = pulses.get(key);
   if (pulse === undefined) {
     pulse = { bytes: 0, windowStart: now, run: 0, quiet: null };
     pulses.set(key, pulse);
   }
   if (now - pulse.windowStart > WINDOW_MS) {
-    // The window closed. A busy one followed directly by this one extends
-    // the run; a whole window of quiet between them ends it.
     const followed = now - pulse.windowStart < 2 * WINDOW_MS;
     pulse.run = followed && pulse.bytes >= WORK_BYTES ? pulse.run + 1 : 0;
     pulse.bytes = 0;
     pulse.windowStart = now;
   }
   pulse.bytes += bytes;
-  if (
-    pulse.bytes >= WORK_BYTES &&
-    pulse.run >= WORK_WINDOWS - 1 &&
-    !session.working
-  ) {
-    session.working = true;
-  }
-
-  if (pulse.quiet !== null) clearTimeout(pulse.quiet);
-  pulse.quiet = setTimeout(() => settle(key), QUIET_MS);
+  return pulse;
 }
 
 /** Starts, or starts over, the clock that ends a hooked session's working
