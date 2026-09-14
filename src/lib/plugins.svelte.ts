@@ -203,6 +203,8 @@ export function stateLabel(plugin: PluginInfo): string {
       return plugin.hello === null
         ? "running"
         : `running ${plugin.hello.version}`;
+    case "building":
+      return "building";
     case "starting":
       return "starting";
     case "stopped":

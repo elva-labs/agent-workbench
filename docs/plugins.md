@@ -19,7 +19,8 @@ name = "github"
 path = "github"
 description = "Pull requests, checks and review comments for the branch."
 version = "0.2.0"
-run = ["node", "main.js"]
+run = ["node", "dist/main.js"]
+build = ["npm", "run", "build"]
 tools = ["pr", "checks"]
 sections = ["Pull request"]
 view = "wide"
@@ -38,16 +39,21 @@ view = "full"
 Each plugin has a name, which is its identity everywhere, a path to its
 directory under the source, a line of description, a version, and the
 command that runs it: a runtime found on the login shell's PATH, `node`
-above all, with a script, or a binary per platform. What it declares,
-tools, sections, a view and how much room the view wants, is listed so the
-settings can say what enabling it means before it has run.
+above all, with a script, or a binary per platform. A plugin whose script
+is made rather than kept in the repository names the command that makes it
+as well, run where the plugin is and before the process starts; fetching
+what that command needs is the command's own business. What the plugin
+declares, tools, sections, a view and how much room the view wants, is
+listed so the settings can say what enabling it means before it has run.
 
 Sources are added in the settings, by URL or by path. Adding one clones
 it, pins the commit that was cloned, validates the manifest, and lists its
 plugins, every one of them off. Validation reads the manifest, checks that
 every path stays under the source, that the runtime the plugin runs on is
-on the login shell's PATH, that every declared name is a plain identifier,
-and that no plugin in any source has the name of another. A source that
+on the login shell's PATH, that the program its build runs is there too,
+that every declared name is a plain identifier, and that no plugin in any
+source has the name of another. A plugin with a build is not asked for its
+script at this point, since the build is what writes it. A source that
 fails says why on its row, "needs node", "manifest invalid at line 12",
 "could not clone", and adds nothing.
 
@@ -72,6 +78,15 @@ away, and the settings row says what happened to it, with the last line it
 wrote to its error output when it left one. One that dies five times in a
 row before greeting the app is broken rather than unlucky, and is left
 alone until it is turned off and on again.
+
+A plugin that declares a build is built before its process starts: the
+first time it is turned on, and again when its source is updated to a
+newer commit. The build runs where the plugin is, with your environment,
+and the settings row says "building" while it goes. A build that fails
+leaves the plugin failed, with the last line it wrote on the row, and
+nothing is started. Turning a plugin off and on again builds nothing a
+second time. A source that is a directory has no commit to remember a
+build by, so a plugin in one is built every time it starts.
 
 The process speaks JSON lines over its standard input and output, the
 same shape the daemon speaks. It is told about every open project on the
@@ -223,8 +238,9 @@ The daemon on the other machine runs no plugins of its own.
 ## Writing one
 
 A source can be a directory on the machine, added by path, with no clone,
-so a plugin is written against the running app: build it, turn it off and
-on again in the settings, and the next process is the new one. The
+so a plugin is written against the running app: turn it off and on again
+in the settings, and the next process is the new one, built first when the
+manifest says how. The
 manifest is read afresh each time, so a tool or a section added to it
 needs no more than that.
 

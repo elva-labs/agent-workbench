@@ -51,6 +51,9 @@ pub struct Declared {
     pub version: String,
     /// The program and its arguments, run in the plugin's directory.
     pub run: Vec<String>,
+    /// The command that produces what `run` needs, run where `run` is.
+    /// Empty for a plugin whose script is in its directory already.
+    pub build: Vec<String>,
     pub tools: Vec<String>,
     pub sections: Vec<String>,
     /// "wide" or "full", when the plugin has a view.
@@ -62,6 +65,9 @@ pub struct Declared {
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Off,
+    /// The build the manifest declares is running; the process comes after
+    /// it.
+    Building,
     Starting,
     Running,
     /// Went, and will be started again after a pause.
@@ -258,6 +264,10 @@ struct StoredSource {
     reference: Option<String>,
     #[serde(default)]
     enabled: Vec<String>,
+    /// The commit each plugin's build last ran at, by plugin name, so a
+    /// plugin is built once per commit of its source.
+    #[serde(default)]
+    built: HashMap<String, String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -321,6 +331,9 @@ struct Inner {
     /// The actions waiting for an answer, which tells an action's result
     /// from a tool call's.
     pending: Mutex<HashSet<String>>,
+    /// Where the build of a plugin with no process has got to: building,
+    /// or the build that failed. What a row says until a process is there.
+    building: Mutex<HashMap<Key, (State, Option<String>)>>,
     /// The projects open on this machine, as the window last said.
     projects: Mutex<Vec<String>>,
     /// The agents' ptys, by pty id, so a session that ends is named by the
@@ -386,7 +399,8 @@ fn plain_reference(reference: &str) -> bool {
 }
 
 /// Reads and checks a source's manifest: every path under the source,
-/// every runtime on the login shell's PATH, every name a plain identifier.
+/// every runtime and every build's program on the login shell's PATH,
+/// every name a plain identifier.
 pub fn read_manifest(
     source: &Path,
     vars: &HashMap<String, String>,
@@ -467,7 +481,19 @@ pub fn read_manifest(
                 "plugin {name}: needs {program}, which is not on the PATH"
             ));
         }
-        if run.len() > 1 {
+        let build = strings("build")?;
+        if let Some(program) = build.first() {
+            if !Path::new(program).is_absolute()
+                && crate::env::find_on_path(vars, program).is_none()
+            {
+                return Err(format!(
+                    "plugin {name}: the build needs {program}, which is not on the PATH"
+                ));
+            }
+        }
+        // A plugin that declares a build is not asked for its script here:
+        // the build is what writes it, and it runs before the process does.
+        if run.len() > 1 && build.is_empty() {
             let script = &run[1];
             let script_path = Path::new(script);
             if !script.starts_with('-')
@@ -500,6 +526,7 @@ pub fn read_manifest(
             description: string("description").unwrap_or_default(),
             version: string("version").unwrap_or_else(|_| "0.0.0".to_string()),
             run,
+            build,
             tools,
             sections: strings("sections")?,
             view,
@@ -570,6 +597,7 @@ impl Plugins {
                 sections: Mutex::new(HashMap::new()),
                 views: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashSet::new()),
+                building: Mutex::new(HashMap::new()),
                 projects: Mutex::new(Vec::new()),
                 ptys: Mutex::new(HashMap::new()),
             }),
@@ -858,16 +886,26 @@ impl Inner {
             Ok(declared) => (declared, None),
             Err(error) => (Vec::new(), Some(error)),
         };
+        let building = self.building.lock().expect("plugins lock").clone();
         let running = self.running.lock().expect("plugins lock");
         let plugins = plugins
             .into_iter()
             .map(|declared| {
                 let enabled = source.enabled.contains(&declared.name);
-                let live = running.get(&(source.id.clone(), declared.name.clone()));
+                let key: Key = (source.id.clone(), declared.name.clone());
+                let live = running.get(&key);
+                // A plugin being built, or one whose build failed, has no
+                // process to say where it is.
+                let waiting = live.is_none().then(|| building.get(&key)).flatten();
                 PluginInfo {
                     enabled,
-                    state: live.map(|r| r.state.clone()).unwrap_or(State::Off),
-                    detail: live.and_then(|r| r.detail.clone()),
+                    state: live
+                        .map(|r| r.state.clone())
+                        .or_else(|| waiting.map(|(state, _)| state.clone()))
+                        .unwrap_or(State::Off),
+                    detail: live
+                        .and_then(|r| r.detail.clone())
+                        .or_else(|| waiting.and_then(|(_, detail)| detail.clone())),
                     hello: live.and_then(|r| r.hello.clone()),
                     declared,
                 }
@@ -945,6 +983,7 @@ impl Inner {
             location: location.clone(),
             reference: reference.map(str::to_string),
             enabled: Vec::new(),
+            built: HashMap::new(),
         };
         let dir = self.dir_of(&source);
         if kind == "git" {
@@ -1112,6 +1151,130 @@ impl Inner {
         }
     }
 
+    /// The commit a source is at. A directory has none, so a plugin in one
+    /// is built every time it starts, which is what writing one wants.
+    fn source_commit(&self, source: &StoredSource) -> Option<String> {
+        if source.kind != "git" {
+            return None;
+        }
+        commit_at(&self.dir_of(source), "HEAD").ok()
+    }
+
+    /// Whether the build has to run: a plugin is built once per commit of
+    /// its source.
+    fn needs_build(&self, source: &StoredSource, name: &str) -> bool {
+        let Some(commit) = self.source_commit(source) else {
+            return true;
+        };
+        self.stored_source(&source.id)
+            .map(|stored| stored.built.get(name) != Some(&commit))
+            .unwrap_or(true)
+    }
+
+    fn remember_built(&self, source_id: &str, name: &str, commit: &str) {
+        let mut stored = self.stored.lock().expect("plugins lock");
+        if let Some(source) = stored.sources.iter_mut().find(|s| s.id == source_id) {
+            source.built.insert(name.to_string(), commit.to_string());
+        }
+        let _ = self.save(&stored);
+    }
+
+    /// Runs a plugin's build where the plugin is, with the user's
+    /// environment. What it wrote is the reason it failed.
+    fn build(
+        &self,
+        dir: &Path,
+        declared: &Declared,
+        vars: &HashMap<String, String>,
+    ) -> Result<(), String> {
+        let program = &declared.build[0];
+        let resolved = if Path::new(program).is_absolute() {
+            PathBuf::from(program)
+        } else {
+            crate::env::find_on_path(vars, program)
+                .ok_or_else(|| format!("build failed: needs {program}"))?
+        };
+        let output = Command::new(&resolved)
+            .args(&declared.build[1..])
+            .current_dir(dir.join(&declared.path))
+            .env_clear()
+            .envs(vars)
+            .env("WORKBENCH_PLUGIN", &declared.name)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("build failed: could not run {program}: {e}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let last = |bytes: &[u8]| {
+            String::from_utf8_lossy(bytes)
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .map(|line| line.trim().to_string())
+        };
+        Err(
+            match last(&output.stderr).or_else(|| last(&output.stdout)) {
+                Some(line) => format!("build failed: {line}"),
+                None => match output.status.code() {
+                    Some(code) => format!("build failed with code {code}"),
+                    None => "build failed".to_string(),
+                },
+            },
+        )
+    }
+
+    /// The build, and the process after it. On a thread of its own: a build
+    /// takes as long as it takes, and the window asked for none of it.
+    fn built_then_launched(
+        self: &Arc<Self>,
+        source: StoredSource,
+        name: String,
+        declared: Declared,
+        failures: u32,
+    ) {
+        let key: Key = (source.id.clone(), name.clone());
+        let dir = self.dir_of(&source);
+        let vars = Self::vars();
+        let mut trouble = self.build(&dir, &declared, &vars).err();
+        if trouble.is_none() {
+            if let Some(commit) = self.source_commit(&source) {
+                self.remember_built(&source.id, &name, &commit);
+            }
+            // What the build was for: the script the plugin runs.
+            if let Some(script) = declared.run.get(1) {
+                let path = Path::new(script);
+                if !script.starts_with('-')
+                    && !path.is_absolute()
+                    && !dir.join(&declared.path).join(path).exists()
+                {
+                    trouble = Some(format!("{script} is not in its directory"));
+                }
+            }
+        }
+        if let Some(why) = trouble {
+            self.building
+                .lock()
+                .expect("plugins lock")
+                .insert(key, (State::Failed, Some(why.clone())));
+            self.tell(&source.id, &name, State::Failed, Some(why), None);
+            return;
+        }
+        // A build is long enough for the plugin to have been turned off
+        // while it ran.
+        let still_on = self
+            .stored_source(&source.id)
+            .map(|stored| stored.enabled.contains(&name))
+            .unwrap_or(false);
+        if !still_on {
+            self.building.lock().expect("plugins lock").remove(&key);
+            return;
+        }
+        self.launch(&source, &declared, failures);
+    }
+
     fn start(self: &Arc<Self>, source: &StoredSource, name: &str) {
         let key: Key = (source.id.clone(), name.to_string());
         let failures = {
@@ -1123,6 +1286,12 @@ impl Inner {
             }
             running.get(&key).map(|r| r.failures).unwrap_or(0)
         };
+        if matches!(
+            self.building.lock().expect("plugins lock").get(&key),
+            Some((State::Building, _))
+        ) {
+            return;
+        }
         let dir = self.dir_of(source);
         let vars = Self::vars();
         let declared = match read_manifest(&dir, &vars) {
@@ -1142,6 +1311,30 @@ impl Inner {
             );
             return;
         };
+        if !declared.build.is_empty() && self.needs_build(source, name) {
+            self.building
+                .lock()
+                .expect("plugins lock")
+                .insert(key, (State::Building, None));
+            self.tell(&source.id, name, State::Building, None, None);
+            let plugins = Arc::clone(self);
+            let source = source.clone();
+            let name = name.to_string();
+            std::thread::spawn(move || {
+                plugins.built_then_launched(source, name, declared, failures)
+            });
+            return;
+        }
+        self.launch(source, &declared, failures);
+    }
+
+    /// Starts the process and reads it until its output ends.
+    fn launch(self: &Arc<Self>, source: &StoredSource, declared: &Declared, failures: u32) {
+        let name = declared.name.as_str();
+        let key: Key = (source.id.clone(), name.to_string());
+        self.building.lock().expect("plugins lock").remove(&key);
+        let dir = self.dir_of(source);
+        let vars = Self::vars();
         let program = declared.run[0].clone();
         let resolved = if Path::new(&program).is_absolute() {
             PathBuf::from(&program)
@@ -1353,6 +1546,7 @@ impl Inner {
     /// Asks the process to stop, and ends it when it has not gone in time.
     fn stop(&self, source_id: &str, name: &str) {
         let key: Key = (source_id.to_string(), name.to_string());
+        self.building.lock().expect("plugins lock").remove(&key);
         let stdin = {
             let mut running = self.running.lock().expect("plugins lock");
             let Some(live) = running.get_mut(&key) else {
@@ -2075,6 +2269,17 @@ view = "wide"
         assert_eq!(declared[0].run, ["sh", "main.sh"]);
         assert_eq!(declared[0].tools, ["pr", "checks"]);
         assert_eq!(declared[0].view.as_deref(), Some("wide"));
+        assert!(declared[0].build.is_empty());
+
+        // The script a build writes is not in the source yet, and the
+        // manifest stands all the same.
+        let built = source_with(
+            "[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\", \"dist/main.sh\"]\nbuild = [\"sh\", \"build.sh\"]\n",
+            "declares-a-build",
+        );
+        let declared = read_manifest(&built, &vars()).unwrap();
+        assert_eq!(declared[0].run, ["sh", "dist/main.sh"]);
+        assert_eq!(declared[0].build, ["sh", "build.sh"]);
 
         let wrong = [
             ("", "no [[plugin]] entries"),
@@ -2083,6 +2288,7 @@ view = "wide"
             ("[[plugin]]\nname = \"github\"\npath = \"nowhere\"\nrun = [\"sh\"]\n", "no directory"),
             ("[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"no-such-runtime-xyz\"]\n", "not on the PATH"),
             ("[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\", \"missing.sh\"]\n", "not in its directory"),
+            ("[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\", \"dist/main.sh\"]\nbuild = [\"no-such-builder-xyz\", \"run\"]\n", "the build needs no-such-builder-xyz"),
             ("[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\"]\ntools = [\"Bad Tool\"]\n", "plain identifier"),
             ("[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\"]\nview = \"huge\"\n", "wide or full"),
             ("[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\"]\n[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\"]\n", "used twice"),
@@ -2796,6 +3002,148 @@ run = ["sh", "main.sh"]
             .unwrap_err();
         assert!(error.contains("no directory"), "{error}");
         assert_eq!(plugins.list().len(), 1);
+    }
+
+    /// A plugin whose script its build writes, and which greets once it is
+    /// run.
+    const GREETER: &str = r#"#!/bin/sh
+echo '{"type":"hello","name":"made","version":"1.0.0"}'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
+  esac
+done
+"#;
+
+    const BUILDS: &str = r#"
+[[plugin]]
+name = "made"
+path = "github"
+description = "Built before it runs."
+version = "1.0.0"
+run = ["sh", "made.sh"]
+build = ["sh", "build.sh"]
+"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn builds_a_plugin_before_it_runs_and_builds_it_again_when_the_source_moves() {
+        let home = std::env::temp_dir().join("workbench-plugins-build-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let counter = std::env::temp_dir().join("workbench-plugins-builds.txt");
+        let _ = std::fs::remove_file(&counter);
+        let upstream = source_with(BUILDS, "builds");
+        std::fs::write(upstream.join("github/greeter"), GREETER).unwrap();
+        std::fs::write(
+            upstream.join("github/build.sh"),
+            format!(
+                "#!/bin/sh\necho built >> {}\ncp greeter made.sh\n",
+                counter.display()
+            ),
+        )
+        .unwrap();
+        let g = |args: &[&str]| git(&upstream, args).unwrap();
+        g(&["init", "-q", "-b", "main"]);
+        g(&["config", "user.email", "t@example.com"]);
+        g(&["config", "user.name", "T"]);
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", "start"]);
+
+        // The script the plugin runs is not in the source: the manifest
+        // stands because a build is what writes it.
+        let recorder = Arc::new(Recorder::default());
+        let plugins = Plugins::new(&home, recorder.clone());
+        let added = plugins
+            .add(&format!("file://{}", upstream.display()), Some("main"))
+            .unwrap();
+        assert_eq!(added.plugins[0].declared.build, ["sh", "build.sh"]);
+
+        let builds = || -> usize {
+            std::fs::read_to_string(&counter)
+                .unwrap_or_default()
+                .lines()
+                .count()
+        };
+        let came_up = || {
+            for _ in 0..100 {
+                std::thread::sleep(Duration::from_millis(100));
+                if plugins.list()[0].plugins[0].state == State::Running {
+                    return true;
+                }
+            }
+            false
+        };
+        plugins.enable(&added.id, "made", true).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        assert_eq!(builds(), 1);
+        assert!(recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == PLUGIN_STATE && payload["state"] == "building"));
+
+        // Off and on again is the same commit, so the build is not run a
+        // second time.
+        plugins.enable(&added.id, "made", false).unwrap();
+        plugins.enable(&added.id, "made", true).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        assert_eq!(builds(), 1);
+
+        // A newer commit is a build of its own.
+        std::fs::write(upstream.join("github/extra.txt"), "x").unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", "more"]);
+        plugins.update(&added.id).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        assert_eq!(builds(), 2);
+        plugins.enable(&added.id, "made", false).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_build_that_fails_says_so_on_the_row_and_starts_nothing() {
+        let home = std::env::temp_dir().join("workbench-plugins-build-fails-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = source_with(BUILDS, "build-fails");
+        std::fs::write(
+            dir.join("github/build.sh"),
+            "#!/bin/sh\necho 'src/main.ts(3,1): error TS1005' >&2\nexit 2\n",
+        )
+        .unwrap();
+        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+
+        let settled = || -> PluginInfo {
+            for _ in 0..100 {
+                std::thread::sleep(Duration::from_millis(100));
+                let plugin = plugins.list().swap_remove(0).plugins.swap_remove(0);
+                if plugin.state == State::Failed {
+                    return plugin;
+                }
+            }
+            plugins.list().swap_remove(0).plugins.swap_remove(0)
+        };
+        plugins.enable(&added.id, "made", true).unwrap();
+        let failed = settled();
+        assert_eq!(failed.state, State::Failed);
+        assert_eq!(
+            failed.detail.as_deref(),
+            Some("build failed: src/main.ts(3,1): error TS1005")
+        );
+        assert!(plugins.tools().is_empty());
+
+        // A build that goes through and writes nothing is no better: the
+        // script it was for is still not there.
+        plugins.enable(&added.id, "made", false).unwrap();
+        std::fs::write(dir.join("github/build.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        plugins.enable(&added.id, "made", true).unwrap();
+        let failed = settled();
+        assert_eq!(
+            failed.detail.as_deref(),
+            Some("made.sh is not in its directory")
+        );
+        plugins.enable(&added.id, "made", false).unwrap();
     }
 
     #[test]

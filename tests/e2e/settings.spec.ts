@@ -393,6 +393,20 @@ test.describe("plugins", () => {
       "true",
     );
     await expect(page.getByTestId("plugin-state")).toContainText("starting");
+    // A plugin with a build is built before its process starts, and the row
+    // says so while it goes.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __pluginState: (event: unknown) => void }
+      ).__pluginState({
+        source: "src-1",
+        name: "github",
+        state: "building",
+        detail: null,
+        hello: null,
+      }),
+    );
+    await expect(page.getByTestId("plugin-state")).toContainText("building");
     // The core's word arrives: running, with the greeting's version.
     await page.evaluate(() =>
       (

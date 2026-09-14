@@ -113,11 +113,13 @@ export interface PluginInfo {
   description: string;
   version: string;
   run: string[];
+  /** The command that produces what `run` needs, empty when there is none. */
+  build: string[];
   tools: string[];
   sections: string[];
   view: "wide" | "full" | null;
   enabled: boolean;
-  state: "off" | "starting" | "running" | "stopped" | "failed";
+  state: "off" | "building" | "starting" | "running" | "stopped" | "failed";
   detail: string | null;
   hello: {
     name: string;

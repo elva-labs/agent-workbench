@@ -19,13 +19,16 @@ import {
 const SESSIONS = "section[data-pane='sessions']";
 const TREE = "[data-testid='file-tree']";
 const CHANGES = "section[data-pane='changes']";
-/** The plugin source the tier adds: a directory with one plugin in it,
+/** The plugin source the tier adds: a directory with two plugins in it,
     kept here as the fixture it is. */
 const PLUGIN_SOURCE = resolve(__dirname, "plugin");
-/** The plugin's row in the settings. `plugin-row` is the pane's word for a
+/** A plugin's row in the settings. `plugin-row` is the pane's word for a
     row of a section too, so every locator says which it means. */
-const SETTINGS_PLUGIN =
-  "[data-testid='settings'] [data-testid='plugin-row'][data-plugin='driverboard']";
+const settingsPlugin = (name: string) =>
+  `[data-testid='settings'] [data-testid='plugin-row'][data-plugin='${name}']`;
+const SETTINGS_PLUGIN = settingsPlugin("driverboard");
+/** The plugin whose script its build writes. */
+const SETTINGS_BUILT = settingsPlugin("driverbuilt");
 
 /**
  * The real binary, driven. Each `it` builds on the last: one app, one
@@ -577,6 +580,20 @@ describe("the real app", () => {
       },
       30_000,
       "the plugin was never started",
+    );
+
+    // The second plugin's script is in no checkout: its build writes it,
+    // and the process starts on what the build left behind.
+    const builtState = () =>
+      textOf(driver, `${SETTINGS_BUILT} [data-testid='plugin-state']`);
+    await driver
+      .findElement(By.css(`${SETTINGS_BUILT} [data-testid='plugin-on']`))
+      .click();
+    await driver.findElement(By.css("[data-testid='plugin-agree']")).click();
+    await driver.wait(
+      async () => (await builtState()).includes("running 0.4.0"),
+      60_000,
+      "the plugin its build writes never came up",
     );
     await closeSettings();
 

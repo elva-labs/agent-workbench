@@ -22,7 +22,8 @@ const github = (): PluginInfo => ({
   path: "github",
   description: "Pull requests.",
   version: "0.2.0",
-  run: ["/usr/local/bin/node", "main.js"],
+  run: ["/usr/local/bin/node", "dist/main.js"],
+  build: ["npm", "run", "build"],
   tools: ["pr", "checks"],
   sections: ["Pull request"],
   view: "wide",
@@ -147,6 +148,15 @@ describe("a plugin", () => {
       },
     });
     expect(stateLabel(plugins.sources[0].plugins[0])).toBe("running 0.2.0");
+    // A plugin with a build is built before its process starts.
+    stateChanged({
+      source: "src-1",
+      name: "github",
+      state: "building",
+      detail: null,
+      hello: null,
+    });
+    expect(stateLabel(plugins.sources[0].plugins[0])).toBe("building");
     stateChanged({
       source: "src-1",
       name: "github",
