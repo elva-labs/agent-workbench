@@ -52,6 +52,12 @@ impl Sessions {
     pub(crate) fn len(&self) -> usize {
         self.inner.lock().expect("sessions lock").len()
     }
+
+    /// Whether a pty is still here: it goes when its process ends or is
+    /// killed.
+    pub fn holds(&self, id: &str) -> bool {
+        self.inner.lock().expect("sessions lock").contains_key(id)
+    }
 }
 
 fn next_id() -> String {

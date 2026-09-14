@@ -317,6 +317,7 @@ impl Core {
             if let Some(home) = &self.home {
                 identify_later(
                     Arc::clone(&self.sink),
+                    Arc::clone(&self.sessions),
                     codex::home(home),
                     agent.to_string(),
                     project.to_path_buf(),
@@ -595,20 +596,27 @@ fn now_secs() -> u64 {
 }
 
 /// Watches for the id an agent mints for the session just spawned, and says
-/// so once it appears. Codex writes its thread to its index as it starts;
-/// a spawn that never gets that far is simply never identified.
+/// so once it appears. Codex writes its thread to its index when the first
+/// prompt is sent, which may be a while after the spawn: the index is read
+/// every half second for the first half minute and every few seconds after
+/// that, for as long as the pty lives.
 fn identify_later(
     sink: Arc<dyn Sink>,
+    sessions: Arc<Sessions>,
     codex_home: PathBuf,
     agent: String,
     project: PathBuf,
     started: u64,
     pty_id: String,
 ) {
+    if agent != "codex" {
+        return;
+    }
     std::thread::spawn(move || {
-        for _ in 0..60 {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            if agent != "codex" {
+        for looked in 0.. {
+            let pause = if looked < 60 { 500 } else { 5_000 };
+            std::thread::sleep(std::time::Duration::from_millis(pause));
+            if !sessions.holds(&pty_id) {
                 return;
             }
             // A second of slack: the index's clock and this one need not agree.
