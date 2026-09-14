@@ -170,6 +170,17 @@ describe("the projects tool", () => {
     expect(last().content).toBe(`${A}  one\n${B}  two  (this one)`);
   });
 
+  it("tells two projects of the same name apart the way the pane does", async () => {
+    workspace.open.push(
+      repo("/home/ada/work/dev-portal"),
+      repo("/home/ada/spike/dev-portal"),
+    );
+    await handle(call("projects"));
+    const lines = (last().content ?? "").split("\n");
+    expect(lines[2]).toBe("/home/ada/work/dev-portal  work/dev-portal");
+    expect(lines[3]).toBe("/home/ada/spike/dev-portal  spike/dev-portal");
+  });
+
   // A project opened inside another is the one a call from inside it is
   // for: the deepest match, not the first.
   it("takes the deepest project a caller is under", async () => {

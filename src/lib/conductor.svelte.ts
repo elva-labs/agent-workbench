@@ -35,7 +35,7 @@ import {
 import { screen } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
-import { workspace } from "$lib/workspace.svelte";
+import { projectLabel, workspace } from "$lib/workspace.svelte";
 
 /** How many sessions one caller may have running at a time. */
 export const CAP = 8;
@@ -147,9 +147,15 @@ function projectLines(request: ConductRequest): string {
   if (workspace.open.length === 0)
     return "No projects are open in the workbench.";
   const here = projectOf(request.cwd);
+  // The name is the one the pane shows: the folder's, with as much of the
+  // path above it as tells it from another open project called the same.
   return workspace.open
     .map((project) =>
-      [project.path, project.name, project.path === here ? "(this one)" : null]
+      [
+        project.path,
+        projectLabel(project.path),
+        project.path === here ? "(this one)" : null,
+      ]
         .filter((part) => part !== null)
         .join("  "),
     )

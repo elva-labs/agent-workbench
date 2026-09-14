@@ -30,7 +30,18 @@ export async function load(): Promise<void> {
     orchestrator.dir = await core().orchestratorDir();
   } catch {
     orchestrator.dir = null;
+    return;
   }
+  // The tools are what make an orchestrator one, and they reach an agent
+  // through the hooks and the tool server written into the directory it
+  // runs in. The directory is the app's own, so they are always there,
+  // whatever the projects were told about live updates.
+  await core()
+    .hookInstall(orchestrator.dir)
+    .catch(() => {
+      // A directory that cannot take them is one no session will get far
+      // in either; the session's own start says so.
+    });
 }
 
 /** A session in the orchestrator's own project. */

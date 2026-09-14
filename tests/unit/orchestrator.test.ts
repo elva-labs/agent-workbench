@@ -36,6 +36,7 @@ const fake = {
   dir: DIR as string | null,
   trees: {} as Record<string, Worktree[]>,
   removed: [] as string[],
+  hooked: [] as string[],
 };
 
 vi.mock("$lib/core", () => ({
@@ -43,6 +44,10 @@ vi.mock("$lib/core", () => ({
     async orchestratorDir() {
       if (fake.dir === null) throw new Error("no core");
       return fake.dir;
+    },
+    async hookInstall(project: string) {
+      fake.hooked.push(project);
+      return { installed: true, settings: "", events: "" };
     },
     async worktrees(project: string) {
       const trees = fake.trees[project];
@@ -116,6 +121,7 @@ beforeEach(() => {
   fake.dir = DIR;
   fake.trees = {};
   fake.removed = [];
+  fake.hooked = [];
   leftBehind.trees = [];
   leftBehind.loading = false;
   orchestrator.dir = DIR;
@@ -130,6 +136,12 @@ describe("the orchestrator's own project", () => {
     fake.dir = null;
     await load();
     expect(orchestrator.dir).toBeNull();
+  });
+
+  it("has the agent's tools written into it, whatever the projects chose", async () => {
+    orchestrator.dir = null;
+    await load();
+    expect(fake.hooked).toEqual([DIR]);
   });
 
   it("holds the sessions that run in it, and no others", () => {
