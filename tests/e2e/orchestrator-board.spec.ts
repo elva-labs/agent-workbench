@@ -300,13 +300,15 @@ test.describe("the orchestrator's board", () => {
     await field.fill("run the unit tests");
     await field.press("Enter");
 
-    // The line reached the session's terminal as one typed line, and the
-    // field closed behind it.
+    // The line reached the session's terminal as one typed line with Enter
+    // on its own after it, and the field closed behind it.
     await expect(field).toHaveCount(0);
-    expect((await written(page)).at(-1)).toEqual([
-      "pty-2",
-      "run the unit tests\r",
-    ]);
+    await expect
+      .poll(async () => (await written(page)).slice(-2))
+      .toEqual([
+        ["pty-2", "run the unit tests"],
+        ["pty-2", "\r"],
+      ]);
 
     // Escape leaves the field without typing anything.
     await page.getByTestId("send-started-row").click();
@@ -314,7 +316,7 @@ test.describe("the orchestrator's board", () => {
     await page.getByTestId("send-field").fill("never mind");
     await page.getByTestId("send-field").press("Escape");
     await expect(page.getByTestId("send-field")).toHaveCount(0);
-    expect(await written(page)).toHaveLength(1);
+    expect(await written(page)).toHaveLength(2);
   });
 
   test("says what the starts left behind, and cleans up what can go", async ({

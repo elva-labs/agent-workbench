@@ -33,7 +33,7 @@
     summaryLine,
     type Group,
   } from "$lib/orchestrator.svelte";
-  import { startedFor } from "$lib/conductor.svelte";
+  import { startedFor, stopStarted } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -123,7 +123,7 @@
   /** The × on a fold: every session behind it stops, and the fold goes with
       the last of them. */
   function stopGroup(group: Group) {
-    for (const session of group.sessions) closeSession(session.key);
+    for (const session of group.sessions) stopStarted(session.key);
   }
 
   /** Closes the choice, the cursor back on the row it opened from. */

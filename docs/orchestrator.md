@@ -30,10 +30,15 @@ names a project the app actually has. `sessions` lists the sessions the
 caller started, each with its id, its project and worktree, its agent, what
 it is doing and the last line it left. `start` starts a session in a project with a first
 prompt, on a worktree of its own if it asks for one, and answers with the
-new session's id. `send` types a line into a running session. `wait` sits
+new session's id. `send` types a line into a running session, and Enter after it on its
+own, as a person does. `wait` sits
 until a session stops working, asks for permission or ends, or until the
 seconds it was given run out. `read` answers with the last lines on a
-session's screen, as you see them. `stop` stops a session.
+session's screen, as you see them. `stop` stops a session and files it
+with the sessions to resume, behind the fold, rather than leaving a row
+of it under the project. A start can carry a name for the work, which the
+session's row and its worktree take; the session runs in a worktree the
+project already trusts, with either agent, so nothing asks on the way in.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the fold, the board and the wait tool

@@ -3,6 +3,7 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import {
   CAP,
+  ENTER_AFTER,
   OUTCOME_ASK,
   allow,
   allowedProjects,
@@ -287,6 +288,25 @@ describe("starting a session", () => {
     expect(sessions.active).toBe(caller.key);
   });
 
+  it("names the session and its worktree after the name the caller gives", async () => {
+    const row = await startAllowed(
+      call(
+        "start",
+        {
+          project: A,
+          prompt: "Fix the flaky cache test",
+          name: "Cache test flake",
+          worktree: true,
+        },
+        { session: "caller-1" },
+      ),
+      "pty-1",
+      "sid-new",
+    );
+    expect(row.title).toBe("Cache test flake");
+    expect(worktrees).toEqual([[A, "cache-test-flake"]]);
+  });
+
   it("gives the session its prompt as one line, and asks it to say how it went", async () => {
     const row = await startAllowed(
       call(
@@ -516,10 +536,19 @@ describe("the question", () => {
 });
 
 describe("sending and stopping", () => {
-  it("sends a line to a session as one typed line", async () => {
+  it("sends a line to a session as one typed line, and Enter on its own after it", async () => {
     own(A, "pty-1", "sid-1");
-    await handle(call("send", { session: "sid-1", text: "yes\nplease" }));
-    expect(written).toEqual([["pty-1", "yes please\r"]]);
+    const answering = handle(
+      call("send", { session: "sid-1", text: "yes\nplease" }),
+    );
+    await settle();
+    expect(written).toEqual([["pty-1", "yes please"]]);
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await answering;
+    expect(written).toEqual([
+      ["pty-1", "yes please"],
+      ["pty-1", "\r"],
+    ]);
     expect(last().error).toBeNull();
   });
 
@@ -536,11 +565,15 @@ describe("sending and stopping", () => {
     expect(last().error).toBe("Session sid-1 is not running.");
   });
 
-  it("stops a session the way the pane's close does", async () => {
+  it("stops a session the way the pane's close does, and files it away", async () => {
     const row = own(A, "pty-1", "sid-1");
+    sessions.mine[A] = ["sid-1"];
     await handle(call("stop", { session: "sid-1" }));
     expect(killed).toEqual(["pty-1"]);
     expect(byKey(row.key)).toBeNull();
+    // Filed with the sessions to resume, behind the fold, rather than left
+    // as a past row of the project's own.
+    expect(sessions.mine[A]).toEqual([]);
     expect(last().content).toBe("Stopped session sid-1.");
   });
 

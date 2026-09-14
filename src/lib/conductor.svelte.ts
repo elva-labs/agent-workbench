@@ -25,6 +25,7 @@ import {
   byKey,
   close,
   create,
+  disown,
   defaultAgent,
   isLive,
   label,
@@ -54,6 +55,32 @@ export const LINES_MAX = 200;
     what became of it comes back on its row instead of being watched for. */
 export const OUTCOME_ASK =
   "When you are done, or stuck, call the notify tool with one line saying which.";
+
+/** How long after a line is typed its Enter follows. An agent takes a
+    chunk that arrives at once for a paste, and an Enter inside a paste is
+    a newline in it rather than a send. */
+export const ENTER_AFTER = 150;
+
+/** Types a line into a session the way a person does: the text, and then
+    Enter on its own. */
+export async function typeLine(ptyId: string, line: string): Promise<void> {
+  await core().write(ptyId, line);
+  await pause(ENTER_AFTER);
+  await core().write(ptyId, "\r");
+}
+
+/** Stops a session another session started, and files it away: it was
+    never the user's own to come back to, and a row for every piece of
+    work an orchestrator finished would bury the ones that are. */
+export function stopStarted(key: string): void {
+  const session = byKey(key);
+  if (session === null) return;
+  const { project, id } = session;
+  close(key);
+  if (id !== null) disown(project, id);
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The question on screen: which call it holds, who asked, and what for. */
 export interface Ask {
@@ -218,6 +245,7 @@ export function stateOf(session: Session): string {
 async function startSession(request: ConductRequest): Promise<Answered> {
   const project = text(request, "project");
   const prompt = text(request, "prompt");
+  const name = text(request, "name");
   if (project === null) return refused("Starting a session needs a project.");
   if (prompt === null)
     return refused("Starting a session needs a prompt to give it.");
@@ -242,7 +270,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     // The core numbers a name the project already has, so the path it
     // answers with is the one to run in.
     try {
-      startIn = await core().worktreeAdd(project, worktreeName(prompt));
+      startIn = await core().worktreeAdd(project, worktreeName(name ?? prompt));
     } catch (error) {
       return refused(`The worktree could not be made: ${String(error)}`);
     }
@@ -260,6 +288,8 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     `${oneLine(prompt)} ${OUTCOME_ASK}`,
   );
   conductor.startedBy[session.key] = caller;
+  // The name the caller gave is the row's, until the agent names it.
+  if (name !== null) session.title = oneLine(name);
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 
   const id = await idFor(session.key);
@@ -307,7 +337,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   if (!mine(request, session)) return notMine(id);
   if (session.status !== "running" || session.ptyId === null)
     return refused(`Session ${id} is not running.`);
-  await core().write(session.ptyId, `${oneLine(line)}\r`);
+  await typeLine(session.ptyId, oneLine(line));
   return said(`Sent to session ${id}. Call wait to hear what it does next.`);
 }
 
@@ -317,7 +347,7 @@ function stopSession(request: ConductRequest): Answered {
   const session = byId(id);
   if (session === null) return refused(`The workbench has no session ${id}.`);
   if (!mine(request, session)) return notMine(id);
-  close(session.key);
+  stopStarted(session.key);
   return said(`Stopped session ${id}.`);
 }
 
@@ -437,7 +467,7 @@ export function startedBy(sessionId: string): Session[] {
 
 /** Closes every session a session started. */
 export function stopAll(sessionId: string) {
-  for (const session of startedBy(sessionId)) close(session.key);
+  for (const session of startedBy(sessionId)) stopStarted(session.key);
 }
 
 /**

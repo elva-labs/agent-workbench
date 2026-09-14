@@ -26,7 +26,16 @@
     visible,
   } from "$lib/files.svelte";
   import { core } from "$lib/core";
-  import { allowedProjects, oneLine, revoke, startedBy, stateOf, stopAll } from "$lib/conductor.svelte";
+  import {
+    allowedProjects,
+    oneLine,
+    revoke,
+    startedBy,
+    stateOf,
+    stopAll,
+    stopStarted,
+    typeLine,
+  } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { listed as presentedFor, openItem } from "$lib/media.svelte";
   import {
@@ -431,7 +440,7 @@
     focusPane("agent");
   }
 
-  function stopStarted() {
+  function stopEveryStarted() {
     if (conducting !== null) stopAll(conducting.id ?? conducting.key);
   }
 
@@ -465,7 +474,7 @@
 
   function stopRow(session: Session) {
     if (sending === session.key) sending = null;
-    closeSession(session.key);
+    stopStarted(session.key);
   }
 
   /** A session with a terminal behind it is one there is somewhere to type. */
@@ -488,7 +497,7 @@
       send tool types a line: one line, and nothing that drives the terminal. */
   function sendTo(session: Session) {
     const line = oneLine(sendLine);
-    if (line !== "" && session.ptyId !== null) void core().write(session.ptyId, `${line}\r`);
+    if (line !== "" && session.ptyId !== null) void typeLine(session.ptyId, line);
     closeSend();
   }
 
@@ -585,7 +594,7 @@
                 class="head-action"
                 tabindex="-1"
                 onpointerdown={(e) => e.preventDefault()}
-                onclick={stopStarted}
+                onclick={stopEveryStarted}
                 data-testid="stop-all">Stop all</button
               >
             </span>

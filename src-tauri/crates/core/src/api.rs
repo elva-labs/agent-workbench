@@ -484,7 +484,13 @@ impl Core {
     /// session to work in without touching the branch the user is on.
     /// Answers with where it is.
     pub fn worktree_add(&self, project: &Path, name: &str) -> Result<String, String> {
-        git::worktree_add(project, name)
+        let path = git::worktree_add(project, name)?;
+        // The agents ask about a directory they have not run in; a worktree
+        // is the project under another path, and has the project's answer.
+        if let Some(home) = &self.home {
+            hook::trust_like(home, project, Path::new(&path))?;
+        }
+        Ok(path)
     }
 
     /// The worktrees the workbench has made for the project, each saying
