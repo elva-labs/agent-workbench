@@ -60,6 +60,10 @@ export function freeze(node: HTMLElement) {
   style.width = `${box.width}px`;
   style.height = `${box.height}px`;
   style.pointerEvents = "none";
+  // Above the panes that stay: they take its ground the moment it leaves the
+  // flow, and their own positioned parts, the terminal's frame and the status
+  // overlay, would otherwise paint over it in document order.
+  style.zIndex = "2";
 }
 
 /** Hands a pane back to the flow, at the width its column gives it. Called
@@ -73,6 +77,7 @@ export function release(node: HTMLElement) {
   style.width = "";
   style.height = "";
   style.pointerEvents = "";
+  style.zIndex = "";
 }
 
 /**
