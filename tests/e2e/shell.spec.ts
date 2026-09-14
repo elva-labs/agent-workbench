@@ -1732,8 +1732,9 @@ test.describe("the window's own controls", () => {
     };
     await expect.poll(centre).toBe(await middle());
     const before = await middle();
+    // The other look: its header is a different height from modern's.
     await page.evaluate(() => {
-      localStorage.setItem("workbench.look", "modern");
+      localStorage.setItem("workbench.look", "terminal");
     });
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
