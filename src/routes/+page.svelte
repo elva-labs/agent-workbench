@@ -193,6 +193,20 @@
     if (attention.focused && key !== null) viewed(key);
   });
 
+  // The platform's own window controls sit on the leftmost header's text,
+  // and a look sets how tall that header is: measured once the look has
+  // painted, and again whenever it changes.
+  $effect(() => {
+    theme.look;
+    const frame = requestAnimationFrame(() => {
+      const header = document.querySelector("section[data-pane] header");
+      if (header === null) return;
+      const box = header.getBoundingClientRect();
+      void core().controlsCentre(Math.round(box.top + box.height / 2));
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
   // Coming back to the window is when what happened elsewhere is wanted:
   // the histories are read again.
   $effect(() => {

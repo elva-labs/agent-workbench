@@ -23,11 +23,30 @@
 #[cfg(target_os = "macos")]
 const CONTROLS_X: f64 = 18.0;
 
-/// Points from the window's top edge to the middle of the buttons: the
-/// frame's 10px padding, the pane's border and half a 32px header, so they
-/// sit on the header's text.
+/// Points from the window's top edge to the middle of the buttons, so they
+/// sit on the header's text. The window measures its header and says where
+/// its middle is, since a look sets the header's height; until it has, the
+/// terminal look's 27 points stand, the frame's padding, the pane's border
+/// and half a 32px header.
 #[cfg(target_os = "macos")]
-const CONTROLS_CENTRE: f64 = 27.0;
+static CONTROLS_CENTRE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(27);
+
+#[cfg(target_os = "macos")]
+fn controls_centre() -> f64 {
+    f64::from(CONTROLS_CENTRE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The window has measured its header: the buttons move to its middle.
+#[cfg(target_os = "macos")]
+pub fn set_controls_centre(window: &tauri::WebviewWindow, centre: u32) {
+    CONTROLS_CENTRE.store(centre.max(1), std::sync::atomic::Ordering::Relaxed);
+    place_window_controls(window);
+}
+
+/// Windows and Linux draw their own controls in the header, which follows
+/// the look on its own.
+#[cfg(not(target_os = "macos"))]
+pub fn set_controls_centre(_window: &tauri::WebviewWindow, _centre: u32) {}
 
 /// Points between one button and the next, which is AppKit's own spacing.
 #[cfg(target_os = "macos")]
@@ -182,7 +201,7 @@ fn place_controls(ns_window: &objc2_app_kit::NSWindow) {
     };
 
     let window_height = ns_window.frame().size.height;
-    let height = CONTROLS_CENTRE * 2.0;
+    let height = controls_centre() * 2.0;
     let mut outer = container.frame();
     if outer.size.height != height || outer.origin.y != window_height - height {
         outer.size.height = height;
@@ -211,7 +230,7 @@ fn place_controls(ns_window: &objc2_app_kit::NSWindow) {
         let centre = parent.convertPoint_fromView(
             NSPoint::new(
                 CONTROLS_X + size.width / 2.0 + index as f64 * (size.width + CONTROLS_GAP),
-                window_height - CONTROLS_CENTRE,
+                window_height - controls_centre(),
             ),
             None,
         );

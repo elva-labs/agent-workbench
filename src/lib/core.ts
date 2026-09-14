@@ -422,6 +422,9 @@ export interface Core {
   windowControl(action: "minimize" | "maximize" | "close"): Promise<void>;
   /** The native popup that stands in for a menu bar on those platforms. */
   openAppMenu(): Promise<void>;
+  /** Where the middle of the leftmost header is, in CSS pixels from the
+      window's top, for the platform's own controls to sit on. */
+  controlsCentre(centre: number): Promise<void>;
   /** A count on the app's icon, or none. Sessions waiting for the user. */
   setBadge(count: number | null): Promise<void>;
   spawn(
@@ -613,6 +616,7 @@ const tauriCore: Core = {
   },
 
   openAppMenu: () => invoke("app_menu"),
+  controlsCentre: (centre) => invoke("controls_centre", { centre }),
 
   async setBadge(count) {
     await getCurrentWindow().setBadgeCount(count === null ? undefined : count);
@@ -806,6 +810,7 @@ const detachedCore: Core = {
   async openUrl() {},
   async windowControl() {},
   async openAppMenu() {},
+  async controlsCentre() {},
   async setBadge() {},
   async spawn() {
     throw new Error("not connected to the workbench core");

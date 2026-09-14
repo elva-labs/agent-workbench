@@ -106,6 +106,12 @@ export async function installFakeCore(
           const w = window as unknown as { __windowControls?: string[] };
           (w.__windowControls ??= []).push("menu");
         },
+        // Where the window said its header's middle is, for a test to read.
+        controlsCentre: async (centre: number) => {
+          (
+            window as unknown as { __controlsCentre?: number }
+          ).__controlsCentre = centre;
+        },
         setBadge: async () => {},
         spawn: async (
           spawnOptions: { session?: string },

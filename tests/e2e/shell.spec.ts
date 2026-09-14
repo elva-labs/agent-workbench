@@ -1514,6 +1514,36 @@ test.describe("the search field", () => {
 // Off macOS the window is undecorated: the controls are the app's, at the end
 // of whichever pane is rightmost, and the settings have a button in the bar.
 test.describe("the window's own controls", () => {
+  // macOS places its traffic lights where the window says the leftmost
+  // header's middle is, and a look sets the header's height.
+  test("are told where the header's middle is, and again when the look changes", async ({
+    page,
+  }) => {
+    const centre = () =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __controlsCentre?: number })
+            .__controlsCentre ?? null,
+      );
+    const middle = async () => {
+      const box = (await page
+        .locator("section[data-pane] header")
+        .first()
+        .boundingBox())!;
+      return Math.round(box.y + box.height / 2);
+    };
+    await expect.poll(centre).toBe(await middle());
+    const before = await middle();
+    await page.evaluate(() => {
+      localStorage.setItem("workbench.look", "modern");
+    });
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    const after = await middle();
+    expect(after).not.toBe(before);
+    await expect.poll(centre).toBe(after);
+  });
+
   test("sit at the rightmost header and follow it", async ({ page }) => {
     await expect(
       page.locator(`${CHANGES} [data-testid='window-controls']`),

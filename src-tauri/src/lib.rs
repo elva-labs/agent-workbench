@@ -448,6 +448,13 @@ async fn conduct_answer(
     .await
 }
 
+/// Where the middle of the leftmost header is, in points from the window's
+/// top: the window measures it, and the platform's own controls follow.
+#[tauri::command]
+fn controls_centre(window: tauri::WebviewWindow, centre: u32) {
+    chrome::set_controls_centre(&window, centre);
+}
+
 /// Where an orchestrator session runs. It is on this machine whatever the
 /// projects it directs are on.
 #[tauri::command]
@@ -991,6 +998,7 @@ pub fn run() {
             plugin_view_message,
             conduct_answer,
             orchestrator_dir,
+            controls_centre,
             worktree_add,
             worktrees,
             worktree_remove,
