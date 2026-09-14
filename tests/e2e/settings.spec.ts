@@ -27,8 +27,81 @@ test("opens on the chord and from the menu, and closes on Escape", async ({
   await expect(page.getByTestId("settings")).toBeHidden();
 });
 
+// Four tabs down the left, one section's worth of settings beside them.
+test.describe("the tabs", () => {
+  test("show one section at a time", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("settings-tab-appearance")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByTestId("theme-system")).toBeVisible();
+    await expect(page.getByTestId("settings-live")).toHaveCount(0);
+    await expect(page.getByTestId("plugin-location")).toHaveCount(0);
+    await expect(page.getByTestId("preset-vim")).toHaveCount(0);
+
+    await page.getByTestId("settings-tab-keys").click();
+    await expect(page.getByTestId("preset-vim")).toBeVisible();
+    await expect(page.getByTestId("theme-system")).toHaveCount(0);
+    await expect(page.getByTestId("settings-tab-keys")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(
+      page.getByTestId("settings-tab-appearance"),
+    ).not.toHaveAttribute("aria-current", "page");
+  });
+
+  test("keep the tab from one opening to the next", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-plugins").click();
+    await expect(page.getByTestId("plugin-location")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("settings")).toBeHidden();
+
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("settings-tab-plugins")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByTestId("plugin-location")).toBeVisible();
+
+    // A window of its own starts on the first tab again.
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("settings-tab-appearance")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  test("move on the arrows, either way", async ({ page }) => {
+    const current = (name: string) =>
+      expect(page.getByTestId(`settings-tab-${name}`)).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-appearance").click();
+    await page.keyboard.press("ArrowDown");
+    await current("live");
+    await expect(page.getByTestId("settings-live")).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await current("plugins");
+    await page.keyboard.press("ArrowUp");
+    await current("live");
+    await page.keyboard.press("ArrowLeft");
+    await current("appearance");
+    // The tab it reaches has the keyboard, so the next arrow moves from there.
+    await expect(page.getByTestId("settings-tab-appearance")).toBeFocused();
+  });
+});
+
 test("changes the theme and keeps it", async ({ page }) => {
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-appearance").click();
   await page.getByTestId("theme-dark").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.reload();
@@ -48,6 +121,7 @@ test("changes the colour palette, which repaints the panes, and keeps it", async
   const before = await accentOf();
 
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-appearance").click();
   await page.getByTestId("palette-indigo").click();
   await expect(page.locator("html")).toHaveAttribute("data-palette", "indigo");
   expect(await accentOf()).not.toBe(before);
@@ -60,6 +134,7 @@ test("changes the colour palette, which repaints the panes, and keeps it", async
 
 test("changes the theme's look and keeps it", async ({ page }) => {
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-appearance").click();
   await page.getByTestId("look-modern").click();
   await expect(page.locator("html")).toHaveAttribute("data-look", "modern");
   await page.keyboard.press("Escape");
@@ -71,6 +146,7 @@ test("changes the theme's look and keeps it", async ({ page }) => {
   // Back to terminal, which is the look the tokens are written in and
   // carries no stamp at all.
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-appearance").click();
   await page.getByTestId("look-terminal").click();
   await expect(page.locator("html")).not.toHaveAttribute("data-look", /.*/);
 });
@@ -104,6 +180,7 @@ test("changes the terminal font, which the open terminals take at once, and keep
   expect(await fontOf()).toMatch(/^ui-monospace/);
 
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-appearance").click();
   await page.getByTestId("mono-jetbrains").click();
   await expect(page.locator("html")).toHaveAttribute("data-mono", "jetbrains");
   await expect.poll(fontOf).toContain("JetBrains Mono");
@@ -128,6 +205,7 @@ test("changes the interface font, which repaints the chrome, and keeps it", asyn
   expect(await sansOf()).toMatch(/^-apple-system/);
 
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-appearance").click();
   await page.getByTestId("sans-plex").click();
   await expect(page.locator("html")).toHaveAttribute("data-sans", "plex");
   expect(await sansOf()).toContain("IBM Plex Sans");
@@ -143,6 +221,7 @@ test("changes the interface font, which repaints the chrome, and keeps it", asyn
 // keys themselves follow at once, and the choice survives a reload.
 test("switches to the vim preset and the keys follow", async ({ page }) => {
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-keys").click();
   await page.getByTestId("preset-vim").click();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("settings")).toBeHidden();
@@ -165,11 +244,23 @@ test("switches to the vim preset and the keys follow", async ({ page }) => {
 
 test("records a chord of one's own", async ({ page }) => {
   await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-keys").click();
   await page.getByTestId("chord-review").click();
   await expect(page.getByTestId("chord-review")).toHaveText(/Press keys/);
   await page.keyboard.press(`${MOD}+g`);
   await expect(page.getByTestId("chord-review")).not.toHaveText(/Press keys/);
   await expect(page.getByTestId("preset-custom")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // A chord on the arrows is recorded, not read as a walk down the tabs.
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("chord-view").click();
+  await page.keyboard.press(`${MOD}+Shift+ArrowRight`);
+  await expect(page.getByTestId("chord-view")).toHaveText("Ctrl+Shift+Right");
+  await expect(page.getByTestId("settings-tab-keys")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   await page.keyboard.press("Escape");
 
   await page.keyboard.press(`${MOD}+g`);
@@ -207,6 +298,11 @@ test.describe("the hooks notice", () => {
     await expect(notice).toContainText("Let the agent talk to the workbench");
     await page.getByTestId("hooks-notice-settings").click();
     await expect(page.getByTestId("settings")).toBeVisible();
+    await expect(page.getByTestId("settings-tab-live")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByTestId("theme-system")).toHaveCount(0);
     await expect(page.getByTestId("settings-live")).toHaveClass(/lit/);
     await expect(page.getByTestId("settings-live")).toBeInViewport();
     await page.keyboard.press("Escape");
@@ -223,6 +319,7 @@ test.describe("the hooks notice", () => {
   });
 
   test("goes when hooks are turned on, and stays gone", async ({ page }) => {
+    // The word lands on the tab the section is in, so the choice is there.
     await page.getByTestId("hooks-notice-settings").click();
     await page.getByTestId("hooks-everywhere-on").click();
     await expect(page.getByTestId("hooks-notice")).toHaveCount(0);
@@ -254,6 +351,7 @@ test.describe("plugins", () => {
   }) => {
     await page.keyboard.press(`${MOD}+,`);
     await expect(page.getByTestId("settings")).toBeVisible();
+    await page.getByTestId("settings-tab-plugins").click();
     await page
       .getByTestId("plugin-location")
       .fill("https://example.com/bad.git");

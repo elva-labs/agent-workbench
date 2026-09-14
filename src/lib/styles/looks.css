@@ -56,6 +56,10 @@
   --title-color-on: var(--accent);
   --meta-size: 12px;
 
+  --heading-size: 12px;
+  --heading-weight: 600;
+  --heading-color: var(--ink);
+
   --row-pad-x: 10px;
   --row-pad-y: 5px;
   --row-size: 12.5px;
@@ -112,4 +116,25 @@
 :root[data-look="modern"] header.leads:not(.lone) .title {
   flex: 1;
   text-align: left;
+}
+
+/* The settings stand over the workbench rather than sit in the frame, so
+   they keep the edge the panes give up: a hairline of the divider, the
+   corner the rest of the look rounds to, and a drop soft enough to lift the
+   card off what is behind it. A field inside takes the fill that stands in
+   for the border the look has taken away. */
+:root[data-look="modern"] [data-testid="settings"] {
+  --pane-border-on: var(--divider);
+  --radius-pane: var(--radius);
+  box-shadow: 0 24px 64px color-mix(in srgb, black 28%, transparent);
+}
+
+:root[data-look="modern"] [data-testid="settings"] input {
+  background: var(--field-bg);
+}
+
+/* The column of tabs takes the same step below the surface the sessions pane
+   takes, so the settings read as a pane with a list beside it. */
+:root[data-look="modern"] [data-testid="settings"] nav {
+  --pane-bg: color-mix(in srgb, var(--bg) 96%, var(--ink) 4%);
 }

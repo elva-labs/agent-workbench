@@ -493,6 +493,10 @@ describe("the real app", () => {
             until.elementLocated(By.css("[data-testid='settings']")),
             5_000,
           );
+          // The plugins are on a tab of their own.
+          await driver
+            .findElement(By.css("[data-testid='settings-tab-plugins']"))
+            .click();
           return;
         } catch (failure) {
           if (attempt >= 3) throw failure;

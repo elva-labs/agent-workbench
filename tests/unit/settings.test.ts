@@ -53,12 +53,18 @@ beforeEach(() => {
   openSettings();
 });
 
+/** The dialog, on the tab that holds what the test is about. */
+async function open(tab: "appearance" | "live" | "plugins" | "keys") {
+  render(Settings);
+  await fireEvent.click(screen.getByTestId(`settings-tab-${tab}`));
+}
+
 describe("the settings", () => {
   it("has one answer for every project, and lets a project say otherwise", async () => {
     workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
     workspace.active = "/repo";
 
-    render(Settings);
+    await open("live");
     const everywhere = within(screen.getByTestId("hooks-everywhere"));
     expect(everywhere.getByTestId("hooks-everywhere-off")).toHaveAttribute(
       "aria-checked",
@@ -102,10 +108,10 @@ describe("the settings", () => {
     await waitFor(() => expect(fake.hooks["/repo"]).toBe(true));
   });
 
-  it("shows the overrides open when a project has one", () => {
+  it("shows the overrides open when a project has one", async () => {
     workspace.open.push(repo("/repo", "repo"));
     hook.overrides["/repo"] = false;
-    render(Settings);
+    await open("live");
     const overrides = screen.getByTestId("hooks-overrides");
     expect(overrides).toHaveAttribute("aria-expanded", "true");
     expect(overrides).toHaveTextContent("(1)");
@@ -114,8 +120,8 @@ describe("the settings", () => {
     ).toHaveAttribute("aria-checked", "true");
   });
 
-  it("says so when there is no project to choose for", () => {
-    render(Settings);
+  it("says so when there is no project to choose for", async () => {
+    await open("live");
     expect(screen.getByTestId("hooks-none")).toBeInTheDocument();
     expect(screen.queryByTestId("hooks-row")).toBeNull();
     expect(screen.queryByTestId("hooks-overrides")).toBeNull();
@@ -123,7 +129,7 @@ describe("the settings", () => {
   });
 
   it("picks a theme", async () => {
-    render(Settings);
+    await open("appearance");
     await fireEvent.click(screen.getByTestId("theme-dark"));
     expect(theme.choice).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
@@ -136,7 +142,7 @@ describe("the settings", () => {
   });
 
   it("picks a colour palette", async () => {
-    render(Settings);
+    await open("appearance");
     const colours = screen.getByRole("radiogroup", { name: "Colour" });
     expect(within(colours).getAllByRole("radio")).toHaveLength(5);
     await fireEvent.click(screen.getByTestId("palette-indigo"));
@@ -151,7 +157,7 @@ describe("the settings", () => {
   });
 
   it("switches presets and shows the chords in the platform's glyphs", async () => {
-    render(Settings);
+    await open("keys");
     expect(screen.getByTestId("chord-focus.sessions")).toHaveTextContent("⌘1");
     await fireEvent.click(screen.getByTestId("preset-vim"));
     expect(keys.preset).toBe("vim");
@@ -164,7 +170,7 @@ describe("the settings", () => {
 
   // Click a chord, press the new one: recorded, and the table is custom.
   it("records a chord pressed on a row", async () => {
-    render(Settings);
+    await open("keys");
     await fireEvent.click(screen.getByTestId("chord-review"));
     expect(screen.getByTestId("chord-review")).toHaveTextContent("Press keys");
     await fireEvent.keyDown(screen.getByTestId("settings"), {
@@ -177,7 +183,7 @@ describe("the settings", () => {
   });
 
   it("says why a chord was refused, and keeps the old one", async () => {
-    render(Settings);
+    await open("keys");
     await fireEvent.click(screen.getByTestId("chord-review"));
     await fireEvent.keyDown(screen.getByTestId("settings"), {
       key: "e",
@@ -190,7 +196,7 @@ describe("the settings", () => {
   });
 
   it("gives up recording on Escape, and closes on Escape otherwise", async () => {
-    render(Settings);
+    await open("keys");
     await fireEvent.click(screen.getByTestId("chord-review"));
     await fireEvent.keyDown(screen.getByTestId("settings"), { key: "Escape" });
     expect(screen.getByTestId("chord-review")).toHaveTextContent("⌘D");

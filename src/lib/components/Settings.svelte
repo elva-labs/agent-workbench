@@ -1,5 +1,15 @@
+<script module lang="ts">
+  /** The four columns of settings, one on screen at a time. */
+  type Tab = "appearance" | "live" | "plugins" | "keys";
+
+  /** The tab last chosen. It belongs to the module rather than the dialog, so
+      closing the settings and opening them again lands where you were; a new
+      window starts on the first. */
+  let remembered: Tab = "appearance";
+</script>
+
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     ACTIONS,
     PRESET_LABELS,
@@ -61,10 +71,44 @@
 
   const PRESET_NAMES = Object.keys(PRESETS) as PresetName[];
 
+  const TABS: { name: Tab; label: string }[] = [
+    { name: "appearance", label: "Appearance" },
+    { name: "live", label: "Live updates" },
+    { name: "plugins", label: "Plugins" },
+    { name: "keys", label: "Keys" },
+  ];
+
   let dialog: HTMLElement;
   /** The action whose chord is being recorded, if any. */
   let recording = $state<ActionKey | null>(null);
   let problem = $state<{ action: ActionKey; text: string } | null>(null);
+
+  let tabs: HTMLElement;
+  let tab = $state<Tab>(remembered);
+
+  function show(next: Tab) {
+    tab = next;
+    remembered = next;
+  }
+
+  /** The arrows walk the list from whichever tab has the keyboard, along it
+      and across it, and the tab they reach takes both the column and the
+      keyboard. A chord being recorded owns every key, so they stand down. */
+  function onTabKeys(e: KeyboardEvent, index: number) {
+    if (recording !== null) return;
+    const step =
+      e.key === "ArrowLeft" || e.key === "ArrowUp"
+        ? -1
+        : e.key === "ArrowRight" || e.key === "ArrowDown"
+          ? 1
+          : 0;
+    if (step === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const next = (index + step + TABS.length) % TABS.length;
+    show(TABS[next].name);
+    tabs.querySelectorAll("button")[next]?.focus();
+  }
 
   // The keyboard is taken on the way in and handed back on the way out,
   // whichever way the dialog closed.
@@ -116,12 +160,13 @@
 
   /** The live updates section, lit for a moment when the dialog was opened
       to point at it. */
-  let live: HTMLElement;
+  let live = $state<HTMLElement | null>(null);
   let lit = $state(false);
   onMount(() => {
     if (settings.highlight !== "hooks") return;
     settings.highlight = null;
-    live.scrollIntoView({ block: "center" });
+    show("live");
+    void tick().then(() => live?.scrollIntoView({ block: "center" }));
     lit = true;
     const timer = setTimeout(() => (lit = false), 2600);
     return () => clearTimeout(timer);
@@ -219,340 +264,357 @@
     </header>
 
     <div class="body">
-      <h3>Appearance</h3>
-      <div class="seg" role="radiogroup" aria-label="Appearance">
-        {#each THEMES as option (option.choice)}
+      <nav aria-label="Settings sections" bind:this={tabs}>
+        {#each TABS as item, index (item.name)}
           <button
-            role="radio"
-            aria-checked={theme.choice === option.choice}
-            class:on={theme.choice === option.choice}
-            onclick={() => setTheme(option.choice)}
-            title={option.hint}
-            data-testid="theme-{option.choice}">{option.label}</button
+            class="tab"
+            class:on={tab === item.name}
+            aria-current={tab === item.name ? "page" : undefined}
+            onclick={() => show(item.name)}
+            onkeydown={(e) => onTabKeys(e, index)}
+            data-testid="settings-tab-{item.name}">{item.label}</button
           >
         {/each}
-      </div>
+      </nav>
 
-      <h3>Theme</h3>
-      <div class="looks" role="radiogroup" aria-label="Theme">
-        {#each LOOKS as look (look.name)}
-          <button
-            class="look"
-            role="radio"
-            aria-checked={theme.look === look.name}
-            class:on={theme.look === look.name}
-            onclick={() => setLook(look.name)}
-            data-testid="look-{look.name}"
-          >
-            <span class="look-name">{look.label}</span>
-            <span class="look-hint">{look.hint}</span>
-          </button>
-        {/each}
-      </div>
-
-      <h3>Font</h3>
-      <div class="fonts">
-        <div class="font-row">
-          <span class="font-what">Terminal</span>
-          <div class="swatches" role="radiogroup" aria-label="Terminal font">
-            {#each TERMINAL_FONTS as font (font.name)}
+      <div class="panel">
+        {#if tab === "appearance"}
+          <h3>Appearance</h3>
+          <div class="seg" role="radiogroup" aria-label="Appearance">
+            {#each THEMES as option (option.choice)}
               <button
-                class="swatch face"
                 role="radio"
-                aria-checked={theme.mono === font.name}
-                class:on={theme.mono === font.name}
-                onclick={() => setMono(font.name)}
-                data-testid="mono-{font.name}"
+                aria-checked={theme.choice === option.choice}
+                class:on={theme.choice === option.choice}
+                onclick={() => setTheme(option.choice)}
+                title={option.hint}
+                data-testid="theme-{option.choice}">{option.label}</button
               >
-                <span style:font-family={font.family}>{font.label}</span>
-                {#if font.hint}<span class="face-hint">{font.hint}</span>{/if}
+            {/each}
+          </div>
+
+          <h3>Theme</h3>
+          <div class="looks" role="radiogroup" aria-label="Theme">
+            {#each LOOKS as look (look.name)}
+              <button
+                class="look"
+                role="radio"
+                aria-checked={theme.look === look.name}
+                class:on={theme.look === look.name}
+                onclick={() => setLook(look.name)}
+                data-testid="look-{look.name}"
+              >
+                <span class="look-name">{look.label}</span>
+                <span class="look-hint">{look.hint}</span>
               </button>
             {/each}
           </div>
-        </div>
-        <div class="font-row">
-          <span class="font-what">Interface</span>
-          <div class="swatches" role="radiogroup" aria-label="Interface font">
-            {#each INTERFACE_FONTS as font (font.name)}
-              <button
-                class="swatch face"
-                role="radio"
-                aria-checked={theme.sans === font.name}
-                class:on={theme.sans === font.name}
-                onclick={() => setSans(font.name)}
-                data-testid="sans-{font.name}"
-              >
-                <span style:font-family={font.family}>{font.label}</span>
-                {#if font.hint}<span class="face-hint">{font.hint}</span>{/if}
-              </button>
-            {/each}
-          </div>
-        </div>
-      </div>
 
-      <h3>Colour</h3>
-      <div class="swatches" role="radiogroup" aria-label="Colour">
-        {#each PALETTES as palette (palette.name)}
-          <button
-            class="swatch"
-            role="radio"
-            aria-checked={theme.palette === palette.name}
-            class:on={theme.palette === palette.name}
-            onclick={() => setPalette(palette.name)}
-            data-testid="palette-{palette.name}"
-          >
-            <span
-              class="dot"
-              style:background={resolvedTheme() === "dark" ? palette.swatch.dark : palette.swatch.light}
-            ></span>
-            {palette.label}
-          </button>
-        {/each}
-      </div>
-
-      <section class="live" class:lit bind:this={live} data-testid="settings-live">
-      <h3>Live updates</h3>
-      <p class="note">
-        The watcher sees every change in the project. Agent hooks, written into the project's
-        <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
-        let the agent do more: say when it is working or waiting, point at code in the viewer,
-        present images and documents, and more.
-      </p>
-      <div class="project" data-testid="hooks-everywhere">
-        <span class="project-name">Every project</span>
-        <div class="seg" role="radiogroup" aria-label="Live updates in every project">
-          <button
-            role="radio"
-            aria-checked={!hook.everywhere}
-            class:on={!hook.everywhere}
-            onclick={() => setHooksEverywhere(false)}
-            disabled={hook.busy}
-            data-testid="hooks-everywhere-off">Watcher only</button
-          >
-          <button
-            role="radio"
-            aria-checked={hook.everywhere}
-            class:on={hook.everywhere}
-            onclick={() => setHooksEverywhere(true)}
-            disabled={hook.busy}
-            data-testid="hooks-everywhere-on">Agent hooks</button
-          >
-        </div>
-      </div>
-      {#if workspace.open.length === 0}
-        <p class="note quiet" data-testid="hooks-none">Every project you open follows that.</p>
-      {:else}
-        <button
-          class="fold"
-          onclick={() => (overridesOpen = !overridesOpen)}
-          aria-expanded={overridesOpen}
-          data-testid="hooks-overrides"
-        >
-          <span class="chevron">{overridesOpen ? "▾" : "▸"}</span>
-          Project overrides{overridden > 0 ? ` (${overridden})` : ""}
-        </button>
-      {/if}
-      {#if overridesOpen}
-        <div class="projects">
-          {#each workspace.open as project (project.path)}
-          {@const own = overrideOf(project.path)}
-          <div class="project" data-testid="hooks-row" data-project={project.path}>
-            <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
-            <div class="seg" role="radiogroup" aria-label="Live updates for {projectLabel(project.path)}">
-              <button
-                role="radio"
-                aria-checked={own === null}
-                class:on={own === null}
-                onclick={() => setHooks(project.path, null)}
-                disabled={hook.busy}
-                data-testid="hooks-default">As every project</button
-              >
-              <button
-                role="radio"
-                aria-checked={own === false}
-                class:on={own === false}
-                onclick={() => setHooks(project.path, false)}
-                disabled={hook.busy}
-                data-testid="hooks-off">Watcher only</button
-              >
-              <button
-                role="radio"
-                aria-checked={own === true}
-                class:on={own === true}
-                onclick={() => setHooks(project.path, true)}
-                disabled={hook.busy}
-                data-testid="hooks-on">Agent hooks</button
-              >
+          <h3>Font</h3>
+          <div class="fonts">
+            <div class="font-row">
+              <span class="font-what">Terminal</span>
+              <div class="swatches" role="radiogroup" aria-label="Terminal font">
+                {#each TERMINAL_FONTS as font (font.name)}
+                  <button
+                    class="swatch face"
+                    role="radio"
+                    aria-checked={theme.mono === font.name}
+                    class:on={theme.mono === font.name}
+                    onclick={() => setMono(font.name)}
+                    data-testid="mono-{font.name}"
+                  >
+                    <span style:font-family={font.family}>{font.label}</span>
+                    {#if font.hint}<span class="face-hint">{font.hint}</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            </div>
+            <div class="font-row">
+              <span class="font-what">Interface</span>
+              <div class="swatches" role="radiogroup" aria-label="Interface font">
+                {#each INTERFACE_FONTS as font (font.name)}
+                  <button
+                    class="swatch face"
+                    role="radio"
+                    aria-checked={theme.sans === font.name}
+                    class:on={theme.sans === font.name}
+                    onclick={() => setSans(font.name)}
+                    data-testid="sans-{font.name}"
+                  >
+                    <span style:font-family={font.family}>{font.label}</span>
+                    {#if font.hint}<span class="face-hint">{font.hint}</span>{/if}
+                  </button>
+                {/each}
+              </div>
             </div>
           </div>
-        {/each}
-        </div>
-      {/if}
-      {#if hook.error}
-        <p class="error" data-testid="hook-error">{hook.error}</p>
-      {/if}
-      </section>
 
-      <h3>Plugins</h3>
-      <p class="note">
-        A plugin comes from a git repository or a directory on this machine, runs with your
-        privileges where the project is, and adds tools for the agent, a section under the tree,
-        or a view. Add a source and turn its plugins on one by one.
-      </p>
-      <form class="add-source" onsubmit={add}>
-        <input
-          type="text"
-          placeholder="Repository URL or directory"
-          bind:value={sourceLocation}
-          disabled={plugins.busy}
-          data-testid="plugin-location"
-        />
-        <input
-          type="text"
-          class="reference"
-          placeholder="ref"
-          bind:value={sourceReference}
-          disabled={plugins.busy}
-          data-testid="plugin-reference"
-        />
-        <button type="submit" disabled={plugins.busy || sourceLocation.trim() === ""} data-testid="plugin-add"
-          >{plugins.busy ? "Working…" : "Add"}</button
-        >
-      </form>
-      {#if plugins.error}
-        <p class="error" data-testid="plugin-error">{plugins.error}</p>
-      {/if}
-      {#if plugins.sources.length > 0}
-        <div class="sources-tools">
-          <button class="tool" onclick={() => void checkAll()} disabled={plugins.busy} data-testid="plugins-check-all"
-            >Check for updates</button
-          >
-        </div>
-      {/if}
-      {#each plugins.sources as source (source.id)}
-        <div class="source" data-testid="plugin-source" data-source={source.id}>
-          <div class="source-head">
-            <span class="source-name" title={source.location}>{lastSegment(source.location)}</span>
-            <span class="source-meta">
-              {source.kind === "dir" ? "directory" : (source.commit?.slice(0, 7) ?? "")}{source.reference
-                ? ` · ${source.reference}`
-                : ""}
-            </span>
-            {#if source.newer}
-              <button class="tool accent" onclick={() => void updateSource(source.id)} disabled={plugins.busy} data-testid="plugin-update"
-                >Update to {source.newer.slice(0, 7)}</button
+          <h3>Colour</h3>
+          <div class="swatches" role="radiogroup" aria-label="Colour">
+            {#each PALETTES as palette (palette.name)}
+              <button
+                class="swatch"
+                role="radio"
+                aria-checked={theme.palette === palette.name}
+                class:on={theme.palette === palette.name}
+                onclick={() => setPalette(palette.name)}
+                data-testid="palette-{palette.name}"
               >
-            {/if}
-            {#if source.kind === "git"}
-              <button class="tool" onclick={() => void checkSource(source.id)} disabled={plugins.busy} data-testid="plugin-check"
-                >Check</button
+                <span
+                  class="dot"
+                  style:background={resolvedTheme() === "dark" ? palette.swatch.dark : palette.swatch.light}
+                ></span>
+                {palette.label}
+              </button>
+            {/each}
+          </div>
+        {:else if tab === "live"}
+          <section class="live" class:lit bind:this={live} data-testid="settings-live">
+            <h3>Live updates</h3>
+            <p class="note">
+              The watcher sees every change in the project. Agent hooks, written into the project's
+              <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
+              let the agent do more: say when it is working or waiting, point at code in the viewer,
+              present images and documents, and more.
+            </p>
+            <div class="project" data-testid="hooks-everywhere">
+              <span class="project-name">Every project</span>
+              <div class="seg" role="radiogroup" aria-label="Live updates in every project">
+                <button
+                  role="radio"
+                  aria-checked={!hook.everywhere}
+                  class:on={!hook.everywhere}
+                  onclick={() => setHooksEverywhere(false)}
+                  disabled={hook.busy}
+                  data-testid="hooks-everywhere-off">Watcher only</button
+                >
+                <button
+                  role="radio"
+                  aria-checked={hook.everywhere}
+                  class:on={hook.everywhere}
+                  onclick={() => setHooksEverywhere(true)}
+                  disabled={hook.busy}
+                  data-testid="hooks-everywhere-on">Agent hooks</button
+                >
+              </div>
+            </div>
+            {#if workspace.open.length === 0}
+              <p class="note quiet" data-testid="hooks-none">Every project you open follows that.</p>
+            {:else}
+              <button
+                class="fold"
+                onclick={() => (overridesOpen = !overridesOpen)}
+                aria-expanded={overridesOpen}
+                data-testid="hooks-overrides"
               >
+                <span class="chevron">{overridesOpen ? "▾" : "▸"}</span>
+                Project overrides{overridden > 0 ? ` (${overridden})` : ""}
+              </button>
             {/if}
-            <button class="tool" onclick={() => void removeSource(source.id)} disabled={plugins.busy} data-testid="plugin-remove"
-              >Remove</button
+            {#if overridesOpen}
+              <div class="projects">
+                {#each workspace.open as project (project.path)}
+                  {@const own = overrideOf(project.path)}
+                  <div class="project" data-testid="hooks-row" data-project={project.path}>
+                    <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
+                    <div class="seg" role="radiogroup" aria-label="Live updates for {projectLabel(project.path)}">
+                      <button
+                        role="radio"
+                        aria-checked={own === null}
+                        class:on={own === null}
+                        onclick={() => setHooks(project.path, null)}
+                        disabled={hook.busy}
+                        data-testid="hooks-default">As every project</button
+                      >
+                      <button
+                        role="radio"
+                        aria-checked={own === false}
+                        class:on={own === false}
+                        onclick={() => setHooks(project.path, false)}
+                        disabled={hook.busy}
+                        data-testid="hooks-off">Watcher only</button
+                      >
+                      <button
+                        role="radio"
+                        aria-checked={own === true}
+                        class:on={own === true}
+                        onclick={() => setHooks(project.path, true)}
+                        disabled={hook.busy}
+                        data-testid="hooks-on">Agent hooks</button
+                      >
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if hook.error}
+              <p class="error" data-testid="hook-error">{hook.error}</p>
+            {/if}
+          </section>
+        {:else if tab === "plugins"}
+          <h3>Plugins</h3>
+          <p class="note">
+            A plugin comes from a git repository or a directory on this machine, runs with your
+            privileges where the project is, and adds tools for the agent, a section under the tree,
+            or a view. Add a source and turn its plugins on one by one.
+          </p>
+          <form class="add-source" onsubmit={add}>
+            <input
+              type="text"
+              placeholder="Repository URL or directory"
+              bind:value={sourceLocation}
+              disabled={plugins.busy}
+              data-testid="plugin-location"
+            />
+            <input
+              type="text"
+              class="reference"
+              placeholder="ref"
+              bind:value={sourceReference}
+              disabled={plugins.busy}
+              data-testid="plugin-reference"
+            />
+            <button type="submit" disabled={plugins.busy || sourceLocation.trim() === ""} data-testid="plugin-add"
+              >{plugins.busy ? "Working…" : "Add"}</button
             >
-          </div>
-          {#if source.error}
-            <p class="error">{source.error}</p>
+          </form>
+          {#if plugins.error}
+            <p class="error" data-testid="plugin-error">{plugins.error}</p>
           {/if}
-          {#each source.plugins as plugin (plugin.name)}
-            <div class="project plugin" data-testid="plugin-row" data-plugin={plugin.name}>
-              <div class="plugin-text">
-                <span class="project-name">{plugin.name} <span class="version">{plugin.version}</span></span>
-                {#if plugin.description}<span class="plugin-desc">{plugin.description}</span>{/if}
-                <span class="plugin-meta" data-testid="plugin-state">{summary(plugin)} · {stateLabel(plugin)}</span>
-              </div>
-              <div class="seg" role="radiogroup" aria-label="{plugin.name} on or off">
-                <button
-                  role="radio"
-                  aria-checked={!plugin.enabled}
-                  class:on={!plugin.enabled}
-                  onclick={() => turn(source.id, plugin.name, false)}
-                  disabled={plugins.busy}
-                  data-testid="plugin-off">Off</button
-                >
-                <button
-                  role="radio"
-                  aria-checked={plugin.enabled}
-                  class:on={plugin.enabled}
-                  onclick={() => turn(source.id, plugin.name, true)}
-                  disabled={plugins.busy}
-                  data-testid="plugin-on">On</button
-                >
-              </div>
+          {#if plugins.sources.length > 0}
+            <div class="sources-tools">
+              <button class="tool" onclick={() => void checkAll()} disabled={plugins.busy} data-testid="plugins-check-all"
+                >Check for updates</button
+              >
             </div>
-            {#if asking !== null && asking.id === source.id && asking.name === plugin.name}
-              <div class="ask" data-testid="plugin-ask">
-                <p>
-                  {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.
-                  Turn it on?
-                </p>
-                <div class="ask-actions">
-                  <button class="go" onclick={() => agree(source.id, plugin.name)} data-testid="plugin-agree">Turn on</button>
-                  <button class="tool" onclick={() => (asking = null)} data-testid="plugin-cancel">Not now</button>
-                </div>
+          {/if}
+          {#each plugins.sources as source (source.id)}
+            <div class="source" data-testid="plugin-source" data-source={source.id}>
+              <div class="source-head">
+                <span class="source-name" title={source.location}>{lastSegment(source.location)}</span>
+                <span class="source-meta">
+                  {source.kind === "dir" ? "directory" : (source.commit?.slice(0, 7) ?? "")}{source.reference
+                    ? ` · ${source.reference}`
+                    : ""}
+                </span>
+                {#if source.newer}
+                  <button class="tool accent" onclick={() => void updateSource(source.id)} disabled={plugins.busy} data-testid="plugin-update"
+                    >Update to {source.newer.slice(0, 7)}</button
+                  >
+                {/if}
+                {#if source.kind === "git"}
+                  <button class="tool" onclick={() => void checkSource(source.id)} disabled={plugins.busy} data-testid="plugin-check"
+                    >Check</button
+                  >
+                {/if}
+                <button class="tool" onclick={() => void removeSource(source.id)} disabled={plugins.busy} data-testid="plugin-remove"
+                  >Remove</button
+                >
               </div>
-            {/if}
+              {#if source.error}
+                <p class="error">{source.error}</p>
+              {/if}
+              {#each source.plugins as plugin (plugin.name)}
+                <div class="project plugin" data-testid="plugin-row" data-plugin={plugin.name}>
+                  <div class="plugin-text">
+                    <span class="project-name">{plugin.name} <span class="version">{plugin.version}</span></span>
+                    {#if plugin.description}<span class="plugin-desc">{plugin.description}</span>{/if}
+                    <span class="plugin-meta" data-testid="plugin-state">{summary(plugin)} · {stateLabel(plugin)}</span>
+                  </div>
+                  <div class="seg" role="radiogroup" aria-label="{plugin.name} on or off">
+                    <button
+                      role="radio"
+                      aria-checked={!plugin.enabled}
+                      class:on={!plugin.enabled}
+                      onclick={() => turn(source.id, plugin.name, false)}
+                      disabled={plugins.busy}
+                      data-testid="plugin-off">Off</button
+                    >
+                    <button
+                      role="radio"
+                      aria-checked={plugin.enabled}
+                      class:on={plugin.enabled}
+                      onclick={() => turn(source.id, plugin.name, true)}
+                      disabled={plugins.busy}
+                      data-testid="plugin-on">On</button
+                    >
+                  </div>
+                </div>
+                {#if asking !== null && asking.id === source.id && asking.name === plugin.name}
+                  <div class="ask" data-testid="plugin-ask">
+                    <p>
+                      {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.
+                      Turn it on?
+                    </p>
+                    <div class="ask-actions">
+                      <button class="go" onclick={() => agree(source.id, plugin.name)} data-testid="plugin-agree">Turn on</button>
+                      <button class="tool" onclick={() => (asking = null)} data-testid="plugin-cancel">Not now</button>
+                    </div>
+                  </div>
+                {/if}
+              {/each}
+            </div>
           {/each}
-        </div>
-      {/each}
+        {:else}
+          <h3>Keys</h3>
+          <p class="note">
+            Every chord carries {describe({ key: "", shift: false, alt: false }).replace(/\+$/, "")}: the
+            keys without it belong to the agent. Pick a preset, or click a chord and press a new one.
+          </p>
+          <div class="seg" role="radiogroup" aria-label="Preset">
+            {#each PRESET_NAMES as name (name)}
+              <button
+                role="radio"
+                aria-checked={keys.preset === name}
+                class:on={keys.preset === name}
+                onclick={() => applyPreset(name)}
+                data-testid="preset-{name}">{PRESET_LABELS[name]}</button
+              >
+            {/each}
+            {#if keys.preset === "custom"}
+              <span class="custom" data-testid="preset-custom">Custom</span>
+            {/if}
+          </div>
 
-      <h3>Keys</h3>
-      <p class="note">
-        Every chord carries {describe({ key: "", shift: false, alt: false }).replace(/\+$/, "")}: the
-        keys without it belong to the agent. Pick a preset, or click a chord and press a new one.
-      </p>
-      <div class="seg" role="radiogroup" aria-label="Preset">
-        {#each PRESET_NAMES as name (name)}
-          <button
-            role="radio"
-            aria-checked={keys.preset === name}
-            class:on={keys.preset === name}
-            onclick={() => applyPreset(name)}
-            data-testid="preset-{name}">{PRESET_LABELS[name]}</button
-          >
-        {/each}
-        {#if keys.preset === "custom"}
-          <span class="custom" data-testid="preset-custom">Custom</span>
+          <table class="bindings">
+            {#each groups as group (group.name)}
+              <tbody>
+                <tr class="group"><th colspan="3">{group.name}</th></tr>
+                {#each group.actions as action (action.key)}
+                  <tr class:problem={problem?.action === action.key}>
+                    <td class="label">{action.label}</td>
+                    <td>
+                      <button
+                        class="chord"
+                        class:recording={recording === action.key}
+                        onclick={() => record(action.key)}
+                        aria-label="Change the key for {action.label}"
+                        data-testid="chord-{action.key}"
+                      >
+                        {recording === action.key ? "Press keys…" : describe(keys.bindings[action.key])}
+                      </button>
+                    </td>
+                    <td>
+                      <button
+                        class="tool"
+                        onclick={() => reset(action.key)}
+                        aria-label="Reset the key for {action.label}"
+                        data-testid="reset-{action.key}">reset</button
+                      >
+                    </td>
+                  </tr>
+                  {#if problem?.action === action.key}
+                    <tr class="explain">
+                      <td colspan="3" data-testid="chord-problem">{problem.text}</td>
+                    </tr>
+                  {/if}
+                {/each}
+              </tbody>
+            {/each}
+          </table>
         {/if}
       </div>
-
-      <table class="bindings">
-        {#each groups as group (group.name)}
-          <tbody>
-            <tr class="group"><th colspan="3">{group.name}</th></tr>
-            {#each group.actions as action (action.key)}
-              <tr class:problem={problem?.action === action.key}>
-                <td class="label">{action.label}</td>
-                <td>
-                  <button
-                    class="chord"
-                    class:recording={recording === action.key}
-                    onclick={() => record(action.key)}
-                    aria-label="Change the key for {action.label}"
-                    data-testid="chord-{action.key}"
-                  >
-                    {recording === action.key ? "Press keys…" : describe(keys.bindings[action.key])}
-                  </button>
-                </td>
-                <td>
-                  <button
-                    class="tool"
-                    onclick={() => reset(action.key)}
-                    aria-label="Reset the key for {action.label}"
-                    data-testid="reset-{action.key}">reset</button
-                  >
-                </td>
-              </tr>
-              {#if problem?.action === action.key}
-                <tr class="explain">
-                  <td colspan="3" data-testid="chord-problem">{problem.text}</td>
-                </tr>
-              {/if}
-            {/each}
-          </tbody>
-        {/each}
-      </table>
     </div>
   </div>
 </div>
@@ -570,13 +632,15 @@
   }
 
   .dialog {
-    width: min(640px, calc(100vw - 48px));
-    max-height: 84vh;
+    width: min(860px, 92vw);
+    height: min(640px, 88vh);
     display: flex;
     flex-direction: column;
     background: var(--surface);
-    border: 1px solid var(--accent);
+    border: 1px solid var(--pane-border-on);
+    border-radius: var(--radius-pane);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
+    overflow: hidden;
     outline: none;
   }
 
@@ -585,40 +649,91 @@
     align-items: baseline;
     justify-content: space-between;
     padding: 9px var(--pane-pad);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
 
   h2 {
     margin: 0;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    font-weight: 500;
+    font-family: var(--chrome);
+    font-size: var(--title-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
+    font-weight: var(--title-weight);
     color: var(--accent);
   }
 
   .body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+
+  /* The tabs stand on a ground a shade below the dialog's own, with the
+     column they open beside them, scrolling on its own. */
+  nav {
+    --pane-bg: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    background: var(--pane-bg);
+    border-right: 1px solid var(--divider, var(--rule));
+    overflow-y: auto;
+  }
+
+  .tab {
+    text-align: left;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .tab:hover {
+    background: var(--surface);
+    color: var(--ink);
+  }
+
+  .tab.on {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .panel {
+    min-width: 0;
     overflow-y: auto;
     padding: 6px var(--pane-pad) 16px;
   }
 
-  h3 {
-    margin: 14px 0 6px;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    font-weight: 500;
-    color: var(--ink-3);
+  .panel > h3:first-child {
+    margin-top: 0;
   }
 
-  /* The section keeps the rhythm of the rest, with room around it for the
-     line that lights up when the dialog was opened to point at it. */
+  h3 {
+    margin: 14px 0 6px;
+    font-family: var(--chrome);
+    font-size: var(--heading-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
+    font-weight: var(--heading-weight);
+    color: var(--heading-color);
+  }
+
+  /* The section is inset so the line that lights up when the dialog was
+     opened to point at it clears the text. */
   .live {
-    margin: 22px -10px 0;
+    margin: 0 -10px;
     padding: 10px 10px 10px;
+    border-radius: var(--radius);
     outline: 1px solid transparent;
     outline-offset: -1px;
   }
@@ -671,10 +786,11 @@
     margin: 12px 0 0;
     border: 0;
     background: none;
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--fold-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-fine);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px 0;
@@ -692,7 +808,7 @@
   }
 
   .project-name {
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 12px;
     color: var(--ink);
     overflow: hidden;
@@ -713,13 +829,16 @@
     align-items: center;
     gap: 0;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    overflow: hidden;
   }
 
   .seg button {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 10px;
     border: 0;
     border-right: 1px solid var(--rule);
@@ -754,15 +873,16 @@
     text-align: left;
     padding: 6px 10px 7px;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
     background: none;
     cursor: pointer;
   }
 
   .look-name {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-3);
   }
 
@@ -799,10 +919,10 @@
 
   .font-what {
     flex: 0 0 68px;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     color: var(--ink-3);
   }
 
@@ -831,12 +951,14 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 10px 4px 8px;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
     background: none;
     color: var(--ink-3);
     cursor: pointer;
@@ -856,10 +978,10 @@
   }
 
   .custom {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 10px;
     color: var(--accent);
     border-left: 1px solid var(--rule);
@@ -875,17 +997,17 @@
   .bindings th {
     text-align: left;
     padding: 12px 0 4px;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
-    font-weight: 500;
-    color: var(--ink-3);
+    font-family: var(--chrome);
+    font-size: var(--heading-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
+    font-weight: var(--heading-weight);
+    color: var(--heading-color);
   }
 
   .bindings td {
     padding: 3px 0;
-    border-top: 1px solid var(--rule);
+    border-top: 1px solid var(--divider, var(--rule));
     color: var(--ink-2);
   }
 
@@ -896,10 +1018,11 @@
   .chord {
     min-width: 96px;
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: var(--field-size);
     padding: 2px 8px;
-    border: 1px solid var(--rule);
-    background: var(--surface-2);
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
+    background: var(--field-bg);
     color: var(--ink);
     cursor: pointer;
     text-align: left;
@@ -913,10 +1036,11 @@
   .tool {
     border: 0;
     background: none;
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px 6px;
@@ -946,10 +1070,11 @@
   .add-source input {
     flex: 1;
     min-width: 0;
-    font-family: var(--mono);
-    font-size: 11.5px;
+    font-family: var(--chrome);
+    font-size: var(--field-size);
     padding: 5px 8px;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
     background: var(--surface);
     color: var(--ink);
   }
@@ -963,12 +1088,14 @@
   .source-head .tool,
   .ask .tool,
   .ask .go {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
     padding: 4px 10px;
     border: 1px solid var(--rule);
+    border-radius: var(--radius);
     background: none;
     color: var(--ink-2);
     cursor: pointer;
@@ -994,7 +1121,7 @@
   }
 
   .source {
-    border-top: 1px solid var(--rule);
+    border-top: 1px solid var(--divider, var(--rule));
     padding: 8px 0 4px;
   }
 
@@ -1006,7 +1133,7 @@
   }
 
   .source-name {
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 11.5px;
     color: var(--ink);
     overflow: hidden;
@@ -1017,7 +1144,7 @@
 
   .source-meta {
     flex: 1;
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
     color: var(--ink-3);
     white-space: nowrap;
@@ -1047,7 +1174,7 @@
   }
 
   .plugin-meta {
-    font-family: var(--mono);
+    font-family: var(--chrome);
     font-size: 10.5px;
     color: var(--ink-3);
   }
@@ -1056,6 +1183,7 @@
     margin: 0 0 8px;
     padding: 8px 10px;
     border: 1px solid var(--accent);
+    border-radius: var(--radius);
   }
 
   .ask p {

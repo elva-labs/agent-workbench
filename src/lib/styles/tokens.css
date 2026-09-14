@@ -100,6 +100,10 @@
   --title-color-on: var(--accent);
   --meta-size: 10.5px;
 
+  --heading-size: 10px;
+  --heading-weight: 500;
+  --heading-color: var(--ink-3);
+
   --row-pad-x: var(--pane-pad);
   --row-pad-y: 4px;
   --row-size: 11.5px;
