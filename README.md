@@ -66,6 +66,9 @@ npm install
 npm run tauri dev
 ```
 
+A development build wears an icon of its own, the figure on the accent
+rather than on black, so it is told from the installed app in the dock.
+
 Linux needs the WebKitGTK development packages Tauri asks for, plus
 `libxdo-dev`, `libayatana-appindicator3-dev` and `librsvg2-dev`.
 
