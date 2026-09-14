@@ -52,8 +52,11 @@ are exact instead. Both agents' prompt, stop and permission hooks append to
 a log the core tails, and from the first line a session's row follows the
 hooks: working from the prompt, needs permission while the agent asks,
 with a hollow ring on the dot, waiting for you from the stop. The pty
-heuristic stands down for that session, except that output after a
-permission prompt means it was granted and the agent went on.
+heuristic stands down for that session, except for two things the hooks
+cannot say: output after a permission prompt means it was granted and the
+agent went on, and a screen that goes still for five seconds while the
+hooks still say working means the turn ended without them, which is what
+an Escape at the keyboard does.
 
 ## Names
 

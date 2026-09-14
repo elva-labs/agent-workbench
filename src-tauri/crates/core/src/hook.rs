@@ -152,6 +152,32 @@ fn read_settings(path: &Path) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+/// The file as it is, to change one entry of and write back. A file that
+/// is not there is empty; a file that is there and cannot be read as an
+/// object is left alone, since writing it back would keep only our entry
+/// and lose everything the agent kept in it.
+fn read_for_writing(path: &Path) -> Result<Map<String, Value>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(error) => return Err(format!("could not read {}: {error}", path.display())),
+    };
+    if text.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => Err(format!(
+            "{} is not a JSON object; leaving it alone",
+            path.display()
+        )),
+        Err(error) => Err(format!(
+            "{} is not JSON ({error}); leaving it alone",
+            path.display()
+        )),
+    }
+}
+
 fn is_ours(entry: &Value, home: &Path) -> bool {
     let ours = [command(home), activity_command(home)];
     entry
@@ -238,10 +264,82 @@ pub fn status(home: &Path, project: &Path) -> HookStatus {
     }
 }
 
+/// Gives a worktree the trust its project has. Both agents ask, the first
+/// time they run in a directory, whether its files are to be trusted, and
+/// a worktree is the project's own files under another path: what the user
+/// said of the project holds for it. Claude Code keeps the answer in its
+/// state under the user's home, Codex in its own config there; each is
+/// copied only where the project's says yes, and a file that cannot be
+/// read is left alone.
+pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), String> {
+    let canonical = |path: &Path| {
+        dunce::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string()
+    };
+    let (from, to) = (canonical(project), canonical(worktree));
+
+    let claude = claude_json_path(home);
+    let mut state = read_for_writing(&claude)?;
+    let trusted = state
+        .get("projects")
+        .and_then(|projects| projects.get(&from))
+        .and_then(|project| project.get("hasTrustDialogAccepted"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if trusted {
+        let entry = state
+            .entry("projects")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Claude's projects state is not an object")?
+            .entry(to.clone())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Claude's project state is not an object")?;
+        if entry.get("hasTrustDialogAccepted") != Some(&Value::Bool(true)) {
+            entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
+            write_settings(&claude, &state)?;
+        }
+    }
+
+    let codex = crate::codex::home(home).join("config.toml");
+    let Ok(text) = std::fs::read_to_string(&codex) else {
+        return Ok(());
+    };
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+    let level = document
+        .get("projects")
+        .and_then(|projects| projects.get(&from))
+        .and_then(|project| project.get("trust_level"))
+        .and_then(|level| level.as_str())
+        .map(str::to_string);
+    if level.as_deref() == Some("trusted") {
+        let projects =
+            document["projects"].or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+        let already = projects
+            .get(&to)
+            .and_then(|project| project.get("trust_level"))
+            .and_then(|level| level.as_str())
+            == Some("trusted");
+        if !already {
+            let mut table = toml_edit::Table::new();
+            table["trust_level"] = toml_edit::value("trusted");
+            projects[&to] = toml_edit::Item::Table(table);
+            std::fs::write(&codex, document.to_string())
+                .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Adds the hooks, leaving every other setting and every other hook alone.
 pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
     let path = settings_path(project);
-    let mut settings = read_settings(&path);
+    let mut settings = read_for_writing(&path)?;
     let mut changed = add_entry(
         &mut settings,
         "PostToolUse",
@@ -259,7 +357,7 @@ pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
     }
 
     let codex = codex_hooks_path(project);
-    let mut hooks = read_settings(&codex);
+    let mut hooks = read_for_writing(&codex)?;
     let mut changed = false;
     for event in CODEX_SESSION_EVENTS {
         changed |= add_entry(&mut hooks, event, session_entry(home), home)?;
@@ -304,7 +402,7 @@ fn install_server(home: &Path, project: &Path) -> Result<(), String> {
         .to_string();
 
     let claude = claude_json_path(home);
-    let mut state = read_settings(&claude);
+    let mut state = read_for_writing(&claude)?;
     let servers = state
         .entry("projects")
         .or_insert_with(|| json!({}))
@@ -368,7 +466,7 @@ fn uninstall_server(home: &Path, project: &Path) -> Result<(), String> {
         .to_string();
     let claude = claude_json_path(home);
     if claude.exists() {
-        let mut state = read_settings(&claude);
+        let mut state = read_for_writing(&claude)?;
         let mut changed = false;
         if let Some(servers) = state
             .get_mut("projects")
@@ -465,7 +563,7 @@ fn exclude_from_git(project: &Path) {
 pub fn uninstall(home: &Path, project: &Path) -> Result<HookStatus, String> {
     let path = settings_path(project);
     if path.exists() {
-        let mut settings = read_settings(&path);
+        let mut settings = read_for_writing(&path)?;
         for event in ["PostToolUse"].iter().chain(CLAUDE_SESSION_EVENTS) {
             remove_entries(&mut settings, event, home);
         }
@@ -474,7 +572,7 @@ pub fn uninstall(home: &Path, project: &Path) -> Result<HookStatus, String> {
 
     let codex = codex_hooks_path(project);
     if codex.exists() {
-        let mut hooks = read_settings(&codex);
+        let mut hooks = read_for_writing(&codex)?;
         for event in CODEX_SESSION_EVENTS {
             remove_entries(&mut hooks, event, home);
         }
@@ -510,6 +608,98 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         (home, project)
+    }
+
+    #[test]
+    fn never_writes_back_a_file_it_could_not_read() {
+        let (home, project) = fixture("unreadable");
+        with_daemon(&home);
+        // Half a file, as one being written looks: not JSON.
+        std::fs::write(
+            claude_json_path(&home),
+            "{\"projects\": {\"/a\": {\"hasTrust",
+        )
+        .unwrap();
+        let error = install(&home, &project).unwrap_err();
+        assert!(error.contains("leaving it alone"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(claude_json_path(&home)).unwrap(),
+            "{\"projects\": {\"/a\": {\"hasTrust"
+        );
+        // The project's own settings, the same.
+        std::fs::write(claude_json_path(&home), "{}").unwrap();
+        std::fs::create_dir_all(settings_path(&project).parent().unwrap()).unwrap();
+        std::fs::write(settings_path(&project), "[1, 2").unwrap();
+        let error = install(&home, &project).unwrap_err();
+        assert!(error.contains("leaving it alone"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&project)).unwrap(),
+            "[1, 2"
+        );
+    }
+
+    #[test]
+    fn a_worktree_is_trusted_where_its_project_is_and_nowhere_else() {
+        let (home, project) = fixture("trust");
+        let worktree = project.join(".claude").join("worktrees").join("fix");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let key = |path: &Path| {
+            dunce::canonicalize(path)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        };
+
+        // Neither agent has been told anything: nothing is written, and a
+        // missing Codex config is left missing.
+        trust_like(&home, &project, &worktree).unwrap();
+        assert!(!claude_json_path(&home).exists());
+        assert!(!crate::codex::home(&home).join("config.toml").exists());
+
+        // The project is trusted with both: the worktree is too, and the
+        // rest of each file stands.
+        std::fs::write(
+            claude_json_path(&home),
+            serde_json::to_string(&json!({
+                "projects": { key(&project): { "hasTrustDialogAccepted": true, "allowedTools": ["Bash"] } },
+                "theme": "dark"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let codex = crate::codex::home(&home).join("config.toml");
+        std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        std::fs::write(
+            &codex,
+            format!(
+                "model = \"o3\"\n\n[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                key(&project)
+            ),
+        )
+        .unwrap();
+        trust_like(&home, &project, &worktree).unwrap();
+        let state = read_settings(&claude_json_path(&home));
+        assert_eq!(
+            state["projects"][key(&worktree)]["hasTrustDialogAccepted"],
+            true
+        );
+        assert_eq!(state["projects"][key(&project)]["allowedTools"][0], "Bash");
+        assert_eq!(state["theme"], "dark");
+        let text = std::fs::read_to_string(&codex).unwrap();
+        let document = text.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(document["model"].as_str(), Some("o3"));
+        assert_eq!(
+            document["projects"][key(&worktree)]["trust_level"].as_str(),
+            Some("trusted")
+        );
+
+        // A project the user has not trusted lends nothing.
+        let other = project.parent().unwrap().join("other");
+        let tree = other.join("tree");
+        std::fs::create_dir_all(&tree).unwrap();
+        trust_like(&home, &other, &tree).unwrap();
+        let state = read_settings(&claude_json_path(&home));
+        assert!(state["projects"].get(key(&tree)).is_none());
     }
 
     fn settings_of(project: &Path) -> Value {
@@ -764,13 +954,20 @@ mod tests {
     }
 
     #[test]
-    fn survives_a_settings_file_that_is_not_json() {
+    fn refuses_a_settings_file_that_is_not_json_rather_than_replace_it() {
         let (home, project) = fixture("broken");
         std::fs::create_dir_all(project.join(".claude")).unwrap();
         std::fs::write(settings_path(&project), "{ not json").unwrap();
 
-        // Better to start fresh than to refuse: the file was already unusable.
-        assert!(install(&home, &project).unwrap().installed);
+        // The file may be one being written, or one the user is mid-way
+        // through: it is theirs, and not ours to start over.
+        let error = install(&home, &project).unwrap_err();
+        assert!(error.contains("leaving it alone"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&project)).unwrap(),
+            "{ not json"
+        );
+        assert!(!status(&home, &project).installed);
     }
 
     #[test]

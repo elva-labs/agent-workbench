@@ -14,6 +14,7 @@ import {
   exact,
   loadRemembered,
   output,
+  QUIET_EXACT_MS,
   QUIET_MS,
   rang,
   noted,
@@ -937,11 +938,14 @@ describe("working, and waiting for you", () => {
       expect(behind.unread).toBe(true);
       expect(statusLabel(behind)).toBe("needs permission");
 
-      // Granted: output means it went on.
+      // Granted: output means it went on, and the screen moving keeps it
+      // working for as long as it moves.
       output(behind.key, WORK_BYTES);
       expect(behind.needs).toBeNull();
       expect(behind.working).toBe(true);
-      vi.advanceTimersByTime(QUIET_MS * 3);
+      vi.advanceTimersByTime(QUIET_EXACT_MS - 1);
+      output(behind.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_EXACT_MS - 1);
       expect(behind.working).toBe(true);
 
       exact("session-pty-1", "stop");
@@ -950,6 +954,27 @@ describe("working, and waiting for you", () => {
       viewed(behind.key);
       exact("session-pty-1", "idle");
       expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A user's Escape ends the turn and fires no hook: the hooks still say
+  // working, and the only sign is the screen going still.
+  it("ends a hooked session's working when its screen goes still", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      exact("session-pty-1", "prompt");
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_EXACT_MS);
+      expect(session.working).toBe(false);
+      expect(session.exact).toBe(true);
+      // The next prompt is the hooks' word again.
+      exact("session-pty-1", "prompt");
+      expect(session.working).toBe(true);
+      vi.advanceTimersByTime(QUIET_EXACT_MS * 2);
+      expect(session.working).toBe(true);
     } finally {
       vi.useRealTimers();
     }

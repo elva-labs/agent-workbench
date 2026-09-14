@@ -624,6 +624,9 @@ export function close(key: string) {
   const pulse = pulses.get(key);
   if (pulse?.quiet) clearTimeout(pulse.quiet);
   pulses.delete(key);
+  const still = stills.get(key);
+  if (still !== undefined) clearTimeout(still);
+  stills.delete(key);
 
   const at = sessions.all.indexOf(session);
   sessions.all.splice(at, 1);
@@ -701,6 +704,10 @@ export function statusLabel(session: Session | null): string {
 
 /** Quiet this long after output is the agent waiting. */
 export const QUIET_MS = 2000;
+/** With the hooks saying, quiet this long while they say working is the
+    turn having ended without them: a user's Escape ends a turn and fires
+    no hook, and an agent at work keeps its screen moving. */
+export const QUIET_EXACT_MS = 5000;
 /** Output within a second below this is a redraw, not work. */
 export const WORK_BYTES = 256;
 /** Seconds running with more than a redraw each before it is work. */
@@ -738,12 +745,15 @@ export function output(key: string, bytes: number, now = Date.now()) {
   const session = byKey(key);
   if (session === null) return;
   if (session.exact) {
-    // The hooks say when it starts and stops. Output still says one thing
-    // they do not: a permission was granted and the agent went on.
+    // The hooks say when it starts and stops. Output still says two things
+    // they do not: a permission was granted and the agent went on, and a
+    // turn the user cut short is over, which is the screen going still
+    // while the hooks still say working.
     if (session.needs !== null && bytes >= WORK_BYTES) {
       session.needs = null;
       session.working = true;
     }
+    if (session.working) stillLater(session);
     return;
   }
   if (!session.engaged) {
@@ -776,6 +786,25 @@ export function output(key: string, bytes: number, now = Date.now()) {
   if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   pulse.quiet = setTimeout(() => settle(key), QUIET_MS);
 }
+
+/** Starts, or starts over, the clock that ends a hooked session's working
+    when its screen has gone still. */
+function stillLater(session: Session) {
+  const held = stills.get(session.key);
+  if (held !== undefined) clearTimeout(held);
+  stills.set(
+    session.key,
+    setTimeout(() => {
+      stills.delete(session.key);
+      const now = byKey(session.key);
+      if (now === null || !now.exact || !now.working) return;
+      now.working = false;
+      if (!isViewed(now)) now.unread = true;
+    }, QUIET_EXACT_MS),
+  );
+}
+
+const stills = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** The agent went quiet: it is waiting, and unread unless watched stop. */
 function settle(key: string) {
@@ -829,6 +858,9 @@ export function exact(sessionId: string, kind: SessionEvent["kind"]) {
   const pulse = pulses.get(session.key);
   if (pulse?.quiet) clearTimeout(pulse.quiet);
   pulses.delete(session.key);
+  const still = stills.get(session.key);
+  if (still !== undefined) clearTimeout(still);
+  stills.delete(session.key);
   switch (kind) {
     case "prompt":
       session.working = true;
@@ -858,6 +890,8 @@ export function unreadCount(): number {
 
 /** Test seam: the counter is module state and rows outlive a component. */
 export function reset() {
+  for (const still of stills.values()) clearTimeout(still);
+  stills.clear();
   for (const pulse of pulses.values()) {
     if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   }
