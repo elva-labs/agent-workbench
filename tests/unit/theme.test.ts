@@ -19,7 +19,7 @@ import {
 beforeEach(() => {
   theme.choice = "system";
   theme.palette = "teal";
-  theme.look = "terminal";
+  theme.look = "modern";
   theme.mono = "system";
   theme.sans = "system";
   delete document.documentElement.dataset.theme;
@@ -102,14 +102,20 @@ describe("setLook", () => {
     expect(document.documentElement.dataset.look).toBe("modern");
   });
 
+  it("wears modern with nothing stored, and stamps it", () => {
+    loadTheme();
+    expect(theme.look).toBe("modern");
+    expect(document.documentElement.dataset.look).toBe("modern");
+  });
+
   it("ignores a look it does not know", () => {
     localStorage.setItem("workbench.look", "brutalist");
     loadTheme();
-    expect(theme.look).toBe("terminal");
+    expect(theme.look).toBe("modern");
   });
 
   it("lists both looks with a line each", () => {
-    expect(LOOKS.map((look) => look.name)).toEqual(["terminal", "modern"]);
+    expect(LOOKS.map((look) => look.name)).toEqual(["modern", "terminal"]);
     for (const look of LOOKS) expect(look.hint).not.toBe("");
   });
 });

@@ -46,17 +46,18 @@ export const PALETTES: PaletteInfo[] = [
   { name: "mono", label: "Mono", swatch: { light: "#2b2b2b", dark: "#d8d8d8" } },
 ];
 
-/** Both looks, in the order the settings show them. */
+/** Both looks, in the order the settings show them: the one a fresh
+    install wears first. */
 export const LOOKS: LookInfo[] = [
-  {
-    name: "terminal",
-    label: "Terminal",
-    hint: "Mono chrome, small capitals, square corners, panes as boxes",
-  },
   {
     name: "modern",
     label: "Modern",
     hint: "The sans, sentence case, soft corners, the panes flush with one hairline between",
+  },
+  {
+    name: "terminal",
+    label: "Terminal",
+    hint: "Mono chrome, small capitals, square corners, panes as boxes",
   },
 ];
 
@@ -89,7 +90,7 @@ export const theme = $state<{
 }>({
   choice: "system",
   palette: "teal",
-  look: "terminal",
+  look: "modern",
   mono: "system",
   sans: "system",
 });

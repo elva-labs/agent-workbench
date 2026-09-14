@@ -15,11 +15,12 @@ System, light or dark. System follows the desktop and changes with it.
 
 ## Theme
 
-Terminal or modern. Terminal is mono chrome, small capitals, square corners
-and panes drawn as boxes. Modern sets the chrome in the sans, in sentence
-case, with soft corners and the three panes flush on one surface, a single
-hairline between each pair and the sessions pane a shade below. Both use the
-same colours, so the appearance and the palette hold across either.
+Modern or terminal, modern to begin with. Modern sets the chrome in the
+sans, in sentence case, with soft corners and the three panes flush on one
+surface, a single hairline between each pair and the sessions pane a shade
+below. Terminal is mono chrome, small capitals, square corners and panes
+drawn as boxes. Both use the same colours, so the appearance and the palette
+hold across either.
 
 ## Font
 
