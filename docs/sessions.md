@@ -9,7 +9,9 @@ background session's pty is never resized and never reflows.
 
 Nothing starts by itself. Opening a project, or the app, shows what the
 project has: live sessions if any, past ones to resume, and a new-session
-row. The menu beside Open project holds the way to a project on another
+row. The past ones are read again each time the window comes back into
+view and once a minute while it is looked at, so a session run in a
+terminal outside the app is there to resume without a restart. The menu beside Open project holds the way to a project on another
 machine and to an orchestrator session; see [remote](remote.md) and
 [orchestrator](orchestrator.md). With more than one agent installed the row opens in place into a row
 per agent; see [agents](adapters.md).

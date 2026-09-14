@@ -137,6 +137,27 @@ export async function loadHistory(project: string) {
   sessions.history[project] = [...newest.values()];
 }
 
+/** How often a project's history is read again while the window is
+    looked at. A session run in a terminal outside the app, or one that
+    ended there, shows up on the next reading. */
+export const HISTORY_EVERY = 60_000;
+
+/** Reads the history of every project that has one again. */
+export function refreshHistory() {
+  for (const project of Object.keys(sessions.history))
+    void loadHistory(project);
+}
+
+/** Keeps the histories fresh: read again on a clock while the window is
+    looked at, and each time it comes back into view. Returns a stop
+    function. */
+export function followHistory(): () => void {
+  const timer = setInterval(() => {
+    if (attention.focused) refreshHistory();
+  }, HISTORY_EVERY);
+  return () => clearInterval(timer);
+}
+
 /** The agent a new session in the project starts with: the one last started
     there, else the first one installed. */
 export function defaultAgent(project: string): AgentId {

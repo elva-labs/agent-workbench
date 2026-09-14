@@ -49,6 +49,8 @@ import {
   statusLabel,
   statusMessage,
   disown,
+  HISTORY_EVERY,
+  followHistory,
 } from "$lib/sessions.svelte";
 
 const A = "/home/ada/dev/one";
@@ -476,6 +478,30 @@ describe("history", () => {
     close(session.key);
     expect(historyFor(A).map((t) => t.id)).toEqual(["theirs"]);
     expect(outsideFor(A)).toEqual([]);
+  });
+
+  // What ran outside the app shows up without a restart: the histories
+  // are read again on a clock while the window is looked at.
+  it("reads the histories again on a clock, while looked at", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadHistory(A);
+      const before = historyReads;
+      const stop = followHistory();
+      attention.focused = true;
+      await vi.advanceTimersByTimeAsync(HISTORY_EVERY);
+      expect(historyReads).toBe(before + 1);
+      // A window nobody is looking at is left alone.
+      attention.focused = false;
+      await vi.advanceTimersByTimeAsync(HISTORY_EVERY);
+      expect(historyReads).toBe(before + 1);
+      stop();
+      attention.focused = true;
+      await vi.advanceTimersByTimeAsync(HISTORY_EVERY);
+      expect(historyReads).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("remembers which sessions are ours across a restart", () => {

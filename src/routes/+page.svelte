@@ -47,6 +47,8 @@
     ended as sessionEnded,
     exact,
     followCwd,
+    followHistory,
+    refreshHistory,
     identified,
     sessions,
     unreadCount,
@@ -179,6 +181,7 @@
       .then((unlisten) => offs.push(unlisten));
     void loadOrchestrator();
     offs.push(followCwd());
+    offs.push(followHistory());
     offs.push(followFocus());
     return () => offs.forEach((off) => off());
   });
@@ -188,6 +191,12 @@
   $effect(() => {
     const key = sessions.active;
     if (attention.focused && key !== null) viewed(key);
+  });
+
+  // Coming back to the window is when what happened elsewhere is wanted:
+  // the histories are read again.
+  $effect(() => {
+    if (attention.focused) refreshHistory();
   });
 
   $effect(() => {
