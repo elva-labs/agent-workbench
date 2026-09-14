@@ -239,8 +239,11 @@ export async function installFakeCore(
           return () => {};
         },
         onPluginSection: async (handler: (event: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__pluginSection =
-            handler;
+          // A test says as much of a section as it cares about; the rest
+          // is what a plugin that says nothing gets.
+          (window as unknown as Record<string, unknown>).__pluginSection = (
+            sent: Record<string, unknown>,
+          ) => handler({ detail: null, folded: false, order: 0, ...sent });
           return () => {};
         },
         onPluginNotice: async (handler: (event: unknown) => void) => {

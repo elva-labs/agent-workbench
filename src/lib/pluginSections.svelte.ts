@@ -4,9 +4,13 @@
  * that failed had to say.
  *
  * A plugin sends a section's whole list of rows whenever it changes, per
- * project, so the window keeps the latest of each and never merges. A list
- * with no rows in it means the section is gone for that project, which is
- * what a plugin stopping looks like from here.
+ * project, so the window keeps the latest of each and never merges. A
+ * section stands while it has rows, actions or a line of detail, and goes
+ * for that project when it has none of the three, which is what a plugin
+ * stopping looks like from here.
+ *
+ * The sections of one plugin are drawn together: the one it declared first
+ * is the plugin's face, and the rest are groups inside its fold.
  */
 
 import {
@@ -26,9 +30,31 @@ export interface PluginSection {
   plugin: string;
   section: string;
   title: string;
+  /** A short line beside the title, or nothing. */
+  detail: string | null;
   project: string;
   rows: PluginRow[];
   actions: PluginAction[];
+  /** Whether the group starts folded when nothing is remembered for it. */
+  folded: boolean;
+  /** Where the section stands among the ones its plugin declared. */
+  order: number;
+}
+
+/** One plugin's sections in the project on screen, as one fold. */
+export interface PluginGroup {
+  /** Source and plugin, which is what the fold is remembered by. */
+  key: string;
+  source: string;
+  plugin: string;
+  /** The first section's title, which names the fold. */
+  title: string;
+  /** The first section's detail, beside that title. */
+  detail: string | null;
+  /** The sections, the first one first. */
+  sections: PluginSection[];
+  /** Every section's rows counted together. */
+  count: number;
 }
 
 /** How long a failed action's word stays on its plugin's sections. */
@@ -66,7 +92,11 @@ export function sectionChanged(event: PluginSectionEvent) {
   const at = pluginSections.sections.findIndex(
     (section) => section.key === key && section.project === event.project,
   );
-  if (event.rows.length === 0) {
+  const nothing =
+    event.rows.length === 0 &&
+    event.actions.length === 0 &&
+    (event.detail === null || event.detail === "");
+  if (nothing) {
     if (at !== -1) pluginSections.sections.splice(at, 1);
     if (pluginSections.pending?.key === key) pluginSections.pending = null;
     return;
@@ -77,9 +107,12 @@ export function sectionChanged(event: PluginSectionEvent) {
     plugin: event.plugin,
     section: event.section,
     title: event.title,
+    detail: event.detail,
     project: event.project,
     rows: event.rows,
     actions: event.actions,
+    folded: event.folded,
+    order: event.order,
   };
   if (at === -1) pluginSections.sections.push(section);
   else pluginSections.sections[at] = section;
@@ -119,6 +152,42 @@ export function listed(): PluginSection[] {
       (a, b) =>
         a.plugin.localeCompare(b.plugin) || a.section.localeCompare(b.section),
     );
+}
+
+/** The sections of the project on screen, one group per plugin, in the
+    order `listed` puts the plugins in. Within a group the sections stand
+    as the plugin declared them, and the first of them names the group. */
+export function grouped(): PluginGroup[] {
+  const groups: PluginGroup[] = [];
+  for (const section of listed()) {
+    const key = pluginOf(section);
+    let group = groups.find((candidate) => candidate.key === key);
+    if (group === undefined) {
+      group = {
+        key,
+        source: section.source,
+        plugin: section.plugin,
+        title: section.title,
+        detail: section.detail,
+        sections: [],
+        count: 0,
+      };
+      groups.push(group);
+    }
+    group.sections.push(section);
+  }
+  for (const group of groups) {
+    group.sections.sort(
+      (a, b) => a.order - b.order || a.section.localeCompare(b.section),
+    );
+    group.title = group.sections[0].title;
+    group.detail = group.sections[0].detail;
+    group.count = group.sections.reduce(
+      (total, section) => total + section.rows.length,
+      0,
+    );
+  }
+  return groups;
 }
 
 /** The section a key names in the project on screen. */

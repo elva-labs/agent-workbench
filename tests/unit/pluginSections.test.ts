@@ -7,6 +7,7 @@ import type {
 } from "$lib/core";
 import {
   NOTICE_MS,
+  grouped,
   listed,
   noticeOf,
   noticed,
@@ -49,9 +50,12 @@ const event = (
   plugin: "github",
   section: "Pull request",
   title: "Pull request",
+  detail: null,
   project: "/one",
   rows: [row("checks/lint")],
   actions: [refresh],
+  folded: false,
+  order: 0,
   ...extra,
 });
 
@@ -81,13 +85,25 @@ describe("a section's rows", () => {
     expect(listed()[0].key).toBe("src-1/github/Pull request");
   });
 
-  it("goes when the plugin sends none, leaving the other projects alone", () => {
+  it("goes when the plugin sends no rows, no actions and no detail, leaving the other projects alone", () => {
     sectionChanged(event());
     sectionChanged(event({ project: "/two" }));
-    sectionChanged(event({ rows: [] }));
+    sectionChanged(event({ rows: [], actions: [] }));
     expect(listed()).toEqual([]);
     workspace.active = "/two";
     expect(listed()).toHaveLength(1);
+  });
+
+  it("stands on its actions or its detail alone, with no rows at all", () => {
+    sectionChanged(event({ rows: [] }));
+    expect(listed()).toHaveLength(1);
+    expect(listed()[0].rows).toEqual([]);
+    expect(listed()[0].actions).toEqual([refresh]);
+    sectionChanged(event({ rows: [], actions: [], detail: "main, 2 ahead" }));
+    expect(listed()).toHaveLength(1);
+    expect(listed()[0].detail).toBe("main, 2 ahead");
+    sectionChanged(event({ rows: [], actions: [], detail: null }));
+    expect(listed()).toEqual([]);
   });
 
   it("lists the project on screen, by plugin then section", () => {
@@ -99,6 +115,54 @@ describe("a section's rows", () => {
     ).toEqual(["git/Git", "github/Checks", "github/Reviews"]);
     workspace.active = null;
     expect(listed()).toEqual([]);
+  });
+
+  it("draws one plugin's sections as one group, the first of them its face", () => {
+    sectionChanged(
+      event({
+        plugin: "git",
+        section: "branches",
+        title: "Branches",
+        order: 1,
+        rows: [row("main"), row("topic")],
+      }),
+    );
+    sectionChanged(
+      event({
+        plugin: "git",
+        section: "status",
+        title: "Git",
+        detail: "main, 2 ahead",
+        order: 0,
+        rows: [row("src/lib.rs")],
+      }),
+    );
+    sectionChanged(event({ plugin: "github", section: "checks" }));
+    const groups = grouped();
+    expect(groups.map((group) => group.key)).toEqual([
+      "src-1/git",
+      "src-1/github",
+    ]);
+    // The order the plugin declared wins over the section's own name.
+    expect(groups[0].sections.map((section) => section.section)).toEqual([
+      "status",
+      "branches",
+    ]);
+    expect(groups[0].title).toBe("Git");
+    expect(groups[0].detail).toBe("main, 2 ahead");
+    expect(groups[0].count).toBe(3);
+    expect(groups[1].title).toBe("Pull request");
+    expect(groups[1].detail).toBeNull();
+    expect(groups[1].count).toBe(1);
+  });
+
+  it("falls back to the section's name when two stand in the same place", () => {
+    sectionChanged(event({ plugin: "git", section: "notes", order: 3 }));
+    sectionChanged(event({ plugin: "git", section: "alerts", order: 3 }));
+    expect(grouped()[0].sections.map((section) => section.section)).toEqual([
+      "alerts",
+      "notes",
+    ]);
   });
 
   it("finds a section by its key in the project on screen", () => {

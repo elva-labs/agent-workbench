@@ -102,7 +102,8 @@ called it; a message from the plugin's view; a request to stop.
 From the plugin to the app: a greeting with its name and version and the
 full shape of what the manifest declared, the tools with their
 descriptions and input schemas, the sections with their actions, the view
-with its width; a section's rows for a project, sent whenever they change;
+with its width; a section's rows for a project, with its title, its line
+of detail and whether it starts folded, sent whenever they change;
 the result of a tool call or an action; a place to open in the viewer, a
 file's diff, files to present, or a line for a session's row, the same
 means the agent has; the view's page and the data the view shows. The app
@@ -138,6 +139,22 @@ and the plugin's answer is one line on stdout with the same id:
   "type": "result",
   "id": "c1",
   "content": "#42 Retry with jitter · checks 3 of 4 passed · 2 comments"
+}
+```
+
+A section's rows come from the plugin the same way, one line whenever they
+change:
+
+```json
+{
+  "type": "section",
+  "id": "status",
+  "title": "Git",
+  "detail": "main, 2 ahead",
+  "folded": false,
+  "project": "/srv/orbit-api",
+  "rows": [],
+  "actions": [{ "id": "commit", "label": "Commit" }]
 }
 ```
 
@@ -200,16 +217,28 @@ reported to the agent as such, and the call is over.
 
 ## Sections and actions
 
-A section sits under the tree with media and processes, folded to its
-header by default and counting its rows there. A row has a label, a line
-of detail, a state, ok, busy, waiting or failed, drawn as the session dot
-is, and actions. An action either runs at once or asks first: the plugin
-declares the fields it needs, one or two, a line of text or a choice among
-named options, and the app asks in a small dialog of its own. A section
-can carry actions on its header too, "Commit", "Pull". Enter on a row runs
-its default action; the rest show on hover and under the cursor, as the
-stop button on a process does. The tree's cursor walks a plugin's rows as
-it walks the others.
+A plugin's sections are drawn as one fold under the tree, beside media and
+processes, folded until it is asked for. The fold takes its title from the
+section the plugin declared first and counts every section's rows. That
+first section's rows sit on the fold itself; each further one is a group
+inside it with a fold of its own, open or folded as the section says.
+
+A section may carry a line of detail beside its title, the branch and how
+far it stands from its remote, say. A row has a label, a line of detail, a
+state, ok, busy, waiting or failed, drawn as the session dot is, and
+actions. An action either runs at once or asks first: the plugin declares
+the fields it needs, one or two, a line of text or a choice among named
+options, and the app asks in a small dialog of its own. A section can
+carry actions of its own too, "Commit", "Pull". A folded header shows
+nothing but the button to the plugin's page; the actions appear once it is
+open, and a group's appear once the group is. Enter on a row runs its
+default action; the rest show on hover and under the cursor, as the stop
+button on a process does. The tree's cursor walks a plugin's rows and its
+group lines as it walks the others.
+
+A section stands while it has rows, actions or a line of detail, so a
+clean tree still shows the branch and what can be done to it, and goes
+when it has none of the three.
 
 ## The view
 

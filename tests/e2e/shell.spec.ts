@@ -60,7 +60,15 @@ function rowNames(page: Page) {
 /** A section as a plugin sends one, for the project the fixture opens. */
 async function pushSection(
   page: Page,
-  sent: { rows: unknown[]; actions?: unknown[] },
+  sent: {
+    rows: unknown[];
+    actions?: unknown[];
+    section?: string;
+    title?: string;
+    detail?: string | null;
+    folded?: boolean;
+    order?: number;
+  },
 ) {
   await page.evaluate(
     ({ project, sent }) =>
@@ -69,11 +77,14 @@ async function pushSection(
       ).__pluginSection({
         source: "src-1",
         plugin: "github",
-        section: "Pull request",
-        title: "Pull request",
+        section: sent.section ?? "Pull request",
+        title: sent.title ?? "Pull request",
+        detail: sent.detail ?? null,
         project,
         rows: sent.rows,
         actions: sent.actions ?? [],
+        folded: sent.folded ?? false,
+        order: sent.order ?? 0,
       }),
     { project: PROJECT, sent },
   );
@@ -905,6 +916,8 @@ test.describe("the file viewer", () => {
     const fold = page.getByTestId("plugin-fold");
     await expect(fold).toContainText("Pull request (2)");
     await expect(page.getByTestId("plugin-row")).toHaveCount(0);
+    // A folded header carries no actions of the plugin's.
+    await expect(page.getByTestId("plugin-section-action")).toHaveCount(0);
     await fold.click();
     const rows = page.getByTestId("plugin-row");
     await expect(rows).toHaveCount(2);
@@ -962,9 +975,129 @@ test.describe("the file viewer", () => {
         project: PROJECT,
       });
 
-    // The plugin stopped: no rows left, and the section goes with them.
-    await pushSection(page, { rows: [] });
+    // No rows, but the actions stand, and so does the section.
+    await pushSection(page, {
+      rows: [],
+      actions: [{ id: "refresh", label: "Refresh", input: null }],
+    });
+    await expect(page.getByTestId("plugin-section")).toHaveCount(1);
+    await expect(fold).toContainText("Pull request");
+    await expect(fold).not.toContainText("(");
+    await expect(page.getByTestId("plugin-row")).toHaveCount(0);
+
+    // The plugin stopped: no rows, no actions and no detail, and the
+    // section goes with them.
+    await pushSection(page, { rows: [], actions: [] });
     await expect(page.getByTestId("plugin-section")).toHaveCount(0);
+  });
+
+  // Two sections of one plugin: one fold, counted for both, named and
+  // detailed by the section the plugin declared first, with the other a
+  // group line inside the fold.
+  test("draws a plugin's second section as a group inside its fold", async ({
+    page,
+  }) => {
+    await pushSection(page, {
+      section: "status",
+      title: "Git",
+      detail: "main, 2 ahead",
+      order: 0,
+      rows: CHECKS,
+      actions: [{ id: "commit", label: "Commit", input: null }],
+    });
+    await pushSection(page, {
+      section: "branches",
+      title: "Branches",
+      order: 1,
+      folded: true,
+      rows: [
+        {
+          id: "main",
+          label: "main",
+          detail: null,
+          state: null,
+          actions: [],
+          default: null,
+        },
+      ],
+      actions: [{ id: "new", label: "New", input: null }],
+    });
+
+    await expect(page.getByTestId("plugin-section")).toHaveCount(1);
+    const fold = page.getByTestId("plugin-fold");
+    await expect(fold).toContainText("Git · main, 2 ahead (3)");
+    await expect(page.getByTestId("plugin-group")).toHaveCount(0);
+
+    await fold.click();
+    // The first section's rows sit on the fold; the second is a line of
+    // its own, folded as it asked to be, with its actions away with it.
+    await expect(page.getByTestId("plugin-row")).toHaveCount(2);
+    const line = page.getByTestId("plugin-group");
+    await expect(line).toHaveCount(1);
+    await expect(line).toHaveAttribute("data-section", "branches");
+    await expect(line).toContainText("Branches (1)");
+    await expect(page.getByTestId("plugin-section-action")).toHaveCount(1);
+    await expect(page.getByTestId("plugin-section-action")).toHaveAttribute(
+      "data-action",
+      "commit",
+    );
+
+    await page.getByTestId("plugin-group-fold").click();
+    await expect(page.getByTestId("plugin-row")).toHaveCount(3);
+    await expect(
+      page.getByTestId("plugin-section-action").nth(1),
+    ).toHaveAttribute("data-action", "new");
+    await page.getByTestId("plugin-section-action").nth(1).click();
+    await expect.poll(() => actionsTaken(page)).toEqual([["new", null]]);
+  });
+
+  test("walks the cursor through a plugin's group lines", async ({ page }) => {
+    await pushSection(page, {
+      section: "status",
+      title: "Git",
+      order: 0,
+      rows: CHECKS,
+    });
+    await pushSection(page, {
+      section: "branches",
+      title: "Branches",
+      order: 1,
+      rows: [
+        {
+          id: "main",
+          label: "main",
+          detail: null,
+          state: null,
+          actions: [],
+          default: null,
+        },
+      ],
+    });
+    await page.getByTestId("plugin-fold").click();
+    const rows = page.getByTestId("plugin-row");
+    const line = page.getByTestId("plugin-group");
+    await expect(rows).toHaveCount(3);
+
+    // Header, the first section's rows, the group line, then its rows.
+    await page.getByTestId("file-tree").focus();
+    await page.keyboard.press("End");
+    await expect(rows.last()).toHaveClass(/cursor/);
+
+    // Left from a row of a group lands on the group line and folds it.
+    await page.keyboard.press("ArrowLeft");
+    await expect(line).toHaveClass(/cursor/);
+    await expect(rows).toHaveCount(2);
+
+    // Right opens it again; Enter folds it.
+    await page.keyboard.press("ArrowRight");
+    await expect(rows).toHaveCount(3);
+    await page.keyboard.press("Enter");
+    await expect(rows).toHaveCount(2);
+
+    // Left on a folded group line takes the plugin's fold with it.
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByTestId("plugin-row")).toHaveCount(0);
+    await expect(page.getByTestId("plugin-fold")).toHaveClass(/cursor/);
   });
 
   test("walks the tree's cursor onto a plugin's rows and folds them", async ({
@@ -1004,6 +1137,7 @@ test.describe("the file viewer", () => {
       rows: CHECKS,
       actions: [{ id: "explode", label: "Boom", input: null }],
     });
+    await page.getByTestId("plugin-fold").click();
     await page.getByTestId("plugin-section-action").click();
     await expect(page.getByTestId("plugin-notice")).toContainText(
       "the plugin is not running",

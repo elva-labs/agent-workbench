@@ -208,17 +208,26 @@ pub struct Row {
     pub default: Option<String>,
 }
 
-/// A section's rows for one project, as told to the window. Empty rows
-/// and no actions is the section gone.
+/// A section's rows for one project, as told to the window. Empty rows,
+/// no actions and no detail is the section gone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SectionEvent {
     pub source: String,
     pub plugin: String,
     pub section: String,
     pub title: String,
+    /// A short line beside the title, the branch and its standing say.
+    pub detail: Option<String>,
     pub project: String,
     pub rows: Vec<Row>,
     pub actions: Vec<Action>,
+    /// Whether the section starts folded where it is drawn as a group
+    /// inside its plugin's fold.
+    pub folded: bool,
+    /// Where the section stands among the ones the greeting declared,
+    /// `u32::MAX` for one the greeting does not name. A `u32`, so the
+    /// window reads the number exactly.
+    pub order: u32,
 }
 
 /// A plugin's page for one project, as told to the window. No html and
@@ -802,6 +811,7 @@ fn checked_section(
     source_id: &str,
     name: &str,
     message: &serde_json::Value,
+    hello: Option<&Hello>,
 ) -> Option<SectionEvent> {
     let text = |key: &str| message.get(key).and_then(|value| value.as_str());
     let section = text("id").unwrap_or_default();
@@ -830,10 +840,33 @@ fn checked_section(
             .filter(|title| !title.is_empty())
             .unwrap_or(section)
             .to_string(),
+        detail: text("detail")
+            .filter(|detail| !detail.is_empty())
+            .map(str::to_string),
         project: project.to_string(),
         rows,
         actions: checked_actions(message.get("actions")),
+        folded: message
+            .get("folded")
+            .and_then(|folded| folded.as_bool())
+            .unwrap_or(false),
+        order: declared_order(hello, section),
     })
+}
+
+/// Where a section stands among the ones the greeting declared, by the id
+/// each declared section carries. One the greeting does not name comes
+/// after every one it does.
+fn declared_order(hello: Option<&Hello>, section: &str) -> u32 {
+    hello
+        .and_then(|hello| {
+            hello
+                .sections
+                .iter()
+                .position(|declared| declared.get("id").and_then(|id| id.as_str()) == Some(section))
+        })
+        .and_then(|at| u32::try_from(at).ok())
+        .unwrap_or(u32::MAX)
 }
 
 /// A page of the plugin's own directory: the path stays under it, as a
@@ -1735,7 +1768,9 @@ impl Inner {
     fn said(&self, source_id: &str, name: &str, kind: &str, message: &serde_json::Value) {
         match kind {
             "section" => {
-                let Some(section) = checked_section(source_id, name, message) else {
+                let hello = self.greeting(source_id, name);
+                let Some(section) = checked_section(source_id, name, message, hello.as_ref())
+                else {
                     return;
                 };
                 let key: SectionKey = (
@@ -1879,6 +1914,16 @@ impl Inner {
         }
     }
 
+    /// What a running plugin said of itself as it came up, which is where
+    /// the order of its sections is written down.
+    fn greeting(&self, source_id: &str, name: &str) -> Option<Hello> {
+        self.running
+            .lock()
+            .expect("plugins lock")
+            .get(&(source_id.to_string(), name.to_string()))
+            .and_then(|live| live.hello.clone())
+    }
+
     fn tell_section(&self, section: &SectionEvent) {
         crate::events::emit(&self.sink, PLUGIN_SECTION, section);
     }
@@ -1899,6 +1944,7 @@ impl Inner {
             self.tell_section(&SectionEvent {
                 rows: Vec::new(),
                 actions: Vec::new(),
+                detail: None,
                 ..section
             });
         }
@@ -2188,8 +2234,8 @@ mod tests {
     /// A plugin that says its rows, points at a place, leaves a line, and
     /// answers an action with what went wrong.
     const SECTIONS: &str = r#"#!/bin/sh
-echo '{"type":"hello","name":"board","version":"1.0.0"}'
-echo '{"type":"section","id":"pull-request","title":"Pull request","project":"PROJECT","rows":[{"id":"lint","label":"lint","detail":"3 of 4","state":"ok","actions":[{"id":"open","label":"Open"}],"default":"open"},{"id":"","label":"nothing"}],"actions":[{"id":"refresh","label":"Refresh","input":[{"id":"branch","label":"Branch","kind":"text"}]}]}'
+echo '{"type":"hello","name":"board","version":"1.0.0","sections":[{"id":"checks"},{"id":"pull-request"}]}'
+echo '{"type":"section","id":"pull-request","title":"Pull request","detail":"main, 2 ahead","folded":true,"project":"PROJECT","rows":[{"id":"lint","label":"lint","detail":"3 of 4","state":"ok","actions":[{"id":"open","label":"Open"}],"default":"open"},{"id":"","label":"nothing"}],"actions":[{"id":"refresh","label":"Refresh","input":[{"id":"branch","label":"Branch","kind":"text"}]}]}'
 echo '{"type":"open","project":"PROJECT","path":"github/main.sh","from":3,"to":5,"note":"here"}'
 echo '{"type":"notify","project":"PROJECT","session":"s-1","text":"   needs   a   key   "}'
 echo '{"type":"whatever","project":"PROJECT"}'
@@ -2621,6 +2667,10 @@ sections = ["Pull request"]
         assert_eq!(section["plugin"], "board");
         assert_eq!(section["section"], "pull-request");
         assert_eq!(section["title"], "Pull request");
+        assert_eq!(section["detail"], "main, 2 ahead");
+        assert_eq!(section["folded"], true);
+        // Second of the two the greeting declared.
+        assert_eq!(section["order"], 1);
         assert_eq!(section["project"], here);
         let rows = section["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 1, "the row without an id is dropped: {section}");
@@ -2694,6 +2744,7 @@ sections = ["Pull request"]
         assert_eq!(gone["section"], "pull-request");
         assert_eq!(gone["project"], here);
         assert!(gone["actions"].as_array().unwrap().is_empty());
+        assert!(gone["detail"].is_null());
     }
 
     #[cfg(unix)]
@@ -2851,6 +2902,8 @@ run = ["sh", "main.sh"]
             "type": "section",
             "id": "pull-request",
             "title": "Pull request",
+            "detail": "main, 2 ahead",
+            "folded": true,
             "project": "/p",
             "rows": [
                 {
@@ -2879,7 +2932,17 @@ run = ["sh", "main.sh"]
             ],
             "actions": [{ "id": "refresh", "label": "Refresh" }, { "id": "nameless" }]
         });
-        let section = checked_section("src-1", "board", &message).unwrap();
+        let greeting = Hello {
+            name: "board".to_string(),
+            version: "1.0.0".to_string(),
+            tools: Vec::new(),
+            sections: vec![
+                serde_json::json!({ "id": "checks" }),
+                serde_json::json!({ "id": "pull-request" }),
+            ],
+            view: None,
+        };
+        let section = checked_section("src-1", "board", &message, Some(&greeting)).unwrap();
         assert_eq!(section.source, "src-1");
         assert_eq!(section.plugin, "board");
         assert_eq!(section.section, "pull-request");
@@ -2903,26 +2966,46 @@ run = ["sh", "main.sh"]
         assert_eq!(fields[0].options.as_ref().unwrap()[0].id, "x");
         assert_eq!(section.actions.len(), 1);
         assert_eq!(section.actions[0].id, "refresh");
+        assert_eq!(section.detail.as_deref(), Some("main, 2 ahead"));
+        assert!(section.folded);
+        // Second of the two the greeting declared.
+        assert_eq!(section.order, 1);
+        // Without the greeting it stands after every section that is named
+        // in one.
+        assert_eq!(
+            checked_section("src-1", "board", &message, None)
+                .unwrap()
+                .order,
+            u32::MAX
+        );
 
         // A section is named as a tool is, and is for one project.
         let named = |id: &str| serde_json::json!({ "id": id, "project": "/p", "rows": [] });
-        assert!(checked_section("src-1", "board", &named("Pull request")).is_none());
-        assert!(checked_section("src-1", "board", &named("")).is_none());
-        assert!(checked_section("src-1", "board", &named("pull-request")).is_some());
-        assert!(
-            checked_section("src-1", "board", &serde_json::json!({ "id": "checks" })).is_none()
-        );
+        assert!(checked_section("src-1", "board", &named("Pull request"), None).is_none());
+        assert!(checked_section("src-1", "board", &named(""), None).is_none());
+        assert!(checked_section("src-1", "board", &named("pull-request"), None).is_some());
+        assert!(checked_section(
+            "src-1",
+            "board",
+            &serde_json::json!({ "id": "checks" }),
+            None
+        )
+        .is_none());
 
-        // A section that says nothing else is itself, and empty.
+        // A section that says nothing else is itself, empty, open, and last.
         let untitled = checked_section(
             "src-1",
             "board",
-            &serde_json::json!({ "id": "checks", "project": "/p" }),
+            &serde_json::json!({ "id": "checks", "project": "/p", "detail": "" }),
+            Some(&greeting),
         )
         .unwrap();
         assert_eq!(untitled.title, "checks");
         assert!(untitled.rows.is_empty());
         assert!(untitled.actions.is_empty());
+        assert_eq!(untitled.detail, None);
+        assert!(!untitled.folded);
+        assert_eq!(untitled.order, 0);
     }
 
     #[test]

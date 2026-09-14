@@ -599,15 +599,19 @@ describe("the real app", () => {
 
     // The plugin's own word that it is up: its section under the tree,
     // counted in the header while folded.
+    // The header sets the title, the detail and the count out beside each
+    // other, so the rendered text carries a break between them.
     await driver.wait(
       async () =>
         (await textOf(driver, `${CHANGES} [data-testid='plugin-fold']`))
           .toLowerCase()
+          .replace(/\s+/g, " ")
           .includes("driver board (2)"),
       60_000,
       "the plugin's section never arrived",
     );
     expect(await sectionRows()).toHaveLength(0);
+    // The header's actions come with the fold, so it is opened first.
     await click(`${CHANGES} [data-testid='plugin-fold']`);
     await driver.wait(
       async () => (await sectionRows()).length === 2,

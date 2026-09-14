@@ -49,7 +49,7 @@
   import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
   import {
     askFor,
-    listed as listedSections,
+    grouped as groupedSections,
     noticeOf,
     run as runAction,
     type PluginSection,
@@ -86,22 +86,33 @@
   let columnHeight = $state(0);
 
   /** The sections' rows as the tree's cursor sees them: each section's
-      header, then its rows while it is open, media first, processes after. */
+      header, then what it holds while it is open, media first, processes
+      after, and a plugin's fold with its group lines and rows last. */
   let sectionCursor = $state(-1);
   const FOLD_ID = "media-fold";
   const PROCESSES_FOLD_ID = "processes-fold";
   const rowIdOf = (id: string) => `media-${id}`;
   const processRowId = (row: ProcessRow) => `process-${row.pid}`;
   const pluginFoldId = (key: string) => `plugin-fold-${key}`;
+  const pluginGroupId = (key: string) => `plugin-group-${key}`;
   const pluginRowId = (key: string, row: PluginRow) => `plugin-row-${key}-${row.id}`;
   type Entry =
     | { id: string; kind: "media-head" }
     | { id: string; kind: "media"; index: number }
     | { id: string; kind: "processes-head" }
     | { id: string; kind: "process"; index: number }
-    | { id: string; kind: "plugin-head"; key: string }
-    | { id: string; kind: "plugin-row"; key: string; index: number };
-  let pluginList = $derived(listedSections());
+    | { id: string; kind: "plugin-head"; group: string }
+    | { id: string; kind: "plugin-group"; group: string; key: string }
+    | {
+        id: string;
+        kind: "plugin-row";
+        group: string;
+        key: string;
+        /** The group line the row sits under, none in the first section. */
+        line: string | null;
+        index: number;
+      };
+  let pluginList = $derived(groupedSections());
   let sectionEntries: Entry[] = $derived.by(() => {
     const list: Entry[] = [];
     if (presented.length > 0) {
@@ -114,13 +125,33 @@
     if (layout.processesOpen) {
       processes.rows.forEach((row, index) => list.push({ id: processRowId(row), kind: "process", index }));
     }
-    for (const section of pluginList) {
-      list.push({ id: pluginFoldId(section.key), kind: "plugin-head", key: section.key });
-      if (sectionOpen(section.key)) {
-        section.rows.forEach((row, index) =>
-          list.push({ id: pluginRowId(section.key, row), kind: "plugin-row", key: section.key, index }),
-        );
-      }
+    for (const group of pluginList) {
+      list.push({ id: pluginFoldId(group.key), kind: "plugin-head", group: group.key });
+      if (!sectionOpen(group.key)) continue;
+      group.sections.forEach((section, at) => {
+        const rows = (line: string | null) =>
+          section.rows.forEach((row, index) =>
+            list.push({
+              id: pluginRowId(section.key, row),
+              kind: "plugin-row",
+              group: group.key,
+              key: section.key,
+              line,
+              index,
+            }),
+          );
+        if (at === 0) {
+          rows(null);
+          return;
+        }
+        list.push({
+          id: pluginGroupId(section.key),
+          kind: "plugin-group",
+          group: group.key,
+          key: section.key,
+        });
+        if (lineOpen(section)) rows(section.key);
+      });
     }
     return list;
   });
@@ -135,22 +166,48 @@
       if (entry.kind === "media-head") toggleMedia();
       else if (entry.kind === "media") openItem(presented[entry.index]);
       else if (entry.kind === "processes-head") toggleProcesses();
-      else if (entry.kind === "plugin-head") toggleSection(entry.key);
-      else if (entry.kind === "plugin-row") {
-        const section = pluginList.find((candidate) => candidate.key === entry.key);
+      else if (entry.kind === "plugin-head") toggleSection(entry.group);
+      else if (entry.kind === "plugin-group") {
+        const section = sectionAt(entry.key);
+        if (section !== undefined) setSectionOpen(entry.key, !lineOpen(section));
+      } else if (entry.kind === "plugin-row") {
+        const section = sectionAt(entry.key);
         if (section !== undefined) runDefault(section, section.rows[entry.index]);
       }
     },
     fold: (index, open) => {
       const entry = sectionEntries[index];
       if (entry === undefined) return;
-      if (entry.kind === "plugin-head" || entry.kind === "plugin-row") {
-        if (open === sectionOpen(entry.key)) return;
+      if (entry.kind === "plugin-head") {
+        if (open === sectionOpen(entry.group)) return;
+        setSectionOpen(entry.group, open);
+        if (!open) sectionCursor = index;
+        return;
+      }
+      if (entry.kind === "plugin-group" || entry.kind === "plugin-row") {
+        // A group line opens and folds on its own; a row folds the line it
+        // sits under. Folding again, or from anything the first section
+        // holds, takes the plugin's whole fold with it.
+        const line = entry.kind === "plugin-group" ? entry.key : entry.line;
+        const section = line === null ? undefined : sectionAt(line);
+        const lineIsOpen = section !== undefined && lineOpen(section);
+        if (open) {
+          if (entry.kind === "plugin-group" && !lineIsOpen) setSectionOpen(entry.key, true);
+          return;
+        }
+        if (line !== null && (entry.kind === "plugin-row" || lineIsOpen)) {
+          const at = sectionEntries.findIndex(
+            (candidate) => candidate.kind === "plugin-group" && candidate.key === line,
+          );
+          setSectionOpen(line, false);
+          sectionCursor = at;
+          return;
+        }
         const head = sectionEntries.findIndex(
-          (candidate) => candidate.kind === "plugin-head" && candidate.key === entry.key,
+          (candidate) => candidate.kind === "plugin-head" && candidate.group === entry.group,
         );
-        setSectionOpen(entry.key, open);
-        if (!open) sectionCursor = head;
+        setSectionOpen(entry.group, false);
+        sectionCursor = head;
         return;
       }
       const media = entry.kind === "media-head" || entry.kind === "media";
@@ -180,13 +237,28 @@
   let anyOpen = $derived(
     (presented.length > 0 && layout.mediaOpen) ||
       layout.processesOpen ||
-      pluginList.some((section) => sectionOpen(section.key)),
+      pluginList.some((group) => sectionOpen(group.key)),
   );
 
-  /** A plugin's section is folded until it is asked for, and the answer is
+  /** A plugin's fold is folded until it is asked for, and the answer is
       remembered by its key. */
   function sectionOpen(key: string) {
     return layout.sectionsOpen[key] === true;
+  }
+
+  /** A group line inside a plugin's fold stands as the section asked to be
+      drawn until someone says otherwise. */
+  function lineOpen(section: PluginSection) {
+    return layout.sectionsOpen[section.key] ?? !section.folded;
+  }
+
+  /** The section a key names among the groups on screen. */
+  function sectionAt(key: string) {
+    for (const group of pluginList) {
+      const found = group.sections.find((section) => section.key === key);
+      if (found !== undefined) return found;
+    }
+    return undefined;
   }
 
   function setSectionOpen(key: string, open: boolean) {
@@ -938,31 +1010,32 @@
                 {/if}
               {/if}
             </section>
-            <!-- A plugin's section: the same shape, with the rows and the
-                 actions the plugin sent for the project on screen. -->
-            {#each pluginList as section (section.key)}
-              {@const open = sectionOpen(section.key)}
-              {@const notice = noticeOf(section)}
-              {@const page = pluginViewOf(`${section.source}/${section.plugin}`)}
-              <section class="section" class:open data-section={section.key} data-testid="plugin-section">
+            <!-- A plugin's sections: one fold, named and counted for the
+                 plugin, with the first section on the fold itself and every
+                 further one a group inside it. -->
+            {#each pluginList as group (group.key)}
+              {@const open = sectionOpen(group.key)}
+              {@const notice = noticeOf(group)}
+              {@const page = pluginViewOf(group.key)}
+              {@const head = group.sections[0]}
+              <section class="section" class:open data-plugin={group.key} data-testid="plugin-section">
                 <div class="section-head">
                   <button
-                    id={pluginFoldId(section.key)}
+                    id={pluginFoldId(group.key)}
                     class="fold"
-                    class:cursor={cursorId === pluginFoldId(section.key)}
+                    class:cursor={cursorId === pluginFoldId(group.key)}
                     tabindex="-1"
                     onpointerdown={(e) => e.preventDefault()}
                     onclick={() => {
                       sectionCursor = sectionEntries.findIndex(
-                        (entry) => entry.kind === "plugin-head" && entry.key === section.key,
+                        (entry) => entry.kind === "plugin-head" && entry.group === group.key,
                       );
-                      toggleSection(section.key);
+                      toggleSection(group.key);
                     }}
                     aria-expanded={open}
                     data-testid="plugin-fold"
                   >
-                    <span class="chevron">{open ? "▾" : "▸"}</span>
-                    {section.title}{section.rows.length > 0 ? ` (${section.rows.length})` : ""}
+                    {@render foldLabel(open, group.title, group.detail, group.count)}
                   </button>
                   <span class="head-actions">
                     {#if page !== null}
@@ -974,16 +1047,18 @@
                         data-testid="plugin-view-open">View</button
                       >
                     {/if}
-                    {#each section.actions as action (action.id)}
-                      <button
-                        class="head-action"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => act(section, action, null)}
-                        data-action={action.id}
-                        data-testid="plugin-section-action">{action.label}</button
-                      >
-                    {/each}
+                    {#if open}
+                      {#each head.actions as action (action.id)}
+                        <button
+                          class="head-action"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => act(head, action, null)}
+                          data-action={action.id}
+                          data-testid="plugin-section-action">{action.label}</button
+                        >
+                      {/each}
+                    {/if}
                   </span>
                 </div>
                 {#if notice !== null}
@@ -991,47 +1066,49 @@
                 {/if}
                 {#if open}
                   <ul class="rows">
-                    {#each section.rows as row (row.id)}
+                    {@render pluginRows(head, false)}
+                    {#each group.sections.slice(1) as section (section.key)}
+                      {@const lineIsOpen = lineOpen(section)}
                       <li
-                        id={pluginRowId(section.key, row)}
-                        class="plugin"
-                        class:cursor={cursorId === pluginRowId(section.key, row)}
-                        data-row={row.id}
-                        data-testid="plugin-row"
+                        id={pluginGroupId(section.key)}
+                        class="group-line"
+                        class:cursor={cursorId === pluginGroupId(section.key)}
+                        data-section={section.section}
+                        data-testid="plugin-group"
                       >
                         <button
-                          class="media-row"
+                          class="fold group-fold"
                           tabindex="-1"
                           onpointerdown={(e) => e.preventDefault()}
                           onclick={() => {
                             sectionCursor = sectionEntries.findIndex(
-                              (entry) => entry.id === pluginRowId(section.key, row),
+                              (entry) => entry.id === pluginGroupId(section.key),
                             );
-                            runDefault(section, row);
+                            setSectionOpen(section.key, !lineIsOpen);
                           }}
-                          title={row.detail ?? row.label}
+                          aria-expanded={lineIsOpen}
+                          data-testid="plugin-group-fold"
                         >
-                          <span class="row-line">
-                            <span class="dot" data-state={row.state ?? "none"}></span>
-                            <span class="media-caption">{row.label}</span>
-                          </span>
-                          {#if row.detail !== null}
-                            <span class="media-meta">{row.detail}</span>
-                          {/if}
+                          {@render foldLabel(lineIsOpen, section.title, section.detail, section.rows.length)}
                         </button>
-                        <span class="row-actions">
-                          {#each row.actions ?? [] as action (action.id)}
-                            <button
-                              class="row-action"
-                              tabindex="-1"
-                              onpointerdown={(e) => e.preventDefault()}
-                              onclick={() => act(section, action, row.id)}
-                              data-action={action.id}
-                              data-testid="plugin-row-action">{action.label}</button
-                            >
-                          {/each}
-                        </span>
+                        {#if lineIsOpen}
+                          <span class="head-actions">
+                            {#each section.actions as action (action.id)}
+                              <button
+                                class="head-action"
+                                tabindex="-1"
+                                onpointerdown={(e) => e.preventDefault()}
+                                onclick={() => act(section, action, null)}
+                                data-action={action.id}
+                                data-testid="plugin-section-action">{action.label}</button
+                              >
+                            {/each}
+                          </span>
+                        {/if}
                       </li>
+                      {#if lineIsOpen}
+                        {@render pluginRows(section, true)}
+                      {/if}
                     {/each}
                   </ul>
                 {/if}
@@ -1049,6 +1126,65 @@
     </div>
   {/if}
 </Pane>
+
+
+<!-- A fold's line: the chevron, the title, the detail beside it, and the
+     count. The title keeps its text; the detail is cut first. -->
+{#snippet foldLabel(open: boolean, title: string, detail: string | null, count: number)}
+  <span class="chevron">{open ? "▾" : "▸"}</span>
+  <span class="fold-title">{title}</span>
+  {#if detail !== null}
+    <span class="fold-detail">· {detail}</span>
+  {/if}
+  {#if count > 0}
+    <span class="fold-count">({count})</span>
+  {/if}
+{/snippet}
+
+<!-- One section's rows, on the fold itself or a step in under a group. -->
+{#snippet pluginRows(section: PluginSection, deep: boolean)}
+  {#each section.rows as row (row.id)}
+    <li
+      id={pluginRowId(section.key, row)}
+      class="plugin"
+      class:deep
+      class:cursor={cursorId === pluginRowId(section.key, row)}
+      data-row={row.id}
+      data-testid="plugin-row"
+    >
+      <button
+        class="media-row"
+        tabindex="-1"
+        onpointerdown={(e) => e.preventDefault()}
+        onclick={() => {
+          sectionCursor = sectionEntries.findIndex((entry) => entry.id === pluginRowId(section.key, row));
+          runDefault(section, row);
+        }}
+        title={row.detail ?? row.label}
+      >
+        <span class="row-line">
+          <span class="dot" data-state={row.state ?? "none"}></span>
+          <span class="media-caption">{row.label}</span>
+        </span>
+        {#if row.detail !== null}
+          <span class="media-meta">{row.detail}</span>
+        {/if}
+      </button>
+      <span class="row-actions">
+        {#each row.actions ?? [] as action (action.id)}
+          <button
+            class="row-action"
+            tabindex="-1"
+            onpointerdown={(e) => e.preventDefault()}
+            onclick={() => act(section, action, row.id)}
+            data-action={action.id}
+            data-testid="plugin-row-action">{action.label}</button
+          >
+        {/each}
+      </span>
+    </li>
+  {/each}
+{/snippet}
 
 <style>
   .column {
@@ -1174,10 +1310,48 @@
     flex: none;
   }
 
-  .section-head .fold {
+  .section-head .fold,
+  .group-fold {
     flex: 1;
     min-width: 0;
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The title says which plugin or section this is, so it keeps its own
+     text and the detail beside it is what gives way in a narrow pane. */
+  .fold-title,
+  .fold-count {
+    flex: none;
+  }
+
+  .fold-detail {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-3);
+  }
+
+  /* A further section inside a plugin's fold: a line of its own, lighter
+     than a row, with its rows a step in under it. */
+  .group-line {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .group-fold {
+    padding: 3px var(--row-pad-x) 3px var(--row-indent);
+    font-size: var(--label-size);
+    color: var(--ink-3);
+  }
+
+  .plugin.deep .media-row {
+    padding-left: calc(var(--row-indent) + 12px);
   }
 
   .head-actions,
@@ -1300,6 +1474,7 @@
   .sections.keyed .fold.cursor,
   .sections.keyed .media-row.cursor,
   .sections.keyed .process.cursor,
+  .sections.keyed .group-line.cursor,
   .sections.keyed .plugin.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);
   }

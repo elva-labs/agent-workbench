@@ -188,9 +188,15 @@ export interface PluginSectionEvent {
   plugin: string;
   section: string;
   title: string;
+  /** A short line beside the title, the branch and its standing say. */
+  detail: string | null;
   project: string;
   rows: PluginRow[];
   actions: PluginAction[];
+  /** Whether the section starts folded inside its plugin's fold. */
+  folded: boolean;
+  /** Where the section stands among the ones its plugin declared. */
+  order: number;
 }
 
 /** What went wrong when an action ran, for the plugin's sections to say. */
