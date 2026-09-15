@@ -381,7 +381,19 @@ export async function installFakeCore(
         },
         onSessionEnded: async () => () => {},
         onSessionIdentified: async () => () => {},
-        onSessionEvent: async () => () => {},
+        onSessionEvent: async (
+          handler: (event: { sessionId: string; kind: string }) => void,
+        ) => {
+          (
+            window as unknown as {
+              __sessionEvent?: (event: {
+                sessionId: string;
+                kind: string;
+              }) => void;
+            }
+          ).__sessionEvent = handler;
+          return () => {};
+        },
         onShowRequest: async (handler: (request: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__showRequest =
             handler;

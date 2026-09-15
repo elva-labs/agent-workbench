@@ -13,6 +13,7 @@ import {
   ownFor,
   readWorktrees,
   removable,
+  conducting,
   summary,
   summaryLine,
   type LeftTree,
@@ -199,12 +200,12 @@ describe("a project's sessions", () => {
 describe("what an orchestrator has out", () => {
   it("counts what is running and what is waiting on you", () => {
     const one = live(DIR, "pty-1", "sid-1");
-    expect(summary(one)).toEqual({ running: 0, asking: 0 });
+    expect(summary(one)).toEqual({ running: 0, asking: 0, working: false });
     expect(summaryLine(one)).toBeNull();
 
     const here = startedIn(A, one, "pty-2", "sid-2");
     const there = startedIn(B, one, "pty-3", "sid-3");
-    expect(summary(one)).toEqual({ running: 2, asking: 0 });
+    expect(summary(one)).toEqual({ running: 2, asking: 0, working: false });
     expect(summaryLine(one)).toBe("2 running");
 
     // Asking for permission is waiting on you, and so is a line left
@@ -223,6 +224,44 @@ describe("what an orchestrator has out", () => {
     expect(isAsking(here)).toBe(false);
     expect(summaryLine(one)).toBe("1 running, 1 asking");
     expect(groupsFor(A)[0].asking).toBe(0);
+  });
+
+  it("breathes when its own agent works, or one it started does", () => {
+    const one = live(DIR, "pty-1", "sid-1");
+    // Nothing out, nothing at work: the dot rests.
+    expect(conducting(one)).toBe(false);
+
+    // Its own agent at work breathes, as any session's does.
+    one.working = true;
+    expect(conducting(one)).toBe(true);
+    one.working = false;
+
+    // Parked on a wait while a child streams: the child's work bubbles up.
+    const child = startedIn(A, one, "pty-2", "sid-2");
+    expect(summary(one).working).toBe(false);
+    expect(conducting(one)).toBe(false);
+    child.working = true;
+    expect(summary(one).working).toBe(true);
+    expect(conducting(one)).toBe(true);
+
+    // A child that has stopped, whatever it was doing, does not.
+    child.status = "exited";
+    expect(conducting(one)).toBe(false);
+  });
+
+  it("lets its own call for attention hold the dot over a working child", () => {
+    const one = live(DIR, "pty-1", "sid-1");
+    const child = startedIn(A, one, "pty-2", "sid-2");
+    child.working = true;
+    expect(conducting(one)).toBe(true);
+
+    // The orchestrator itself needs the user: its permission ring, or its
+    // unread accent, is the row's state, not the child's work.
+    one.needs = "permission";
+    expect(conducting(one)).toBe(false);
+    one.needs = null;
+    one.unread = true;
+    expect(conducting(one)).toBe(false);
   });
 
   it("counts only what the orchestrator itself started", () => {

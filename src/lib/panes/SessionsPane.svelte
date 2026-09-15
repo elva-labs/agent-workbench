@@ -25,6 +25,7 @@
   import { activate, close as closeProject, openPath, pick, projectLabel, workspace } from "$lib/workspace.svelte";
   import {
     LABEL,
+    conducting,
     conductors,
     foldLabel,
     groupsFor,
@@ -383,7 +384,7 @@
       <span
         class="dot"
         class:live={isLive(session)}
-        class:working={session.working}
+        class:working={conducting(session)}
         class:unread={session.unread}
         class:permission={session.needs === "permission"}
         title={statusLabel(session)}

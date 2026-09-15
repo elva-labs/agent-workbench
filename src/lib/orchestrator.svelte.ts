@@ -60,13 +60,32 @@ export function isAsking(session: Session): boolean {
   return isLive(session) && (session.needs === "permission" || session.unread);
 }
 
-/** What one orchestrator has running, for the line under its name. */
-export function summary(session: Session): { running: number; asking: number } {
+/** What one orchestrator has running, for the line under its name and its
+    dot: how many are live, how many are waiting on you, and whether any is
+    at work right now. */
+export function summary(session: Session): {
+  running: number;
+  asking: number;
+  working: boolean;
+} {
   const started = startedBy(session.id ?? session.key);
   return {
     running: started.filter(isLive).length,
     asking: started.filter(isAsking).length,
+    working: started.some((child) => isLive(child) && child.working),
   };
+}
+
+/** Whether an orchestrator's dot should breathe: its own agent is at work,
+    or one it started is. A child that is asking shows in the summary line
+    and the fold's accent rather than here, so it does not stop the dot. The
+    orchestrator's own call for attention does: its permission ring or its
+    unread accent is the row's state, and a working child does not paint
+    over it. */
+export function conducting(session: Session): boolean {
+  if (session.working) return true;
+  if (session.unread || session.needs === "permission") return false;
+  return summary(session).working;
 }
 
 /** The line under an orchestrator's name: what it has out, and how much of

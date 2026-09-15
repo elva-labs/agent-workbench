@@ -161,6 +161,46 @@ test.describe("the orchestrator", () => {
     await expect(page.getByTestId("started-session")).toHaveCount(1);
   });
 
+  test("breathes on the orchestrator's own dot while a started session works", async ({
+    page,
+  }) => {
+    await orchestrate(page);
+    // The orchestrator is what is on screen; the session it directs is
+    // session-3, folded under the project it runs in.
+    const dot = page
+      .getByTestId("session-row")
+      .filter({ has: page.getByTestId("orchestrator-summary") })
+      .locator(".dot");
+    // Parked on a wait with the child idle: the dot rests.
+    await expect(dot).not.toHaveClass(/working/);
+
+    const event = (kind: string) =>
+      page.evaluate(
+        (kind) =>
+          (
+            window as unknown as {
+              __sessionEvent?: (event: {
+                sessionId: string;
+                kind: string;
+              }) => void;
+            }
+          ).__sessionEvent?.({ sessionId: "session-3", kind }),
+        kind,
+      );
+
+    // The child starts a turn: its work bubbles up to the orchestrator's dot.
+    await event("prompt");
+    await expect(dot).toHaveClass(/working/);
+
+    // The child stops and, unlooked at, is now waiting on the user: the dot
+    // rests again, and the accent count says why.
+    await event("stop");
+    await expect(dot).not.toHaveClass(/working/);
+    await expect(page.getByTestId("orchestrator-summary")).toHaveText(
+      "1 running, 1 asking",
+    );
+  });
+
   test("speaks up on the fold when a started session is waiting", async ({
     page,
   }) => {
