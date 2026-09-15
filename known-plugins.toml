@@ -1,0 +1,17 @@
+# Sources of plugins the workbench offers from the first launch. Each is a
+# git repository with a workbench-plugins.toml at its root; the plugins
+# named here are the ones that manifest declares, in the words it uses.
+# How a source joins the list is in docs/plugins.md.
+
+[[source]]
+id = "elva-labs"
+repository = "https://github.com/elva-labs/agent-workbench-plugins"
+ref = "main"
+
+[[source.plugin]]
+name = "todos"
+description = "The TODOs in the code, and notes to self, per project."
+
+[[source.plugin]]
+name = "git"
+description = "The branch, what changed, the stashes and a graph of the log."

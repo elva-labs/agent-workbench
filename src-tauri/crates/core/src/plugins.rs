@@ -9,6 +9,7 @@
 //! plugin that is, and tells the window as each changes state.
 
 use crate::events::Sink;
+use crate::known::KnownSource;
 use crate::show::{
     Answer, DiffRequest, NotifyRequest, PresentRequest, ShowRequest, ToolRequest, DIFF_REQUEST,
     NOTIFY_REQUEST, PRESENT_REQUEST, SHOW_REQUEST,
@@ -58,6 +59,25 @@ pub struct Declared {
     pub sections: Vec<String>,
     /// "wide" or "full", when the plugin has a view.
     pub view: Option<String>,
+}
+
+impl Declared {
+    /// A plugin the app's own list names and no manifest has been read
+    /// for yet: the name and the line the list carries, and nothing else
+    /// until the source is fetched.
+    fn listed(name: &str, description: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            path: String::new(),
+            description: description.to_string(),
+            version: String::new(),
+            run: Vec::new(),
+            build: Vec::new(),
+            tools: Vec::new(),
+            sections: Vec::new(),
+            view: None,
+        }
+    }
 }
 
 /// Where a plugin process is, as the window shows it.
@@ -146,6 +166,8 @@ pub struct SourceInfo {
     pub newer: Option<String>,
     /// Why the source is unusable, when it is.
     pub error: Option<String>,
+    /// Whether the app's own list names this source.
+    pub known: bool,
     pub plugins: Vec<PluginInfo>,
 }
 
@@ -327,6 +349,8 @@ struct Inner {
     home: PathBuf,
     root: PathBuf,
     sink: Arc<dyn Sink>,
+    /// The sources the app offers out of the box.
+    known: Vec<KnownSource>,
     stored: Mutex<Stored>,
     running: Mutex<HashMap<Key, Running>>,
     /// Newer commits found by a check, by source id.
@@ -390,7 +414,7 @@ fn crc32(bytes: &[u8]) -> u32 {
 
 /// A plugin's name: what the manifest calls it, and what its tools are
 /// prefixed with, so it is a plain identifier.
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     let mut chars = name.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
@@ -587,9 +611,42 @@ fn kind_of(location: &str) -> &'static str {
     }
 }
 
+/// A source the app offers and nothing has been fetched for: the
+/// repository and ref the list gives, and its plugins as the list names
+/// them, every one of them off.
+fn offered(source: &KnownSource) -> SourceInfo {
+    SourceInfo {
+        id: crate::known::stored_id(&source.id),
+        kind: "git".to_string(),
+        location: source.repository.clone(),
+        reference: source.reference.clone(),
+        commit: None,
+        newer: None,
+        error: None,
+        known: true,
+        plugins: source
+            .plugins
+            .iter()
+            .map(|plugin| PluginInfo {
+                declared: Declared::listed(&plugin.name, &plugin.description),
+                enabled: false,
+                state: State::Off,
+                detail: None,
+                hello: None,
+            })
+            .collect(),
+    }
+}
+
 impl Plugins {
     /// The sources' directory is under the app's own in the home.
     pub fn new(home: &Path, sink: Arc<dyn Sink>) -> Self {
+        Self::with_known(home, sink, crate::known::known())
+    }
+
+    /// The same, with the sources offered out of the box given rather
+    /// than read from the app's own list.
+    fn with_known(home: &Path, sink: Arc<dyn Sink>, known: Vec<KnownSource>) -> Self {
         let root = home.join(".agent-workbench").join("plugins");
         let stored = std::fs::read_to_string(root.join("state.json"))
             .ok()
@@ -600,6 +657,7 @@ impl Plugins {
                 home: home.to_path_buf(),
                 root,
                 sink,
+                known,
                 stored: Mutex::new(stored),
                 running: Mutex::new(HashMap::new()),
                 newer: Mutex::new(HashMap::new()),
@@ -622,6 +680,12 @@ impl Plugins {
     /// and reads its manifest. A source whose manifest fails adds nothing.
     pub fn add(&self, location: &str, reference: Option<&str>) -> Result<SourceInfo, String> {
         self.inner.add(location, reference)
+    }
+
+    /// Clones a source the app's own list names, under the id that list
+    /// gives it. The source's plugins are off, as any other source's are.
+    pub fn fetch(&self, id: &str) -> Result<SourceInfo, String> {
+        self.inner.fetch(id)
     }
 
     /// Stops the source's plugins and removes it, clone included.
@@ -957,21 +1021,47 @@ impl Inner {
                 .get(&source.id)
                 .cloned(),
             error,
+            known: self.known_source(&source.id).is_some(),
             plugins,
         }
     }
 
+    /// The app's own list's word on a source, by stored id.
+    fn known_source(&self, id: &str) -> Option<&KnownSource> {
+        let name = crate::known::suffix(id)?;
+        self.known.iter().find(|source| source.id == name)
+    }
+
+    /// Every source stored, and then every source the app offers that has
+    /// not been fetched, as the list the window draws.
     fn list(&self) -> Vec<SourceInfo> {
-        let stored = self.stored.lock().expect("plugins lock");
-        stored
-            .sources
-            .iter()
-            .map(|source| self.describe(source))
-            .collect()
+        let sources = self.stored.lock().expect("plugins lock").sources.clone();
+        let mut listed: Vec<SourceInfo> =
+            sources.iter().map(|source| self.describe(source)).collect();
+        for source in &self.known {
+            let id = crate::known::stored_id(&source.id);
+            if listed.iter().any(|listed| listed.id == id) {
+                continue;
+            }
+            listed.push(offered(source));
+        }
+        listed
     }
 
     fn add(
         self: &Arc<Self>,
+        location: &str,
+        reference: Option<&str>,
+    ) -> Result<SourceInfo, String> {
+        self.add_as(None, location, reference)
+    }
+
+    /// Adds a source under the id given, or under the one its location
+    /// makes when none is: a source of the user's is known by where it
+    /// came from, one the app offers by the name the list gives it.
+    fn add_as(
+        self: &Arc<Self>,
+        id: Option<&str>,
         location: &str,
         reference: Option<&str>,
     ) -> Result<SourceInfo, String> {
@@ -1003,7 +1093,9 @@ impl Inner {
         } else {
             location.to_string()
         };
-        let id = source_id(&location);
+        let id = id
+            .map(str::to_string)
+            .unwrap_or_else(|| source_id(&location));
         {
             let stored = self.stored.lock().expect("plugins lock");
             if stored.sources.iter().any(|s| s.id == id) {
@@ -1047,6 +1139,23 @@ impl Inner {
         self.save(&stored)?;
         drop(stored);
         Ok(self.describe(&source))
+    }
+
+    /// Clones a source the app's own list names. The list says where the
+    /// source is; its manifest says what the source holds, and is what
+    /// the answer carries.
+    fn fetch(self: &Arc<Self>, id: &str) -> Result<SourceInfo, String> {
+        let source = self
+            .known_source(id)
+            .ok_or("that source is not one the app offers")?
+            .clone();
+        {
+            let stored = self.stored.lock().expect("plugins lock");
+            if stored.sources.iter().any(|s| s.id == id) {
+                return Err("that source is fetched already".to_string());
+            }
+        }
+        self.add_as(Some(id), &source.repository, source.reference.as_deref())
     }
 
     fn remove(self: &Arc<Self>, id: &str) -> Result<(), String> {
@@ -1132,11 +1241,13 @@ impl Inner {
     fn enable(self: &Arc<Self>, id: &str, name: &str, on: bool) -> Result<SourceInfo, String> {
         let source = {
             let mut stored = self.stored.lock().expect("plugins lock");
-            let source = stored
-                .sources
-                .iter_mut()
-                .find(|s| s.id == id)
-                .ok_or("no such source")?;
+            let Some(source) = stored.sources.iter_mut().find(|s| s.id == id) else {
+                return Err(if self.known_source(id).is_some() {
+                    "fetch the source first".to_string()
+                } else {
+                    "no such source".to_string()
+                });
+            };
             if on && !source.enabled.iter().any(|n| n == name) {
                 source.enabled.push(name.to_string());
             }
@@ -2222,6 +2333,12 @@ mod tests {
         )])
     }
 
+    /// A core with no source offered out of the box, so a test sees the
+    /// sources it adds and nothing else.
+    fn plugins_at(home: &Path, sink: Arc<dyn Sink>) -> Plugins {
+        Plugins::with_known(home, sink, Vec::new())
+    }
+
     fn source_with(manifest: &str, name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("workbench-plugins-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2388,7 +2505,7 @@ tools = ["ping"]
         )
         .unwrap();
         let recorder = Arc::new(Recorder::default());
-        let plugins = Plugins::new(&home, recorder.clone());
+        let plugins = plugins_at(&home, recorder.clone());
         let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
         assert_eq!(added.kind, "dir");
         assert_eq!(added.plugins.len(), 1);
@@ -2422,11 +2539,11 @@ tools = ["ping"]
         assert_eq!(off.plugins[0].state, State::Off);
 
         // The state survives a new core, and a removed source is gone.
-        let again = Plugins::new(&home, recorder.clone());
+        let again = plugins_at(&home, recorder.clone());
         assert_eq!(again.list().len(), 1);
         again.remove(&added.id).unwrap();
         assert!(again.list().is_empty());
-        assert!(Plugins::new(&home, recorder).list().is_empty());
+        assert!(plugins_at(&home, recorder).list().is_empty());
     }
 
     #[test]
@@ -2450,7 +2567,7 @@ run = ["sh", "main.sh"]
         )
         .unwrap();
         let recorder = Arc::new(Recorder::default());
-        let plugins = Plugins::new(&home, recorder.clone());
+        let plugins = plugins_at(&home, recorder.clone());
         let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
         plugins.enable(&added.id, "brief", true).unwrap();
 
@@ -2500,7 +2617,7 @@ run = ["sh", "main.sh"]
         // the plugin is the one that answers.
         let home = std::env::temp_dir().join("workbench-plugins-other-home");
         let _ = std::fs::remove_dir_all(&home);
-        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let request = crate::show::ToolRequest {
             id: "call-1".into(),
             source: "someone-elses-source".into(),
@@ -2547,7 +2664,7 @@ done
 "#,
         )
         .unwrap();
-        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
         plugins.enable(&added.id, "echo", true).unwrap();
 
@@ -2634,7 +2751,7 @@ sections = ["Pull request"]
         )
         .unwrap();
         let recorder = Arc::new(Recorder::default());
-        let plugins = Plugins::new(&home, recorder.clone());
+        let plugins = plugins_at(&home, recorder.clone());
         let added = plugins.add(&here, None).unwrap();
         plugins.enable(&added.id, "board", true).unwrap();
 
@@ -2780,7 +2897,7 @@ run = ["sh", "main.sh"]
         std::fs::write(dir.join("escape.html"), "<p>escaped</p>").unwrap();
 
         let recorder = Arc::new(Recorder::default());
-        let plugins = Plugins::new(&home, recorder.clone());
+        let plugins = plugins_at(&home, recorder.clone());
         let added = plugins.add(&here, None).unwrap();
         plugins.enable(&added.id, "pages", true).unwrap();
         plugins.enable(&added.id, "quiet", true).unwrap();
@@ -3012,7 +3129,7 @@ run = ["sh", "main.sh"]
     fn refuses_a_location_or_a_ref_that_git_would_read_as_an_option() {
         let home = std::env::temp_dir().join("workbench-plugins-arguments-home");
         let _ = std::fs::remove_dir_all(&home);
-        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let root = home.join(".agent-workbench").join("plugins");
 
         let smuggled = "--upload-pack=touch /tmp/workbench-never-written";
@@ -3035,6 +3152,105 @@ run = ["sh", "main.sh"]
         assert!(!plain_reference(""));
     }
 
+    /// A repository with the manifest given in it, committed on main, for
+    /// a source to be cloned from.
+    fn upstream_with(manifest: &str, name: &str) -> PathBuf {
+        let dir = source_with(manifest, name);
+        let g = |args: &[&str]| git(&dir, args).unwrap();
+        g(&["init", "-q", "-b", "main"]);
+        g(&["config", "user.email", "t@example.com"]);
+        g(&["config", "user.name", "T"]);
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", "start"]);
+        dir
+    }
+
+    #[test]
+    fn offers_the_sources_it_knows_and_fetches_one_when_asked() {
+        let home = std::env::temp_dir().join("workbench-plugins-known-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let upstream = upstream_with(GOOD, "known-upstream");
+        let list = format!(
+            "[[source]]\nid = \"labs\"\nrepository = \"file://{}\"\nref = \"main\"\n\n\
+             [[source.plugin]]\nname = \"github\"\ndescription = \"Pull requests.\"\n",
+            upstream.display()
+        );
+        let known = crate::known::known_from(&list).unwrap();
+        let plugins = Plugins::with_known(&home, Arc::new(Recorder::default()), known);
+
+        // Offered before anything is fetched: the list's word, every
+        // plugin off, and nothing to check or update.
+        let listed = plugins.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "known-labs");
+        assert!(listed[0].known);
+        assert_eq!(listed[0].commit, None);
+        assert_eq!(listed[0].reference.as_deref(), Some("main"));
+        assert_eq!(listed[0].plugins.len(), 1);
+        assert_eq!(listed[0].plugins[0].declared.name, "github");
+        assert_eq!(listed[0].plugins[0].declared.description, "Pull requests.");
+        assert!(listed[0].plugins[0].declared.run.is_empty());
+        assert!(!listed[0].plugins[0].enabled);
+        assert_eq!(listed[0].plugins[0].state, State::Off);
+
+        // Nothing runs from a source that is not there.
+        assert_eq!(
+            plugins.enable("known-labs", "github", true).unwrap_err(),
+            "fetch the source first"
+        );
+        assert_eq!(
+            plugins.fetch("src-1").unwrap_err(),
+            "that source is not one the app offers"
+        );
+
+        // Fetched: the manifest's word, under the id the list gives.
+        let fetched = plugins.fetch("known-labs").unwrap();
+        assert_eq!(fetched.id, "known-labs");
+        assert!(fetched.known);
+        assert!(fetched.commit.is_some());
+        assert_eq!(fetched.plugins[0].declared.run, ["sh", "main.sh"]);
+        assert_eq!(fetched.plugins[0].declared.tools, ["pr", "checks"]);
+        let listed = plugins.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "known-labs");
+        assert!(listed[0].known);
+        assert!(listed[0].commit.is_some());
+        assert_eq!(
+            plugins.fetch("known-labs").unwrap_err(),
+            "that source is fetched already"
+        );
+
+        // Removed, it is offered again, and unfetched.
+        plugins.remove("known-labs").unwrap();
+        let listed = plugins.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "known-labs");
+        assert!(listed[0].known);
+        assert_eq!(listed[0].commit, None);
+        assert_eq!(listed[0].plugins[0].declared.description, "Pull requests.");
+    }
+
+    #[test]
+    fn a_source_of_the_user_s_own_is_listed_beside_the_ones_offered() {
+        let home = std::env::temp_dir().join("workbench-plugins-known-own-home");
+        let _ = std::fs::remove_dir_all(&home);
+        let upstream = upstream_with(GOOD, "known-own-upstream");
+        let list = "[[source]]\nid = \"labs\"\nrepository = \"https://example.com/labs.git\"\n\
+                    ref = \"main\"\n[[source.plugin]]\nname = \"github\"\ndescription = \"Pull requests.\"\n";
+        let known = crate::known::known_from(list).unwrap();
+        let plugins = Plugins::with_known(&home, Arc::new(Recorder::default()), known);
+        let added = plugins
+            .add(&format!("file://{}", upstream.display()), Some("main"))
+            .unwrap();
+        assert!(!added.known);
+        let listed = plugins.list();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, added.id);
+        assert!(!listed[0].known);
+        assert_eq!(listed[1].id, "known-labs");
+        assert!(listed[1].known);
+    }
+
     #[test]
     fn adds_a_repository_by_cloning_it_and_checks_for_a_newer_commit() {
         let home = std::env::temp_dir().join("workbench-plugins-clone-home");
@@ -3047,7 +3263,7 @@ run = ["sh", "main.sh"]
         g(&["add", "."]);
         g(&["commit", "-q", "-m", "start"]);
         let first = g(&["rev-parse", "HEAD"]);
-        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let added = plugins
             .add(&format!("file://{}", upstream.display()), Some("main"))
             .unwrap();
@@ -3135,7 +3351,7 @@ build = ["sh", "build.sh"]
         // The script the plugin runs is not in the source: the manifest
         // stands because a build is what writes it.
         let recorder = Arc::new(Recorder::default());
-        let plugins = Plugins::new(&home, recorder.clone());
+        let plugins = plugins_at(&home, recorder.clone());
         let added = plugins
             .add(&format!("file://{}", upstream.display()), Some("main"))
             .unwrap();
@@ -3194,7 +3410,7 @@ build = ["sh", "build.sh"]
             "#!/bin/sh\necho 'src/main.ts(3,1): error TS1005' >&2\nexit 2\n",
         )
         .unwrap();
-        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
 
         let settled = || -> PluginInfo {
@@ -3258,7 +3474,7 @@ run = ["sh", "main.sh"]
         std::fs::write(dir.join("github/main.sh"), RECORDS).unwrap();
         let received = dir.join("github/received.txt");
 
-        let plugins = Plugins::new(&home, Arc::new(Recorder::default()));
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         plugins.set_projects(vec!["/one".to_string(), "/two".to_string()]);
         let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
         plugins.enable(&added.id, "ears", true).unwrap();

@@ -20,6 +20,8 @@ export const plugins = $state({
   busy: false,
   /** What the last action said went wrong, shown until the next. */
   error: null as string | null,
+  /** The source being fetched, while the core is cloning it. */
+  fetching: null as string | null,
   /** When the sources were last checked for newer commits. */
   checked: 0,
 });
@@ -93,12 +95,35 @@ export async function addSource(
   return true;
 }
 
+/** Whether a source's files are there: a source the app offers is a name
+    and a repository until it is fetched, and one of the user's own is
+    there from the moment it is added. */
+export function fetched(source: PluginSource): boolean {
+  return !source.known || source.commit !== null;
+}
+
+/** Clones a source the app offers. False when it could not be fetched,
+    with the reason in `error`. */
+export async function fetchSource(id: string): Promise<boolean> {
+  plugins.fetching = id;
+  const source = await act(() => core().pluginFetch(id));
+  plugins.fetching = null;
+  if (source === null) return false;
+  put(source);
+  return true;
+}
+
 export async function removeSource(id: string) {
+  const known = plugins.sources.find((s) => s.id === id)?.known === true;
   const done = await act(async () => {
     await core().pluginRemove(id);
     return true;
   });
-  if (done) plugins.sources = plugins.sources.filter((s) => s.id !== id);
+  if (!done) return;
+  plugins.sources = plugins.sources.filter((s) => s.id !== id);
+  // A source the app offers is listed again, unfetched, once its clone
+  // is gone, so the core is asked what it lists now.
+  if (known) await loadPlugins();
 }
 
 export async function checkSource(id: string) {
@@ -114,7 +139,7 @@ export async function checkSource(id: string) {
 export async function checkAll() {
   await Promise.all(
     plugins.sources
-      .filter((source) => source.kind === "git")
+      .filter((source) => source.kind === "git" && fetched(source))
       .map((source) => checkSource(source.id)),
   );
   plugins.checked = Date.now();
@@ -245,7 +270,8 @@ export function watchPluginProjects() {
 export function watchPluginUpdates() {
   $effect(() => {
     const timer = setInterval(() => {
-      if (plugins.sources.some((s) => s.kind === "git")) void checkAll();
+      if (plugins.sources.some((s) => s.kind === "git" && fetched(s)))
+        void checkAll();
     }, CHECK_EVERY);
     return () => clearInterval(timer);
   });
@@ -257,5 +283,6 @@ export function resetPlugins() {
   plugins.loaded = false;
   plugins.busy = false;
   plugins.error = null;
+  plugins.fetching = null;
   plugins.checked = 0;
 }

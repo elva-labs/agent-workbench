@@ -376,6 +376,10 @@ pub fn dispatch(
             let p: PluginAddParams = parse(params)?;
             value(core.plugin_add(&p.location, p.reference.as_deref())?)
         }
+        "plugin_fetch" => {
+            let p: IdParams = parse(params)?;
+            value(core.plugin_fetch(&p.id)?)
+        }
         "plugin_remove" => {
             let p: IdParams = parse(params)?;
             core.plugin_remove(&p.id)?;

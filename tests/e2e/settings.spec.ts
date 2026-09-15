@@ -37,7 +37,7 @@ test.describe("the tabs", () => {
     );
     await expect(page.getByTestId("theme-system")).toBeVisible();
     await expect(page.getByTestId("settings-live")).toHaveCount(0);
-    await expect(page.getByTestId("plugin-location")).toHaveCount(0);
+    await expect(page.getByTestId("plugin-add-source")).toHaveCount(0);
     await expect(page.getByTestId("preset-vim")).toHaveCount(0);
 
     await page.getByTestId("settings-tab-keys").click();
@@ -55,7 +55,7 @@ test.describe("the tabs", () => {
   test("keep the tab from one opening to the next", async ({ page }) => {
     await page.keyboard.press(`${MOD}+,`);
     await page.getByTestId("settings-tab-plugins").click();
-    await expect(page.getByTestId("plugin-location")).toBeVisible();
+    await expect(page.getByTestId("plugin-add-source")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("settings")).toBeHidden();
 
@@ -64,7 +64,7 @@ test.describe("the tabs", () => {
       "aria-current",
       "page",
     );
-    await expect(page.getByTestId("plugin-location")).toBeVisible();
+    await expect(page.getByTestId("plugin-add-source")).toBeVisible();
 
     // A window of its own starts on the first tab again.
     await page.reload();
@@ -343,8 +343,8 @@ test.describe("the hooks notice", () => {
   });
 });
 
-// Plugin sources: added by URL, listed with their plugins off, turned on
-// after the question, and removed.
+// Plugin sources: the ones the app offers, and the ones added by URL,
+// listed with their plugins off, turned on after the question, and removed.
 test.describe("plugins", () => {
   test("adds a source, turns a plugin on after the question, and removes it", async ({
     page,
@@ -352,6 +352,10 @@ test.describe("plugins", () => {
     await page.keyboard.press(`${MOD}+,`);
     await expect(page.getByTestId("settings")).toBeVisible();
     await page.getByTestId("settings-tab-plugins").click();
+    await page.getByTestId("plugin-add-source").click();
+    const source = page.locator(
+      '[data-testid="plugin-source"][data-source="src-1"]',
+    );
     await page
       .getByTestId("plugin-location")
       .fill("https://example.com/bad.git");
@@ -359,29 +363,28 @@ test.describe("plugins", () => {
     await expect(page.getByTestId("plugin-error")).toContainText(
       "could not clone",
     );
-    await expect(page.getByTestId("plugin-source")).toHaveCount(0);
+    await expect(source).toHaveCount(0);
 
     await page
       .getByTestId("plugin-location")
       .fill("https://example.com/good-plugins.git");
     await page.getByTestId("plugin-add").click();
-    const source = page.getByTestId("plugin-source");
     await expect(source).toHaveCount(1);
     await expect(source).toContainText("good-plugins.git");
     await expect(source).toContainText("0123456");
-    const row = page.getByTestId("plugin-row");
+    const row = source.getByTestId("plugin-row");
     await expect(row).toContainText("github");
-    await expect(page.getByTestId("plugin-state")).toContainText(
+    await expect(source.getByTestId("plugin-state")).toContainText(
       "2 tools, 1 section, a wide view, runs node · off",
     );
 
     // On asks once, and says what it means.
     await row.getByTestId("plugin-on").click();
-    await expect(page.getByTestId("plugin-ask")).toContainText(
+    await expect(source.getByTestId("plugin-ask")).toContainText(
       "runs node with your privileges",
     );
     await page.getByTestId("plugin-cancel").click();
-    await expect(page.getByTestId("plugin-ask")).toHaveCount(0);
+    await expect(source.getByTestId("plugin-ask")).toHaveCount(0);
     await expect(row.getByTestId("plugin-on")).toHaveAttribute(
       "aria-checked",
       "false",
@@ -392,7 +395,7 @@ test.describe("plugins", () => {
       "aria-checked",
       "true",
     );
-    await expect(page.getByTestId("plugin-state")).toContainText("starting");
+    await expect(source.getByTestId("plugin-state")).toContainText("starting");
     // A plugin with a build is built before its process starts, and the row
     // says so while it goes.
     await page.evaluate(() =>
@@ -406,7 +409,7 @@ test.describe("plugins", () => {
         hello: null,
       }),
     );
-    await expect(page.getByTestId("plugin-state")).toContainText("building");
+    await expect(source.getByTestId("plugin-state")).toContainText("building");
     // The core's word arrives: running, with the greeting's version.
     await page.evaluate(() =>
       (
@@ -425,29 +428,109 @@ test.describe("plugins", () => {
         },
       }),
     );
-    await expect(page.getByTestId("plugin-state")).toContainText(
+    await expect(source.getByTestId("plugin-state")).toContainText(
       "running 0.2.0",
     );
 
     // Off, then on again: no question the second time.
     await row.getByTestId("plugin-off").click();
-    await expect(page.getByTestId("plugin-state")).toContainText("off");
+    await expect(source.getByTestId("plugin-state")).toContainText("off");
     await row.getByTestId("plugin-on").click();
-    await expect(page.getByTestId("plugin-ask")).toHaveCount(0);
+    await expect(source.getByTestId("plugin-ask")).toHaveCount(0);
     await expect(row.getByTestId("plugin-on")).toHaveAttribute(
       "aria-checked",
       "true",
     );
 
     // A check finds a newer commit; the update takes it.
-    await page.getByTestId("plugin-check").click();
-    await expect(page.getByTestId("plugin-update")).toContainText("fedcba9");
-    await page.getByTestId("plugin-update").click();
-    await expect(page.getByTestId("plugin-update")).toHaveCount(0);
+    await source.getByTestId("plugin-check").click();
+    await expect(source.getByTestId("plugin-update")).toContainText("fedcba9");
+    await source.getByTestId("plugin-update").click();
+    await expect(source.getByTestId("plugin-update")).toHaveCount(0);
     await expect(source).toContainText("fedcba9");
 
-    await page.getByTestId("plugin-remove").click();
-    await expect(page.getByTestId("plugin-source")).toHaveCount(0);
+    await source.getByTestId("plugin-remove").click();
+    await expect(source).toHaveCount(0);
+  });
+
+  // A source the app knows is offered from the first launch: listed, its
+  // plugins named and off, and nothing fetched until one is turned on.
+  test("offers the sources it knows, fetched only when a plugin is turned on", async ({
+    page,
+  }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-plugins").click();
+    const known = page.locator(
+      '[data-testid="plugin-source"][data-source="known-elva-labs"]',
+    );
+    await expect(known).toHaveAttribute("data-known", "true");
+    await expect(known).toHaveAttribute("data-fetched", "false");
+    await expect(known).toContainText("agent-workbench-plugins");
+    await expect(known).toContainText("known");
+    const rows = known.getByTestId("plugin-row");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText("todos");
+    await expect(rows.nth(0)).toContainText("The TODOs in the code");
+    await expect(rows.nth(1)).toContainText("git");
+    // Nothing has run and no manifest has been read: the rows say nothing
+    // of either, and there is nothing to check, update or remove.
+    await expect(known.getByTestId("plugin-state")).toHaveCount(0);
+    await expect(known.getByTestId("plugin-check")).toHaveCount(0);
+    await expect(known.getByTestId("plugin-remove")).toHaveCount(0);
+    await expect(known.getByTestId("plugin-on").first()).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    // The form for a source of your own is behind the link.
+    await expect(page.getByTestId("plugin-location")).toHaveCount(0);
+    await page.getByTestId("plugin-add-source").click();
+    await expect(page.getByTestId("plugin-location")).toBeVisible();
+  });
+
+  test("fetches a known source once, on the way to turning a plugin on", async ({
+    page,
+  }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-plugins").click();
+    const known = page.locator(
+      '[data-testid="plugin-source"][data-source="known-elva-labs"]',
+    );
+    const todos = known.locator('[data-testid="plugin-row"][data-plugin=todos]');
+    await todos.getByTestId("plugin-on").click();
+
+    // The question names where the plugin comes from and what it is for,
+    // and is asked once: agreeing fetches the source and turns it on.
+    const ask = known.getByTestId("plugin-ask");
+    await expect(ask).toContainText("agent-workbench-plugins");
+    await expect(ask).toContainText("The TODOs in the code");
+    await expect(ask).toContainText("with your privileges");
+    await page.getByTestId("plugin-agree").click();
+    await expect(ask).toHaveCount(0);
+
+    await expect(known).toHaveAttribute("data-fetched", "true");
+    await expect(known).toContainText("known");
+    await expect(known).toContainText("0123456");
+    await expect(known.getByTestId("plugin-check")).toBeVisible();
+    await expect(known.getByTestId("plugin-remove")).toBeVisible();
+    await expect(todos.getByTestId("plugin-on")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(todos.getByTestId("plugin-state")).toContainText(
+      "3 tools, 2 sections, runs node · starting",
+    );
+    // The other plugin came with the manifest, and is off.
+    const git = known.locator('[data-testid="plugin-row"][data-plugin=git]');
+    await expect(git.getByTestId("plugin-state")).toContainText(
+      "3 tools, 2 sections, a full view, runs node · off",
+    );
+
+    // Removing the fetched copy leaves the source offered, unfetched.
+    await known.getByTestId("plugin-remove").click();
+    await expect(known).toHaveAttribute("data-fetched", "false");
+    await expect(known.getByTestId("plugin-row")).toHaveCount(2);
+    await expect(known.getByTestId("plugin-state")).toHaveCount(0);
+    await expect(known.getByTestId("plugin-remove")).toHaveCount(0);
   });
 
   // The projects open reach the core, so the plugins on the machine know

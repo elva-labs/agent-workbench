@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginInfo, PluginSource, ProjectInfo } from "$lib/core";
 import {
   addSource,
+  checkAll,
   checkSource,
   enablePlugin,
+  fetchSource,
+  fetched,
   loadPlugins,
   plugins,
   projectsToSend,
@@ -40,7 +43,29 @@ const source = (id = "src-1"): PluginSource => ({
   commit: "0123456789abcdef",
   newer: null,
   error: null,
+  known: false,
   plugins: [github()],
+});
+
+/** A source the app offers, before anything has been fetched: the list's
+    word on its plugins, and no commit. */
+const offered = (): PluginSource => ({
+  ...source("known-elva-labs"),
+  commit: null,
+  known: true,
+  plugins: [
+    {
+      ...github(),
+      name: "todos",
+      description: "The TODOs in the code.",
+      version: "",
+      run: [],
+      build: [],
+      tools: [],
+      sections: [],
+      view: null,
+    },
+  ],
 });
 
 const calls: string[] = [];
@@ -54,6 +79,11 @@ vi.mock("$lib/core", () => ({
       calls.push(`add:${location}`);
       if (fail !== null) throw new Error(fail);
       return source("src-2");
+    },
+    async pluginFetch(id: string) {
+      calls.push(`fetch:${id}`);
+      if (fail !== null) throw new Error(fail);
+      return { ...source(id), known: true };
     },
     async pluginRemove(id: string) {
       calls.push(`remove:${id}`);
@@ -110,6 +140,38 @@ describe("the sources", () => {
     await removeSource("src-1");
     expect(plugins.sources).toEqual([]);
     expect(calls).toEqual(["check:src-1", "update:src-1", "remove:src-1"]);
+  });
+});
+
+describe("a source the app offers", () => {
+  it("is unfetched until it is fetched, and then carries the manifest", async () => {
+    plugins.sources = [offered()];
+    expect(fetched(plugins.sources[0])).toBe(false);
+    expect(await fetchSource("known-elva-labs")).toBe(true);
+    expect(calls).toEqual(["fetch:known-elva-labs"]);
+    const source = plugins.sources[0];
+    expect(source.id).toBe("known-elva-labs");
+    expect(source.known).toBe(true);
+    expect(fetched(source)).toBe(true);
+    expect(source.plugins.map((p) => p.name)).toEqual(["github"]);
+    expect(plugins.fetching).toBeNull();
+    expect(plugins.busy).toBe(false);
+  });
+
+  it("keeps the reason it could not be fetched, and stays unfetched", async () => {
+    plugins.sources = [offered()];
+    fail = "could not clone: not found";
+    expect(await fetchSource("known-elva-labs")).toBe(false);
+    expect(plugins.error).toContain("could not clone");
+    expect(fetched(plugins.sources[0])).toBe(false);
+    expect(plugins.fetching).toBeNull();
+    expect(plugins.busy).toBe(false);
+  });
+
+  it("is left out of a check across the sources until it is fetched", async () => {
+    plugins.sources = [offered(), source("src-1")];
+    await checkAll();
+    expect(calls).toEqual(["check:src-1"]);
   });
 });
 

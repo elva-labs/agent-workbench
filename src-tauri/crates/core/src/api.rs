@@ -145,6 +145,12 @@ impl Core {
         self.plugins()?.add(location, reference)
     }
 
+    /// Clones a source the app's own list names, so its plugins can be
+    /// turned on.
+    pub fn plugin_fetch(&self, id: &str) -> Result<crate::plugins::SourceInfo, String> {
+        self.plugins()?.fetch(id)
+    }
+
     pub fn plugin_remove(&self, id: &str) -> Result<(), String> {
         self.plugins()?.remove(id)
     }

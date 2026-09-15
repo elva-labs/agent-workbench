@@ -545,19 +545,17 @@ describe("the real app", () => {
         selector,
       );
 
-    // The source: a directory on this machine, added by path.
+    // The source: a directory on this machine, added by path. The form is
+    // behind the link, beneath the sources the app offers.
     await openSettings();
+    await driver.findElement(By.css("[data-testid='plugin-add-source']")).click();
     await driver
       .findElement(By.css("[data-testid='plugin-location']"))
       .sendKeys(PLUGIN_SOURCE);
     await driver.findElement(By.css("[data-testid='plugin-add']")).click();
-    await driver.wait(
-      until.elementLocated(By.css("[data-testid='plugin-source']")),
-      20_000,
-    );
-    expect(await textOf(driver, "[data-testid='plugin-source']")).toContain(
-      "directory",
-    );
+    const own = "[data-testid='plugin-source']:not([data-known])";
+    await driver.wait(until.elementLocated(By.css(own)), 20_000);
+    expect(await textOf(driver, own)).toContain("directory");
     await driver.wait(
       async () => (await textOf(driver, SETTINGS_PLUGIN)).includes("1.2.3"),
       10_000,

@@ -30,6 +30,8 @@
     checkAll,
     checkSource,
     enablePlugin,
+    fetchSource,
+    fetched,
     loadPlugins,
     plugins,
     removeSource,
@@ -40,6 +42,7 @@
     updateSource,
   } from "$lib/plugins.svelte";
   import { lastSegment } from "$lib/paths";
+  import type { PluginInfo, PluginSource } from "$lib/core";
   import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import {
@@ -124,9 +127,17 @@
 
   let sourceLocation = $state("");
   let sourceReference = $state("");
+  /** Whether the form for a source of your own is on screen. It stays
+      open for as long as the dialog is. */
+  let addingSource = $state(false);
   /** The plugin whose question is on screen: enabling it means agreeing
       to what it declares. Asked once per plugin. */
   let asking = $state<{ id: string; name: string } | null>(null);
+  /** The sources the app offers first, then the ones you added. */
+  const ordered = $derived([
+    ...plugins.sources.filter((source) => source.known),
+    ...plugins.sources.filter((source) => !source.known),
+  ]);
 
   async function add(e: SubmitEvent) {
     e.preventDefault();
@@ -136,6 +147,7 @@
     if (added) {
       sourceLocation = "";
       sourceReference = "";
+      addingSource = false;
     }
   }
 
@@ -146,7 +158,7 @@
       return;
     }
     if (trusted(id, name)) {
-      void enablePlugin(id, name, true);
+      void start(id, name);
       return;
     }
     asking = { id, name };
@@ -155,7 +167,25 @@
   function agree(id: string, name: string) {
     trust(id, name);
     asking = null;
-    void enablePlugin(id, name, true);
+    void start(id, name);
+  }
+
+  /** Turning a plugin on. A source the app offers is fetched first, and
+      nothing is enabled when the fetch fails. */
+  async function start(id: string, name: string) {
+    const source = plugins.sources.find((s) => s.id === id);
+    if (source !== undefined && !fetched(source) && !(await fetchSource(id)))
+      return;
+    await enablePlugin(id, name, true);
+  }
+
+  /** What a plugin's row says of it, and nothing while there is nothing
+      to say: a plugin of a source that has not been fetched has neither a
+      process nor a manifest behind it. */
+  function rowState(source: PluginSource, plugin: PluginInfo): string | null {
+    if (plugins.fetching === source.id) return "fetching";
+    if (!fetched(source)) return null;
+    return `${summary(plugin)} · ${stateLabel(plugin)}`;
   }
 
   /** The live updates section, lit for a moment when the dialog was opened
@@ -455,72 +485,74 @@
         {:else if tab === "plugins"}
           <h3>Plugins</h3>
           <p class="note">
-            A plugin comes from a git repository or a directory on this machine, runs with your
-            privileges where the project is, and adds tools for the agent, a section under the tree,
-            or a view. Add a source and turn its plugins on one by one.
+            A plugin runs with your privileges where the project is, and adds tools for the agent, a
+            section under the tree, or a view. The sources the workbench knows are offered here;
+            turning a plugin on fetches its source first. A source of your own can be added below.
           </p>
-          <form class="add-source" onsubmit={add}>
-            <input
-              type="text"
-              placeholder="Repository URL or directory"
-              bind:value={sourceLocation}
-              disabled={plugins.busy}
-              data-testid="plugin-location"
-            />
-            <input
-              type="text"
-              class="reference"
-              placeholder="ref"
-              bind:value={sourceReference}
-              disabled={plugins.busy}
-              data-testid="plugin-reference"
-            />
-            <button type="submit" disabled={plugins.busy || sourceLocation.trim() === ""} data-testid="plugin-add"
-              >{plugins.busy ? "Working…" : "Add"}</button
-            >
-          </form>
           {#if plugins.error}
             <p class="error" data-testid="plugin-error">{plugins.error}</p>
           {/if}
-          {#if plugins.sources.length > 0}
+          {#if plugins.sources.some(fetched)}
             <div class="sources-tools">
               <button class="tool" onclick={() => void checkAll()} disabled={plugins.busy} data-testid="plugins-check-all"
                 >Check for updates</button
               >
             </div>
           {/if}
-          {#each plugins.sources as source (source.id)}
-            <div class="source" data-testid="plugin-source" data-source={source.id}>
+          {#each ordered as source (source.id)}
+            <div
+              class="source"
+              data-testid="plugin-source"
+              data-source={source.id}
+              data-known={source.known ? "true" : null}
+              data-fetched={fetched(source) ? "true" : "false"}
+            >
               <div class="source-head">
                 <span class="source-name" title={source.location}>{lastSegment(source.location)}</span>
                 <span class="source-meta">
-                  {source.kind === "dir" ? "directory" : (source.commit?.slice(0, 7) ?? "")}{source.reference
-                    ? ` · ${source.reference}`
-                    : ""}
+                  {[
+                    source.known ? "known" : null,
+                    source.kind === "dir" ? "directory" : (source.commit?.slice(0, 7) ?? null),
+                    source.reference,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </span>
                 {#if source.newer}
                   <button class="tool accent" onclick={() => void updateSource(source.id)} disabled={plugins.busy} data-testid="plugin-update"
                     >Update to {source.newer.slice(0, 7)}</button
                   >
                 {/if}
-                {#if source.kind === "git"}
+                {#if source.kind === "git" && fetched(source)}
                   <button class="tool" onclick={() => void checkSource(source.id)} disabled={plugins.busy} data-testid="plugin-check"
                     >Check</button
                   >
                 {/if}
-                <button class="tool" onclick={() => void removeSource(source.id)} disabled={plugins.busy} data-testid="plugin-remove"
-                  >Remove</button
-                >
+                {#if fetched(source)}
+                  <button
+                    class="tool"
+                    onclick={() => void removeSource(source.id)}
+                    disabled={plugins.busy}
+                    title={source.known ? "Removes the fetched copy; the source stays listed" : null}
+                    data-testid="plugin-remove">Remove</button
+                  >
+                {/if}
               </div>
               {#if source.error}
                 <p class="error">{source.error}</p>
               {/if}
               {#each source.plugins as plugin (plugin.name)}
+                {@const state = rowState(source, plugin)}
                 <div class="project plugin" data-testid="plugin-row" data-plugin={plugin.name}>
                   <div class="plugin-text">
-                    <span class="project-name">{plugin.name} <span class="version">{plugin.version}</span></span>
+                    <span class="project-name"
+                      >{plugin.name}
+                      {#if plugin.version}<span class="version">{plugin.version}</span>{/if}</span
+                    >
                     {#if plugin.description}<span class="plugin-desc">{plugin.description}</span>{/if}
-                    <span class="plugin-meta" data-testid="plugin-state">{summary(plugin)} · {stateLabel(plugin)}</span>
+                    {#if state}
+                      <span class="plugin-meta" data-testid="plugin-state">{state}</span>
+                    {/if}
                   </div>
                   <div class="seg" role="radiogroup" aria-label="{plugin.name} on or off">
                     <button
@@ -544,7 +576,12 @@
                 {#if asking !== null && asking.id === source.id && asking.name === plugin.name}
                   <div class="ask" data-testid="plugin-ask">
                     <p>
-                      {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.
+                      {#if fetched(source)}
+                        {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.
+                      {:else}
+                        {plugin.name} is fetched from <code>{lastSegment(source.location)}</code> and runs
+                        with your privileges: {plugin.description}
+                      {/if}
                       Turn it on?
                     </p>
                     <div class="ask-actions">
@@ -556,6 +593,32 @@
               {/each}
             </div>
           {/each}
+          {#if addingSource}
+            <form class="add-source" onsubmit={add}>
+              <input
+                type="text"
+                placeholder="Repository URL or directory"
+                bind:value={sourceLocation}
+                disabled={plugins.busy}
+                data-testid="plugin-location"
+              />
+              <input
+                type="text"
+                class="reference"
+                placeholder="ref"
+                bind:value={sourceReference}
+                disabled={plugins.busy}
+                data-testid="plugin-reference"
+              />
+              <button type="submit" disabled={plugins.busy || sourceLocation.trim() === ""} data-testid="plugin-add"
+                >{plugins.busy ? "Working…" : "Add"}</button
+              >
+            </form>
+          {:else}
+            <button class="link" onclick={() => (addingSource = true)} data-testid="plugin-add-source"
+              >Add a source…</button
+            >
+          {/if}
         {:else}
           <h3>Keys</h3>
           <p class="note">
@@ -1060,11 +1123,30 @@
     font-size: 12px;
     color: var(--del);
   }
-  /* Plugin sources: a form to add one, then each source with its plugins. */
+  /* Plugin sources: each source with its plugins, and a form under them
+     for one of your own. */
   .add-source {
     display: flex;
     gap: 6px;
-    margin: 0 0 8px;
+    margin: 8px 0 0;
+  }
+
+  .link {
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    margin: 8px 0 0;
+    padding: 4px 0;
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .link:hover {
+    color: var(--accent);
   }
 
   .add-source input {

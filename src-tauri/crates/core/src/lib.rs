@@ -15,6 +15,7 @@ pub mod env;
 pub mod events;
 pub mod git;
 pub mod hook;
+pub mod known;
 pub mod mcp;
 pub mod pair;
 pub mod plugins;

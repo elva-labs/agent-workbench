@@ -139,6 +139,8 @@ export interface PluginSource {
   commit: string | null;
   newer: string | null;
   error: string | null;
+  /** Whether the app's own list of sources names this one. */
+  known: boolean;
   plugins: PluginInfo[];
 }
 
@@ -455,6 +457,8 @@ export interface Core {
   /** The plugin sources on this machine, with their plugins and states. */
   pluginSources(): Promise<PluginSource[]>;
   pluginAdd(location: string, reference: string | null): Promise<PluginSource>;
+  /** Clones a source the app's own list names, so its plugins can run. */
+  pluginFetch(id: string): Promise<PluginSource>;
   pluginRemove(id: string): Promise<void>;
   /** A newer commit on the source's ref, or null when there is none. */
   pluginCheck(id: string): Promise<string | null>;
@@ -651,6 +655,7 @@ const tauriCore: Core = {
   pluginSources: () => invoke<PluginSource[]>("plugin_sources"),
   pluginAdd: (location, reference) =>
     invoke<PluginSource>("plugin_add", { location, reference }),
+  pluginFetch: (id) => invoke<PluginSource>("plugin_fetch", { id }),
   pluginRemove: (id) => invoke<void>("plugin_remove", { id }),
   pluginCheck: (id) => invoke<string | null>("plugin_check", { id }),
   pluginUpdate: (id) => invoke<PluginSource>("plugin_update", { id }),
@@ -837,6 +842,9 @@ const detachedCore: Core = {
     return [];
   },
   async pluginAdd() {
+    throw new Error("no core");
+  },
+  async pluginFetch() {
     throw new Error("no core");
   },
   async pluginRemove() {},

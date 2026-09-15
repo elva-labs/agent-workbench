@@ -723,6 +723,14 @@ async fn plugin_add(
     .await
 }
 
+/// Clones a source the app's own list names, so its plugins can be turned
+/// on.
+#[tauri::command]
+async fn plugin_fetch(core: State<'_, Arc<Core>>, id: String) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.plugin_fetch(&id).and_then(value)).await
+}
+
 #[tauri::command]
 async fn plugin_remove(core: State<'_, Arc<Core>>, id: String) -> Result<(), String> {
     let core = Arc::clone(&core);
@@ -989,6 +997,7 @@ pub fn run() {
             pty_stop_process,
             plugin_sources,
             plugin_add,
+            plugin_fetch,
             plugin_remove,
             plugin_check,
             plugin_update,

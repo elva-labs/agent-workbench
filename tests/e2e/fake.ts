@@ -80,6 +80,64 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+
+      type FakeSource = {
+        id: string;
+        kind: string;
+        location: string;
+        reference: string | null;
+        commit: string | null;
+        newer: string | null;
+        error: string | null;
+        known: boolean;
+        plugins: Record<string, unknown>[];
+      };
+
+      /** A plugin the shipped list names and nothing has been fetched for:
+          the name and the line, and nothing else. */
+      const listed = (name: string, description: string) => ({
+        name,
+        path: "",
+        description,
+        version: "",
+        run: [] as string[],
+        build: [] as string[],
+        tools: [] as string[],
+        sections: [] as string[],
+        view: null,
+        enabled: false,
+        state: "off",
+        detail: null,
+        hello: null,
+      });
+
+      /** The source the shipped list offers, as it stands unfetched. */
+      const offered = (): FakeSource => ({
+        id: "known-elva-labs",
+        kind: "git",
+        location: "https://github.com/elva-labs/agent-workbench-plugins",
+        reference: "main",
+        commit: null,
+        newer: null,
+        error: null,
+        known: true,
+        plugins: [
+          listed(
+            "todos",
+            "The TODOs in the code, and notes to self, per project.",
+          ),
+          listed(
+            "git",
+            "The branch, what changed, the stashes and a graph of the log.",
+          ),
+        ],
+      });
+
+      const sources = (): FakeSource[] => {
+        const w = window as unknown as { __pluginSources?: FakeSource[] };
+        return (w.__pluginSources ??= [offered()]);
+      };
+
       (
         window as unknown as { __WORKBENCH_CORE__: unknown }
       ).__WORKBENCH_CORE__ = {
@@ -157,26 +215,25 @@ export async function installFakeCore(
         },
         kill: async () => {},
         ptyCwd: async () => null,
-        // Plugin sources, kept here: a URL with "good" in it adds a source
-        // with one plugin, anything else is refused.
+        // Plugin sources, kept here. The list the app ships offers one
+        // source, unfetched, with its plugins named; a URL with "good" in
+        // it adds a source of the user's own, anything else is refused.
         pluginSources: async () => {
-          const w = window as unknown as { __pluginSources?: unknown[] };
-          return w.__pluginSources ?? [];
+          return sources();
         },
         pluginAdd: async (location: string, reference: string | null) => {
-          const w = window as unknown as {
-            __pluginSources?: Record<string, unknown>[];
-          };
           if (!location.includes("good"))
             throw new Error("could not clone: repository not found");
+          const own = sources().filter((s) => s.known !== true).length;
           const source = {
-            id: `src-${(w.__pluginSources ?? []).length + 1}`,
+            id: `src-${own + 1}`,
             kind: location.startsWith("/") ? "dir" : "git",
             location,
             reference,
             commit: "0123456789abcdef",
             newer: null,
             error: null,
+            known: false,
             plugins: [
               {
                 name: "github",
@@ -195,33 +252,66 @@ export async function installFakeCore(
               },
             ],
           };
-          (w.__pluginSources ??= []).push(source);
+          sources().push(source);
           return source;
         },
+        // Fetching an offered source clones it: the manifest's word takes
+        // the list's place, and its plugins are still off.
+        pluginFetch: async (id: string) => {
+          const source = sources().find((s) => s.id === id)!;
+          source.commit = "0123456789abcdef";
+          source.plugins = [
+            {
+              name: "todos",
+              path: "plugins/todos",
+              description:
+                "The TODOs in the code, and notes to self, per project.",
+              version: "0.1.0",
+              run: ["node", "dist/main.js"],
+              build: ["npm", "run", "build"],
+              tools: ["list", "add", "finish"],
+              sections: ["Todos", "Notes"],
+              view: null,
+              enabled: false,
+              state: "off",
+              detail: null,
+              hello: null,
+            },
+            {
+              name: "git",
+              path: "plugins/git",
+              description:
+                "The branch, what changed, the stashes and a graph of the log.",
+              version: "0.1.0",
+              run: ["node", "dist/main.js"],
+              build: ["npm", "run", "build"],
+              tools: ["status", "commit", "log"],
+              sections: ["Git", "Branches"],
+              view: "full",
+              enabled: false,
+              state: "off",
+              detail: null,
+              hello: null,
+            },
+          ];
+          return source;
+        },
+        // A source the list names is offered again once its clone is gone.
         pluginRemove: async (id: string) => {
-          const w = window as unknown as { __pluginSources?: { id: string }[] };
-          w.__pluginSources = (w.__pluginSources ?? []).filter(
-            (s) => s.id !== id,
+          const w = window as unknown as { __pluginSources?: FakeSource[] };
+          w.__pluginSources = sources().flatMap((s) =>
+            s.id !== id ? [s] : s.known ? [offered()] : [],
           );
         },
         pluginCheck: async () => "fedcba9876543210",
         pluginUpdate: async (id: string) => {
-          const w = window as unknown as {
-            __pluginSources?: Record<string, unknown>[];
-          };
-          const source = (w.__pluginSources ?? []).find((s) => s.id === id)!;
+          const source = sources().find((s) => s.id === id)!;
           source.commit = "fedcba9876543210";
           source.newer = null;
           return source;
         },
         pluginEnable: async (id: string, name: string, on: boolean) => {
-          const w = window as unknown as {
-            __pluginSources?: {
-              id: string;
-              plugins: Record<string, unknown>[];
-            }[];
-          };
-          const source = (w.__pluginSources ?? []).find((s) => s.id === id)!;
+          const source = sources().find((s) => s.id === id)!;
           const plugin = source.plugins.find((p) => p.name === name)!;
           plugin.enabled = on;
           plugin.state = on ? "starting" : "off";

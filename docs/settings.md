@@ -56,8 +56,11 @@ tools they bring the agent, is in [hooks](hooks.md).
 
 Sources of plugins, each a git repository or a directory on this machine,
 with the plugins each names and a switch per plugin, and a check across
-every source at the top. What adding, enabling, checking and updating do
-is in [plugins](plugins.md).
+every source at the top. The sources the workbench knows are listed from
+the first launch with every plugin off, and turning one on fetches its
+source first. A source of your own goes in behind the link under them.
+What adding, enabling, checking and updating do is in
+[plugins](plugins.md).
 
 ## Keys
 

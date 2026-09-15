@@ -66,6 +66,34 @@ newer commit once a day while it runs and on request from the settings,
 and marks the row; updating is a choice made per source, never made for
 you. Removing a source stops and removes its plugins.
 
+The workbench knows some sources already and offers them from the first
+launch, from a list that ships with it in a file at the repository root.
+The list carries each source's repository and ref, and the name and one
+line for each plugin the source holds, so the settings can name a plugin
+before anything has been fetched. Every plugin is off and nothing is
+cloned until one is turned on. Turning one on asks what any other plugin
+is asked, where it comes from and that it runs with your privileges, and
+agreeing fetches the source with git, pins the commit, and starts the
+plugin. Once fetched, a source the workbench knows is checked, updated
+and removed like any other; removing it takes the clone away and leaves
+the source offered again.
+
+### Joining the known list
+
+The file holds one entry per source: an id, the repository to clone and
+the ref to clone it at, and the name and a line of description for each
+plugin, taken from the source's manifest in the words it uses. A pull
+request that adds an entry is how a source joins the list. The build
+reads the file and fails on an entry that is missing anything, whose id
+is not a plain identifier, or that names a plugin twice, so a list the
+app cannot use never ships.
+
+What a reviewer looks at is the source itself: that its manifest
+validates, that each plugin does what its line says it does, and that no
+plugin is named as one in another listed source is. A listed plugin runs
+with the user's privileges like any other, so being on the list is the
+project's word that someone looked, and nothing more.
+
 ## How a plugin runs
 
 The core owns plugin processes, the app's own core for projects here and

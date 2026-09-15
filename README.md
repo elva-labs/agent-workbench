@@ -96,8 +96,8 @@ npm run test:driver   # the real binary, driven over WebDriver
   what it gives, the agent's tools among it.
 - [Orchestrator](docs/orchestrator.md): a session that starts and steers
   other sessions.
-- [Plugins](docs/plugins.md): where they come from, what one may add to the
-  workbench, and how one is written.
+- [Plugins](docs/plugins.md): where they come from, the sources offered out
+  of the box, what one may add to the workbench, and how one is written.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
 - [Remote](docs/remote.md): projects on other machines.
 - [Platforms](docs/platforms.md): what differs on each.
