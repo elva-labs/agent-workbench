@@ -243,11 +243,10 @@ test.describe("the conductor", () => {
       arguments: { session: "session-2", prompt: "Go on with the test" },
       session: "session-1",
     });
-    const ask = page.getByTestId("conduct-ask");
-    await expect(ask).toBeVisible();
-    await expect(ask).toContainText("Go on with the test");
-    await page.getByTestId("conduct-allow").click();
+    // No question: starting it was consented to, and this is that session
+    // going on.
     await expect.poll(() => answerTo(page, "c-9")).not.toBeNull();
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
     const answer = (await answerTo(page, "c-9"))!;
     expect(answer.error).toBeNull();
     expect(answer.content).toContain("Resumed session session-2");

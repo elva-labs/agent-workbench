@@ -459,10 +459,12 @@ function roomFor(request: ConductRequest): Answered | null {
 
 /**
  * Brings back a session the caller started that is no longer running,
- * where it ran, with its conversation. The user is asked as for a start:
- * it is a session starting in a project either way. A prompt, when the
- * call gives one, is what the session goes on with; without one it comes
- * up waiting, for the caller to send a line.
+ * where it ran, with its conversation. The user is not asked again: the
+ * record holds only sessions they allowed this caller to start, so the
+ * consent was given when the session was, and bringing it back is that
+ * session going on rather than a new one. A prompt, when the call gives
+ * one, is what the session goes on with; without one it comes up waiting,
+ * for the caller to send a line.
  */
 async function resumeSession(
   request: ConductRequest,
@@ -492,9 +494,6 @@ async function resumeSession(
     );
 
   const prompt = text(request, "prompt");
-  const shown = prompt ?? `Resume session ${entry.name ?? id.slice(0, 8)}`;
-  if ((await askUser(request, project, shown, false)) === "no")
-    return refused("The user did not allow the session to be resumed.");
 
   // A row that ended is its transcript again; the resumed session takes
   // its place rather than sitting beside it.

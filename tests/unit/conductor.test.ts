@@ -176,13 +176,12 @@ beforeEach(() => {
   workspace.open.push(repo(A), repo(B));
 });
 
-/** A resume the user allows, answered once the row's process is up. The
-    question goes up once the core has said the worktree stands. */
-async function resumeAllowed(request: ConductRequest, ptyId: string) {
+/** A resume, answered once the row's process is up. Nothing is asked: the
+    consent was given when the session was started. */
+async function resumed(request: ConductRequest, ptyId: string) {
   const answering = handle(request);
   await settle();
-  if (conductor.asking !== null) allow();
-  await settle();
+  expect(conductor.asking).toBeNull();
   const row = sessions.all.at(-1)!;
   started(row.key, ptyId, row.id);
   flushSync();
@@ -967,7 +966,7 @@ describe("resuming a session", () => {
     standing = { [A]: [tree] };
   }
 
-  it("asks the user, then brings the session back where it ran, with the prompt and the model", async () => {
+  it("brings the session back where it ran, with the prompt and the model, asking nothing: its start was consented to", async () => {
     await startInTree();
     const request = call(
       "start",
@@ -976,10 +975,9 @@ describe("resuming a session", () => {
     );
     const answering = handle(request);
     await settle();
-    expect(conductor.asking?.project).toBe(A);
-    expect(conductor.asking?.prompt).toBe("Go on with");
-    allow();
-    await settle();
+    // A fresh run: the caller has no standing answer, and none is needed.
+    expect(allowedProjects("caller-1")).toEqual([]);
+    expect(conductor.asking).toBeNull();
 
     const row = sessions.all[0];
     expect(row.resumedFrom).toBe("sid-1");
@@ -1004,7 +1002,7 @@ describe("resuming a session", () => {
 
   it("comes up waiting when no prompt is given", async () => {
     await startInTree();
-    const row = await resumeAllowed(
+    const row = await resumed(
       call("start", { session: "sid-1" }, { session: "caller-1" }),
       "pty-5",
     );
@@ -1017,7 +1015,7 @@ describe("resuming a session", () => {
     await startInTree();
     const caller = live(B, "pty-0", "caller-1");
     sessions.active = caller.key;
-    await resumeAllowed(
+    await resumed(
       call("start", { session: "sid-1" }, { session: "caller-1" }),
       "pty-5",
     );
@@ -1029,8 +1027,6 @@ describe("resuming a session", () => {
     const answering = handle(
       call("start", { session: "sid-1" }, { session: "caller-1" }),
     );
-    await settle();
-    allow();
     await settle();
     const row = sessions.all[0];
     failed(row.key, "claude was not found on your PATH");
@@ -1045,7 +1041,7 @@ describe("resuming a session", () => {
     started(dead.key, "pty-4", "sid-1");
     ended({ id: "pty-4", code: 0, clean: true });
     expect(sessions.all).toHaveLength(1);
-    const row = await resumeAllowed(
+    const row = await resumed(
       call("start", { session: "sid-1" }, { session: "caller-1" }),
       "pty-5",
     );
@@ -1063,7 +1059,7 @@ describe("resuming a session", () => {
 
   it("refuses a session that is running", async () => {
     await startInTree();
-    await resumeAllowed(
+    await resumed(
       call("start", { session: "sid-1" }, { session: "caller-1" }),
       "pty-5",
     );
@@ -1085,18 +1081,6 @@ describe("resuming a session", () => {
     workspace.open.splice(0, workspace.open.length, repo(B));
     await handle(call("start", { session: "sid-1" }, { session: "caller-1" }));
     expect(last().error).toContain(`ran in ${A}, which is not open`);
-  });
-
-  it("refuses when the user says no", async () => {
-    await startInTree();
-    const answering = handle(
-      call("start", { session: "sid-1" }, { session: "caller-1" }),
-    );
-    await settle();
-    refuse();
-    await answering;
-    expect(last().error).toContain("did not allow");
-    expect(sessions.all).toHaveLength(0);
   });
 
   it("counts against the cap like a start", async () => {

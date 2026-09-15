@@ -56,10 +56,10 @@ the app itself was closed, the started sessions went with it. `sessions`
 then lists them as stopped, after the running ones, and `start` with one
 of those ids in place of a project and prompt brings it back where it ran,
 in its worktree with its conversation. A prompt given with it is what the
-session goes on with; without one it comes up waiting for a line. The user
-is asked as for any start, the cap and the one-level rule apply, and a
-session whose worktree has since been cleaned up, or whose project is no
-longer open, is refused with the reason. A session the orchestrator
+session goes on with; without one it comes up waiting for a line. The cap
+and the one-level rule apply, and a session whose worktree has since been
+cleaned up, or whose project is no longer open, is refused with the
+reason. A session the orchestrator
 stopped itself is not offered back: the stop said it was done with. The
 record lives with the window's other memory, so a wiped local storage
 forgets it, which only means the orchestrator starts afresh.
@@ -79,7 +79,9 @@ The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. An allowed
 caller is remembered for that project for as long as the app runs. A
-refusal is an answer the agent reads, not an error.
+refusal is an answer the agent reads, not an error. Bringing back a
+session it already started is never asked about: the consent was given
+when the session was, and the resumed session is that one going on.
 
 A session started by another may not start any of its own, and no session
 may have more than eight running at a time.
