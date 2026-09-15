@@ -110,15 +110,27 @@
   sandbox="allow-scripts"
   title={page.plugin}
   onload={() => (loaded = page.html)}
+  class:waiting={loaded === null}
   style:height="{height}px"
   data-testid="plugin-page"
 ></iframe>
 
 <style>
+  /* The frame is painted in the canvas colour of the scheme it inherits, the
+     same scheme the page inside reads as prefers-color-scheme. A strip the
+     frame gains before the page repaints, while a column moves, is then the
+     colour a page that follows the scheme is about to paint there. */
   iframe {
     width: 100%;
     border: 0;
     border-radius: var(--radius);
-    background: white;
+    background: Canvas;
+  }
+
+  /* Until its page has loaded, the frame holds the browser's own empty
+     document, which a webview may paint white whatever the scheme. The
+     frame keeps its place in the layout but shows nothing until then. */
+  iframe.waiting {
+    visibility: hidden;
   }
 </style>
