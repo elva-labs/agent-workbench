@@ -1,7 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine, type GrepHit } from "$lib/core";
 import type { MediaItem } from "$lib/media.svelte";
-import { enterReview, exitReview } from "$lib/layout.svelte";
+import { enterReview, exitReview, layout, togglePane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
 
@@ -446,6 +446,14 @@ export function showPluginView(page: NonNullable<typeof files.pluginView>) {
 export function closeViewer() {
   deselect();
   exitReview();
+}
+
+/** Opens the sessions pane from its folded column. Reviewing is what folds
+    it, so the viewer closes first and the pane comes back with the working
+    shape. A window too narrow for the pane leaves it folded. */
+export function unfoldSessions() {
+  if (layout.mode === "reviewing") closeViewer();
+  if (!layout.sessionsChosen) togglePane("sessions");
 }
 
 export async function setScope(scope: Scope) {

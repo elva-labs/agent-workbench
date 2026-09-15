@@ -12,6 +12,14 @@ async function widthOf(page: Page, selector: string) {
   return box.width;
 }
 
+/** How wide the sessions pane's column is while the pane is folded. */
+const FOLDED = 50;
+
+/** Waits for the sessions pane to be folded to its narrow column, or open. */
+async function sessionsFolded(page: Page, folded = true) {
+  await expect.poll(() => widthOf(page, SESSIONS).then((width) => width <= FOLDED + 1)).toBe(folded);
+}
+
 /** Waits for the columns to arrive: two frames apart, the grid reads the same. */
 async function settled(page: Page) {
   await expect
@@ -269,14 +277,14 @@ test("resizes a pane from the keyboard and resets it", async ({ page }) => {
 
 test("collapses and restores the side panes", async ({ page }) => {
   await page.keyboard.press(`${MOD}+b`);
-  await expect(page.locator(SESSIONS)).toBeHidden();
+  await sessionsFolded(page);
   await expect(page.locator(AGENT)).toBeVisible();
 
   await page.keyboard.press(`${MOD}+\\`);
   await expect(page.locator(CHANGES)).toBeHidden();
 
   await page.keyboard.press(`${MOD}+b`);
-  await expect(page.locator(SESSIONS)).toBeVisible();
+  await sessionsFolded(page, false);
 });
 
 test("cycles the theme and keeps the choice", async ({ page }) => {
@@ -322,11 +330,11 @@ test("does not scroll the window: the shell is chrome, not a document", async ({
 });
 
 test.describe("responsive collapse", () => {
-  test("folds the sessions pane away rather than squeezing the agent", async ({
+  test("folds the sessions pane rather than squeezing the agent", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 800, height: 800 });
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
     await expect(page.locator(CHANGES)).toBeVisible();
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
@@ -335,7 +343,7 @@ test.describe("responsive collapse", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 600, height: 800 });
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
     await expect(page.locator(CHANGES)).toBeHidden();
     await expect(page.locator(AGENT)).toBeVisible();
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
@@ -356,30 +364,30 @@ test.describe("responsive collapse", () => {
 
   test("brings the panes back when the window grows", async ({ page }) => {
     await page.setViewportSize({ width: 600, height: 800 });
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
 
     await page.setViewportSize({ width: 1440, height: 900 });
-    await expect(page.locator(SESSIONS)).toBeVisible();
+    await sessionsFolded(page, false);
     await expect(page.locator(CHANGES)).toBeVisible();
   });
 
   // A stint in split-screen must not permanently forget your preference.
   test("does not mistake a forced collapse for a choice", async ({ page }) => {
     await page.setViewportSize({ width: 600, height: 800 });
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
 
     await page.reload();
     await page.setViewportSize({ width: 1440, height: 900 });
-    await expect(page.locator(SESSIONS)).toBeVisible();
+    await sessionsFolded(page, false);
   });
 
   test("remembers a pane you actually closed", async ({ page }) => {
     await page.keyboard.press(`${MOD}+b`);
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
 
     await page.setViewportSize({ width: 600, height: 800 });
     await page.setViewportSize({ width: 1440, height: 900 });
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
   });
 });
 
@@ -1410,19 +1418,19 @@ test.describe("the file viewer", () => {
     expect(Math.abs(viewer.y - tree.y)).toBeLessThan(2);
   });
 
-  test("folds the sessions pane away and keeps the agent visible", async ({
+  test("folds the sessions pane and keeps the agent visible", async ({
     page,
   }) => {
     await row(page, "mod.rs").click();
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
     await expect(page.locator(AGENT)).toBeVisible();
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
-  // Opening the viewer eases the sessions column shut and the changes column
-  // wider. The agent's grid keeps its size while they move and is measured
-  // once they arrive.
-  test("sees the sessions pane out without measuring the agent twice", async ({
+  // Opening the viewer eases the sessions column folded and the changes
+  // column wider. The agent's grid keeps its size while they move and is
+  // measured once they arrive.
+  test("folds the sessions pane without measuring the agent twice", async ({
     page,
   }) => {
     await page.getByTestId("start-agent").click();
@@ -1431,7 +1439,7 @@ test.describe("the file viewer", () => {
     const told = await timesResized(page);
 
     await row(page, "mod.rs").click();
-    await expect(page.locator(SESSIONS)).toHaveCount(0, { timeout: 10_000 });
+    await sessionsFolded(page);
 
     await expect.poll(() => columnsOf(page)).not.toBe(before);
     const widened = await columnsOf(page);
@@ -1442,7 +1450,7 @@ test.describe("the file viewer", () => {
     expect(await timesResized(page)).toBe(told + 1);
 
     await page.keyboard.press("Escape");
-    await expect(page.locator(SESSIONS)).toBeVisible();
+    await sessionsFolded(page, false);
     await expect.poll(() => columnsOf(page)).toBe(before);
   });
 
@@ -1454,7 +1462,7 @@ test.describe("the file viewer", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
 
     await row(page, "mod.rs").click();
-    expect(await page.locator(SESSIONS).count()).toBe(0);
+    expect(await widthOf(page, SESSIONS)).toBeLessThanOrEqual(FOLDED + 1);
 
     const terminal = page.locator("section[data-pane='terminal']");
     await page.keyboard.press(`${MOD}+j`);
@@ -1579,11 +1587,11 @@ test.describe("the file viewer", () => {
 
   test("closes on Escape and restores the sessions pane", async ({ page }) => {
     await row(page, "mod.rs").click();
-    await expect(page.locator(SESSIONS)).toBeHidden();
+    await sessionsFolded(page);
 
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
-    await expect(page.locator(SESSIONS)).toBeVisible();
+    await sessionsFolded(page, false);
     await expect(page.locator(TREE)).toBeVisible();
     // Done with the file: nothing stays highlighted.
     await expect(page.locator(`${TREE} [aria-selected='true']`)).toHaveCount(0);

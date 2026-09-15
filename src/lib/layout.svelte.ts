@@ -3,16 +3,19 @@
  *
  * The app has two shapes. **Working** is three panes with the agent taking the
  * room. **Reviewing** is the changes pane grown into a file viewer, with the
- * sessions pane folded away because a session list is no use while reading a
- * diff. One deliberate transition between them, and the agent resizes once on
- * the way in rather than once per file opened.
+ * sessions pane folded to a narrow column because a session list is no use
+ * while reading a diff. One deliberate transition between them, and the agent
+ * resizes once on the way in rather than once per file opened.
  *
  * Below either shape sits the terminal panel: a strip along the bottom of the
  * window holding the project's shells, hidden until asked for. It takes its
  * height from the three panes above, which is one resize for the agent on a
  * deliberate toggle, the same bargain review mode strikes.
  *
- * Two kinds of collapse, and they must not be confused:
+ * The sessions pane is never gone, only open or folded: folded, its column is
+ * `FOLDED` wide and shows its projects and the dots of their sessions where
+ * they stand when it is open. Two kinds of collapse, for it and the changes
+ * pane, and they must not be confused:
  *
  *   chosen  — you pressed the toggle. Persisted.
  *   forced  — the window is too narrow to hold the pane. Transient.
@@ -64,17 +67,23 @@ export const DEFAULT = {
   terminalList: 200,
 } as const;
 
-/** Content width below which the sessions pane cannot fit alongside the rest. */
+/** How wide the sessions pane's column is while the pane is folded. */
+export const FOLDED = 50;
+
+/** Content width below which the sessions pane cannot open alongside the rest. */
 export const NEEDS_SESSIONS =
   MIN.sessions + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
-/** Content width below which even the changes pane has to go. */
-export const NEEDS_CHANGES = MIN.changes + SPLITTER + MIN.agent;
+/** Content width below which even the changes pane has to go, beside the
+    folded sessions pane. */
+export const NEEDS_CHANGES =
+  FOLDED + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
 /**
  * Content width below which reviewing hides the agent rather than squeezing it.
  * Hiding costs nothing: the pane keeps its width, so the PTY is never resized
  * and the terminal comes back exactly as it was. Squeezing costs a reflow.
  */
-export const NEEDS_AGENT_WHILE_REVIEWING = MIN.agent + SPLITTER + MIN_REVIEW;
+export const NEEDS_AGENT_WHILE_REVIEWING =
+  FOLDED + SPLITTER + MIN.agent + SPLITTER + MIN_REVIEW;
 /** Content height below which the terminal panel cannot fit under the panes. */
 export const NEEDS_TERMINAL = MIN.panes + SPLITTER + MIN.terminal;
 
@@ -119,9 +128,9 @@ export function sessionsVisible() {
 }
 
 /**
- * How much of the sessions column is open, from 0 to 1. The column's width is
- * this share of the pane's, so the panes beside it give up and take back the
- * room as it moves. It follows `sessionsVisible`, eased by the page.
+ * How far the sessions column is open, from 0, folded, to 1, the pane's own
+ * width. The panes beside it give up and take back the room as it moves. It
+ * follows `sessionsVisible`, eased by the page.
  */
 export const sessionsOpen = new Tween(1);
 
@@ -129,13 +138,19 @@ export const sessionsOpen = new Tween(1);
     by the page between the working and reviewing widths. */
 export const changesSpan = new Tween<number>(DEFAULT.changes);
 
+/** How far the terminal panel is up, from 0 to 1, following
+    `terminalVisible` and eased by the page. */
+export const terminalOpen = new Tween(0);
+
 const columnsMoving = $derived(
   sessionsOpen.current !== sessionsOpen.target ||
-    changesSpan.current !== changesSpan.target,
+    changesSpan.current !== changesSpan.target ||
+    terminalOpen.current !== terminalOpen.target,
 );
 
-/** A column is on its way to a new width. Terminals keep the size they had
-    until it arrives, so the pty hears one resize rather than one a frame. */
+/** A column or the terminal panel is on its way to a new size. Terminals
+    keep the size they had until it arrives, so a pty hears one resize rather
+    than one a frame. */
 export function sliding() {
   return columnsMoving;
 }
@@ -152,8 +167,9 @@ export function terminalVisible() {
   return layout.terminalChosen && !layout.terminalForced;
 }
 
-/** The pane at the left edge of the window, whose header the macOS window
-    controls sit over. */
+/** The pane whose header the macOS window controls sit over: the sessions
+    pane while it is open, and the first pane beside it while it is folded,
+    whose header then runs on under the controls from the folded column. */
 export function leftmost(): PaneId {
   if (sessionsVisible()) return "sessions";
   if (agentVisible()) return "agent";
@@ -209,7 +225,8 @@ export function applyLayout(width: number, height: number = layout.height) {
     layout.changesForced = false;
     layout.agentHidden = width < NEEDS_AGENT_WHILE_REVIEWING;
 
-    const room = layout.agentHidden ? width : width - SPLITTER - MIN.agent;
+    const beside = width - FOLDED - SPLITTER;
+    const room = layout.agentHidden ? beside : beside - SPLITTER - MIN.agent;
     layout.review = Math.min(
       Math.max(layout.review, MIN_REVIEW),
       Math.max(MIN_REVIEW, room),
@@ -238,10 +255,10 @@ export function applyLayout(width: number, height: number = layout.height) {
     ? Math.max(MIN.changes, layout.changes)
     : layout.changes;
 
-  const splitters =
-    (showSessions ? SPLITTER : 0) + (showChanges ? SPLITTER : 0);
+  // The sessions column is there either way, folded or open.
+  const splitters = SPLITTER + (showChanges ? SPLITTER : 0);
   let overflow =
-    (showSessions ? sessions : 0) +
+    (showSessions ? sessions : FOLDED) +
     (showChanges ? changes : 0) +
     splitters +
     MIN.agent -
@@ -272,7 +289,7 @@ export function enterReview() {
   // mode change rather than on every file, and it gets the width straight
   // back on exit.
   if (!layout.reviewTouched) {
-    const freed = sessionsVisible() ? layout.sessions + SPLITTER : 0;
+    const freed = sessionsVisible() ? layout.sessions - FOLDED : 0;
     layout.review = Math.max(
       DEFAULT.review,
       layout.changes + freed,

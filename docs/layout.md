@@ -9,7 +9,7 @@ too small.
 The agent takes whatever the side panes do not.
 
 **Reviewing** is the changes pane grown into a file viewer, with the sessions
-pane folded away. Inside the pane the tree keeps the left column and the
+pane folded. Inside the pane the tree keeps the left column and the
 content takes the rest. You enter it by opening a file or with
 <kbd>Cmd</kbd><kbd>D</kbd>, and leave it with <kbd>Esc</kbd>, the same chord,
 or the control in the viewer's bar.
@@ -32,22 +32,38 @@ The agent pane is a character grid, and below a certain width a TUI stops
 being usable. It is the last pane to lose room and the only one that can
 never be closed.
 
-| Content width | Layout                              |
-| ------------- | ----------------------------------- |
-| 812 and up    | All three panes                     |
-| 626 to 812    | Sessions folds away                 |
-| Under 626     | Changes folds away too, agent alone |
+| Content width | Layout                                        |
+| ------------- | --------------------------------------------- |
+| 812 and up    | All three panes                               |
+| 682 to 812    | Sessions folds                                |
+| Under 682     | Changes folds away too, agent beside the fold |
 
-The window's minimum width is that 626 plus the frame's padding, which stays
+The window's minimum width is that 682 plus the frame's padding, which stays
 under half of a 1440-wide display so macOS split-screen still accepts the
 window. A unit test keeps the window configuration and the layout's numbers
 in step.
 
 Within a shape, the changes pane gives width up before the sessions pane.
 
+## Folded, not gone
+
+The sessions pane is never gone, only open or folded. Folded, its column is
+50 pixels wide and the pane keeps every row where it stands when open: each
+project's name, cut at the column's edge, and under it the dots of its
+sessions, each in its own row. The rest of the rows keep their height and
+show nothing, so the dots stay with their project and nothing moves when the
+pane opens again. Its header joins the header beside it into one row, and
+the line down the column's edge starts under that row.
+
+The folded column is one button. A click anywhere on it opens the pane and
+gives it the keyboard, and so does focusing the pane by its key or pressing
+<kbd>Cmd</kbd><kbd>B</kbd>. Reviewing folds the pane as part of its shape,
+so opening it while reviewing closes the viewer. In a window too narrow for
+the pane, the fold is all there is and there is nothing to open.
+
 ## Forced is not chosen
 
-A pane can be missing for two reasons, and they are kept apart:
+A pane can be folded or missing for two reasons, and they are kept apart:
 
 - **chosen**: you pressed the toggle. Persisted.
 - **forced**: the window cannot hold it. Transient, never persisted.
@@ -57,7 +73,7 @@ that you like the sessions pane open.
 
 ## Hiding is free, resizing is not
 
-Below 932px of content, reviewing hides the agent rather than squeezing it.
+Below 988px of content, reviewing hides the agent rather than squeezing it.
 The pane keeps its width while hidden, so no pty resize is sent and the
 terminal comes back as it was, with nothing redrawn or rewrapped. The agent
 pane is hidden rather than unmounted for the same reason; unmounting would
@@ -65,14 +81,17 @@ destroy the terminal.
 
 ## What moves
 
-Toggling the sessions pane eases its column shut or open. The pane keeps its
-own width throughout and slides off the left edge, and the panes beside it
-widen into the room it leaves, or narrow to make room as it returns. Opening
-and closing the viewer moves the same way: the sessions column eases shut or
-open while the changes column eases to its new width on the same curve, so
-the agent between them moves steadily from its old width to its new one and
-never below its minimum. When the pane goes because the window is too narrow
-for it, its column shuts at once.
+Toggling the sessions pane eases its column between folded and open. What
+the pane holds keeps its open width throughout and the column cuts it off,
+so no row moves, and the panes beside it widen into the room it leaves, or
+narrow to make room as it returns. The header beside the column keeps its
+title clear of the traffic lights by whatever the column leaves short of
+them, so the title stands still. Opening and closing the viewer moves the
+same way: the sessions column eases folded or open while the changes column
+eases to its new width on the same curve, so the agent between them moves
+steadily from its old width to its new one and never below its minimum. When
+the pane folds because the window is too narrow for it, its column folds at
+once.
 
 A terminal whose pane is widening or narrowing keeps the size it had until
 the column arrives, then is measured once. The agent is told one new size per
@@ -80,8 +99,10 @@ toggle rather than one per frame, and does not redraw at every width in
 between. While the column moves, the terminal's grid is either short of its
 pane's new edge or clipped by it.
 
-The terminal panel moves on its own instead, falling away and rising back
-while the panes above it keep their new height from the first frame. In the
+The terminal panel eases up and down the same way, and the panes above it
+give up and take back the height as it goes. The panel keeps its own height
+inside and is cut off at the window's foot while it moves, so it slides
+rather than squeezes, and its shells are measured once it arrives. In the
 sessions pane a row that goes fades where it stands, and the rows below it
 close the gap rather than jump into it; a row that arrives fades in.
 
@@ -121,9 +142,10 @@ with the others; below 140px it stops giving way and the shells keep 320px.
 ## The window's own chrome
 
 On macOS the window has no title bar. The traffic lights sit over the header
-of whichever pane is at the left edge, sessions normally, the agent once that
-pane is closed or folded, the viewer when reviewing hides the agent too, and
-that pane's header is inset so its title clears them. The app places the
+at the left edge: the sessions pane's while it is open, and while it is
+folded the header of the pane beside its column, the agent's, or the
+viewer's when reviewing hides the agent too. That header is inset so its
+title clears them. The app places the
 buttons on the header's text itself, and since macOS lays the title bar out
 again whenever it likes, it listens for the buttons' frames changing and
 puts them back each time. The window keeps its plain title bar rather than a

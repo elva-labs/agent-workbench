@@ -42,6 +42,7 @@
     select,
     toggleScope,
     toggleView,
+    unfoldSessions,
   } from "$lib/files.svelte";
   import {
     cycle as cycleSession,
@@ -56,12 +57,13 @@
     viewed,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
-  import { PANE_MOTION, PANE_TRAVEL, reduced } from "$lib/motion";
+  import { PANE_MOTION, reduced } from "$lib/motion";
   import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
     DEFAULT,
+    FOLDED,
     MIN,
     MIN_REVIEW,
     agentVisible,
@@ -77,6 +79,7 @@
     sessionsOpen,
     sessionsVisible,
     sliding,
+    terminalOpen,
     terminalVisible,
     togglePane,
     toggleTerminal,
@@ -234,10 +237,10 @@
     return settled && moved && !reduced() ? PANE_MOTION : 0;
   }
 
-  // The sessions column eases open and shut when the pane is toggled or the
-  // shape changes, and the panes beside it take and give back its room as it
-  // goes. The pane keeps its own width the whole way, so it slides rather
-  // than squeezes.
+  // The sessions column eases between folded and open when the pane is
+  // toggled or the shape changes, and the panes beside it take and give back
+  // the room as it goes. The pane keeps its own width the whole way and the
+  // column cuts it off, so no row moves.
   let sessionsWasChosen = untrack(() => layout.sessionsChosen);
   let sessionsWasMode = untrack(() => layout.mode);
   $effect.pre(() => {
@@ -266,34 +269,41 @@
     });
   });
 
-  /** The pane is on screen or on its way off it. */
-  let sessionsMounted = $derived(sessionsVisible() || sessionsOpen.current > 0);
+  /** The sessions column's width, folded or open or on its way, the splitter
+      beside it included. */
+  let sessionsColumn = $derived(
+    `calc(${FOLDED + (layout.sessions - FOLDED) * sessionsOpen.current}px + var(--splitter-w))`,
+  );
 
-  /** The panel is on its way out: out of the flow, still on screen. The
-      shells in it are never unmounted, so its going is a state of its own
-      rather than something a transition can hold on to. */
-  let terminalLeaving = $state(false);
-  let terminalWasShown = false;
-
+  // The folded pane's header runs on into the header beside it, so the line
+  // down the column's edge starts under the header row.
+  let sessionsHead = $state(0);
   $effect(() => {
+    const header = document.querySelector("section[data-pane='sessions'] > header");
+    if (header === null) return;
+    const observer = new ResizeObserver(() => (sessionsHead = (header as HTMLElement).offsetHeight));
+    observer.observe(header);
+    return () => observer.disconnect();
+  });
+
+  // The terminal panel eases up and down, and the panes above it give up
+  // and take back the height as it goes. The shells in it are never
+  // unmounted, so it is out of the layout only once it is all the way down.
+  let terminalWasShown = untrack(() => terminalVisible());
+  $effect.pre(() => {
     const shown = terminalVisible();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     untrack(() => {
-      const going = terminalWasShown && !shown && !reduced();
+      const moved = shown !== terminalWasShown;
       terminalWasShown = shown;
-      terminalLeaving = going;
-      if (going) timer = setTimeout(() => (terminalLeaving = false), PANE_MOTION);
+      void terminalOpen.set(shown ? 1 : 0, { duration: easing(moved), easing: cubicOut });
     });
-    return () => clearTimeout(timer);
   });
 
   let columns = $derived.by(() => {
     const cols: string[] = [];
-    // The sessions pane and the splitter beside it share one column, and
-    // leave and come back together as that column opens and shuts.
-    if (sessionsMounted) {
-      cols.push(`calc((${layout.sessions}px + var(--splitter-w)) * ${sessionsOpen.current})`);
-    }
+    // The sessions pane and the splitter beside it share one column, folded
+    // or open, and move together as it eases between the two.
+    cols.push(sessionsColumn);
     if (agentVisible()) cols.push("1fr");
     if (changesVisible()) {
       if (agentVisible()) cols.push("var(--splitter-w)");
@@ -350,10 +360,13 @@
     e.preventDefault();
     switch (action.type) {
       case "focus":
+        // Going to the sessions pane opens it out of its fold.
+        if (action.pane === "sessions") unfoldSessions();
         focusPane(action.pane);
         break;
       case "toggle":
-        togglePane(action.pane);
+        if (action.pane === "sessions" && !sessionsVisible()) unfoldSessions();
+        else togglePane(action.pane);
         break;
       case "cycleTheme":
         cycleTheme();
@@ -418,8 +431,8 @@
 <div
   class="frame"
   style:--controls-inset="{CONTROLS_INSET}px"
-  style:--pane-motion="{PANE_MOTION}ms"
-  style:--pane-travel="{PANE_TRAVEL}px"
+  style:--sessions-col={sessionsColumn}
+  style:--folded="{FOLDED}px"
 >
   <div class="stack" bind:clientHeight={stack}>
   <main
@@ -429,16 +442,18 @@
     data-mode={layout.mode}
     bind:clientWidth={viewport}
   >
-    <!-- The pane and its splitter in one slot, as wide as the column. The
-         pane keeps its full width against the slot's right edge, so a column
-         part open shows the right part of it. -->
-    {#if sessionsMounted}
-      <div
-        class="sessions-slot"
-        class:sliding={sliding()}
-        style:--sessions-w="{layout.sessions}px"
-      >
-        <SessionsPane />
+    <!-- The pane and its splitter in one slot, as wide as the column. What
+         the pane holds keeps the pane's open width, so a column narrower
+         than that cuts it off at the right and no row moves. Folded, the
+         splitter gives way to a plain edge: there is nothing to drag. -->
+    <div
+      class="sessions-slot"
+      class:folded={!sessionsVisible()}
+      style:--sessions-w="{layout.sessions}px"
+      style:--head-h="{sessionsHead}px"
+    >
+      <SessionsPane />
+      {#if sessionsVisible()}
         <Splitter
           label="Resize projects and sessions"
           onDelta={resizeSessions}
@@ -449,8 +464,10 @@
           }}
           onCommit={saveLayout}
         />
-      </div>
-    {/if}
+      {:else}
+        <div class="fold-edge" aria-hidden="true"></div>
+      {/if}
+    </div>
 
     <!-- Hidden rather than unmounted, always. Unmounting would destroy the
          terminal; hiding leaves the pane at its width, so the PTY is never
@@ -474,15 +491,15 @@
 
   <!-- Hidden rather than unmounted, for the same reason as the agent: the
        shells in it stay mounted, so hiding is free and showing is a fit. The
-       panel and the bar above it go and come back together, and on the way
-       out the group leaves the stack's flow at once, so the panes have their
-       height back before it has finished falling. -->
+       panel and the bar above it go and come back together, in a group as
+       tall as the share of them that is up; the panel keeps its own height
+       inside, so it slides rather than squeezes. -->
   <div
     class="terminal-group"
-    class:hidden={!terminalVisible() && !terminalLeaving}
-    class:leaving={terminalLeaving}
+    class:hidden={!terminalVisible() && terminalOpen.current === 0}
+    style:height="calc({layout.terminal * terminalOpen.current}px + var(--splitter-w) * {terminalOpen.current})"
   >
-    {#if terminalVisible() || terminalLeaving}
+    {#if terminalVisible() || terminalOpen.current > 0}
       <Splitter
         label="Resize the terminal"
         orientation="horizontal"
@@ -530,18 +547,12 @@
      rounded one on macOS. */
   .frame {
     --frame-pad: 10px;
-    /* The curve the panes leave and arrive on, cubic out, the one the
-       custom transitions use. */
-    --pane-ease: cubic-bezier(0.33, 1, 0.68, 1);
     height: calc(100vh - 26px);
     padding: var(--frame-pad);
     background: var(--bg);
   }
 
-  /* Positioned, so the terminal group has something to fall from once it is
-     out of the flow. */
   .stack {
-    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -556,50 +567,17 @@
     align-items: stretch;
   }
 
-  /* The bar and the panel, one thing to show and to hide. */
+  /* The bar and the panel, one thing to show and to hide, cut off at the
+     window's foot while they are on their way. */
   .terminal-group {
     display: flex;
     flex-direction: column;
     flex: none;
-    animation: rise var(--pane-motion) var(--pane-ease) both;
+    overflow: hidden;
   }
 
   .terminal-group.hidden {
     display: none;
-  }
-
-  /* On its way out it spans the stack's foot, where the panes have already
-     taken the height back. */
-  .terminal-group.leaving {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    animation: fall var(--pane-motion) var(--pane-ease) both;
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(var(--pane-travel));
-    }
-  }
-
-  @keyframes fall {
-    to {
-      opacity: 0;
-      transform: translateY(var(--pane-travel));
-    }
-  }
-
-  /* With as little movement as asked for, the panel is simply where it ends
-     up. The panes' own transitions answer the same question for themselves. */
-  @media (prefers-reduced-motion: reduce) {
-    .terminal-group,
-    .terminal-group.leaving {
-      animation: none;
-    }
   }
 
   .terminal-slot {
@@ -616,21 +594,51 @@
   /* The pane and the splitter beside it, in the width of one column. */
   .sessions-slot {
     display: flex;
-    justify-content: flex-end;
     min-width: 0;
     min-height: 0;
   }
 
-  /* Clipped only on the way: at rest, what the pane floats past its edge,
-     a menu or a tooltip, stays visible. */
-  .sessions-slot.sliding {
-    overflow: hidden;
+  .sessions-slot :global(.pane) {
+    flex: 1;
+    min-width: 0;
   }
 
-  .sessions-slot :global(.pane) {
+  /* What the pane holds keeps the open width, and the pane cuts it off
+     without ever scrolling to what is past the cut. */
+  .sessions-slot :global([data-pane="sessions"] > .body) {
+    overflow: clip;
+  }
+
+  .sessions-slot :global([data-pane="sessions"] > .body > :not([data-testid="unfold-sessions"])) {
+    min-width: calc(var(--sessions-w) - 2px);
+  }
+
+  /* Folded, the header is part of the row the header beside it starts: the
+     same ground, and nothing in it. */
+  .sessions-slot.folded :global([data-pane="sessions"] > header) {
+    background: var(--surface);
+  }
+
+  .sessions-slot.folded :global([data-pane="sessions"] > header > *) {
+    visibility: hidden;
+  }
+
+  /* The splitter's line with nothing to drag, from under the header row. */
+  .fold-edge {
+    position: relative;
     flex: none;
-    width: var(--sessions-w);
-    min-width: 0;
+    width: var(--splitter-w);
+    background: linear-gradient(var(--surface) var(--head-h), transparent var(--head-h));
+  }
+
+  .fold-edge::after {
+    content: "";
+    position: absolute;
+    top: var(--head-h);
+    bottom: 0;
+    left: calc(50% - 0.5px);
+    width: 1px;
+    background: var(--splitter);
   }
 
   .agent-slot {

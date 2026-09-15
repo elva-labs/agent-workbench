@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT,
+  FOLDED,
   MIN,
   NEEDS_AGENT_WHILE_REVIEWING,
   NEEDS_CHANGES,
@@ -217,7 +218,7 @@ describe("review mode", () => {
   });
 
   it("opens no narrower than its floor in a small window", () => {
-    applyLayout(1100);
+    applyLayout(1160);
     enterReview();
     expect(layout.review).toBe(DEFAULT.review);
   });
@@ -240,7 +241,7 @@ describe("review mode", () => {
   it("is squeezed to its own minimum when the window cannot give more", () => {
     layout.mode = "reviewing";
     layout.review = DEFAULT.review;
-    applyLayout(MIN_REVIEW + SPLITTER + MIN.agent);
+    applyLayout(FOLDED + SPLITTER + MIN_REVIEW + SPLITTER + MIN.agent);
     expect(layout.review).toBe(MIN_REVIEW);
     expect(layout.tree).toBe(MIN.tree);
   });

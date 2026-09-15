@@ -35,7 +35,15 @@ test("slides up from the bottom with a shell in it and takes focus", async ({ pa
   await expect(page.locator(ROW)).toHaveCount(1);
   await expect(page.locator(ROW)).toHaveText(/shell 1/);
 
-  // Under the panes, across the whole width, and the agent gave up the room.
+  // Under the panes, across the whole width, and the agent gave up the room
+  // once the panel is all the way up.
+  await expect
+    .poll(async () => {
+      const first = (await boxOf(page, AGENT)).height;
+      await page.waitForTimeout(50);
+      return first === (await boxOf(page, AGENT)).height && first < before.height;
+    })
+    .toBe(true);
   const agent = await boxOf(page, AGENT);
   const terminal = await boxOf(page, TERMINAL);
   expect(terminal.y).toBeGreaterThanOrEqual(agent.y + agent.height);
@@ -54,6 +62,39 @@ test("closes again on the same key and hands focus back to the agent", async ({ 
   // Reopening finds the same shell: hiding did not end anything.
   await page.keyboard.press(`${MOD}+j`);
   await expect(page.locator(ROW)).toHaveCount(1);
+});
+
+// The panel eases up and down, and the panes above it give up and take back
+// the height as it goes: its top edge and the agent's bottom edge stay
+// together on every frame, and the agent is never short of the panel or
+// over it.
+test("slides with the panes above it taking and giving back the height", async ({ page }) => {
+  const record = () =>
+    page.evaluate(
+      () =>
+        new Promise<{ agent: number; top: number }[]>((resolve) => {
+          const frames: { agent: number; top: number }[] = [];
+          const start = performance.now();
+          const sample = () => {
+            const agent = document.querySelector("section[data-pane='agent']")!.getBoundingClientRect();
+            const group = document.querySelector(".terminal-group")!.getBoundingClientRect();
+            frames.push({ agent: agent.bottom, top: group.height > 0 ? group.top : agent.bottom });
+            if (performance.now() - start < 400) requestAnimationFrame(sample);
+            else resolve(frames);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+
+  for (const key of ["open", "close"]) {
+    const frames = record();
+    await page.keyboard.press(`${MOD}+j`);
+    const seen = await frames;
+    const bottoms = seen.map((f) => Math.round(f.agent));
+    const between = new Set(bottoms.slice(1, -1).filter((b) => b !== bottoms[0] && b !== bottoms.at(-1)));
+    expect(between.size, key).toBeGreaterThan(1);
+    for (const f of seen) expect(Math.abs(f.top - f.agent)).toBeLessThanOrEqual(1);
+  }
 });
 
 test("can be focused by number and hidden from its own bar", async ({ page }) => {

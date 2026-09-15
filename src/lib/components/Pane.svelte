@@ -3,11 +3,12 @@
   import { core } from "$lib/core";
   import { isMac } from "$lib/keymap";
   import {
-    CONTROLS_INSET,
     layout,
     focusPane,
+    agentVisible,
     leftmost,
     rightmost,
+    sessionsVisible,
     type PaneId,
   } from "$lib/layout.svelte";
 
@@ -28,10 +29,14 @@
   let focused = $derived(layout.focus === id);
 
   // On macOS the window has no title bar of its own: the traffic lights sit
-  // over the header of whichever pane is at the left edge, and the headers
-  // are what you grab to move the window.
+  // over the header at the left edge, and the headers are what you grab to
+  // move the window. Open, the sessions pane's header holds them; the header
+  // of the pane beside its column clears them by whatever the column, folded
+  // or on its way, leaves short of them, so its title stands still as the
+  // column moves.
   const mac = isMac();
-  let inset = $derived(mac && leftmost() === id);
+  let beside = $derived(id === (agentVisible() ? "agent" : "changes"));
+  let inset = $derived(mac && (id === "sessions" ? sessionsVisible() : beside));
   // Elsewhere the window is undecorated and the app draws the controls
   // itself, at the end of the rightmost header, where the platform has them.
   let controls = $derived(!mac && !bare && rightmost() === id);
@@ -61,7 +66,7 @@
   onfocusin={() => focusPane(id)}
 >
   {#if !bare}
-    <header class:inset class:leads={appMenu} class:lone={!head && !meta} data-tauri-drag-region>
+    <header class:inset class:beside class:leads={appMenu} class:lone={!head && !meta} data-tauri-drag-region>
       {#if appMenu}
         <button class="app-menu" onclick={openAppMenu} aria-label="Menu" title="Menu" data-testid="app-menu">
           <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M0 1h12M0 5h12M0 9h12" /></svg>
@@ -129,6 +134,13 @@
   /* The frame's padding and the pane's border are already part of the inset. */
   header.inset {
     padding-left: calc(var(--controls-inset) - var(--frame-pad) - 1px);
+  }
+
+  header.inset.beside {
+    padding-left: max(
+      var(--pane-pad),
+      calc(var(--controls-inset) - var(--frame-pad) - 1px - var(--sessions-col))
+    );
   }
 
   header.leads {

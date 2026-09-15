@@ -37,7 +37,9 @@
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
-  import { focusPane, layout, type PaneId } from "$lib/layout.svelte";
+  import { focusPane, layout, sessionsVisible, type PaneId } from "$lib/layout.svelte";
+  import { unfoldSessions } from "$lib/files.svelte";
+  import { chordFor, describe } from "$lib/keys.svelte";
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
 
@@ -351,6 +353,18 @@
     return workspace.open.some((project) => project.path === path);
   }
 
+  /** Folded to its narrow column: the rows keep their places, and the pane
+      is one button that opens it. */
+  let folded = $derived(!sessionsVisible());
+  /** Reviewing folds the pane, and opening it closes the viewer; a window
+      too narrow for it has nothing to open it into. */
+  let unfoldable = $derived(layout.mode === "reviewing" || !layout.sessionsForced);
+
+  function unfold() {
+    unfoldSessions();
+    focusPane("sessions");
+  }
+
 </script>
 
 <!-- A session's row, wherever it is drawn. The line beneath the name is
@@ -481,8 +495,21 @@
 {/snippet}
 
 <Pane id="sessions" title="Projects &amp; sessions" meta="">
+  {#if folded}
+    <button
+      class="unfold"
+      tabindex="-1"
+      onpointerdown={(e) => e.preventDefault()}
+      onclick={unfold}
+      disabled={!unfoldable}
+      aria-label="Show sessions"
+      title="Show sessions ({describe(chordFor('toggle.sessions'))})"
+      data-testid="unfold-sessions"><span class="unfold-mark" aria-hidden="true">›</span></button
+    >
+  {/if}
+
   {#if workspace.error}
-    <div class="error-row">
+    <div class="error-row" class:folded inert={folded}>
       <p class="error" data-testid="project-error">{workspace.error}</p>
       <button
         class="dismiss"
@@ -496,7 +523,7 @@
   {/if}
 
   {#if workspace.open.length === 0}
-    <div class="empty" data-testid="no-project">
+    <div class="empty" class:folded inert={folded} data-testid="no-project">
       <p>Open a folder to work in. A session starts there, and the changes pane watches it.</p>
     </div>
   {/if}
@@ -507,6 +534,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="nav"
+    class:folded
+    inert={folded}
     tabindex="0"
     aria-label="Projects and sessions"
     bind:this={nav}
@@ -748,8 +777,8 @@
   </div>
 
   {#if notOpen.length > 0}
-    <p class="section">Recent</p>
-    <ul class="recent">
+    <p class="section" class:folded>Recent</p>
+    <ul class="recent" class:folded inert={folded}>
       {#each notOpen as path (path)}
         <li>
           <button
@@ -767,6 +796,79 @@
 </Pane>
 
 <style>
+  /* The button the folded pane is, laid over it so a click anywhere opens
+     it, with its mark where the way in stands when the pane is open. */
+  :global([data-pane="sessions"] > .body) {
+    position: relative;
+  }
+
+  .unfold {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+
+  .unfold:disabled {
+    cursor: default;
+  }
+
+  .unfold-mark {
+    position: absolute;
+    top: 8px;
+    left: 0;
+    width: var(--folded);
+    height: 26px;
+    display: grid;
+    place-items: center;
+    font-family: var(--chrome);
+    font-size: 15px;
+    color: var(--ink-3);
+  }
+
+  .unfold:hover:not(:disabled) .unfold-mark {
+    color: var(--accent);
+  }
+
+  .unfold:disabled .unfold-mark {
+    visibility: hidden;
+  }
+
+  /* Folded, every row keeps its place and its height and shows only what
+     says whose sessions these are: a project's name, cut at the column's
+     edge, and the dots of the sessions under it. Nothing moves when the pane
+     opens again. */
+  .nav.folded {
+    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 14px), transparent calc(var(--folded) - 3px));
+  }
+
+  .nav.folded .project-row .name {
+    text-overflow: clip;
+  }
+
+  .nav.folded .head,
+  .nav.folded .text,
+  .nav.folded .label,
+  .nav.folded .tag,
+  .nav.folded .state,
+  .nav.folded .actions,
+  .nav.folded .icon,
+  .nav.folded .host,
+  .nav.folded .flag,
+  .nav.folded .new,
+  .nav.folded .fold,
+  .nav.folded .choice,
+  .nav.folded .cursor::before,
+  .error-row.folded,
+  .empty.folded,
+  .section.folded,
+  .recent.folded {
+    visibility: hidden;
+  }
+
   .head {
     display: flex;
     gap: 6px;
