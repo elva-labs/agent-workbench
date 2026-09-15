@@ -10,7 +10,7 @@
   import { register as registerScreen } from "$lib/screens";
   import { isMac, resolveAction } from "$lib/keymap";
   import { references } from "$lib/refs";
-  import { layout } from "$lib/layout.svelte";
+  import { layout, sliding } from "$lib/layout.svelte";
   import { typed } from "$lib/sessions.svelte";
   import {
     WriteQueue,
@@ -279,7 +279,7 @@
   });
 
   function measure() {
-    if (!fit || !terminal || !active) return;
+    if (!fit || !terminal || !active || sliding()) return;
     try {
       fit.fit();
     } catch {
@@ -344,7 +344,8 @@
   });
 
   // Coming back into view after being hidden, or after the panes moved, needs
-  // a fresh measurement rather than a stale fit.
+  // a fresh measurement rather than a stale fit. A column that has finished
+  // sliding is a move too.
   $effect(() => {
     active;
     shown;
@@ -352,7 +353,8 @@
     layout.height;
     layout.tree;
     layout.terminal;
-    if (active && shown) {
+    const held = sliding();
+    if (active && shown && !held) {
       untrack(() => queueMicrotask(() => measure()));
     }
   });

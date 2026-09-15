@@ -21,6 +21,8 @@
  * forgetting that you like the sessions pane open.
  */
 
+import { Tween } from "svelte/motion";
+
 export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing";
 
@@ -114,6 +116,28 @@ export const layout = $state({
 
 export function sessionsVisible() {
   return layout.sessionsChosen && !layout.sessionsForced;
+}
+
+/**
+ * How much of the sessions column is open, from 0 to 1. The column's width is
+ * this share of the pane's, so the panes beside it give up and take back the
+ * room as it moves. It follows `sessionsVisible`, eased by the page.
+ */
+export const sessionsOpen = new Tween(1);
+
+/** The changes column's width in pixels, following `changesWidth` and eased
+    by the page between the working and reviewing widths. */
+export const changesSpan = new Tween<number>(DEFAULT.changes);
+
+const columnsMoving = $derived(
+  sessionsOpen.current !== sessionsOpen.target ||
+    changesSpan.current !== changesSpan.target,
+);
+
+/** A column is on its way to a new width. Terminals keep the size they had
+    until it arrives, so the pty hears one resize rather than one a frame. */
+export function sliding() {
+  return columnsMoving;
 }
 
 export function changesVisible() {

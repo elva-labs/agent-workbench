@@ -12,6 +12,23 @@ async function widthOf(page: Page, selector: string) {
   return box.width;
 }
 
+/** Waits for the columns to arrive: two frames apart, the grid reads the same. */
+async function settled(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          new Promise<boolean>((resolve) => {
+            const shell = document.querySelector("[data-testid='shell']")!;
+            const read = () => getComputedStyle(shell).gridTemplateColumns;
+            const first = read();
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(read() === first)));
+          }),
+      ),
+    )
+    .toBe(true);
+}
+
 /** Cmd on macOS, Ctrl elsewhere. */
 const MOD = "ControlOrMeta";
 
@@ -1385,6 +1402,7 @@ test.describe("the file viewer", () => {
   // The tree keeps the pane's left column; the content takes the rest.
   test("puts the tree beside the content, not above it", async ({ page }) => {
     await row(page, "mod.rs").click();
+    await settled(page);
 
     const tree = (await page.locator(TREE).boundingBox())!;
     const viewer = (await page.getByTestId("viewer").boundingBox())!;
@@ -1401,9 +1419,9 @@ test.describe("the file viewer", () => {
     expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
-  // The sessions pane takes its time leaving; the columns do not wait for it.
-  // The agent's grid is measured once, on the frame the mode changed, and not
-  // again while the pane is still on its way out.
+  // Opening the viewer eases the sessions column shut and the changes column
+  // wider. The agent's grid keeps its size while they move and is measured
+  // once they arrive.
   test("sees the sessions pane out without measuring the agent twice", async ({
     page,
   }) => {
@@ -1413,7 +1431,7 @@ test.describe("the file viewer", () => {
     const told = await timesResized(page);
 
     await row(page, "mod.rs").click();
-    await expect(page.locator(SESSIONS)).toHaveCount(0, { timeout: 1000 });
+    await expect(page.locator(SESSIONS)).toHaveCount(0, { timeout: 10_000 });
 
     await expect.poll(() => columnsOf(page)).not.toBe(before);
     const widened = await columnsOf(page);
@@ -1495,6 +1513,7 @@ test.describe("the file viewer", () => {
     page,
   }) => {
     await row(page, "mod.rs").click();
+    await settled(page);
     const agentWidth = await widthOf(page, AGENT);
     const treeWidth = await widthOf(page, TREE);
 
@@ -1509,6 +1528,7 @@ test.describe("the file viewer", () => {
 
   test("resizes the tree against the content", async ({ page }) => {
     await row(page, "mod.rs").click();
+    await settled(page);
     const before = await widthOf(page, TREE);
 
     const handle = page.getByRole("separator", {
@@ -1613,6 +1633,7 @@ test.describe("the file viewer", () => {
     await page.keyboard.press(`${MOD}+d`);
 
     await expect(page.locator(AGENT)).toBeVisible();
+    await settled(page);
     expect(await widthOf(page, AGENT)).toBeCloseTo(before, 0);
   });
 
@@ -1621,13 +1642,16 @@ test.describe("the file viewer", () => {
   }) => {
     const working = await widthOf(page, CHANGES);
     await row(page, "mod.rs").click();
+    await settled(page);
     const reviewing = await widthOf(page, CHANGES);
     expect(reviewing).toBeGreaterThan(working);
 
     await page.keyboard.press("Escape");
+    await settled(page);
     expect(await widthOf(page, CHANGES)).toBeCloseTo(working, 0);
 
     await page.keyboard.press(`${MOD}+d`);
+    await settled(page);
     expect(await widthOf(page, CHANGES)).toBeCloseTo(reviewing, 0);
   });
 });

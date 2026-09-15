@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { cubicOut } from "svelte/easing";
   import Splitter from "$lib/components/Splitter.svelte";
   import SessionsPane from "$lib/panes/SessionsPane.svelte";
   import AgentPane from "$lib/panes/AgentPane.svelte";
@@ -55,15 +56,7 @@
     viewed,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
-  import {
-    PANE_MOTION,
-    PANE_TRAVEL,
-    arrive,
-    depart,
-    freeze,
-    reduced,
-    release,
-  } from "$lib/motion";
+  import { PANE_MOTION, PANE_TRAVEL, reduced } from "$lib/motion";
   import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import {
@@ -73,13 +66,17 @@
     MIN_REVIEW,
     agentVisible,
     applyLayout,
+    changesSpan,
     changesVisible,
+    changesWidth,
     enterReview,
     exitReview,
     focusPane,
     layout,
     saveLayout,
+    sessionsOpen,
     sessionsVisible,
+    sliding,
     terminalVisible,
     togglePane,
     toggleTerminal,
@@ -219,19 +216,58 @@
 
   let reviewing = $derived(layout.mode === "reviewing");
 
-  let sessionsSlot = $state<HTMLDivElement | null>(null);
-
-  // The sessions pane is held at the box it had before the columns lose its
-  // width, so the panes that stay resolve in one layout and the agent's pty
-  // hears one size. A pre-effect is the last moment the box is still the
-  // pane's own; the transition that follows is paint over a grid that has
-  // already settled.
-  $effect.pre(() => {
-    const slot = sessionsSlot;
-    if (slot === null) return;
-    if (sessionsVisible()) release(slot);
-    else freeze(slot);
+  // Until the window has drawn a couple of frames the sessions column is
+  // simply where it belongs: the saved layout and the window's width both
+  // arrive then, and neither is a toggle to watch.
+  let settled = false;
+  $effect(() => {
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => (settled = true));
+    });
+    return () => cancelAnimationFrame(frame);
   });
+
+  /** How long the columns take to reach new widths: the whole motion for a
+      toggle or a change of shape, nothing for a window too narrow for a pane
+      or a splitter being dragged. */
+  function easing(moved: boolean) {
+    return settled && moved && !reduced() ? PANE_MOTION : 0;
+  }
+
+  // The sessions column eases open and shut when the pane is toggled or the
+  // shape changes, and the panes beside it take and give back its room as it
+  // goes. The pane keeps its own width the whole way, so it slides rather
+  // than squeezes.
+  let sessionsWasChosen = untrack(() => layout.sessionsChosen);
+  let sessionsWasMode = untrack(() => layout.mode);
+  $effect.pre(() => {
+    const shown = sessionsVisible();
+    const chosen = layout.sessionsChosen;
+    const mode = layout.mode;
+    untrack(() => {
+      const moved = chosen !== sessionsWasChosen || mode !== sessionsWasMode;
+      sessionsWasChosen = chosen;
+      sessionsWasMode = mode;
+      void sessionsOpen.set(shown ? 1 : 0, { duration: easing(moved), easing: cubicOut });
+    });
+  });
+
+  // The changes column eases between its working and reviewing widths on the
+  // same curve as the sessions column, so the agent between them moves
+  // steadily from its old width to its new one and never below either.
+  let changesWasMode = untrack(() => layout.mode);
+  $effect.pre(() => {
+    const width = changesWidth();
+    const mode = layout.mode;
+    untrack(() => {
+      const moved = mode !== changesWasMode;
+      changesWasMode = mode;
+      void changesSpan.set(width, { duration: easing(moved), easing: cubicOut });
+    });
+  });
+
+  /** The pane is on screen or on its way off it. */
+  let sessionsMounted = $derived(sessionsVisible() || sessionsOpen.current > 0);
 
   /** The panel is on its way out: out of the flow, still on screen. The
       shells in it are never unmounted, so its going is a state of its own
@@ -253,17 +289,18 @@
 
   let columns = $derived.by(() => {
     const cols: string[] = [];
-    // The sessions pane and the splitter beside it share one column: they
-    // leave and come back together, in one element, so the motion is on that
-    // element and never on the column.
-    if (sessionsVisible()) cols.push(`calc(${layout.sessions}px + var(--splitter-w))`);
+    // The sessions pane and the splitter beside it share one column, and
+    // leave and come back together as that column opens and shuts.
+    if (sessionsMounted) {
+      cols.push(`calc((${layout.sessions}px + var(--splitter-w)) * ${sessionsOpen.current})`);
+    }
     if (agentVisible()) cols.push("1fr");
     if (changesVisible()) {
       if (agentVisible()) cols.push("var(--splitter-w)");
       // With the agent hidden the viewer is the only pane, so it takes the room
       // rather than holding a fixed width against empty space.
       cols.push(
-        agentVisible() ? `${reviewing ? layout.review : layout.changes}px` : "1fr",
+        agentVisible() ? `${changesSpan.current}px` : "1fr",
       );
     }
     return cols.join(" ");
@@ -392,10 +429,15 @@
     data-mode={layout.mode}
     bind:clientWidth={viewport}
   >
-    <!-- The pane and its splitter in one slot: the slot is what departs and
-         arrives, so the columns snap while it is still on screen. -->
-    {#if sessionsVisible()}
-      <div class="sessions-slot" bind:this={sessionsSlot} in:arrive out:depart>
+    <!-- The pane and its splitter in one slot, as wide as the column. The
+         pane keeps its full width against the slot's right edge, so a column
+         part open shows the right part of it. -->
+    {#if sessionsMounted}
+      <div
+        class="sessions-slot"
+        class:sliding={sliding()}
+        style:--sessions-w="{layout.sessions}px"
+      >
         <SessionsPane />
         <Splitter
           label="Resize projects and sessions"
@@ -574,12 +616,20 @@
   /* The pane and the splitter beside it, in the width of one column. */
   .sessions-slot {
     display: flex;
+    justify-content: flex-end;
     min-width: 0;
     min-height: 0;
   }
 
+  /* Clipped only on the way: at rest, what the pane floats past its edge,
+     a menu or a tooltip, stays visible. */
+  .sessions-slot.sliding {
+    overflow: hidden;
+  }
+
   .sessions-slot :global(.pane) {
-    flex: 1;
+    flex: none;
+    width: var(--sessions-w);
     min-width: 0;
   }
 

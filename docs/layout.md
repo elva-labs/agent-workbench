@@ -65,19 +65,25 @@ destroy the terminal.
 
 ## What moves
 
-The columns never animate. When a pane goes, the panes that stay take their
-new widths in the same frame, and the pane itself is what you watch leave: it
-is held at the box it had, out of the layout's way, and slides off to the
-side it leaves by as it fades. It comes back the same way, in the width its
-column already has. The terminal panel does this vertically, falling away and
-rising back while the panes above it keep their new height from the first
-frame.
+Toggling the sessions pane eases its column shut or open. The pane keeps its
+own width throughout and slides off the left edge, and the panes beside it
+widen into the room it leaves, or narrow to make room as it returns. Opening
+and closing the viewer moves the same way: the sessions column eases shut or
+open while the changes column eases to its new width on the same curve, so
+the agent between them moves steadily from its old width to its new one and
+never below its minimum. When the pane goes because the window is too narrow
+for it, its column shuts at once.
 
-A column that eased to its new width would be a new terminal size on every
-frame of the ease, with the redraw that costs. The pane moving on its own
-costs nothing. In the sessions pane a row that goes fades where it stands,
-and the rows below it close the gap rather than jump into it; a row that
-arrives fades in.
+A terminal whose pane is widening or narrowing keeps the size it had until
+the column arrives, then is measured once. The agent is told one new size per
+toggle rather than one per frame, and does not redraw at every width in
+between. While the column moves, the terminal's grid is either short of its
+pane's new edge or clipped by it.
+
+The terminal panel moves on its own instead, falling away and rising back
+while the panes above it keep their new height from the first frame. In the
+sessions pane a row that goes fades where it stands, and the rows below it
+close the gap rather than jump into it; a row that arrives fades in.
 
 None of this happens when the system asks for reduced motion. Panes and rows
 are then simply where they end up.
