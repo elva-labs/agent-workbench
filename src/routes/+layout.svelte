@@ -26,6 +26,7 @@
   import { loadTheme } from "$lib/theme.svelte";
   import { loadKeys } from "$lib/keys.svelte";
   import { loadLayout } from "$lib/layout.svelte";
+  import { loadStarted } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { restore } from "$lib/workspace.svelte";
 
@@ -36,6 +37,7 @@
     loadKeys();
     loadLayout();
     loadRemembered();
+    loadStarted();
     restore();
   });
 </script>

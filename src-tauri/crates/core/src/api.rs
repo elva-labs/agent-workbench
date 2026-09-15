@@ -273,6 +273,7 @@ impl Core {
         cwd: Option<&Path>,
         session: Option<String>,
         prompt: Option<&str>,
+        model: Option<&str>,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -299,6 +300,7 @@ impl Core {
             env: &environment.vars,
             session: session_id.as_deref(),
             prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
+            model: model.filter(|model| !model.trim().is_empty()),
             orchestrator,
         };
         let surface = match &session_id {

@@ -9,6 +9,7 @@ import {
   allowedProjects,
   conductor,
   handle,
+  loadStarted,
   once,
   refuse,
   resetConductor,
@@ -21,7 +22,9 @@ import {
 import {
   byKey,
   create,
+  ended,
   exact,
+  failed,
   forProject,
   reset as resetSessions,
   sessions,
@@ -43,6 +46,8 @@ const written: [string, string][] = [];
 const killed: string[] = [];
 const worktrees: [string, string][] = [];
 let worktreeFails: string | null = null;
+/** The worktrees each project has, as the core lists them. */
+let standing: Record<string, string[]> = {};
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -58,6 +63,15 @@ vi.mock("$lib/core", () => ({
       worktrees.push([project, name]);
       if (worktreeFails !== null) throw worktreeFails;
       return `${project}/.worktrees/${name}`;
+    },
+    async worktrees(project: string) {
+      return (standing[project] ?? []).map((path) => ({
+        path,
+        name: path.split("/").pop(),
+        branch: "main",
+        merged: false,
+        dirty: false,
+      }));
     },
     async write(id: string, data: string) {
       written.push([id, data]);
@@ -156,9 +170,33 @@ beforeEach(() => {
   killed.length = 0;
   worktrees.length = 0;
   worktreeFails = null;
+  standing = {};
   calls = 0;
+  localStorage.removeItem("workbench.started");
   workspace.open.push(repo(A), repo(B));
 });
+
+/** A resume the user allows, answered once the row's process is up. The
+    question goes up once the core has said the worktree stands. */
+async function resumeAllowed(request: ConductRequest, ptyId: string) {
+  const answering = handle(request);
+  await settle();
+  if (conductor.asking !== null) allow();
+  await settle();
+  const row = sessions.all.at(-1)!;
+  started(row.key, ptyId, row.id);
+  flushSync();
+  await answering;
+  return row;
+}
+
+/** The window came back after the app was closed: the rows are gone, and
+    what callers started is read back from storage. */
+function restarted() {
+  resetSessions();
+  resetConductor();
+  loadStarted();
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -334,6 +372,25 @@ describe("starting a session", () => {
     expect(worktrees).toEqual([[A, "fix-the-flaky-test"]]);
     expect(row.startIn).toBe(`${A}/.worktrees/fix-the-flaky-test`);
     expect(last().content).toContain(`${A}/.worktrees/fix-the-flaky-test`);
+  });
+
+  it("starts the session on the model the caller names", async () => {
+    const row = await startAllowed(
+      call(
+        "start",
+        { project: A, prompt: "Fix the flaky test", model: "sonnet" },
+        { session: "caller-1" },
+      ),
+      "pty-1",
+      "sid-new",
+    );
+    expect(row.model).toBe("sonnet");
+    const plain = await startAllowed(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+      "pty-2",
+      "sid-2",
+    );
+    expect(plain.model).toBeNull();
   });
 
   it("refuses when the worktree cannot be made", async () => {
@@ -752,6 +809,302 @@ describe("the parent link", () => {
     stopAll("caller-1");
     expect(killed).toEqual(["pty-1", "pty-2"]);
     expect(sessions.all.map((session) => session.id)).toEqual(["sid-3"]);
+  });
+});
+
+describe("what a caller started, between runs", () => {
+  async function startTwo() {
+    await startAllowed(
+      call(
+        "start",
+        {
+          project: A,
+          prompt: "Fix the flaky test",
+          name: "Cache flake",
+          worktree: true,
+        },
+        { session: "caller-1" },
+      ),
+      "pty-1",
+      "sid-1",
+    );
+    await startAllowed(
+      call(
+        "start",
+        { project: B, prompt: "Bump deps" },
+        { session: "caller-1" },
+      ),
+      "pty-2",
+      "sid-2",
+    );
+  }
+
+  it("is written down as it is started, and read back after a restart", async () => {
+    await startTwo();
+    expect(conductor.started["caller-1"]).toEqual([
+      {
+        id: "sid-1",
+        project: A,
+        worktree: `${A}/.worktrees/cache-flake`,
+        agent: "claude-code",
+        name: "Cache flake",
+      },
+      {
+        id: "sid-2",
+        project: B,
+        worktree: null,
+        agent: "claude-code",
+        name: null,
+      },
+    ]);
+
+    restarted();
+    expect(sessions.all).toHaveLength(0);
+    expect(conductor.started["caller-1"]).toHaveLength(2);
+  });
+
+  it("is listed as stopped by the sessions tool, with the way back", async () => {
+    await startTwo();
+    restarted();
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    const lines = last().content!.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("sid-1  Cache flake  ");
+    expect(lines[0]).toContain(`worktree ${A}/.worktrees/cache-flake`);
+    expect(lines[0]).toContain("stopped");
+    expect(lines[0]).toContain("naming session sid-1");
+    expect(lines[1]).toContain("sid-2  sid-2  ");
+
+    await handle(call("sessions", { project: B }, { session: "caller-1" }));
+    expect(last().content!.split("\n")).toHaveLength(1);
+    expect(last().content).toContain("sid-2");
+  });
+
+  it("is nobody else's to list", async () => {
+    await startTwo();
+    restarted();
+    await handle(call("sessions", {}, { session: "caller-2" }));
+    expect(last().content).toBe("You have started no sessions.");
+  });
+
+  it("is forgotten when the caller stops it", async () => {
+    await startTwo();
+    await handle(call("stop", { session: "sid-2" }, { session: "caller-1" }));
+    expect(conductor.started["caller-1"].map((entry) => entry.id)).toEqual([
+      "sid-1",
+    ]);
+    restarted();
+    expect(conductor.started["caller-1"].map((entry) => entry.id)).toEqual([
+      "sid-1",
+    ]);
+  });
+
+  it("makes a row with that id the caller's, however it came back", async () => {
+    await startTwo();
+    restarted();
+    // The user resumed it from the pane themselves.
+    const row = create(B, "sid-2", "claude-code");
+    started(row.key, "pty-9", "sid-2");
+    expect(startedFor(row.key)).toBe("caller-1");
+    expect(startedBy("caller-1")).toHaveLength(1);
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    const lines = last().content!.split("\n");
+    expect(lines[0]).toContain("sid-2");
+    expect(lines[0]).toContain("waiting");
+    expect(lines[1]).toContain("sid-1");
+    expect(lines[1]).toContain("stopped");
+  });
+
+  it("reads a corrupt record as nothing started", () => {
+    localStorage.setItem("workbench.started", "{not json");
+    expect(() => loadStarted()).not.toThrow();
+    localStorage.setItem(
+      "workbench.started",
+      JSON.stringify({
+        "caller-1": [
+          { id: "ok", project: A, worktree: null, agent: "codex", name: null },
+          { id: 7, project: A, worktree: null, agent: "codex", name: null },
+          {
+            id: "bad-agent",
+            project: A,
+            worktree: null,
+            agent: "x",
+            name: null,
+          },
+        ],
+        "caller-2": "not a list",
+      }),
+    );
+    loadStarted();
+    expect(conductor.started).toEqual({
+      "caller-1": [
+        { id: "ok", project: A, worktree: null, agent: "codex", name: null },
+      ],
+    });
+  });
+});
+
+describe("resuming a session", () => {
+  const tree = `${A}/.worktrees/cache-flake`;
+
+  async function startInTree() {
+    await startAllowed(
+      call(
+        "start",
+        {
+          project: A,
+          prompt: "Fix the flaky test",
+          name: "Cache flake",
+          worktree: true,
+        },
+        { session: "caller-1" },
+      ),
+      "pty-1",
+      "sid-1",
+    );
+    restarted();
+    worktrees.length = 0;
+    standing = { [A]: [tree] };
+  }
+
+  it("asks the user, then brings the session back where it ran, with the prompt and the model", async () => {
+    await startInTree();
+    const request = call(
+      "start",
+      { session: "sid-1", prompt: "Go on with\nthe test", model: "opus" },
+      { session: "caller-1" },
+    );
+    const answering = handle(request);
+    await settle();
+    expect(conductor.asking?.project).toBe(A);
+    expect(conductor.asking?.prompt).toBe("Go on with");
+    allow();
+    await settle();
+
+    const row = sessions.all[0];
+    expect(row.resumedFrom).toBe("sid-1");
+    expect(row.id).toBe("sid-1");
+    expect(row.startIn).toBe(tree);
+    expect(row.title).toBe("Cache flake");
+    expect(row.prompt).toBe(`Go on with the test ${OUTCOME_ASK}`);
+    expect(row.model).toBe("opus");
+    expect(startedFor(row.key)).toBe("caller-1");
+    // Nothing is made: the worktree stands.
+    expect(worktrees).toHaveLength(0);
+
+    started(row.key, "pty-5", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().error).toBeNull();
+    expect(last().content).toContain(
+      `Resumed session sid-1 in ${A}, in ${tree}`,
+    );
+    expect(last().content).toContain("the prompt");
+  });
+
+  it("comes up waiting when no prompt is given", async () => {
+    await startInTree();
+    const row = await resumeAllowed(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+      "pty-5",
+    );
+    expect(row.prompt).toBeNull();
+    expect(conductor.asking).toBeNull();
+    expect(last().content).toContain("Send it a line to go on");
+  });
+
+  it("leaves the window where it was", async () => {
+    await startInTree();
+    const caller = live(B, "pty-0", "caller-1");
+    sessions.active = caller.key;
+    await resumeAllowed(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+      "pty-5",
+    );
+    expect(sessions.active).toBe(caller.key);
+  });
+
+  it("says why when the session did not come up", async () => {
+    await startInTree();
+    const answering = handle(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+    );
+    await settle();
+    allow();
+    await settle();
+    const row = sessions.all[0];
+    failed(row.key, "claude was not found on your PATH");
+    flushSync();
+    await answering;
+    expect(last().error).toContain("claude was not found");
+  });
+
+  it("takes the place of a row that ended", async () => {
+    await startInTree();
+    const dead = create(A, "sid-1", "claude-code", tree);
+    started(dead.key, "pty-4", "sid-1");
+    ended({ id: "pty-4", code: 0, clean: true });
+    expect(sessions.all).toHaveLength(1);
+    const row = await resumeAllowed(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+      "pty-5",
+    );
+    expect(sessions.all).toHaveLength(1);
+    expect(row.key).not.toBe(dead.key);
+    expect(row.status).toBe("running");
+  });
+
+  it("refuses a session the caller did not start", async () => {
+    await startInTree();
+    await handle(call("start", { session: "sid-1" }, { session: "caller-2" }));
+    expect(last().error).toContain("not one you started");
+    expect(sessions.all).toHaveLength(0);
+  });
+
+  it("refuses a session that is running", async () => {
+    await startInTree();
+    await resumeAllowed(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+      "pty-5",
+    );
+    await handle(call("start", { session: "sid-1" }, { session: "caller-1" }));
+    expect(last().error).toContain("running already");
+    expect(sessions.all).toHaveLength(1);
+  });
+
+  it("refuses when the worktree is gone", async () => {
+    await startInTree();
+    standing = {};
+    await handle(call("start", { session: "sid-1" }, { session: "caller-1" }));
+    expect(last().error).toContain(`worktree ${tree}, which is gone`);
+    expect(sessions.all).toHaveLength(0);
+  });
+
+  it("refuses when the project is not open", async () => {
+    await startInTree();
+    workspace.open.splice(0, workspace.open.length, repo(B));
+    await handle(call("start", { session: "sid-1" }, { session: "caller-1" }));
+    expect(last().error).toContain(`ran in ${A}, which is not open`);
+  });
+
+  it("refuses when the user says no", async () => {
+    await startInTree();
+    const answering = handle(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+    );
+    await settle();
+    refuse();
+    await answering;
+    expect(last().error).toContain("did not allow");
+    expect(sessions.all).toHaveLength(0);
+  });
+
+  it("counts against the cap like a start", async () => {
+    await startInTree();
+    for (let n = 0; n < CAP; n += 1)
+      own(B, `pty-${n + 10}`, `busy-${n}`, "caller-1");
+    await handle(call("start", { session: "sid-1" }, { session: "caller-1" }));
+    expect(last().error).toContain(`${CAP} sessions running already`);
   });
 });
 

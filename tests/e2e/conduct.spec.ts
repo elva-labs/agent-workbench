@@ -193,6 +193,73 @@ test.describe("the conductor", () => {
     );
   });
 
+  test("remembers what it started across a restart, and resumes it on request", async ({
+    page,
+  }) => {
+    await push(page, {
+      id: "c-7",
+      tool: "start",
+      arguments: {
+        project: PROJECT,
+        prompt: "Fix the flaky test",
+        name: "Cache flake",
+        model: "sonnet",
+      },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-7")).not.toBeNull();
+    // The model the caller chose goes to the agent's command line.
+    const spawns = () =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __spawns?: {
+                session?: string;
+                model?: string;
+                prompt?: string;
+              }[];
+            }
+          ).__spawns ?? [],
+      );
+    expect((await spawns()).at(-1)?.model).toBe("sonnet");
+
+    // The app comes back: no rows, and the started session went with it.
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(rows(page)).toHaveCount(0);
+
+    await push(page, { id: "c-8", tool: "sessions", session: "session-1" });
+    await expect.poll(() => answerTo(page, "c-8")).not.toBeNull();
+    const listed = (await answerTo(page, "c-8"))!.content ?? "";
+    expect(listed).toContain("session-2  Cache flake  ");
+    expect(listed).toContain("stopped");
+    expect(listed).toContain("naming session session-2");
+
+    await push(page, {
+      id: "c-9",
+      tool: "start",
+      arguments: { session: "session-2", prompt: "Go on with the test" },
+      session: "session-1",
+    });
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask).toContainText("Go on with the test");
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-9")).not.toBeNull();
+    const answer = (await answerTo(page, "c-9"))!;
+    expect(answer.error).toBeNull();
+    expect(answer.content).toContain("Resumed session session-2");
+    // Back under the fold, resumed by id, with the prompt on its command line.
+    await expect(page.getByTestId("started-fold")).toContainText(
+      "1 started by",
+    );
+    const resumed = (await spawns()).at(-1);
+    expect(resumed?.session).toBe("session-2");
+    expect(resumed?.prompt).toContain("Go on with the test");
+  });
+
   test("starts nothing when the user says no", async ({ page }) => {
     await push(page, {
       id: "c-3",

@@ -16,11 +16,16 @@
  * A session may start others, and those may not start any of their own:
  * one level deep, and no more than the cap at a time, so a loop of agents
  * starting agents cannot run away with the machine.
+ *
+ * What a session started is remembered between runs, by session id, so a
+ * caller resumed after the app was closed still finds its sessions: the
+ * running ones are its to direct as before, and the ones that went with
+ * the app are listed as stopped and can be resumed where they ran.
  */
 
 import { SvelteSet } from "svelte/reactivity";
 
-import { core, type AgentId, type ConductRequest } from "$lib/core";
+import { core, type ConductRequest } from "$lib/core";
 import {
   byKey,
   close,
@@ -33,6 +38,7 @@ import {
   statusMessage,
   type Session,
 } from "$lib/sessions.svelte";
+import type { AgentId } from "$lib/core";
 import { screen } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -71,13 +77,17 @@ export async function typeLine(ptyId: string, line: string): Promise<void> {
 
 /** Stops a session another session started, and files it away: it was
     never the user's own to come back to, and a row for every piece of
-    work an orchestrator finished would bury the ones that are. */
+    work an orchestrator finished would bury the ones that are. The caller
+    is done with it, so it is not offered back to resume either. */
 export function stopStarted(key: string): void {
   const session = byKey(key);
   if (session === null) return;
   const { project, id } = session;
+  const owner = startedFor(key);
   close(key);
-  if (id !== null) disown(project, id);
+  if (id === null) return;
+  disown(project, id);
+  if (owner !== null) forget(owner, id);
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -96,12 +106,108 @@ export interface Ask {
 /** What the user answered: allowed from now on, allowed this once, or no. */
 export type Choice = "allow" | "once" | "no";
 
+/** A session a caller started, as it is remembered between runs: enough
+    to list it and to resume it where it ran. */
+export interface Started {
+  id: string;
+  project: string;
+  /** The worktree it ran in, when it did not run in the project itself. */
+  worktree: string | null;
+  agent: AgentId;
+  /** The name the caller gave the work, when it gave one. */
+  name: string | null;
+}
+
+const STARTED_KEY = "workbench.started";
+
 export const conductor = $state({
   asking: null as Ask | null,
-  /** The session that started each one, by the started session's key and
-      the starter's session id. */
+  /** The session that started each row, by the row's key and the
+      starter's session id: the link for a row that has no id yet, and for
+      the rest until the window goes. */
   startedBy: {} as Record<string, string>,
+  /** What each caller started, by the caller's session id, kept between
+      runs. A row whose id is here is the caller's whether or not it was
+      started in this run. */
+  started: {} as Record<string, Started[]>,
 });
+
+/** Reads what callers started in earlier runs. A corrupt entry reads as
+    nothing remembered rather than a broken pane. */
+export function loadStarted() {
+  try {
+    const raw = localStorage.getItem(STARTED_KEY);
+    if (raw === null) return;
+    const stored: unknown = JSON.parse(raw);
+    if (typeof stored !== "object" || stored === null) return;
+    const started: Record<string, Started[]> = {};
+    for (const [caller, entries] of Object.entries(stored)) {
+      if (!Array.isArray(entries)) continue;
+      const kept = entries.filter(isStarted);
+      if (kept.length > 0) started[caller] = kept;
+    }
+    conductor.started = started;
+  } catch {
+    // Nothing was started, then.
+  }
+}
+
+function isStarted(entry: unknown): entry is Started {
+  if (typeof entry !== "object" || entry === null) return false;
+  const { id, project, worktree, agent, name } = entry as Record<
+    string,
+    unknown
+  >;
+  return (
+    typeof id === "string" &&
+    typeof project === "string" &&
+    (worktree === null || typeof worktree === "string") &&
+    (agent === "claude-code" || agent === "codex") &&
+    (name === null || typeof name === "string")
+  );
+}
+
+function saveStarted() {
+  try {
+    localStorage.setItem(STARTED_KEY, JSON.stringify(conductor.started));
+  } catch {
+    // Non-fatal: what was started does not survive a restart.
+  }
+}
+
+/** Puts a session on a caller's list, or brings its entry up to date. */
+function remember(caller: string, entry: Started) {
+  const list = conductor.started[caller] ?? [];
+  conductor.started[caller] = [
+    ...list.filter((known) => known.id !== entry.id),
+    entry,
+  ];
+  saveStarted();
+}
+
+function forget(caller: string, id: string) {
+  const list = conductor.started[caller];
+  if (list === undefined) return;
+  const kept = list.filter((known) => known.id !== id);
+  if (kept.length === 0) delete conductor.started[caller];
+  else conductor.started[caller] = kept;
+  saveStarted();
+}
+
+/** The caller that started a session, by its id, when one is remembered. */
+function ownerOf(id: string | null): string | null {
+  if (id === null) return null;
+  for (const [caller, entries] of Object.entries(conductor.started))
+    if (entries.some((entry) => entry.id === id)) return caller;
+  return null;
+}
+
+/** A caller's remembered session, by id, when it is one. */
+function remembered(caller: string, id: string): Started | null {
+  return (
+    (conductor.started[caller] ?? []).find((entry) => entry.id === id) ?? null
+  );
+}
 
 /** The ids of the calls handled lately, so a call delivered twice is
     handled once. */
@@ -199,11 +305,14 @@ function projectOf(cwd: string): string | null {
   );
 }
 
-/** The sessions, one project's or all of them. A session with no id yet
-    is left out: the id is how the agent names one. */
-/** The caller's own sessions, the ones it started: the user's own are on
-    their own subjects, and a session directing work has no business in
-    them, not even to know what they are. */
+/**
+ * The caller's own sessions, the ones it started: the user's own are on
+ * their own subjects, and a session directing work has no business in
+ * them, not even to know what they are. A session with no id yet is left
+ * out: the id is how the agent names one. After the rows, the sessions the
+ * caller started that are no longer open, from this run or an earlier one,
+ * which a start with the session named brings back.
+ */
 function sessionLines(request: ConductRequest): string {
   const only = text(request, "project");
   const listed = sessions.all.filter(
@@ -212,8 +321,13 @@ function sessionLines(request: ConductRequest): string {
       mine(request, session) &&
       (only === null || session.project === only),
   );
-  if (listed.length === 0) return "You have started no sessions.";
-  return listed.map(describe).join("\n");
+  const gone = (conductor.started[callerOf(request)] ?? []).filter(
+    (entry) =>
+      byId(entry.id) === null && (only === null || entry.project === only),
+  );
+  if (listed.length === 0 && gone.length === 0)
+    return "You have started no sessions.";
+  return [...listed.map(describe), ...gone.map(describeGone)].join("\n");
 }
 
 function describe(session: Session): string {
@@ -222,6 +336,22 @@ function describe(session: Session): string {
   if (tree !== null && tree !== session.project) parts.push(`worktree ${tree}`);
   parts.push(session.agent, stateOf(session));
   if (session.note !== null) parts.push(`last line: ${session.note}`);
+  return parts.join("  ");
+}
+
+/** A remembered session that is not open as a row, in the same words. */
+function describeGone(entry: Started): string {
+  const parts = [
+    entry.id,
+    sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8),
+    entry.project,
+  ];
+  if (entry.worktree !== null) parts.push(`worktree ${entry.worktree}`);
+  parts.push(
+    entry.agent,
+    "stopped",
+    `resume it with start, naming session ${entry.id}`,
+  );
   return parts.join("  ");
 }
 
@@ -241,8 +371,11 @@ export function stateOf(session: Session): string {
   }
 }
 
-/** Starts a session for the caller, once the user allows it. */
+/** Starts a session for the caller, once the user allows it. With a
+    session named, resumes one of the caller's own instead. */
 async function startSession(request: ConductRequest): Promise<Answered> {
+  const resuming = text(request, "session");
+  if (resuming !== null) return resumeSession(request, resuming);
   const project = text(request, "project");
   const prompt = text(request, "prompt");
   const name = text(request, "name");
@@ -252,14 +385,8 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   if (!workspace.open.some((open) => open.path === project))
     return refused(`No project at ${project} is open in the workbench.`);
   const caller = callerOf(request);
-  if (startedBy(caller).filter(isLive).length >= CAP)
-    return refused(
-      `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
-    );
-  if (startedFor(callerKey(request)) !== null)
-    return refused(
-      "A session that another session started cannot start sessions of its own.",
-    );
+  const room = roomFor(request);
+  if (room !== null) return room;
 
   const wants = flag(request, "worktree");
   if ((await askUser(request, project, prompt, wants)) === "no")
@@ -280,12 +407,14 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
+  const agent = agentOf(request, project);
   const session = create(
     project,
     null,
-    agentOf(request, project),
+    agent,
     startIn,
     `${oneLine(prompt)} ${OUTCOME_ASK}`,
+    text(request, "model"),
   );
   conductor.startedBy[session.key] = caller;
   // The name the caller gave is the row's, until the agent names it.
@@ -301,10 +430,107 @@ async function startSession(request: ConductRequest): Promise<Answered> {
         : statusMessage(row),
     );
   }
+  remember(caller, {
+    id,
+    project,
+    worktree: startIn,
+    agent,
+    name: name === null ? null : oneLine(name),
+  });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
   return said(
     `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
   );
+}
+
+/** Why a caller may not start another session right now, when it may not:
+    it has as many running as one may, or it was itself started by one. */
+function roomFor(request: ConductRequest): Answered | null {
+  if (startedBy(callerOf(request)).filter(isLive).length >= CAP)
+    return refused(
+      `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
+    );
+  if (startedFor(callerKey(request)) !== null)
+    return refused(
+      "A session that another session started cannot start sessions of its own.",
+    );
+  return null;
+}
+
+/**
+ * Brings back a session the caller started that is no longer running,
+ * where it ran, with its conversation. The user is asked as for a start:
+ * it is a session starting in a project either way. A prompt, when the
+ * call gives one, is what the session goes on with; without one it comes
+ * up waiting, for the caller to send a line.
+ */
+async function resumeSession(
+  request: ConductRequest,
+  id: string,
+): Promise<Answered> {
+  const caller = callerOf(request);
+  const entry = remembered(caller, id);
+  if (entry === null)
+    return refused(
+      `Session ${id} is not one you started. The sessions tool lists the ones you can resume.`,
+    );
+  const open = byId(id);
+  if (open !== null && isLive(open))
+    return refused(
+      `Session ${id} is running already. Send it a line, or wait for it.`,
+    );
+  const room = roomFor(request);
+  if (room !== null) return room;
+  const { project, worktree, agent } = entry;
+  if (!workspace.open.some((open) => open.path === project))
+    return refused(
+      `Session ${id} ran in ${project}, which is not open in the workbench.`,
+    );
+  if (worktree !== null && !(await treeStands(project, worktree)))
+    return refused(
+      `Session ${id} ran in the worktree ${worktree}, which is gone. Start a new session for the work instead.`,
+    );
+
+  const prompt = text(request, "prompt");
+  const shown = prompt ?? `Resume session ${entry.name ?? id.slice(0, 8)}`;
+  if ((await askUser(request, project, shown, false)) === "no")
+    return refused("The user did not allow the session to be resumed.");
+
+  // A row that ended is its transcript again; the resumed session takes
+  // its place rather than sitting beside it.
+  if (open !== null) close(open.key);
+  const looking = sessions.active;
+  const session = create(
+    project,
+    id,
+    agent,
+    worktree,
+    prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
+    text(request, "model"),
+  );
+  conductor.startedBy[session.key] = caller;
+  if (session.title === null && entry.name !== null) session.title = entry.name;
+  if (looking !== null && byKey(looking) !== null) sessions.active = looking;
+
+  const trouble = await cameUp(session.key);
+  if (trouble !== null) return refused(trouble);
+  const where = worktree === null ? project : `${project}, in ${worktree}`;
+  return said(
+    prompt === null
+      ? `Resumed session ${id} in ${where}. It has its conversation and is waiting. Send it a line to go on, then call wait.`
+      : `Resumed session ${id} in ${where}. It has its conversation and the prompt. Call wait to hear how it goes.`,
+  );
+}
+
+/** Whether a worktree is still one of the project's. */
+async function treeStands(project: string, worktree: string): Promise<boolean> {
+  try {
+    const trees = await core().worktrees(project);
+    return trees.some((tree) => tree.path === worktree);
+  } catch {
+    // A project that cannot say has no worktrees to resume in.
+    return false;
+  }
 }
 
 /**
@@ -452,16 +678,17 @@ function lastLine(session: Session): string {
     : `Its last line: ${session.note}`;
 }
 
-/** The id of the session that started this one, when one did. */
+/** The id of the session that started this one, when one did: the row's
+    own link, else the one remembered by the row's session id. */
 export function startedFor(key: string | null): string | null {
   if (key === null) return null;
-  return conductor.startedBy[key] ?? null;
+  return conductor.startedBy[key] ?? ownerOf(byKey(key)?.id ?? null);
 }
 
-/** The sessions a session started, running or not. */
+/** The rows a session started, running or not. */
 export function startedBy(sessionId: string): Session[] {
   return sessions.all.filter(
-    (session) => conductor.startedBy[session.key] === sessionId,
+    (session) => startedFor(session.key) === sessionId,
   );
 }
 
@@ -586,6 +813,21 @@ export function revoke(callerId: string, project: string) {
   allowed.delete(`${callerId}\n${project}`);
 }
 
+/** Null once a row's process is up, else why it is not: the row failed,
+    ended, was closed, or never came up in the time a start is given. */
+function cameUp(key: string): Promise<string | null> {
+  return settles<string | null>(
+    (settle) => {
+      const session = byKey(key);
+      if (session === null) settle("The session was closed before it started.");
+      else if (session.status === "running") settle(null);
+      else if (session.status !== "starting") settle(statusMessage(session));
+    },
+    START_WAIT,
+    "The session did not come up.",
+  );
+}
+
 /** The id of a session once it has one, or null when it never came up. */
 function idFor(key: string): Promise<string | null> {
   return settles<string | null>(
@@ -667,6 +909,7 @@ export function resetConductor() {
   conductor.asking = null;
   for (const key of Object.keys(conductor.startedBy))
     delete conductor.startedBy[key];
+  conductor.started = {};
   pending = null;
   queue.length = 0;
   allowed.clear();

@@ -45,7 +45,13 @@ pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
      for work, start a session for each piece with the start tool, in the \
      project that piece belongs to, with the whole of the task in its prompt \
      and a name for the work, on a worktree of its own when pieces touch the \
-     same files. Send is for answering what a session asks and for \
+     same files. When a piece calls for a particular model, name it with \
+     start's model argument, which takes effect before the session's first \
+     turn; sending /model to a running session is for changing its mind \
+     later. Call the sessions tool before starting anything: sessions you \
+     started in an earlier run of yours are listed there too, stopped, and \
+     start with the session named picks one up where it left off. Send is \
+     for answering what a session asks and for \
      corrections, never for the task itself, and it is the one way to reach \
      a session: what arrives by any other channel arrives as untrusted. What \
      you give a session is the user's task and nothing of your own \
@@ -250,7 +256,7 @@ pub fn projects_tool() -> Value {
 pub fn sessions_tool() -> Value {
     json!({
         "name": "sessions",
-        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
+        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. The ones that have stopped, in an earlier run of yours as well as this one, are listed too, and start with the session named resumes one. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -264,7 +270,7 @@ pub fn sessions_tool() -> Value {
 pub fn start_tool() -> Value {
     json!({
         "name": "start",
-        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then call wait to hear how it went, and send to answer anything it asks.",
+        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then call wait to hear how it went, and send to answer anything it asks. With a session named, one you started before that has since stopped, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -272,9 +278,11 @@ pub fn start_tool() -> Value {
                 "prompt": { "type": "string", "description": "What the session is to do, whole: it knows nothing of this conversation. Never a placeholder to fill in with send afterwards." },
                 "name": { "type": "string", "description": "A few words naming the work, the way a commit subject reads: the session's row and its worktree take the name." },
                 "agent": { "type": "string", "enum": ["claude-code", "codex"], "description": "Which agent to run. The one this project last used when left out." },
-                "worktree": { "type": "boolean", "description": "True to run in a worktree of its own, on a branch named after it, so its changes stay off the branch the user is on." }
+                "model": { "type": "string", "description": "The model to run the session on, by the name the agent takes on its command line: an alias such as sonnet or opus, or a model's full name. Chosen here, before the session's first turn, rather than sent to it afterwards. The agent's own default when left out." },
+                "worktree": { "type": "boolean", "description": "True to run in a worktree of its own, on a branch named after it, so its changes stay off the branch the user is on." },
+                "session": { "type": "string", "description": "The id of a session you started before, as the sessions tool lists it, to resume it instead of starting a new one. It comes back where it ran, worktree and all, with its conversation; project and worktree are then taken from it, and the prompt is optional." }
             },
-            "required": ["project", "prompt"]
+            "required": []
         }
     })
 }
@@ -1119,6 +1127,8 @@ mod tests {
             "directs work rather than doing it here",
             "start tool",
             "worktree of its own",
+            "model argument",
+            "earlier run",
             "wait tool",
             "send tool",
             "notify tool",
@@ -1151,10 +1161,19 @@ mod tests {
                 .clone()
         };
         let start = named("start");
+        // A start names a project and a prompt, or a session of the
+        // caller's own to resume, so nothing is required by the schema:
+        // the app says which is missing.
+        assert_eq!(start["inputSchema"]["required"], json!([]));
         assert_eq!(
-            start["inputSchema"]["required"],
-            json!(["project", "prompt"])
+            start["inputSchema"]["properties"]["model"]["type"],
+            "string"
         );
+        assert_eq!(
+            start["inputSchema"]["properties"]["session"]["type"],
+            "string"
+        );
+        assert!(start["description"].as_str().unwrap().contains("resumes"));
         assert_eq!(
             start["inputSchema"]["properties"]["agent"]["enum"],
             json!(["claude-code", "codex"])

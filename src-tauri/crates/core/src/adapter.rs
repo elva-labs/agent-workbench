@@ -47,6 +47,9 @@ pub struct LaunchCtx<'a> {
     /// has to say: given on the command line, so the agent has it from
     /// the start rather than typed at it while it is still coming up.
     pub prompt: Option<&'a str>,
+    /// The model to run on, by the name the agent takes on its command
+    /// line, when the caller chose one. The agent's own default otherwise.
+    pub model: Option<&'a str>,
     /// Whether this session is the one that directs the others. It runs in
     /// the workbench's own orchestrator directory, and the tools it starts
     /// tell it what directing work means.
@@ -158,6 +161,19 @@ fn program(binary: PathBuf, args: &[&str], vars: &HashMap<String, String>) -> Co
     command
 }
 
+/// The model flag and the prompt on the end of an agent's arguments. Both
+/// agents take `--model`, and both take the prompt after `--`: it is the
+/// agent's text, whatever it starts with, and never one of the agent's flags.
+fn with_prompt<'a>(ctx: &LaunchCtx<'a>, mut args: Vec<&'a str>) -> Vec<&'a str> {
+    if let Some(model) = ctx.model {
+        args.extend(["--model", model]);
+    }
+    if let Some(prompt) = ctx.prompt {
+        args.extend(["--", prompt]);
+    }
+    args
+}
+
 pub struct ClaudeCode;
 
 impl ClaudeCode {
@@ -198,17 +214,11 @@ impl AgentAdapter for ClaudeCode {
     }
 
     fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        // The prompt comes after `--`: it is the agent's text, whatever it
-        // starts with, and never one of the agent's flags.
-        let mut args = vec!["--session-id", session];
-        if let Some(prompt) = ctx.prompt {
-            args.extend(["--", prompt]);
-        }
-        self.command(ctx, &args)
+        self.command(ctx, &with_prompt(ctx, vec!["--session-id", session]))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        self.command(ctx, &["--resume", session])
+        self.command(ctx, &with_prompt(ctx, vec!["--resume", session]))
     }
 
     fn caps(&self) -> Caps {
@@ -250,15 +260,11 @@ impl AgentAdapter for Codex {
     }
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
-        let args: Vec<&str> = match ctx.prompt {
-            Some(prompt) => vec!["--", prompt],
-            None => Vec::new(),
-        };
-        self.command(ctx, &args)
+        self.command(ctx, &with_prompt(ctx, Vec::new()))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        self.command(ctx, &["resume", session])
+        self.command(ctx, &with_prompt(ctx, vec!["resume", session]))
     }
 
     fn caps(&self) -> Caps {
@@ -336,6 +342,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
@@ -376,6 +383,7 @@ mod tests {
             env: &vars,
             session: Some("abc"),
             prompt: Some("--dangerously-skip-permissions and fix it"),
+            model: None,
             orchestrator: false,
         };
         let argv = |surface: Surface| {
@@ -404,6 +412,75 @@ mod tests {
     }
 
     #[test]
+    fn the_model_goes_on_the_command_line_before_the_prompt_for_a_launch_and_a_resume() {
+        let dir = std::env::temp_dir().join("workbench-adapter-model");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let vars = vars_with_path(&dir);
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            session: Some("abc"),
+            prompt: Some("Go on with the cache test"),
+            model: Some("sonnet"),
+            orchestrator: false,
+        };
+        let argv = |surface: Surface| {
+            let Surface::Pty(command) = surface;
+            command
+                .get_argv()
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            &argv(ClaudeCode.launch(&ctx, "abc").unwrap())[1..],
+            [
+                "--session-id",
+                "abc",
+                "--model",
+                "sonnet",
+                "--",
+                "Go on with the cache test"
+            ]
+        );
+        assert_eq!(
+            &argv(ClaudeCode.resume(&ctx, "abc").unwrap())[1..],
+            [
+                "--resume",
+                "abc",
+                "--model",
+                "sonnet",
+                "--",
+                "Go on with the cache test"
+            ]
+        );
+        assert_eq!(
+            &argv(Codex.launch(&ctx, "").unwrap())[1..],
+            ["--model", "sonnet", "--", "Go on with the cache test"]
+        );
+        assert_eq!(
+            &argv(Codex.resume(&ctx, "abc").unwrap())[1..],
+            [
+                "resume",
+                "abc",
+                "--model",
+                "sonnet",
+                "--",
+                "Go on with the cache test"
+            ]
+        );
+    }
+
+    #[test]
     fn finds_the_binary_on_the_given_path() {
         let dir = fake_claude("workbench-adapter-detect");
         let vars = vars_with_path(&dir);
@@ -425,6 +502,7 @@ mod tests {
             env: &vars,
             session: Some("abc-123"),
             prompt: None,
+            model: None,
             orchestrator: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
@@ -439,6 +517,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
@@ -465,6 +544,7 @@ mod tests {
                 env: &vars,
                 session: Some("abc"),
                 prompt: None,
+                model: None,
                 orchestrator,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
@@ -491,6 +571,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
@@ -507,6 +588,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
 
@@ -529,6 +611,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
 
@@ -557,6 +640,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
 
@@ -582,6 +666,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
 
@@ -602,6 +687,7 @@ mod tests {
             env: &vars,
             session: None,
             prompt: None,
+            model: None,
             orchestrator: false,
         };
 

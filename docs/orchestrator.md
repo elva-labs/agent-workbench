@@ -39,6 +39,30 @@ with the sessions to resume, behind the fold, rather than leaving a row
 of it under the project. A start can carry a name for the work, which the
 session's row and its worktree take; the session runs in a worktree the
 project already trusts, with either agent, so nothing asks on the way in.
+A start can also name a model, which goes to the agent on its command
+line and holds from the session's first turn, so an orchestrator chooses
+the model for a piece of work when it starts it rather than sending a
+model command afterwards.
+
+## What is remembered
+
+What a session started is written down by session id, with the project,
+the worktree, the agent and the name, and kept between runs beside the
+sessions the app knows as its own. An orchestrator closed and resumed
+keeps its id, so the sessions it started are still its own: the ones
+still running answer to its tools as before, and a row with one of its
+ids, resumed from the pane by hand, is folded under it all the same. When
+the app itself was closed, the started sessions went with it. `sessions`
+then lists them as stopped, after the running ones, and `start` with one
+of those ids in place of a project and prompt brings it back where it ran,
+in its worktree with its conversation. A prompt given with it is what the
+session goes on with; without one it comes up waiting for a line. The user
+is asked as for any start, the cap and the one-level rule apply, and a
+session whose worktree has since been cleaned up, or whose project is no
+longer open, is refused with the reason. A session the orchestrator
+stopped itself is not offered back: the stop said it was done with. The
+record lives with the window's other memory, so a wiped local storage
+forgets it, which only means the orchestrator starts afresh.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the fold, the board and the wait tool

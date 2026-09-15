@@ -36,6 +36,9 @@ export interface SpawnOptions {
   session?: string;
   /** The first prompt, for a fresh session started with one. */
   prompt?: string;
+  /** The model to run on, by the name the agent takes on its command
+      line. The agent's own default when left out. */
+  model?: string;
   cols: number;
   rows: number;
 }

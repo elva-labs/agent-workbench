@@ -101,6 +101,8 @@ struct SpawnParams {
     session: Option<String>,
     #[serde(default)]
     prompt: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
     cols: u16,
     rows: u16,
 }
@@ -281,6 +283,7 @@ pub fn dispatch(
                 p.cwd.as_deref(),
                 p.session,
                 p.prompt.as_deref(),
+                p.model.as_deref(),
                 p.cols,
                 p.rows,
                 make_output,

@@ -56,6 +56,10 @@ export interface Session {
   /** The first prompt, when the session was started with one: another
       session's, given to the agent on its command line. */
   prompt: string | null;
+  /** The model the session was started on, when one was chosen for it:
+      given to the agent on its command line, so it holds from the first
+      turn. Null for the agent's own default. */
+  model: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -476,6 +480,7 @@ export function create(
   agent: AgentId = defaultAgent(project),
   startIn: string | null = null,
   prompt: string | null = null,
+  model: string | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   prefer(project, agent);
@@ -493,6 +498,7 @@ export function create(
     cwd: null,
     startIn,
     prompt,
+    model,
     worktree: null,
     working: false,
     engaged: false,
@@ -534,6 +540,7 @@ export async function launch(
         cwd: session.startIn ?? undefined,
         session: session.resumedFrom ?? undefined,
         prompt: session.prompt ?? undefined,
+        model: session.model ?? undefined,
         cols,
         rows,
       },
