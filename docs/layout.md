@@ -142,16 +142,16 @@ with the others; below 140px it stops giving way and the shells keep 320px.
 ## The window's own chrome
 
 On macOS the window has no title bar. The traffic lights sit over the header
-at the left edge: the sessions pane's while it is open, and while it is
-folded the header of the pane beside its column, the agent's, or the
-viewer's when reviewing hides the agent too. That header is inset so its
-title clears them. The app places the
-buttons on the header's text itself, and since macOS lays the title bar out
-again whenever it likes, it listens for the buttons' frames changing and
-puts them back each time. The window keeps its plain title bar rather than a
-toolbar, because macOS 26 rounds a toolbar window's corners far more than
-every other window's. The pane headers are drag regions: grab one to move
-the window, double-click to zoom.
+of whichever pane is at the left edge, sessions normally, the agent once that
+pane is closed or folded, the viewer when reviewing hides the agent too, and
+that pane's header is inset so its title clears them. The app measures that
+header once the look has painted and again when the look changes, and places
+the buttons on its middle; since macOS lays the title bar out again whenever
+it likes, it listens for the buttons' frames changing and puts them back each
+time. The window keeps its plain title bar rather than a toolbar, because
+macOS 26 rounds a toolbar window's corners far more than every other window's.
+The pane headers are drag regions: grab one to move the window, double-click
+to zoom.
 
 On Windows and Linux the window is undecorated and the app draws minimize,
 maximize and close at the end of the rightmost pane's header, where the
@@ -213,10 +213,10 @@ clears the selection together; the keyboard stays in the tree.
 
 ## Under the tree
 
-Two sections sit at the bottom of the tree's column, each folded to its
-header until asked, with a count in the header when there is anything to
-count, and a divider to drag above them when one is open; the share and
-the folds are remembered, and two open sections share the height.
+Sections sit at the bottom of the tree's column, each folded to its header
+until asked, with a count in the header when there is anything to count, and
+a divider to drag above them when one is open; the share and the folds are
+remembered, and the open ones share the height.
 
 **Media** is what the agent has presented for the session on screen, one
 row per call under its caption, opening in the viewer. **Processes** is
@@ -225,7 +225,8 @@ typed for you, the test run it started, each with what it runs under, how
 long it has run, its share of a CPU and its memory, read every couple of
 seconds while the section is open and less often while it is folded. A
 stop button on the row ends the process, and nothing outside a session's
-own tree can be reached from there.
+own tree can be reached from there. A plugin that sends sections adds a fold
+of its own under those two; [plugins](plugins.md) says what it holds.
 
 The tree's cursor walks on into the sections: <kbd>Down</kbd> past the
 last file lands on the first header, <kbd>Enter</kbd> opens a media call

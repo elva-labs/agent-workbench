@@ -235,13 +235,13 @@ message's type, in any language that can read and write lines.
 
 ## Tools
 
-A plugin's tools join the six of the app's on the tool server, each under
-the plugin's name, `github_pr`, `git_commit`, so nothing collides with the
-app's or another plugin's. A call lands in the request log as the app's
-own do; the core hands it to the plugin's process and writes the plugin's
-answer where the tool server waits for it, so the agent sees one server
-and one round trip. A plugin that does not answer within a minute is
-reported to the agent as such, and the call is over.
+A plugin's tools are listed on the tool server after the app's own and the
+orchestrator's, each under the plugin's name, `github_pr`, `git_commit`, so
+nothing collides with the app's or another plugin's. A call lands in the
+request log as the app's own do; the core hands it to the plugin's process and
+writes the plugin's answer where the tool server waits for it, so the agent
+sees one server and one round trip. A plugin that does not answer within a
+minute is reported to the agent as such, and the call is over.
 
 ## Sections and actions
 
@@ -258,13 +258,15 @@ actions. An action either runs at once or asks first: the plugin declares
 the fields it needs, one or two, a line of text or a choice among named
 options, and the app asks in a small dialog of its own. A section can
 carry actions of its own too, "Commit", "Pull". A folded header shows
-nothing but the button to the plugin's page; the actions appear once it is
-open, and a group's appear once the group is. The title and the detail
+nothing but View, which opens the plugin's page; the actions appear once it
+is open, and a group's appear once the group is. The title and the detail
 beside it keep their text, so the actions a narrow pane has no room for
 are found under a "⋯" button at the end of the line. Enter on a row runs
 its default action; the rest show on hover and under the cursor, as the
 stop button on a process does. The tree's cursor walks a plugin's rows and
 its group lines as it walks the others.
+
+![The git plugin's fold under the tree: the branch and its standing beside the title, a row per changed file, and the actions the pane has no room for under a menu.](plugin-fold.png)
 
 A section stands while it has rows, actions or a line of detail, so a
 clean tree still shows the branch and what can be done to it, and goes

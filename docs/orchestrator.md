@@ -9,21 +9,25 @@ session a line, wait until one of them stops or asks for something, read
 what one has on screen, and stop them.
 
 It runs in a project of its own, `orchestrator` under the workbench's home.
-The first one starts from the menu beside Open project; from then on the
-project sits above the ones you opened, with its sessions and the past
-ones to resume, and a session started there is an orchestrator. Nothing
-else about it differs, except what it is told: an orchestrator is told to
-direct work rather than do it, to start a session per piece in the project
-it belongs to, on a worktree of its own when pieces touch the same files,
-to wait on them rather than ask after them in a loop, and to leave a line
+The first one starts from New orchestrator session, in the menu beside Open
+project; from then on the project sits above the ones you opened, with its
+sessions and the past ones to resume, and a session started there is an
+orchestrator. With more than one agent installed its new-session row opens
+into a row per agent, as any project's does. Nothing else about it differs,
+except what it is told: an orchestrator is told to direct work rather than
+do it, to start a session per piece in the project it belongs to, on a
+worktree of its own when pieces touch the same files, to wait on them rather
+than ask after them in a loop, to put the user's whole task in the prompt it
+starts a session with and none of its own housekeeping, and to leave a line
 on its own row when it stops, whether to relay a question or to report.
 Every other session has the same tools and none of the nudge.
 
 ## The tools
 
 The seven tools reach the workbench through the same tool server the app's
-own tools use, so hooks must be on for the project the calling session runs
-in. See [hooks](hooks.md).
+own tools use. The orchestrator's own directory carries them whatever the
+projects were told about live updates; any other session has them where its
+project's hooks are on. See [hooks](hooks.md).
 
 `projects` lists the open projects, the caller's own marked, so a session
 names a project the app actually has. `sessions` lists the sessions the
@@ -37,12 +41,13 @@ seconds it was given run out. `read` answers with the last lines on a
 session's screen, as you see them. `stop` stops a session and files it
 with the sessions to resume, behind the fold, rather than leaving a row
 of it under the project. A start can carry a name for the work, which the
-session's row and its worktree take; the session runs in a worktree the
-project already trusts, with either agent, so nothing asks on the way in.
-A start can also name a model, which goes to the agent on its command
-line and holds from the session's first turn, so an orchestrator chooses
-the model for a piece of work when it starts it rather than sending a
-model command afterwards.
+session's row and its worktree take; a name the project already has is
+numbered rather than refused, so the same work twice is fix-it and fix-it-2.
+A worktree it starts in is trusted where its project is, with either agent,
+so nothing asks on the way in. A start can also name a model, which goes to
+the agent on its command line and holds from the session's first turn, so
+an orchestrator chooses the model for a piece of work when it starts it
+rather than sending a model command afterwards.
 
 ## What is remembered
 
@@ -86,6 +91,8 @@ when the session was, and the resumed session is that one going on.
 A session started by another may not start any of its own, and no session
 may have more than eight running at a time.
 
+![The question over the agent pane: which session wants to start one, in which project, the prompt it would give, and Allow this session, Once or No.](orchestrator-ask.png)
+
 ## In the panes
 
 The sessions an orchestrator started stay in the project they run in, where
@@ -96,14 +103,16 @@ each. The line speaks up in the accent when one of them is waiting on you,
 session it started.
 
 The orchestrator's own row says what it has out, "3 running, 1 asking", and
-its changes pane shows the sessions it started instead of a file tree:
-each with its project, its worktree, what it is doing, how long it has
-been at it and the line it left, with Stop all on the section's header.
-Each row can be stopped on its own, or sent a line without leaving the
-orchestrator. Under the list, the projects the orchestrator has been
-allowed to start sessions in, each with a way to take that back, and the
-worktrees its starts have left behind, with Clean up for the ones whose
-work is merged and whose trees are clean; the rest say why they stay.
+its changes pane, headed Orchestrator, shows the sessions it started instead
+of a file tree: each with its project, its worktree, what it is doing, how
+long it has been at it and the line it left, with Stop all on the section's
+header. Each row can be stopped on its own, or sent a line without leaving the
+orchestrator. Under the list, the projects the orchestrator has been allowed
+to start sessions in, each with a way to take that back, and the worktrees its
+starts have left behind, with Clean up for the ones whose work is merged and
+whose trees are clean; the rest say why they stay.
+
+![An orchestrator on screen: its session under its own project, the two sessions it started folded under theirs, and the board in the changes pane with a row for each, what it is doing, and the project it may start in.](orchestrator-board.png)
 
 The sessions it started keep out of the keyboard's way too: Delete on one
 of them does nothing, and a fold stops the lot from its own hover action.

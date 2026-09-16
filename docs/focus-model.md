@@ -33,15 +33,15 @@ Unbound <kbd>Cmd</kbd> chords pass through rather than being swallowed.
 
 ## The chords are the user's
 
-Settings, from the native menu or <kbd>Cmd</kbd><kbd>,</kbd>, holds the
-whole table: pick a preset, or click a chord and press a new one. The same
-dialog holds the appearance (system, light or dark), the colour palette, and
-live updates per project. The one rule that does not move is the modifier:
-every chord carries <kbd>Cmd</kbd> (<kbd>Ctrl</kbd> elsewhere), because the
-keys without it belong to whatever terminal has focus, and <kbd>Ctrl+C</kbd>
-and <kbd>Ctrl+R</kbd> are refused outright since on Windows and Linux they
-are the agent's. A chord another action holds is refused with the name of
-that action.
+Settings, from the native menu or <kbd>Cmd</kbd><kbd>,</kbd>, holds the whole
+table: pick a preset, or click a chord and press a new one. The keys are one
+tab of it; the appearance and the look, the fonts and the colours, live
+updates and plugins are the others, in [settings](settings.md). The one rule
+that does not move is the modifier: every chord carries <kbd>Cmd</kbd>
+(<kbd>Ctrl</kbd> elsewhere), because the keys without it belong to whatever
+terminal has focus, and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are refused
+outright since on Windows and Linux they are the agent's. A chord another
+action holds is refused with the name of that action.
 
 The **Vim** preset lays movement between panes on <kbd>h</kbd>, <kbd>j</kbd>,
 <kbd>k</kbd> and <kbd>l</kbd>, as the panes lie: sessions to the left,
@@ -108,6 +108,7 @@ the next thing is usually another file.
 
 ## What focus looks like
 
-The focused pane draws its border and its title in the accent colour, and
-the status bar names it. An unfocused agent pane shows a hollow cursor, the
-terminal convention.
+The focused pane is marked in the accent, its title with it, and the status
+bar names it; which part of the pane carries the mark is the look's, in
+[settings](settings.md#theme). An unfocused agent pane shows a hollow cursor,
+the terminal convention.

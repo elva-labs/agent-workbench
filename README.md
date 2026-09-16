@@ -11,7 +11,7 @@ with the keyboard almost entirely its own. The app adds what a terminal
 window lacks: the changes as they land, past sessions to resume, a session's
 state at a glance, and projects on other machines over ssh.
 
-![Two sessions running, Claude Code and Codex, with a shell below them; then a past session resumed from the list, bringing its worktree's changed files into the changes pane, and one of them opened as a diff.](docs/demo.gif)
+![A session started in a project and given a task; the files it changes land in the changes pane as it works, with the git plugin's fold under the tree, and one of them is opened as a diff.](docs/demo.gif)
 
 ## What it does
 
@@ -20,8 +20,9 @@ state at a glance, and projects on other machines over ssh.
   switching between them stops nothing. A session's row says whether the
   agent is working, waiting for you, or asking for permission.
 - **Changes.** The changed files and their diffs, refreshed as the agent
-  edits, with a file viewer and search over the tree. A session that moves
-  into a git worktree takes the pane with it.
+  edits, with a file viewer and search over the tree. Under the tree sit what
+  the agent has presented and what runs under the project's sessions. A
+  session that moves into a git worktree takes the pane with it.
 - **Tools for the agent.** With hooks on, the agent can point at a place in
   a file or at a file's changes, put images, PDFs, documents, pages and
   diagrams in front of you, ask what you are looking at, type a command
@@ -32,11 +33,19 @@ state at a glance, and projects on other machines over ssh.
   own, waits on them and answers for them. The sessions it starts fold away
   under their projects until one needs you. See
   [orchestrator](docs/orchestrator.md).
+- **Plugins.** A plugin adds to the workbench from outside it: tools for the
+  agent, a section under the file tree with rows and actions, and a page of
+  its own in the changes pane. The settings offer the sources the workbench
+  knows and take one of your own. See [plugins](docs/plugins.md).
 - **Terminal.** Plain shells under the panes, per project, split if you like.
 - **Remote projects.** Pair a machine with one pasted token, or name a host
   your ssh already reaches, and work in a folder there. The agent, the
   changes and the shells run on that machine; the window does not know the
   difference. See [remote](docs/remote.md).
+- **The look.** Modern to begin with, the panes flush on one surface;
+  terminal for mono chrome and panes drawn as boxes. Light, dark or whatever
+  the desktop is set to, five palettes, and the terminal's font and the
+  interface's chosen apart. See [settings](docs/settings.md).
 - **Keyboard first.** The agent owns the keyboard. The app claims a few
   modifier chords, all of them yours to change. See
   [focus](docs/focus-model.md).
@@ -86,12 +95,13 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Architecture](docs/architecture.md): the one rule, the two halves, and
   the core that runs without a window.
 - [Layout](docs/layout.md): the two shapes, what gives way when the window
-  shrinks, the terminal panel, the window's chrome.
+  shrinks, what moves when a pane goes, the tree and what sits under it, the
+  terminal panel, the window's chrome.
 - [Sessions](docs/sessions.md): what a session is, what its row says, past
   sessions, and how the changes pane keeps up.
 - [Focus](docs/focus-model.md): who owns the keyboard.
-- [Settings](docs/settings.md): appearance, theme, colours, fonts, keys,
-  live updates.
+- [Settings](docs/settings.md): the four tabs, the appearance and the look,
+  fonts and colours, live updates, plugins, keys.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
   what it gives, the agent's tools among it.
 - [Orchestrator](docs/orchestrator.md): a session that starts and steers

@@ -7,7 +7,10 @@ them is kept by the window and applies at once.
 The settings are in four tabs down the left. Appearance carries the
 appearance, theme, font and colour sections; live updates, plugins and keys
 each carry the section of that name. Opening the settings again lands on the
-tab last used, for as long as the window is open.
+tab last used, for as long as the window is open. The dialog follows the look
+the panes are drawn in.
+
+![The settings over the workbench: the four tabs down the left, and the Appearance tab with its appearance, theme, font and colour choices.](settings.png)
 
 ## Appearance
 
@@ -18,9 +21,12 @@ System, light or dark. System follows the desktop and changes with it.
 Modern or terminal, modern to begin with. Modern sets the chrome in the
 sans, in sentence case, with soft corners and the three panes flush on one
 surface, a single hairline between each pair and the sessions pane a shade
-below. Terminal is mono chrome, small capitals, square corners and panes
-drawn as boxes. Both use the same colours, so the appearance and the palette
-hold across either.
+below; that hairline is the resize bar itself, with three pixels either side
+of it to take hold of, and it turns accent under the pointer. Terminal is mono
+chrome, small capitals, square corners and panes drawn as boxes. The focused
+pane is marked in the accent either way, its title with it: an edge along the
+header under modern, the pane's own border under terminal. Both use the same
+colours, so the appearance and the palette hold across either.
 
 ## Font
 
@@ -54,13 +60,13 @@ tools they bring the agent, is in [hooks](hooks.md).
 
 ## Plugins
 
-Sources of plugins, each a git repository or a directory on this machine,
-with the plugins each names and a switch per plugin, and a check across
-every source at the top. The sources the workbench knows are listed from
-the first launch with every plugin off, and turning one on fetches its
-source first. A source of your own goes in behind the link under them.
-What adding, enabling, checking and updating do is in
-[plugins](plugins.md).
+Sources of plugins, each a git repository or a directory on this machine, with
+the plugins each names, what each plugin is for and how it is faring, and a
+switch per plugin. Check for updates, at the top, asks every fetched source at
+once. The sources the workbench knows are listed from the first launch with
+every plugin off, and turning one on fetches its source first. A source of
+your own goes in behind Add a source, under them. What adding, enabling,
+checking and updating do is in [plugins](plugins.md).
 
 ## Keys
 

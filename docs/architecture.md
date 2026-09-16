@@ -17,11 +17,11 @@ Tests install a fake behind that seam and drive the real frontend without
 Tauri, which is how the browser tier works.
 
 The Rust side is two crates. The **core** has no window attached: ptys, git,
-the watcher, the transcript indexes, the hooks and the session log, with an
-event sink and a per-pty output that whoever holds the core provides. The
-**app** is the window: thin Tauri commands over one core object, the native
-menu, the window chrome, and the routing that sends a command to the core
-here or to the same core on another machine.
+the watcher, the transcript indexes, the hooks, the session log and the plugin
+processes, with an event sink and a per-pty output that whoever holds the core
+provides. The **app** is the window: thin Tauri commands over one core object,
+the native menu, the window chrome, and the routing that sends a command to
+the core here or to the same core on another machine.
 
 ## The core elsewhere
 
@@ -44,12 +44,13 @@ session, sit behind one seam. [Agents](adapters.md) lists them.
 
 ## What is persisted
 
-The core keeps nothing across restarts but what the agents themselves write
-and what the tools need: the request log, and the record of what is on
-screen, both under the app's directory in the user's home. The window
-remembers the workspace, the layout, its chords, theme and palette, which
-sessions were the app's own, the names it knew sessions by, what each
-session presented, and which words to the user were taken, all in the
-webview's local storage, keyed by the real project path. Hooks the user
-turns on are written into the project's own agent configuration, and only
-there.
+The core keeps nothing across restarts but what the agents themselves write,
+what the tools need and what plugins are for: the request log, the record of
+what is on screen, and the plugin sources with their clones and which of their
+plugins are on, all under the app's directory in the user's home. The window
+remembers the workspace, the layout, its chords, the appearance, the look, the
+fonts and the palette, which sessions were the app's own, the names it knew
+sessions by, what each session presented, and which words to the user were
+taken, all in the webview's local storage, keyed by the real project path.
+Hooks the user turns on are written into the project's own agent
+configuration, and only there.
