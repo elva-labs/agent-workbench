@@ -52,7 +52,7 @@ export interface Spawned {
   sessionId: string | null;
 }
 
-/** A transition one of the agent's own hooks reported, by session id:
+/** A transition reported by an agent hook or session log, by session id:
     `prompt` (the user sent one), `stop` (the turn ended), `permission` (it
     is asking), `idle` (it has been waiting a while). */
 export interface SessionEvent {

@@ -28,8 +28,7 @@ closes the choice.
 Claude Code takes the id it is given, so a running session and the
 transcript it writes are the same thing from the start. Codex mints its own.
 After spawning it the core watches Codex's index for a thread started in the
-project since the spawn, and reports it: every half second for the first
-half minute, then every few seconds for as long as the session lives, since
+project since the spawn, and reports it: every half second for as long as the session lives, since
 Codex records the thread when the first prompt is sent, which may be a while
 after the spawn. Until then the row has no id and no name: it cannot be
 resumed and is not yet the app's own. A Codex row also polls the
@@ -37,7 +36,8 @@ index every couple of seconds for its name.
 
 ## What is quarantined
 
-Both indexes are the agents' own and move with their versions. Every line
-that reads one is kept apart, and every failure there is an empty answer: a
+Both indexes and Codex's session log are the agents' own and move with their
+versions. Every line that reads one is kept apart, and every failure there
+is an empty answer: a
 project with no history, never a pane that will not open. Codex leaves an
 old index behind when its schema moves; the newest is read.

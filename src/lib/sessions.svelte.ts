@@ -381,6 +381,7 @@ export function identified(
   if (session === undefined) return;
   session.id = sessionId;
   adopt(session.project, sessionId);
+  replayActivity(sessionId);
   if (title !== null) named(session.key, title);
 }
 
@@ -579,6 +580,7 @@ export function started(
   if (sessionId !== null) {
     session.id = sessionId;
     adopt(session.project, sessionId);
+    replayActivity(sessionId);
   }
 
   const early = claim(ptyId);
@@ -716,7 +718,7 @@ export function statusLabel(session: Session | null): string {
 }
 
 /**
- * Activity, read off the pty.
+ * Claude Code activity, read off the pty. Codex uses rollout turn events.
  *
  * An agent at work streams: its spinner and its text keep bytes flowing for
  * seconds on end. An agent waiting shows a still screen, give or take a
@@ -772,6 +774,9 @@ export function typed(ptyId: string, data: string) {
 export function output(key: string, bytes: number, now = Date.now()) {
   const session = byKey(key);
   if (session === null) return;
+  // Codex reports turn boundaries in its rollout. Output is only needed
+  // to notice activity after a permission request.
+  if (session.agent === "codex" && session.needs === null) return;
   if (!session.exact && !session.engaged) {
     if (session.startedAt === null || now - session.startedAt < GRACE_MS)
       return;
@@ -791,7 +796,7 @@ export function output(key: string, bytes: number, now = Date.now()) {
       session.needs = null;
       session.working = true;
     }
-    if (session.working && work) stillLater(session);
+    if (session.agent !== "codex" && session.working && work) stillLater(session);
     return;
   }
   if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working) {
@@ -880,14 +885,30 @@ export function noted(key: string, text: string) {
   if (!isViewed(session)) session.unread = true;
 }
 
-/**
- * One of the agent's own hooks fired. From here on the session's transitions
- * are exact: the heuristic stands down for it. A prompt is the user at the
- * keyboard, so it reads the session as well as starting it.
- */
+// Only the latest transition matters when identification catches up. The
+// bound also covers hooks from sessions outside this window.
+const pendingActivity = new Map<string, SessionEvent["kind"]>();
+
+function replayActivity(sessionId: string) {
+  const kind = pendingActivity.get(sessionId);
+  pendingActivity.delete(sessionId);
+  if (kind !== undefined) exact(sessionId, kind);
+}
+
+/** A hook or rollout reports a turn transition. */
 export function exact(sessionId: string, kind: SessionEvent["kind"]) {
-  const session = sessions.all.find((candidate) => candidate.id === sessionId);
-  if (session === undefined) return;
+  const session = sessions.all.find((candidate) =>
+    candidate.id === sessionId &&
+    (candidate.status === "running" || candidate.status === "starting"),
+  );
+  if (session === undefined) {
+    if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
+    pendingActivity.delete(sessionId);
+    pendingActivity.set(sessionId, kind);
+    if (pendingActivity.size > 256)
+      pendingActivity.delete(pendingActivity.keys().next().value!);
+    return;
+  }
   session.exact = true;
   const pulse = pulses.get(session.key);
   if (pulse?.quiet) clearTimeout(pulse.quiet);
@@ -924,6 +945,7 @@ export function unreadCount(): number {
 
 /** Test seam: the counter is module state and rows outlive a component. */
 export function reset() {
+  pendingActivity.clear();
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();
   for (const pulse of pulses.values()) {

@@ -128,9 +128,183 @@ pub fn title_of(codex_home: &Path, id: &str) -> Option<String> {
         .flatten()
 }
 
+/// The rollout belongs to Codex; failures leave activity unknown.
+fn rollout_path(codex_home: &Path, id: &str) -> Option<PathBuf> {
+    open(codex_home)?
+        .query_row(
+            "SELECT rollout_path FROM threads WHERE id = ?1",
+            [id],
+            |row| row.get::<_, String>(0).map(PathBuf::from),
+        )
+        .ok()
+}
+
+/// Reads complete turn events, retaining the byte offset across polls.
+/// A resumed conversation starts at its current end, without replaying history.
+pub struct Activity {
+    id: Option<String>,
+    path: Option<PathBuf>,
+    offset: u64,
+}
+
+impl Activity {
+    pub fn new(home: &Path, id: Option<String>) -> Self {
+        let path = id.as_ref().and_then(|id| rollout_path(home, id));
+        let offset = path
+            .as_ref()
+            .and_then(|path| path.metadata().ok())
+            .map(|meta| meta.len())
+            .unwrap_or(0);
+        Self { id, path, offset }
+    }
+
+    fn poll(&mut self, home: &Path) -> Option<&'static str> {
+        if self.path.is_none() {
+            self.path = rollout_path(home, self.id.as_deref()?);
+        }
+        let (lines, offset) = crate::activity::read_new(self.path.as_ref()?, self.offset);
+        self.offset = offset;
+        lines.iter().rev().find_map(|line| turn_event(line))
+    }
+}
+
+fn turn_event(line: &str) -> Option<&'static str> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("type")?.as_str()? != "event_msg" {
+        return None;
+    }
+    match value.get("payload")?.get("type")?.as_str()? {
+        "task_started" => Some("prompt"),
+        "task_complete" | "turn_aborted" => Some("stop"),
+        _ => None,
+    }
+}
+
+/// Follows the running PTY's identity and turn events on its own machine.
+pub fn observe(
+    sink: std::sync::Arc<dyn crate::events::Sink>,
+    sessions: std::sync::Arc<crate::pty::Sessions>,
+    home: PathBuf,
+    project: PathBuf,
+    started: u64,
+    pty_id: String,
+    mut activity: Activity,
+) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !sessions.holds(&pty_id) {
+            return;
+        }
+        if activity.id.is_none() {
+            if let Some((id, title)) = started_since(&home, &project, started.saturating_sub(1)) {
+                crate::events::emit(
+                    &sink,
+                    crate::api::SESSION_IDENTIFIED,
+                    &crate::api::SessionIdentified {
+                        pty_id: pty_id.clone(),
+                        session_id: id.clone(),
+                        title,
+                    },
+                );
+                activity.id = Some(id);
+            }
+        }
+        if let Some(kind) = activity.poll(&home) {
+            crate::events::emit(
+                &sink,
+                crate::activity::SESSION_EVENT,
+                &crate::activity::SessionEvent {
+                    session_id: activity.id.clone().unwrap(),
+                    kind: kind.to_string(),
+                },
+            );
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_reads_complete_turns_and_ignores_redraw_unrelated_events() {
+        use std::io::Write;
+        let home = codex_home("activity");
+        let path = home.join("rollout.jsonl");
+        let start = r#"{"type":"event_msg","payload":{"type":"task_started"}}"#;
+        let stop = r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#;
+        std::fs::write(&path, format!("{start}\n")).unwrap();
+        let mut activity = Activity {
+            id: Some("id".into()),
+            path: Some(path.clone()),
+            offset: 0,
+        };
+        assert_eq!(activity.poll(&home), Some("prompt"));
+        assert_eq!(activity.poll(&home), None);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        write!(file, "{stop}").unwrap();
+        assert_eq!(activity.poll(&home), None, "partial lines wait");
+        writeln!(file).unwrap();
+        assert_eq!(activity.poll(&home), Some("stop"));
+        writeln!(file, "{start}\n{stop}").unwrap();
+        assert_eq!(activity.poll(&home), Some("stop"), "latest transition wins");
+        std::fs::write(&path, format!("{start}\n")).unwrap();
+        assert_eq!(
+            activity.poll(&home),
+            Some("prompt"),
+            "truncation resets the offset"
+        );
+        assert_eq!(
+            turn_event(r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#),
+            Some("stop")
+        );
+        assert_eq!(
+            turn_event(r#"{"type":"event_msg","payload":{"type":"token_count"}}"#),
+            None
+        );
+        assert_eq!(
+            turn_event(r#"{"type":"response_item","payload":{"type":"task_started"}}"#),
+            None
+        );
+        assert_eq!(turn_event("invalid"), None);
+    }
+
+    #[test]
+    fn resumed_activity_skips_history_and_retries_a_missing_rollout() {
+        use std::io::Write;
+        let home = codex_home("activity-resume");
+        let path = home.join("rollout.jsonl");
+        let start = r#"{"type":"event_msg","payload":{"type":"task_started"}}"#;
+        std::fs::write(&path, format!("{start}\n")).unwrap();
+        let db = Connection::open(home.join("state_1.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
+            .unwrap();
+        db.execute(
+            "INSERT INTO threads VALUES ('id', ?1)",
+            [path.to_str().unwrap()],
+        )
+        .unwrap();
+        let mut activity = Activity::new(&home, Some("id".into()));
+        assert_eq!(activity.poll(&home), None);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{start}").unwrap();
+        assert_eq!(activity.poll(&home), Some("prompt"));
+        let mut fresh = Activity::new(&home, None);
+        fresh.id = Some("later".into());
+        assert_eq!(fresh.poll(&home), None);
+        db.execute(
+            "INSERT INTO threads VALUES ('later', ?1)",
+            [path.to_str().unwrap()],
+        )
+        .unwrap();
+        assert_eq!(fresh.poll(&home), Some("prompt"));
+    }
 
     fn codex_home(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("workbench-codex-{name}"));

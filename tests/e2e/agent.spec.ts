@@ -953,6 +953,33 @@ test.describe("with codex installed too", () => {
     await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
   });
 
+  test("Codex breathes only during a reported turn, even with continuous redraws", async ({ page }) => {
+    await page.getByTestId("start-agent-codex").click();
+    await running(page);
+    await page.clock.install();
+    const dot = rows(page).first().locator(".dot");
+    const redraw = async () => {
+      await page.evaluate(() => window.__fake.outputs["pty-1"]?.(
+        new TextEncoder().encode("\r" + "idle screen".repeat(100)),
+      ));
+      await page.clock.runFor(1010);
+    };
+    await page.clock.runFor(61_000);
+    for (let i = 0; i < 4; i++) await redraw();
+    await expect(dot).toHaveCSS("animation-name", "none");
+    await page.evaluate(() => {
+      window.__fake.sessionEvent?.({ sessionId: "cx-1", kind: "prompt" });
+      window.__fake.identify?.({ ptyId: "pty-1", sessionId: "cx-1", title: null });
+    });
+    await expect(dot).toHaveCSS("animation-name", /breathe/);
+    await page.clock.runFor(10_000);
+    await expect(dot).toHaveCSS("animation-name", /breathe/);
+    await page.evaluate(() => window.__fake.sessionEvent?.({ sessionId: "cx-1", kind: "stop" }));
+    for (let i = 0; i < 4; i++) await redraw();
+    await expect(dot).toHaveCSS("animation-name", "none");
+    await expect(dot).toBeVisible();
+  });
+
   test("starts the first orchestrator session from the menu, agent chosen", async ({
     page,
   }) => {

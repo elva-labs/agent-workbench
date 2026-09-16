@@ -773,6 +773,56 @@ describe("working, and waiting for you", () => {
     }
   };
 
+  it("uses Codex turn events despite idle redraws, Enter, and long silent work", () => {
+    vi.useFakeTimers();
+    try {
+      const session = create(A, null, "codex");
+      started(session.key, "codex-pty", null);
+      typed("codex-pty", "\r");
+      vi.advanceTimersByTime(GRACE_MS);
+      streams(session, WORK_WINDOWS + 2);
+      expect(session.working).toBe(false);
+
+      exact("codex-id", "prompt");
+      identified("codex-pty", "codex-id", null);
+      expect(session.working).toBe(true);
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_EXACT_MS * 2);
+      expect(session.working).toBe(true);
+
+      exact("codex-id", "stop");
+      streams(session, WORK_WINDOWS + 2);
+      expect(session.working).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the latest transition received before identification", () => {
+    const session = create(A, null, "codex");
+    started(session.key, "codex-pty", null);
+    exact("codex-id", "prompt");
+    exact("codex-id", "stop");
+    identified("codex-pty", "codex-id", null);
+    expect(session.exact).toBe(true);
+    expect(session.working).toBe(false);
+  });
+
+  it("replays events received before a resumed spawn returns and ignores ended sessions", () => {
+    const session = create(A, "codex-id", "codex");
+    exact("codex-id", "prompt");
+    started(session.key, "codex-pty", "codex-id");
+    expect(session.working).toBe(true);
+    ended({ id: "codex-pty", code: 0, clean: true });
+    exact("codex-id", "prompt");
+    expect(session.working).toBe(false);
+    const resumed = create(A, "codex-id", "codex");
+    started(resumed.key, "codex-pty-2", "codex-id");
+    exact("codex-id", "prompt");
+    expect(resumed.working).toBe(true);
+    expect(session.working).toBe(false);
+  });
+
   it("is working once more than a redraw's worth flows for seconds running", () => {
     vi.useFakeTimers();
     try {

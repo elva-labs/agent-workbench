@@ -31,7 +31,14 @@ to another project brings that project forward.
 
 ## What a row says
 
-A row says what its agent is doing. Read off the pty, an agent at work
+A row says what its agent is doing. Codex's turn-start, completion and
+interruption events are read from its session log every half second. A new
+session waits until a turn starts, and a resumed session follows only new
+events. Terminal redraws do not start work, and a quiet terminal does not
+end an active turn. This works with hooks off. An unavailable or unrecognised
+log leaves the row running without the working animation.
+
+For Claude Code without hooks, activity is read off the pty. An agent at work
 streams for seconds on end and an agent waiting shows a still screen, give
 or take a redraw, so more than a redraw's worth of bytes in each of three
 seconds running is **working**, with the dot breathing, and two seconds
@@ -51,14 +58,14 @@ stopped or what it needs, which marks the row the same way and goes when
 the session is looked at.
 
 With the project's hooks on (Live updates, in the settings) the transitions
-are exact instead. Both agents' prompt, stop and permission hooks append to
-a log the core tails, and from the first line a session's row follows the
+are reported by the agent. Both agents' prompt, stop and permission hooks
+append to a log the core tails, and from the first line a session's row follows the
 hooks: working from the prompt, needs permission while the agent asks,
 with a hollow ring on the dot, waiting for you from the stop. The pty
 heuristic stands down for that session, except for two things the hooks
 cannot say: output after a permission prompt means it was granted and the
-agent went on, and a screen that goes still, give or take a redraw, for
-five seconds while the hooks still say working means the turn ended
+agent went on, and, for Claude Code, a screen that goes still, give or take a
+redraw, for five seconds while the hooks still say working means the turn ended
 without them, which is what an Escape at the keyboard does.
 
 ## Names
