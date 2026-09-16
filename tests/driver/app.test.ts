@@ -35,6 +35,38 @@ async function clickUntil(
   }
 }
 
+/** What the window held when a click did nothing: its size, the element's
+    box, what sits at its middle, the sessions pane's fold, the saved layout,
+    and whether a click from a script does what the driver's did not. */
+async function sceneReport(driver: WebDriver, selector: string) {
+  return driver.executeScript((selector: string) => {
+    const el = document.querySelector<HTMLElement>(selector);
+    const box = el?.getBoundingClientRect();
+    const mid = box
+      ? document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2,
+        )
+      : null;
+    const describe = (node: Element | null) =>
+      node === null
+        ? "nothing"
+        : `${node.tagName.toLowerCase()}#${node.id}.${[...node.classList].join(".")}[${node.getAttribute("data-testid") ?? ""}]`;
+    const before = el?.getAttribute("aria-expanded");
+    el?.click();
+    const after = el?.getAttribute("aria-expanded");
+    return [
+      `window ${window.innerWidth}x${window.innerHeight}`,
+      `box ${box ? [box.left, box.top, box.width, box.height].map(Math.round).join(",") : "none"}`,
+      `at middle ${describe(mid)}`,
+      `unfold-sessions ${document.querySelector("[data-testid='unfold-sessions']") !== null}`,
+      `expanded ${before} then ${after} after a script click`,
+      `layout ${localStorage.getItem("workbench.layout")}`,
+      `focus ${describe(document.activeElement)}`,
+    ].join("; ");
+  }, selector) as Promise<string>;
+}
+
 const TREE = "[data-testid='file-tree']";
 const CHANGES = "section[data-pane='changes']";
 /** The plugin source the tier adds: a directory with two plugins in it,
@@ -649,14 +681,8 @@ describe("the real app", () => {
         "the section did not open on its rows",
       );
     } catch (error) {
-      const folds = await driver.findElements(
-        By.css(`${CHANGES} [data-testid='plugin-fold']`),
-      );
-      const expanded = await Promise.all(
-        folds.map((candidate) => candidate.getAttribute("aria-expanded")),
-      );
       throw new Error(
-        `${(error as Error).message}; folds ${folds.length}, expanded ${expanded.join(",")}, rows ${(await sectionRows()).length}`,
+        `${(error as Error).message}; ${await sceneReport(driver, `${CHANGES} [data-testid='plugin-fold']`)}`,
       );
     }
     const rows = await sectionRows();
@@ -858,7 +884,13 @@ describe("the real app", () => {
     // whatever the tests before left in the list.
     const choice = By.css("[data-testid='agent-option']");
     const opened = async () => (await driver.findElements(choice)).length === 2;
-    await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
+    try {
+      await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
+    } catch (error) {
+      throw new Error(
+        `${(error as Error).message}; ${await sceneReport(driver, "[data-testid='new-session']")}`,
+      );
+    }
     let options = await driver.findElements(choice);
     await options[0].click();
     await waitForText(driver, "FAKE CLAUDE");
