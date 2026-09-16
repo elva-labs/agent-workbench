@@ -63,6 +63,7 @@ async function sceneReport(driver: WebDriver, selector: string) {
       `expanded ${before} then ${after} after a script click`,
       `layout ${localStorage.getItem("workbench.layout")}`,
       `focus ${describe(document.activeElement)}`,
+      `errors ${JSON.stringify((window as unknown as { __errors?: string[] }).__errors ?? "none kept")}`,
     ].join("; ");
   }, selector) as Promise<string>;
 }
@@ -595,6 +596,20 @@ describe("the real app", () => {
         selector,
       );
 
+    // Whatever the page throws from here on is kept for the report.
+    await driver.executeScript(() => {
+      const w = window as unknown as { __errors: string[] };
+      w.__errors = [];
+      window.addEventListener("error", (e) =>
+        w.__errors.push(`${e.message} @ ${e.filename}:${e.lineno}`),
+      );
+      window.addEventListener("unhandledrejection", (e) =>
+        w.__errors.push(
+          `rejected: ${String((e as PromiseRejectionEvent).reason)}`,
+        ),
+      );
+    });
+
     // The source: a directory on this machine, added by path. The form is
     // behind the link, beneath the sources the app offers.
     await openSettings();
@@ -667,14 +682,14 @@ describe("the real app", () => {
     // click on getting it back, so the click is made again while the fold
     // has not opened.
     const fold = By.css(`${CHANGES} [data-testid='plugin-fold']`);
-    await clickUntil(
-      driver,
-      fold,
-      async () =>
-        (await driver.findElement(fold).getAttribute("aria-expanded")) ===
-        "true",
-    );
     try {
+      await clickUntil(
+        driver,
+        fold,
+        async () =>
+          (await driver.findElement(fold).getAttribute("aria-expanded")) ===
+          "true",
+      );
       await driver.wait(
         async () => (await sectionRows()).length === 2,
         10_000,

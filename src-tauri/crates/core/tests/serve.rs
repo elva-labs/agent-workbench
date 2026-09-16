@@ -77,7 +77,10 @@ fn streams_a_shell_s_output_and_its_end() {
     for line in lines.by_ref() {
         let value: Value = serde_json::from_str(&line.unwrap()).unwrap();
         if value["id"] == 1 {
-            pty = Some(value["result"].as_str().unwrap().to_string());
+            let id = value["result"]
+                .as_str()
+                .unwrap_or_else(|| panic!("pty_shell answered {value}"));
+            pty = Some(id.to_string());
         } else if value["event"] == "pty_output" {
             let id = pty.as_deref().unwrap();
             assert_eq!(value["payload"]["id"], id);
