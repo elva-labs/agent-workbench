@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { By, Key, until } from "selenium-webdriver";
+import { By, Key, until, type WebDriver } from "selenium-webdriver";
 import {
   DAEMON,
   launch,
@@ -17,6 +17,24 @@ import {
 } from "./harness";
 
 const SESSIONS = "section[data-pane='sessions']";
+/** Clicks until what the click does has shown, since a window that has lost
+    the foreground on Windows spends the first click on getting it back. */
+async function clickUntil(
+  driver: WebDriver,
+  locator: By,
+  done: () => Promise<boolean>,
+) {
+  for (let attempt = 0; ; attempt += 1) {
+    await driver.findElement(locator).click();
+    try {
+      await driver.wait(done, 2_500);
+      return;
+    } catch (error) {
+      if (attempt >= 2) throw error;
+    }
+  }
+}
+
 const TREE = "[data-testid='file-tree']";
 const CHANGES = "section[data-pane='changes']";
 /** The plugin source the tier adds: a directory with two plugins in it,
@@ -613,10 +631,17 @@ describe("the real app", () => {
     expect(await sectionRows()).toHaveLength(0);
     // The header's actions come with the fold, so it is opened first, by a
     // click the driver makes itself, as it makes the ones before.
-    const fold = driver.findElement(
-      By.css(`${CHANGES} [data-testid='plugin-fold']`),
+    // A window that has lost the foreground on Windows spends the first
+    // click on getting it back, so the click is made again while the fold
+    // has not opened.
+    const fold = By.css(`${CHANGES} [data-testid='plugin-fold']`);
+    await clickUntil(
+      driver,
+      fold,
+      async () =>
+        (await driver.findElement(fold).getAttribute("aria-expanded")) ===
+        "true",
     );
-    await fold.click();
     try {
       await driver.wait(
         async () => (await sectionRows()).length === 2,
@@ -831,21 +856,13 @@ describe("the real app", () => {
     const { driver } = app;
     // A claude session first, so the tags have two kinds to tell apart
     // whatever the tests before left in the list.
-    await driver.findElement(By.css("[data-testid='new-session']")).click();
     const choice = By.css("[data-testid='agent-option']");
-    await driver.wait(
-      async () => (await driver.findElements(choice)).length === 2,
-      10_000,
-      "the row never opened into the choice of agent",
-    );
+    const opened = async () => (await driver.findElements(choice)).length === 2;
+    await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
     let options = await driver.findElements(choice);
     await options[0].click();
     await waitForText(driver, "FAKE CLAUDE");
-    await driver.findElement(By.css("[data-testid='new-session']")).click();
-    await driver.wait(
-      async () => (await driver.findElements(choice)).length === 2,
-      10_000,
-    );
+    await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
     options = await driver.findElements(choice);
     await options[1].click();
     await waitForText(driver, "FAKE CODEX");
