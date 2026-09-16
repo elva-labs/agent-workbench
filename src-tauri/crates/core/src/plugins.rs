@@ -2350,6 +2350,7 @@ mod tests {
 
     /// A plugin that says its rows, points at a place, leaves a line, and
     /// answers an action with what went wrong.
+    #[cfg(unix)]
     const SECTIONS: &str = r#"#!/bin/sh
 echo '{"type":"hello","name":"board","version":"1.0.0","sections":[{"id":"checks"},{"id":"pull-request"}]}'
 echo '{"type":"section","id":"pull-request","title":"Pull request","detail":"main, 2 ahead","folded":true,"project":"PROJECT","rows":[{"id":"lint","label":"lint","detail":"3 of 4","state":"ok","actions":[{"id":"open","label":"Open"}],"default":"open"},{"id":"","label":"nothing"}],"actions":[{"id":"refresh","label":"Refresh","input":[{"id":"branch","label":"Branch","kind":"text"}]}]}'
@@ -2370,6 +2371,7 @@ done
     /// A plugin with a view: a page of its own, inline and from a file,
     /// one from outside its directory, data for the page, and whatever the
     /// page sends back.
+    #[cfg(unix)]
     const PAGES: &str = r#"#!/bin/sh
 echo '{"type":"hello","name":"pages","version":"1.0.0"}'
 echo '{"type":"view","project":"PROJECT","html":"<h1>Board</h1>","open":true}'
@@ -2389,6 +2391,7 @@ done
 
     /// A plugin whose manifest declares no view, and which sends a page
     /// anyway before saying something that is heard.
+    #[cfg(unix)]
     const UNSEEN: &str = r#"#!/bin/sh
 echo '{"type":"hello","name":"quiet","version":"1.0.0"}'
 echo '{"type":"view","project":"PROJECT","html":"<h1>Nothing</h1>","open":true}'
@@ -2401,6 +2404,7 @@ done
 "#;
 
     /// A plugin that writes down every line it is told, and answers `stop`.
+    #[cfg(unix)]
     const RECORDS: &str = r#"#!/bin/sh
 echo '{"type":"hello","name":"ears","version":"1.0.0"}'
 while IFS= read -r line; do
@@ -3305,6 +3309,7 @@ run = ["sh", "main.sh"]
 
     /// A plugin whose script its build writes, and which greets once it is
     /// run.
+    #[cfg(unix)]
     const GREETER: &str = r#"#!/bin/sh
 echo '{"type":"hello","name":"made","version":"1.0.0"}'
 while IFS= read -r line; do
@@ -3314,6 +3319,7 @@ while IFS= read -r line; do
 done
 "#;
 
+    #[cfg(unix)]
     const BUILDS: &str = r#"
 [[plugin]]
 name = "made"

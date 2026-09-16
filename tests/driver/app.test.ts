@@ -548,7 +548,9 @@ describe("the real app", () => {
     // The source: a directory on this machine, added by path. The form is
     // behind the link, beneath the sources the app offers.
     await openSettings();
-    await driver.findElement(By.css("[data-testid='plugin-add-source']")).click();
+    await driver
+      .findElement(By.css("[data-testid='plugin-add-source']"))
+      .click();
     await driver
       .findElement(By.css("[data-testid='plugin-location']"))
       .sendKeys(PLUGIN_SOURCE);
@@ -609,13 +611,29 @@ describe("the real app", () => {
       "the plugin's section never arrived",
     );
     expect(await sectionRows()).toHaveLength(0);
-    // The header's actions come with the fold, so it is opened first.
-    await click(`${CHANGES} [data-testid='plugin-fold']`);
-    await driver.wait(
-      async () => (await sectionRows()).length === 2,
-      10_000,
-      "the section did not open on its rows",
+    // The header's actions come with the fold, so it is opened first, by a
+    // click the driver makes itself, as it makes the ones before.
+    const fold = driver.findElement(
+      By.css(`${CHANGES} [data-testid='plugin-fold']`),
     );
+    await fold.click();
+    try {
+      await driver.wait(
+        async () => (await sectionRows()).length === 2,
+        10_000,
+        "the section did not open on its rows",
+      );
+    } catch (error) {
+      const folds = await driver.findElements(
+        By.css(`${CHANGES} [data-testid='plugin-fold']`),
+      );
+      const expanded = await Promise.all(
+        folds.map((candidate) => candidate.getAttribute("aria-expanded")),
+      );
+      throw new Error(
+        `${(error as Error).message}; folds ${folds.length}, expanded ${expanded.join(",")}, rows ${(await sectionRows()).length}`,
+      );
+    }
     const rows = await sectionRows();
     expect(rows[0].text).toContain("ready");
     expect(rows[0].text).toContain("the fixture is up");
@@ -814,14 +832,21 @@ describe("the real app", () => {
     // A claude session first, so the tags have two kinds to tell apart
     // whatever the tests before left in the list.
     await driver.findElement(By.css("[data-testid='new-session']")).click();
-    let options = await driver.findElements(
-      By.css("[data-testid='agent-option']"),
+    const choice = By.css("[data-testid='agent-option']");
+    await driver.wait(
+      async () => (await driver.findElements(choice)).length === 2,
+      10_000,
+      "the row never opened into the choice of agent",
     );
-    expect(options).toHaveLength(2);
+    let options = await driver.findElements(choice);
     await options[0].click();
     await waitForText(driver, "FAKE CLAUDE");
     await driver.findElement(By.css("[data-testid='new-session']")).click();
-    options = await driver.findElements(By.css("[data-testid='agent-option']"));
+    await driver.wait(
+      async () => (await driver.findElements(choice)).length === 2,
+      10_000,
+    );
+    options = await driver.findElements(choice);
     await options[1].click();
     await waitForText(driver, "FAKE CODEX");
     const tags = await driver.findElements(By.css("[data-testid='agent-tag']"));

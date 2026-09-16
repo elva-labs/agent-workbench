@@ -141,8 +141,10 @@ mod tests {
 
     #[test]
     fn lists_what_runs_under_a_process_and_stops_it() {
+        // Two commands, so the shell forks the sleep rather than becoming
+        // it, which a shell given one command does on macOS.
         let mut child = std::process::Command::new("sh")
-            .args(["-c", "sleep 30"])
+            .args(["-c", "sleep 30; true"])
             .spawn()
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(200));
