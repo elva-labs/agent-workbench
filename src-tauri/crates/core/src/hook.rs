@@ -672,7 +672,7 @@ mod tests {
         std::fs::write(
             &codex,
             format!(
-                "model = \"o3\"\n\n[projects.\"{}\"]\ntrust_level = \"trusted\"\n",
+                "model = \"o3\"\n\n[projects.'{}']\ntrust_level = \"trusted\"\n",
                 key(&project)
             ),
         )

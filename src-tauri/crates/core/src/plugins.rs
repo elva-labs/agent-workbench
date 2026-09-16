@@ -2323,6 +2323,9 @@ impl Inner {
 
 #[cfg(test)]
 mod tests {
+    // The fixtures that run a shell script are unix only, and so are the
+    // tests that use them; what only they use is unused on Windows.
+    #![allow(dead_code)]
     use super::*;
     use crate::events::testing::Recorder;
 
@@ -2551,6 +2554,7 @@ tools = ["ping"]
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_plugin_that_dies_before_greeting_says_why_and_is_left_alone_in_time() {
         let home = std::env::temp_dir().join("workbench-plugins-home-dies");
         let _ = std::fs::remove_dir_all(&home);
@@ -3170,6 +3174,7 @@ run = ["sh", "main.sh"]
     }
 
     #[test]
+    #[cfg(unix)]
     fn offers_the_sources_it_knows_and_fetches_one_when_asked() {
         let home = std::env::temp_dir().join("workbench-plugins-known-home");
         let _ = std::fs::remove_dir_all(&home);
@@ -3235,6 +3240,7 @@ run = ["sh", "main.sh"]
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_source_of_the_user_s_own_is_listed_beside_the_ones_offered() {
         let home = std::env::temp_dir().join("workbench-plugins-known-own-home");
         let _ = std::fs::remove_dir_all(&home);
@@ -3256,6 +3262,7 @@ run = ["sh", "main.sh"]
     }
 
     #[test]
+    #[cfg(unix)]
     fn adds_a_repository_by_cloning_it_and_checks_for_a_newer_commit() {
         let home = std::env::temp_dir().join("workbench-plugins-clone-home");
         let _ = std::fs::remove_dir_all(&home);
