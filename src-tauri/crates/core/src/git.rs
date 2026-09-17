@@ -77,6 +77,16 @@ fn letter(status: Status) -> &'static str {
     }
 }
 
+/// Whether a status entry names a directory rather than a file.
+///
+/// Git does not look inside a directory that holds a repository of its own,
+/// a worktree under the project among them, so status reports the whole
+/// directory as one path with a trailing slash. Nothing can be done with it:
+/// a directory has no diff, and reading it as a file is an error.
+fn is_directory(path: &str) -> bool {
+    path.ends_with('/')
+}
+
 pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
     let repo = open(root)?;
 
@@ -96,6 +106,7 @@ pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
         .iter()
         .filter(|entry| entry.status() != Status::CURRENT)
         .filter_map(|entry| entry.path().map(|path| (path.to_string(), entry.status())))
+        .filter(|(path, _)| !is_directory(path))
         .collect();
 
     let counts = line_counts(&repo, changed.iter().map(|(path, _)| path.as_str()));
@@ -302,7 +313,9 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
         for entry in statuses.iter() {
             if entry.status().is_wt_new() {
                 if let Some(path) = entry.path() {
-                    paths.push(path.to_string());
+                    if !is_directory(path) {
+                        paths.push(path.to_string());
+                    }
                 }
             }
         }
@@ -904,6 +917,30 @@ mod tests {
         // Paths stay relative to the worktree root, not to where you looked.
         let files = status(&dir.join("src/deep")).unwrap();
         assert_eq!(files[0].path, "src/deep/a.txt");
+    }
+
+    // A worktree under the project is a repository of its own, which git
+    // reports as one directory rather than the files inside it. A directory
+    // is not something the pane can show, so it is not a change.
+    #[test]
+    fn a_worktree_under_the_project_is_not_a_changed_file() {
+        let dir = repo("worktree-status");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+
+        let tree = worktree_add(&dir, "feature").unwrap();
+        write(Path::new(&tree), "b.txt", "two\n");
+
+        assert!(status(&dir).unwrap().is_empty(), "{:?}", status(&dir));
+        assert!(!list_files(&dir)
+            .unwrap()
+            .iter()
+            .any(|path| path.contains("worktrees")));
+
+        // The worktree's own changes are its own to show.
+        let inside = status(Path::new(&tree)).unwrap();
+        assert_eq!(inside.len(), 1);
+        assert_eq!(inside[0].path, "b.txt");
     }
 
     #[test]
