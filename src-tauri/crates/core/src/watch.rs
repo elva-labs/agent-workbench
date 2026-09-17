@@ -82,6 +82,28 @@ pub fn is_interesting(path: &Path) -> bool {
     matches!(name.as_str(), "index" | "HEAD" | "MERGE_HEAD" | "ORIG_HEAD")
 }
 
+/// The directory git keeps a worktree's index and HEAD in, when it is not
+/// inside the worktree itself.
+///
+/// A linked worktree holds a file where a repository holds a directory, and
+/// its index lives under the main repository as `.git/worktrees/<name>`. A
+/// commit or a `git add` made in the worktree writes there and nowhere in the
+/// tree, so without watching it too those never reach the pane.
+fn admin_dir(root: &Path) -> Option<PathBuf> {
+    let git = Repository::open(root).ok()?.path().to_path_buf();
+    // Both sides resolved, because one of them comes from git and the other
+    // from the caller, and a temporary directory or a home behind a symlink
+    // would otherwise look like somewhere else entirely.
+    if real(&git).starts_with(real(root)) {
+        return None;
+    }
+    Some(git)
+}
+
+fn real(path: &Path) -> PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// Watches a worktree, and optionally one more path: the file the PostToolUse
 /// hook writes. Both mean the same thing to the pane, which is that the tree
 /// may have moved.
@@ -117,6 +139,12 @@ pub fn watch(
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| format!("could not watch {}: {e}", root.display()))?;
+
+    // Best effort: a tree whose index cannot be watched still follows every
+    // edit, and only a commit made inside it waits for the next one.
+    if let Some(admin) = admin_dir(&root) {
+        let _ = watcher.watch(&admin, RecursiveMode::Recursive);
+    }
 
     let stop = Arc::new(Stop::default());
     std::thread::spawn({
@@ -317,6 +345,61 @@ mod tests {
         };
         assert!(!ignored.covers(&event(&[dir.join("target/debug/app")])));
         assert!(!ignored.covers(&event(&[])));
+    }
+
+    /// A repository with a linked worktree under it, and the worktree's path.
+    fn repo_with_worktree(name: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("workbench-watch-{name}"));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str], at: &Path| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(at)
+                .output()
+                .expect("git should be installed");
+        };
+        git(&["init", "-q", "-b", "main"], &dir);
+        git(&["config", "user.email", "test@example.com"], &dir);
+        git(&["config", "user.name", "Test"], &dir);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&["add", "-A"], &dir);
+        git(&["commit", "-qm", "one"], &dir);
+        let tree = dir.join(".claude/worktrees/feature");
+        git(
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                "--",
+                &tree.to_string_lossy(),
+            ],
+            &dir,
+        );
+        (dir, tree)
+    }
+
+    // A commit made in a worktree writes under the main repository, which is
+    // outside the tree the watcher is on.
+    #[test]
+    fn a_worktree_index_is_watched_where_git_keeps_it() {
+        let (dir, tree) = repo_with_worktree("admin");
+        let admin = admin_dir(&tree).expect("a linked worktree keeps its index elsewhere");
+        assert!(
+            real(&admin).starts_with(real(&dir).join(".git")),
+            "{}",
+            admin.display()
+        );
+        assert!(is_interesting(&admin.join("index")));
+    }
+
+    // A repository's own index is already inside what is being watched.
+    #[test]
+    fn a_plain_repository_has_nothing_else_to_watch() {
+        let (dir, _) = repo_with_worktree("admin-own");
+        assert_eq!(admin_dir(&dir), None);
     }
 
     #[test]

@@ -711,6 +711,29 @@ describe("titles", () => {
 });
 
 describe("where the session works", () => {
+  // The pane follows a session into its worktree before the process has said
+  // anything, and a session whose process has ended never says anything.
+  it("belongs to the worktree it was started in from the start", async () => {
+    const tree = `${A}/.claude/worktrees/feature`;
+    const session = create(A, null, "claude-code", tree);
+    await vi.waitFor(() => expect(session.worktree).toBe(tree));
+  });
+
+  it("has no worktree when it was started in the project itself", async () => {
+    const session = create(A);
+    await Promise.resolve();
+    expect(session.worktree).toBeNull();
+  });
+
+  // The running session's own cwd is the more current answer.
+  it("does not undo what the session's cwd already said", async () => {
+    const tree = `${A}/.claude/worktrees/feature`;
+    const session = create(A, null, "claude-code", tree);
+    session.worktree = "marker";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.worktree).toBe("marker");
+  });
+
   it("resolves a new directory to its repository", async () => {
     const session = live(A, "pty-1");
     await located(session.key, `${A}/.claude/worktrees/feature/inside`);

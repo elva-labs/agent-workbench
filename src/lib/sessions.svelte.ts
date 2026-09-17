@@ -421,6 +421,29 @@ export async function located(key: string, cwd: string | null) {
   }
 }
 
+/**
+ * The repository a session was started in, on the row from the start.
+ *
+ * A session started in a worktree, or resumed into the one it ran in, belongs
+ * to that worktree before its process has said anything, and a session whose
+ * process has ended never says anything again. Without this the changes pane
+ * would show the project's own tree, where a worktree's files are a directory
+ * git does not look inside.
+ */
+export async function startedIn(key: string, dir: string) {
+  try {
+    const info = await core().projectInfo(dir);
+    const session = byKey(key);
+    // Only while nothing better is known: the running session's own cwd is
+    // the more current answer, and it may have arrived first.
+    if (session !== null && session.worktree === null)
+      session.worktree = info.repository;
+  } catch {
+    // A directory the core cannot describe is no worktree, which is what the
+    // row already says.
+  }
+}
+
 const CWD_POLL = 2000;
 
 /**
@@ -518,6 +541,7 @@ export function create(
   // mutations nothing sees.
   const live = sessions.all[sessions.all.length - 1];
   sessions.active = live.key;
+  if (startIn !== null) void startedIn(live.key, startIn);
   return live;
 }
 
