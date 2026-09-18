@@ -23,6 +23,9 @@ machine kind it can put one on.
 3. The release workflow builds the daemons, then the bundles on all four
    targets, and opens a draft release for the tag with everything attached.
    It refuses a tag that does not match the version in the configuration.
+   Attaching is a step of its own that retries and replaces what is already
+   there, so a run that fell over while uploading can be run again from the
+   Actions tab; the jobs that succeeded keep what they attached.
 4. Read the draft, then publish it.
 5. Put the release in the organisation's Homebrew tap. `scripts/cask.sh`
    with the version prints the cask for the app, and `scripts/formula.sh`
