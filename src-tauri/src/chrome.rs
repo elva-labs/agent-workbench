@@ -15,6 +15,12 @@
 //! keeps its plain title bar: a toolbar would hold the buttons lower by
 //! itself, but macOS 26 rounds a toolbar window's corners far more than
 //! every other window's.
+//!
+//! Full screen is AppKit's: it moves the buttons into a bar of its own that
+//! shows under the pointer, and sizes the title bar's views itself on the
+//! way in and out, laying them out again until they hold the frames it
+//! asked for. The app places nothing from the start of the way in until the
+//! window is back out.
 
 /// Where the close button's left edge goes, in points from the window's
 /// left edge: past the frame's padding and the pane's border, with the same
@@ -52,6 +58,12 @@ pub fn set_controls_centre(_window: &tauri::WebviewWindow, _centre: u32) {}
 #[cfg(target_os = "macos")]
 const CONTROLS_GAP: f64 = 8.0;
 
+/// Set while the window is on its way into or out of full screen, which the
+/// style mask does not say until part of the way through.
+#[cfg(target_os = "macos")]
+static FULL_SCREEN_TRANSITION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_os = "macos")]
 objc2::define_class!(
     /// A view that draws nothing and places the traffic lights when it is
@@ -81,7 +93,11 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2::{MainThreadMarker, MainThreadOnly};
-    use objc2_app_kit::{NSView, NSViewFrameDidChangeNotification, NSWindow, NSWindowButton};
+    use objc2_app_kit::{
+        NSView, NSViewFrameDidChangeNotification, NSWindow, NSWindowButton,
+        NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
+        NSWindowWillEnterFullScreenNotification, NSWindowWillExitFullScreenNotification,
+    };
     use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSRect};
     use std::ptr::NonNull;
 
@@ -146,6 +162,39 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
         };
         std::mem::forget(token);
     }
+
+    // The way into and out of full screen is marked from its first
+    // notification to its last. Once in, the style mask says so; once out,
+    // the buttons are back in the title bar at AppKit's height and are
+    // placed again.
+    let window_object: &AnyObject = ns_window;
+    for (name, transition) in [
+        (unsafe { NSWindowWillEnterFullScreenNotification }, true),
+        (unsafe { NSWindowDidEnterFullScreenNotification }, false),
+        (unsafe { NSWindowWillExitFullScreenNotification }, true),
+        (unsafe { NSWindowDidExitFullScreenNotification }, false),
+    ] {
+        let again = window.clone();
+        let placer = placer.clone();
+        let block = block2::RcBlock::new(move |_: NonNull<NSNotification>| {
+            FULL_SCREEN_TRANSITION.store(transition, std::sync::atomic::Ordering::SeqCst);
+            if !transition {
+                place_window_controls(&again);
+                if let Some(placer) = &placer {
+                    placer.setNeedsLayout(true);
+                }
+            }
+        });
+        let token = unsafe {
+            centre.addObserverForName_object_queue_usingBlock(
+                Some(name),
+                Some(window_object),
+                None,
+                &block,
+            )
+        };
+        std::mem::forget(token);
+    }
 }
 
 /// Puts the three standard buttons where the header's text is. The title
@@ -163,7 +212,7 @@ fn place_window_controls(window: &tauri::WebviewWindow) {
 
 #[cfg(target_os = "macos")]
 fn place_controls(ns_window: &objc2_app_kit::NSWindow) {
-    use objc2_app_kit::NSWindowButton;
+    use objc2_app_kit::{NSWindowButton, NSWindowStyleMask};
     use objc2_foundation::NSPoint;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -181,9 +230,27 @@ fn place_controls(ns_window: &objc2_app_kit::NSWindow) {
         }
     }
 
+    // In full screen, and on the way in and out, the title bar is AppKit's
+    // to size: it lays the bar out again for as long as a frame is not the
+    // one it set.
+    if FULL_SCREEN_TRANSITION.load(Ordering::SeqCst)
+        || ns_window
+            .styleMask()
+            .contains(NSWindowStyleMask::FullScreen)
+    {
+        return;
+    }
+
     let Some(close) = ns_window.standardWindowButton(NSWindowButton::CloseButton) else {
         return;
     };
+    // Full screen keeps the buttons in a window of its own.
+    if !close
+        .window()
+        .is_some_and(|theirs| std::ptr::eq(&*theirs, ns_window))
+    {
+        return;
+    }
     let Some(miniaturize) = ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton)
     else {
         return;

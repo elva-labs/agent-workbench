@@ -150,6 +150,9 @@ the buttons on its middle; since macOS lays the title bar out again whenever
 it likes, it listens for the buttons' frames changing and puts them back each
 time. The window keeps its plain title bar rather than a toolbar, because
 macOS 26 rounds a toolbar window's corners far more than every other window's.
+In full screen macOS keeps the buttons in a bar of its own that shows under
+the pointer, and the app places nothing from the start of the way in until
+the window is back out.
 The pane headers are drag regions: grab one to move the window, double-click
 to zoom.
 
