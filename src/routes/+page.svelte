@@ -13,6 +13,7 @@
   import { resume } from "$lib/resume.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
+  import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
@@ -141,6 +142,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onConductRequest((request) => void conductRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onBrowserRequest((request) => void browserRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginState((event) => pluginStateChanged(event))

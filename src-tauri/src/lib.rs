@@ -454,6 +454,37 @@ async fn conduct_answer(
     .await
 }
 
+/// The window's one answer to a call one of its agents made on a browser
+/// tool: the text the agent reads, or the reason it could not be done. The
+/// browser itself always opens on this machine; the directory the call came
+/// from says which machine's tool server waits for the answer.
+#[tauri::command]
+async fn browser_answer(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    cwd: String,
+    content: Option<String>,
+    error: Option<String>,
+) -> Result<Value, String> {
+    let sent = (id.clone(), content.clone(), error.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&cwd),
+        "browser_answer",
+        move |_| {
+            let (id, content, error) = sent;
+            json!({ "id": id, "content": content, "error": error })
+        },
+        move |core, _| {
+            core.conduct_answer(&id, content, error)?;
+            Ok(Value::Null)
+        },
+    )
+    .await
+}
+
 /// Where the middle of the leftmost header is, in points from the window's
 /// top: the window measures it, and the platform's own controls follow.
 /// It asks for the window: one that shows a browser holds more than one
@@ -1017,6 +1048,7 @@ pub fn run() {
             plugin_action,
             plugin_view_message,
             conduct_answer,
+            browser_answer,
             orchestrator_dir,
             controls_centre,
             worktree_add,

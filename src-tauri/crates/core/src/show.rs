@@ -29,6 +29,7 @@ pub const DIFF_REQUEST: &str = "diff_request";
 pub const TERMINAL_REQUEST: &str = "terminal_request";
 pub const NOTIFY_REQUEST: &str = "notify_request";
 pub const CONDUCT_REQUEST: &str = "conduct_request";
+pub const BROWSER_REQUEST: &str = "browser_request";
 
 /// The kinds the `present` tool takes, by extension: images, PDFs, and
 /// Markdown, which the window renders. Video is not among them yet.
@@ -202,6 +203,40 @@ pub struct ConductRequest {
     pub session: Option<String>,
 }
 
+/// The tools an agent drives the embedded browser with. The window owns the
+/// browser's tabs and answers each of these itself, the same way it answers
+/// a conductor's call.
+pub const BROWSER_TOOLS: &[&str] = &[
+    "browser_open",
+    "browser_tabs",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_console",
+    "browser_screenshot",
+    "browser_eval",
+    "browser_close",
+];
+
+/// A call the agent made on one of the browser's tools. The window answers
+/// it, and the answer goes where the tool server waits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserRequest {
+    /// What the answer file is named after, unique to this call.
+    pub id: String,
+    /// One of [`BROWSER_TOOLS`].
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// Where the calling agent runs, which says which project it is in. The
+    /// browser itself always opens on the user's own machine.
+    pub cwd: String,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// A line of the log, whichever tool wrote it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -213,6 +248,7 @@ pub enum Request {
     Notify(NotifyRequest),
     Tool(ToolRequest),
     Conduct(ConductRequest),
+    Browser(BrowserRequest),
 }
 
 /// What a plugin answered a tool call with: the text for the agent, or
@@ -328,6 +364,15 @@ pub fn classify(line: &str) -> Option<Request> {
             }
             Some(Request::Conduct(conduct))
         }
+        Request::Browser(browser) => {
+            if !valid_id(&browser.id)
+                || !BROWSER_TOOLS.contains(&browser.tool.as_str())
+                || browser.cwd.is_empty()
+            {
+                return None;
+            }
+            Some(Request::Browser(browser))
+        }
     }
 }
 
@@ -347,15 +392,17 @@ pub fn append(home: &Path, request: &Request) -> Result<(), String> {
     writeln!(file, "{line}").map_err(|e| e.to_string())
 }
 
-/// Watches the request log for the life of the core. Two kinds are not
-/// plain events: a plugin's tool call goes to `on_tool`, which hands it
-/// to the plugin that owns the tool, and a call on a conductor's tool
-/// goes to `on_conduct`, which asks whoever owns the sessions.
+/// Watches the request log for the life of the core. Three kinds are not
+/// plain events: a plugin's tool call goes to `on_tool`, which hands it to
+/// the plugin that owns the tool, a call on a conductor's tool goes to
+/// `on_conduct`, which asks whoever owns the sessions, and a call on a
+/// browser tool goes to `on_browser`, which asks whoever owns the browser.
 pub fn watch(
     sink: Arc<dyn Sink>,
     path: PathBuf,
     on_tool: impl Fn(ToolRequest) + Send + Sync + 'static,
     on_conduct: impl Fn(ConductRequest) + Send + Sync + 'static,
+    on_browser: impl Fn(BrowserRequest) + Send + Sync + 'static,
 ) -> Result<(), String> {
     activity::watch_log(sink, path, ROTATE_AT, move |line| {
         classify(line).and_then(|request| match request {
@@ -380,6 +427,10 @@ pub fn watch(
             }
             Request::Conduct(conduct) => {
                 on_conduct(conduct);
+                None
+            }
+            Request::Browser(browser) => {
+                on_browser(browser);
                 None
             }
         })
@@ -434,7 +485,8 @@ mod tests {
             | Request::Terminal(_)
             | Request::Notify(_)
             | Request::Tool(_)
-            | Request::Conduct(_) => None,
+            | Request::Conduct(_)
+            | Request::Browser(_) => None,
         }
     }
 
@@ -527,6 +579,35 @@ mod tests {
             classify(r#"{"kind":"conduct","id":"../out","tool":"start","cwd":"/p"}"#).is_none()
         );
         assert!(classify(r#"{"kind":"conduct","id":"","tool":"start","cwd":"/p"}"#).is_none());
+    }
+
+    #[test]
+    fn reads_a_browser_call_and_refuses_a_tool_it_does_not_serve() {
+        let line = r#"{"kind":"browser","id":"b-1","tool":"browser_open","arguments":{"url":"https://example.com"},"cwd":"/p","session":"s-1"}"#;
+        let Some(Request::Browser(request)) = classify(line) else {
+            panic!("not a browser request");
+        };
+        assert_eq!(request.id, "b-1");
+        assert_eq!(request.tool, "browser_open");
+        assert_eq!(request.arguments["url"], "https://example.com");
+        assert_eq!(request.cwd, "/p");
+        assert_eq!(request.session.as_deref(), Some("s-1"));
+        for tool in BROWSER_TOOLS {
+            let line = format!(r#"{{"kind":"browser","id":"b-1","tool":"{tool}","cwd":"/p"}}"#);
+            assert!(classify(&line).is_some(), "{tool}");
+        }
+        assert!(classify(r#"{"kind":"browser","id":"b-1","tool":"delete","cwd":"/p"}"#).is_none());
+        assert!(
+            classify(r#"{"kind":"browser","id":"b-1","tool":"browser_open","cwd":""}"#).is_none()
+        );
+        assert!(classify(r#"{"kind":"browser","id":"b-1","tool":"browser_open"}"#).is_none());
+        assert!(
+            classify(r#"{"kind":"browser","id":"../out","tool":"browser_open","cwd":"/p"}"#)
+                .is_none()
+        );
+        assert!(
+            classify(r#"{"kind":"browser","id":"","tool":"browser_open","cwd":"/p"}"#).is_none()
+        );
     }
 
     #[test]

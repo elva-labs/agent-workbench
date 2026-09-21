@@ -249,6 +249,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         onNotifyRequest: async () => () => {},
         onConductRequest: async () => () => {},
         conductAnswer: async () => {},
+        onBrowserRequest: async () => () => {},
+        browserAnswer: async () => {},
         worktreeAdd: async (project: string, name: string) =>
           `${project}/${name}`,
         setSelection: async () => {},

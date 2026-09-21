@@ -109,6 +109,31 @@ export interface ConductRequest {
   session: string | null;
 }
 
+/** A call an agent made on one of the browser's tools: opening a tab,
+    reading or driving its page, or closing it. The window answers every
+    one, the same way it answers a conductor's call; the browser itself
+    always opens on this machine. */
+export interface BrowserRequest {
+  /** What the answer is named after, unique to this call. */
+  id: string;
+  tool:
+    | "browser_open"
+    | "browser_tabs"
+    | "browser_navigate"
+    | "browser_snapshot"
+    | "browser_click"
+    | "browser_type"
+    | "browser_console"
+    | "browser_screenshot"
+    | "browser_eval"
+    | "browser_close";
+  arguments: Record<string, unknown>;
+  /** Where the calling agent runs, which says which project it is in. */
+  cwd: string;
+  /** The session the calling agent runs as, when its environment named one. */
+  session: string | null;
+}
+
 /** A plugin as its manifest declares it, plus what is on and running. */
 export interface PluginInfo {
   name: string;
@@ -447,6 +472,15 @@ export interface BrowserSnapshot {
   active: number | null;
 }
 
+/** One message a tab's page produced, as its console capture recorded it. */
+export interface BrowserConsoleEntry {
+  level: string;
+  text: string;
+  /** Milliseconds since the epoch. */
+  time: number;
+  url: string;
+}
+
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
@@ -551,6 +585,19 @@ export interface Core {
     content: string | null,
     error: string | null,
   ): Promise<void>;
+  /** A session called one of the browser's tools. */
+  onBrowserRequest(
+    handler: (request: BrowserRequest) => void,
+  ): Promise<() => void>;
+  /** The window's one answer to a browser call: the text the agent reads,
+      or the reason it could not be done. The directory the call came from
+      says which machine's tool server waits for it. */
+  browserAnswer(
+    id: string,
+    cwd: string,
+    content: string | null,
+    error: string | null,
+  ): Promise<void>;
   /** Makes a worktree of the project, and answers with its absolute path. */
   worktreeAdd(project: string, name: string): Promise<string>;
   /** Where an orchestrator session runs, made if it is not there yet. */
@@ -601,6 +648,28 @@ export interface Core {
   onBrowserTabs(
     handler: (snapshot: BrowserSnapshot) => void,
   ): Promise<() => void>;
+  /** The tab's page as text, with a ref on each element `browserClick` and
+      `browserType` can reach. Null id means the active tab. */
+  browserSnapshot(id: number | null): Promise<string>;
+  /** Clicks the element a snapshot gave `ref` for. Rejects with a plain
+      reason: "no such element; take a new snapshot" for a stale one. */
+  browserClick(id: number | null, ref: string): Promise<void>;
+  /** Types into the element a snapshot gave `ref` for, replacing what is
+      there; with submit, an Enter follows and its form, if it has one, is
+      submitted. */
+  browserType(
+    id: number | null,
+    ref: string,
+    text: string,
+    submit: boolean,
+  ): Promise<void>;
+  /** The tab's console messages since the last call, then clears them. */
+  browserConsole(id: number | null): Promise<BrowserConsoleEntry[]>;
+  /** A screenshot of the tab, as the path of the PNG it was written to. */
+  browserScreenshot(id: number | null): Promise<string>;
+  /** Runs `script` as the body of an async function in the tab's page, and
+      answers with its result, JSON encoded. */
+  browserEval(id: number | null, script: string): Promise<string>;
 
   /** Sessions the agent already has on disk for this project, newest first. */
   transcripts(project: string, agent: AgentId): Promise<Transcript[]>;
@@ -803,6 +872,13 @@ const tauriCore: Core = {
   },
   conductAnswer: (id, cwd, content, error) =>
     invoke<void>("conduct_answer", { id, cwd, content, error }),
+  async onBrowserRequest(handler) {
+    return listen<BrowserRequest>("browser_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  browserAnswer: (id, cwd, content, error) =>
+    invoke<void>("browser_answer", { id, cwd, content, error }),
   worktreeAdd: (project, name) =>
     invoke<string>("worktree_add", { project, name }),
   orchestratorDir: () => invoke<string>("orchestrator_dir"),
@@ -833,6 +909,14 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  browserSnapshot: (id) => invoke<string>("browser_snapshot", { id }),
+  browserClick: (id, ref) => invoke<void>("browser_click", { id, ref }),
+  browserType: (id, ref, text, submit) =>
+    invoke<void>("browser_type", { id, ref, text, submit }),
+  browserConsole: (id) =>
+    invoke<BrowserConsoleEntry[]>("browser_console", { id }),
+  browserScreenshot: (id) => invoke<string>("browser_screenshot", { id }),
+  browserEval: (id, script) => invoke<string>("browser_eval", { id, script }),
 
   async onFileDrag(handler) {
     return getCurrentWebview().onDragDropEvent((event) => {
@@ -994,6 +1078,10 @@ const detachedCore: Core = {
     return () => {};
   },
   async conductAnswer() {},
+  async onBrowserRequest() {
+    return () => {};
+  },
+  async browserAnswer() {},
   async worktreeAdd() {
     throw new Error("no core");
   },
@@ -1043,6 +1131,24 @@ const detachedCore: Core = {
   },
   async onBrowserTabs() {
     return () => {};
+  },
+  async browserSnapshot() {
+    throw new Error("no core");
+  },
+  async browserClick() {
+    throw new Error("no core");
+  },
+  async browserType() {
+    throw new Error("no core");
+  },
+  async browserConsole() {
+    return [];
+  },
+  async browserScreenshot() {
+    throw new Error("no core");
+  },
+  async browserEval() {
+    throw new Error("no core");
   },
   async transcripts() {
     return [];

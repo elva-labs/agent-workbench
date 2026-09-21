@@ -19,8 +19,9 @@ use serde_json::{json, Value};
 
 use crate::plugins::{self, PublishedTool};
 use crate::show::{
-    self, resolve, Answer, ConductRequest, DiffRequest, NotifyRequest, PresentRequest, Request,
-    ShowRequest, TerminalRequest, ToolRequest, CONDUCT_TOOLS, MEDIA_EXTENSIONS,
+    self, resolve, Answer, BrowserRequest, ConductRequest, DiffRequest, NotifyRequest,
+    PresentRequest, Request, ShowRequest, TerminalRequest, ToolRequest, BROWSER_TOOLS,
+    CONDUCT_TOOLS, MEDIA_EXTENSIONS,
 };
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -30,7 +31,7 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 /// something put together at run time.
 macro_rules! general_instructions {
     () => {
-        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress."
+        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters."
     };
 }
 
@@ -83,14 +84,16 @@ fn instructions() -> &'static str {
 
 /// The app's own tools, as the agent sees them.
 pub fn tools() -> Vec<Value> {
-    vec![
+    let mut listed = vec![
         tool(),
         diff_tool(),
         present_tool(),
         selection_tool(),
         terminal_tool(),
         notify_tool(),
-    ]
+    ];
+    listed.extend(browser_tools());
+    listed
 }
 
 /// How long a plugin or the app has to answer a call before the agent is
@@ -225,6 +228,161 @@ pub fn present_tool() -> Value {
                 "caption": { "type": "string", "description": "One sentence on what the files show." }
             },
             "required": ["files"]
+        }
+    })
+}
+
+/// The tools the agent drives the user's Agent Workbench browser with, as
+/// the agent sees them. The browser always opens on the user's own machine,
+/// whatever machine the calling session runs on.
+pub fn browser_tools() -> Vec<Value> {
+    vec![
+        browser_open_tool(),
+        browser_tabs_tool(),
+        browser_navigate_tool(),
+        browser_snapshot_tool(),
+        browser_click_tool(),
+        browser_type_tool(),
+        browser_console_tool(),
+        browser_screenshot_tool(),
+        browser_eval_tool(),
+        browser_close_tool(),
+    ]
+}
+
+pub fn browser_open_tool() -> Value {
+    json!({
+        "name": "browser_open",
+        "description": "Opens a url in a new tab in the user's Agent Workbench browser and shows it in the viewer. Use this when the user asks to see a page or a web app, or when you want to look at one yourself. Answers with the tab's id, its url and its title.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "The address to open." }
+            },
+            "required": ["url"]
+        }
+    })
+}
+
+pub fn browser_tabs_tool() -> Value {
+    json!({
+        "name": "browser_tabs",
+        "description": "The tabs open in the user's Agent Workbench browser: each one's id, url and title, whether it is the active tab, whether it is loading, and its last load error. Call it to see what is open before acting on a tab by id.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
+pub fn browser_navigate_tool() -> Value {
+    json!({
+        "name": "browser_navigate",
+        "description": "Sends a tab to a new address, or steps it back, forward or reloads it. Give url to go to an address, or action for one of back, forward or reload; give exactly one of the two.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." },
+                "url": { "type": "string", "description": "The address to go to." },
+                "action": { "type": "string", "enum": ["back", "forward", "reload"], "description": "A step to take instead of going to an address." }
+            }
+        }
+    })
+}
+
+pub fn browser_snapshot_tool() -> Value {
+    json!({
+        "name": "browser_snapshot",
+        "description": "The tab's page as text, with a short ref on each element that can be clicked or typed into. This is the cheap way to read a page: prefer it over browser_screenshot, and use the refs it gives with browser_click and browser_type.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." }
+            }
+        }
+    })
+}
+
+pub fn browser_click_tool() -> Value {
+    json!({
+        "name": "browser_click",
+        "description": "Clicks the element a browser_snapshot gave a ref for. Take a fresh snapshot first if the page has changed since the ref was read.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." },
+                "ref": { "type": "string", "description": "An element's ref, from browser_snapshot." }
+            },
+            "required": ["ref"]
+        }
+    })
+}
+
+pub fn browser_type_tool() -> Value {
+    json!({
+        "name": "browser_type",
+        "description": "Types text into the element a browser_snapshot gave a ref for, replacing what is there. With submit, an Enter follows and the element's form, if it has one, is submitted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." },
+                "ref": { "type": "string", "description": "An element's ref, from browser_snapshot." },
+                "text": { "type": "string", "description": "The text to type." },
+                "submit": { "type": "boolean", "description": "Press Enter and submit the element's form after typing." }
+            },
+            "required": ["ref", "text"]
+        }
+    })
+}
+
+pub fn browser_console_tool() -> Value {
+    json!({
+        "name": "browser_console",
+        "description": "The tab's console messages since the last call to this tool, then clears them. This is the first thing to look at after changing a web app: a script error or a failed request shows up here.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." }
+            }
+        }
+    })
+}
+
+pub fn browser_screenshot_tool() -> Value {
+    json!({
+        "name": "browser_screenshot",
+        "description": "A screenshot of the tab, as a PNG you can read as an image. The tab is brought to the front and the browser shown first, since a hidden view cannot be captured. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." }
+            }
+        }
+    })
+}
+
+pub fn browser_eval_tool() -> Value {
+    json!({
+        "name": "browser_eval",
+        "description": "Runs script as the body of an async function in the tab's page, and answers with its result as JSON. return and await both work. Use it for anything browser_snapshot, browser_click and browser_type cannot reach.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. The active tab when left out." },
+                "script": { "type": "string", "description": "The function body to run." }
+            },
+            "required": ["script"]
+        }
+    })
+}
+
+pub fn browser_close_tool() -> Value {
+    json!({
+        "name": "browser_close",
+        "description": "Closes a tab.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs." }
+            },
+            "required": ["tab"]
         }
     })
 }
@@ -509,6 +667,9 @@ fn call(
         _ if CONDUCT_TOOLS.contains(&name) => {
             conduct_call(home, cwd, session, name, &arguments, waits)
         }
+        _ if BROWSER_TOOLS.contains(&name) => {
+            browser_call(home, cwd, session, name, &arguments, waits)
+        }
         _ => plugin_call(home, cwd, session, name, &arguments, waits.answer),
     }
 }
@@ -563,6 +724,39 @@ fn conduct_call(
         } else {
             format!("the app did not answer the {name} tool within a minute")
         });
+    };
+    if let Some(error) = answer.error {
+        return Err(error);
+    }
+    Ok(json!({ "content": [{ "type": "text", "text": answer.content.unwrap_or_default() }] }))
+}
+
+/// One of the browser's tools: the browser is the window's, so the call
+/// goes in the log for the window to answer, the same way a conductor's
+/// call does.
+fn browser_call(
+    home: &Path,
+    cwd: &Path,
+    session: Option<&str>,
+    name: &str,
+    arguments: &Value,
+    waits: Waits,
+) -> Result<Value, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    show::append(
+        home,
+        &Request::Browser(BrowserRequest {
+            id: id.clone(),
+            tool: name.to_string(),
+            arguments: arguments.clone(),
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
+    let Some(answer) = await_answer(home, &id, waits.answer) else {
+        return Err(format!(
+            "the app did not answer the {name} tool within a minute"
+        ));
     };
     if let Some(error) = answer.error {
         return Err(error);
@@ -950,6 +1144,29 @@ mod tests {
         });
     }
 
+    /// Answers a browser call as it lands, the way the window does once it
+    /// has performed it.
+    fn answer_the_browser_call(home: &Path, answer: Answer) {
+        let home = home.to_path_buf();
+        std::thread::spawn(move || {
+            for _ in 0..200 {
+                let text = std::fs::read_to_string(show::requests_path(&home)).unwrap_or_default();
+                let call = text
+                    .lines()
+                    .rev()
+                    .find_map(|line| match show::classify(line) {
+                        Some(Request::Browser(call)) => Some(call),
+                        _ => None,
+                    });
+                if let Some(call) = call {
+                    show::write_answer(&home, &call.id, &answer).unwrap();
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+    }
+
     #[test]
     fn lists_a_plugin_tool_after_the_app_s_own() {
         let home = home("plugin-list");
@@ -963,7 +1180,7 @@ mod tests {
             .unwrap();
             listed["result"]["tools"].as_array().unwrap().clone()
         };
-        assert_eq!(ask(&home).len(), 13);
+        assert_eq!(ask(&home).len(), 23);
         publish_a_tool(&home);
         let listed = ask(&home);
         let names: Vec<&str> = listed
@@ -979,6 +1196,16 @@ mod tests {
                 "selection",
                 "terminal",
                 "notify",
+                "browser_open",
+                "browser_tabs",
+                "browser_navigate",
+                "browser_snapshot",
+                "browser_click",
+                "browser_type",
+                "browser_console",
+                "browser_screenshot",
+                "browser_eval",
+                "browser_close",
                 "projects",
                 "sessions",
                 "start",
@@ -989,9 +1216,9 @@ mod tests {
                 "github_pr"
             ]
         );
-        assert_eq!(listed[13]["description"], "The branch's pull request.");
+        assert_eq!(listed[23]["description"], "The branch's pull request.");
         assert_eq!(
-            listed[13]["inputSchema"]["properties"]["state"]["type"],
+            listed[23]["inputSchema"]["properties"]["state"]["type"],
             "string"
         );
     }
@@ -1071,6 +1298,7 @@ mod tests {
         let instructions = answer["result"]["instructions"].as_str().unwrap();
         assert!(instructions.contains("show tool"));
         assert!(instructions.contains("present tool"));
+        assert!(instructions.contains("browser_open"));
         assert!(handle(
             &home,
             Path::new("/p"),
@@ -1100,6 +1328,16 @@ mod tests {
                 "selection",
                 "terminal",
                 "notify",
+                "browser_open",
+                "browser_tabs",
+                "browser_navigate",
+                "browser_snapshot",
+                "browser_click",
+                "browser_type",
+                "browser_console",
+                "browser_screenshot",
+                "browser_eval",
+                "browser_close",
                 "projects",
                 "sessions",
                 "start",
@@ -1152,7 +1390,7 @@ mod tests {
         )
         .unwrap();
         let listed = listed["result"]["tools"].as_array().unwrap().clone();
-        assert_eq!(listed.len(), 13);
+        assert_eq!(listed.len(), 23);
         let named = |name: &str| {
             listed
                 .iter()
@@ -1203,6 +1441,68 @@ mod tests {
             named("sessions")["inputSchema"]["properties"]["project"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn the_browser_s_tools_say_what_they_take() {
+        let home = home("browser-schemas");
+        let listed = handle(
+            &home,
+            Path::new("/p"),
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        )
+        .unwrap();
+        let listed = listed["result"]["tools"].as_array().unwrap().clone();
+        let named = |name: &str| {
+            listed
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            named("browser_open")["inputSchema"]["required"],
+            json!(["url"])
+        );
+        assert_eq!(
+            named("browser_tabs")["inputSchema"]["properties"],
+            json!({})
+        );
+        assert!(
+            named("browser_navigate")["inputSchema"]["properties"]["action"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("reload"))
+        );
+        assert_eq!(
+            named("browser_click")["inputSchema"]["required"],
+            json!(["ref"])
+        );
+        assert_eq!(
+            named("browser_type")["inputSchema"]["required"],
+            json!(["ref", "text"])
+        );
+        assert_eq!(
+            named("browser_close")["inputSchema"]["required"],
+            json!(["tab"])
+        );
+        assert_eq!(
+            named("browser_eval")["inputSchema"]["required"],
+            json!(["script"])
+        );
+        assert!(named("browser_screenshot")["description"]
+            .as_str()
+            .unwrap()
+            .contains("front"));
+        assert!(named("browser_snapshot")["description"]
+            .as_str()
+            .unwrap()
+            .contains("ref"));
+        assert!(named("browser_console")["description"]
+            .as_str()
+            .unwrap()
+            .contains("clears"));
     }
 
     #[test]
@@ -1442,6 +1742,60 @@ mod tests {
         assert_eq!(
             answer["result"]["content"][0]["text"],
             "the app did not answer the sessions tool within a minute"
+        );
+    }
+
+    #[test]
+    fn a_browser_call_lands_in_the_log_and_answers_with_what_the_app_said() {
+        let home = home("browser-open");
+        answer_the_browser_call(
+            &home,
+            Answer {
+                content: Some("Opened tab 1: https://example.com/".into()),
+                error: None,
+            },
+        );
+        let answer = handle_within(&home, Path::new("/p"), Some("s-1"), r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"browser_open","arguments":{"url":"https://example.com"}}}"#, Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "Opened tab 1: https://example.com/"
+        );
+        assert!(answer["result"]["isError"].is_null());
+        let Request::Browser(call) = first(&home) else {
+            panic!("not a browser request");
+        };
+        assert!(!call.id.is_empty());
+        assert_eq!(call.tool, "browser_open");
+        assert_eq!(call.arguments["url"], "https://example.com");
+        assert_eq!(call.cwd, "/p");
+        assert_eq!(call.session.as_deref(), Some("s-1"));
+        // The answer is taken away once it has been read.
+        assert!(!show::answer_path(&home, &call.id).exists());
+    }
+
+    #[test]
+    fn the_app_s_error_on_a_browser_call_comes_back_as_a_tool_error() {
+        let home = home("browser-error");
+        answer_the_browser_call(
+            &home,
+            Answer {
+                content: None,
+                error: Some("no such tab".into()),
+            },
+        );
+        let answer = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"browser_click","arguments":{"tab":9,"ref":"e1"}}}"#, Duration::from_secs(10)).unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        assert_eq!(answer["result"]["content"][0]["text"], "no such tab");
+    }
+
+    #[test]
+    fn an_app_that_does_not_answer_a_browser_call_is_reported_to_the_agent() {
+        let home = home("browser-silent");
+        let answer = handle_within(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"browser_tabs","arguments":{}}}"#, Duration::from_millis(150)).unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        assert_eq!(
+            answer["result"]["content"][0]["text"],
+            "the app did not answer the browser_tabs tool within a minute"
         );
     }
 

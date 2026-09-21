@@ -117,6 +117,12 @@ export async function installFakeCore(
         w.__browserTabs?.(browserSnapshot());
       };
 
+      // The tab a page-tool call names, or the active one for null.
+      const resolveFakeTab = (id: number | null): FakeBrowserTab | undefined =>
+        id === null
+          ? browserState.tabs.find((tab) => tab.id === browserState.active)
+          : browserState.tabs.find((tab) => tab.id === id);
+
       const hostOf = (url: string) => {
         try {
           return new URL(url).hostname;
@@ -549,6 +555,22 @@ export async function installFakeCore(
           const w = window as unknown as { __conductAnswers?: unknown[] };
           (w.__conductAnswers ??= []).push({ id, cwd, content, error });
         },
+        // The browser's own calls, pushed by a test through the handler,
+        // and the window's answers, read back from the list.
+        onBrowserRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__browserRequest =
+            handler;
+          return () => {};
+        },
+        browserAnswer: async (
+          id: string,
+          cwd: string,
+          content: string | null,
+          error: string | null,
+        ) => {
+          const w = window as unknown as { __browserAnswers?: unknown[] };
+          (w.__browserAnswers ??= []).push({ id, cwd, content, error });
+        },
         worktreeAdd: async (project: string, name: string) =>
           `${project}/.claude/worktrees/${name}`,
         orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",
@@ -777,6 +799,47 @@ export async function installFakeCore(
           (window as unknown as Record<string, unknown>).__browserTabs =
             handler;
           return () => {};
+        },
+        // The page tools: there is no real page behind a fake tab, so each
+        // answers with simple canned data keyed off the tab it was asked
+        // about, enough to exercise the wiring from a browser tool's call
+        // to its answer.
+        browserSnapshot: async (id: number | null) => {
+          const tab = resolveFakeTab(id);
+          if (tab === undefined) throw new Error("no such tab");
+          return `page ${tab.url}\n- link "Example" [ref=e1]`;
+        },
+        browserClick: async (id: number | null, ref: string) => {
+          const tab = resolveFakeTab(id);
+          if (tab === undefined) throw new Error("no such tab");
+          if (ref !== "e1") throw new Error("no such element; take a new snapshot");
+        },
+        browserType: async (
+          id: number | null,
+          ref: string,
+          _text: string,
+          _submit: boolean,
+        ) => {
+          const tab = resolveFakeTab(id);
+          if (tab === undefined) throw new Error("no such tab");
+          if (ref !== "e1") throw new Error("no such element; take a new snapshot");
+        },
+        browserConsole: async (id: number | null) => {
+          const tab = resolveFakeTab(id);
+          if (tab === undefined) throw new Error("no such tab");
+          return [
+            { level: "log", text: `console for ${tab.url}`, time: Date.now(), url: tab.url },
+          ];
+        },
+        browserScreenshot: async (id: number | null) => {
+          const tab = resolveFakeTab(id);
+          if (tab === undefined) throw new Error("no such tab");
+          return `/tmp/workbench-browser/${tab.id}-fake.png`;
+        },
+        browserEval: async (id: number | null, script: string) => {
+          const tab = resolveFakeTab(id);
+          if (tab === undefined) throw new Error("no such tab");
+          return JSON.stringify({ ran: script.length > 0, url: tab.url });
         },
 
         transcripts: async () => [],
