@@ -3,6 +3,7 @@
   import FileTree, { type Beyond } from "$lib/components/FileTree.svelte";
   import FoldHead from "$lib/components/FoldHead.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
+  import BrowserView from "$lib/components/BrowserView.svelte";
   import SearchResults from "$lib/components/SearchResults.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
@@ -24,8 +25,10 @@
     setQuery,
     setScope,
     setView,
+    showBrowser,
     visible,
   } from "$lib/files.svelte";
+  import { browser, cover as coverBrowser, open as openBrowserTab } from "$lib/browser.svelte";
   import { core } from "$lib/core";
   import {
     allowedProjects,
@@ -356,6 +359,26 @@
       menuOpen = false;
     }
   }
+
+  /** Shows the browser, opening a new tab first when none is open. */
+  async function openBrowser() {
+    if (browser.tabs.length === 0) await openBrowserTab();
+    showBrowser();
+  }
+
+  // The native view floats above the page, so it would show through the
+  // menu while the menu is open. Covering it here, rather than in the
+  // browser view itself, keeps the rule in one place regardless of what the
+  // viewer is showing.
+  let uncoverMenu: (() => void) | null = null;
+  $effect(() => {
+    if (menuOpen) {
+      uncoverMenu = coverBrowser();
+    } else if (uncoverMenu !== null) {
+      uncoverMenu();
+      uncoverMenu = null;
+    }
+  });
 
   onMount(() => {
     let off: (() => void) | null = null;
@@ -862,6 +885,9 @@
             <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
               <span>Reload</span>
             </button>
+            <button role="menuitem" onclick={() => choose(() => openBrowser())} data-testid="menu-browser">
+              <span>Browser</span>
+            </button>
           </div>
         {/if}
       </div>
@@ -1096,7 +1122,11 @@
         {#if !fullView}
           <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
         {/if}
-        <FileViewer />
+        {#if browser.showing}
+          <BrowserView />
+        {:else}
+          <FileViewer />
+        {/if}
       {/if}
     </div>
   {/if}

@@ -14,6 +14,11 @@
  * behind whichever placement is already in flight, since two `browser_place`
  * calls sent together can land in either order and a stale one landing last
  * would misplace the view.
+ *
+ * The native view floats above the page, so anything the app draws over the
+ * viewer's body would be covered by it. `cover` hides the view for as long
+ * as something is drawn there, a menu or a dialog, and puts it back at its
+ * last rectangle once the last cover lifts.
  */
 
 import { core, type BrowserSnapshot, type BrowserTab } from "$lib/core";
@@ -35,6 +40,10 @@ export const browser = $state({
   /** The last rejection from navigate or open. Cleared on the next attempt
       and when the active tab changes. */
   addressError: null as string | null,
+  /** Something is drawn above the viewer's body right now, a menu or a
+      dialog, that the native view would otherwise show through. The view
+      is hidden while this is true, the way it is for a new tab. */
+  covered: false,
 });
 
 /** The tab in front, or null with none open. */
@@ -113,6 +122,11 @@ let sending = false;
 /** The rectangle last actually sent, null once the view is known hidden, so
     a rectangle equal to it is skipped and a hide is not sent twice running. */
 let placed: Rect | null = null;
+/** The rectangle last asked for, whether or not it was actually sent, so a
+    cover that lifts can put the view back where it was without waiting for
+    the next resize. */
+let lastRect: Rect | null = null;
+let coverCount = 0;
 
 function sameRect(a: Rect, b: Rect): boolean {
   return (
@@ -150,17 +164,27 @@ async function pump() {
 }
 
 /** Whether the active tab's native view belongs on screen at all: the
-    viewer is showing the browser, and the active tab is not a new tab. */
+    viewer is showing the browser, nothing covers it, and the active tab is
+    a page that loaded: a new tab and a page that failed are drawn by the
+    viewer itself. */
 function shouldShow(): boolean {
   const tab = activeTab();
-  return browser.showing && tab !== null && tab.url !== "about:blank";
+  return (
+    browser.showing &&
+    !browser.covered &&
+    tab !== null &&
+    tab.url !== "about:blank" &&
+    tab.error === null
+  );
 }
 
 /** Where the active tab's native view goes, in logical pixels relative to
     the window's viewport. Skips a rectangle equal to the one already
     placed, and hides the view instead of placing it while there is no tab
-    to show it for or the viewer is not showing the browser. */
+    to show it for, the viewer is not showing the browser, or something
+    covers it. */
 export function place(rect: Rect) {
+  lastRect = rect;
   if (!shouldShow()) {
     queued = "hide";
     void pump();
@@ -175,6 +199,30 @@ export function hide() {
   browser.showing = false;
   queued = "hide";
   void pump();
+}
+
+/**
+ * Hides the native view while something is drawn above the viewer's body,
+ * a menu opening or a dialog coming up, and returns the function that lifts
+ * it. Covers nest: the view stays hidden until as many `uncover`s have run
+ * as `cover`s were taken, and only the last one puts the view back, at the
+ * last rectangle it was asked to sit at.
+ */
+export function cover(): () => void {
+  coverCount += 1;
+  browser.covered = true;
+  queued = "hide";
+  void pump();
+
+  let lifted = false;
+  return () => {
+    if (lifted) return;
+    lifted = true;
+    coverCount = Math.max(0, coverCount - 1);
+    if (coverCount > 0) return;
+    browser.covered = false;
+    if (lastRect !== null) place(lastRect);
+  };
 }
 
 let initialized = false;
@@ -198,8 +246,11 @@ export function resetBrowser() {
   browser.active = null;
   browser.showing = false;
   browser.addressError = null;
+  browser.covered = false;
   queued = null;
   sending = false;
   placed = null;
+  lastRect = null;
+  coverCount = 0;
   initialized = false;
 }

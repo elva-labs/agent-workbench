@@ -79,6 +79,7 @@ import {
   activeTab,
   browser,
   close,
+  cover,
   hide,
   initBrowser,
   navigate,
@@ -164,6 +165,22 @@ describe("the placement queue", () => {
     expect(placeLog).toEqual([RECT_A, RECT_B, RECT_A]);
   });
 
+  it("keeps the native view hidden for a page that did not load", async () => {
+    browser.tabs = [
+      tab(1, "http://localhost:9/", { error: "localhost:9 is not answering" }),
+    ];
+    browser.active = 1;
+    show();
+
+    place(RECT_A);
+    expect(placeLog).toEqual([]);
+
+    // The page loads on a retry, and the same rectangle is placed.
+    browser.tabs = [tab(1, "http://localhost:9/")];
+    place(RECT_A);
+    expect(placeLog).toEqual([RECT_A]);
+  });
+
   it("skips a rectangle equal to the one already placed", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
     browser.active = 1;
@@ -218,6 +235,86 @@ describe("the placement queue", () => {
     place(RECT_A);
     expect(pending).toEqual([]);
     expect(hideCount).toBe(2);
+  });
+});
+
+describe("cover", () => {
+  it("hides the view while covered and puts it back at the last rectangle once uncovered", async () => {
+    browser.tabs = [tab(1, "https://example.com/")];
+    browser.active = 1;
+    show();
+
+    place(RECT_A);
+    await resolveNext();
+    expect(placeLog).toEqual([RECT_A]);
+
+    const uncover = cover();
+    expect(browser.covered).toBe(true);
+    await resolveNext();
+    expect(hideCount).toBe(1);
+
+    // Covered: a placement asked for while it is up is not sent, since the
+    // view is not supposed to be there yet.
+    place(RECT_B);
+    expect(pending).toEqual([]);
+    expect(placeLog).toEqual([RECT_A]);
+
+    uncover();
+    expect(browser.covered).toBe(false);
+    await resolveNext();
+    expect(placeLog).toEqual([RECT_A, RECT_B]);
+  });
+
+  it("nests: the view returns only once every cover has lifted", async () => {
+    browser.tabs = [tab(1, "https://example.com/")];
+    browser.active = 1;
+    show();
+    place(RECT_A);
+    await resolveNext();
+
+    const first = cover();
+    await resolveNext();
+    expect(hideCount).toBe(1);
+    const second = cover();
+
+    first();
+    expect(browser.covered).toBe(true);
+
+    second();
+    expect(browser.covered).toBe(false);
+    await resolveNext();
+    expect(placeLog).toEqual([RECT_A, RECT_A]);
+  });
+
+  it("lifting the same cover twice does nothing the second time", async () => {
+    browser.tabs = [tab(1, "https://example.com/")];
+    browser.active = 1;
+    show();
+    place(RECT_A);
+    await resolveNext();
+
+    const uncover = cover();
+    await resolveNext();
+    uncover();
+    await resolveNext();
+    expect(placeLog).toEqual([RECT_A, RECT_A]);
+
+    uncover();
+    expect(browser.covered).toBe(false);
+    expect(placeLog).toEqual([RECT_A, RECT_A]);
+  });
+
+  it("with nothing ever placed, covering and uncovering sends no calls", () => {
+    browser.tabs = [tab(1, "https://example.com/")];
+    browser.active = 1;
+    show();
+
+    const uncover = cover();
+    expect(pending).toEqual([]);
+    uncover();
+    expect(pending).toEqual([]);
+    expect(hideCount).toBe(0);
+    expect(placeLog).toEqual([]);
   });
 });
 

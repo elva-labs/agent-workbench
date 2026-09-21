@@ -28,6 +28,7 @@
   import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
+  import { initBrowser } from "$lib/browser.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
@@ -111,6 +112,7 @@
   // row takes it; an exit that beat its own spawn result waits to be claimed.
   onMount(() => {
     const offs: (() => void)[] = [];
+    void initBrowser();
     core()
       .onSessionEnded((event) => {
         if (!sessionEnded(event) && !shellEnded(event)) stash(event);

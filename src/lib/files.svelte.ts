@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine, type GrepHit } from "$lib/core";
 import type { MediaItem } from "$lib/media.svelte";
+import { browser, hide as hideBrowser, show as showBrowserView } from "$lib/browser.svelte";
 import { enterReview, exitReview, layout, togglePane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
@@ -391,11 +392,19 @@ async function loadSelected() {
   }
 }
 
+/** Puts away whatever other kind the viewer was holding: media, a plugin's
+    page, or the browser. Called by whichever kind is taking the viewer, so
+    only one is ever showing. */
+function leaveOtherKinds() {
+  files.media = null;
+  files.pluginView = null;
+  if (browser.showing) hideBrowser();
+}
+
 export async function select(path: string) {
   if (files.target !== null && files.target.path !== path) files.target = null;
   if (files.picked !== null && files.picked.path !== path) files.picked = null;
-  files.media = null;
-  files.pluginView = null;
+  leaveOtherKinds();
   files.selected = path;
   reveal(path);
   await loadSelected();
@@ -405,8 +414,7 @@ export async function select(path: string) {
 export function deselect() {
   files.target = null;
   files.picked = null;
-  files.media = null;
-  files.pluginView = null;
+  leaveOtherKinds();
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;
@@ -439,6 +447,14 @@ export function showMedia(item: MediaItem) {
 export function showPluginView(page: NonNullable<typeof files.pluginView>) {
   deselect();
   files.pluginView = page;
+  enterReview();
+}
+
+/** Shows the embedded browser in the viewer, in place of any file, media or
+    plugin page. */
+export function showBrowser() {
+  deselect();
+  showBrowserView();
   enterReview();
 }
 

@@ -26,11 +26,15 @@ import {
   selectedEntry,
   setScope,
   setView,
+  showBrowser,
+  showMedia,
+  showPluginView,
   toggleDir,
   toggleScope,
   toggleView,
 } from "$lib/files.svelte";
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
+import { browser, resetBrowser } from "$lib/browser.svelte";
 import { enterReview, layout } from "$lib/layout.svelte";
 
 const ROOT = "/repo";
@@ -111,6 +115,7 @@ beforeEach(() => {
   clear();
   files.view = "diff";
   resetWorkspace();
+  resetBrowser();
   workspace.open.push({
     path: ROOT,
     name: "repo",
@@ -409,6 +414,89 @@ describe("letting go", () => {
   it("is harmless with nothing selected and no viewer open", () => {
     expect(() => closeViewer()).not.toThrow();
     expect(files.selected).toBeNull();
+  });
+});
+
+/** The browser is a fourth kind the viewer can hold, alongside a file,
+    media and a plugin's page: only one is ever showing. */
+describe("the browser as a viewer kind", () => {
+  const mediaItem = {
+    id: "m1",
+    owner: "project:/repo",
+    project: ROOT,
+    files: ["screenshot.png"],
+    caption: null,
+    at: 0,
+  };
+  const pluginPage = {
+    key: "src/todos",
+    source: "src",
+    plugin: "todos",
+    project: ROOT,
+    width: "wide" as const,
+    html: "<p>todo</p>",
+  };
+
+  it("opens the viewer and puts away a file that was open", async () => {
+    await refresh();
+    await select("src/lib.rs");
+    expect(files.selected).toBe("src/lib.rs");
+
+    showBrowser();
+
+    expect(browser.showing).toBe(true);
+    expect(files.selected).toBeNull();
+    expect(layout.mode).toBe("reviewing");
+  });
+
+  it("selecting a file puts the browser away", async () => {
+    await refresh();
+    showBrowser();
+    expect(browser.showing).toBe(true);
+
+    await select("src/lib.rs");
+
+    expect(browser.showing).toBe(false);
+    expect(files.selected).toBe("src/lib.rs");
+  });
+
+  it("showing media puts the browser away", () => {
+    showBrowser();
+    showMedia(mediaItem);
+    expect(browser.showing).toBe(false);
+    expect(files.media).toEqual(mediaItem);
+  });
+
+  it("showing a plugin's page puts the browser away", () => {
+    showBrowser();
+    showPluginView(pluginPage);
+    expect(browser.showing).toBe(false);
+    expect(files.pluginView).toEqual(pluginPage);
+  });
+
+  it("showing the browser puts away media and a plugin's page", () => {
+    showMedia(mediaItem);
+    showBrowser();
+    expect(files.media).toBeNull();
+
+    showPluginView(pluginPage);
+    showBrowser();
+    expect(files.pluginView).toBeNull();
+  });
+
+  it("closeViewer hides the browser along with leaving review", () => {
+    showBrowser();
+    closeViewer();
+    expect(browser.showing).toBe(false);
+    expect(layout.mode).toBe("working");
+  });
+
+  it("does nothing to the browser when it was not showing", async () => {
+    await refresh();
+    await select("src/lib.rs");
+    expect(browser.showing).toBe(false);
+    deselect();
+    expect(browser.showing).toBe(false);
   });
 });
 
