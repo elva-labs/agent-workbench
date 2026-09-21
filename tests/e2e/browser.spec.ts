@@ -41,6 +41,14 @@ async function openBrowser(page: Page) {
   await settled(page);
 }
 
+/** Opens a tab from the tree's Browser fold rather than the "⋯" menu: the
+    fold, then its header's own action. */
+async function openFoldNewTab(page: Page) {
+  await page.getByTestId("browser-fold").click();
+  await page.getByTestId("browser-fold-new-tab").click();
+  await settled(page);
+}
+
 interface BrowserWindowState {
   rect: { x: number; y: number; width: number; height: number } | null;
   showing: boolean;
@@ -199,4 +207,126 @@ test("opening the menu hides the native view and closing it brings it back at th
   await expect.poll(() => browserWindowState(page).then((s) => s?.showing)).toBe(true);
   const after = (await browserWindowState(page))!.rect;
   expect(after).toEqual(before);
+});
+
+/**
+ * The Browser fold under the tree, beside Processes: how the browser is
+ * opened from there, one row per tab, and the fold's place in the column.
+ */
+
+test("the fold stands under the tree with no tabs open, and says so", async ({ page }) => {
+  const fold = page.getByTestId("browser-fold");
+  await expect(fold).toContainText("Browser (0)");
+
+  await fold.click();
+  await expect(page.getByTestId("browser-fold-empty")).toBeVisible();
+  await expect(page.getByTestId("browser-fold-row")).toHaveCount(0);
+});
+
+test("the header's own action opens a new tab and shows it, counted in the fold", async ({ page }) => {
+  await openFoldNewTab(page);
+
+  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("browser-body").getByText("New tab")).toBeVisible();
+  await expect(page.getByTestId("browser-fold")).toContainText("Browser (1)");
+  await expect(page.getByTestId("browser-fold-row")).toHaveCount(1);
+});
+
+test("a row shows the tab's host as its label and its url, without the scheme, as its detail", async ({ page }) => {
+  await openFoldNewTab(page);
+  const address = page.getByTestId("browser-address");
+  await address.fill("example.com");
+  await address.press("Enter");
+
+  const row = page.getByTestId("browser-fold-row");
+  await expect(row).toContainText("example.com");
+  await expect(row).not.toContainText("https://");
+});
+
+test("a second tab gives two rows, the active one marked current", async ({ page }) => {
+  await openFoldNewTab(page);
+  const address = page.getByTestId("browser-address");
+  await address.fill("example.com");
+  await address.press("Enter");
+
+  await page.getByTestId("browser-new-tab").click();
+  const rows = page.getByTestId("browser-fold-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).locator(".media-row")).not.toHaveClass(/\bon\b/);
+  await expect(rows.nth(1).locator(".media-row")).toHaveClass(/\bon\b/);
+});
+
+test("clicking a row activates that tab and shows it", async ({ page }) => {
+  await openFoldNewTab(page);
+  const address = page.getByTestId("browser-address");
+  await address.fill("example.com");
+  await address.press("Enter");
+
+  await page.getByTestId("browser-new-tab").click();
+  await address.fill("example.org");
+  await address.press("Enter");
+
+  const rows = page.getByTestId("browser-fold-row");
+  await rows.first().locator(".media-row").click();
+
+  await expect(address).toHaveValue(/example\.com/);
+  await expect(rows.first().locator(".media-row")).toHaveClass(/\bon\b/);
+});
+
+test("a row's close action removes it and the tab from the strip", async ({ page }) => {
+  await openFoldNewTab(page);
+  const address = page.getByTestId("browser-address");
+  await address.fill("example.com");
+  await address.press("Enter");
+
+  const row = page.getByTestId("browser-fold-row");
+  await expect(row).toHaveCount(1);
+  await expect(page.getByTestId("browser-tab")).toHaveCount(1);
+
+  await row.hover();
+  await row.getByTestId("browser-fold-close").click();
+
+  await expect(row).toHaveCount(0);
+  await expect(page.getByTestId("browser-tab")).toHaveCount(0);
+});
+
+test("opening a file from the tree leaves the fold's rows in place, none marked current", async ({ page }) => {
+  await openFoldNewTab(page);
+  const address = page.getByTestId("browser-address");
+  await address.fill("example.com");
+  await address.press("Enter");
+
+  await row(page, "mod.rs").click();
+
+  const rows = page.getByTestId("browser-fold-row");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator(".media-row")).not.toHaveClass(/\bon\b/);
+  await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "diff");
+});
+
+test("the fold folds and unfolds as Processes does", async ({ page }) => {
+  const fold = page.getByTestId("browser-fold");
+  await expect(fold).toHaveText(/^\s*▸\s*Browser \(0\)\s*$/);
+
+  await fold.click();
+  await expect(fold).toHaveText(/^\s*▾\s*Browser \(0\)\s*$/);
+  await expect(page.getByTestId("browser-fold-empty")).toBeVisible();
+
+  await fold.click();
+  await expect(fold).toHaveText(/^\s*▸\s*Browser \(0\)\s*$/);
+  await expect(page.getByTestId("browser-fold-empty")).toHaveCount(0);
+});
+
+test("the fold sits inside the tree's column and does not overlap Processes", async ({ page }) => {
+  const column = (await page.getByTestId("tree-column").boundingBox())!;
+  const browserFold = (await page.getByTestId("browser-fold").boundingBox())!;
+  const processesFold = (await page.getByTestId("processes-fold").boundingBox())!;
+
+  expect(browserFold.x).toBeGreaterThanOrEqual(column.x);
+  expect(browserFold.y).toBeGreaterThanOrEqual(column.y);
+  expect(browserFold.x + browserFold.width).toBeLessThanOrEqual(column.x + column.width + 1);
+  expect(browserFold.y + browserFold.height).toBeLessThanOrEqual(column.y + column.height + 1);
+
+  // The two folds' own rows never occupy the same vertical space.
+  expect(browserFold.y).toBeGreaterThanOrEqual(processesFold.y + processesFold.height - 1);
 });

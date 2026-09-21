@@ -24,11 +24,19 @@
     setMode,
     setQuery,
     setScope,
+    newBrowserTab,
+    openBrowser,
     setView,
     showBrowser,
     visible,
   } from "$lib/files.svelte";
-  import { browser, cover as coverBrowser, open as openBrowserTab } from "$lib/browser.svelte";
+  import {
+    activate as activateBrowserTab,
+    browser,
+    close as closeBrowserTab,
+    cover as coverBrowser,
+    titleFor as browserTitleFor,
+  } from "$lib/browser.svelte";
   import { core } from "$lib/core";
   import {
     allowedProjects,
@@ -59,7 +67,7 @@
     type PluginSection,
   } from "$lib/pluginSections.svelte";
   import { open as openPluginView, viewOf as pluginViewOf } from "$lib/pluginView.svelte";
-  import type { PluginAction, PluginRow } from "$lib/core";
+  import type { BrowserTab, PluginAction, PluginRow } from "$lib/core";
   import { lastSegment } from "$lib/paths";
   import {
     activeSession,
@@ -90,13 +98,15 @@
   let columnHeight = $state(0);
 
   /** The sections' rows as the tree's cursor sees them: each section's
-      header, then what it holds while it is open, media first, processes
-      after, and a plugin's fold with its group lines and rows last. */
+      header, then what it holds while it is open, media first, processes,
+      the browser, and a plugin's fold with its group lines and rows last. */
   let sectionCursor = $state(-1);
   const FOLD_ID = "media-fold";
   const PROCESSES_FOLD_ID = "processes-fold";
+  const BROWSER_FOLD_ID = "browser-fold";
   const rowIdOf = (id: string) => `media-${id}`;
   const processRowId = (row: ProcessRow) => `process-${row.pid}`;
+  const browserRowId = (tab: BrowserTab) => `browser-tab-${tab.id}`;
   const pluginFoldId = (key: string) => `plugin-fold-${key}`;
   const pluginGroupId = (key: string) => `plugin-group-${key}`;
   const pluginRowId = (key: string, row: PluginRow) => `plugin-row-${key}-${row.id}`;
@@ -105,6 +115,8 @@
     | { id: string; kind: "media"; index: number }
     | { id: string; kind: "processes-head" }
     | { id: string; kind: "process"; index: number }
+    | { id: string; kind: "browser-head" }
+    | { id: string; kind: "browser-tab"; index: number }
     | { id: string; kind: "plugin-head"; group: string }
     | { id: string; kind: "plugin-group"; group: string; key: string }
     | {
@@ -128,6 +140,10 @@
     list.push({ id: PROCESSES_FOLD_ID, kind: "processes-head" });
     if (layout.processesOpen) {
       processes.rows.forEach((row, index) => list.push({ id: processRowId(row), kind: "process", index }));
+    }
+    list.push({ id: BROWSER_FOLD_ID, kind: "browser-head" });
+    if (layout.browserOpen) {
+      browser.tabs.forEach((tab, index) => list.push({ id: browserRowId(tab), kind: "browser-tab", index }));
     }
     for (const group of pluginList) {
       list.push({ id: pluginFoldId(group.key), kind: "plugin-head", group: group.key });
@@ -170,7 +186,11 @@
       if (entry.kind === "media-head") toggleMedia();
       else if (entry.kind === "media") openItem(presented[entry.index]);
       else if (entry.kind === "processes-head") toggleProcesses();
-      else if (entry.kind === "plugin-head") toggleSection(entry.group);
+      else if (entry.kind === "browser-head") toggleBrowser();
+      else if (entry.kind === "browser-tab") {
+        const tab = browser.tabs[entry.index];
+        if (tab !== undefined) void selectBrowserTab(tab.id);
+      } else if (entry.kind === "plugin-head") toggleSection(entry.group);
       else if (entry.kind === "plugin-group") {
         const section = sectionAt(entry.key);
         if (section !== undefined) setSectionOpen(entry.key, !lineOpen(section));
@@ -214,14 +234,24 @@
         sectionCursor = head;
         return;
       }
-      const media = entry.kind === "media-head" || entry.kind === "media";
-      const head = sectionEntries.findIndex((candidate) => candidate.kind === (media ? "media-head" : "processes-head"));
-      if (media) {
+      // Media, processes and the browser each fold the same way: a row
+      // folds the section it sits under, and leaves the cursor on its header.
+      const headKind =
+        entry.kind === "media-head" || entry.kind === "media"
+          ? "media-head"
+          : entry.kind === "processes-head" || entry.kind === "process"
+            ? "processes-head"
+            : "browser-head";
+      const head = sectionEntries.findIndex((candidate) => candidate.kind === headKind);
+      if (headKind === "media-head") {
         if (open === layout.mediaOpen) return;
         layout.mediaOpen = open;
-      } else {
+      } else if (headKind === "processes-head") {
         if (open === layout.processesOpen) return;
         layout.processesOpen = open;
+      } else {
+        if (open === layout.browserOpen) return;
+        layout.browserOpen = open;
       }
       saveLayout();
       // Folding from a row leaves the cursor on the section's header.
@@ -241,6 +271,7 @@
   let anyOpen = $derived(
     (presented.length > 0 && layout.mediaOpen) ||
       layout.processesOpen ||
+      layout.browserOpen ||
       pluginList.some((group) => sectionOpen(group.key)),
   );
 
@@ -307,6 +338,31 @@
     saveLayout();
   }
 
+  function toggleBrowser() {
+    layout.browserOpen = !layout.browserOpen;
+    saveLayout();
+  }
+
+  /** A row's own state dot: busy while the tab is loading, failed once it
+      holds an error, ok otherwise. */
+  function browserDot(tab: BrowserTab): string {
+    if (tab.error !== null) return "failed";
+    if (tab.loading) return "busy";
+    return "ok";
+  }
+
+  /** A row's detail line: the tab's url without its scheme. */
+  function withoutScheme(url: string): string {
+    return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  }
+
+  /** A row or Enter on it: bring that tab to the front and show it, the way
+      a click on its row in the tab strip does. */
+  async function selectBrowserTab(id: number) {
+    await activateBrowserTab(id);
+    showBrowser();
+  }
+
   // A chord asked for the field: put the keyboard in it, whatever had it.
   $effect(() => {
     files.fieldRequests;
@@ -358,12 +414,6 @@
       e.stopPropagation();
       menuOpen = false;
     }
-  }
-
-  /** Shows the browser, opening a new tab first when none is open. */
-  async function openBrowser() {
-    if (browser.tabs.length === 0) await openBrowserTab();
-    showBrowser();
   }
 
   // The native view floats above the page, so it would show through the
@@ -916,7 +966,7 @@
            presented for the session on screen, a section of its own with a
            divider to drag, folded to its header when asked. -->
       {#if !fullView}
-        <div class="column" bind:clientHeight={columnHeight}>
+        <div class="column" bind:clientHeight={columnHeight} data-testid="tree-column">
           <div class="tree-slot">
             {#if searchingLines()}
               <SearchResults onOpen={openHit} />
@@ -1035,6 +1085,84 @@
                           aria-label="Stop {row.name}"
                           title="Stop"
                           data-testid="process-stop">×</button
+                        >
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              {/if}
+            </section>
+            <!-- The browser: how it is opened, and its open tabs. Stands
+                 even with none open, since opening one is what the fold is
+                 for; its header carries that action beside the fold. -->
+            <section class="section" class:open={layout.browserOpen} data-testid="browser-section">
+              <div class="section-head">
+                <button
+                  id={BROWSER_FOLD_ID}
+                  class="fold"
+                  class:cursor={cursorId === BROWSER_FOLD_ID}
+                  tabindex="-1"
+                  onpointerdown={(e) => e.preventDefault()}
+                  onclick={() => {
+                    sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "browser-head");
+                    toggleBrowser();
+                  }}
+                  aria-expanded={layout.browserOpen}
+                  data-testid="browser-fold"
+                >
+                  <span class="chevron">{layout.browserOpen ? "▾" : "▸"}</span>
+                  Browser ({browser.tabs.length})
+                </button>
+                <span class="head-actions">
+                  <button
+                    class="head-action"
+                    tabindex="-1"
+                    onpointerdown={(e) => e.preventDefault()}
+                    onclick={() => void newBrowserTab()}
+                    data-testid="browser-fold-new-tab">New tab</button
+                  >
+                </span>
+              </div>
+              {#if layout.browserOpen}
+                {#if browser.tabs.length === 0}
+                  <p class="section-empty" data-testid="browser-fold-empty">No tabs open.</p>
+                {:else}
+                  <ul class="rows">
+                    {#each browser.tabs as tab (tab.id)}
+                      <li
+                        class="browser-tab"
+                        class:cursor={cursorId === browserRowId(tab)}
+                        id={browserRowId(tab)}
+                        data-testid="browser-fold-row"
+                      >
+                        <button
+                          class="media-row"
+                          class:on={browser.showing && tab.id === browser.active}
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => {
+                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === browserRowId(tab));
+                            void selectBrowserTab(tab.id);
+                          }}
+                          title={tab.url}
+                        >
+                          <span class="row-line">
+                            <span class="dot" data-state={browserDot(tab)}></span>
+                            {#if tab.opener.kind === "agent"}
+                              <span class="agent-mark" title="Opened by an agent"></span>
+                            {/if}
+                            <span class="media-caption">{browserTitleFor(tab)}</span>
+                          </span>
+                          <span class="media-meta">{withoutScheme(tab.url)}</span>
+                        </button>
+                        <button
+                          class="stop"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => void closeBrowserTab(tab.id)}
+                          aria-label="Close {browserTitleFor(tab)}"
+                          title="Close"
+                          data-testid="browser-fold-close">×</button
                         >
                       </li>
                     {/each}
@@ -1263,8 +1391,10 @@
   }
 
   /* A process row: the text, and a stop button over its end on hover. A
-     plugin's row carries its actions the same way. */
+     browser tab's row and a plugin's row carry their own actions the same
+     way. */
   .process,
+  .browser-tab,
   .plugin {
     position: relative;
   }
@@ -1289,6 +1419,8 @@
 
   .process:hover .stop,
   .process.cursor .stop,
+  .browser-tab:hover .stop,
+  .browser-tab.cursor .stop,
   .plugin:hover .row-actions,
   .plugin.cursor .row-actions {
     opacity: 1;
@@ -1296,6 +1428,16 @@
 
   .stop:hover {
     color: var(--del);
+  }
+
+  /* The mark a tab opened by an agent carries, the same one the tab strip
+     draws beside its title. */
+  .agent-mark {
+    flex: none;
+    width: var(--dot);
+    height: var(--dot);
+    border-radius: 50%;
+    background: var(--accent);
   }
 
   /* A section a plugin sent: its header carries the plugin's own actions,
@@ -1446,6 +1588,7 @@
   .sections.keyed :global(.fold.cursor),
   .sections.keyed .media-row.cursor,
   .sections.keyed .process.cursor,
+  .sections.keyed .browser-tab.cursor,
   .sections.keyed .group-line.cursor,
   .sections.keyed .plugin.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);

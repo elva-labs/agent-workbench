@@ -87,6 +87,7 @@ import {
   place,
   resetBrowser,
   show,
+  titleFor,
 } from "$lib/browser.svelte";
 
 function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): BrowserTab {
@@ -395,6 +396,25 @@ describe("snapshot events", () => {
     tabsSnapshot = { tabs: [], active: null };
     await initBrowser();
     expect(browser.active).toBe(9);
+  });
+});
+
+describe("titleFor", () => {
+  it("is the tab's own title when it has one", () => {
+    expect(titleFor(tab(1, "https://example.com/", { title: "Example" }))).toBe("Example");
+  });
+
+  it("is the host until the tab has a title", () => {
+    expect(titleFor(tab(1, "https://example.com/path"))).toBe("example.com");
+  });
+
+  it("is the url itself when it cannot be parsed as one", () => {
+    expect(titleFor(tab(1, "not a url"))).toBe("not a url");
+  });
+
+  it("is \"New tab\" for a tab with no address yet", () => {
+    expect(titleFor(tab(1, "about:blank"))).toBe("New tab");
+    expect(titleFor(tab(1, ""))).toBe("New tab");
   });
 });
 

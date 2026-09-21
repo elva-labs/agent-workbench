@@ -20,6 +20,8 @@ import {
   files,
   isOpen,
   listed,
+  newBrowserTab,
+  openBrowser,
   refresh,
   reveal,
   select,
@@ -62,6 +64,7 @@ const fake = {
   grepTruncated: false,
   diffCalls: 0,
   fail: null as string | null,
+  browserOpenCalls: [] as { url: string | null; session: string | null }[],
 };
 
 vi.mock("$lib/core", () => ({
@@ -93,6 +96,22 @@ vi.mock("$lib/core", () => ({
     async setWindowTitle() {},
     async projectInfo(path: string) {
       return { path, name: path, repository: path, isGit: true };
+    },
+    async browserOpen(url: string | null, session: string | null) {
+      fake.browserOpenCalls.push({ url, session });
+      const id = fake.browserOpenCalls.length;
+      const tab = {
+        id,
+        url: url ?? "about:blank",
+        title: "",
+        home: url,
+        opener: { kind: "user" as const },
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      };
+      return { tabs: [tab], active: id };
     },
   }),
 }));
@@ -142,6 +161,7 @@ beforeEach(() => {
   fake.grepCalls = [];
   fake.grepFail = null;
   fake.grepTruncated = false;
+  fake.browserOpenCalls = [];
 });
 
 describe("refresh", () => {
@@ -497,6 +517,55 @@ describe("the browser as a viewer kind", () => {
     expect(browser.showing).toBe(false);
     deselect();
     expect(browser.showing).toBe(false);
+  });
+});
+
+describe("newBrowserTab", () => {
+  it("opens a tab and shows the browser, whatever is open already", async () => {
+    await newBrowserTab();
+    await newBrowserTab();
+
+    expect(fake.browserOpenCalls).toEqual([
+      { url: null, session: null },
+      { url: null, session: null },
+    ]);
+    expect(browser.showing).toBe(true);
+  });
+});
+
+/** What the "⋯" menu's Browser item calls to open the viewer on the
+    browser. */
+describe("openBrowser", () => {
+  it("opens a tab first when none is open, then shows the browser", async () => {
+    expect(browser.tabs).toEqual([]);
+
+    await openBrowser();
+
+    expect(fake.browserOpenCalls).toEqual([{ url: null, session: null }]);
+    expect(browser.tabs.length).toBe(1);
+    expect(browser.showing).toBe(true);
+  });
+
+  it("shows the browser without opening another tab when one is already open", async () => {
+    browser.tabs = [
+      {
+        id: 1,
+        url: "https://example.com/",
+        title: "",
+        home: "https://example.com/",
+        opener: { kind: "user" },
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ];
+    browser.active = 1;
+
+    await openBrowser();
+
+    expect(fake.browserOpenCalls).toEqual([]);
+    expect(browser.showing).toBe(true);
   });
 });
 

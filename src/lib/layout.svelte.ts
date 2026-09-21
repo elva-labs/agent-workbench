@@ -105,12 +105,13 @@ export const layout = $state({
   agentHidden: false,
   /** Set once you drag the viewer's splitter, so we stop sizing it for you. */
   reviewTouched: false,
-  /** The sections under the tree, media and processes: their share of the
-      changes pane's height when one is open, and which are open rather
-      than folded to their header. */
+  /** The sections under the tree, media, processes and the browser: their
+      share of the changes pane's height when one is open, and which are
+      open rather than folded to their header. */
   mediaShare: 0.3,
   mediaOpen: false,
   processesOpen: false,
+  browserOpen: false,
   /** A plugin's section, by source, plugin and section: open rather than
       folded. Absent is folded, which is how one first appears. */
   sectionsOpen: {} as Record<string, boolean>,
@@ -397,6 +398,8 @@ export function loadLayout() {
     if (typeof v.mediaOpen === "boolean") layout.mediaOpen = v.mediaOpen;
     if (typeof v.processesOpen === "boolean")
       layout.processesOpen = v.processesOpen;
+    if (typeof v.browserOpen === "boolean")
+      layout.browserOpen = v.browserOpen;
     if (v.sectionsOpen !== null && typeof v.sectionsOpen === "object") {
       const open: Record<string, boolean> = {};
       for (const [key, value] of Object.entries(v.sectionsOpen)) {
@@ -435,6 +438,7 @@ export function saveLayout() {
         mediaShare: layout.mediaShare,
         mediaOpen: layout.mediaOpen,
         processesOpen: layout.processesOpen,
+        browserOpen: layout.browserOpen,
         sectionsOpen: layout.sectionsOpen,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,

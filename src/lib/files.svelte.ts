@@ -1,7 +1,12 @@
 import { SvelteSet } from "svelte/reactivity";
 import { core, type ChangedFile, type DiffLine, type GrepHit } from "$lib/core";
 import type { MediaItem } from "$lib/media.svelte";
-import { browser, hide as hideBrowser, show as showBrowserView } from "$lib/browser.svelte";
+import {
+  browser,
+  hide as hideBrowser,
+  open as openBrowserTab,
+  show as showBrowserView,
+} from "$lib/browser.svelte";
 import { enterReview, exitReview, layout, togglePane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { watchRoot } from "$lib/workspace.svelte";
@@ -456,6 +461,20 @@ export function showBrowser() {
   deselect();
   showBrowserView();
   enterReview();
+}
+
+/** Shows the browser, opening a tab first when none is open yet: what the
+    "⋯" menu's Browser item does. */
+export async function openBrowser() {
+  if (browser.tabs.length === 0) await openBrowserTab();
+  showBrowser();
+}
+
+/** Opens a new tab and shows the browser on it: what the Browser fold's
+    header action does, whatever is open already. */
+export async function newBrowserTab() {
+  await openBrowserTab();
+  showBrowser();
 }
 
 /** Done reading: the file is let go and the viewer closes, if it was open. */

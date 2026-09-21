@@ -813,8 +813,9 @@ test.describe("the file viewer", () => {
     await page.keyboard.press("ArrowRight");
     await expect(page.getByTestId("media-item")).toHaveCount(1);
 
-    // Home is the top of the tree; End is the processes header, the last
-    // row of the column, with the media row just above it.
+    // Home is the top of the tree; End is the browser header, the last row
+    // of the column, with the processes header above it, and the media row
+    // above that.
     await page.keyboard.press("Home");
     await expect(page.getByTestId("media-fold")).not.toHaveClass(/cursor/);
     await expect(page.getByTestId("file-tree")).toHaveAttribute(
@@ -822,6 +823,8 @@ test.describe("the file viewer", () => {
       /^tree-/,
     );
     await page.keyboard.press("End");
+    await expect(page.getByTestId("browser-fold")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowUp");
     await expect(page.getByTestId("processes-fold")).toHaveClass(/cursor/);
     await page.keyboard.press("ArrowUp");
     await expect(page.getByTestId("media-item")).toHaveClass(/cursor/);
@@ -877,9 +880,12 @@ test.describe("the file viewer", () => {
     await expect(rows.first()).toContainText("session 1");
     await expect(rows.first()).toContainText("2m");
     await expect(rows.first()).toContainText("50 MB");
-    // The keyboard reaches the rows from the tree; End is the last one.
+    // The keyboard reaches the rows from the tree; End is the browser
+    // header, the last row of the column, with the last process row above it.
     await page.getByTestId("file-tree").focus();
     await page.keyboard.press("End");
+    await expect(page.getByTestId("browser-fold")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowUp");
     await expect(rows.last()).toHaveClass(/cursor/);
     await page.keyboard.press("ArrowLeft");
     await expect(page.getByTestId("process-row")).toHaveCount(0);

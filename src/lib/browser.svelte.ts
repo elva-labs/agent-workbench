@@ -51,6 +51,18 @@ export function activeTab(): BrowserTab | null {
   return browser.tabs.find((tab) => tab.id === browser.active) ?? null;
 }
 
+/** A tab's label: its title, its host until it has one, or "New tab" while
+    it holds no address yet. */
+export function titleFor(tab: BrowserTab): string {
+  if (tab.title !== "") return tab.title;
+  if (tab.url === "about:blank" || tab.url === "") return "New tab";
+  try {
+    return new URL(tab.url).host || tab.url;
+  } catch {
+    return tab.url;
+  }
+}
+
 function applySnapshot(snapshot: BrowserSnapshot) {
   const activeChanged = browser.active !== snapshot.active;
   browser.tabs = snapshot.tabs;

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { BrowserTab } from "$lib/core";
   import {
     activate,
     activeTab,
@@ -14,6 +13,7 @@
     open,
     place,
     reload,
+    titleFor,
     type Rect,
   } from "$lib/browser.svelte";
 
@@ -61,16 +61,6 @@
       const current = activeTab();
       draft = current === null || current.url === "about:blank" ? "" : current.url;
       addressInput?.blur();
-    }
-  }
-
-  function titleFor(candidate: BrowserTab): string {
-    if (candidate.title !== "") return candidate.title;
-    if (candidate.url === "about:blank" || candidate.url === "") return "New tab";
-    try {
-      return new URL(candidate.url).host || candidate.url;
-    } catch {
-      return candidate.url;
     }
   }
 
