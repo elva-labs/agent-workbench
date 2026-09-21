@@ -8,8 +8,11 @@
 //! the one that paints the window, and a `git status` on a large tree or a
 //! slow `.zshrc` would freeze the UI for as long as it took.
 
+mod browser;
 mod chrome;
 mod menu;
+#[cfg(all(debug_assertions, target_os = "macos"))]
+mod probe;
 pub mod remote;
 pub mod ssh;
 
@@ -968,10 +971,13 @@ pub fn run() {
             }
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
+            app.manage(Arc::new(browser::Browser::default()));
             menu::install(app)?;
             if let Some(webview_window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&webview_window.as_ref().window());
             }
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            probe::maybe_run_probe(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1021,7 +1027,14 @@ pub fn run() {
             remote_hosts,
             remote_pair,
             remote_forget,
-            menu::app_menu
+            menu::app_menu,
+            browser::browser_open,
+            browser::browser_close,
+            browser::browser_activate,
+            browser::browser_navigate,
+            browser::browser_place,
+            browser::browser_hide,
+            browser::browser_tabs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
