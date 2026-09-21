@@ -372,12 +372,17 @@
   // viewer is showing.
   let uncoverMenu: (() => void) | null = null;
   $effect(() => {
-    if (menuOpen) {
-      uncoverMenu = coverBrowser();
-    } else if (uncoverMenu !== null) {
-      uncoverMenu();
-      uncoverMenu = null;
-    }
+    const open = menuOpen;
+    // The menu alone decides this: what covering reads of the browser's
+    // own state is not something to run again for.
+    untrack(() => {
+      if (open) {
+        uncoverMenu ??= coverBrowser();
+      } else if (uncoverMenu !== null) {
+        uncoverMenu();
+        uncoverMenu = null;
+      }
+    });
   });
 
   onMount(() => {

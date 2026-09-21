@@ -121,8 +121,11 @@
     rafHandle = stillFor < STILL_FRAMES ? requestAnimationFrame(loop) : null;
   }
 
-  /** Restarts the frame loop, unless it is already running. */
+  /** Measures now, and follows on the frames after unless that is already
+      under way. Now, because a window that is covered or on another desktop
+      gets no frames, and the view still has to land where it belongs. */
   function nudge() {
+    measure();
     stillFor = 0;
     if (rafHandle === null) rafHandle = requestAnimationFrame(loop);
   }
