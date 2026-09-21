@@ -423,6 +423,30 @@ export type FileDrag =
   | { type: "drop"; paths: string[]; x: number; y: number }
   | { type: "leave" };
 
+/** A tab of the embedded browser, as the native layer keeps it. */
+export interface BrowserTab {
+  id: number;
+  /** The current url, updated as navigation happens. `about:blank` is a
+      new tab, drawn by the frontend rather than the native view. */
+  url: string;
+  title: string;
+  /** The url the tab was opened with; null for a tab opened empty, as a
+      new tab. */
+  home: string | null;
+  opener: { kind: "user" } | { kind: "agent"; session: string };
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** The last load failure, cleared as soon as a navigation starts. */
+  error: string | null;
+}
+
+/** The embedded browser's tabs, and which one is active. */
+export interface BrowserSnapshot {
+  tabs: BrowserTab[];
+  active: number | null;
+}
+
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
@@ -544,6 +568,39 @@ export interface Core {
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
   /** Settings was chosen from the native menu. */
   onOpenSettings(handler: () => void): Promise<() => void>;
+
+  /** Opens a tab: a url, or none for a new tab the frontend draws its own
+      page for. `session` names the agent that asked, for a tab an agent
+      opens. */
+  browserOpen(
+    url: string | null,
+    session: string | null,
+  ): Promise<BrowserSnapshot>;
+  browserClose(id: number): Promise<BrowserSnapshot>;
+  browserActivate(id: number): Promise<BrowserSnapshot>;
+  /** Rejects with a plain reason meant to be shown: "enter an address",
+      "not an address", or "only http and https addresses open here". */
+  browserNavigate(id: number, address: string): Promise<void>;
+  browserBack(id: number): Promise<void>;
+  browserForward(id: number): Promise<void>;
+  browserReload(id: number): Promise<void>;
+  /** Navigates back to the tab's own url. */
+  browserHome(id: number): Promise<void>;
+  /** Lays the active tab's native view over a rectangle, in logical pixels
+      relative to the window's viewport, and marks the browser as showing. */
+  browserPlace(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): Promise<void>;
+  /** Hides the active tab's native view and marks the browser as not
+      showing. */
+  browserHide(): Promise<void>;
+  browserTabs(): Promise<BrowserSnapshot>;
+  onBrowserTabs(
+    handler: (snapshot: BrowserSnapshot) => void,
+  ): Promise<() => void>;
 
   /** Sessions the agent already has on disk for this project, newest first. */
   transcripts(project: string, agent: AgentId): Promise<Transcript[]>;
@@ -757,6 +814,26 @@ const tauriCore: Core = {
     return listen("open_settings", () => handler());
   },
 
+  browserOpen: (url, session) =>
+    invoke<BrowserSnapshot>("browser_open", { url, session }),
+  browserClose: (id) => invoke<BrowserSnapshot>("browser_close", { id }),
+  browserActivate: (id) => invoke<BrowserSnapshot>("browser_activate", { id }),
+  browserNavigate: (id, address) =>
+    invoke<void>("browser_navigate", { id, address }),
+  browserBack: (id) => invoke<void>("browser_back", { id }),
+  browserForward: (id) => invoke<void>("browser_forward", { id }),
+  browserReload: (id) => invoke<void>("browser_reload", { id }),
+  browserHome: (id) => invoke<void>("browser_home", { id }),
+  browserPlace: (x, y, width, height) =>
+    invoke<void>("browser_place", { x, y, width, height }),
+  browserHide: () => invoke<void>("browser_hide"),
+  browserTabs: () => invoke<BrowserSnapshot>("browser_tabs"),
+  async onBrowserTabs(handler) {
+    return listen<BrowserSnapshot>("browser_tabs", (event) =>
+      handler(event.payload),
+    );
+  },
+
   async onFileDrag(handler) {
     return getCurrentWebview().onDragDropEvent((event) => {
       const drag = event.payload;
@@ -933,6 +1010,38 @@ const detachedCore: Core = {
     return () => {};
   },
   async onOpenSettings() {
+    return () => {};
+  },
+  async browserOpen() {
+    throw new Error("no core");
+  },
+  async browserClose() {
+    throw new Error("no core");
+  },
+  async browserActivate() {
+    throw new Error("no core");
+  },
+  async browserNavigate() {
+    throw new Error("no core");
+  },
+  async browserBack() {
+    throw new Error("no core");
+  },
+  async browserForward() {
+    throw new Error("no core");
+  },
+  async browserReload() {
+    throw new Error("no core");
+  },
+  async browserHome() {
+    throw new Error("no core");
+  },
+  async browserPlace() {},
+  async browserHide() {},
+  async browserTabs() {
+    return { tabs: [], active: null };
+  },
+  async onBrowserTabs() {
     return () => {};
   },
   async transcripts() {

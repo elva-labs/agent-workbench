@@ -81,6 +81,120 @@ export async function installFakeCore(
 
       let ptyCount = 0;
 
+      // The embedded browser's tabs, kept the way the Rust model keeps
+      // them: ids from 1, never reused; opening activates; closing the
+      // active tab activates its right neighbour, else its left.
+      type FakeBrowserTab = {
+        id: number;
+        url: string;
+        title: string;
+        home: string | null;
+        opener: { kind: "user" } | { kind: "agent"; session: string };
+        loading: boolean;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        error: string | null;
+      };
+
+      const browserState = {
+        tabs: [] as FakeBrowserTab[],
+        active: null as number | null,
+        nextId: 1,
+        // Per-tab back/forward stack: the urls visited, and where in them
+        // the tab now stands.
+        histories: new Map<number, { stack: string[]; index: number }>(),
+      };
+
+      const browserSnapshot = () => ({
+        tabs: browserState.tabs.map((tab) => ({ ...tab })),
+        active: browserState.active,
+      });
+
+      const emitBrowserTabs = () => {
+        const w = window as unknown as {
+          __browserTabs?: (snapshot: unknown) => void;
+        };
+        w.__browserTabs?.(browserSnapshot());
+      };
+
+      const hostOf = (url: string) => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return url;
+        }
+      };
+
+      // The scheme `input` names, if it names one at all: a colon followed
+      // by digits and the end of the authority is a port, not a scheme.
+      const explicitScheme = (input: string): string | null => {
+        const slashes = input.indexOf("://");
+        if (slashes !== -1) return input.slice(0, slashes);
+        const colon = input.indexOf(":");
+        if (colon === -1) return null;
+        const after = input.slice(colon + 1);
+        const digits = after.match(/^\d*/)![0];
+        if (digits.length > 0) {
+          const rest = after.slice(digits.length);
+          if (rest === "" || /^[/?#]/.test(rest)) return null;
+        }
+        return input.slice(0, colon);
+      };
+
+      // `http` or `https` for a scheme-less address, by what its host looks
+      // like: localhost, an IPv4 address, or a single name with a port get
+      // plain http, and anything else with a dot gets https.
+      const classifyHost = (input: string): string => {
+        const authorityEnd = input.search(/[/?#]/);
+        const authority = authorityEnd === -1 ? input : input.slice(0, authorityEnd);
+        if (authority === "") throw new Error("not an address");
+        const port = authority.match(/^(.+):(\d+)$/);
+        const host = port ? port[1] : authority;
+        const hasPort = port !== null;
+        if (host === "") throw new Error("not an address");
+        const isIPv4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+        const local = host.toLowerCase() === "localhost" || isIPv4;
+        if (local || (hasPort && !host.includes("."))) return "http";
+        if (host.includes(".")) return "https";
+        throw new Error("not an address");
+      };
+
+      // The same address rules the core applies, in a simplified form: no
+      // search fallback, no scheme reads as http or https by the host's
+      // shape, and anything else is refused with the reason to show.
+      const normalizeBrowserAddress = (input: string): string => {
+        const trimmed = input.trim();
+        if (trimmed === "") throw new Error("enter an address");
+        if (/\s/.test(trimmed)) throw new Error("not an address");
+        const named = explicitScheme(trimmed);
+        const scheme = named ?? classifyHost(trimmed);
+        if (scheme.toLowerCase() !== "http" && scheme.toLowerCase() !== "https") {
+          throw new Error("only http and https addresses open here");
+        }
+        const candidate = named !== null ? trimmed : `${scheme}://${trimmed}`;
+        return new URL(candidate).href;
+      };
+
+      // A finished navigation: the url lands at once, the title becomes its
+      // host, and the tab's history stack gains an entry, dropping whatever
+      // was ahead of it.
+      const browserNavigated = (tab: FakeBrowserTab, url: string) => {
+        const history = browserState.histories.get(tab.id) ?? {
+          stack: [],
+          index: -1,
+        };
+        history.stack = history.stack.slice(0, history.index + 1);
+        history.stack.push(url);
+        history.index = history.stack.length - 1;
+        browserState.histories.set(tab.id, history);
+        tab.url = url;
+        tab.title = hostOf(url);
+        tab.loading = false;
+        tab.error = null;
+        tab.canGoBack = history.index > 0;
+        tab.canGoForward = false;
+      };
+
       type FakeSource = {
         id: string;
         kind: string;
@@ -544,6 +658,124 @@ export async function installFakeCore(
         },
         onFileDrag: async (handler: (drag: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__fileDrag = handler;
+          return () => {};
+        },
+
+        // The embedded browser: tabs kept in memory, with the address rules
+        // and the history stack a real tab would have.
+        browserOpen: async (url: string | null, session: string | null) => {
+          const home = url === null ? null : normalizeBrowserAddress(url);
+          const id = browserState.nextId++;
+          const tab: FakeBrowserTab = {
+            id,
+            url: "about:blank",
+            title: "",
+            home,
+            opener:
+              session !== null ? { kind: "agent", session } : { kind: "user" },
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            error: null,
+          };
+          browserState.tabs.push(tab);
+          browserState.histories.set(id, { stack: [], index: -1 });
+          if (home !== null) browserNavigated(tab, home);
+          browserState.active = id;
+          emitBrowserTabs();
+          return browserSnapshot();
+        },
+        browserClose: async (id: number) => {
+          const index = browserState.tabs.findIndex((tab) => tab.id === id);
+          if (index !== -1) {
+            browserState.tabs.splice(index, 1);
+            browserState.histories.delete(id);
+            if (browserState.active === id) {
+              const next = browserState.tabs[index] ?? browserState.tabs[index - 1];
+              browserState.active = next ? next.id : null;
+            }
+          }
+          emitBrowserTabs();
+          return browserSnapshot();
+        },
+        browserActivate: async (id: number) => {
+          if (browserState.tabs.some((tab) => tab.id === id)) {
+            browserState.active = id;
+          }
+          emitBrowserTabs();
+          return browserSnapshot();
+        },
+        browserNavigate: async (id: number, address: string) => {
+          const tab = browserState.tabs.find((candidate) => candidate.id === id);
+          if (tab === undefined) throw new Error("no such tab");
+          const url = normalizeBrowserAddress(address);
+          browserNavigated(tab, url);
+          emitBrowserTabs();
+        },
+        browserBack: async (id: number) => {
+          const tab = browserState.tabs.find((candidate) => candidate.id === id);
+          if (tab === undefined) throw new Error("no such tab");
+          const history = browserState.histories.get(id);
+          if (history !== undefined && history.index > 0) {
+            history.index -= 1;
+            tab.url = history.stack[history.index];
+            tab.title = hostOf(tab.url);
+            tab.error = null;
+            tab.canGoBack = history.index > 0;
+            tab.canGoForward = true;
+          }
+          emitBrowserTabs();
+        },
+        browserForward: async (id: number) => {
+          const tab = browserState.tabs.find((candidate) => candidate.id === id);
+          if (tab === undefined) throw new Error("no such tab");
+          const history = browserState.histories.get(id);
+          if (history !== undefined && history.index < history.stack.length - 1) {
+            history.index += 1;
+            tab.url = history.stack[history.index];
+            tab.title = hostOf(tab.url);
+            tab.error = null;
+            tab.canGoBack = true;
+            tab.canGoForward = history.index < history.stack.length - 1;
+          }
+          emitBrowserTabs();
+        },
+        browserReload: async (id: number) => {
+          const tab = browserState.tabs.find((candidate) => candidate.id === id);
+          if (tab === undefined) throw new Error("no such tab");
+          tab.error = null;
+          emitBrowserTabs();
+        },
+        browserHome: async (id: number) => {
+          const tab = browserState.tabs.find((candidate) => candidate.id === id);
+          if (tab === undefined) throw new Error("no such tab");
+          if (tab.home !== null) browserNavigated(tab, tab.home);
+          emitBrowserTabs();
+        },
+        // Where the browser was last told to sit, and whether it is
+        // showing, for a test to read back.
+        browserPlace: async (
+          x: number,
+          y: number,
+          width: number,
+          height: number,
+        ) => {
+          (
+            window as unknown as {
+              __browser?: { rect: unknown; showing: boolean };
+            }
+          ).__browser = { rect: { x, y, width, height }, showing: true };
+        },
+        browserHide: async () => {
+          const w = window as unknown as {
+            __browser?: { rect: unknown; showing: boolean };
+          };
+          w.__browser = { rect: w.__browser?.rect ?? null, showing: false };
+        },
+        browserTabs: async () => browserSnapshot(),
+        onBrowserTabs: async (handler: (snapshot: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__browserTabs =
+            handler;
           return () => {};
         },
 
