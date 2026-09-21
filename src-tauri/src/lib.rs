@@ -9,6 +9,7 @@
 //! slow `.zshrc` would freeze the UI for as long as it took.
 
 mod browser;
+mod browser_page;
 mod chrome;
 mod menu;
 #[cfg(all(debug_assertions, target_os = "macos"))]
@@ -1038,7 +1039,13 @@ pub fn run() {
             browser::browser_home,
             browser::browser_place,
             browser::browser_hide,
-            browser::browser_tabs
+            browser::browser_tabs,
+            browser_page::browser_eval,
+            browser_page::browser_console,
+            browser_page::browser_snapshot,
+            browser_page::browser_click,
+            browser_page::browser_type,
+            browser_page::browser_screenshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

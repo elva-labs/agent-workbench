@@ -66,6 +66,20 @@ impl Default for Browser {
     }
 }
 
+impl Browser {
+    /// The tab currently active, if one is open at all.
+    pub fn active(&self) -> Option<TabId> {
+        self.tabs.lock().unwrap().active()
+    }
+
+    /// Whether `id` is the tab actually shown right now: the active tab,
+    /// with the browser's place showing it at all. Only the active tab's
+    /// webview is ever visible, so this is enough to tell.
+    pub fn is_visible(&self, id: TabId) -> bool {
+        self.tabs.lock().unwrap().active() == Some(id) && self.place.lock().unwrap().showing
+    }
+}
+
 /// Sends the tabs as they now stand to the main webview alone: a tab's own
 /// page never gets a look at another tab's state.
 fn emit_snapshot(app: &AppHandle, snapshot: &Snapshot) {
@@ -89,6 +103,9 @@ fn tab_webview(id: TabId, start: &Url, app: &AppHandle) -> WebviewBuilder<Wry> {
     let window_app = app.clone();
 
     let builder = WebviewBuilder::new(id.label(), WebviewUrl::External(start.clone()))
+        // Runs before the page's own scripts, so a tab's console capture is
+        // in place from the first line.
+        .initialization_script(crate::browser_page::CONSOLE_CAPTURE_SCRIPT)
         // A frame inside the page asks here too, so the tab's own address
         // is taken from the page load below, which is the top frame's alone.
         .on_navigation(navigation_allowed)
