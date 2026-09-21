@@ -115,6 +115,12 @@ when it stops, and not for progress.
 
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 
+Ten more read and drive a tab of the embedded browser: opening, closing,
+listing and navigating one, reading it back as a snapshot of text with a
+ref on everything a click or a type can reach, clicking and typing by ref,
+reading its console, a screenshot, and running script in its page. See
+[browser](browser.md).
+
 Seven more are the orchestrator's, for a session that starts and steers
 other sessions: what they do and what the user is asked is in
 [orchestrator](orchestrator.md).

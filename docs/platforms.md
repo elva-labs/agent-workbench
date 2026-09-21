@@ -9,7 +9,9 @@ started, and what the platform will not say.
 The window has no title bar. The traffic lights sit over the header of the
 leftmost pane, placed by the app; [layout](layout.md) has the details.
 Following a session into a worktree reads the process's working directory
-through the kernel's process information.
+through the kernel's process information. The embedded browser has all of
+it here: tabs, and the tools an agent reads and drives a page with alike.
+See [browser](browser.md).
 
 ## Linux
 
@@ -17,7 +19,9 @@ WebKitGTK renders the window. Building needs the WebKitGTK development
 package and the few libraries Tauri lists for AppImage bundling; the driver
 tier needs the WebKitGTK WebDriver package and `tauri-driver`. The window is
 undecorated and the app draws its own controls. A process's working
-directory comes from procfs.
+directory comes from procfs. A browser tab opens, navigates and closes
+through WebKitGTK, but the tools that read or drive its page are not
+supported there.
 
 ## Windows
 
@@ -28,7 +32,9 @@ through `cmd /c`; a project path is handed to it in the plain form, since
 Windows directory. The hooks run under Git Bash, which Claude Code needs
 there anyway. Following a session into a worktree is not implemented, so
 the changes pane stays on the project. The driver tier attaches to a running
-app rather than launching one; [testing](testing.md) says why.
+app rather than launching one; [testing](testing.md) says why. A browser
+tab works the same way it does on Linux, through WebView2 rather than
+WebKitGTK.
 
 ## Remotes
 
