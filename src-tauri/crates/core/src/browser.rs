@@ -141,6 +141,34 @@ pub fn tab_id_from_label(label: &str) -> Option<TabId> {
     label.strip_prefix("browser-")?.parse().ok().map(TabId)
 }
 
+/// The host and port a load-failure check asks after for `url`, with the
+/// scheme's default port filled in when the address does not name one, or
+/// `None` for a target with no host to check against, `about:` among them.
+pub fn navigation_target(url: &str) -> Option<(String, u16)> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.to_string();
+    let port = parsed.port_or_known_default()?;
+    Some((host, port))
+}
+
+/// Why a load-failure check found a host unreachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectFailure {
+    /// The host name did not resolve to an address.
+    Resolution,
+    /// The name resolved, but nothing answered: the connection was refused
+    /// or timed out.
+    Connection,
+}
+
+/// The short plain message a load failure is reported to a tab as.
+pub fn connect_failure_message(host: &str, port: u16, failure: ConnectFailure) -> String {
+    match failure {
+        ConnectFailure::Resolution => format!("{host} could not be found"),
+        ConnectFailure::Connection => format!("{host}:{port} is not answering"),
+    }
+}
+
 /// Who opened a tab.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -183,6 +211,12 @@ pub struct Tabs {
     next_id: u32,
     tabs: Vec<Tab>,
     active: Option<TabId>,
+    /// The address each tab was last sent to on purpose, by `open` or
+    /// [`Tabs::navigate_to`], never by a page load. WebKit commits an
+    /// `about:blank` of its own while it swaps processes for another origin
+    /// and when a connection fails, and [`Tabs::is_interstitial`] tells
+    /// that one from a page of the tab's own by this.
+    targets: std::collections::HashMap<TabId, String>,
 }
 
 impl Default for Tabs {
@@ -197,6 +231,7 @@ impl Tabs {
             next_id: 1,
             tabs: Vec::new(),
             active: None,
+            targets: std::collections::HashMap::new(),
         }
     }
 
@@ -206,6 +241,7 @@ impl Tabs {
         let id = TabId(self.next_id);
         self.next_id += 1;
         let url = home.clone().unwrap_or_else(|| "about:blank".to_string());
+        self.targets.insert(id, url.clone());
         self.tabs.push(Tab {
             id,
             url,
@@ -228,6 +264,7 @@ impl Tabs {
             return false;
         };
         self.tabs.remove(index);
+        self.targets.remove(&id);
         if self.active == Some(id) {
             self.active = self
                 .tabs
@@ -263,6 +300,28 @@ impl Tabs {
         &self.tabs
     }
 
+    /// Whether a page load reporting `url` for `id` is WebKit's own
+    /// `about:blank` and not a page of the tab's: it names `about:blank`
+    /// while the tab was last sent somewhere else. Applying it would wipe
+    /// the address a load-failure check is still watching.
+    pub fn is_interstitial(&self, id: TabId, url: &str) -> bool {
+        url == "about:blank"
+            && self
+                .targets
+                .get(&id)
+                .is_some_and(|target| target != "about:blank")
+    }
+
+    /// Marks `id` as deliberately sent to `url`: its url becomes the
+    /// address right away, ahead of any page-load event a doomed
+    /// connection might never produce, and `url` is remembered as the
+    /// target a later `about:blank` process-swap commit is checked
+    /// against.
+    pub fn navigate_to(&mut self, id: TabId, url: String) -> bool {
+        self.targets.insert(id, url.clone());
+        self.navigation_started(id, url)
+    }
+
     pub fn navigation_started(&mut self, id: TabId, url: String) -> bool {
         let Some(tab) = self.get_mut(id) else {
             return false;
@@ -282,10 +341,16 @@ impl Tabs {
         true
     }
 
-    pub fn navigation_failed(&mut self, id: TabId, message: String) -> bool {
+    /// Records a load failure for `id`, but only while it is still on
+    /// `for_url`: a check started against an address the tab has since
+    /// navigated away from must not clobber what replaced it.
+    pub fn navigation_failed(&mut self, id: TabId, for_url: &str, message: String) -> bool {
         let Some(tab) = self.get_mut(id) else {
             return false;
         };
+        if tab.url != for_url {
+            return false;
+        }
         tab.loading = false;
         tab.error = Some(message);
         true
@@ -503,7 +568,7 @@ mod tests {
         assert!(!tabs.activate(missing));
         assert!(!tabs.navigation_started(missing, "https://x".to_string()));
         assert!(!tabs.navigation_finished(missing, "https://x".to_string()));
-        assert!(!tabs.navigation_failed(missing, "boom".to_string()));
+        assert!(!tabs.navigation_failed(missing, "https://x", "boom".to_string()));
         assert!(!tabs.titled(missing, "title".to_string()));
         assert!(!tabs.history(missing, true, true));
     }
@@ -513,7 +578,7 @@ mod tests {
         let mut tabs = Tabs::new();
         let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
 
-        tabs.navigation_failed(id, "could not connect".to_string());
+        tabs.navigation_failed(id, "https://a.example/", "could not connect".to_string());
         assert_eq!(
             tabs.get(id).unwrap().error.as_deref(),
             Some("could not connect")
@@ -537,6 +602,102 @@ mod tests {
         assert_eq!(tab.title, "B Example");
         assert!(tab.can_go_back);
         assert!(!tab.can_go_forward);
+    }
+
+    #[test]
+    fn an_about_blank_commit_that_does_not_match_the_deliberate_target_is_an_interstitial() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        tabs.navigate_to(id, "http://localhost:9/".to_string());
+
+        assert!(tabs.is_interstitial(id, "about:blank"));
+        assert!(
+            !tabs.is_interstitial(id, "http://localhost:9/"),
+            "a commit that names the real target is never an interstitial"
+        );
+
+        // It stays an interstitial even once the tab has stopped loading,
+        // since WebKit's own about:blank fallback for a failed connection
+        // can arrive after a load-failure check has already recorded it.
+        tabs.navigation_failed(id, "http://localhost:9/", "not answering".to_string());
+        assert!(tabs.is_interstitial(id, "about:blank"));
+    }
+
+    #[test]
+    fn an_about_blank_commit_matching_the_deliberate_target_is_not_an_interstitial() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(None, Opener::User);
+        // A tab opened empty was deliberately sent to about:blank, and a
+        // commit that confirms as much is not noise.
+        assert!(!tabs.is_interstitial(id, "about:blank"));
+
+        tabs.navigate_to(id, "https://a.example/".to_string());
+        tabs.navigate_to(id, "about:blank".to_string());
+        assert!(!tabs.is_interstitial(id, "about:blank"));
+
+        assert!(!tabs.is_interstitial(TabId::new(99), "about:blank"));
+    }
+
+    #[test]
+    fn a_late_failure_is_dropped_once_the_tab_has_moved_on() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        tabs.navigation_started(id, "https://b.example/".to_string());
+
+        assert!(!tabs.navigation_failed(
+            id,
+            "https://a.example/",
+            "a.example could not be found".to_string()
+        ));
+        assert_eq!(tabs.get(id).unwrap().error, None);
+
+        assert!(tabs.navigation_failed(
+            id,
+            "https://b.example/",
+            "b.example is not answering".to_string()
+        ));
+        assert_eq!(
+            tabs.get(id).unwrap().error.as_deref(),
+            Some("b.example is not answering")
+        );
+    }
+
+    #[test]
+    fn navigation_target_reads_the_host_and_fills_in_the_default_port() {
+        assert_eq!(
+            navigation_target("https://example.com/path"),
+            Some(("example.com".to_string(), 443))
+        );
+        assert_eq!(
+            navigation_target("http://example.com/path"),
+            Some(("example.com".to_string(), 80))
+        );
+        assert_eq!(
+            navigation_target("http://localhost:5173/app"),
+            Some(("localhost".to_string(), 5173))
+        );
+        assert_eq!(
+            navigation_target("https://example.com:8443/x"),
+            Some(("example.com".to_string(), 8443))
+        );
+    }
+
+    #[test]
+    fn navigation_target_is_none_for_about_and_unparsable_urls() {
+        assert_eq!(navigation_target("about:blank"), None);
+        assert_eq!(navigation_target("not a url"), None);
+    }
+
+    #[test]
+    fn connect_failure_message_names_the_kind_of_failure() {
+        assert_eq!(
+            connect_failure_message("example.com", 443, ConnectFailure::Resolution),
+            "example.com could not be found"
+        );
+        assert_eq!(
+            connect_failure_message("example.com", 8080, ConnectFailure::Connection),
+            "example.com:8080 is not answering"
+        );
     }
 
     #[test]

@@ -1032,6 +1032,10 @@ pub fn run() {
             browser::browser_close,
             browser::browser_activate,
             browser::browser_navigate,
+            browser::browser_back,
+            browser::browser_forward,
+            browser::browser_reload,
+            browser::browser_home,
             browser::browser_place,
             browser::browser_hide,
             browser::browser_tabs

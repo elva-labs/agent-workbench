@@ -9,14 +9,23 @@
 //! [`tauri::WebviewWindow`]: once a window holds a second webview, Tauri no
 //! longer hands it out as the latter.
 
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, State, Url,
-    WebviewUrl, Window, Wry,
+    Webview, WebviewUrl, Window, Wry,
 };
-use workbench_core::browser::{normalize_url, Opener, Snapshot, TabId, Tabs};
+use workbench_core::browser::{
+    connect_failure_message, navigation_target, normalize_url, ConnectFailure, Opener, Snapshot,
+    TabId, Tabs,
+};
+
+/// How long a load-failure check waits for a host to answer before it
+/// reports the tab as unreachable.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Safari's user agent on macOS. WKWebView's own stops at `AppleWebKit`,
 /// which a site reads as an embedded view rather than a browser.
@@ -83,20 +92,35 @@ fn tab_webview(id: TabId, start: &Url, app: &AppHandle) -> WebviewBuilder<Wry> {
         // A frame inside the page asks here too, so the tab's own address
         // is taken from the page load below, which is the top frame's alone.
         .on_navigation(navigation_allowed)
-        .on_page_load(move |_webview, payload| {
+        .on_page_load(move |webview, payload| {
             let browser = load_app.state::<Arc<Browser>>();
             let url = payload.url().to_string();
+            let event = payload.event();
             let snapshot = {
                 let mut tabs = browser.tabs.lock().unwrap();
-                match payload.event() {
-                    PageLoadEvent::Started => tabs.navigation_started(id, url),
-                    PageLoadEvent::Finished => tabs.navigation_finished(id, url),
-                };
+                // A cross-origin destination can make WebKit swap the tab to
+                // a new process, which commits a transient `about:blank`
+                // before the real destination is known to have answered at
+                // all; applying that here would erase the target a
+                // load-failure check kicked off against this tab is still
+                // watching for.
+                if !tabs.is_interstitial(id, &url) {
+                    match event {
+                        PageLoadEvent::Started => tabs.navigation_started(id, url),
+                        PageLoadEvent::Finished => tabs.navigation_finished(id, url),
+                    };
+                }
                 tabs.snapshot()
             };
             emit_snapshot(&load_app, &snapshot);
+            // A single-page app's own navigation changes history without a
+            // page load, but a real page load always ends one, so this is
+            // also where the buttons catch up on those.
+            if let PageLoadEvent::Finished = event {
+                refresh_history(id, webview, load_app.clone());
+            }
         })
-        .on_document_title_changed(move |_webview, title| {
+        .on_document_title_changed(move |webview, title| {
             let browser = title_app.state::<Arc<Browser>>();
             let snapshot = {
                 let mut tabs = browser.tabs.lock().unwrap();
@@ -104,6 +128,10 @@ fn tab_webview(id: TabId, start: &Url, app: &AppHandle) -> WebviewBuilder<Wry> {
                 tabs.snapshot()
             };
             emit_snapshot(&title_app, &snapshot);
+            // A single-page app changes its title on the same pushState
+            // navigation that changes its history, so this is the other
+            // place the back/forward buttons need to catch up.
+            refresh_history(id, webview, title_app.clone());
         })
         .on_new_window(move |url, _features| {
             let app = window_app.clone();
@@ -143,6 +171,136 @@ fn apply_platform(builder: WebviewBuilder<Wry>) -> WebviewBuilder<Wry> {
     builder
 }
 
+/// Marks `id` as now under way to `target`: the tab's url becomes the
+/// address right away, ahead of any page load event a doomed connection
+/// would never reach, and a load-failure check is kicked off against it.
+fn settle_on(browser: &Browser, app: &AppHandle, id: TabId, target: String) {
+    let snapshot = {
+        let mut tabs = browser.tabs.lock().unwrap();
+        tabs.navigate_to(id, target.clone());
+        tabs.snapshot()
+    };
+    emit_snapshot(app, &snapshot);
+    check_reachable(id, target, app.clone());
+}
+
+/// Checks in the background whether `url`'s host answers, and records a
+/// load failure on `id` if it is still there and still on `url` by the time
+/// the answer comes back. Called with the address a navigation was actually
+/// sent to, from [`settle_on`] and from `open_tab`: wry reports neither a
+/// start nor an end for a navigation that never gets a response (and a
+/// commit that swaps the tab to a different origin can even settle on
+/// `about:blank` first), so a tab's own page-load event is not a fire point
+/// this can wait on. Skipped for a target with no host to check against,
+/// `about:` among them.
+fn check_reachable(id: TabId, url: String, app: AppHandle) {
+    let Some((host, port)) = navigation_target(&url) else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let probe_host = host.clone();
+        let outcome =
+            tauri::async_runtime::spawn_blocking(move || probe(&probe_host, port, CONNECT_TIMEOUT))
+                .await;
+        let Ok(Err(failure)) = outcome else {
+            return;
+        };
+
+        let message = connect_failure_message(&host, port, failure);
+        let browser = app.state::<Arc<Browser>>();
+        let (changed, snapshot) = {
+            let mut tabs = browser.tabs.lock().unwrap();
+            let changed = tabs.navigation_failed(id, &url, message);
+            (changed, tabs.snapshot())
+        };
+        if changed {
+            emit_snapshot(&app, &snapshot);
+        }
+    });
+}
+
+/// Whether `host:port` answers within `timeout`. Resolving the name and
+/// connecting to it share the one deadline, so a slow resolver eats into
+/// the time left to connect rather than escaping the timeout altogether.
+fn probe(host: &str, port: u16, timeout: Duration) -> Result<(), ConnectFailure> {
+    let deadline = Instant::now() + timeout;
+    let addrs: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| ConnectFailure::Resolution)?
+        .collect();
+    if addrs.is_empty() {
+        return Err(ConnectFailure::Resolution);
+    }
+    for addr in addrs {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ConnectFailure::Connection);
+        }
+        if TcpStream::connect_timeout(&addr, remaining).is_ok() {
+            return Ok(());
+        }
+    }
+    Err(ConnectFailure::Connection)
+}
+
+/// Refreshes `id`'s back/forward state from `webview` and emits the
+/// snapshot. Runs as its own task so a slow read never holds up the page
+/// load or title-change event it was asked from.
+fn refresh_history(id: TabId, webview: Webview<Wry>, app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let (can_go_back, can_go_forward) = read_history(&webview).await;
+        let browser = app.state::<Arc<Browser>>();
+        let snapshot = {
+            let mut tabs = browser.tabs.lock().unwrap();
+            tabs.history(id, can_go_back, can_go_forward);
+            tabs.snapshot()
+        };
+        emit_snapshot(&app, &snapshot);
+    });
+}
+
+/// `canGoBack` and `canGoForward`, read from the `WKWebView` directly: wry
+/// exposes no history query of its own on any platform.
+#[cfg(target_os = "macos")]
+async fn read_history(webview: &Webview<Wry>) -> (bool, bool) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if with_native_webview(webview, move |view| {
+        let _ = tx.send(unsafe { (view.canGoBack(), view.canGoForward()) });
+    })
+    .is_err()
+    {
+        return (true, true);
+    }
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(2)))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or((true, true))
+}
+
+/// Wry exposes no history query outside macOS, so the buttons just stay
+/// usable; a click that turns out to have nowhere to go is a no-op.
+#[cfg(not(target_os = "macos"))]
+async fn read_history(_webview: &Webview<Wry>) -> (bool, bool) {
+    (true, true)
+}
+
+/// Runs `action` against `webview`'s `WKWebView`, reaching it the same way
+/// the placement probe does to read from a child webview.
+#[cfg(target_os = "macos")]
+fn with_native_webview<F>(webview: &Webview<Wry>, action: F) -> Result<(), String>
+where
+    F: FnOnce(&objc2_web_kit::WKWebView) + Send + 'static,
+{
+    webview
+        .with_webview(move |platform| unsafe {
+            let view: &objc2_web_kit::WKWebView =
+                &*(platform.inner() as *const objc2_web_kit::WKWebView);
+            action(view);
+        })
+        .map_err(|e| e.to_string())
+}
+
 /// Opens a tab on `window`, builds its webview at the browser's last
 /// placement if it is showing, and hides the tab that was active. Shared by
 /// the `browser_open` command and by a tab's own `window.open`.
@@ -177,7 +335,9 @@ async fn open_tab(
     let page_url = page.parse::<Url>().map_err(|e| e.to_string())?;
     let builder = tab_webview(id, &page_url, &app);
 
-    let (position, size, visible) = match (showing, rect) {
+    // A tab opened empty is a new tab, which the window's page draws
+    // itself: its blank webview stays out of sight until it has an address.
+    let (position, size, visible) = match (showing && page != "about:blank", rect) {
         (true, Some((x, y, w, h))) => (
             Position::Logical(LogicalPosition::new(x, y)),
             Size::Logical(LogicalSize::new(w, h)),
@@ -212,6 +372,8 @@ async fn open_tab(
             previous_webview.hide().map_err(|e| e.to_string())?;
         }
     }
+
+    check_reachable(id, page, app.clone());
 
     let snapshot = browser.tabs.lock().unwrap().snapshot();
     emit_snapshot(&app, &snapshot);
@@ -315,12 +477,87 @@ pub async fn browser_activate(
 }
 
 #[tauri::command]
-pub async fn browser_navigate(window: Window, id: u32, address: String) -> Result<(), String> {
+pub async fn browser_navigate(
+    window: Window,
+    app: AppHandle,
+    browser: State<'_, Arc<Browser>>,
+    id: u32,
+    address: String,
+) -> Result<(), String> {
     let id = TabId::new(id);
     let address = normalize_url(&address)?;
     let webview = window.get_webview(&id.label()).ok_or("no such tab")?;
     let url = address.parse::<Url>().map_err(|e| e.to_string())?;
-    webview.navigate(url).map_err(|e| e.to_string())
+    webview.navigate(url).map_err(|e| e.to_string())?;
+    settle_on(&browser, &app, id, address);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn browser_back(window: Window, id: u32) -> Result<(), String> {
+    let id = TabId::new(id);
+    let webview = window.get_webview(&id.label()).ok_or("no such tab")?;
+    step_back(&webview)
+}
+
+#[cfg(target_os = "macos")]
+fn step_back(webview: &Webview<Wry>) -> Result<(), String> {
+    with_native_webview(webview, |view| unsafe {
+        view.goBack();
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn step_back(webview: &Webview<Wry>) -> Result<(), String> {
+    webview.eval("history.back()").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_forward(window: Window, id: u32) -> Result<(), String> {
+    let id = TabId::new(id);
+    let webview = window.get_webview(&id.label()).ok_or("no such tab")?;
+    step_forward(&webview)
+}
+
+#[cfg(target_os = "macos")]
+fn step_forward(webview: &Webview<Wry>) -> Result<(), String> {
+    with_native_webview(webview, |view| unsafe {
+        view.goForward();
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn step_forward(webview: &Webview<Wry>) -> Result<(), String> {
+    webview.eval("history.forward()").map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_reload(window: Window, id: u32) -> Result<(), String> {
+    let id = TabId::new(id);
+    let webview = window.get_webview(&id.label()).ok_or("no such tab")?;
+    webview.reload().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_home(
+    window: Window,
+    app: AppHandle,
+    browser: State<'_, Arc<Browser>>,
+    id: u32,
+) -> Result<(), String> {
+    let tab_id = TabId::new(id);
+    let target = {
+        let tabs = browser.tabs.lock().unwrap();
+        let tab = tabs.get(tab_id).ok_or("no such tab")?;
+        tab.home
+            .clone()
+            .unwrap_or_else(|| "about:blank".to_string())
+    };
+    let webview = window.get_webview(&tab_id.label()).ok_or("no such tab")?;
+    let url = target.parse::<Url>().map_err(|e| e.to_string())?;
+    webview.navigate(url).map_err(|e| e.to_string())?;
+    settle_on(&browser, &app, tab_id, target);
+    Ok(())
 }
 
 #[tauri::command]
