@@ -452,8 +452,10 @@ async fn conduct_answer(
 
 /// Where the middle of the leftmost header is, in points from the window's
 /// top: the window measures it, and the platform's own controls follow.
+/// It asks for the window: one that shows a browser holds more than one
+/// webview, and Tauri hands no `WebviewWindow` to a command then.
 #[tauri::command]
-fn controls_centre(window: tauri::WebviewWindow, centre: u32) {
+fn controls_centre(window: tauri::Window, centre: u32) {
     chrome::set_controls_centre(&window, centre);
 }
 
@@ -967,8 +969,8 @@ pub fn run() {
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
             menu::install(app)?;
-            if let Some(window) = app.get_webview_window("main") {
-                chrome::inset_window_controls(&window);
+            if let Some(webview_window) = app.get_webview_window("main") {
+                chrome::inset_window_controls(&webview_window.as_ref().window());
             }
             Ok(())
         })

@@ -25,7 +25,7 @@ members = ["crates/core"]
 
 [dependencies]
 workbench-core = { path = "crates/core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
