@@ -19,7 +19,6 @@
   import {
     activeSession,
     create,
-    defaultAgent,
     launch,
     rang,
     sessions,
@@ -50,34 +49,57 @@
   let title = $derived(current === null ? "Agent" : `Agent · ${agentLabel(current.agent)}`);
 
 
+  /** Whether the new-session button has opened into the choice of agent. */
+  let choosing = $state(false);
+
+  // The choice belongs to the bar it opened in: another session coming up
+  // closes it.
+  $effect(() => {
+    void current?.key;
+    choosing = false;
+  });
+
   function startAnother() {
-    if (workspace.active !== null) create(workspace.active);
+    if (installed().length > 1) choosing = true;
+    else if (workspace.active !== null) create(workspace.active);
   }
 
   function startWith(id: AgentId) {
+    choosing = false;
     if (workspace.active !== null) create(workspace.active, null, id);
   }
 
-  /** The default agent for the active project, which is the one the plain
-      new-session button starts. */
-  let preferred = $derived(workspace.active === null ? null : defaultAgent(workspace.active));
+  /** Escape backs out of the choice while one of its buttons has focus.
+      From the terminal it is the agent's. */
+  function onChoiceKey(e: KeyboardEvent) {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    choosing = false;
+  }
 </script>
 
 <!-- The way to a session from here. With several agents installed the
-     choice is made on the spot, one button each, rather than the default
-     starting on its own; with one there is nothing to choose. -->
+     button opens, in place, into one button each; with one there is
+     nothing to choose and it starts. -->
 {#snippet starters()}
-  {#if installed().length > 1}
-    {#each installed() as id (id)}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="starters" onkeydown={onChoiceKey}>
+    {#if choosing && installed().length > 1}
+      {#each installed() as id (id)}
+        <button onclick={() => startWith(id)} data-testid={`start-agent-${id}`} data-agent={id}
+          >{agentLabel(id)}</button
+        >
+      {/each}
       <button
-        onclick={() => startWith(id)}
-        data-testid={id === preferred ? "start-agent" : `start-agent-${id}`}
-        data-agent={id}>{agentLabel(id)}</button
+        class="cancel"
+        onclick={() => (choosing = false)}
+        aria-label="Cancel"
+        data-testid="start-agent-cancel">×</button
       >
-    {/each}
-  {:else}
-    <button onclick={startAnother} data-testid="start-agent">New session</button>
-  {/if}
+    {:else}
+      <button onclick={startAnother} data-testid="start-agent">New session</button>
+    {/if}
+  </div>
 {/snippet}
 
 <Pane id="agent" {title} meta={statusLabel(current)}>
@@ -113,11 +135,7 @@
       </div>
     {:else if current === null}
       <div class="overlay" data-testid="agent-status">
-        <p class="message">
-          {installed().length > 1
-            ? "No session open. Resume a past one from the list, or start one with"
-            : "No session open. Resume a past one from the list, or start a new one."}
-        </p>
+        <p class="message">No session open. Resume a past one from the list, or start a new one.</p>
         {@render starters()}
       </div>
     {:else if current.status !== "running"}
@@ -162,8 +180,18 @@
     max-width: 64ch;
   }
 
-  button {
+  .overlay > button,
+  .starters {
     margin-left: auto;
+  }
+
+  .starters {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  button {
     font-family: var(--chrome);
     font-size: var(--btn-size);
     font-weight: var(--btn-weight);
@@ -175,5 +203,12 @@
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;
+  }
+
+  .cancel {
+    padding: 4px 6px;
+    border-color: transparent;
+    background: none;
+    color: var(--ink-2);
   }
 </style>

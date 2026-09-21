@@ -954,6 +954,7 @@ test.describe("with codex installed too", () => {
   });
 
   test("Codex breathes only during a reported turn, even with continuous redraws", async ({ page }) => {
+    await page.getByTestId("start-agent").click();
     await page.getByTestId("start-agent-codex").click();
     await running(page);
     await page.clock.install();
@@ -1004,12 +1005,45 @@ test.describe("with codex installed too", () => {
   test("offers each agent from the agent pane when no session is open", async ({
     page,
   }) => {
-    const status = page.getByTestId("agent-status");
-    await expect(status).toContainText("start one with");
-    await expect(page.getByTestId("start-agent")).toHaveText("Claude Code");
+    const start = page.getByTestId("start-agent");
+    await expect(start).toHaveText("New session");
+    await start.click();
+    await expect(start).toHaveCount(0);
+    await expect(page.getByTestId("start-agent-claude-code")).toHaveText("Claude Code");
+    await expect(page.getByTestId("start-agent-codex")).toHaveText("Codex");
+    expect(await spawns(page)).toHaveLength(0);
+
     await page.getByTestId("start-agent-codex").click();
     await expect.poll(() => spawns(page)).toHaveLength(1);
     expect((await spawns(page))[0].agent).toBe("codex");
+  });
+
+  test("keeps the agent pane's buttons against its right edge", async ({ page }) => {
+    const status = page.getByTestId("agent-status");
+    const flush = async (testid: string) => {
+      const bar = (await status.boundingBox())!;
+      const box = (await page.getByTestId(testid).boundingBox())!;
+      expect(bar.x + bar.width - (box.x + box.width)).toBeLessThan(40);
+    };
+    await flush("start-agent");
+    await page.getByTestId("start-agent").click();
+    await flush("start-agent-cancel");
+
+    const claude = (await page.getByTestId("start-agent-claude-code").boundingBox())!;
+    const codex = (await page.getByTestId("start-agent-codex").boundingBox())!;
+    expect(codex.x - (claude.x + claude.width)).toBeLessThan(20);
+  });
+
+  test("backs out of the agent pane's choice without starting anything", async ({ page }) => {
+    await page.getByTestId("start-agent").click();
+    await page.getByTestId("start-agent-cancel").click();
+    await expect(page.getByTestId("start-agent")).toHaveText("New session");
+
+    await page.getByTestId("start-agent").click();
+    await page.getByTestId("start-agent-codex").focus();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("start-agent")).toHaveText("New session");
+    expect(await spawns(page)).toHaveLength(0);
   });
 
   test("offers both agents and starts the one you pick", async ({ page }) => {
