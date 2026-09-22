@@ -302,9 +302,31 @@ async fn read_history(webview: &Webview<Wry>) -> (bool, bool) {
         .unwrap_or((true, true))
 }
 
-/// Wry exposes no history query outside macOS, so the buttons just stay
+/// `can_go_back` and `can_go_forward`, read from the WebKitGTK view.
+#[cfg(target_os = "linux")]
+async fn read_history(webview: &Webview<Wry>) -> (bool, bool) {
+    use webkit2gtk::WebViewExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    if webview
+        .with_webview(move |platform| {
+            let view = platform.inner();
+            let _ = tx.send((view.can_go_back(), view.can_go_forward()));
+        })
+        .is_err()
+    {
+        return (true, true);
+    }
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(2)))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or((true, true))
+}
+
+/// Wry exposes no history query on Windows, so the buttons just stay
 /// usable; a click that turns out to have nowhere to go is a no-op.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 async fn read_history(_webview: &Webview<Wry>) -> (bool, bool) {
     (true, true)
 }
@@ -540,7 +562,16 @@ fn step_back(webview: &Webview<Wry>) -> Result<(), String> {
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn step_back(webview: &Webview<Wry>) -> Result<(), String> {
+    use webkit2gtk::WebViewExt;
+
+    webview
+        .with_webview(|platform| platform.inner().go_back())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn step_back(webview: &Webview<Wry>) -> Result<(), String> {
     webview.eval("history.back()").map_err(|e| e.to_string())
 }
@@ -559,7 +590,16 @@ fn step_forward(webview: &Webview<Wry>) -> Result<(), String> {
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn step_forward(webview: &Webview<Wry>) -> Result<(), String> {
+    use webkit2gtk::WebViewExt;
+
+    webview
+        .with_webview(|platform| platform.inner().go_forward())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn step_forward(webview: &Webview<Wry>) -> Result<(), String> {
     webview.eval("history.forward()").map_err(|e| e.to_string())
 }
