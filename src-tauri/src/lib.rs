@@ -9,6 +9,7 @@
 //! slow `.zshrc` would freeze the UI for as long as it took.
 
 mod browser;
+mod browser_keys;
 mod browser_page;
 mod chrome;
 mod menu;
@@ -1004,10 +1005,12 @@ pub fn run() {
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
             app.manage(Arc::new(browser::Browser::default()));
+            app.manage(Arc::new(browser_keys::Keys::default()));
             menu::install(app)?;
             if let Some(webview_window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&webview_window.as_ref().window());
             }
+            browser_keys::install(app);
             #[cfg(all(debug_assertions, target_os = "macos"))]
             probe::maybe_run_probe(app.handle());
             Ok(())
@@ -1072,6 +1075,7 @@ pub fn run() {
             browser::browser_place,
             browser::browser_hide,
             browser::browser_tabs,
+            browser_keys::browser_keys,
             browser_page::browser_eval,
             browser_page::browser_console,
             browser_page::browser_snapshot,

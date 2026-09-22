@@ -71,6 +71,17 @@ step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>.
   <kbd>Cmd</kbd>+click (<kbd>Ctrl</kbd> elsewhere), bare URLs and links the
   program marked up alike. A plain click is left to the TUI.
 
+## A page in the browser
+
+A page shown in the embedded browser is a native view of its own, not part
+of the app's page, and once a person clicks into it the keyboard is the
+page's: every key reaches it, the same as a real browser tab. The app takes
+back only what it always takes back, Escape and its own chords, and lets
+the rest through untouched, Cmd+C and Cmd+V among them. Clicking into a
+page counts as focusing the changes pane, since that is where the tab
+lives, but it does not pull the keyboard there the way pressing
+Cmd+3 would: the page keeps it until Escape or a chord takes it back.
+
 ## Focus follows the pointer down, not the hover
 
 A pane takes focus on pointer down and on focus-in, never on hover. Hover

@@ -361,6 +361,18 @@ export function focusPane(id: PaneId) {
 }
 
 /**
+ * A pointer went down inside a browser tab's page: the changes pane is
+ * marked focused, since that is where the tab lives, but the keyboard stays
+ * with the page. Unlike [`focusPane`] this never bumps `focusRequest`, the
+ * signal a pane reads as "take the keyboard, even if you already have it";
+ * without it, a pane already holding the DOM's own focus keeps it.
+ */
+export function browserFocused() {
+  if (!changesVisible()) return;
+  layout.focus = "changes";
+}
+
+/**
  * Hands the keyboard back to the pane that has the focus state. A dialog
  * takes the document's focus while it is up and leaves it on nothing when it
  * goes; without this the pane would still be named as focused while its keys

@@ -40,7 +40,9 @@ so `javascript:alert(1)` is refused while `localhost:3000` opens as a page.
 Nothing but `http` and `https` is let through, and there is no search
 fallback for text that reads as neither an address nor a scheme. Home
 returns to the address a tab was opened with, or to `about:blank` for one
-opened as a new tab.
+opened as a new tab. Clicking from the address field into the page hands
+the page the keyboard; see [focus](focus-model.md) for what the app still
+takes back.
 
 A new tab draws its own page in the body: a line asking for an address and,
 with nothing else open, a button to start one. A page that did not load

@@ -34,6 +34,7 @@
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
+  import { keys } from "$lib/keys.svelte";
   import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import {
@@ -70,6 +71,7 @@
     MIN_REVIEW,
     agentVisible,
     applyLayout,
+    browserFocused,
     changesSpan,
     changesVisible,
     changesWidth,
@@ -147,6 +149,9 @@
       .onBrowserRequest((request) => void browserRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
+      .onBrowserFocused(() => browserFocused())
+      .then((unlisten) => offs.push(unlisten));
+    core()
       .onPluginState((event) => pluginStateChanged(event))
       .then((unlisten) => offs.push(unlisten));
     core()
@@ -221,6 +226,12 @@
 
   $effect(() => {
     badge(unreadCount());
+  });
+
+  // The native layer takes a chord back from a browser tab's page on the
+  // app's behalf, so it needs the table again whenever a binding changes.
+  $effect(() => {
+    void core().browserKeys(Object.values(keys.bindings));
   });
 
   let reviewing = $derived(layout.mode === "reviewing");

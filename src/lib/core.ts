@@ -481,6 +481,14 @@ export interface BrowserConsoleEntry {
   url: string;
 }
 
+/** A key chord the app claims, the shape the keymap keeps them in: the
+    platform modifier is implied, and only Shift and Alt can join it. */
+export interface KeyChord {
+  key: string;
+  shift: boolean;
+  alt: boolean;
+}
+
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
@@ -648,6 +656,14 @@ export interface Core {
   onBrowserTabs(
     handler: (snapshot: BrowserSnapshot) => void,
   ): Promise<() => void>;
+  /** The chords the app claims, sent on load and whenever the keymap
+      changes, so a native key monitor inside a tab's webview knows what to
+      take back from the page. */
+  browserKeys(chords: KeyChord[]): Promise<void>;
+  /** A pointer went down inside a browser tab's webview: the keyboard is
+      about to leave the app's own page, wherever it was, for the page the
+      tab shows. */
+  onBrowserFocused(handler: () => void): Promise<() => void>;
   /** The tab's page as text, with a ref on each element `browserClick` and
       `browserType` can reach. Null id means the active tab. */
   browserSnapshot(id: number | null): Promise<string>;
@@ -909,6 +925,10 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  browserKeys: (chords) => invoke<void>("browser_keys", { chords }),
+  async onBrowserFocused(handler) {
+    return listen("browser_focused", () => handler());
+  },
   browserSnapshot: (id) => invoke<string>("browser_snapshot", { id }),
   browserClick: (id, ref) => invoke<void>("browser_click", { id, ref }),
   browserType: (id, ref, text, submit) =>
@@ -1130,6 +1150,10 @@ const detachedCore: Core = {
     return { tabs: [], active: null };
   },
   async onBrowserTabs() {
+    return () => {};
+  },
+  async browserKeys() {},
+  async onBrowserFocused() {
     return () => {};
   },
   async browserSnapshot() {

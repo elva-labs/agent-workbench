@@ -11,6 +11,7 @@ import { installFakeCore } from "./fake";
 
 const CHANGES = "section[data-pane='changes']";
 const TREE = "[data-testid='file-tree']";
+const MOD = "ControlOrMeta";
 
 function row(page: Page, name: string) {
   return page.locator(TREE).getByText(name, { exact: true });
@@ -329,4 +330,46 @@ test("the fold sits inside the tree's column and does not overlap Processes", as
 
   // The two folds' own rows never occupy the same vertical space.
   expect(browserFold.y).toBeGreaterThanOrEqual(processesFold.y + processesFold.height - 1);
+});
+
+/**
+ * A page inside a browser tab is a native webview, not the app's own DOM,
+ * so taking the keyboard and the pointer back from it happens through the
+ * core rather than a DOM event: a native key monitor forwards the app's own
+ * chords, and a click is reported once it lands. The fake core stands in
+ * for both, recording the chords on `window.__browserKeys` and exposing the
+ * click as `window.__browserFocused`.
+ */
+test.describe("keeping the keyboard from a browser tab", () => {
+  function browserKeys(page: Page) {
+    return page.evaluate(
+      () => (window as unknown as { __browserKeys?: { key: string }[] }).__browserKeys ?? null,
+    );
+  }
+
+  test("hands the chords over on load and again after a binding changes", async ({ page }) => {
+    await expect.poll(() => browserKeys(page)).not.toBeNull();
+    const initial = (await browserKeys(page))!;
+    expect(initial.some((chord) => chord.key === "3")).toBe(true);
+
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-keys").click();
+    await page.getByTestId("preset-vim").click();
+    await page.keyboard.press("Escape");
+
+    await expect
+      .poll(async () => (await browserKeys(page))!.some((chord) => chord.key === "l"))
+      .toBe(true);
+  });
+
+  test("a click landing in a tab marks the changes pane focused", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+2`);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+
+    await page.evaluate(() =>
+      (window as unknown as { __browserFocused?: () => void }).__browserFocused?.(),
+    );
+
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
+  });
 });

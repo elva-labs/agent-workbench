@@ -800,6 +800,18 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        // The chords the app currently claims, as the frontend last handed
+        // them over, and the way a test fires a click landing in a tab's
+        // webview: calling the handler `onBrowserFocused` stored here.
+        browserKeys: async (chords: unknown) => {
+          (window as unknown as Record<string, unknown>).__browserKeys =
+            chords;
+        },
+        onBrowserFocused: async (handler: () => void) => {
+          (window as unknown as Record<string, unknown>).__browserFocused =
+            handler;
+          return () => {};
+        },
         // The page tools: there is no real page behind a fake tab, so each
         // answers with simple canned data keyed off the tab it was asked
         // about, enough to exercise the wiring from a browser tool's call
