@@ -604,11 +604,24 @@ fn step_forward(webview: &Webview<Wry>) -> Result<(), String> {
     webview.eval("history.forward()").map_err(|e| e.to_string())
 }
 
+/// Loads the tab's page again. A reload is a navigation sent on purpose,
+/// so a failure the tab showed is cleared and its host checked again.
 #[tauri::command]
-pub async fn browser_reload(window: Window, id: u32) -> Result<(), String> {
+pub async fn browser_reload(
+    window: Window,
+    app: AppHandle,
+    browser: State<'_, Arc<Browser>>,
+    id: u32,
+) -> Result<(), String> {
     let id = TabId::new(id);
     let webview = window.get_webview(&id.label()).ok_or("no such tab")?;
-    webview.reload().map_err(|e| e.to_string())
+    let url = {
+        let tabs = browser.tabs.lock().unwrap();
+        tabs.get(id).ok_or("no such tab")?.url.clone()
+    };
+    webview.reload().map_err(|e| e.to_string())?;
+    settle_on(&browser, &app, id, url);
+    Ok(())
 }
 
 #[tauri::command]

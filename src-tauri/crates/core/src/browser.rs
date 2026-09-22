@@ -192,7 +192,8 @@ pub struct Tab {
     pub loading: bool,
     pub can_go_back: bool,
     pub can_go_forward: bool,
-    /// The last load failure, cleared as soon as a navigation starts.
+    /// The last load failure, cleared when the tab is sent somewhere on
+    /// purpose or a page load starts for another address.
     pub error: Option<String>,
 }
 
@@ -217,6 +218,12 @@ pub struct Tabs {
     /// and when a connection fails, and [`Tabs::is_interstitial`] tells
     /// that one from a page of the tab's own by this.
     targets: std::collections::HashMap<TabId, String>,
+    /// The tabs sent somewhere on purpose whose load the webview has not
+    /// yet reported as under way. WebKitGTK ends a load that never got
+    /// under way by reporting it finished at the address the tab was on
+    /// before, and [`Tabs::navigation_finished`] tells that from a page of
+    /// the tab's own by this.
+    uncommitted: std::collections::HashSet<TabId>,
 }
 
 impl Default for Tabs {
@@ -232,6 +239,7 @@ impl Tabs {
             tabs: Vec::new(),
             active: None,
             targets: std::collections::HashMap::new(),
+            uncommitted: std::collections::HashSet::new(),
         }
     }
 
@@ -242,6 +250,9 @@ impl Tabs {
         self.next_id += 1;
         let url = home.clone().unwrap_or_else(|| "about:blank".to_string());
         self.targets.insert(id, url.clone());
+        if home.is_some() {
+            self.uncommitted.insert(id);
+        }
         self.tabs.push(Tab {
             id,
             url,
@@ -265,6 +276,7 @@ impl Tabs {
         };
         self.tabs.remove(index);
         self.targets.remove(&id);
+        self.uncommitted.remove(&id);
         if self.active == Some(id) {
             self.active = self
                 .tabs
@@ -314,15 +326,13 @@ impl Tabs {
 
     /// Marks `id` as deliberately sent to `url`: its url becomes the
     /// address right away, ahead of any page-load event a doomed
-    /// connection might never produce, and `url` is remembered as the
+    /// connection might never produce, any failure it showed is cleared,
+    /// even one for this same address, and `url` is remembered as the
     /// target a later `about:blank` process-swap commit is checked
     /// against.
     pub fn navigate_to(&mut self, id: TabId, url: String) -> bool {
         self.targets.insert(id, url.clone());
-        self.navigation_started(id, url)
-    }
-
-    pub fn navigation_started(&mut self, id: TabId, url: String) -> bool {
+        self.uncommitted.insert(id);
         let Some(tab) = self.get_mut(id) else {
             return false;
         };
@@ -332,11 +342,38 @@ impl Tabs {
         true
     }
 
-    pub fn navigation_finished(&mut self, id: TabId, url: String) -> bool {
+    /// A page load the webview reports as under way. One for the address
+    /// the tab has already failed to reach is that same navigation being
+    /// reported late, and leaves the failure standing: WebKitGTK reports
+    /// the start of a load whose host does not resolve only after a
+    /// load-failure check has found as much.
+    pub fn navigation_started(&mut self, id: TabId, url: String) -> bool {
+        self.uncommitted.remove(&id);
         let Some(tab) = self.get_mut(id) else {
             return false;
         };
+        if tab.error.is_some() && tab.url == url {
+            return false;
+        }
         tab.url = url;
+        tab.loading = true;
+        tab.error = None;
+        true
+    }
+
+    /// A page load the webview reports as over. One that ends a load sent
+    /// on purpose before it was ever reported under way, at an address
+    /// other than the one it was sent to, is that load failing: the tab
+    /// keeps the address it was sent to, so a load-failure check against
+    /// it still lands.
+    pub fn navigation_finished(&mut self, id: TabId, url: String) -> bool {
+        let never_started = self.uncommitted.remove(&id);
+        let Some(tab) = self.get_mut(id) else {
+            return false;
+        };
+        if !(never_started && tab.url != url) {
+            tab.url = url;
+        }
         tab.loading = false;
         true
     }
@@ -602,6 +639,90 @@ mod tests {
         assert_eq!(tab.title, "B Example");
         assert!(tab.can_go_back);
         assert!(!tab.can_go_forward);
+    }
+
+    #[test]
+    fn a_start_reported_after_the_failure_for_the_same_address_leaves_it_standing() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(None, Opener::User);
+        tabs.navigate_to(id, "https://nowhere.invalid/".to_string());
+        tabs.navigation_failed(
+            id,
+            "https://nowhere.invalid/",
+            "nowhere.invalid could not be found".to_string(),
+        );
+
+        assert!(!tabs.navigation_started(id, "https://nowhere.invalid/".to_string()));
+        let tab = tabs.get(id).unwrap();
+        assert_eq!(
+            tab.error.as_deref(),
+            Some("nowhere.invalid could not be found")
+        );
+        assert!(!tab.loading);
+
+        tabs.navigation_finished(id, "https://nowhere.invalid/".to_string());
+        assert_eq!(
+            tabs.get(id).unwrap().error.as_deref(),
+            Some("nowhere.invalid could not be found")
+        );
+    }
+
+    #[test]
+    fn a_load_that_ends_before_it_got_under_way_keeps_the_address_it_was_sent_to() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        tabs.navigation_started(id, "https://a.example/".to_string());
+        tabs.navigation_finished(id, "https://a.example/".to_string());
+
+        // WebKitGTK ends a load whose host refused it by reporting it
+        // finished at the page the tab was on before.
+        tabs.navigate_to(id, "http://localhost:9/".to_string());
+        tabs.navigation_finished(id, "https://a.example/".to_string());
+        let tab = tabs.get(id).unwrap();
+        assert_eq!(tab.url, "http://localhost:9/");
+        assert!(!tab.loading);
+
+        assert!(tabs.navigation_failed(
+            id,
+            "http://localhost:9/",
+            "localhost:9 is not answering".to_string()
+        ));
+        // The error page WebKitGTK then commits for the address leaves the
+        // failure standing.
+        tabs.navigation_started(id, "http://localhost:9/".to_string());
+        tabs.navigation_finished(id, "http://localhost:9/".to_string());
+        assert_eq!(
+            tabs.get(id).unwrap().error.as_deref(),
+            Some("localhost:9 is not answering")
+        );
+    }
+
+    #[test]
+    fn a_load_that_got_under_way_follows_where_it_finished() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(Some("http://a.example/".to_string()), Opener::User);
+        tabs.navigation_started(id, "https://a.example/".to_string());
+        tabs.navigation_finished(id, "https://a.example/landing".to_string());
+        assert_eq!(tabs.get(id).unwrap().url, "https://a.example/landing");
+
+        // A page's own navigation, never sent on purpose, is followed too.
+        tabs.navigation_finished(id, "https://a.example/next".to_string());
+        assert_eq!(tabs.get(id).unwrap().url, "https://a.example/next");
+    }
+
+    #[test]
+    fn sending_a_tab_to_the_address_it_failed_on_clears_the_failure() {
+        let mut tabs = Tabs::new();
+        let id = tabs.open(Some("http://localhost:9/".to_string()), Opener::User);
+        tabs.navigation_failed(id, "http://localhost:9/", "not answering".to_string());
+
+        assert!(tabs.navigate_to(id, "http://localhost:9/".to_string()));
+        let tab = tabs.get(id).unwrap();
+        assert_eq!(tab.error, None);
+        assert!(tab.loading);
+
+        // The start the webview reports for that attempt is not held back.
+        assert!(tabs.navigation_started(id, "http://localhost:9/".to_string()));
     }
 
     #[test]
