@@ -15,6 +15,11 @@
 //! click until after AppKit has already changed first responder, so the
 //! monitor also watches for a `leftMouseDown` there and tells the frontend
 //! a browser tab was focused; that event passes through unharmed either way.
+//!
+//! On Linux a key reaches the GTK window before the widget holding the
+//! keyboard, so a handler on the window does the same with Ctrl in Cmd's
+//! place, and the window's own report of a new focus widget tells the
+//! frontend when a tab's webview has taken the keyboard.
 
 use std::sync::Mutex;
 
@@ -22,8 +27,10 @@ use serde::Deserialize;
 use tauri::State;
 
 /// A key chord the frontend has bound to an app action. The platform
-/// modifier, Cmd, is implied; only Shift and Alt can join it.
+/// modifier, Cmd on macOS and Ctrl elsewhere, is implied; only Shift and
+/// Alt can join it. Windows has no monitor to read one back.
 #[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(windows, allow(dead_code))]
 pub struct Chord {
     pub key: String,
     pub shift: bool,
@@ -35,6 +42,7 @@ pub struct Chord {
 #[derive(Default)]
 pub struct Keys(Mutex<Vec<Chord>>);
 
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 impl Keys {
     fn matches(&self, key: &str, shift: bool, alt: bool) -> bool {
         self.0
@@ -43,6 +51,22 @@ impl Keys {
             .iter()
             .any(|chord| chord.key == key && chord.shift == shift && chord.alt == alt)
     }
+}
+
+/// The key a tab's page gives up to the app: bare Escape, or a chord of the
+/// platform modifier with a key the app has bound, and only those. `key` is
+/// the name the frontend's table would carry, `modifier` whether the
+/// platform modifier alone of the system's is held, and `other` whether any
+/// modifier the app never binds is held besides.
+#[cfg(any(target_os = "linux", test))]
+fn claim(keys: &Keys, key: &str, modifier: bool, shift: bool, alt: bool, other: bool) -> bool {
+    if other {
+        return false;
+    }
+    if key == "Escape" && !modifier && !shift && !alt {
+        return true;
+    }
+    modifier && keys.matches(key, shift, alt)
 }
 
 #[tauri::command]
@@ -270,7 +294,180 @@ pub fn install(app: &tauri::App) {
     mac::install(app);
 }
 
-/// The local event monitor is AppKit's own; elsewhere there is nothing to
-/// install.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+mod gtk_window {
+    use std::sync::Arc;
+
+    use gtk::gdk::keys::{constants as key, Key};
+    use gtk::gdk::ModifierType;
+    use gtk::glib::object::ObjectType;
+    use gtk::glib::Propagation;
+    use gtk::prelude::*;
+    use tauri::{App, Emitter, Manager, Webview, Wry};
+
+    use super::{claim, Keys};
+
+    /// Connects the window's key and focus handlers. As on macOS, a window or
+    /// webview missing at startup leaves every key with the page.
+    pub fn install(app: &App) {
+        let Some(window) = app.get_window("main") else {
+            return;
+        };
+        let Some(main_webview) = app.get_webview("main") else {
+            return;
+        };
+        let Some(keys) = app.try_state::<Arc<Keys>>() else {
+            return;
+        };
+        let Ok(gtk_window) = window.gtk_window() else {
+            return;
+        };
+        let keys = Arc::clone(&keys);
+        let main_ptr = main_webview_ptr(&main_webview);
+
+        gtk_window.connect_key_press_event(move |gtk_window, event| {
+            let in_tab = gtk_window
+                .focused_widget()
+                .is_some_and(|focus| is_tab_webview(&focus, main_ptr));
+            if !in_tab {
+                return Propagation::Proceed;
+            }
+            let state = event.state();
+            let control = state.contains(ModifierType::CONTROL_MASK);
+            let shift = state.contains(ModifierType::SHIFT_MASK);
+            let alt = state.contains(ModifierType::MOD1_MASK);
+            let other = state.intersects(
+                ModifierType::SUPER_MASK | ModifierType::META_MASK | ModifierType::HYPER_MASK,
+            );
+            let Some(name) = key_name(&event.keyval()) else {
+                return Propagation::Proceed;
+            };
+            if !claim(&keys, &name, control, shift, alt, other) {
+                return Propagation::Proceed;
+            }
+
+            let script = format!(
+                "window.dispatchEvent(new KeyboardEvent('keydown', {{ key: {key}, ctrlKey: {control}, shiftKey: {shift}, altKey: {alt}, bubbles: true, cancelable: true }}))",
+                key = serde_json::to_string(&name).unwrap_or_else(|_| "\"\"".to_string()),
+            );
+            let _ = main_webview.eval(&script);
+            let _ = main_webview.set_focus();
+            Propagation::Stop
+        });
+
+        let app_handle = app.handle().clone();
+        gtk_window.connect_set_focus(move |_, focus| {
+            if focus.is_some_and(|focus| is_tab_webview(focus, main_ptr)) {
+                let _ = app_handle.emit_to("main", "browser_focused", ());
+            }
+        });
+    }
+
+    /// The main webview's own widget, read once so a tab's webview can be
+    /// told apart from it. Setup runs on the main thread, where
+    /// `with_webview` runs at once.
+    fn main_webview_ptr(main_webview: &Webview<Wry>) -> usize {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = main_webview.with_webview(move |platform| {
+            let _ = tx.send(platform.inner().as_ptr() as usize);
+        });
+        rx.try_recv().unwrap_or(0)
+    }
+
+    /// Whether `widget` is a WebKitGTK view other than the main one.
+    fn is_tab_webview(widget: &gtk::Widget, main_ptr: usize) -> bool {
+        widget.is::<webkit2gtk::WebView>() && widget.as_ptr() as usize != main_ptr
+    }
+
+    /// The name the frontend's table would carry for `keyval`: the arrows,
+    /// Escape, Enter, Tab and Space by name, and a single character
+    /// otherwise, lower-cased so Shift does not spell a second chord. None
+    /// for a key with no name a chord could hold.
+    fn key_name(keyval: &Key) -> Option<String> {
+        let named = [
+            (key::Left, "ArrowLeft"),
+            (key::Right, "ArrowRight"),
+            (key::Down, "ArrowDown"),
+            (key::Up, "ArrowUp"),
+            (key::Escape, "Escape"),
+            (key::Return, "Enter"),
+            (key::Tab, "Tab"),
+            (key::ISO_Left_Tab, "Tab"),
+            (key::space, " "),
+        ];
+        if let Some((_, name)) = named.iter().find(|(named, _)| named == keyval) {
+            return Some(name.to_string());
+        }
+        let character = keyval.to_unicode().filter(|c| !c.is_control())?;
+        Some(character.to_lowercase().to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn install(app: &tauri::App) {
+    gtk_window::install(app);
+}
+
+/// Windows has no monitor: every key typed into a page is the page's.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn install(_app: &tauri::App) {}
+
+#[cfg(test)]
+mod tests {
+    use super::{claim, Chord, Keys};
+
+    fn keys() -> Keys {
+        let keys = Keys::default();
+        *keys.0.lock().unwrap() = vec![
+            Chord {
+                key: "2".to_string(),
+                shift: false,
+                alt: false,
+            },
+            Chord {
+                key: "f".to_string(),
+                shift: true,
+                alt: false,
+            },
+        ];
+        keys
+    }
+
+    #[test]
+    fn a_bound_chord_is_taken_from_the_page() {
+        let keys = keys();
+        assert!(claim(&keys, "2", true, false, false, false));
+        assert!(claim(&keys, "f", true, true, false, false));
+    }
+
+    #[test]
+    fn a_chord_the_app_has_not_bound_stays_with_the_page() {
+        let keys = keys();
+        assert!(!claim(&keys, "c", true, false, false, false));
+        assert!(!claim(&keys, "v", true, false, false, false));
+        assert!(!claim(&keys, "f", true, false, false, false));
+        assert!(!claim(&keys, "2", true, false, true, false));
+    }
+
+    #[test]
+    fn a_key_without_the_platform_modifier_stays_with_the_page() {
+        let keys = keys();
+        assert!(!claim(&keys, "2", false, false, false, false));
+        assert!(!claim(&keys, "f", false, true, false, false));
+    }
+
+    #[test]
+    fn bare_escape_is_taken_and_escape_in_a_chord_is_not() {
+        let keys = keys();
+        assert!(claim(&keys, "Escape", false, false, false, false));
+        assert!(!claim(&keys, "Escape", false, true, false, false));
+        assert!(!claim(&keys, "Escape", true, false, false, false));
+    }
+
+    #[test]
+    fn a_modifier_the_app_never_binds_leaves_the_key_with_the_page() {
+        let keys = keys();
+        assert!(!claim(&keys, "2", true, false, false, true));
+        assert!(!claim(&keys, "Escape", false, false, false, true));
+    }
+}
