@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Opens folders in Agent Workbench as projects, the current one when none is
+# named. The app's Homebrew cask links it onto the PATH.
+#
+#   awb [folder ...]
+#
+# The folders go through `open` to the app bundle this sits in, which starts
+# the app when it is not running and hands them to it when it is.
+set -eu
+
+case "${1:-}" in
+  -h | --help)
+    echo "usage: awb [folder ...]"
+    echo "Opens each folder in Agent Workbench, the current one when none is named."
+    exit 0
+    ;;
+esac
+
+[ $# -gt 0 ] || set -- .
+for folder; do
+  if [ ! -d "$folder" ]; then
+    echo "awb: not a folder: $folder" >&2
+    exit 1
+  fi
+  set -- "$@" "$(CDPATH='' cd -- "$folder" && pwd)"
+  shift
+done
+
+# The bundle is what is left of this file's own path, with Homebrew's link
+# resolved, once everything from its Contents on is taken off.
+self=$(realpath "$0")
+app=${self%/Contents/*}
+case "$app" in
+  *.app) ;;
+  *) app="Agent Workbench" ;;
+esac
+exec open -a "$app" "$@"

@@ -623,6 +623,11 @@ export interface Core {
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
   /** Settings was chosen from the native menu. */
   onOpenSettings(handler: () => void): Promise<() => void>;
+  /** The folders the app was asked to open from outside the window, from a
+      terminal or a second launch, since it was last asked. */
+  takeOpened(): Promise<string[]>;
+  /** More folders are waiting for `takeOpened`. */
+  onOpenRequested(handler: () => void): Promise<() => void>;
 
   /** Opens a tab: a url, or none for a new tab the frontend draws its own
       page for. `session` names the agent that asked, for a tab an agent
@@ -905,6 +910,10 @@ const tauriCore: Core = {
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
   },
+  takeOpened: () => invoke<string[]>("take_opened"),
+  async onOpenRequested(handler) {
+    return listen("open_requested", () => handler());
+  },
 
   browserOpen: (url, session) =>
     invoke<BrowserSnapshot>("browser_open", { url, session }),
@@ -1118,6 +1127,12 @@ const detachedCore: Core = {
     return () => {};
   },
   async onOpenSettings() {
+    return () => {};
+  },
+  async takeOpened() {
+    return [];
+  },
+  async onOpenRequested() {
     return () => {};
   },
   async browserOpen() {

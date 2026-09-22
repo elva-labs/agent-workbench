@@ -38,6 +38,23 @@ tab opens, navigates and closes through WebView2, but its back and forward
 buttons stay usable, a page keeps every key typed into it, and the tools
 that read or drive its page are not supported.
 
+## Opening folders from a terminal
+
+On macOS the Homebrew cask puts `awb` on the PATH. `awb` opens the folder
+the terminal is in as a project, and `awb <folder> ...` the folders it names.
+It hands them to the app through `open`, so the system starts the app when
+it is not running and sends them to it when it is. Folders named to
+`open -a "Agent Workbench"` arrive the same way.
+
+On Linux and Windows the app takes folders as arguments. Started again while
+it runs, it hands its folders to the running app, which comes to the front,
+and exits. Debug builds do not: they have the installed app's identifier,
+and would hand themselves over to it.
+
+Either way the folders open after the projects the window had last time,
+and the last one named is left in front. A folder already open is brought
+forward rather than opened twice.
+
 ## Remotes
 
 A project on another machine runs the daemon there. Builds ship for Linux

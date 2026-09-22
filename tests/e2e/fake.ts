@@ -52,11 +52,11 @@ export const DEFAULT_FIXTURE: GitFixture = {
 
 export async function installFakeCore(
   page: Page,
-  options: { open?: string[]; fixture?: GitFixture } = {},
+  options: { open?: string[]; opened?: string[]; fixture?: GitFixture } = {},
 ) {
   await page.addInitScript(
-    ({ open, fixture }) => {
-      const state = { fixture, changed: null as unknown };
+    ({ open, opened, fixture }) => {
+      const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
 
@@ -678,6 +678,19 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        // Folders handed to the app from outside the window: the ones it
+        // started with, and any a test hands over through
+        // `__openRequested` while it runs.
+        takeOpened: async () => state.opened.splice(0),
+        onOpenRequested: async (handler: () => void) => {
+          (window as unknown as Record<string, unknown>).__openRequested = (
+            paths: string[],
+          ) => {
+            state.opened.push(...paths);
+            handler();
+          };
+          return () => {};
+        },
         onFileDrag: async (handler: (drag: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__fileDrag = handler;
           return () => {};
@@ -929,6 +942,7 @@ export async function installFakeCore(
     },
     {
       open: options.open ?? [PROJECT],
+      opened: options.opened ?? [],
       fixture: options.fixture ?? DEFAULT_FIXTURE,
     },
   );

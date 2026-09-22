@@ -43,6 +43,7 @@ cask "agent-workbench" do
   depends_on macos: :ventura
 
   app "Agent Workbench.app"
+  binary "#{appdir}/Agent Workbench.app/Contents/Resources/bin/awb"
 
   zap trash: [
     "~/Library/Application Support/com.elva-labs.agent-workbench",

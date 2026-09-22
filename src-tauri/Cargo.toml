@@ -44,3 +44,9 @@ block2 = "0.6"
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 webkit2gtk = "2.0"
+
+# A second launch hands its folders to the running app and exits. macOS
+# needs none of this: the system keeps one copy of an app running and sends
+# it what `open` names.
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
+tauri-plugin-single-instance = "2"

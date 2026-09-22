@@ -12,6 +12,7 @@ mod browser;
 mod browser_keys;
 mod browser_page;
 mod chrome;
+mod launch;
 mod menu;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod probe;
@@ -994,7 +995,18 @@ async fn remote_dirs(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // The single instance plugin has to be the first one registered. A
+    // debug build goes without: it has the installed app's identifier, and
+    // would hand itself over to the installed app.
+    #[cfg(any(target_os = "linux", windows))]
+    let builder = if cfg!(debug_assertions) {
+        builder
+    } else {
+        builder.plugin(launch::single_instance())
+    };
+    builder
+        .manage(launch::Launches::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -1017,6 +1029,8 @@ pub fn run() {
             browser_keys::install(app);
             #[cfg(all(debug_assertions, target_os = "macos"))]
             probe::maybe_run_probe(app.handle());
+            let cwd = std::env::current_dir().unwrap_or_default();
+            launch::request(app.handle(), launch::folders(std::env::args(), &cwd));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1068,6 +1082,7 @@ pub fn run() {
             remote_pair,
             remote_forget,
             menu::app_menu,
+            launch::take_opened,
             browser::browser_open,
             browser::browser_close,
             browser::browser_activate,
@@ -1087,6 +1102,7 @@ pub fn run() {
             browser_page::browser_type,
             browser_page::browser_screenshot
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(launch::on_event);
 }

@@ -71,6 +71,10 @@ brew tap elva-labs/elva
 brew install --cask agent-workbench
 ```
 
+The cask also puts `awb` on the PATH, which opens a folder as a project from
+a terminal: `awb .` for the one you are in. See
+[platforms](docs/platforms.md#opening-folders-from-a-terminal).
+
 ## Running it from source
 
 ```

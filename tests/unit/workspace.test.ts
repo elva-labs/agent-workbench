@@ -1,7 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { projectLabel, reset, workspace } from "$lib/workspace.svelte";
+import {
+  followOpenRequests,
+  projectLabel,
+  reset,
+  workspace,
+} from "$lib/workspace.svelte";
 
-vi.mock("$lib/core", () => ({ core: () => ({}) }));
+/** Folders waiting to be taken, and the window's word that more are. */
+const fake = vi.hoisted(() => {
+  const state = { waiting: [] as string[], told: null as (() => void) | null };
+  const core = {
+    projectInfo: async (path: string) => ({
+      path,
+      name: path.split("/").pop()!,
+      repository: path,
+      isGit: true,
+    }),
+    setWindowTitle: async () => {},
+    takeOpened: async () => state.waiting.splice(0),
+    onOpenRequested: async (handler: () => void) => {
+      state.told = handler;
+      return () => (state.told = null);
+    },
+  };
+  return { state, core };
+});
+
+vi.mock("$lib/core", () => ({ core: () => fake.core }));
 
 const repo = (path: string) => ({
   path,
@@ -10,7 +35,11 @@ const repo = (path: string) => ({
   isGit: true,
 });
 
-beforeEach(() => reset());
+beforeEach(() => {
+  reset();
+  fake.state.waiting = [];
+  fake.state.told = null;
+});
 
 describe("what a project is called", () => {
   it("is the folder's name on its own", () => {
@@ -45,5 +74,45 @@ describe("what a project is called", () => {
 
   it("is the folder's name for a path that is not open", () => {
     expect(projectLabel("/home/ada/dev/elsewhere")).toBe("elsewhere");
+  });
+});
+
+describe("folders asked for from outside the window", () => {
+  const open = () => workspace.open.map((project) => project.path);
+
+  // Started from a terminal: the folder waits for the workspace the window
+  // had last time, and is the one left in front.
+  it("open once the stored workspace is back, in front", async () => {
+    let finish = () => {};
+    const restored = new Promise<void>((resolve) => (finish = resolve));
+    fake.state.waiting = ["/home/ada/dev/asked"];
+    followOpenRequests(restored);
+    await Promise.resolve();
+    expect(open()).toEqual([]);
+
+    workspace.open.push(repo("/home/ada/dev/demo"));
+    workspace.active = "/home/ada/dev/demo";
+    finish();
+    await vi.waitFor(() => expect(workspace.active).toBe("/home/ada/dev/asked"));
+    expect(open()).toEqual(["/home/ada/dev/demo", "/home/ada/dev/asked"]);
+  });
+
+  it("open as they are asked for, an open one brought forward", async () => {
+    followOpenRequests(Promise.resolve());
+    await vi.waitFor(() => expect(fake.state.told).not.toBeNull());
+
+    for (const path of ["/home/ada/dev/one", "/home/ada/dev/two", "/home/ada/dev/one"]) {
+      fake.state.waiting.push(path);
+      fake.state.told!();
+      await vi.waitFor(() => expect(workspace.active).toBe(path));
+    }
+    expect(open()).toEqual(["/home/ada/dev/one", "/home/ada/dev/two"]);
+  });
+
+  it("stop being listened for when the window is done", async () => {
+    const stop = followOpenRequests(Promise.resolve());
+    await vi.waitFor(() => expect(fake.state.told).not.toBeNull());
+    stop();
+    expect(fake.state.told).toBeNull();
   });
 });

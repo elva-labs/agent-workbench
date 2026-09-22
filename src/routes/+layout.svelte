@@ -28,7 +28,7 @@
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
-  import { restore } from "$lib/workspace.svelte";
+  import { followOpenRequests, restore } from "$lib/workspace.svelte";
 
   let { children } = $props();
 
@@ -38,7 +38,7 @@
     loadLayout();
     loadRemembered();
     loadStarted();
-    restore();
+    return followOpenRequests(restore());
   });
 </script>
 

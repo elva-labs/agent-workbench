@@ -156,6 +156,34 @@ export async function pick(): Promise<boolean> {
   }
 }
 
+/**
+ * Opens the folders the app is asked to open from outside the window: named
+ * when it started, or later from a terminal or a second launch. None opens
+ * before the stored workspace is back, so the one asked for is left in front.
+ */
+export function followOpenRequests(restored: Promise<void>): () => void {
+  let off: (() => void) | null = null;
+  let stopped = false;
+  const follow = async () => {
+    const unlisten = await core().onOpenRequested(() => void openRequested());
+    if (stopped) {
+      unlisten();
+      return;
+    }
+    off = unlisten;
+    await openRequested();
+  };
+  void restored.then(follow, follow);
+  return () => {
+    stopped = true;
+    off?.();
+  };
+}
+
+async function openRequested() {
+  for (const path of await core().takeOpened()) await openPath(path);
+}
+
 /** Removes a project from the window, stopping everything running in it. */
 export function close(path: string) {
   closeProject(path);
