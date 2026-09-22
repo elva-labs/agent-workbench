@@ -25,7 +25,7 @@ members = ["crates/core"]
 
 [dependencies]
 workbench-core = { path = "crates/core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -34,7 +34,13 @@ uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSNotification", "NSOperation", "NSString", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow", "NSImage", "NSBitmapImageRep", "NSImageRep", "NSGraphics", "NSEvent", "NSApplication", "NSGraphicsContext", "block2"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSNotification", "NSOperation", "NSString", "NSArray", "NSError", "NSDictionary", "NSData", "NSValue", "block2"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKContentWorld", "WKFrameInfo", "WKSnapshotConfiguration", "objc2-app-kit", "block2"] }
 block2 = "0.6"
 
+# The embedded browser's tabs are laid over the window's own webview in a
+# GTK layer of the app's own, and read their history from WebKitGTK.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = "2.0"

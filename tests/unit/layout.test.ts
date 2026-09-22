@@ -12,6 +12,7 @@ import {
   SPLITTER,
   agentVisible,
   applyLayout,
+  browserFocused,
   changesVisible,
   enterReview,
   exitReview,
@@ -299,6 +300,23 @@ describe("focusPane", () => {
     returnFocus();
     expect(layout.focus).toBe("sessions");
     expect(layout.focusRequest).toBe(asked + 1);
+  });
+});
+
+describe("browserFocused", () => {
+  it("marks the changes pane focused without asking for the keyboard", () => {
+    focusPane("sessions");
+    const asked = layout.focusRequest;
+    browserFocused();
+    expect(layout.focus).toBe("changes");
+    expect(layout.focusRequest).toBe(asked);
+  });
+
+  it("does nothing while the changes pane is closed", () => {
+    togglePane("changes");
+    focusPane("agent");
+    browserFocused();
+    expect(layout.focus).toBe("agent");
   });
 });
 

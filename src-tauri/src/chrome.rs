@@ -44,7 +44,7 @@ fn controls_centre() -> f64 {
 
 /// The window has measured its header: the buttons move to its middle.
 #[cfg(target_os = "macos")]
-pub fn set_controls_centre(window: &tauri::WebviewWindow, centre: u32) {
+pub fn set_controls_centre(window: &tauri::Window, centre: u32) {
     CONTROLS_CENTRE.store(centre.max(1), std::sync::atomic::Ordering::Relaxed);
     place_window_controls(window);
 }
@@ -52,7 +52,7 @@ pub fn set_controls_centre(window: &tauri::WebviewWindow, centre: u32) {
 /// Windows and Linux draw their own controls in the header, which follows
 /// the look on its own.
 #[cfg(not(target_os = "macos"))]
-pub fn set_controls_centre(_window: &tauri::WebviewWindow, _centre: u32) {}
+pub fn set_controls_centre(_window: &tauri::Window, _centre: u32) {}
 
 /// Points between one button and the next, which is AppKit's own spacing.
 #[cfg(target_os = "macos")]
@@ -89,7 +89,7 @@ objc2::define_class!(
 );
 
 #[cfg(target_os = "macos")]
-pub fn inset_window_controls(window: &tauri::WebviewWindow) {
+pub fn inset_window_controls(window: &tauri::Window) {
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2::{MainThreadMarker, MainThreadOnly};
@@ -202,7 +202,7 @@ pub fn inset_window_controls(window: &tauri::WebviewWindow) {
 /// is then placed by window coordinates, so how AppKit lays the title bar
 /// out inside does not matter.
 #[cfg(target_os = "macos")]
-fn place_window_controls(window: &tauri::WebviewWindow) {
+fn place_window_controls(window: &tauri::Window) {
     let Ok(ptr) = window.ns_window() else { return };
     // The pointer is the window's NSWindow, alive for as long as the window,
     // and this runs on the main thread, which AppKit insists on.
@@ -312,6 +312,6 @@ fn place_controls(ns_window: &objc2_app_kit::NSWindow) {
 /// Windows and Linux: no decorations, so the top row is the app's. The
 /// window keeps its resize borders and its shadow; only the bar goes.
 #[cfg(not(target_os = "macos"))]
-pub fn inset_window_controls(window: &tauri::WebviewWindow) {
+pub fn inset_window_controls(window: &tauri::Window) {
     let _ = window.set_decorations(false);
 }

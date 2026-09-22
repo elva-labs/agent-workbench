@@ -71,6 +71,12 @@ its stylesheet, and asks the terminals for the DOM renderer, since the
 software GL behind a headless X server paints a third WebGL terminal late
 or never and WebKit names every GPU the same.
 
+On Linux the tier also drives the embedded browser. A tab's page is a
+native view the WebDriver session cannot see into, so where it sits and what
+it shows are read from the X server's picture of the screen, a pixel at a
+time, and clicks and keys reach it through `xdotool`, the way a person's
+would. That needs ImageMagick and xdotool beside Xvfb.
+
 On Windows the harness starts the binary itself with the debugger open and
 attaches Edge WebDriver to it, because WebView2 never writes the file Edge
 WebDriver waits for when it launches a browser. Two things follow: quitting
@@ -86,3 +92,22 @@ The remote road is covered twice: the driver tier opens its repository as
 when asked walks the real road against `sshd` on the local machine. See
 [remote](remote.md). What runs on which machines in CI is in
 [CI and releases](release.md).
+
+## The placement probe
+
+A native view's place on screen cannot be read from the page it sits over,
+and there is no WebDriver for macOS to drive the real app with either, so
+the embedded browser's placement is checked by a probe built into debug
+builds on macOS alone. It runs a file of steps through the main window's
+own page, the way a person's script would, and after each step records what
+the page answered beside the frames the system really holds for every web
+view in the window, whether or not the window's own page agrees they are
+there. See [browser](browser.md) for what a tab's placement follows.
+
+Two environment variables drive it. `WORKBENCH_PROBE_STEPS` names a file of
+steps to run, one per line: `resize:<width>x<height>` resizes the window,
+`evalin:<label>:<script>` runs `script` in the child webview `label` names,
+and anything else runs as a script in the main webview. `WORKBENCH_PROBE_REPORT`
+names where the report goes, defaulting to a file in the system's temp
+directory; it is written as JSON, a step's own result beside the frames
+found after it, and echoed to stderr too.

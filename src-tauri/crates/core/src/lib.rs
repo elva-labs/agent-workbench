@@ -8,6 +8,7 @@
 pub mod activity;
 pub mod adapter;
 pub mod api;
+pub mod browser;
 pub mod client;
 pub mod codex;
 pub mod cwd;

@@ -109,6 +109,31 @@ export interface ConductRequest {
   session: string | null;
 }
 
+/** A call an agent made on one of the browser's tools: opening a tab,
+    reading or driving its page, or closing it. The window answers every
+    one, the same way it answers a conductor's call; the browser itself
+    always opens on this machine. */
+export interface BrowserRequest {
+  /** What the answer is named after, unique to this call. */
+  id: string;
+  tool:
+    | "browser_open"
+    | "browser_tabs"
+    | "browser_navigate"
+    | "browser_snapshot"
+    | "browser_click"
+    | "browser_type"
+    | "browser_console"
+    | "browser_screenshot"
+    | "browser_eval"
+    | "browser_close";
+  arguments: Record<string, unknown>;
+  /** Where the calling agent runs, which says which project it is in. */
+  cwd: string;
+  /** The session the calling agent runs as, when its environment named one. */
+  session: string | null;
+}
+
 /** A plugin as its manifest declares it, plus what is on and running. */
 export interface PluginInfo {
   name: string;
@@ -423,6 +448,47 @@ export type FileDrag =
   | { type: "drop"; paths: string[]; x: number; y: number }
   | { type: "leave" };
 
+/** A tab of the embedded browser, as the native layer keeps it. */
+export interface BrowserTab {
+  id: number;
+  /** The current url, updated as navigation happens. `about:blank` is a
+      new tab, drawn by the frontend rather than the native view. */
+  url: string;
+  title: string;
+  /** The url the tab was opened with; null for a tab opened empty, as a
+      new tab. */
+  home: string | null;
+  opener: { kind: "user" } | { kind: "agent"; session: string };
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** The last load failure, cleared as soon as a navigation starts. */
+  error: string | null;
+}
+
+/** The embedded browser's tabs, and which one is active. */
+export interface BrowserSnapshot {
+  tabs: BrowserTab[];
+  active: number | null;
+}
+
+/** One message a tab's page produced, as its console capture recorded it. */
+export interface BrowserConsoleEntry {
+  level: string;
+  text: string;
+  /** Milliseconds since the epoch. */
+  time: number;
+  url: string;
+}
+
+/** A key chord the app claims, the shape the keymap keeps them in: the
+    platform modifier is implied, and only Shift and Alt can join it. */
+export interface KeyChord {
+  key: string;
+  shift: boolean;
+  alt: boolean;
+}
+
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
@@ -527,6 +593,19 @@ export interface Core {
     content: string | null,
     error: string | null,
   ): Promise<void>;
+  /** A session called one of the browser's tools. */
+  onBrowserRequest(
+    handler: (request: BrowserRequest) => void,
+  ): Promise<() => void>;
+  /** The window's one answer to a browser call: the text the agent reads,
+      or the reason it could not be done. The directory the call came from
+      says which machine's tool server waits for it. */
+  browserAnswer(
+    id: string,
+    cwd: string,
+    content: string | null,
+    error: string | null,
+  ): Promise<void>;
   /** Makes a worktree of the project, and answers with its absolute path. */
   worktreeAdd(project: string, name: string): Promise<string>;
   /** Where an orchestrator session runs, made if it is not there yet. */
@@ -544,6 +623,69 @@ export interface Core {
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
   /** Settings was chosen from the native menu. */
   onOpenSettings(handler: () => void): Promise<() => void>;
+
+  /** Opens a tab: a url, or none for a new tab the frontend draws its own
+      page for. `session` names the agent that asked, for a tab an agent
+      opens. */
+  browserOpen(
+    url: string | null,
+    session: string | null,
+  ): Promise<BrowserSnapshot>;
+  browserClose(id: number): Promise<BrowserSnapshot>;
+  browserActivate(id: number): Promise<BrowserSnapshot>;
+  /** Rejects with a plain reason meant to be shown: "enter an address",
+      "not an address", or "only http and https addresses open here". */
+  browserNavigate(id: number, address: string): Promise<void>;
+  browserBack(id: number): Promise<void>;
+  browserForward(id: number): Promise<void>;
+  browserReload(id: number): Promise<void>;
+  /** Navigates back to the tab's own url. */
+  browserHome(id: number): Promise<void>;
+  /** Lays the active tab's native view over a rectangle, in logical pixels
+      relative to the window's viewport, and marks the browser as showing. */
+  browserPlace(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): Promise<void>;
+  /** Hides the active tab's native view and marks the browser as not
+      showing. */
+  browserHide(): Promise<void>;
+  browserTabs(): Promise<BrowserSnapshot>;
+  onBrowserTabs(
+    handler: (snapshot: BrowserSnapshot) => void,
+  ): Promise<() => void>;
+  /** The chords the app claims, sent on load and whenever the keymap
+      changes, so a native key monitor inside a tab's webview knows what to
+      take back from the page. */
+  browserKeys(chords: KeyChord[]): Promise<void>;
+  /** A pointer went down inside a browser tab's webview: the keyboard is
+      about to leave the app's own page, wherever it was, for the page the
+      tab shows. */
+  onBrowserFocused(handler: () => void): Promise<() => void>;
+  /** The tab's page as text, with a ref on each element `browserClick` and
+      `browserType` can reach. Null id means the active tab. */
+  browserSnapshot(id: number | null): Promise<string>;
+  /** Clicks the element a snapshot gave `ref` for. Rejects with a plain
+      reason: "no such element; take a new snapshot" for a stale one. */
+  browserClick(id: number | null, ref: string): Promise<void>;
+  /** Types into the element a snapshot gave `ref` for, replacing what is
+      there; with submit, an Enter follows and its form, if it has one, is
+      submitted. */
+  browserType(
+    id: number | null,
+    ref: string,
+    text: string,
+    submit: boolean,
+  ): Promise<void>;
+  /** The tab's console messages since the last call, then clears them. */
+  browserConsole(id: number | null): Promise<BrowserConsoleEntry[]>;
+  /** A screenshot of the tab, as the path of the PNG it was written to. */
+  browserScreenshot(id: number | null): Promise<string>;
+  /** Runs `script` as the body of an async function in the tab's page, and
+      answers with its result, JSON encoded. */
+  browserEval(id: number | null, script: string): Promise<string>;
 
   /** Sessions the agent already has on disk for this project, newest first. */
   transcripts(project: string, agent: AgentId): Promise<Transcript[]>;
@@ -746,6 +888,13 @@ const tauriCore: Core = {
   },
   conductAnswer: (id, cwd, content, error) =>
     invoke<void>("conduct_answer", { id, cwd, content, error }),
+  async onBrowserRequest(handler) {
+    return listen<BrowserRequest>("browser_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  browserAnswer: (id, cwd, content, error) =>
+    invoke<void>("browser_answer", { id, cwd, content, error }),
   worktreeAdd: (project, name) =>
     invoke<string>("worktree_add", { project, name }),
   orchestratorDir: () => invoke<string>("orchestrator_dir"),
@@ -756,6 +905,38 @@ const tauriCore: Core = {
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
   },
+
+  browserOpen: (url, session) =>
+    invoke<BrowserSnapshot>("browser_open", { url, session }),
+  browserClose: (id) => invoke<BrowserSnapshot>("browser_close", { id }),
+  browserActivate: (id) => invoke<BrowserSnapshot>("browser_activate", { id }),
+  browserNavigate: (id, address) =>
+    invoke<void>("browser_navigate", { id, address }),
+  browserBack: (id) => invoke<void>("browser_back", { id }),
+  browserForward: (id) => invoke<void>("browser_forward", { id }),
+  browserReload: (id) => invoke<void>("browser_reload", { id }),
+  browserHome: (id) => invoke<void>("browser_home", { id }),
+  browserPlace: (x, y, width, height) =>
+    invoke<void>("browser_place", { x, y, width, height }),
+  browserHide: () => invoke<void>("browser_hide"),
+  browserTabs: () => invoke<BrowserSnapshot>("browser_tabs"),
+  async onBrowserTabs(handler) {
+    return listen<BrowserSnapshot>("browser_tabs", (event) =>
+      handler(event.payload),
+    );
+  },
+  browserKeys: (chords) => invoke<void>("browser_keys", { chords }),
+  async onBrowserFocused(handler) {
+    return listen("browser_focused", () => handler());
+  },
+  browserSnapshot: (id) => invoke<string>("browser_snapshot", { id }),
+  browserClick: (id, ref) => invoke<void>("browser_click", { id, ref }),
+  browserType: (id, ref, text, submit) =>
+    invoke<void>("browser_type", { id, ref, text, submit }),
+  browserConsole: (id) =>
+    invoke<BrowserConsoleEntry[]>("browser_console", { id }),
+  browserScreenshot: (id) => invoke<string>("browser_screenshot", { id }),
+  browserEval: (id, script) => invoke<string>("browser_eval", { id, script }),
 
   async onFileDrag(handler) {
     return getCurrentWebview().onDragDropEvent((event) => {
@@ -917,6 +1098,10 @@ const detachedCore: Core = {
     return () => {};
   },
   async conductAnswer() {},
+  async onBrowserRequest() {
+    return () => {};
+  },
+  async browserAnswer() {},
   async worktreeAdd() {
     throw new Error("no core");
   },
@@ -934,6 +1119,60 @@ const detachedCore: Core = {
   },
   async onOpenSettings() {
     return () => {};
+  },
+  async browserOpen() {
+    throw new Error("no core");
+  },
+  async browserClose() {
+    throw new Error("no core");
+  },
+  async browserActivate() {
+    throw new Error("no core");
+  },
+  async browserNavigate() {
+    throw new Error("no core");
+  },
+  async browserBack() {
+    throw new Error("no core");
+  },
+  async browserForward() {
+    throw new Error("no core");
+  },
+  async browserReload() {
+    throw new Error("no core");
+  },
+  async browserHome() {
+    throw new Error("no core");
+  },
+  async browserPlace() {},
+  async browserHide() {},
+  async browserTabs() {
+    return { tabs: [], active: null };
+  },
+  async onBrowserTabs() {
+    return () => {};
+  },
+  async browserKeys() {},
+  async onBrowserFocused() {
+    return () => {};
+  },
+  async browserSnapshot() {
+    throw new Error("no core");
+  },
+  async browserClick() {
+    throw new Error("no core");
+  },
+  async browserType() {
+    throw new Error("no core");
+  },
+  async browserConsole() {
+    return [];
+  },
+  async browserScreenshot() {
+    throw new Error("no core");
+  },
+  async browserEval() {
+    throw new Error("no core");
   },
   async transcripts() {
     return [];

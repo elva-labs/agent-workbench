@@ -8,8 +8,13 @@
 //! the one that paints the window, and a `git status` on a large tree or a
 //! slow `.zshrc` would freeze the UI for as long as it took.
 
+mod browser;
+mod browser_keys;
+mod browser_page;
 mod chrome;
 mod menu;
+#[cfg(all(debug_assertions, target_os = "macos"))]
+mod probe;
 pub mod remote;
 pub mod ssh;
 
@@ -450,10 +455,43 @@ async fn conduct_answer(
     .await
 }
 
+/// The window's one answer to a call one of its agents made on a browser
+/// tool: the text the agent reads, or the reason it could not be done. The
+/// browser itself always opens on this machine; the directory the call came
+/// from says which machine's tool server waits for the answer.
+#[tauri::command]
+async fn browser_answer(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    cwd: String,
+    content: Option<String>,
+    error: Option<String>,
+) -> Result<Value, String> {
+    let sent = (id.clone(), content.clone(), error.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&cwd),
+        "browser_answer",
+        move |_| {
+            let (id, content, error) = sent;
+            json!({ "id": id, "content": content, "error": error })
+        },
+        move |core, _| {
+            core.conduct_answer(&id, content, error)?;
+            Ok(Value::Null)
+        },
+    )
+    .await
+}
+
 /// Where the middle of the leftmost header is, in points from the window's
 /// top: the window measures it, and the platform's own controls follow.
+/// It asks for the window: one that shows a browser holds more than one
+/// webview, and Tauri hands no `WebviewWindow` to a command then.
 #[tauri::command]
-fn controls_centre(window: tauri::WebviewWindow, centre: u32) {
+fn controls_centre(window: tauri::Window, centre: u32) {
     chrome::set_controls_centre(&window, centre);
 }
 
@@ -966,10 +1004,19 @@ pub fn run() {
             }
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
+            app.manage(Arc::new(browser::Browser::default()));
+            app.manage(Arc::new(browser_keys::Keys::default()));
             menu::install(app)?;
-            if let Some(window) = app.get_webview_window("main") {
-                chrome::inset_window_controls(&window);
+            if let Some(webview_window) = app.get_webview_window("main") {
+                chrome::inset_window_controls(&webview_window.as_ref().window());
+                #[cfg(target_os = "linux")]
+                if let Err(error) = browser::install_layer(&webview_window) {
+                    eprintln!("browser layer: {error}");
+                }
             }
+            browser_keys::install(app);
+            #[cfg(all(debug_assertions, target_os = "macos"))]
+            probe::maybe_run_probe(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1008,6 +1055,7 @@ pub fn run() {
             plugin_action,
             plugin_view_message,
             conduct_answer,
+            browser_answer,
             orchestrator_dir,
             controls_centre,
             worktree_add,
@@ -1019,7 +1067,25 @@ pub fn run() {
             remote_hosts,
             remote_pair,
             remote_forget,
-            menu::app_menu
+            menu::app_menu,
+            browser::browser_open,
+            browser::browser_close,
+            browser::browser_activate,
+            browser::browser_navigate,
+            browser::browser_back,
+            browser::browser_forward,
+            browser::browser_reload,
+            browser::browser_home,
+            browser::browser_place,
+            browser::browser_hide,
+            browser::browser_tabs,
+            browser_keys::browser_keys,
+            browser_page::browser_eval,
+            browser_page::browser_console,
+            browser_page::browser_snapshot,
+            browser_page::browser_click,
+            browser_page::browser_type,
+            browser_page::browser_screenshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

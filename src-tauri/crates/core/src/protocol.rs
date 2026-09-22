@@ -120,8 +120,11 @@ struct PathParams {
     path: PathBuf,
 }
 
+/// A call's answer, however it is named: the conductor's tools and the
+/// browser's both answer through the one underlying method, which just
+/// writes where the tool server named `id` waits.
 #[derive(Deserialize)]
-struct ConductAnswerParams {
+struct AnswerParams {
     id: String,
     #[serde(default)]
     content: Option<String>,
@@ -436,8 +439,8 @@ pub fn dispatch(
             core.set_selection(p.selection)?;
             Ok(Value::Null)
         }
-        "conduct_answer" => {
-            let p: ConductAnswerParams = parse(params)?;
+        "conduct_answer" | "browser_answer" => {
+            let p: AnswerParams = parse(params)?;
             core.conduct_answer(&p.id, p.content, p.error)?;
             Ok(Value::Null)
         }
@@ -624,6 +627,30 @@ mod tests {
         let missing = dispatch(&core, "conduct_answer", json!({}), no_output)
             .expect_err("an answer names its call");
         assert!(missing.contains("bad parameters"), "{missing}");
+    }
+
+    #[test]
+    fn a_browser_call_is_answered_the_same_way_as_a_conduct_call() {
+        let core = core();
+        let Some(home) = core.home().map(|home| home.to_path_buf()) else {
+            return;
+        };
+        let sent = dispatch(
+            &core,
+            "browser_answer",
+            json!({ "id": "workbench-protocol-browser", "content": "1  https://example.com/  Example" }),
+            no_output,
+        )
+        .unwrap();
+        assert_eq!(sent, Value::Null);
+        let path = crate::show::answer_path(&home, "workbench-protocol-browser");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let answer: crate::show::Answer = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            answer.content.as_deref(),
+            Some("1  https://example.com/  Example")
+        );
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

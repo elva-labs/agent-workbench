@@ -225,9 +225,12 @@ impl Core {
                 // A tool call in the log belongs to a plugin, not to the
                 // window: it goes to the process that owns the tool. A
                 // conductor's call is the window's, which owns the
-                // sessions, and it answers through `conduct_answer`.
+                // sessions, and it answers through `conduct_answer`. A
+                // browser call is the window's too, which owns the
+                // browser's tabs, and it answers through `browser_answer`.
                 let plugins = self.plugins.clone();
                 let sink = Arc::clone(&self.sink);
+                let browser_sink = Arc::clone(&self.sink);
                 crate::show::watch(
                     Arc::clone(&self.sink),
                     crate::show::requests_path(home),
@@ -237,6 +240,9 @@ impl Core {
                         }
                     },
                     move |request| events::emit(&sink, crate::show::CONDUCT_REQUEST, &request),
+                    move |request| {
+                        events::emit(&browser_sink, crate::show::BROWSER_REQUEST, &request)
+                    },
                 )?;
                 // Starting the plugins reads manifests and spawns runtimes,
                 // which is not for the thread the window is being drawn on.

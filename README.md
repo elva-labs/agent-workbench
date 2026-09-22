@@ -37,6 +37,9 @@ state at a glance, and projects on other machines over ssh.
   agent, a section under the file tree with rows and actions, and a page of
   its own in the changes pane. The settings offer the sources the workbench
   knows and take one of your own. See [plugins](docs/plugins.md).
+- **Browser.** A tab beside the agent for looking at what it is building,
+  its docs or a pull request, with a fold under the tree and tools an agent
+  can read and drive it with. See [browser](docs/browser.md).
 - **Terminal.** Plain shells under the panes, per project, split if you like.
 - **Remote projects.** Pair a machine with one pasted token, or name a host
   your ssh already reaches, and work in a folder there. The agent, the
@@ -104,6 +107,8 @@ npm run test:driver   # the real binary, driven over WebDriver
   fonts and colours, live updates, plugins, keys.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
   what it gives, the agent's tools among it.
+- [Browser](docs/browser.md): the tab beside the agent, how it is built, and
+  what an agent can do with it.
 - [Orchestrator](docs/orchestrator.md): a session that starts and steers
   other sessions.
 - [Plugins](docs/plugins.md): where they come from, the sources offered out

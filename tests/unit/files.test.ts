@@ -20,17 +20,23 @@ import {
   files,
   isOpen,
   listed,
+  newBrowserTab,
+  openBrowser,
   refresh,
   reveal,
   select,
   selectedEntry,
   setScope,
   setView,
+  showBrowser,
+  showMedia,
+  showPluginView,
   toggleDir,
   toggleScope,
   toggleView,
 } from "$lib/files.svelte";
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
+import { browser, resetBrowser } from "$lib/browser.svelte";
 import { enterReview, layout } from "$lib/layout.svelte";
 
 const ROOT = "/repo";
@@ -58,6 +64,7 @@ const fake = {
   grepTruncated: false,
   diffCalls: 0,
   fail: null as string | null,
+  browserOpenCalls: [] as { url: string | null; session: string | null }[],
 };
 
 vi.mock("$lib/core", () => ({
@@ -90,6 +97,22 @@ vi.mock("$lib/core", () => ({
     async projectInfo(path: string) {
       return { path, name: path, repository: path, isGit: true };
     },
+    async browserOpen(url: string | null, session: string | null) {
+      fake.browserOpenCalls.push({ url, session });
+      const id = fake.browserOpenCalls.length;
+      const tab = {
+        id,
+        url: url ?? "about:blank",
+        title: "",
+        home: url,
+        opener: { kind: "user" as const },
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      };
+      return { tabs: [tab], active: id };
+    },
   }),
 }));
 
@@ -111,6 +134,7 @@ beforeEach(() => {
   clear();
   files.view = "diff";
   resetWorkspace();
+  resetBrowser();
   workspace.open.push({
     path: ROOT,
     name: "repo",
@@ -137,6 +161,7 @@ beforeEach(() => {
   fake.grepCalls = [];
   fake.grepFail = null;
   fake.grepTruncated = false;
+  fake.browserOpenCalls = [];
 });
 
 describe("refresh", () => {
@@ -409,6 +434,138 @@ describe("letting go", () => {
   it("is harmless with nothing selected and no viewer open", () => {
     expect(() => closeViewer()).not.toThrow();
     expect(files.selected).toBeNull();
+  });
+});
+
+/** The browser is a fourth kind the viewer can hold, alongside a file,
+    media and a plugin's page: only one is ever showing. */
+describe("the browser as a viewer kind", () => {
+  const mediaItem = {
+    id: "m1",
+    owner: "project:/repo",
+    project: ROOT,
+    files: ["screenshot.png"],
+    caption: null,
+    at: 0,
+  };
+  const pluginPage = {
+    key: "src/todos",
+    source: "src",
+    plugin: "todos",
+    project: ROOT,
+    width: "wide" as const,
+    html: "<p>todo</p>",
+  };
+
+  it("opens the viewer and puts away a file that was open", async () => {
+    await refresh();
+    await select("src/lib.rs");
+    expect(files.selected).toBe("src/lib.rs");
+
+    showBrowser();
+
+    expect(browser.showing).toBe(true);
+    expect(files.selected).toBeNull();
+    expect(layout.mode).toBe("reviewing");
+  });
+
+  it("selecting a file puts the browser away", async () => {
+    await refresh();
+    showBrowser();
+    expect(browser.showing).toBe(true);
+
+    await select("src/lib.rs");
+
+    expect(browser.showing).toBe(false);
+    expect(files.selected).toBe("src/lib.rs");
+  });
+
+  it("showing media puts the browser away", () => {
+    showBrowser();
+    showMedia(mediaItem);
+    expect(browser.showing).toBe(false);
+    expect(files.media).toEqual(mediaItem);
+  });
+
+  it("showing a plugin's page puts the browser away", () => {
+    showBrowser();
+    showPluginView(pluginPage);
+    expect(browser.showing).toBe(false);
+    expect(files.pluginView).toEqual(pluginPage);
+  });
+
+  it("showing the browser puts away media and a plugin's page", () => {
+    showMedia(mediaItem);
+    showBrowser();
+    expect(files.media).toBeNull();
+
+    showPluginView(pluginPage);
+    showBrowser();
+    expect(files.pluginView).toBeNull();
+  });
+
+  it("closeViewer hides the browser along with leaving review", () => {
+    showBrowser();
+    closeViewer();
+    expect(browser.showing).toBe(false);
+    expect(layout.mode).toBe("working");
+  });
+
+  it("does nothing to the browser when it was not showing", async () => {
+    await refresh();
+    await select("src/lib.rs");
+    expect(browser.showing).toBe(false);
+    deselect();
+    expect(browser.showing).toBe(false);
+  });
+});
+
+describe("newBrowserTab", () => {
+  it("opens a tab and shows the browser, whatever is open already", async () => {
+    await newBrowserTab();
+    await newBrowserTab();
+
+    expect(fake.browserOpenCalls).toEqual([
+      { url: null, session: null },
+      { url: null, session: null },
+    ]);
+    expect(browser.showing).toBe(true);
+  });
+});
+
+/** What the "⋯" menu's Browser item calls to open the viewer on the
+    browser. */
+describe("openBrowser", () => {
+  it("opens a tab first when none is open, then shows the browser", async () => {
+    expect(browser.tabs).toEqual([]);
+
+    await openBrowser();
+
+    expect(fake.browserOpenCalls).toEqual([{ url: null, session: null }]);
+    expect(browser.tabs.length).toBe(1);
+    expect(browser.showing).toBe(true);
+  });
+
+  it("shows the browser without opening another tab when one is already open", async () => {
+    browser.tabs = [
+      {
+        id: 1,
+        url: "https://example.com/",
+        title: "",
+        home: "https://example.com/",
+        opener: { kind: "user" },
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        error: null,
+      },
+    ];
+    browser.active = 1;
+
+    await openBrowser();
+
+    expect(fake.browserOpenCalls).toEqual([]);
+    expect(browser.showing).toBe(true);
   });
 });
 

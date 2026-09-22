@@ -13,6 +13,7 @@
   import { resume } from "$lib/resume.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
+  import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
@@ -28,10 +29,12 @@
   import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
+  import { initBrowser } from "$lib/browser.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
   import { isMac, resolveAction } from "$lib/keymap";
+  import { keys } from "$lib/keys.svelte";
   import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import {
@@ -68,6 +71,7 @@
     MIN_REVIEW,
     agentVisible,
     applyLayout,
+    browserFocused,
     changesSpan,
     changesVisible,
     changesWidth,
@@ -111,6 +115,7 @@
   // row takes it; an exit that beat its own spawn result waits to be claimed.
   onMount(() => {
     const offs: (() => void)[] = [];
+    void initBrowser();
     core()
       .onSessionEnded((event) => {
         if (!sessionEnded(event) && !shellEnded(event)) stash(event);
@@ -139,6 +144,12 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onConductRequest((request) => void conductRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onBrowserRequest((request) => void browserRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onBrowserFocused(() => browserFocused())
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginState((event) => pluginStateChanged(event))
@@ -215,6 +226,12 @@
 
   $effect(() => {
     badge(unreadCount());
+  });
+
+  // The native layer takes a chord back from a browser tab's page on the
+  // app's behalf, so it needs the table again whenever a binding changes.
+  $effect(() => {
+    void core().browserKeys(Object.values(keys.bindings));
   });
 
   let reviewing = $derived(layout.mode === "reviewing");

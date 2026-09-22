@@ -105,12 +105,13 @@ export const layout = $state({
   agentHidden: false,
   /** Set once you drag the viewer's splitter, so we stop sizing it for you. */
   reviewTouched: false,
-  /** The sections under the tree, media and processes: their share of the
-      changes pane's height when one is open, and which are open rather
-      than folded to their header. */
+  /** The sections under the tree, media, processes and the browser: their
+      share of the changes pane's height when one is open, and which are
+      open rather than folded to their header. */
   mediaShare: 0.3,
   mediaOpen: false,
   processesOpen: false,
+  browserOpen: false,
   /** A plugin's section, by source, plugin and section: open rather than
       folded. Absent is folded, which is how one first appears. */
   sectionsOpen: {} as Record<string, boolean>,
@@ -360,6 +361,18 @@ export function focusPane(id: PaneId) {
 }
 
 /**
+ * A pointer went down inside a browser tab's page: the changes pane is
+ * marked focused, since that is where the tab lives, but the keyboard stays
+ * with the page. Unlike [`focusPane`] this never bumps `focusRequest`, the
+ * signal a pane reads as "take the keyboard, even if you already have it";
+ * without it, a pane already holding the DOM's own focus keeps it.
+ */
+export function browserFocused() {
+  if (!changesVisible()) return;
+  layout.focus = "changes";
+}
+
+/**
  * Hands the keyboard back to the pane that has the focus state. A dialog
  * takes the document's focus while it is up and leaves it on nothing when it
  * goes; without this the pane would still be named as focused while its keys
@@ -397,6 +410,8 @@ export function loadLayout() {
     if (typeof v.mediaOpen === "boolean") layout.mediaOpen = v.mediaOpen;
     if (typeof v.processesOpen === "boolean")
       layout.processesOpen = v.processesOpen;
+    if (typeof v.browserOpen === "boolean")
+      layout.browserOpen = v.browserOpen;
     if (v.sectionsOpen !== null && typeof v.sectionsOpen === "object") {
       const open: Record<string, boolean> = {};
       for (const [key, value] of Object.entries(v.sectionsOpen)) {
@@ -435,6 +450,7 @@ export function saveLayout() {
         mediaShare: layout.mediaShare,
         mediaOpen: layout.mediaOpen,
         processesOpen: layout.processesOpen,
+        browserOpen: layout.browserOpen,
         sectionsOpen: layout.sectionsOpen,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,

@@ -228,8 +228,11 @@ typed for you, the test run it started, each with what it runs under, how
 long it has run, its share of a CPU and its memory, read every couple of
 seconds while the section is open and less often while it is folded. A
 stop button on the row ends the process, and nothing outside a session's
-own tree can be reached from there. A plugin that sends sections adds a fold
-of its own under those two; [plugins](plugins.md) says what it holds.
+own tree can be reached from there. **Browser** is the embedded browser's
+tabs, one row per tab, standing even with none open since it is where a tab
+is opened from; see [browser](browser.md). A plugin that sends sections
+adds a fold of its own under those three; [plugins](plugins.md) says what
+it holds.
 
 The tree's cursor walks on into the sections: <kbd>Down</kbd> past the
 last file lands on the first header, <kbd>Enter</kbd> opens a media call
@@ -247,4 +250,6 @@ stay marked once the keyboard has moved on, to the agent above all, so they
 are still the answer to "this" while the question is typed; a click in the
 viewer lets them go, and the line numbers are never part of a selection.
 What the agent presented opens in the same place, every file of the call
-down the viewer.
+down the viewer. The embedded browser takes the same place again, in place
+of a file or what was presented; [browser](browser.md) has what it shows
+there.

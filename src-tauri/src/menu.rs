@@ -9,7 +9,7 @@
 //! window, which opens its settings view.
 
 use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{App, AppHandle, Emitter, Manager, State, WebviewWindow, Wry};
+use tauri::{App, AppHandle, Emitter, Manager, State, Window, Wry};
 
 pub const OPEN_SETTINGS: &str = "open_settings";
 const SETTINGS_ID: &str = "settings";
@@ -50,10 +50,8 @@ pub fn install(app: &App) -> tauri::Result<()> {
 /// Shows the popup at the pointer, for the button that stands in for a
 /// menu bar.
 #[tauri::command]
-pub fn app_menu(window: WebviewWindow, menu: State<'_, AppMenu>) -> Result<(), String> {
-    menu.0
-        .popup(window.as_ref().window())
-        .map_err(|e| e.to_string())
+pub fn app_menu(window: Window, menu: State<'_, AppMenu>) -> Result<(), String> {
+    menu.0.popup(window).map_err(|e| e.to_string())
 }
 
 fn menu_bar(handle: &AppHandle) -> tauri::Result<Menu<Wry>> {

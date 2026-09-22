@@ -1005,8 +1005,10 @@ describe("tree keyboard navigation", () => {
     await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(cursorName()).toBe("src");
     await fireEvent.keyDown(tree(), { key: "End" });
-    expect(tree().getAttribute("aria-activedescendant")).toBe("processes-fold");
+    expect(tree().getAttribute("aria-activedescendant")).toBe("browser-fold");
     await fireEvent.keyDown(tree(), { key: "ArrowDown" });
+    expect(tree().getAttribute("aria-activedescendant")).toBe("browser-fold");
+    await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(tree().getAttribute("aria-activedescendant")).toBe("processes-fold");
     await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(cursorName()).toBe("token_cache.rs");
@@ -1029,6 +1031,7 @@ describe("tree keyboard navigation", () => {
   it("climbs to the parent with left from a file", async () => {
     await renderChanges();
     await fireEvent.keyDown(tree(), { key: "End" });
+    await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     await fireEvent.keyDown(tree(), { key: "ArrowUp" });
     expect(cursorName()).toBe("token_cache.rs");
     await fireEvent.keyDown(tree(), { key: "ArrowLeft" });
