@@ -66,6 +66,7 @@ impl Default for Browser {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl Browser {
     /// The tab currently active, if one is open at all.
     pub fn active(&self) -> Option<TabId> {

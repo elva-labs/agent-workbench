@@ -16,7 +16,10 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State, Window};
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+use tauri::{State, Window};
+#[cfg(target_os = "macos")]
 use workbench_core::browser::TabId;
 
 use crate::browser::Browser;
@@ -36,6 +39,7 @@ pub struct ConsoleEntry {
 /// accident, defined non-enumerable in [`CONSOLE_CAPTURE_SCRIPT`] so
 /// `for...in` and `Object.keys` do not turn it up either. Must match the
 /// property [`CONSOLE_CAPTURE_SCRIPT`] defines.
+#[cfg(target_os = "macos")]
 const CONSOLE_ACCESSOR: &str = "__workbench_console_e6f2a9c4d8b14f6c9a2e7b3f1d5c8a90";
 
 /// Wraps `console.log/info/warn/error/debug`, listens for `error` in the
@@ -121,6 +125,7 @@ const REF_ATTR: &str = "data-workbench-ref";
 const SNAPSHOT_SCRIPT: &str = include_str!("browser_page/snapshot.js");
 
 /// The tab `id` names, or the active one for `None`, with its webview.
+#[cfg(target_os = "macos")]
 fn resolve_tab(
     window: &Window,
     browser: &Browser,
