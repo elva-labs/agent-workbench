@@ -10,6 +10,7 @@
 
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { coversBrowser } from "$lib/browser.svelte";
   import {
     ACTIONS,
     PRESET_LABELS,
@@ -274,7 +275,7 @@
      the keyboard, so Escape is handled there. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="scrim" onclick={closeSettings} data-testid="settings-scrim">
+<div class="scrim" onclick={closeSettings} use:coversBrowser data-testid="settings-scrim">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div

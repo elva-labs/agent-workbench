@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installFakeCore } from "./fake";
+import { PROJECT, installFakeCore } from "./fake";
 
 /**
  * The embedded browser, as a fourth kind the changes pane's viewer can
@@ -208,6 +208,61 @@ test("opening the menu hides the native view and closing it brings it back at th
   await expect.poll(() => browserWindowState(page).then((s) => s?.showing)).toBe(true);
   const after = (await browserWindowState(page))!.rect;
   expect(after).toEqual(before);
+});
+
+/** Opens a page in the browser and waits for the native view to sit over
+    the placeholder, answering with the rectangle it was placed at. */
+async function showPage(page: Page) {
+  await openBrowser(page);
+  const address = page.getByTestId("browser-address");
+  await address.fill("example.com");
+  await address.press("Enter");
+  await expect.poll(() => placedOverBody(page)).toBe(true);
+  return (await browserWindowState(page))!.rect;
+}
+
+function showing(page: Page) {
+  return browserWindowState(page).then((s) => s?.showing);
+}
+
+test("the settings hide the native view while they are up, and it comes back where it was", async ({
+  page,
+}) => {
+  const before = await showPage(page);
+
+  await page.evaluate(() =>
+    (window as unknown as { __openSettings?: () => void }).__openSettings?.(),
+  );
+  await expect(page.getByTestId("settings")).toBeVisible();
+  await expect.poll(() => showing(page)).toBe(false);
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("settings")).toBeHidden();
+  await expect.poll(() => showing(page)).toBe(true);
+  expect((await browserWindowState(page))!.rect).toEqual(before);
+});
+
+test("an orchestrator's question hides the native view until it is answered", async ({ page }) => {
+  await page.getByTestId("start-agent").click();
+  await showPage(page);
+
+  await page.evaluate(
+    (project) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id: "c-1",
+        tool: "start",
+        arguments: { project, prompt: "Fix the flaky test" },
+        cwd: project,
+        session: "session-1",
+      }),
+    PROJECT,
+  );
+  await expect(page.getByTestId("conduct-ask")).toBeVisible();
+  await expect.poll(() => showing(page)).toBe(false);
+
+  await page.getByTestId("conduct-no").click();
+  await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+  await expect.poll(() => showing(page)).toBe(true);
 });
 
 /**

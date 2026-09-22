@@ -80,6 +80,7 @@ import {
   browser,
   close,
   cover,
+  coversBrowser,
   hide,
   initBrowser,
   navigate,
@@ -316,6 +317,28 @@ describe("cover", () => {
     expect(pending).toEqual([]);
     expect(hideCount).toBe(0);
     expect(placeLog).toEqual([]);
+  });
+
+  it("an element that covers the viewer covers the view from its mount until its destroy", async () => {
+    browser.tabs = [tab(1, "https://example.com/")];
+    browser.active = 1;
+    show();
+    place(RECT_A);
+    await resolveNext();
+
+    const dialog = coversBrowser(document.createElement("div"));
+    expect(browser.covered).toBe(true);
+    await resolveNext();
+    expect(hideCount).toBe(1);
+
+    const menu = coversBrowser(document.createElement("div"));
+    dialog.destroy();
+    expect(browser.covered).toBe(true);
+
+    menu.destroy();
+    expect(browser.covered).toBe(false);
+    await resolveNext();
+    expect(placeLog).toEqual([RECT_A, RECT_A]);
   });
 });
 

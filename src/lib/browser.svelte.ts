@@ -237,6 +237,14 @@ export function cover(): () => void {
   };
 }
 
+/**
+ * An action for anything drawn over the viewer's body, a dialog or a menu:
+ * the native view is covered for as long as the element is on the page.
+ */
+export function coversBrowser(_node: HTMLElement) {
+  return { destroy: cover() };
+}
+
 let initialized = false;
 
 /** Subscribes to the tabs event once, and loads what is open already. Call

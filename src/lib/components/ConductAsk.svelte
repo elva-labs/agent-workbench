@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { coversBrowser } from "$lib/browser.svelte";
   import { allow, conductor, once, refuse } from "$lib/conductor.svelte";
 
   let ask = $derived(conductor.asking);
 </script>
 
 {#if ask !== null}
-  <div class="ask" role="alertdialog" aria-label="Start a session" data-testid="conduct-ask">
+  <div class="ask" role="alertdialog" aria-label="Start a session" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants to start a session</p>
     <p class="where">
       In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.

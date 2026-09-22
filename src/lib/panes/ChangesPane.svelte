@@ -34,7 +34,7 @@
     activate as activateBrowserTab,
     browser,
     close as closeBrowserTab,
-    cover as coverBrowser,
+    coversBrowser,
     titleFor as browserTitleFor,
   } from "$lib/browser.svelte";
   import { core } from "$lib/core";
@@ -415,25 +415,6 @@
       menuOpen = false;
     }
   }
-
-  // The native view floats above the page, so it would show through the
-  // menu while the menu is open. Covering it here, rather than in the
-  // browser view itself, keeps the rule in one place regardless of what the
-  // viewer is showing.
-  let uncoverMenu: (() => void) | null = null;
-  $effect(() => {
-    const open = menuOpen;
-    // The menu alone decides this: what covering reads of the browser's
-    // own state is not something to run again for.
-    untrack(() => {
-      if (open) {
-        uncoverMenu ??= coverBrowser();
-      } else if (uncoverMenu !== null) {
-        uncoverMenu();
-        uncoverMenu = null;
-      }
-    });
-  });
 
   onMount(() => {
     let off: (() => void) | null = null;
@@ -900,7 +881,7 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <div class="scrim" onclick={() => (menuOpen = false)}></div>
-          <div class="menu" role="menu" data-testid="changes-menu-items">
+          <div class="menu" role="menu" use:coversBrowser data-testid="changes-menu-items">
             <button
               role="menuitemradio"
               aria-checked={files.scope === "changed"}

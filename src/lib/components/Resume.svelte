@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { coversBrowser } from "$lib/browser.svelte";
   import { agentTag } from "$lib/agent.svelte";
   import { lastSegment } from "$lib/paths";
   import { returnFocus } from "$lib/layout.svelte";
@@ -67,7 +68,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="scrim" onclick={closeResume} data-testid="resume-scrim">
+<div class="scrim" onclick={closeResume} use:coversBrowser data-testid="resume-scrim">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
