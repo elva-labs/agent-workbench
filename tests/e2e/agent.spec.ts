@@ -251,6 +251,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         conductAnswer: async () => {},
         onBrowserRequest: async () => () => {},
         browserAnswer: async () => {},
+        onBrowserTabs: async () => () => {},
+        browserTabs: async () => ({ tabs: [], active: null }),
+        browserKeys: async () => {},
+        onBrowserFocused: async () => () => {},
         worktreeAdd: async (project: string, name: string) =>
           `${project}/${name}`,
         setSelection: async () => {},
