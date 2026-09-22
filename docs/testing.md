@@ -71,6 +71,12 @@ its stylesheet, and asks the terminals for the DOM renderer, since the
 software GL behind a headless X server paints a third WebGL terminal late
 or never and WebKit names every GPU the same.
 
+On Linux the tier also drives the embedded browser. A tab's page is a
+native view the WebDriver session cannot see into, so where it sits and what
+it shows are read from the X server's picture of the screen, a pixel at a
+time, and clicks and keys reach it through `xdotool`, the way a person's
+would. That needs ImageMagick and xdotool beside Xvfb.
+
 On Windows the harness starts the binary itself with the debugger open and
 attaches Edge WebDriver to it, because WebView2 never writes the file Edge
 WebDriver waits for when it launches a browser. Two things follow: quitting
