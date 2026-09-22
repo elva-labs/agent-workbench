@@ -1009,6 +1009,10 @@ pub fn run() {
             menu::install(app)?;
             if let Some(webview_window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&webview_window.as_ref().window());
+                #[cfg(target_os = "linux")]
+                if let Err(error) = browser::install_layer(&webview_window) {
+                    eprintln!("browser layer: {error}");
+                }
             }
             browser_keys::install(app);
             #[cfg(all(debug_assertions, target_os = "macos"))]

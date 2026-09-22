@@ -39,3 +39,8 @@ objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSNotification"
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKContentWorld", "WKFrameInfo", "WKSnapshotConfiguration", "objc2-app-kit", "block2"] }
 block2 = "0.6"
 
+# The embedded browser's tabs are laid over the window's own webview in a
+# GTK layer of the app's own, and read their history from WebKitGTK.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = "2.0"

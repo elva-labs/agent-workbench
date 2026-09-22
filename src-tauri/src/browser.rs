@@ -15,13 +15,19 @@ use std::time::{Duration, Instant};
 
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, State, Url,
-    Webview, WebviewUrl, Window, Wry,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, State, Url, Webview,
+    WebviewUrl, Window, Wry,
 };
 use workbench_core::browser::{
     connect_failure_message, navigation_target, normalize_url, ConnectFailure, Opener, Snapshot,
     TabId, Tabs,
 };
+
+#[cfg(target_os = "linux")]
+mod layer;
+
+#[cfg(target_os = "linux")]
+pub use layer::install as install_layer;
 
 /// How long a load-failure check waits for a host to answer before it
 /// reports the tab as unreachable.
@@ -355,18 +361,13 @@ async fn open_tab(
 
     // A tab opened empty is a new tab, which the window's page draws
     // itself: its blank webview stays out of sight until it has an address.
-    let (position, size, visible) = match (showing && page != "about:blank", rect) {
-        (true, Some((x, y, w, h))) => (
-            Position::Logical(LogicalPosition::new(x, y)),
-            Size::Logical(LogicalSize::new(w, h)),
-            true,
-        ),
-        _ => (
-            Position::Logical(LogicalPosition::new(0.0, 0.0)),
-            Size::Logical(LogicalSize::new(1.0, 1.0)),
-            false,
-        ),
+    let (bounds, visible) = match (showing && page != "about:blank", rect) {
+        (true, Some(rect)) => (rect, true),
+        _ => ((0.0, 0.0, 1.0, 1.0), false),
     };
+    let (x, y, w, h) = bounds;
+    let position = Position::Logical(LogicalPosition::new(x, y));
+    let size = Size::Logical(LogicalSize::new(w, h));
 
     let webview = match window.add_child(builder, position, size) {
         Ok(webview) => webview,
@@ -384,6 +385,8 @@ async fn open_tab(
     if !visible {
         webview.hide().map_err(|e| e.to_string())?;
     }
+    #[cfg(target_os = "linux")]
+    layer::adopt(&webview, bounds)?;
 
     if let Some(previous) = previous {
         if let Some(previous_webview) = window.get_webview(&previous.label()) {
@@ -408,16 +411,28 @@ fn place_and_show(window: &Window, browser: &Browser, id: TabId) -> Result<(), S
     if !showing {
         return Ok(());
     }
-    let (Some((x, y, w, h)), Some(webview)) = (rect, window.get_webview(&id.label())) else {
+    let (Some(rect), Some(webview)) = (rect, window.get_webview(&id.label())) else {
         return Ok(());
     };
+    set_rect(&webview, rect)?;
+    webview.show().map_err(|e| e.to_string())
+}
+
+/// Moves `webview` to `rect`, in the layer the tabs sit in.
+#[cfg(target_os = "linux")]
+fn set_rect(webview: &Webview<Wry>, rect: Rectangle) -> Result<(), String> {
+    layer::place(webview, rect)
+}
+
+/// Moves `webview` to `rect` over the window's own webview.
+#[cfg(not(target_os = "linux"))]
+fn set_rect(webview: &Webview<Wry>, (x, y, w, h): Rectangle) -> Result<(), String> {
     webview
-        .set_bounds(Rect {
+        .set_bounds(tauri::Rect {
             position: Position::Logical(LogicalPosition::new(x, y)),
             size: Size::Logical(LogicalSize::new(w, h)),
         })
-        .map_err(|e| e.to_string())?;
-    webview.show().map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
