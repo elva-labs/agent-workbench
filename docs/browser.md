@@ -60,7 +60,10 @@ most sites refuse to be framed, and the agent could not reach into one. The
 rectangle is followed on a resize and, since a
 pane's column eases its width with no resize event of its own, on every
 frame while the rectangle is still moving, settling once it has stood still
-for a few frames running.
+for a few frames running. On Linux, WebKitGTK views in one window stack in a
+column and share its height, so the app's own page is put under a layer of
+its own as the window opens, and each tab's view is moved into that layer
+and placed there by coordinates.
 
 The native view floats above everything the app draws, so it is hidden for
 as long as a menu or a dialog is drawn over the viewer's body, and placed
@@ -118,7 +121,11 @@ one.
 
 ## Platforms
 
-macOS has all of it. Elsewhere a tab still opens, navigates and closes
-through the platform's own web view, but the tools that read or drive a
-page, the script, the console, the snapshot, the click, the type and the
-screenshot, answer that they are not supported there.
+macOS has all of it. On Linux a tab opens, navigates and closes through
+WebKitGTK, sits over the viewer the same way, greys its buttons the same
+way, and gives Escape and the app's chords back. On Windows a tab opens,
+navigates and closes through WebView2, its back and forward buttons stay
+usable whether or not there is somewhere to go, and a page keeps every key
+typed into it. On both, the tools that read or drive a page, the script,
+the console, the snapshot, the click, the type and the screenshot, answer
+that they are not supported there.

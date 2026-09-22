@@ -20,8 +20,9 @@ package and the few libraries Tauri lists for AppImage bundling; the driver
 tier needs the WebKitGTK WebDriver package and `tauri-driver`. The window is
 undecorated and the app draws its own controls. A process's working
 directory comes from procfs. A browser tab opens, navigates and closes
-through WebKitGTK, but the tools that read or drive its page are not
-supported there.
+through WebKitGTK, in a layer the app lays over its own page, and gives
+Escape and the app's chords back, but the tools that read or drive its page
+are not supported there.
 
 ## Windows
 
@@ -33,8 +34,9 @@ Windows directory. The hooks run under Git Bash, which Claude Code needs
 there anyway. Following a session into a worktree is not implemented, so
 the changes pane stays on the project. The driver tier attaches to a running
 app rather than launching one; [testing](testing.md) says why. A browser
-tab works the same way it does on Linux, through WebView2 rather than
-WebKitGTK.
+tab opens, navigates and closes through WebView2, but its back and forward
+buttons stay usable, a page keeps every key typed into it, and the tools
+that read or drive its page are not supported.
 
 ## Remotes
 

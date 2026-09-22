@@ -80,7 +80,8 @@ back only what it always takes back, Escape and its own chords, and lets
 the rest through untouched, Cmd+C and Cmd+V among them. Clicking into a
 page counts as focusing the changes pane, since that is where the tab
 lives, but it does not pull the keyboard there the way pressing
-Cmd+3 would: the page keeps it until Escape or a chord takes it back.
+Cmd+3 would: the page keeps it until Escape or a chord takes it back. Linux
+does the same with Ctrl in Cmd's place; on Windows a page keeps every key.
 
 ## Focus follows the pointer down, not the hover
 
