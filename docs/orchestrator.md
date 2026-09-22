@@ -47,7 +47,9 @@ A worktree it starts in is trusted where its project is, with either agent,
 so nothing asks on the way in. A start can also name a model, which goes to
 the agent on its command line and holds from the session's first turn, so
 an orchestrator chooses the model for a piece of work when it starts it
-rather than sending a model command afterwards.
+rather than sending a model command afterwards. A model's name belongs to
+one agent, so a start that names a model names the agent too, and one
+that leaves the agent out is refused rather than given the project's last.
 
 ## What is remembered
 

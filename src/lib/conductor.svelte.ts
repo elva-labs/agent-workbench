@@ -382,6 +382,12 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   if (project === null) return refused("Starting a session needs a project.");
   if (prompt === null)
     return refused("Starting a session needs a prompt to give it.");
+  // A model's name means something to one agent only, so the agent is
+  // named with it rather than taken from the project's last one.
+  if (text(request, "model") !== null && text(request, "agent") === null)
+    return refused(
+      "A start that names a model names the agent too, claude-code or codex: the model's name is the agent's to read.",
+    );
   if (!workspace.open.some((open) => open.path === project))
     return refused(`No project at ${project} is open in the workbench.`);
   const caller = callerOf(request);

@@ -377,7 +377,12 @@ describe("starting a session", () => {
     const row = await startAllowed(
       call(
         "start",
-        { project: A, prompt: "Fix the flaky test", model: "sonnet" },
+        {
+          project: A,
+          prompt: "Fix the flaky test",
+          agent: "claude-code",
+          model: "sonnet",
+        },
         { session: "caller-1" },
       ),
       "pty-1",
@@ -390,6 +395,19 @@ describe("starting a session", () => {
       "sid-2",
     );
     expect(plain.model).toBeNull();
+  });
+
+  it("refuses a model named without an agent", async () => {
+    await handle(
+      call(
+        "start",
+        { project: A, prompt: "Fix it", model: "sonnet" },
+        { session: "caller-1" },
+      ),
+    );
+    expect(last().error).toContain("names the agent too");
+    expect(conductor.asking).toBeNull();
+    expect(forProject(A)).toHaveLength(0);
   });
 
   it("refuses when the worktree cannot be made", async () => {

@@ -203,6 +203,7 @@ test.describe("the conductor", () => {
         project: PROJECT,
         prompt: "Fix the flaky test",
         name: "Cache flake",
+        agent: "claude-code",
         model: "sonnet",
       },
       session: "session-1",
