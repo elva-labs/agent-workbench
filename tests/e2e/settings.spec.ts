@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
 
 const MOD = "ControlOrMeta";
 const AGENT = "section[data-pane='agent']";
@@ -276,16 +276,16 @@ test.describe("the hooks notice", () => {
   test.beforeEach(async ({ page }) => {
     // A setup from before the choice: the fake's workspace on record, hooks
     // off, and the word not yet taken.
-    await page.addInitScript(() => {
+    await page.addInitScript((file) => {
       // Once for the tab: a reload after that keeps what the app wrote.
       if (sessionStorage.getItem("notice-test") !== null) return;
       sessionStorage.setItem("notice-test", "1");
-      localStorage.setItem(
-        "workbench.hooks",
-        JSON.stringify({ everywhere: false, overrides: {} }),
-      );
+      const off = { everywhere: false, overrides: {} };
+      localStorage.setItem("workbench.hooks", JSON.stringify(off));
+      const settings = JSON.parse(localStorage.getItem(file) ?? "{}");
+      localStorage.setItem(file, JSON.stringify({ ...settings, hooks: off }));
       localStorage.removeItem("workbench.notices");
-    });
+    }, SETTINGS_FILE);
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
   });
@@ -332,11 +332,14 @@ test.describe("the hooks notice", () => {
   test("does not show on a fresh install, which has hooks on", async ({
     page,
   }) => {
-    await page.addInitScript(() => {
+    // Nothing on the machine: no workspace, no hooks answer, no settings
+    // file.
+    await page.addInitScript((file) => {
       localStorage.removeItem("workbench.workspace");
       localStorage.removeItem("workbench.hooks");
       localStorage.removeItem("workbench.notices");
-    });
+      localStorage.removeItem(file);
+    }, SETTINGS_FILE);
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
     await expect(page.getByTestId("hooks-notice")).toHaveCount(0);

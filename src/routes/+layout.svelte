@@ -25,6 +25,8 @@
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
   import { loadKeys } from "$lib/keys.svelte";
+  import { loadHooks } from "$lib/hook.svelte";
+  import { followSettings } from "$lib/preferences.svelte";
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
@@ -33,12 +35,28 @@
   let { children } = $props();
 
   onMount(() => {
+    // The window's own copies first, so the first frame is painted as the
+    // last one was; the core's settings follow as soon as it answers. The
+    // hooks are read before the workspace is, which is what tells a fresh
+    // install from a setup that predates the hooks choice.
     loadTheme();
     loadKeys();
+    loadHooks();
     loadLayout();
     loadRemembered();
     loadStarted();
-    return followOpenRequests(restore());
+    let closed = false;
+    let stopSettings = () => {};
+    void followSettings().then((stop) => {
+      if (closed) stop();
+      else stopSettings = stop;
+    });
+    const stopOpening = followOpenRequests(restore());
+    return () => {
+      closed = true;
+      stopSettings();
+      stopOpening();
+    };
   });
 </script>
 

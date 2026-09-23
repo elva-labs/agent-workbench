@@ -68,6 +68,8 @@ pub struct Core {
     processes: crate::processes::Processes,
     /// None without a home directory, where there is nowhere to keep them.
     plugins: Option<crate::plugins::Plugins>,
+    /// None without a home directory, for the same reason.
+    settings: Option<Arc<crate::settings::Store>>,
 }
 
 /// The sink the core hands to the ptys and the watcher: everything reaches
@@ -116,6 +118,9 @@ impl Core {
             }),
             None => sink,
         };
+        let settings = home
+            .as_deref()
+            .map(|home| Arc::new(crate::settings::Store::new(home, Arc::clone(&sink))));
         Self {
             sessions: Arc::new(Sessions::default()),
             processes: crate::processes::Processes::default(),
@@ -123,6 +128,7 @@ impl Core {
             sink,
             home,
             plugins,
+            settings,
         }
     }
 
@@ -213,6 +219,33 @@ impl Core {
 
     pub fn home(&self) -> Option<&Path> {
         self.home.as_deref()
+    }
+
+    fn settings(&self) -> Result<&Arc<crate::settings::Store>, String> {
+        self.settings
+            .as_ref()
+            .ok_or_else(|| "no home directory".to_string())
+    }
+
+    /// The machine's settings, and whether a file held them yet.
+    pub fn settings_get(&self) -> Result<crate::settings::Stored, String> {
+        Ok(self.settings()?.load())
+    }
+
+    /// Watches the settings file, so an edit to it reaches the window. The
+    /// app does this for the machine it runs on; a daemon on another machine
+    /// does not, since the settings a window follows are its own machine's.
+    pub fn watch_settings(&self) -> Result<(), String> {
+        self.settings()?.watch()
+    }
+
+    /// Lays a change over the machine's settings. Answers with the settings
+    /// as they now are, which every window hears as well.
+    pub fn settings_set(
+        &self,
+        change: &serde_json::Value,
+    ) -> Result<crate::settings::Settings, String> {
+        self.settings()?.set(change)
     }
 
     /// Tails the session log for as long as the core lives, whether or not

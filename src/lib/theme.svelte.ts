@@ -1,3 +1,6 @@
+import type { Settings } from "$lib/core";
+import { persist } from "$lib/persist";
+
 /**
  * Theme choice, in four parts. Appearance: `system` follows
  * prefers-color-scheme and stamps nothing; an explicit choice stamps
@@ -7,6 +10,10 @@
  * terminal the one tokens.css is written in. Fonts: the terminal's family
  * and the interface's, stamped as data-mono and data-sans, with the machine's own
  * pair the ones tokens.css is written in.
+ *
+ * The core keeps the choice for the machine. The window keeps a copy of
+ * its own as well, read before the core has answered, so the first frame
+ * is painted in the colours the last one was.
  */
 export type ThemeChoice = "light" | "dark" | "system";
 export type PaletteName = "teal" | "indigo" | "amber" | "rose" | "mono";
@@ -136,43 +143,90 @@ export function loadTheme() {
   applyTheme();
 }
 
-/** Keeps a choice for the next start. A storage that refuses is not fatal:
-    the choice holds for this window and is gone at the next one. */
+/** Keeps the window's copy of a choice, for the first frame of the next
+    start. A storage that refuses is not fatal: the core still has it. */
 function remember(key: string, value: string) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // Non-fatal: the choice does not survive a restart.
+    // Non-fatal: the next start paints the defaults until the core answers.
   }
+}
+
+function rememberAll() {
+  remember(KEY, theme.choice);
+  remember(PALETTE_KEY, theme.palette);
+  remember(LOOK_KEY, theme.look);
+  remember(MONO_KEY, theme.mono);
+  remember(SANS_KEY, theme.sans);
 }
 
 export function setPalette(palette: PaletteName) {
   theme.palette = palette;
   remember(PALETTE_KEY, palette);
   applyTheme();
+  persist({ palette });
 }
 
 export function setLook(look: LookName) {
   theme.look = look;
   remember(LOOK_KEY, look);
   applyTheme();
+  persist({ look });
 }
 
 export function setMono(mono: MonoName) {
   theme.mono = mono;
   remember(MONO_KEY, mono);
   applyTheme();
+  persist({ terminalFont: mono });
 }
 
 export function setSans(sans: SansName) {
   theme.sans = sans;
   remember(SANS_KEY, sans);
   applyTheme();
+  persist({ interfaceFont: sans });
 }
 
 export function setTheme(choice: ThemeChoice) {
   theme.choice = choice;
   remember(KEY, choice);
+  applyTheme();
+  persist({ appearance: choice });
+}
+
+/** The theme's part of the settings. */
+export function themeSettings(): Pick<
+  Settings,
+  "appearance" | "look" | "palette" | "terminalFont" | "interfaceFont"
+> {
+  return {
+    appearance: theme.choice,
+    look: theme.look,
+    palette: theme.palette,
+    terminalFont: theme.mono,
+    interfaceFont: theme.sans,
+  };
+}
+
+/** Takes the theme the core has for the machine: each part it knows, the
+    rest left as it is. Nothing is sent back, since this is the core's word. */
+export function adoptTheme(
+  settings: Pick<
+    Settings,
+    "appearance" | "look" | "palette" | "terminalFont" | "interfaceFont"
+  >,
+) {
+  const choice: unknown = settings.appearance;
+  if (choice === "light" || choice === "dark" || choice === "system") {
+    theme.choice = choice;
+  }
+  if (isPalette(settings.palette)) theme.palette = settings.palette;
+  if (isLook(settings.look)) theme.look = settings.look;
+  if (isMono(settings.terminalFont)) theme.mono = settings.terminalFont;
+  if (isSans(settings.interfaceFont)) theme.sans = settings.interfaceFont;
+  rememberAll();
   applyTheme();
 }
 

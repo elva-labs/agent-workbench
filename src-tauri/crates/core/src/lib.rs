@@ -25,6 +25,7 @@ pub mod project;
 pub mod protocol;
 pub mod pty;
 pub mod selection;
+pub mod settings;
 pub mod shell;
 pub mod show;
 pub mod transcripts;

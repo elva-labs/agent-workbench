@@ -1,4 +1,5 @@
 import { isMac } from "$lib/platform";
+import { persist } from "$lib/persist";
 
 /**
  * The chords the app claims, and who decides them.
@@ -7,7 +8,8 @@ import { isMac } from "$lib/platform";
  * unmodified keys belong to whatever terminal has focus, and that is not
  * negotiable here. Within that rule the user picks: a preset, or a chord of
  * their own per action. The stored shape is the whole table, so a custom
- * arrangement survives a change to the presets.
+ * arrangement survives a change to the presets. The core keeps the table
+ * for the machine; the window keeps a copy, read before the core answers.
  */
 
 export type ActionKey =
@@ -225,6 +227,19 @@ export function describe(chord: Chord, mac: boolean = isMac()): string {
   return `Ctrl+${chord.shift ? "Shift+" : ""}${chord.alt ? "Alt+" : ""}${key}`;
 }
 
+/** A stored table as a whole keymap: every action it has a chord for
+    takes it, and the rest take the default preset's. */
+function fromTable(table: unknown): Keymap {
+  const bindings = { ...PRESETS.default };
+  if (typeof table === "object" && table !== null) {
+    for (const { key } of ACTIONS) {
+      const chord = (table as Record<string, unknown>)[key];
+      if (isChord(chord)) bindings[key] = { key: chord.key, shift: chord.shift, alt: chord.alt };
+    }
+  }
+  return bindings;
+}
+
 export function loadKeys() {
   let raw: string | null = null;
   try {
@@ -236,19 +251,22 @@ export function loadKeys() {
   try {
     const stored: unknown = JSON.parse(raw);
     if (typeof stored !== "object" || stored === null) return;
-    const bindings = { ...PRESETS.default };
-    const table = (stored as { bindings?: unknown }).bindings;
-    if (typeof table === "object" && table !== null) {
-      for (const { key } of ACTIONS) {
-        const chord = (table as Record<string, unknown>)[key];
-        if (isChord(chord)) bindings[key] = { key: chord.key, shift: chord.shift, alt: chord.alt };
-      }
-    }
+    const bindings = fromTable((stored as { bindings?: unknown }).bindings);
     keys.bindings = bindings;
     keys.preset = presetOf(bindings);
   } catch {
     // A corrupt entry is not worth a broken keyboard. The default stands.
   }
+}
+
+/** Takes the table the core has for the machine. Nothing is sent back,
+    since this is the core's word. */
+export function adoptKeys(table: Record<string, Chord>) {
+  const bindings = fromTable(table);
+  if (ACTIONS.every(({ key }) => sameChord(bindings[key], keys.bindings[key]))) return;
+  keys.bindings = bindings;
+  keys.preset = presetOf(bindings);
+  remember();
 }
 
 function isChord(value: unknown): value is Chord {
@@ -262,12 +280,17 @@ function isChord(value: unknown): value is Chord {
   );
 }
 
-function save() {
+function remember() {
   try {
     localStorage.setItem(KEY, JSON.stringify({ bindings: keys.bindings }));
   } catch {
-    // Non-fatal: the arrangement does not survive a restart.
+    // Non-fatal: the next start uses the default until the core answers.
   }
+}
+
+function save() {
+  remember();
+  persist({ keys: { ...keys.bindings } });
 }
 
 /** Test seam. */

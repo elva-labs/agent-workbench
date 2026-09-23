@@ -1,8 +1,8 @@
 # Settings
 
 Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
-(<kbd>Ctrl</kbd> on Windows and Linux), over the workbench. Everything in
-them is kept by the window and applies at once.
+(<kbd>Ctrl</kbd> on Windows and Linux), over the workbench. A choice applies
+at once.
 
 The settings are in four tabs down the left. Appearance carries the
 appearance, theme, font and colour sections; live updates, plugins and keys
@@ -72,3 +72,21 @@ checking and updating do is in [plugins](plugins.md).
 
 The whole chord table, with two presets and room for your own. What the app
 may claim and why is in [focus](focus-model.md).
+
+## Where they are kept
+
+The appearance, the look, the palette, the fonts, the chords and the answer
+on hooks are kept for the machine, in `settings.json` under
+`~/.agent-workbench`, and every window on the machine follows the same file.
+The window reads it at start and hears of every change to it, whether made
+in the settings, by another window, or by an edit to the file itself, which
+reaches an open window at once. A value in the file that the app does not
+know is passed over and the default stands for it.
+
+The window keeps a copy of its own as well, so the first frame of a start is
+painted as the last one was before the file has been read. On a machine
+without the file, that copy is what the file is first written from.
+
+The plugins keep their own record, described in [plugins](plugins.md). A
+window on a remote machine's project still follows the settings of the
+machine the window runs on.

@@ -1,4 +1,5 @@
-import { core } from "$lib/core";
+import { core, type Settings } from "$lib/core";
+import { persist } from "$lib/persist";
 
 /**
  * The agents' hooks: one answer for every project, and a word for the rare
@@ -10,7 +11,8 @@ import { core } from "$lib/core";
  * session's row follows the agent's own word for working, waiting and asking.
  * So the choice is made once and every project opened from then on follows
  * it. A fresh install starts with them on; a setup that predates the choice
- * keeps what it had, off, until asked.
+ * keeps what it had, off, until asked. The core keeps the answer for the
+ * machine; the window keeps a copy, read before the core answers.
  */
 
 const KEY = "workbench.hooks";
@@ -69,7 +71,7 @@ export function loadHooks() {
   }
 }
 
-function save() {
+function remember() {
   try {
     localStorage.setItem(
       KEY,
@@ -79,8 +81,43 @@ function save() {
       }),
     );
   } catch {
-    // Non-fatal: the choice does not survive a restart.
+    // Non-fatal: the next start uses the default until the core answers.
   }
+}
+
+function save() {
+  remember();
+  persist({ hooks: hooksSettings() });
+}
+
+/** The hooks' part of the settings. */
+export function hooksSettings(): Settings["hooks"] {
+  if (!loaded) loadHooks();
+  return { everywhere: hook.everywhere, overrides: { ...hook.overrides } };
+}
+
+/** Takes the answer the core has for the machine, and brings the projects
+    given to it when it differs from what the window had. Nothing is sent
+    back, since this is the core's word. */
+export function adoptHooks(settings: Settings["hooks"], projects: string[]) {
+  if (!loaded) loadHooks();
+  const overrides: Record<string, boolean> = {};
+  for (const [path, value] of Object.entries(settings.overrides ?? {})) {
+    if (typeof value === "boolean") overrides[path] = value;
+  }
+  const everywhere = settings.everywhere === true;
+  const same =
+    everywhere === hook.everywhere &&
+    JSON.stringify(sorted(overrides)) === JSON.stringify(sorted(hook.overrides));
+  if (same) return;
+  hook.everywhere = everywhere;
+  hook.overrides = overrides;
+  remember();
+  for (const project of projects) void apply(project);
+}
+
+function sorted(record: Record<string, boolean>): [string, boolean][] {
+  return Object.entries(record).sort(([a], [b]) => a.localeCompare(b));
 }
 
 /** The project's own word, or null when it follows the rest. */

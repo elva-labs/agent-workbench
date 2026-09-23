@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
 
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
@@ -1771,9 +1771,10 @@ test.describe("the window's own controls", () => {
     await expect.poll(centre).toBe(await middle());
     const before = await middle();
     // The other look: its header is a different height from modern's.
-    await page.evaluate(() => {
-      localStorage.setItem("workbench.look", "terminal");
-    });
+    await page.evaluate((file) => {
+      const settings = JSON.parse(localStorage.getItem(file) ?? "{}");
+      localStorage.setItem(file, JSON.stringify({ ...settings, look: "terminal" }));
+    }, SETTINGS_FILE);
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
     const after = await middle();

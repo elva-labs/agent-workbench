@@ -50,12 +50,22 @@ export const DEFAULT_FIXTURE: GitFixture = {
   ],
 };
 
+/** Where the fake keeps the settings file the core would keep, in the
+    page's storage so a reload finds it the way a restart finds the file. */
+export const SETTINGS_FILE = "fake.settings";
+
 export async function installFakeCore(
   page: Page,
-  options: { open?: string[]; opened?: string[]; fixture?: GitFixture } = {},
+  options: {
+    open?: string[];
+    opened?: string[];
+    fixture?: GitFixture;
+    /** A settings file already on the machine. */
+    settings?: Record<string, unknown>;
+  } = {},
 ) {
   await page.addInitScript(
-    ({ open, opened, fixture }) => {
+    ({ open, opened, fixture, settings, settingsFile }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -256,6 +266,41 @@ export async function installFakeCore(
       const sources = (): FakeSource[] => {
         const w = window as unknown as { __pluginSources?: FakeSource[] };
         return (w.__pluginSources ??= [offered()]);
+      };
+
+      // The settings file, as the core keeps it: absent until the window
+      // hands over its own copy or a change is made, checked the way the
+      // core checks a change, and announced to the window on every change.
+      if (settings !== null && localStorage.getItem(settingsFile) === null) {
+        localStorage.setItem(settingsFile, JSON.stringify(settings));
+      }
+      const settingsDefaults = {
+        appearance: "system",
+        look: "modern",
+        palette: "teal",
+        terminalFont: "system",
+        interfaceFont: "system",
+        keys: {},
+        hooks: { everywhere: true, overrides: {} },
+      };
+      const allowed: Record<string, string[]> = {
+        appearance: ["system", "light", "dark"],
+        look: ["modern", "terminal"],
+        palette: ["teal", "indigo", "amber", "rose", "mono"],
+        terminalFont: ["system", "plex", "jetbrains"],
+        interfaceFont: ["system", "plex", "inter"],
+      };
+      const readSettings = (): Record<string, unknown> | null => {
+        const raw = localStorage.getItem(settingsFile);
+        return raw === null ? null : { ...settingsDefaults, ...JSON.parse(raw) };
+      };
+      const settingsChanged = (next: unknown) => {
+        const w = window as unknown as {
+          __settingsChanged?: (settings: unknown) => void;
+          __settingsWrites?: unknown[];
+        };
+        (w.__settingsWrites ??= []).push(next);
+        w.__settingsChanged?.(next);
       };
 
       (
@@ -938,12 +983,40 @@ export async function installFakeCore(
           (window as unknown as Record<string, unknown>).__gitChanged = handler;
           return () => {};
         },
+        settingsGet: async () => {
+          const found = readSettings();
+          return found === null
+            ? { stored: false, settings: settingsDefaults }
+            : { stored: true, settings: found };
+        },
+        settingsSet: async (change: Record<string, unknown>) => {
+          for (const [field, value] of Object.entries(change)) {
+            if (field in allowed) {
+              if (!allowed[field].includes(value as string))
+                throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
+            } else if (field !== "keys" && field !== "hooks") {
+              throw new Error(`there is no setting called ${field}`);
+            }
+          }
+          const next = { ...(readSettings() ?? settingsDefaults), ...change };
+          localStorage.setItem(settingsFile, JSON.stringify(next));
+          settingsChanged(next);
+          return next;
+        },
+        // A test edits the file behind the window's back through this.
+        onSettingsChanged: async (handler: (settings: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__settingsChanged =
+            handler;
+          return () => {};
+        },
       };
     },
     {
       open: options.open ?? [PROJECT],
       opened: options.opened ?? [],
       fixture: options.fixture ?? DEFAULT_FIXTURE,
+      settings: options.settings ?? null,
+      settingsFile: SETTINGS_FILE,
     },
   );
 }

@@ -743,6 +743,20 @@ async fn pty_stop_process(
     .await
 }
 
+/// The settings of this machine, and whether a file held them yet. Never
+/// routed: the window follows the settings of the machine it runs on.
+#[tauri::command]
+async fn settings_get(core: State<'_, Arc<Core>>) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.settings_get().and_then(value)).await
+}
+
+#[tauri::command]
+async fn settings_set(core: State<'_, Arc<Core>>, change: Value) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.settings_set(&change).and_then(value)).await
+}
+
 /// The plugin sources on this machine, with their plugins and states.
 #[tauri::command]
 async fn plugin_sources(core: State<'_, Arc<Core>>) -> Result<Value, String> {
@@ -1014,6 +1028,9 @@ pub fn run() {
             if let Err(error) = core.start() {
                 eprintln!("session log: {error}");
             }
+            if let Err(error) = core.watch_settings() {
+                eprintln!("settings: {error}");
+            }
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
             app.manage(Arc::new(browser::Browser::default()));
@@ -1058,6 +1075,8 @@ pub fn run() {
             pty_cwd,
             pty_processes,
             pty_stop_process,
+            settings_get,
+            settings_set,
             plugin_sources,
             plugin_add,
             plugin_fetch,

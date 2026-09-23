@@ -489,6 +489,25 @@ export interface KeyChord {
   alt: boolean;
 }
 
+/** The user's preferences, one set per machine, kept by the core. */
+export interface Settings {
+  appearance: "system" | "light" | "dark";
+  look: "modern" | "terminal";
+  palette: string;
+  terminalFont: "system" | "plex" | "jetbrains";
+  interfaceFont: "system" | "plex" | "inter";
+  /** The whole chord table, by action. Empty is the default preset. */
+  keys: Record<string, KeyChord>;
+  hooks: { everywhere: boolean; overrides: Record<string, boolean> };
+}
+
+/** The settings, and whether a file held them: none held means the window
+    has not yet handed over what it kept before there was a file. */
+export interface StoredSettings {
+  stored: boolean;
+  settings: Settings;
+}
+
 export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
@@ -623,6 +642,16 @@ export interface Core {
   onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void>;
   /** Settings was chosen from the native menu. */
   onOpenSettings(handler: () => void): Promise<() => void>;
+  /** The settings of the machine the window runs on. */
+  settingsGet(): Promise<StoredSettings>;
+  /** Lays a change over the settings: only the fields it names change,
+      keys and hooks whole. Rejects with the reason when a value will not
+      do, and then nothing changes. Answers with the settings as they now
+      are. */
+  settingsSet(change: Partial<Settings>): Promise<Settings>;
+  /** The settings changed, by this window, another, or an edit to the
+      file. */
+  onSettingsChanged(handler: (settings: Settings) => void): Promise<() => void>;
   /** The folders the app was asked to open from outside the window, from a
       terminal or a second launch, since it was last asked. */
   takeOpened(): Promise<string[]>;
@@ -910,6 +939,13 @@ const tauriCore: Core = {
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
   },
+  settingsGet: () => invoke<StoredSettings>("settings_get"),
+  settingsSet: (change) => invoke<Settings>("settings_set", { change }),
+  async onSettingsChanged(handler) {
+    return listen<Settings>("settings_changed", (event) =>
+      handler(event.payload),
+    );
+  },
   takeOpened: () => invoke<string[]>("take_opened"),
   async onOpenRequested(handler) {
     return listen("open_requested", () => handler());
@@ -1127,6 +1163,15 @@ const detachedCore: Core = {
     return () => {};
   },
   async onOpenSettings() {
+    return () => {};
+  },
+  async settingsGet() {
+    throw new Error("no core");
+  },
+  async settingsSet() {
+    throw new Error("no core");
+  },
+  async onSettingsChanged() {
     return () => {};
   },
   async takeOpened() {
