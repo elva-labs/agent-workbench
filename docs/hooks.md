@@ -107,11 +107,12 @@ agent is told to run its own commands itself.
 ![The agent types npm run dev into a new terminal; the user presses Enter and the server comes up under the panes.](tools-terminal.gif)
 
 `notify` leaves one line under the session's name in the sessions pane and
-marks the row as wanting attention, for when the user is in another
-session: why the agent stopped, what it needs, what is done. The row has
-room for a few words on one line and cuts the rest off, which the agent is
-told. Looking at the session clears it. The agent is told to use it once,
-when it stops, and not for progress.
+marks the row as wanting attention, unless the user is already looking at
+that session: why the agent stopped, what it needs, what is done. The row
+has room for a few words on one line and cuts the rest off, which the agent
+is told. Looking at the session clears it. The agent is told to call it at
+the end of every turn it hands back, since it cannot tell whether the user
+is watching, and never for progress.
 
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 
