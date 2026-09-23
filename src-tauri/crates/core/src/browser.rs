@@ -224,6 +224,11 @@ pub struct Tabs {
     /// before, and [`Tabs::navigation_finished`] tells that from a page of
     /// the tab's own by this.
     uncommitted: std::collections::HashSet<TabId>,
+    /// The address each tab's reachability check is still out on. A tab
+    /// reads as loading until its check answers: WebKitGTK can report a
+    /// load that will fail as finished before the check has found why, and
+    /// a tab that looked settled in between would read as having arrived.
+    checking: std::collections::HashMap<TabId, String>,
 }
 
 impl Default for Tabs {
@@ -240,6 +245,7 @@ impl Tabs {
             active: None,
             targets: std::collections::HashMap::new(),
             uncommitted: std::collections::HashSet::new(),
+            checking: std::collections::HashMap::new(),
         }
     }
 
@@ -277,6 +283,7 @@ impl Tabs {
         self.tabs.remove(index);
         self.targets.remove(&id);
         self.uncommitted.remove(&id);
+        self.checking.remove(&id);
         if self.active == Some(id) {
             self.active = self
                 .tabs
@@ -333,6 +340,7 @@ impl Tabs {
     pub fn navigate_to(&mut self, id: TabId, url: String) -> bool {
         self.targets.insert(id, url.clone());
         self.uncommitted.insert(id);
+        self.checking.remove(&id);
         let Some(tab) = self.get_mut(id) else {
             return false;
         };
@@ -340,6 +348,23 @@ impl Tabs {
         tab.loading = true;
         tab.error = None;
         true
+    }
+
+    /// A reachability check has gone out on `url` for `id`.
+    pub fn check_started(&mut self, id: TabId, url: &str) {
+        if self.get(id).is_some() {
+            self.checking.insert(id, url.to_string());
+        }
+    }
+
+    /// The check on `url` for `id` found the host answering. Answers
+    /// whether the tab reads differently for it.
+    pub fn check_passed(&mut self, id: TabId, url: &str) -> bool {
+        if self.checking.get(&id).map(String::as_str) != Some(url) {
+            return false;
+        }
+        self.checking.remove(&id);
+        self.get(id).is_some_and(|tab| !tab.loading)
     }
 
     /// A page load the webview reports as under way. One for the address
@@ -390,6 +415,9 @@ impl Tabs {
         }
         tab.loading = false;
         tab.error = Some(message);
+        if self.checking.get(&id).map(String::as_str) == Some(for_url) {
+            self.checking.remove(&id);
+        }
         true
     }
 
@@ -410,9 +438,22 @@ impl Tabs {
         true
     }
 
+    /// The tabs as the window is told of them: one whose check is still
+    /// out on the address it shows reads as loading.
     pub fn snapshot(&self) -> Snapshot {
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| {
+                let checking = self.checking.get(&tab.id) == Some(&tab.url);
+                Tab {
+                    loading: tab.loading || checking,
+                    ..tab.clone()
+                }
+            })
+            .collect();
         Snapshot {
-            tabs: self.tabs.clone(),
+            tabs,
             active: self.active,
         }
     }
@@ -665,6 +706,47 @@ mod tests {
             tabs.get(id).unwrap().error.as_deref(),
             Some("nowhere.invalid could not be found")
         );
+    }
+
+    #[test]
+    fn a_tab_reads_as_loading_until_its_check_answers() {
+        let loading = |tabs: &Tabs, id: TabId| {
+            tabs.snapshot()
+                .tabs
+                .iter()
+                .find(|tab| tab.id == id)
+                .unwrap()
+                .loading
+        };
+        let mut tabs = Tabs::new();
+        let id = tabs.open(Some("https://nowhere.invalid/".to_string()), Opener::User);
+        tabs.check_started(id, "https://nowhere.invalid/");
+        // WebKitGTK reports the doomed load over before the check has found
+        // the host missing.
+        tabs.navigation_finished(id, "about:blank".to_string());
+        assert!(loading(&tabs, id));
+        assert!(tabs.navigation_failed(
+            id,
+            "https://nowhere.invalid/",
+            "nowhere.invalid could not be found".to_string()
+        ));
+        assert!(!loading(&tabs, id));
+
+        // A host that answers ends the wait as soon as the page has.
+        tabs.navigate_to(id, "https://a.example/".to_string());
+        tabs.check_started(id, "https://a.example/");
+        tabs.navigation_started(id, "https://a.example/".to_string());
+        tabs.navigation_finished(id, "https://a.example/".to_string());
+        assert!(loading(&tabs, id));
+        assert!(tabs.check_passed(id, "https://a.example/"));
+        assert!(!loading(&tabs, id));
+
+        // A check on an address the tab has left says nothing of it.
+        tabs.navigate_to(id, "https://b.example/".to_string());
+        tabs.check_started(id, "https://b.example/");
+        assert!(!tabs.check_passed(id, "https://a.example/"));
+        tabs.close(id);
+        assert!(!tabs.check_passed(id, "https://b.example/"));
     }
 
     #[test]

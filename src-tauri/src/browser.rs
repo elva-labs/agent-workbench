@@ -211,9 +211,10 @@ fn settle_on(browser: &Browser, app: &AppHandle, id: TabId, target: String) {
 /// Checks in the background whether `url`'s host answers, and records a
 /// load failure on `id` if it is still there and still on `url` by the time
 /// the answer comes back. Called with the address a navigation was actually
-/// sent to, from [`settle_on`] and from `open_tab`: wry reports neither a
-/// start nor an end for a navigation that never gets a response (and a
-/// commit that swaps the tab to a different origin can even settle on
+/// sent to, from [`settle_on`] and from `open_tab`. The tab reads as
+/// loading until the check answers either way. wry reports neither a start
+/// nor an end for a navigation that never gets a response (and a commit
+/// that swaps the tab to a different origin can even settle on
 /// `about:blank` first), so a tab's own page-load event is not a fire point
 /// this can wait on. Skipped for a target with no host to check against,
 /// `about:` among them.
@@ -221,20 +222,26 @@ fn check_reachable(id: TabId, url: String, app: AppHandle) {
     let Some((host, port)) = navigation_target(&url) else {
         return;
     };
+    app.state::<Arc<Browser>>()
+        .tabs
+        .lock()
+        .unwrap()
+        .check_started(id, &url);
     tauri::async_runtime::spawn(async move {
         let probe_host = host.clone();
         let outcome =
             tauri::async_runtime::spawn_blocking(move || probe(&probe_host, port, CONNECT_TIMEOUT))
                 .await;
-        let Ok(Err(failure)) = outcome else {
-            return;
-        };
-
-        let message = connect_failure_message(&host, port, failure);
         let browser = app.state::<Arc<Browser>>();
         let (changed, snapshot) = {
             let mut tabs = browser.tabs.lock().unwrap();
-            let changed = tabs.navigation_failed(id, &url, message);
+            let changed = match outcome {
+                Ok(Err(failure)) => {
+                    let message = connect_failure_message(&host, port, failure);
+                    tabs.navigation_failed(id, &url, message)
+                }
+                _ => tabs.check_passed(id, &url),
+            };
             (changed, tabs.snapshot())
         };
         if changed {
