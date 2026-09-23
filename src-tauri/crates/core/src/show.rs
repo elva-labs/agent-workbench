@@ -410,20 +410,23 @@ pub fn classify(line: &str) -> Option<Request> {
     }
 }
 
-/// Appends a request to the log for the core here to pick up.
+/// Appends a request to the log for the core here to pick up. The line
+/// goes out in one write, newline and all: calls an agent makes at once
+/// append at once, and a line written in pieces would be split by another.
 pub fn append(home: &Path, request: &Request) -> Result<(), String> {
     let path = requests_path(home);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     }
-    let line = serde_json::to_string(request).map_err(|e| e.to_string())?;
+    let mut line = serde_json::to_string(request).map_err(|e| e.to_string())?;
+    line.push('\n');
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
         .open(&path)
         .map_err(|e| format!("could not open {}: {e}", path.display()))?;
-    writeln!(file, "{line}").map_err(|e| e.to_string())
+    file.write_all(line.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Watches the request log for the life of the core. Three kinds are not
@@ -568,6 +571,39 @@ mod tests {
         assert_eq!(classify(lines.next().unwrap()).unwrap(), request);
         assert_eq!(classify(lines.next().unwrap()).unwrap(), media);
         assert!(classify(r#"{"kind":"present","files":[],"cwd":"/p"}"#).is_none());
+    }
+
+    #[test]
+    fn calls_appended_at_once_each_keep_a_line_of_their_own() {
+        let home = std::env::temp_dir().join("workbench-show-append-at-once");
+        let _ = std::fs::remove_dir_all(&home);
+        let threads: Vec<_> = (0..16)
+            .map(|n| {
+                let home = home.clone();
+                std::thread::spawn(move || {
+                    for m in 0..25 {
+                        append(
+                            &home,
+                            &Request::Settings(SettingsRequest {
+                                id: format!("c-{n}-{m}"),
+                                tool: "settings".into(),
+                                arguments: serde_json::json!({ "padding": "x".repeat(200) }),
+                                cwd: "/p".into(),
+                                session: None,
+                            }),
+                        )
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let text = std::fs::read_to_string(requests_path(&home)).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 16 * 25);
+        assert!(lines.iter().all(|line| classify(line).is_some()));
     }
 
     #[test]
