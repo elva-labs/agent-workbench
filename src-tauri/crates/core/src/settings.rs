@@ -511,6 +511,15 @@ impl Store {
         Ok(written)
     }
 
+    /// Reads the stylesheet again after something touched it, under the
+    /// write lock for the same reason as the settings file.
+    fn restyle(&self) {
+        let Ok(_writing) = self.writing.lock() else {
+            return;
+        };
+        self.announce_styles(&self.styles());
+    }
+
     fn announce_styles(&self, styles: &Styles) {
         let Ok(mut announced) = self.styles_announced.lock() else {
             return;
@@ -563,8 +572,13 @@ impl Store {
 
     /// Reads the file again after something touched it, and announces what
     /// it holds if that is news. A file that is gone or not an object is
-    /// left alone: the windows keep what they have.
+    /// left alone: the windows keep what they have. The read and the
+    /// announcement happen under the write lock, so what is announced is
+    /// never older than a change the store has already announced.
     fn reread(&self) {
+        let Ok(_writing) = self.writing.lock() else {
+            return;
+        };
         let Ok(text) = std::fs::read_to_string(&self.path) else {
             return;
         };
@@ -613,7 +627,7 @@ impl Store {
                     store.reread();
                 }
                 if restyled {
-                    store.announce_styles(&store.styles());
+                    store.restyle();
                 }
             }
         });
