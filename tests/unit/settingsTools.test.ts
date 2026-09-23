@@ -8,6 +8,8 @@ const answers: {
   error: string | null;
 }[] = [];
 const sets: Partial<Settings>[] = [];
+const sheets: string[] = [];
+let refuseSheet: string | null = null;
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -23,6 +25,11 @@ vi.mock("$lib/core", () => ({
       sets.push(change);
       return change as Settings;
     },
+    stylesSet: async (css: string) => {
+      if (refuseSheet !== null) throw new Error(refuseSheet);
+      sheets.push(css);
+      return { css, problem: null };
+    },
   }),
 }));
 
@@ -37,12 +44,14 @@ import {
   dismissUndo,
   handle,
   plan,
+  planStyles,
   planTheme,
   resetSettingsTools,
   settingsAsk,
   undoChange,
 } from "$lib/settingsTools.svelte";
 import { setThemes, theme } from "$lib/theme.svelte";
+import { resetUserStyles, userStyles } from "$lib/userStyles.svelte";
 
 let next = 0;
 function request(
@@ -58,6 +67,9 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
   theme.themes = {};
+  sheets.length = 0;
+  refuseSheet = null;
+  resetUserStyles();
   answers.length = 0;
   sets.length = 0;
   resetSettingsTools();
@@ -356,5 +368,78 @@ describe("a theme", () => {
     expect(changes).toEqual([{ field: "palette", label: "Palette", from: "Teal", to: "Dusk" }]);
     expect(describeSettings()).toContain("dusk (Dusk)");
     expect(describeSettings()).toMatch(/palette: teal \(one of teal, indigo, amber, rose, mono, dusk\)/);
+  });
+});
+
+describe("the user's stylesheet", () => {
+  const css = "header {\n  letter-spacing: 0.2em;\n}\n";
+
+  it("is the sheet and the styles turned on", () => {
+    const { next, changes, css: shown } = planStyles({ css, reason: "wider" });
+    expect(shown).toBe(css);
+    expect(next.css).toBe(css);
+    expect(next.userStyles).toBe(true);
+    expect(changes).toEqual([
+      { field: "css", label: "Stylesheet", from: "none", to: "3 lines" },
+      { field: "userStyles", label: "Custom styles", from: "Off", to: "On" },
+    ]);
+  });
+
+  it("is refused when it would load anything, in the core's words", () => {
+    expect(() => planStyles({ css: "@import 'https://x';" })).toThrow(/imports another/);
+    expect(() => planStyles({ css: "a { background: url(https://x) }" })).toThrow(/url\(\)/);
+    expect(() => planStyles({})).toThrow(/needs the css/);
+    expect(() => planStyles({ css, path: "/etc" })).toThrow(/not path/);
+  });
+
+  it("is shown to the user as it is, and written and turned on when allowed", async () => {
+    const done = handle(request("styles_write", { css }));
+    await settle();
+    expect(settingsAsk.asking?.css).toBe(css);
+    expect(sheets).toEqual([]);
+    allowChange();
+    await done;
+    expect(sheets).toEqual([css]);
+    expect(userStyles.on).toBe(true);
+    expect(sets).toContainEqual({ userStyles: true });
+    expect(answers[0].content).toMatch(/allowed the change/);
+  });
+
+  it("is put back as it was by undo", async () => {
+    userStyles.css = "p { color: red; }";
+    const done = handle(request("styles_write", { css }));
+    await settle();
+    allowChange();
+    await done;
+    undoChange();
+    await settle();
+    expect(sheets).toEqual([css, "p { color: red; }"]);
+    expect(userStyles.on).toBe(false);
+  });
+
+  it("refused by the core after all is the answer, and nothing else changes", async () => {
+    refuseSheet = "could not write user.css";
+    const done = handle(request("styles_write", { css }));
+    await settle();
+    allowChange();
+    await done;
+    expect(answers[0].error).toBe("could not write user.css");
+    expect(userStyles.on).toBe(false);
+    expect(settingsAsk.undo).toBeNull();
+  });
+
+  it("is turned on or off by settings_change", () => {
+    expect(plan({ userStyles: true }).changes).toEqual([
+      { field: "userStyles", label: "Custom styles", from: "Off", to: "On" },
+    ]);
+    expect(() => plan({ userStyles: "yes" })).toThrow(/true or false/);
+  });
+
+  it("is read out by the settings tool, with its reason when it is not used", () => {
+    userStyles.css = "header { color: red; }";
+    expect(describeSettings()).toContain("```css\nheader { color: red; }\n```");
+    userStyles.css = "";
+    userStyles.problem = "the stylesheet imports another";
+    expect(describeSettings()).toContain("is not used: the stylesheet imports another");
   });
 });

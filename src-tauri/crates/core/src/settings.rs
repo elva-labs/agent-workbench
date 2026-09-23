@@ -13,6 +13,10 @@
 //! left out, and the default stands for it. A change is checked strictly:
 //! one bad value refuses the whole change, and says which.
 //!
+//! The user's own stylesheet sits beside the file, and is watched with it;
+//! what it may hold is in [`crate::styles`], and whether it is laid over
+//! the app's is a setting like the rest.
+//!
 //! A theme of the user's own is a palette by another name: colours for the
 //! light appearance and the dark, and a few measures of the chrome's shape,
 //! each a token the stylesheets are written in. Only those tokens are taken,
@@ -29,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::events::{self, Sink};
+use crate::styles::{self, Styles, USER_STYLES_CHANGED};
 
 pub const SETTINGS_CHANGED: &str = "settings_changed";
 
@@ -137,6 +142,8 @@ pub struct Settings {
     pub hooks: Hooks,
     /// The user's own themes, by name. A palette may name one.
     pub themes: BTreeMap<String, Theme>,
+    /// Whether the user's own stylesheet is laid over the app's.
+    pub user_styles: bool,
 }
 
 impl Default for Settings {
@@ -153,6 +160,7 @@ impl Default for Settings {
                 overrides: BTreeMap::new(),
             },
             themes: BTreeMap::new(),
+            user_styles: false,
         }
     }
 }
@@ -379,6 +387,9 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             }
         }
         "themes" => settings.themes = themes(value, false)?,
+        "userStyles" => {
+            settings.user_styles = value.as_bool().ok_or("userStyles is true or false")?;
+        }
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => settings.keys = keys(value)?,
@@ -458,14 +469,18 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
     })
 }
 
-/// The settings file of one machine, and the windows' news of it.
+/// The settings file of one machine, the stylesheet beside it, and the
+/// windows' news of both.
 pub struct Store {
+    home: PathBuf,
     path: PathBuf,
     sink: Arc<dyn Sink>,
     /// The settings last announced, so a change is announced once whether
     /// the store made it or the watcher saw it, and a write that changes
     /// nothing is not announced at all.
     announced: Mutex<Option<Settings>>,
+    /// The same, for the stylesheet.
+    styles_announced: Mutex<Option<Styles>>,
     /// Held while a change is read, laid over and written, so two changes
     /// at once both land.
     writing: Mutex<()>,
@@ -474,11 +489,37 @@ pub struct Store {
 impl Store {
     pub fn new(home: &Path, sink: Arc<dyn Sink>) -> Self {
         Self {
+            home: home.to_path_buf(),
             path: settings_path(home),
             sink,
             announced: Mutex::new(None),
+            styles_announced: Mutex::new(None),
             writing: Mutex::new(()),
         }
+    }
+
+    /// The user's stylesheet, or none and why.
+    pub fn styles(&self) -> Styles {
+        styles::read(&self.home)
+    }
+
+    /// Writes the user's stylesheet once it passes, and announces it.
+    pub fn set_styles(&self, css: &str) -> Result<Styles, String> {
+        let _writing = self.writing.lock().map_err(|_| "the settings are stuck")?;
+        let written = styles::write(&self.home, css)?;
+        self.announce_styles(&written);
+        Ok(written)
+    }
+
+    fn announce_styles(&self, styles: &Styles) {
+        let Ok(mut announced) = self.styles_announced.lock() else {
+            return;
+        };
+        if announced.as_ref() == Some(styles) {
+            return;
+        }
+        *announced = Some(styles.clone());
+        events::emit(&self.sink, USER_STYLES_CHANGED, styles);
     }
 
     pub fn path(&self) -> &Path {
@@ -544,6 +585,10 @@ impl Store {
         if let Ok(mut announced) = self.announced.lock() {
             *announced = Some(self.load().settings);
         }
+        if let Ok(mut announced) = self.styles_announced.lock() {
+            *announced = Some(self.styles());
+        }
+        let sheet = styles::styles_path(&self.home);
         let (sender, receiver) = channel::<notify::Result<notify::Event>>();
         let mut watcher = notify::recommended_watcher(move |event| {
             let _ = sender.send(event);
@@ -558,12 +603,17 @@ impl Store {
             let _watcher = watcher;
             while let Ok(event) = receiver.recv() {
                 let mut touched = concerns(&event, &store.path);
+                let mut restyled = concerns(&event, &sheet);
                 // Coalesce a burst: whatever arrived is read in one go.
                 while let Ok(event) = receiver.try_recv() {
                     touched |= concerns(&event, &store.path);
+                    restyled |= concerns(&event, &sheet);
                 }
                 if touched {
                     store.reread();
+                }
+                if restyled {
+                    store.announce_styles(&store.styles());
                 }
             }
         });
@@ -571,7 +621,7 @@ impl Store {
     }
 }
 
-/// Whether an event in the directory is about the settings file.
+/// Whether an event in the directory is about this file.
 fn concerns(event: &notify::Result<notify::Event>, path: &Path) -> bool {
     let Ok(event) = event else {
         return false;
@@ -861,6 +911,66 @@ mod tests {
         assert_eq!(loaded.settings, Settings::default());
         store.set(&json!({ "appearance": "dark" })).unwrap();
         assert_eq!(store.load().settings.appearance, "dark");
+    }
+
+    #[test]
+    fn the_user_s_styles_are_off_until_turned_on() {
+        assert!(!Settings::default().user_styles);
+        let next = apply(&Settings::default(), &json!({ "userStyles": true })).unwrap();
+        assert!(next.user_styles);
+        assert!(apply(&next, &json!({ "userStyles": "yes" })).is_err());
+    }
+
+    #[test]
+    fn a_stylesheet_is_written_and_announced_once() {
+        let home = home("styles");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        assert!(store.set_styles("@import 'x';").is_err());
+        store.set_styles("header { color: red; }").unwrap();
+        store.set_styles("header { color: red; }").unwrap();
+        let events = recorder.events.lock().unwrap().clone();
+        let styled: Vec<_> = events
+            .iter()
+            .filter(|(name, _)| name == USER_STYLES_CHANGED)
+            .collect();
+        assert_eq!(styled.len(), 1);
+        assert_eq!(styled[0].1["css"], "header { color: red; }");
+        assert!(styled[0].1["problem"].is_null());
+        assert_eq!(store.styles().css, "header { color: red; }");
+    }
+
+    #[test]
+    fn an_edit_to_the_stylesheet_reaches_the_windows_with_its_problem() {
+        let home = home("styles-watched");
+        let recorder = Arc::new(Recorder::default());
+        let store = Arc::new(Store::new(&home, recorder.clone()));
+        store.watch().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(
+            styles::styles_path(&home),
+            "body { background: url(https://x.example/p.png); }",
+        )
+        .unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        let styled = || {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, _)| name == USER_STYLES_CHANGED)
+                .map(|(_, payload)| payload.clone())
+                .collect::<Vec<_>>()
+        };
+        while styled().is_empty() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let announced = styled();
+        assert_eq!(announced.len(), 1, "{announced:?}");
+        assert_eq!(announced[0]["css"], "");
+        assert!(announced[0]["problem"].as_str().unwrap().contains("url()"));
+        assert!(changes(&recorder).is_empty(), "the settings did not change");
     }
 
     #[test]

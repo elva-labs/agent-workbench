@@ -62,6 +62,7 @@
     type ThemeChoice,
   } from "$lib/theme.svelte";
   import { DEFAULTS } from "$lib/customThemes";
+  import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
 
   /**
    * The settings, over the workbench. Reached from the native menu or its
@@ -431,6 +432,42 @@
             <p class="note">
               Your own themes, made by an agent you asked or by hand, are kept with the settings
               in <code>~/.agent-workbench/settings.json</code>.
+            </p>
+          {/if}
+
+          <h3>Custom styles</h3>
+          <div class="seg" role="radiogroup" aria-label="Custom styles">
+            <button
+              role="radio"
+              aria-checked={userStyles.on}
+              class:on={userStyles.on}
+              onclick={() => setUserStyles(true)}
+              data-testid="styles-on">On</button
+            >
+            <button
+              role="radio"
+              aria-checked={!userStyles.on}
+              class:on={!userStyles.on}
+              onclick={() => setUserStyles(false)}
+              data-testid="styles-off">Off</button
+            >
+          </div>
+          <p class="note" data-testid="styles-note">
+            A stylesheet of your own, <code>~/.agent-workbench/user.css</code>, laid over the app's.
+            {#if userStyles.problem !== null}
+              It is not used, for the reason below.
+            {:else if userStyles.css === ""}
+              There is none yet.
+            {:else}
+              {@const lines = userStyles.css.trimEnd().split("\n").length}
+              It has {lines} {lines === 1 ? "line" : "lines"}.
+            {/if}
+            It is set aside while the settings are open and while the app asks you something, and
+            Turn Off Custom Styles in the app's menu turns it off from anywhere.
+          </p>
+          {#if userStyles.problem !== null}
+            <p class="note problem" data-testid="styles-problem">
+              {userStyles.problem[0].toUpperCase()}{userStyles.problem.slice(1)}.
             </p>
           {/if}
         {:else if tab === "live"}
@@ -863,6 +900,10 @@
   .note code {
     font-family: var(--mono);
     font-size: 11.5px;
+  }
+
+  .note.problem {
+    color: var(--del);
   }
 
   .note.quiet {

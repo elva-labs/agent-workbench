@@ -392,7 +392,12 @@ pub fn browser_close_tool() -> Value {
 /// agent sees them. The settings are those of the machine the user's window
 /// runs on, whatever machine the calling session runs on.
 pub fn settings_tools() -> Vec<Value> {
-    vec![settings_tool(), settings_change_tool(), theme_save_tool()]
+    vec![
+        settings_tool(),
+        settings_change_tool(),
+        theme_save_tool(),
+        styles_write_tool(),
+    ]
 }
 
 pub fn settings_tool() -> Value {
@@ -416,6 +421,7 @@ pub fn settings_change_tool() -> Value {
                 "terminalFont": { "type": "string", "enum": ["system", "plex", "jetbrains"], "description": "The family the terminals draw in: the machine's own monospace, IBM Plex Mono or JetBrains Mono." },
                 "interfaceFont": { "type": "string", "enum": ["system", "plex", "inter"], "description": "The family the rest of the app is set in: the machine's own sans, IBM Plex Sans or Inter." },
                 "keyPreset": { "type": "string", "enum": ["default", "vim"], "description": "A whole chord table at once. Chords named in keys are laid over it." },
+                "userStyles": { "type": "boolean", "description": "Whether the user's own stylesheet is laid over the app's." },
                 "keys": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
@@ -459,6 +465,21 @@ pub fn theme_save_tool() -> Value {
                 "reason": { "type": "string", "description": "A few words on why, in the user's terms, shown to them with the theme." }
             },
             "required": ["name"]
+        }
+    })
+}
+
+pub fn styles_write_tool() -> Value {
+    json!({
+        "name": "styles_write",
+        "description": "Writes the user's own stylesheet for Agent Workbench, laid over the app's own, and turns it on: for a change to how the workbench looks that the settings and a theme cannot make, and only when the user asked for it. It replaces the whole sheet, so read the one there first with the settings tool and keep what should stay. It restyles the page and may load nothing: no @import, no url() but a data: url, no backslash escapes. Aim at the stable hooks, the section[data-pane] of each pane and the elements with a data-testid, and at the tokens the stylesheets are written in, rather than at class names, which change. The user is shown the sheet and allows or declines it before anything changes, and can undo it; the answer says which. An empty sheet takes the user's styles away.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "css": { "type": "string", "description": "The whole stylesheet." },
+                "reason": { "type": "string", "description": "A few words on why, in the user's terms, shown to them with the sheet." }
+            },
+            "required": ["css"]
         }
     })
 }
@@ -865,7 +886,7 @@ fn settings_call(
             session: session.map(str::to_string),
         }),
     )?;
-    let asked = name == "settings_change" || name == "theme_save";
+    let asked = name != "settings";
     let wait = if asked { waits.watching } else { waits.answer };
     let Some(answer) = await_answer(home, &id, wait) else {
         return Err(if asked {
@@ -1397,6 +1418,7 @@ mod tests {
             "interfaceFont",
             "keyPreset",
             "keys",
+            "userStyles",
             "reason",
         ] {
             assert!(properties.contains_key(name), "{name}");
@@ -1421,7 +1443,7 @@ mod tests {
             .unwrap();
             listed["result"]["tools"].as_array().unwrap().clone()
         };
-        assert_eq!(ask(&home).len(), 26);
+        assert_eq!(ask(&home).len(), 27);
         publish_a_tool(&home);
         let listed = ask(&home);
         let names: Vec<&str> = listed
@@ -1450,6 +1472,7 @@ mod tests {
                 "settings",
                 "settings_change",
                 "theme_save",
+                "styles_write",
                 "projects",
                 "sessions",
                 "start",
@@ -1460,9 +1483,9 @@ mod tests {
                 "github_pr"
             ]
         );
-        assert_eq!(listed[26]["description"], "The branch's pull request.");
+        assert_eq!(listed[27]["description"], "The branch's pull request.");
         assert_eq!(
-            listed[26]["inputSchema"]["properties"]["state"]["type"],
+            listed[27]["inputSchema"]["properties"]["state"]["type"],
             "string"
         );
     }
@@ -1585,6 +1608,7 @@ mod tests {
                 "settings",
                 "settings_change",
                 "theme_save",
+                "styles_write",
                 "projects",
                 "sessions",
                 "start",
@@ -1637,7 +1661,7 @@ mod tests {
         )
         .unwrap();
         let listed = listed["result"]["tools"].as_array().unwrap().clone();
-        assert_eq!(listed.len(), 26);
+        assert_eq!(listed.len(), 27);
         let named = |name: &str| {
             listed
                 .iter()

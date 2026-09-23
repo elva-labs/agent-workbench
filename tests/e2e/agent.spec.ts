@@ -261,6 +261,13 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           throw new Error("no settings here");
         },
         onSettingsChanged: async () => () => {},
+        stylesGet: async () => {
+          throw new Error("no styles here");
+        },
+        stylesSet: async () => {
+          throw new Error("no styles here");
+        },
+        onStylesChanged: async () => () => {},
         onBrowserTabs: async () => () => {},
         browserTabs: async () => ({ tabs: [], active: null }),
         browserKeys: async () => {},

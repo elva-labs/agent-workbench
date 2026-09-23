@@ -15,6 +15,10 @@
  * rules the core keeps it by and for being readable, then shown to the
  * user as swatches with the switch to it, and kept only if they allow it.
  *
+ * So is the user's own stylesheet: checked against the rules the core
+ * keeps it by, then shown to the user as the sheet itself, and written and
+ * turned on only if they allow it. Undo puts back the sheet it replaced.
+ *
  * The hooks and the plugins are not the agent's to change. They are
  * refused with a word saying they are the user's, in the settings.
  */
@@ -45,6 +49,7 @@ import {
   type PresetName,
 } from "$lib/keys.svelte";
 import { label, sessions } from "$lib/sessions.svelte";
+import { setUserStyles, styleProblem, userStyles } from "$lib/userStyles.svelte";
 import {
   INTERFACE_FONTS,
   LOOKS,
@@ -79,6 +84,9 @@ interface Next {
   palette?: string;
   /** The whole set of the user's own themes, when a theme is saved. */
   themes?: Record<string, CustomTheme>;
+  userStyles?: boolean;
+  /** The user's stylesheet, whole, when one is written. */
+  css?: string;
   terminalFont?: MonoName;
   interfaceFont?: SansName;
   keys?: Keymap;
@@ -92,6 +100,8 @@ export interface Ask {
   changes: Change[];
   /** A theme being saved, to be shown as swatches. */
   theme: CustomTheme | null;
+  /** A stylesheet being written, to be shown as it is. */
+  css: string | null;
 }
 
 export interface Undo {
@@ -150,7 +160,14 @@ export async function handle(request: SettingsRequest): Promise<void> {
     answered =
       request.tool === "settings"
         ? said(describeSettings())
-        : await change(request, request.tool === "theme_save" ? planTheme : plan);
+        : await change(
+            request,
+            request.tool === "theme_save"
+              ? planTheme
+              : request.tool === "styles_write"
+                ? planStyles
+                : plan,
+          );
   } catch (error) {
     answered = refused(error instanceof Error ? error.message : String(error));
   }
@@ -203,9 +220,25 @@ export function describeSettings(): string {
       .map(([token, most]) => `${token} up to ${most}px`)
       .join(", ")}. A token left out keeps the default palette's value.`,
     "",
+    `userStyles: ${userStyles.on} (true or false): whether the user's own stylesheet is laid over the app's.`,
+    userStyles.problem !== null
+      ? `The user's stylesheet on disk is not used: ${userStyles.problem}.`
+      : userStyles.css === ""
+        ? "The user has no stylesheet of their own."
+        : `The user's stylesheet, which styles_write replaces whole:\n\`\`\`css\n${sheetExcerpt(userStyles.css)}\n\`\`\``,
+    "",
     "Change them with settings_change, naming only what should change. The agent hooks and the plugins are the user's to change, in the settings.",
   ];
   return lines.join("\n");
+}
+
+/** How much of the user's sheet the settings tool reads out. */
+const EXCERPT = 8000;
+
+function sheetExcerpt(css: string): string {
+  return css.length <= EXCERPT
+    ? css
+    : `${css.slice(0, EXCERPT)}\n/* ${css.length - EXCERPT} more characters, left out here */`;
 }
 
 function oneOf<Name extends string>(
@@ -251,6 +284,10 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
         break;
       case "keyPreset":
       case "keys":
+        break;
+      case "userStyles":
+        if (typeof value !== "boolean") throw new Error("userStyles is true or false.");
+        next.userStyles = value;
         break;
       default:
         if (USERS_OWN.has(field)) {
@@ -336,6 +373,10 @@ function changesOf(next: Next): Change[] {
       nameOf(INTERFACE_FONTS, next.interfaceFont),
     );
   }
+  if (next.userStyles !== undefined) {
+    const said = (on: boolean) => (on ? "On" : "Off");
+    line("userStyles", "Custom styles", said(userStyles.on), said(next.userStyles));
+  }
   if (next.keys !== undefined) {
     const table = next.keys;
     const preset = presetOf(table);
@@ -417,18 +458,60 @@ export function planTheme(args: Record<string, unknown>): {
   return { next, changes, theme: saved };
 }
 
+/**
+ * What writing the user's stylesheet would change: the sheet, whole, and
+ * the styles turned on if they are off. Checked by the rules the core keeps
+ * a sheet by. Throws the reason when it will not do.
+ */
+export function planStyles(args: Record<string, unknown>): {
+  next: Next;
+  changes: Change[];
+  css: string;
+} {
+  for (const field of Object.keys(args)) {
+    if (field !== "css" && field !== "reason") {
+      throw new Error(`styles_write takes the css and a reason, not ${field}.`);
+    }
+  }
+  if (typeof args.css !== "string") throw new Error("styles_write needs the css, whole.");
+  const css = args.css;
+  const problem = styleProblem(css);
+  if (problem !== null) throw new Error(`${problem[0].toUpperCase()}${problem.slice(1)}.`);
+  const lines = (text: string) => {
+    const count = text.trim() === "" ? 0 : text.trimEnd().split("\n").length;
+    return count === 0 ? "none" : `${count} ${count === 1 ? "line" : "lines"}`;
+  };
+  const empty = css.trim() === "";
+  const next: Next = { css };
+  const changes: Change[] = [];
+  if (css !== userStyles.css) {
+    changes.push({
+      field: "css",
+      label: "Stylesheet",
+      from: lines(userStyles.css),
+      to: lines(css),
+    });
+  }
+  if (!empty && !userStyles.on) {
+    next.userStyles = true;
+    changes.push({ field: "userStyles", label: "Custom styles", from: "Off", to: "On" });
+  }
+  return { next, changes, css };
+}
+
 async function change(
   request: SettingsRequest,
   planned: (args: Record<string, unknown>) => {
     next: Next;
     changes: Change[];
     theme?: CustomTheme;
+    css?: string;
   },
 ): Promise<Answered> {
   // Checked now, so a change that will not do is refused without a wait.
   planned(request.arguments ?? {});
   return inTurn(async () => {
-    const { next, changes, theme: shown } = planned(request.arguments ?? {});
+    const { next, changes, theme: shown, css } = planned(request.arguments ?? {});
     if (changes.length === 0) {
       return said("Nothing to change: the settings are already so.");
     }
@@ -438,21 +521,32 @@ async function change(
         : null;
     const caller = callerOf(request);
     const choice = await new Promise<Choice>((settle) => {
-      settingsAsk.asking = { request, caller, reason, changes, theme: shown ?? null };
+      settingsAsk.asking = {
+        request,
+        caller,
+        reason,
+        changes,
+        theme: shown ?? null,
+        css: css ?? null,
+      };
       pending = settle;
     });
     if (choice === "decline") {
       return refused("The user declined the change. Nothing changed.");
     }
-    const undo = take(next);
+    const undo = await take(next);
     offerUndo({ caller, changes }, undo);
     const made = changes.map((change) => `${change.label} is now ${change.to}`).join("; ");
     return said(`The user allowed the change. ${made}. They can undo it for a short while.`);
   });
 }
 
-/** Makes a change, and answers with what puts things back as they were. */
-function take(next: Next): () => void {
+/** Makes a change, and answers with what puts things back as they were.
+    A stylesheet the core refuses after all is the change's reason for not
+    being made, and nothing else is touched. */
+async function take(next: Next): Promise<() => void> {
+  const sheet = userStyles.css;
+  if (next.css !== undefined) await core().stylesSet(next.css);
   const before = {
     appearance: theme.choice,
     look: theme.look,
@@ -461,6 +555,7 @@ function take(next: Next): () => void {
     interfaceFont: theme.sans,
     keys: { ...keys.bindings },
     themes: { ...theme.themes },
+    userStyles: userStyles.on,
   };
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
@@ -469,7 +564,10 @@ function take(next: Next): () => void {
   if (next.terminalFont !== undefined) setMono(next.terminalFont);
   if (next.interfaceFont !== undefined) setSans(next.interfaceFont);
   if (next.keys !== undefined) setBindings(next.keys);
+  if (next.userStyles !== undefined) setUserStyles(next.userStyles);
   return () => {
+    if (next.css !== undefined) void core().stylesSet(sheet).catch(() => {});
+    if (next.userStyles !== undefined) setUserStyles(before.userStyles);
     if (next.appearance !== undefined) setTheme(before.appearance);
     if (next.look !== undefined) setLook(before.look);
     if (next.themes !== undefined) setThemes(before.themes, before.palette);

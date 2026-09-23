@@ -14,6 +14,7 @@ import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptKeys, keys } from "$lib/keys.svelte";
 import { onSettled, sending } from "$lib/persist";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
+import { adoptUserStylesSetting, followStyles, userStyles } from "$lib/userStyles.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
 /** The settings as the window has them now. */
@@ -22,6 +23,7 @@ export function currentSettings(): Settings {
     ...themeSettings(),
     keys: { ...keys.bindings },
     hooks: hooksSettings(),
+    userStyles: userStyles.on,
   };
 }
 
@@ -29,6 +31,7 @@ export function currentSettings(): Settings {
 export function adopt(settings: Settings) {
   adoptTheme(settings);
   adoptKeys(settings.keys ?? {});
+  adoptUserStylesSetting(settings.userStyles);
   adoptHooks(
     settings.hooks ?? { everywhere: false, overrides: {} },
     workspace.open.map((project) => project.path),
@@ -43,6 +46,7 @@ export function adopt(settings: Settings) {
 export async function followSettings(): Promise<() => void> {
   onSettled(adopt);
   let stop = () => {};
+  const stopStyles = await followStyles();
   try {
     stop = await core().onSettingsChanged((settings) => {
       if (!sending()) adopt(settings);
@@ -55,6 +59,7 @@ export async function followSettings(): Promise<() => void> {
   }
   return () => {
     stop();
+    stopStyles();
     onSettled(null);
   };
 }

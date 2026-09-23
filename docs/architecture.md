@@ -48,11 +48,12 @@ The core keeps nothing across restarts but what the agents themselves write,
 what the tools need, what plugins are for and the user's settings: the
 request log, the record of what is on screen, the plugin sources with their
 clones and which of their plugins are on, and one settings file for the
-machine, all under the app's directory in the user's home. The window
-remembers the workspace, the layout, which sessions were the app's own, the
-names it knew sessions by, what each session presented, and which words to
-the user were taken, all in the webview's local storage, keyed by the real
-project path, and a copy of the settings to paint its first frame with.
+machine with the user's own stylesheet beside it, all under the app's
+directory in the user's home. The window remembers the workspace, the
+layout, which sessions were the app's own, the names it knew sessions by,
+what each session presented, and which words to the user were taken, all
+in the webview's local storage, keyed by the real project path, and a copy
+of the settings to paint its first frame with.
 [Settings](settings.md) says how the file and that copy relate.
 Hooks the user turns on are written into the project's own agent
 configuration, and only there.

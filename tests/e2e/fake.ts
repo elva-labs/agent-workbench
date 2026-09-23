@@ -53,6 +53,8 @@ export const DEFAULT_FIXTURE: GitFixture = {
 /** Where the fake keeps the settings file the core would keep, in the
     page's storage so a reload finds it the way a restart finds the file. */
 export const SETTINGS_FILE = "fake.settings";
+/** Where the fake keeps the user's stylesheet the same way. */
+export const STYLES_FILE = "fake.userStyles";
 
 export async function installFakeCore(
   page: Page,
@@ -62,10 +64,12 @@ export async function installFakeCore(
     fixture?: GitFixture;
     /** A settings file already on the machine. */
     settings?: Record<string, unknown>;
+    /** A stylesheet of the user's already on the machine. */
+    styles?: string;
   } = {},
 ) {
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -274,6 +278,9 @@ export async function installFakeCore(
       if (settings !== null && localStorage.getItem(settingsFile) === null) {
         localStorage.setItem(settingsFile, JSON.stringify(settings));
       }
+      if (styles !== null && localStorage.getItem(stylesFile) === null) {
+        localStorage.setItem(stylesFile, styles);
+      }
       const settingsDefaults = {
         appearance: "system",
         look: "modern",
@@ -283,6 +290,7 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         themes: {},
+        userStyles: false,
       };
       const allowed: Record<string, string[]> = {
         appearance: ["system", "light", "dark"],
@@ -1016,6 +1024,8 @@ export async function installFakeCore(
             } else if (field in allowed) {
               if (!allowed[field].includes(value as string))
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
+            } else if (field === "userStyles") {
+              if (typeof value !== "boolean") throw new Error("userStyles is true or false");
             } else if (!["keys", "hooks", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }
@@ -1026,6 +1036,28 @@ export async function installFakeCore(
           localStorage.setItem(settingsFile, JSON.stringify(next));
           settingsChanged(next);
           return next;
+        },
+        // The user's stylesheet, kept in the page's storage like the
+        // settings file, held to the core's rules in brief.
+        stylesGet: async () => {
+          const css = localStorage.getItem(stylesFile) ?? "";
+          return /@import|url\((?!\s*['"]?data:)|\\/i.test(css)
+            ? { css: "", problem: "the stylesheet has a url() that is not a data: url. It may load nothing from anywhere" }
+            : { css, problem: null };
+        },
+        stylesSet: async (css: string) => {
+          if (/@import|url\((?!\s*['"]?data:)|\\/i.test(css))
+            throw new Error("the stylesheet has a url() that is not a data: url. It may load nothing from anywhere");
+          if (css.trim() === "") localStorage.removeItem(stylesFile);
+          else localStorage.setItem(stylesFile, css);
+          const styles = { css: css.trim() === "" ? "" : css, problem: null };
+          const w = window as unknown as { __stylesChanged?: (styles: unknown) => void };
+          w.__stylesChanged?.(styles);
+          return styles;
+        },
+        onStylesChanged: async (handler: (styles: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__stylesChanged = handler;
+          return () => {};
         },
         // A test edits the file behind the window's back through this.
         onSettingsChanged: async (handler: (settings: unknown) => void) => {
@@ -1041,6 +1073,8 @@ export async function installFakeCore(
       fixture: options.fixture ?? DEFAULT_FIXTURE,
       settings: options.settings ?? null,
       settingsFile: SETTINGS_FILE,
+      styles: options.styles ?? null,
+      stylesFile: STYLES_FILE,
     },
   );
 }

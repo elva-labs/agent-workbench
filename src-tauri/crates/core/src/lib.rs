@@ -28,6 +28,7 @@ pub mod selection;
 pub mod settings;
 pub mod shell;
 pub mod show;
+pub mod styles;
 pub mod transcripts;
 pub mod watch;
 

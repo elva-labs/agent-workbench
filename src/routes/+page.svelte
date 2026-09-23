@@ -13,6 +13,7 @@
   import { resume } from "$lib/resume.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
+  import UserStyles from "$lib/components/UserStyles.svelte";
   import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { handle as settingsRequested } from "$lib/settingsTools.svelte";
@@ -553,6 +554,7 @@
   <ConductAsk />
 {/if}
 <SettingsAsk />
+<UserStyles />
 
 
 <footer class="status no-select">

@@ -275,7 +275,9 @@ fn open_at(
         Box::new(move |event, payload| {
             if event == CLOSED {
                 let _ = app.emit(REMOTE_CLOSED, json!({ "host": name, "reason": payload }));
-            } else if event == workbench_core::settings::SETTINGS_CHANGED {
+            } else if event == workbench_core::settings::SETTINGS_CHANGED
+                || event == workbench_core::styles::USER_STYLES_CHANGED
+            {
                 // The window follows the settings of the machine it runs on,
                 // never another's.
             } else {

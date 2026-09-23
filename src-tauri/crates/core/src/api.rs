@@ -232,6 +232,17 @@ impl Core {
         Ok(self.settings()?.load())
     }
 
+    /// The user's own stylesheet, or none and why it is not handed over.
+    pub fn styles_get(&self) -> Result<crate::styles::Styles, String> {
+        Ok(self.settings()?.styles())
+    }
+
+    /// Writes the user's own stylesheet once it passes; an empty one takes
+    /// the file away. Every window hears of it.
+    pub fn styles_set(&self, css: &str) -> Result<crate::styles::Styles, String> {
+        self.settings()?.set_styles(css)
+    }
+
     /// Watches the settings file, so an edit to it reaches the window. The
     /// app does this for the machine it runs on; a daemon on another machine
     /// does not, since the settings a window follows are its own machine's.

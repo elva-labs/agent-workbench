@@ -140,7 +140,7 @@ export interface BrowserRequest {
 export interface SettingsRequest {
   /** What the answer is named after, unique to this call. */
   id: string;
-  tool: "settings" | "settings_change" | "theme_save";
+  tool: "settings" | "settings_change" | "theme_save" | "styles_write";
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which machine waits. */
   cwd: string;
@@ -523,6 +523,15 @@ export interface Settings {
       shape: Record<string, string>;
     }
   >;
+  /** Whether the user's own stylesheet is laid over the app's. */
+  userStyles: boolean;
+}
+
+/** The user's own stylesheet: its text, or none and why the one on disk
+    is not handed over. */
+export interface UserStyles {
+  css: string;
+  problem: string | null;
 }
 
 /** The settings, and whether a file held them: none held means the window
@@ -688,6 +697,13 @@ export interface Core {
   /** The settings changed, by this window, another, or an edit to the
       file. */
   onSettingsChanged(handler: (settings: Settings) => void): Promise<() => void>;
+  /** The user's own stylesheet on the machine the window runs on. */
+  stylesGet(): Promise<UserStyles>;
+  /** Writes it, once it passes; rejects with the reason when it does not.
+      An empty sheet takes the file away. */
+  stylesSet(css: string): Promise<UserStyles>;
+  /** The stylesheet changed, by a window or an edit to the file. */
+  onStylesChanged(handler: (styles: UserStyles) => void): Promise<() => void>;
   /** The folders the app was asked to open from outside the window, from a
       terminal or a second launch, since it was last asked. */
   takeOpened(): Promise<string[]>;
@@ -989,6 +1005,13 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  stylesGet: () => invoke<UserStyles>("styles_get"),
+  stylesSet: (css) => invoke<UserStyles>("styles_set", { css }),
+  async onStylesChanged(handler) {
+    return listen<UserStyles>("user_styles_changed", (event) =>
+      handler(event.payload),
+    );
+  },
   takeOpened: () => invoke<string[]>("take_opened"),
   async onOpenRequested(handler) {
     return listen("open_requested", () => handler());
@@ -1219,6 +1242,15 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async onSettingsChanged() {
+    return () => {};
+  },
+  async stylesGet() {
+    throw new Error("no core");
+  },
+  async stylesSet() {
+    throw new Error("no core");
+  },
+  async onStylesChanged() {
     return () => {};
   },
   async takeOpened() {

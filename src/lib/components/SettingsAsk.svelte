@@ -41,6 +41,9 @@
         </li>
       {/each}
     </ul>
+    {#if ask.css !== null && ask.css.trim() !== ""}
+      <pre class="css" data-testid="settings-ask-css">{ask.css}</pre>
+    {/if}
     {#if ask.theme !== null}
       {@const shown = ask.theme}
       <div class="previews" data-testid="settings-ask-theme">
@@ -173,6 +176,21 @@
   .actions {
     display: flex;
     gap: 8px;
+  }
+
+  /* The sheet as it would be written, to be read before it is allowed. */
+  .css {
+    margin: 0 0 10px;
+    max-height: 220px;
+    overflow: auto;
+    padding: 6px 8px;
+    background: var(--surface);
+    border-left: 2px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--ink);
+    white-space: pre;
   }
 
   /* The theme as it would paint, one small card on its ground for each

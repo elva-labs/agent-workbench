@@ -22,6 +22,7 @@ const DEFAULTS: Settings = {
   keys: {},
   hooks: { everywhere: true, overrides: {} },
   themes: {},
+  userStyles: false,
 };
 
 vi.mock("$lib/core", () => ({

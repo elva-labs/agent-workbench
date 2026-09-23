@@ -5,8 +5,8 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 at once.
 
 The settings are in four tabs down the left. Appearance carries the
-appearance, theme, font and colour sections; live updates, plugins and keys
-each carry the section of that name. Opening the settings again lands on the
+appearance, theme, font, colour and custom styles sections; live updates,
+plugins and keys each carry the section of that name. Opening the settings again lands on the
 tab last used, for as long as the window is open. The dialog follows the look
 the panes are drawn in.
 
@@ -59,6 +59,31 @@ deleted with the cross beside it; deleting the one in use goes back to
 teal. An agent can make one for you, as the next section describes, and the
 file described under [where they are kept](#where-they-are-kept) holds them
 for editing by hand.
+
+## Custom styles
+
+A stylesheet of your own, `user.css` beside the settings file, laid over
+the app's own when this is on. It can restyle anything, and it can load
+nothing: a sheet with an `@import`, a `url()` that is not a `data:` url, an
+image function that takes an address, or a backslash escape, which could
+spell one of those out of sight, is not used, and the section says why.
+It is off to begin with, and turning it on is kept with the rest of the
+settings.
+
+The sheet is set aside while the settings are open and while the app asks
+you something, such as whether an agent may start a session or change a
+setting. A sheet can dress anything up, and a question has to read as the
+app's own; the settings being plain is also the way back from a sheet that
+has made the rest hard to use. Turn Off Custom Styles, in the app's menu on
+macOS and in the menu at the top left elsewhere, turns it off from anywhere
+by writing the settings file itself.
+
+A sheet holds up best aimed at what stays put: each pane is a
+`section[data-pane]`, named `sessions`, `agent`, `changes` and `terminal`,
+with its header the first thing in it; the controls the tests reach for
+carry a `data-testid`; and the colours, sizes and shapes the stylesheets
+are written in are custom properties on the root, the ones a theme sets
+among them. Class names are the app's own and change without notice.
 
 ## Live updates
 
@@ -118,6 +143,13 @@ accent 3 to 1 against the surface, or the agent is told the ratio that fell
 short. The user sees the theme as a small card on its ground for each
 appearance before allowing it, and undoing takes the theme away again with
 the palette it replaced.
+
+An agent can write the stylesheet too, for a change the settings and a
+theme cannot make. It replaces the sheet whole, is held to the same rules
+before the user is troubled, and is shown to the user as the sheet itself;
+allowing it writes it and turns custom styles on. Undo puts back the sheet
+it replaced. The agent reads the sheet there with the other settings, and
+is told to aim at the stable parts named in the section above.
 
 The settings an agent changes are those of the machine the window runs
 on, whichever machine the agent runs on.

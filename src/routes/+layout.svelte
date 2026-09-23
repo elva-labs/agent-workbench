@@ -27,6 +27,7 @@
   import { loadKeys } from "$lib/keys.svelte";
   import { loadHooks } from "$lib/hook.svelte";
   import { followSettings } from "$lib/preferences.svelte";
+  import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
@@ -42,6 +43,7 @@
     loadTheme();
     loadKeys();
     loadHooks();
+    loadUserStyles();
     loadLayout();
     loadRemembered();
     loadStarted();

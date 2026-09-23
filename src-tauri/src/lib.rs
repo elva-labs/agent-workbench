@@ -787,6 +787,20 @@ async fn settings_set(core: State<'_, Arc<Core>>, change: Value) -> Result<Value
     blocking(move || core.settings_set(&change).and_then(value)).await
 }
 
+/// The user's own stylesheet on this machine. Never routed, like the
+/// settings.
+#[tauri::command]
+async fn styles_get(core: State<'_, Arc<Core>>) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.styles_get().and_then(value)).await
+}
+
+#[tauri::command]
+async fn styles_set(core: State<'_, Arc<Core>>, css: String) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.styles_set(&css).and_then(value)).await
+}
+
 /// The plugin sources on this machine, with their plugins and states.
 #[tauri::command]
 async fn plugin_sources(core: State<'_, Arc<Core>>) -> Result<Value, String> {
@@ -1107,6 +1121,8 @@ pub fn run() {
             pty_stop_process,
             settings_get,
             settings_set,
+            styles_get,
+            styles_set,
             plugin_sources,
             plugin_add,
             plugin_fetch,
