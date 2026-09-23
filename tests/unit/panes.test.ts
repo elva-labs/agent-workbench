@@ -728,15 +728,6 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     expect(screen.getAllByTestId("new-session")).toHaveLength(1);
   });
-
-  it("lists recent projects that are not open", () => {
-    workspace.recent = ["/home/ada/dev/one", "/home/ada/dev/two"];
-    workspace.open.push(repo("/home/ada/dev/one", "one"));
-
-    render(SessionsPane);
-    expect(screen.getByText("~/dev/two")).toBeInTheDocument();
-    expect(screen.queryByText("~/dev/one")).not.toBeInTheDocument();
-  });
 });
 
 // Off macOS the window is undecorated and the app draws the controls at the

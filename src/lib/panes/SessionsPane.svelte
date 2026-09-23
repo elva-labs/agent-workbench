@@ -2,7 +2,6 @@
   import Pane from "$lib/components/Pane.svelte";
   import { AGENTS, agentLabel, agentTag, installed, isReady } from "$lib/agent.svelte";
   import type { AgentId } from "$lib/core";
-  import { shorten } from "$lib/paths";
   import {
     ago,
     byKey,
@@ -22,7 +21,7 @@
     type HistoryEntry,
     type Session,
   } from "$lib/sessions.svelte";
-  import { activate, close as closeProject, openPath, pick, projectLabel, workspace } from "$lib/workspace.svelte";
+  import { activate, close as closeProject, pick, projectLabel, workspace } from "$lib/workspace.svelte";
   import {
     LABEL,
     conducting,
@@ -44,7 +43,6 @@
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
 
-  let notOpen = $derived(workspace.recent.filter((path) => !isOpen(path)));
 
   /** With more than one agent to run, every row says which it is, and the
       new-session row offers the choice. With one, nothing changes. */
@@ -195,7 +193,6 @@
         out.push({ id: `fold:${path}:${agent}`, run: () => openResume(path, agent) });
       }
     }
-    for (const path of notOpen) out.push({ id: `recent:${path}`, run: () => openPath(path) });
     return out;
   });
 
@@ -349,10 +346,6 @@
     const dir = orchestrator.dir;
     if (dir !== null && sessions.history[dir] === undefined) loadHistory(dir);
   });
-
-  function isOpen(path: string) {
-    return workspace.open.some((project) => project.path === path);
-  }
 
   /** Folded to its narrow column: the rows keep their places, and the pane
       is one button that opens it. */
@@ -776,23 +769,6 @@
       {/if}
     {/each}
   </div>
-
-  {#if notOpen.length > 0}
-    <p class="section" class:folded>Recent</p>
-    <ul class="recent" class:folded inert={folded}>
-      {#each notOpen as path (path)}
-        <li>
-          <button
-            class:cursor={current === `recent:${path}`}
-            tabindex="-1"
-            onclick={() => openPath(path)}
-            title={path}
-            data-row="recent:{path}">{shorten(path)}</button
-          >
-        </li>
-      {/each}
-    </ul>
-  {/if}
   </div>
 </Pane>
 
@@ -864,9 +840,7 @@
   .nav.folded .choice,
   .nav.folded .cursor::before,
   .error-row.folded,
-  .empty.folded,
-  .section.folded,
-  .recent.folded {
+  .empty.folded {
     visibility: hidden;
   }
 
@@ -1520,48 +1494,5 @@
 
   .dismiss:hover {
     color: var(--ink);
-  }
-
-  .section {
-    margin: 0;
-    padding: 8px var(--pane-pad) 4px;
-    border-top: 1px solid var(--head-rule);
-    font-family: var(--chrome);
-    font-size: var(--label-size);
-    letter-spacing: var(--label-track);
-    text-transform: var(--label-case);
-    color: var(--ink-3);
-    flex: none;
-  }
-
-  .recent {
-    list-style: none;
-    margin: 0;
-    padding: 0 0 8px;
-    flex: none;
-    max-height: 30%;
-    overflow-y: auto;
-  }
-
-  .recent button {
-    display: block;
-    width: calc(100% - 2 * var(--row-inset));
-    margin: 0 var(--row-inset);
-    text-align: left;
-    font-family: var(--chrome);
-    font-size: var(--row-size);
-    padding: var(--row-pad-y) var(--row-pad-x);
-    border: 0;
-    border-radius: var(--radius);
-    background: none;
-    color: var(--ink-2);
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .recent button:hover {
-    background: var(--surface-2);
   }
 </style>

@@ -509,7 +509,6 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
           JSON.stringify({
             open: paths,
             active: paths[0] ?? null,
-            recent: paths,
           }),
         );
         // The DOM renderer for the terminals: WebKit names every GPU

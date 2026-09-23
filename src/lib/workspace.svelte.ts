@@ -18,14 +18,11 @@ import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
  */
 
 const KEY = "workbench.workspace";
-const RECENT_LIMIT = 8;
 
 export const workspace = $state({
   open: [] as ProjectInfo[],
   /** Path of the project whose sessions the panes are showing. */
   active: null as string | null,
-  /** Paths, most recent first, whether currently open or not. */
-  recent: [] as string[],
   error: null as string | null,
   opening: false,
 });
@@ -114,13 +111,9 @@ export async function openPath(path: string): Promise<boolean> {
   try {
     const info = await core().projectInfo(path);
     if (!isOpen(info.path)) workspace.open.push(info);
-    remember(info.path);
     activate(info.path);
     return true;
   } catch (error) {
-    // A folder that cannot be described is not one worth offering again.
-    workspace.recent = workspace.recent.filter((recent) => recent !== path);
-    save();
     workspace.error = String(error);
     return false;
   }
@@ -200,13 +193,6 @@ export function close(path: string) {
   else save();
 }
 
-function remember(path: string) {
-  workspace.recent = [
-    path,
-    ...workspace.recent.filter((p) => p !== path),
-  ].slice(0, RECENT_LIMIT);
-}
-
 function save() {
   try {
     localStorage.setItem(
@@ -214,7 +200,6 @@ function save() {
       JSON.stringify({
         open: workspace.open.map((project) => project.path),
         active: workspace.active,
-        recent: workspace.recent,
       }),
     );
   } catch {
@@ -238,17 +223,11 @@ export async function restore() {
   }
   if (raw === null) return;
 
-  let stored: { open?: unknown; active?: unknown; recent?: unknown };
+  let stored: { open?: unknown; active?: unknown };
   try {
     stored = JSON.parse(raw);
   } catch {
     return;
-  }
-
-  if (Array.isArray(stored.recent)) {
-    workspace.recent = stored.recent.filter(
-      (path): path is string => typeof path === "string",
-    );
   }
 
   const paths = Array.isArray(stored.open)
@@ -275,7 +254,6 @@ export async function restore() {
 export function reset() {
   workspace.open = [];
   workspace.active = null;
-  workspace.recent = [];
   workspace.error = null;
   workspace.opening = false;
 }

@@ -146,7 +146,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
       if (open.length > 0) {
         localStorage.setItem(
           "workbench.workspace",
-          JSON.stringify({ open, active: open[0], recent: open }),
+          JSON.stringify({ open, active: open[0] }),
         );
       } else {
         localStorage.removeItem("workbench.workspace");
@@ -950,8 +950,6 @@ test.describe("several projects", () => {
 
     await expect.poll(() => killed(page)).toEqual(["pty-1"]);
     await expect(page.locator("[data-testid='close-project']")).toHaveCount(1);
-    // Closing does not forget it: it drops back to the recent list.
-    await expect(page.locator(SESSIONS)).toContainText("~/dev/one");
     await running(page);
   });
 

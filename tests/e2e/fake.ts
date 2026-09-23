@@ -77,7 +77,7 @@ export async function installFakeCore(
       if (open.length > 0) {
         localStorage.setItem(
           "workbench.workspace",
-          JSON.stringify({ open, active: open[0], recent: open }),
+          JSON.stringify({ open, active: open[0] }),
         );
       } else {
         localStorage.removeItem("workbench.workspace");
