@@ -68,8 +68,7 @@ impl Stop {
 /// the status genuinely changed without a worktree file moving, which is what
 /// a commit or a `git add` looks like from out here.
 pub fn is_interesting(path: &Path) -> bool {
-    let mut segments = path.components().map(|c| c.as_os_str().to_string_lossy());
-    if !segments.any(|segment| segment == ".git") {
+    if !inside_git(path) {
         return true;
     }
 
@@ -80,6 +79,10 @@ pub fn is_interesting(path: &Path) -> bool {
         return false;
     }
     matches!(name.as_str(), "index" | "HEAD" | "MERGE_HEAD" | "ORIG_HEAD")
+}
+
+fn inside_git(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".git")
 }
 
 /// The directory git keeps a worktree's index and HEAD in, when it is not
@@ -245,6 +248,9 @@ impl Ignored {
 
     /// True only when every path in the event is ignored. Unsure means not
     /// ignored: a spurious refresh is cheap and a missed one is not.
+    ///
+    /// Git counts everything under `.git` as ignored, but `is_interesting`
+    /// has already chosen which of those matter, so they are never covered.
     fn covers(&self, event: &notify::Result<Event>) -> bool {
         let Ok(event) = event else { return false };
         let Some(repo) = self.repo.as_ref() else {
@@ -254,6 +260,7 @@ impl Ignored {
             && event.paths.iter().all(|path| {
                 path.strip_prefix(&self.root)
                     .ok()
+                    .filter(|relative| !inside_git(relative))
                     .and_then(|relative| repo.status_should_ignore(relative).ok())
                     .unwrap_or(false)
             })
@@ -332,6 +339,16 @@ mod tests {
         assert!(ignored.covers(&event(&[dir.join("target/debug/app")])));
         assert!(!ignored.covers(&event(&[dir.join("src/main.rs")])));
         assert!(!ignored.covers(&event(&[dir.join("target/x"), dir.join("src/main.rs")])));
+    }
+
+    // A commit in a plain repository writes only under .git, which git itself
+    // reports as ignored.
+    #[test]
+    fn a_commit_is_never_covered() {
+        let dir = repo_with_ignore("commit");
+        let ignored = Ignored::for_root(&dir);
+        assert!(!ignored.covers(&event(&[dir.join(".git/index")])));
+        assert!(!ignored.covers(&event(&[dir.join(".git/HEAD"), dir.join("target/x")])));
     }
 
     // Unsure means not ignored: a spurious refresh is cheap, a missed one is not.
