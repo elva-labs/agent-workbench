@@ -32,6 +32,9 @@
   --accent-soft: #e2efed;
   --add: #2e6b3f;
   --del: #9b3a47;
+  /* A session that was open when the app last quit and has not started
+     since. The terminal's yellow, so a theme that sets one sets both. */
+  --dormant: var(--ansi-yellow);
 
   /* ansi */
   --ansi-black: #14181a;

@@ -25,6 +25,7 @@
     statusLabel,
     statusMessage,
     titled,
+    wake,
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -48,6 +49,11 @@
 
   let title = $derived(current === null ? "Agent" : `Agent · ${agentLabel(current.agent)}`);
 
+  // A session that was open when the app quit starts once it is the one
+  // this pane shows.
+  $effect(() => {
+    if (current?.status === "dormant") wake(current.key);
+  });
 
   /** Whether the new-session button has opened into the choice of agent. */
   let choosing = $state(false);
@@ -105,21 +111,24 @@
 <Pane id="agent" {title} meta={statusLabel(current)}>
   <div class="wrap">
     <HooksNotice />
-    <!-- Every session stays mounted. Only the active one is visible, so its
-         PTY keeps its size and coming back to it costs no reflow. -->
+    <!-- Every session that has started stays mounted. Only the active one
+         is visible, so its PTY keeps its size and coming back to it costs
+         no reflow. -->
     {#each sessions.all as session (session.key)}
-      <TerminalView
-        id={session.key}
-        ptyId={session.ptyId}
-        active={session.key === sessions.active}
-        shown={agentVisible()}
-        focused={layout.focus === "agent"}
-        start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
-        onTitle={session.agent === "claude-code" ? (raw) => titled(session.key, raw) : undefined}
-        onAttention={() => rang(session.key)}
-        onFileRef={(path, line) => referenced(session.key, path, line)}
-        newlineOnShiftEnter
-      />
+      {#if session.status !== "dormant"}
+        <TerminalView
+          id={session.key}
+          ptyId={session.ptyId}
+          active={session.key === sessions.active}
+          shown={agentVisible()}
+          focused={layout.focus === "agent"}
+          start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
+          onTitle={session.agent === "claude-code" ? (raw) => titled(session.key, raw) : undefined}
+          onAttention={() => rang(session.key)}
+          onFileRef={(path, line) => referenced(session.key, path, line)}
+          newlineOnShiftEnter
+        />
+      {/if}
     {/each}
 
     {#if blocked !== null}

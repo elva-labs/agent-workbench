@@ -226,10 +226,15 @@ test.describe("the conductor", () => {
       );
     expect((await spawns()).at(-1)?.model).toBe("sonnet");
 
-    // The app comes back: no rows, and the started session went with it.
+    // The app comes back with the caller, resumed, and without the session
+    // it started: that one is the caller's to bring back.
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
-    await expect(rows(page)).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+    await expect(page.getByTestId("started-fold")).toHaveCount(0);
+    await expect.poll(async () => (await spawns()).map((spawn) => spawn.session)).toEqual([
+      "session-1",
+    ]);
 
     await push(page, { id: "c-8", tool: "sessions", session: "session-1" });
     await expect.poll(() => answerTo(page, "c-8")).not.toBeNull();

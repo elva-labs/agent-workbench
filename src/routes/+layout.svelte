@@ -31,6 +31,7 @@
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
+  import { reopen } from "$lib/reopen.svelte";
   import { followOpenRequests, restore } from "$lib/workspace.svelte";
 
   let { children } = $props();
@@ -53,11 +54,18 @@
       if (closed) stop();
       else stopSettings = stop;
     });
-    const stopOpening = followOpenRequests(restore());
+    // The sessions that were open come back into the projects that are, and
+    // only then are the folders asked for from outside opened in front.
+    let stopReopen = () => {};
+    const restored = restore().then(() => {
+      if (!closed) stopReopen = reopen();
+    });
+    const stopOpening = followOpenRequests(restored);
     return () => {
       closed = true;
       stopSettings();
       stopOpening();
+      stopReopen();
     };
   });
 </script>

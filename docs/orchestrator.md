@@ -59,7 +59,8 @@ sessions the app knows as its own. An orchestrator closed and resumed
 keeps its id, so the sessions it started are still its own: the ones
 still running answer to its tools as before, and a row with one of its
 ids, resumed from the pane by hand, is folded under it all the same. When
-the app itself was closed, the started sessions went with it. `sessions`
+the app itself was closed, the orchestrator comes back with the other
+sessions that were open, and the sessions it started do not. `sessions`
 then lists them as stopped, after the running ones, and `start` with one
 of those ids in place of a project and prompt brings it back where it ran,
 in its worktree with its conversation. A prompt given with it is what the

@@ -377,6 +377,7 @@
       <span
         class="dot"
         class:live={isLive(session)}
+        class:dormant={session.status === "dormant"}
         class:working={conducting(session)}
         class:unread={session.unread}
         class:permission={session.needs === "permission"}
@@ -1259,6 +1260,13 @@
   .dot.live {
     background: var(--add);
     border-color: var(--add);
+  }
+
+  /* Open when the app last quit, and not started since: it starts when
+     selected. */
+  .dot.dormant {
+    background: var(--dormant);
+    border-color: var(--dormant);
   }
 
   /* At work: the dot breathes. Waiting for you: the accent, and the name in

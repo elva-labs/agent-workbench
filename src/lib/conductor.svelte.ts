@@ -358,6 +358,8 @@ function describeGone(entry: Started): string {
 /** What a session is doing, in the words the tools answer in. */
 export function stateOf(session: Session): string {
   switch (session.status) {
+    case "dormant":
+      return "not started since the workbench restarted";
     case "starting":
       return "starting";
     case "exited":

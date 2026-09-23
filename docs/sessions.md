@@ -7,8 +7,10 @@ nothing. The sessions you are not looking at are hidden rather than
 unmounted, and hidden in a way that keeps their box in layout, so a
 background session's pty is never resized and never reflows.
 
-Nothing starts by itself. Opening a project, or the app, shows what the
-project has: live sessions if any, past ones to resume, and a new-session row.
+Nothing new starts by itself. Opening a project shows what the project has:
+live sessions if any, past ones to resume, and a new-session row. Opening the
+app brings back the sessions that were open when it quit, as described under
+[after a restart](#after-a-restart).
 The past ones are read again each time the window comes back into view and
 once a minute while it is looked at, so a session run in a terminal outside
 the app is there to resume without a restart. The menu beside Open project
@@ -29,6 +31,22 @@ id, and the terminal's own teardown does not, so a second signal never lands
 on an id that may since have been reused. On shutdown the pty master closes
 with the process and the agent sees SIGHUP. Picking a session that belongs
 to another project brings that project forward.
+
+## After a restart
+
+The sessions that were open when the app quit come back as rows in their
+projects, in the order they had and under the names they had, with nothing
+running behind them. Their dot is yellow. The session that was on screen
+starts at once, through the agent's resume command, and each of the others
+starts when it is selected. Bringing a project forward selects its most
+recent session, so that one starts too. A session closed by hand before the
+quit stays closed, a session whose project did not open again is left out,
+and a session an orchestrator started stays with the orchestrator; see
+[orchestrator](orchestrator.md).
+
+The yellow is the terminal's, so a theme that sets its yellow sets this dot
+too. In the amber palette, whose accent is a yellow, it is a lemon instead,
+so it is never taken for an unread session.
 
 ## What a row says
 

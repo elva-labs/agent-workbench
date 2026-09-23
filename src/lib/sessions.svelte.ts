@@ -23,8 +23,10 @@ import { claim, resetExits } from "$lib/exits";
  * there could only ever be one.
  */
 
+/** `dormant` is a session that was open when the app last quit, back as a
+    row with nothing running behind it until it is woken. */
 export type SessionStatus =
-  "starting" | "running" | "exited" | "crashed" | "failed";
+  "dormant" | "starting" | "running" | "exited" | "crashed" | "failed";
 
 export interface Session {
   /** Stable for the lifetime of the row, unlike the pty id which only exists
@@ -506,14 +508,53 @@ export function create(
   prompt: string | null = null,
   model: string | null = null,
 ): Session {
-  ordinals[project] = (ordinals[project] ?? 0) + 1;
   prefer(project, agent);
-  const session: Session = {
+  const live = added(
+    row(project, resumedFrom, agent, startIn, prompt, model, "starting"),
+  );
+  sessions.active = live.key;
+  return live;
+}
+
+/**
+ * Adds a row for a session that was open when the app last quit. It is
+ * listed where it was, under the name it had, and nothing runs behind it
+ * until `wake` is called for it. Neither the active session nor the agent
+ * the project last started changes.
+ */
+export function reopened(
+  project: string,
+  id: string,
+  agent: AgentId,
+  startIn: string | null,
+  model: string | null,
+): Session {
+  return added(row(project, id, agent, startIn, null, model, "dormant"));
+}
+
+/** Starts the process behind a row that was open when the app last quit:
+    from here it is a resumed session like any other. */
+export function wake(key: string) {
+  const session = byKey(key);
+  if (session?.status === "dormant") session.status = "starting";
+}
+
+function row(
+  project: string,
+  resumedFrom: string | null,
+  agent: AgentId,
+  startIn: string | null,
+  prompt: string | null,
+  model: string | null,
+  status: SessionStatus,
+): Session {
+  ordinals[project] = (ordinals[project] ?? 0) + 1;
+  return {
     key: `s${++counter}`,
     project,
     agent,
     ptyId: null,
-    status: "starting",
+    status,
     id: resumedFrom,
     resumedFrom,
     ordinal: ordinals[project],
@@ -535,13 +576,15 @@ export function create(
     error: null,
     mounted: false,
   };
+}
+
+function added(session: Session): Session {
   sessions.all.push(session);
   // Return what the array holds, not what was handed to it: $state proxies the
   // object on the way in, and the original would be a stale copy whose
   // mutations nothing sees.
   const live = sessions.all[sessions.all.length - 1];
-  sessions.active = live.key;
-  if (startIn !== null) void startedIn(live.key, startIn);
+  if (live.startIn !== null) void startedIn(live.key, live.startIn);
   return live;
 }
 
@@ -706,6 +749,8 @@ export function closeProject(project: string) {
  */
 export function statusMessage(session: Session): string {
   switch (session.status) {
+    case "dormant":
+      return "Starts when selected.";
     case "starting":
       return "Starting…";
     case "running":
@@ -725,6 +770,8 @@ export function statusMessage(session: Session): string {
 export function statusLabel(session: Session | null): string {
   if (session === null) return "no session";
   switch (session.status) {
+    case "dormant":
+      return "was open, starts when selected";
     case "starting":
       return "starting";
     case "running":

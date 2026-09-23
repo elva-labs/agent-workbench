@@ -68,6 +68,9 @@
   --accent-soft: #f7ecdc;
   --ansi-cyan: #a0651a;
   --ansi-bright-cyan: #c4863a;
+  /* The accent is the yellow here, so a dormant session takes a lemon
+     that an unread one does not have. */
+  --dormant: #a8961c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -83,6 +86,7 @@
     --accent-soft: #33270f;
     --ansi-cyan: #e0b15c;
     --ansi-bright-cyan: #eccb8a;
+    --dormant: #e3d66b;
   }
 }
 
@@ -98,6 +102,7 @@
   --accent-soft: #33270f;
   --ansi-cyan: #e0b15c;
   --ansi-bright-cyan: #eccb8a;
+  --dormant: #e3d66b;
 }
 
 /* Rose: a pink accent, greys leaning rose. */

@@ -776,6 +776,54 @@ test.describe("several sessions in one project", () => {
     expect(await killed(page)).toEqual(["pty-1"]);
     await running(page);
   });
+
+  // A restart brings both back. The one on screen resumes at once; the
+  // other waits, in yellow, until it is picked.
+  test("come back after a restart, each starting when selected", async ({
+    page,
+  }) => {
+    await page.reload();
+    await expect(rows(page)).toHaveCount(2);
+    await expect(page.locator(AGENT)).toContainText("running");
+    expect((await spawns(page)).map((spawn) => spawn.session)).toEqual([
+      "session-2",
+    ]);
+
+    const waiting = rows(page).first().locator(".dot");
+    await expect(waiting).toHaveClass(/dormant/);
+    const yellow = await page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--ansi-yellow")
+        .trim(),
+    );
+    const [r, g, b] = [1, 3, 5].map((at) =>
+      parseInt(yellow.slice(at, at + 2), 16),
+    );
+    await expect(waiting).toHaveCSS(
+      "background-color",
+      `rgb(${r}, ${g}, ${b})`,
+    );
+    await expect(
+      page.locator(`${AGENT} [data-testid='terminal']`),
+    ).toHaveCount(1);
+
+    await rows(page).first().click();
+    await expect.poll(() => spawnCount(page)).toBe(2);
+    expect((await spawns(page)).at(-1)?.session).toBe("session-1");
+    await expect(waiting).not.toHaveClass(/dormant/);
+    await expect(rows(page).first()).toContainText("running");
+  });
+
+  test("a session closed before a restart stays closed", async ({ page }) => {
+    await page.locator("[data-testid='close-session']").first().click();
+    await expect(rows(page)).toHaveCount(1);
+    await page.reload();
+    await expect(rows(page)).toHaveCount(1);
+    await expect(page.locator(AGENT)).toContainText("running");
+    expect((await spawns(page)).map((spawn) => spawn.session)).toEqual([
+      "session-2",
+    ]);
+  });
 });
 
 test.describe("working, and waiting for you", () => {

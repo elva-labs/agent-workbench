@@ -212,7 +212,8 @@ function save() {
  *
  * Paths are re-described rather than restored from storage: a directory may
  * have been moved, or may have become a repository since, so the core is asked
- * afresh. Sessions are not restored, because processes do not survive a quit.
+ * afresh. The sessions that were open come back separately, once the projects
+ * they belong to are.
  */
 export async function restore() {
   let raw: string | null = null;
