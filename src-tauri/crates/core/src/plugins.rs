@@ -318,10 +318,17 @@ struct Running {
     /// The last lines the plugin wrote to its error output, for the row
     /// to say why it went.
     complaints: Arc<Mutex<VecDeque<String>>>,
+    /// Disconnects once the error output has been read to its end.
+    complained: std::sync::mpsc::Receiver<()>,
 }
 
 /// How many lines of a plugin's error output are kept for its row.
 const COMPLAINTS: usize = 5;
+
+/// How long a plugin that has gone is given for the last of its error
+/// output to be read: the process is reaped by then, so the pipe ends
+/// unless something the plugin started still holds it.
+const LAST_WORDS: Duration = Duration::from_millis(500);
 
 /// How many starts in a row may go wrong before the plugin is left alone:
 /// one that dies before it greets is broken, not unlucky, and is not
@@ -1526,9 +1533,11 @@ impl Inner {
         // What the plugin complains of is kept, the last few lines of it,
         // so a plugin that dies can say why on its row.
         let complaints = Arc::new(Mutex::new(VecDeque::new()));
+        let (read_to_end, complained) = std::sync::mpsc::channel::<()>();
         {
             let complaints = Arc::clone(&complaints);
             std::thread::spawn(move || {
+                let _read_to_end = read_to_end;
                 for line in BufReader::new(stderr).lines() {
                     let Ok(line) = line else { break };
                     if line.trim().is_empty() {
@@ -1567,6 +1576,7 @@ impl Inner {
                     hello: None,
                     failures,
                     complaints,
+                    complained,
                 },
             );
         }
@@ -1631,6 +1641,9 @@ impl Inner {
             // the wait would hold the lock for as long as it lived.
             let _ = live.child.kill();
             let code = live.child.wait().ok().and_then(|status| status.code());
+            // Its output ending says nothing of whether its last complaint
+            // has been read yet.
+            let _ = live.complained.recv_timeout(LAST_WORDS);
             live.failures = if greeted { 0 } else { live.failures + 1 };
             let complaint = live
                 .complaints
