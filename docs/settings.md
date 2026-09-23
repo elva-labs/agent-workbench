@@ -47,6 +47,19 @@ appearances while add and del stay what they are. The terminal's sixteen
 ANSI colours are derived from the same tokens, so the agent's own interface
 sits in the palette rather than beside it.
 
+Themes of your own sit after the five. A theme restates some of those
+tokens, for the light appearance and the dark, and may set a few measures of
+the chrome's shape: the corner radii and the padding inside a pane. A token
+it leaves out keeps the teal palette's value, and a colour it sets only for
+light gives way to teal's dark value in the dark, so a theme never paints
+the light ground into the dark appearance. Colours are taken only as hex and
+measures only as whole pixels within a limit, so a theme can recolour and
+reshape the window and do nothing else. A theme is chosen like a palette and
+deleted with the cross beside it; deleting the one in use goes back to
+teal. An agent can make one for you, as the next section describes, and the
+file described under [where they are kept](#where-they-are-kept) holds them
+for editing by hand.
+
 ## Live updates
 
 Watcher only, or agent hooks, chosen once for every project; each project
@@ -97,13 +110,22 @@ settings that change moved. Changes asked at once are put one after
 another, each read against the settings as they are by the time it comes
 up.
 
+An agent can also save a theme of the user's own, for a look the palettes
+do not give, and switch to it in the same step. The theme is checked the
+way the file is, and for being readable: the ink needs a contrast of 4.5 to
+1 against the surface and the background in either appearance, and the
+accent 3 to 1 against the surface, or the agent is told the ratio that fell
+short. The user sees the theme as a small card on its ground for each
+appearance before allowing it, and undoing takes the theme away again with
+the palette it replaced.
+
 The settings an agent changes are those of the machine the window runs
 on, whichever machine the agent runs on.
 
 ## Where they are kept
 
-The appearance, the look, the palette, the fonts, the chords and the answer
-on hooks are kept for the machine, in `settings.json` under
+The appearance, the look, the palette, the fonts, the chords, the answer
+on hooks and your own themes are kept for the machine, in `settings.json` under
 `~/.agent-workbench`, and every window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which

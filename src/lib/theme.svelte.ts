@@ -1,4 +1,5 @@
 import type { Settings } from "$lib/core";
+import { themeCss, validThemes, type CustomTheme } from "$lib/customThemes";
 import { persist } from "$lib/persist";
 
 /**
@@ -10,6 +11,9 @@ import { persist } from "$lib/persist";
  * terminal the one tokens.css is written in. Fonts: the terminal's family
  * and the interface's, stamped as data-mono and data-sans, with the machine's own
  * pair the ones tokens.css is written in.
+ *
+ * A palette may also be one of the user's own themes, painted from a
+ * stylesheet the window writes into the page; see customThemes.ts.
  *
  * The core keeps the choice for the machine. The window keeps a copy of
  * its own as well, read before the core has answered, so the first frame
@@ -87,23 +91,35 @@ const PALETTE_KEY = "workbench.palette";
 const LOOK_KEY = "workbench.look";
 const MONO_KEY = "workbench.mono";
 const SANS_KEY = "workbench.sans";
+const THEMES_KEY = "workbench.themes";
 
 export const theme = $state<{
   choice: ThemeChoice;
-  palette: PaletteName;
+  /** One of the palettes, or the name of one of the user's own themes. */
+  palette: string;
   look: LookName;
   mono: MonoName;
   sans: SansName;
+  /** The user's own themes, by name. */
+  themes: Record<string, CustomTheme>;
+  /** Counts every repaint, for what reads the colours back from the page,
+      such as a terminal, to follow. */
+  painted: number;
 }>({
   choice: "system",
   palette: "teal",
   look: "modern",
   mono: "system",
   sans: "system",
+  themes: {},
+  painted: 0,
 });
 
-function isPalette(value: unknown): value is PaletteName {
-  return PALETTES.some((palette) => palette.name === value);
+function isPalette(value: unknown): value is string {
+  return (
+    PALETTES.some((palette) => palette.name === value) ||
+    (typeof value === "string" && Object.hasOwn(theme.themes, value))
+  );
 }
 
 function isLook(value: unknown): value is LookName {
@@ -130,6 +146,7 @@ export function loadTheme() {
     look = localStorage.getItem(LOOK_KEY);
     mono = localStorage.getItem(MONO_KEY);
     sans = localStorage.getItem(SANS_KEY);
+    theme.themes = validThemes(JSON.parse(localStorage.getItem(THEMES_KEY) ?? "{}"));
   } catch {
     // Storage can throw in a locked-down webview. The defaults hold.
   }
@@ -154,6 +171,7 @@ function remember(key: string, value: string) {
 }
 
 function rememberAll() {
+  remember(THEMES_KEY, JSON.stringify(theme.themes));
   remember(KEY, theme.choice);
   remember(PALETTE_KEY, theme.palette);
   remember(LOOK_KEY, theme.look);
@@ -161,7 +179,8 @@ function rememberAll() {
   remember(SANS_KEY, theme.sans);
 }
 
-export function setPalette(palette: PaletteName) {
+export function setPalette(palette: string) {
+  if (!isPalette(palette)) return;
   theme.palette = palette;
   remember(PALETTE_KEY, palette);
   applyTheme();
@@ -196,33 +215,53 @@ export function setTheme(choice: ThemeChoice) {
   persist({ appearance: choice });
 }
 
+/** Keeps a new set of the user's own themes, and the palette with them:
+    one change, so a theme and the choice of it arrive together. A palette
+    naming a theme the set no longer has goes back to the default. */
+export function setThemes(themes: Record<string, CustomTheme>, palette = theme.palette) {
+  theme.themes = validThemes(themes);
+  theme.palette = isPalette(palette) ? palette : "teal";
+  rememberAll();
+  applyTheme();
+  persist({ themes: { ...theme.themes }, palette: theme.palette });
+}
+
+/** Takes one of the user's own themes away. */
+export function deleteTheme(name: string) {
+  const { [name]: _gone, ...kept } = theme.themes;
+  setThemes(kept);
+}
+
+type ThemeFields =
+  | "appearance"
+  | "look"
+  | "palette"
+  | "terminalFont"
+  | "interfaceFont"
+  | "themes";
+
 /** The theme's part of the settings. */
-export function themeSettings(): Pick<
-  Settings,
-  "appearance" | "look" | "palette" | "terminalFont" | "interfaceFont"
-> {
+export function themeSettings(): Pick<Settings, ThemeFields> {
   return {
     appearance: theme.choice,
     look: theme.look,
     palette: theme.palette,
     terminalFont: theme.mono,
     interfaceFont: theme.sans,
+    themes: { ...theme.themes },
   };
 }
 
 /** Takes the theme the core has for the machine: each part it knows, the
     rest left as it is. Nothing is sent back, since this is the core's word. */
-export function adoptTheme(
-  settings: Pick<
-    Settings,
-    "appearance" | "look" | "palette" | "terminalFont" | "interfaceFont"
-  >,
-) {
+export function adoptTheme(settings: Partial<Pick<Settings, ThemeFields>>) {
   const choice: unknown = settings.appearance;
   if (choice === "light" || choice === "dark" || choice === "system") {
     theme.choice = choice;
   }
+  if (settings.themes !== undefined) theme.themes = validThemes(settings.themes);
   if (isPalette(settings.palette)) theme.palette = settings.palette;
+  else if (!isPalette(theme.palette)) theme.palette = "teal";
   if (isLook(settings.look)) theme.look = settings.look;
   if (isMono(settings.terminalFont)) theme.mono = settings.terminalFont;
   if (isSans(settings.interfaceFont)) theme.sans = settings.interfaceFont;
@@ -235,7 +274,22 @@ export function cycleTheme() {
   setTheme(theme.choice === "light" ? "dark" : theme.choice === "dark" ? "system" : "light");
 }
 
+/** The stylesheet the user's own themes are painted from, written last
+    into the page's head. */
+function paintThemes() {
+  const id = "workbench-themes";
+  let sheet = document.getElementById(id);
+  if (sheet === null) {
+    sheet = document.createElement("style");
+    sheet.id = id;
+    document.head.appendChild(sheet);
+  }
+  const css = themeCss(theme.themes);
+  if (sheet.textContent !== css) sheet.textContent = css;
+}
+
 function applyTheme() {
+  paintThemes();
   const root = document.documentElement;
   if (theme.choice === "system") {
     delete root.dataset.theme;
@@ -262,6 +316,7 @@ function applyTheme() {
   } else {
     root.dataset.sans = theme.sans;
   }
+  theme.painted += 1;
 }
 
 /** What the app is actually painting right now, system preference resolved. */

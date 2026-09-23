@@ -11,11 +11,22 @@
  * reads is what it would change then. Every call is answered exactly once:
  * the agent on the other side is blocked until it is.
  *
+ * A theme of the user's own is saved the same way: checked against the
+ * rules the core keeps it by and for being readable, then shown to the
+ * user as swatches with the switch to it, and kept only if they allow it.
+ *
  * The hooks and the plugins are not the agent's to change. They are
  * refused with a word saying they are the user's, in the settings.
  */
 
 import { core, type SettingsRequest } from "$lib/core";
+import {
+  COLOUR_TOKENS,
+  SHAPE_TOKENS,
+  checkTheme,
+  readability,
+  type CustomTheme,
+} from "$lib/customThemes";
 import {
   ACTIONS,
   PRESETS,
@@ -44,10 +55,10 @@ import {
   setPalette,
   setSans,
   setTheme,
+  setThemes,
   theme,
   type LookName,
   type MonoName,
-  type PaletteName,
   type SansName,
   type ThemeChoice,
 } from "$lib/theme.svelte";
@@ -65,7 +76,9 @@ export interface Change {
 interface Next {
   appearance?: ThemeChoice;
   look?: LookName;
-  palette?: PaletteName;
+  palette?: string;
+  /** The whole set of the user's own themes, when a theme is saved. */
+  themes?: Record<string, CustomTheme>;
   terminalFont?: MonoName;
   interfaceFont?: SansName;
   keys?: Keymap;
@@ -77,6 +90,8 @@ export interface Ask {
   caller: string;
   reason: string | null;
   changes: Change[];
+  /** A theme being saved, to be shown as swatches. */
+  theme: CustomTheme | null;
 }
 
 export interface Undo {
@@ -133,7 +148,9 @@ export async function handle(request: SettingsRequest): Promise<void> {
   let answered: Answered;
   try {
     answered =
-      request.tool === "settings" ? said(describeSettings()) : await change(request);
+      request.tool === "settings"
+        ? said(describeSettings())
+        : await change(request, request.tool === "theme_save" ? planTheme : plan);
   } catch (error) {
     answered = refused(error instanceof Error ? error.message : String(error));
   }
@@ -149,15 +166,24 @@ function nameOf<Name extends string>(
   return list.find((item) => item.name === value)?.label ?? value;
 }
 
+/** The palettes a palette may be: the app's, then the user's own themes. */
+function palettes(): { name: string; label: string }[] {
+  return [
+    ...PALETTES,
+    ...Object.entries(theme.themes).map(([name, custom]) => ({ name, label: custom.label })),
+  ];
+}
+
 /** The settings as the agent reads them, each with what it takes. */
 export function describeSettings(): string {
   const names = (list: { name: string }[]) => list.map((item) => item.name).join(", ");
+  const own = Object.entries(theme.themes);
   const lines = [
     "Agent Workbench's settings, on the machine the user's window runs on.",
     "",
     `appearance: ${theme.choice} (one of ${names(APPEARANCES)})`,
     `look: ${theme.look} (one of ${names(LOOKS)})`,
-    `palette: ${theme.palette} (one of ${names(PALETTES)})`,
+    `palette: ${theme.palette} (one of ${names(palettes())})`,
     `terminalFont: ${theme.mono} (one of ${names(TERMINAL_FONTS)})`,
     `interfaceFont: ${theme.sans} (one of ${names(INTERFACE_FONTS)})`,
     `keyPreset: ${keys.preset} (one of ${Object.keys(PRESETS).join(", ")}; custom once a chord differs from both)`,
@@ -166,6 +192,16 @@ export function describeSettings(): string {
     ...ACTIONS.map(
       ({ key, label }) => `  ${key}: ${chordText(keys.bindings[key])}  (${label})`,
     ),
+    "",
+    "",
+    own.length === 0
+      ? "The user has no themes of their own."
+      : `The user's own themes: ${own.map(([name, custom]) => `${name} (${custom.label})`).join(", ")}.`,
+    `A theme saved with theme_save sets colours for light and for dark, by token: ${COLOUR_TOKENS.join(", ")}; and measures of the chrome, whole pixels: ${Object.entries(
+      SHAPE_TOKENS,
+    )
+      .map(([token, most]) => `${token} up to ${most}px`)
+      .join(", ")}. A token left out keeps the default palette's value.`,
     "",
     "Change them with settings_change, naming only what should change. The agent hooks and the plugins are the user's to change, in the settings.",
   ];
@@ -205,7 +241,7 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
         next.look = oneOf(field, value, LOOKS);
         break;
       case "palette":
-        next.palette = oneOf(field, value, PALETTES);
+        next.palette = oneOf(field, value, palettes());
         break;
       case "terminalFont":
         next.terminalFont = oneOf(field, value, TERMINAL_FONTS);
@@ -278,7 +314,11 @@ function changesOf(next: Next): Change[] {
     line("look", "Look", nameOf(LOOKS, theme.look), nameOf(LOOKS, next.look));
   }
   if (next.palette !== undefined) {
-    line("palette", "Palette", nameOf(PALETTES, theme.palette), nameOf(PALETTES, next.palette));
+    const known = [
+      ...palettes(),
+      ...Object.entries(next.themes ?? {}).map(([name, custom]) => ({ name, label: custom.label })),
+    ];
+    line("palette", "Palette", nameOf(known, theme.palette), nameOf(known, next.palette));
   }
   if (next.terminalFont !== undefined) {
     line(
@@ -333,11 +373,62 @@ function inTurn<T>(work: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function change(request: SettingsRequest): Promise<Answered> {
+/**
+ * What saving a theme would change: the theme itself, kept among the
+ * user's own under its name, and the palette switched to it. Checked by
+ * the rules the core keeps a theme by, and for being readable. Throws the
+ * reason when something will not do.
+ */
+export function planTheme(args: Record<string, unknown>): {
+  next: Next;
+  changes: Change[];
+  theme: CustomTheme;
+} {
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  const fields: Record<string, unknown> = {};
+  for (const [field, value] of Object.entries(args)) {
+    if (field === "name" || field === "reason") continue;
+    fields[field] = value;
+  }
+  const saved = checkTheme(name, fields);
+  const unreadable = readability(saved);
+  if (unreadable !== null) throw new Error(unreadable);
+  const before = theme.themes[name];
+  const same = before !== undefined && JSON.stringify(before) === JSON.stringify(saved);
+  const next: Next = { themes: { ...theme.themes, [name]: saved }, palette: name };
+  const changes: Change[] = [];
+  if (!same) {
+    changes.push({
+      field: "theme",
+      label: "Theme",
+      from: before === undefined ? "none" : `${before.label} as it was`,
+      to: before === undefined ? `${saved.label}, new` : `${saved.label}, changed`,
+    });
+  }
+  if (theme.palette !== name) {
+    const known = [...palettes(), { name, label: saved.label }];
+    changes.push({
+      field: "palette",
+      label: "Palette",
+      from: nameOf(known, theme.palette),
+      to: saved.label,
+    });
+  }
+  return { next, changes, theme: saved };
+}
+
+async function change(
+  request: SettingsRequest,
+  planned: (args: Record<string, unknown>) => {
+    next: Next;
+    changes: Change[];
+    theme?: CustomTheme;
+  },
+): Promise<Answered> {
   // Checked now, so a change that will not do is refused without a wait.
-  plan(request.arguments ?? {});
+  planned(request.arguments ?? {});
   return inTurn(async () => {
-    const { next, changes } = plan(request.arguments ?? {});
+    const { next, changes, theme: shown } = planned(request.arguments ?? {});
     if (changes.length === 0) {
       return said("Nothing to change: the settings are already so.");
     }
@@ -347,7 +438,7 @@ async function change(request: SettingsRequest): Promise<Answered> {
         : null;
     const caller = callerOf(request);
     const choice = await new Promise<Choice>((settle) => {
-      settingsAsk.asking = { request, caller, reason, changes };
+      settingsAsk.asking = { request, caller, reason, changes, theme: shown ?? null };
       pending = settle;
     });
     if (choice === "decline") {
@@ -369,17 +460,20 @@ function take(next: Next): () => void {
     terminalFont: theme.mono,
     interfaceFont: theme.sans,
     keys: { ...keys.bindings },
+    themes: { ...theme.themes },
   };
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
-  if (next.palette !== undefined) setPalette(next.palette);
+  if (next.themes !== undefined) setThemes(next.themes, next.palette);
+  else if (next.palette !== undefined) setPalette(next.palette);
   if (next.terminalFont !== undefined) setMono(next.terminalFont);
   if (next.interfaceFont !== undefined) setSans(next.interfaceFont);
   if (next.keys !== undefined) setBindings(next.keys);
   return () => {
     if (next.appearance !== undefined) setTheme(before.appearance);
     if (next.look !== undefined) setLook(before.look);
-    if (next.palette !== undefined) setPalette(before.palette);
+    if (next.themes !== undefined) setThemes(before.themes, before.palette);
+    else if (next.palette !== undefined) setPalette(before.palette);
     if (next.terminalFont !== undefined) setMono(before.terminalFont);
     if (next.interfaceFont !== undefined) setSans(before.interfaceFont);
     if (next.keys !== undefined) setBindings(before.keys);

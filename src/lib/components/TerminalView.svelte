@@ -321,8 +321,7 @@
 
   // Live setter: the TUI recolours without a respawn.
   $effect(() => {
-    theme.choice;
-    theme.palette;
+    theme.painted;
     if (!terminal) return;
     untrack(() => {
       terminal!.options.theme = buildTheme(tokenReader(document.documentElement));

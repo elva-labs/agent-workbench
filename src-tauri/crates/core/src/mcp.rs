@@ -31,7 +31,7 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 /// something put together at run time.
 macro_rules! general_instructions {
     () => {
-        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not."
+        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The notify tool leaves one line on this session's row for when the user is in another session: why you stopped or what you need, once, not progress. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not."
     };
 }
 
@@ -392,7 +392,7 @@ pub fn browser_close_tool() -> Value {
 /// agent sees them. The settings are those of the machine the user's window
 /// runs on, whatever machine the calling session runs on.
 pub fn settings_tools() -> Vec<Value> {
-    vec![settings_tool(), settings_change_tool()]
+    vec![settings_tool(), settings_change_tool(), theme_save_tool()]
 }
 
 pub fn settings_tool() -> Value {
@@ -423,6 +423,42 @@ pub fn settings_change_tool() -> Value {
                 },
                 "reason": { "type": "string", "description": "A few words on why, in the user's terms, shown to them with the change." }
             }
+        }
+    })
+}
+
+pub fn theme_save_tool() -> Value {
+    let colours = crate::settings::COLOUR_TOKENS.join(", ");
+    let shapes: Vec<String> = crate::settings::SHAPE_TOKENS
+        .iter()
+        .map(|(token, most)| format!("{token} (up to {most}px)"))
+        .collect();
+    json!({
+        "name": "theme_save",
+        "description": "Saves a theme of the user's own for Agent Workbench and switches to it: colours for the light appearance and the dark, and a few measures of the chrome's shape. Only for a look the user asked for that the built-in palettes do not give. A token left out keeps the default palette's value. Keep text readable: the ink on the surface and the background needs a contrast of 4.5 to 1, and the accent on the surface 3 to 1, or the theme is refused with the ratio. The user is shown the theme and allows or declines it before anything changes, and can undo it; the answer says which. Saving under a name the user already has replaces that theme.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "What the theme is kept by: lower-case letters, digits and dashes, starting with a letter, such as dusk or solar-2." },
+                "label": { "type": "string", "description": "What the user sees it called, a few words." },
+                "light": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": format!("Colours for the light appearance, by token, each a hex colour such as #1a2b3c. The tokens: {colours}.")
+                },
+                "dark": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Colours for the dark appearance, by the same tokens as light."
+                },
+                "shape": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": format!("Measures of the chrome, the same in either appearance, each whole pixels such as 6px: {}.", shapes.join(", "))
+                },
+                "reason": { "type": "string", "description": "A few words on why, in the user's terms, shown to them with the theme." }
+            },
+            "required": ["name"]
         }
     })
 }
@@ -829,7 +865,7 @@ fn settings_call(
             session: session.map(str::to_string),
         }),
     )?;
-    let asked = name == "settings_change";
+    let asked = name == "settings_change" || name == "theme_save";
     let wait = if asked { waits.watching } else { waits.answer };
     let Some(answer) = await_answer(home, &id, wait) else {
         return Err(if asked {
@@ -1385,7 +1421,7 @@ mod tests {
             .unwrap();
             listed["result"]["tools"].as_array().unwrap().clone()
         };
-        assert_eq!(ask(&home).len(), 25);
+        assert_eq!(ask(&home).len(), 26);
         publish_a_tool(&home);
         let listed = ask(&home);
         let names: Vec<&str> = listed
@@ -1413,6 +1449,7 @@ mod tests {
                 "browser_close",
                 "settings",
                 "settings_change",
+                "theme_save",
                 "projects",
                 "sessions",
                 "start",
@@ -1423,9 +1460,9 @@ mod tests {
                 "github_pr"
             ]
         );
-        assert_eq!(listed[25]["description"], "The branch's pull request.");
+        assert_eq!(listed[26]["description"], "The branch's pull request.");
         assert_eq!(
-            listed[25]["inputSchema"]["properties"]["state"]["type"],
+            listed[26]["inputSchema"]["properties"]["state"]["type"],
             "string"
         );
     }
@@ -1547,6 +1584,7 @@ mod tests {
                 "browser_close",
                 "settings",
                 "settings_change",
+                "theme_save",
                 "projects",
                 "sessions",
                 "start",
@@ -1599,7 +1637,7 @@ mod tests {
         )
         .unwrap();
         let listed = listed["result"]["tools"].as_array().unwrap().clone();
-        assert_eq!(listed.len(), 25);
+        assert_eq!(listed.len(), 26);
         let named = |name: &str| {
             listed
                 .iter()

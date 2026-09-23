@@ -121,9 +121,10 @@ ref on everything a click or a type can reach, clicking and typing by ref,
 reading its console, a screenshot, and running script in its page. See
 [browser](browser.md).
 
-Two more read and change the workbench's own settings, the appearance,
-look, palette, fonts and chords, for when the user asks an agent for that:
-every change is put to the user first. See [settings](settings.md).
+Three more read and change the workbench's own settings, the appearance,
+look, palette, fonts and chords, and save a theme of the user's own, for
+when the user asks an agent for that: every change is put to the user
+first. See [settings](settings.md).
 
 Seven more are the orchestrator's, for a session that starts and steers
 other sessions: what they do and what the user is asked is in

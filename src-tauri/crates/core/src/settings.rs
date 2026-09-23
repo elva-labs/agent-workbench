@@ -1,7 +1,8 @@
 //! The user's preferences for the workbench, kept in one file per machine.
 //!
 //! The appearance, the look, the palette, the two fonts, the chords the app
-//! claims and the answer on agent hooks are the user's, not a window's, so
+//! claims, the answer on agent hooks and the user's own themes are the
+//! user's, not a window's, so
 //! they live here under the app's home and every window on the machine
 //! reads the same ones. A change is written whole and moved into place, and
 //! announced as an event carrying the settings as they now are. The file is
@@ -11,6 +12,12 @@
 //! The file is read leniently: a value that is not one the app knows is
 //! left out, and the default stands for it. A change is checked strictly:
 //! one bad value refuses the whole change, and says which.
+//!
+//! A theme of the user's own is a palette by another name: colours for the
+//! light appearance and the dark, and a few measures of the chrome's shape,
+//! each a token the stylesheets are written in. Only those tokens are taken,
+//! colours only as hex and measures only as pixels, so what a theme can do
+//! to the window is recolour and reshape it and nothing else.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -37,6 +44,51 @@ pub const INTERFACE_FONTS: &[&str] = &["system", "plex", "inter"];
 const MOST_CHORDS: usize = 64;
 const LONGEST_NAME: usize = 64;
 
+/// The colour tokens a theme may set, for each appearance.
+pub const COLOUR_TOKENS: &[&str] = &[
+    "bg",
+    "surface",
+    "surface-2",
+    "ink",
+    "ink-2",
+    "ink-3",
+    "rule",
+    "rule-strong",
+    "accent",
+    "accent-soft",
+    "add",
+    "del",
+    "ansi-black",
+    "ansi-red",
+    "ansi-green",
+    "ansi-yellow",
+    "ansi-blue",
+    "ansi-magenta",
+    "ansi-cyan",
+    "ansi-white",
+    "ansi-bright-black",
+    "ansi-bright-red",
+    "ansi-bright-green",
+    "ansi-bright-yellow",
+    "ansi-bright-blue",
+    "ansi-bright-magenta",
+    "ansi-bright-cyan",
+    "ansi-bright-white",
+];
+
+/// The measures of the chrome's shape a theme may set, the same in either
+/// appearance, with the most each may be, in pixels.
+pub const SHAPE_TOKENS: &[(&str, u32)] = &[
+    ("radius", 16),
+    ("radius-sm", 12),
+    ("radius-tag", 12),
+    ("pane-pad", 24),
+];
+
+/// How many themes the file may hold, and how long a theme's label may be.
+const MOST_THEMES: usize = 32;
+const LONGEST_LABEL: usize = 40;
+
 pub fn settings_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("settings.json")
 }
@@ -48,6 +100,19 @@ pub struct Chord {
     pub key: String,
     pub shift: bool,
     pub alt: bool,
+}
+
+/// A theme of the user's own: what it is called, its colours for each
+/// appearance and its shape, each by token.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Theme {
+    pub label: String,
+    #[serde(default)]
+    pub light: BTreeMap<String, String>,
+    #[serde(default)]
+    pub dark: BTreeMap<String, String>,
+    #[serde(default)]
+    pub shape: BTreeMap<String, String>,
 }
 
 /// Whether the agents' hooks go into every project, and the projects that
@@ -70,6 +135,8 @@ pub struct Settings {
     /// window fills in whatever an action has no chord for.
     pub keys: BTreeMap<String, Chord>,
     pub hooks: Hooks,
+    /// The user's own themes, by name. A palette may name one.
+    pub themes: BTreeMap<String, Theme>,
 }
 
 impl Default for Settings {
@@ -85,6 +152,7 @@ impl Default for Settings {
                 everywhere: true,
                 overrides: BTreeMap::new(),
             },
+            themes: BTreeMap::new(),
         }
     }
 }
@@ -139,13 +207,178 @@ fn hooks(value: &Value) -> Result<Hooks, String> {
         .map_err(|_| "hooks is everywhere, on or off, and the projects that say otherwise".into())
 }
 
+/// A colour as a theme gives it: `#` and three or six hex digits.
+pub fn is_colour(text: &str) -> bool {
+    let Some(digits) = text.strip_prefix('#') else {
+        return false;
+    };
+    (digits.len() == 3 || digits.len() == 6) && digits.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// A measure as a theme gives it: whole pixels, `6px`, no more than `most`.
+fn is_pixels(text: &str, most: u32) -> bool {
+    text.strip_suffix("px")
+        .filter(|digits| !digits.is_empty() && digits.len() <= 3)
+        .and_then(|digits| digits.parse::<u32>().ok())
+        .is_some_and(|pixels| pixels <= most)
+}
+
+/// A theme's name: what the palette names it by, and what the window marks
+/// the page with, so lower-case letters, digits and dashes, and never one of
+/// the palettes the app has.
+pub fn is_theme_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !PALETTES.contains(&name)
+}
+
+fn colours(
+    name: &str,
+    appearance: &str,
+    value: Option<&Value>,
+) -> Result<BTreeMap<String, String>, String> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let table = value.as_object().ok_or(format!(
+        "the {appearance} colours of {name} are a table of tokens"
+    ))?;
+    let mut colours = BTreeMap::new();
+    for (token, colour) in table {
+        if !COLOUR_TOKENS.contains(&token.as_str()) {
+            return Err(format!(
+                "{token} is not a colour a theme sets; it sets {}",
+                COLOUR_TOKENS.join(", ")
+            ));
+        }
+        match colour.as_str() {
+            Some(text) if is_colour(text) => {
+                colours.insert(token.clone(), text.to_ascii_lowercase());
+            }
+            _ => {
+                return Err(format!(
+                    "{token} in the {appearance} colours of {name} is a hex colour such as #1a2b3c, not {colour}"
+                ))
+            }
+        }
+    }
+    Ok(colours)
+}
+
+fn shape(name: &str, value: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
+    let Some(value) = value else {
+        return Ok(BTreeMap::new());
+    };
+    let table = value
+        .as_object()
+        .ok_or(format!("the shape of {name} is a table of tokens"))?;
+    let mut shape = BTreeMap::new();
+    for (token, measure) in table {
+        let Some((_, most)) = SHAPE_TOKENS.iter().find(|(known, _)| known == token) else {
+            let known: Vec<&str> = SHAPE_TOKENS.iter().map(|(token, _)| *token).collect();
+            return Err(format!(
+                "{token} is not a measure a theme sets; it sets {}",
+                known.join(", ")
+            ));
+        };
+        match measure.as_str() {
+            Some(text) if is_pixels(text, *most) => {
+                shape.insert(token.clone(), text.to_string());
+            }
+            _ => {
+                return Err(format!(
+                    "{token} in the shape of {name} is whole pixels up to {most}px, such as 6px, not {measure}"
+                ))
+            }
+        }
+    }
+    Ok(shape)
+}
+
+fn theme(name: &str, value: &Value) -> Result<Theme, String> {
+    if !is_theme_name(name) {
+        return Err(format!(
+            "{name:?} is not a theme's name: lower-case letters, digits and dashes, starting with a letter, and none of {}",
+            PALETTES.join(", ")
+        ));
+    }
+    let fields = value.as_object().ok_or(format!(
+        "the theme {name} is a table of a label, colours and a shape"
+    ))?;
+    if let Some(other) = fields
+        .keys()
+        .find(|field| !["label", "light", "dark", "shape"].contains(&field.as_str()))
+    {
+        return Err(format!(
+            "a theme has a label, light, dark and shape, not {other}"
+        ));
+    }
+    let label = match fields.get("label") {
+        None => name.to_string(),
+        Some(Value::String(label))
+            if !label.trim().is_empty() && label.chars().count() <= LONGEST_LABEL =>
+        {
+            label.trim().to_string()
+        }
+        Some(_) => {
+            return Err(format!(
+                "the label of {name} is a few words, {LONGEST_LABEL} characters at most"
+            ))
+        }
+    };
+    Ok(Theme {
+        label,
+        light: colours(name, "light", fields.get("light"))?,
+        dark: colours(name, "dark", fields.get("dark"))?,
+        shape: shape(name, fields.get("shape"))?,
+    })
+}
+
+/// The themes a value holds: all of them, or the reason one will not do.
+/// Read leniently, the ones that will not do are left out instead.
+fn themes(value: &Value, lenient: bool) -> Result<BTreeMap<String, Theme>, String> {
+    let table = value
+        .as_object()
+        .ok_or("themes is a table of themes by name")?;
+    if table.len() > MOST_THEMES {
+        return Err(format!("the settings hold {MOST_THEMES} themes at most"));
+    }
+    let mut themes = BTreeMap::new();
+    for (name, value) in table {
+        match theme(name, value) {
+            Ok(theme) => {
+                themes.insert(name.clone(), theme);
+            }
+            Err(_) if lenient => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(themes)
+}
+
 /// Sets one field from a value, or says why the value will not do. A name
 /// the settings do not have is refused too, so a misspelling is not lost.
+/// A palette is checked against the themes the settings hold, so it is set
+/// after them.
 fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), String> {
     match field {
         "appearance" => settings.appearance = one_of(field, value, APPEARANCES)?,
         "look" => settings.look = one_of(field, value, LOOKS)?,
-        "palette" => settings.palette = one_of(field, value, PALETTES)?,
+        "palette" => {
+            let named = value.as_str().unwrap_or_default();
+            if !settings.themes.contains_key(named) {
+                let mut known: Vec<&str> = PALETTES.to_vec();
+                known.extend(settings.themes.keys().map(String::as_str));
+                settings.palette = one_of(field, value, &known)?;
+            } else {
+                settings.palette = named.to_string();
+            }
+        }
+        "themes" => settings.themes = themes(value, false)?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => settings.keys = keys(value)?,
@@ -155,27 +388,52 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
     Ok(())
 }
 
+/// A change's fields in the order they are set: the palette last, since
+/// it may name a theme the same change brings.
+fn in_order(fields: &Map<String, Value>) -> impl Iterator<Item = (&String, &Value)> {
+    let palette = fields.iter().filter(|(field, _)| *field == "palette");
+    fields
+        .iter()
+        .filter(|(field, _)| *field != "palette")
+        .chain(palette)
+}
+
+/// A palette that names a theme the settings no longer hold is the default.
+fn settle_palette(settings: &mut Settings) {
+    if !PALETTES.contains(&settings.palette.as_str())
+        && !settings.themes.contains_key(&settings.palette)
+    {
+        settings.palette = Settings::default().palette;
+    }
+}
+
 /// The settings a file's text holds, each field that does not read left at
-/// its default. None when the text is not a JSON object at all.
+/// its default, and each theme that does not read left out. None when the
+/// text is not a JSON object at all.
 pub fn parse(text: &str) -> Option<Settings> {
     let fields: Map<String, Value> = serde_json::from_str(text).ok()?;
     let mut settings = Settings::default();
-    for (field, value) in &fields {
-        let _ = set_field(&mut settings, field, value);
+    for (field, value) in in_order(&fields) {
+        if field == "themes" {
+            settings.themes = themes(value, true).unwrap_or_default();
+        } else {
+            let _ = set_field(&mut settings, field, value);
+        }
     }
     Some(settings)
 }
 
 /// The settings with a change laid over them. The change names only the
-/// fields it changes; keys and hooks are replaced whole.
+/// fields it changes; keys, hooks and themes are replaced whole.
 pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     let fields = change
         .as_object()
         .ok_or("a change is an object of settings by name")?;
     let mut next = settings.clone();
-    for (field, value) in fields {
+    for (field, value) in in_order(fields) {
         set_field(&mut next, field, value)?;
     }
+    settle_palette(&mut next);
     Ok(next)
 }
 
@@ -456,6 +714,140 @@ mod tests {
         assert!(settings.keys.is_empty());
         assert!(parse("not json").is_none());
         assert!(parse("[1]").is_none());
+    }
+
+    fn dusk() -> Value {
+        json!({
+            "label": "Dusk",
+            "light": { "accent": "#7A4A8C", "surface": "#fff" },
+            "dark": { "accent": "#c39ad4", "bg": "#101014" },
+            "shape": { "radius": "10px", "pane-pad": "16px" }
+        })
+    }
+
+    #[test]
+    fn a_theme_and_the_palette_naming_it_arrive_in_one_change() {
+        let next = apply(
+            &Settings::default(),
+            &json!({ "palette": "dusk", "themes": { "dusk": dusk() } }),
+        )
+        .unwrap();
+        assert_eq!(next.palette, "dusk");
+        let theme = &next.themes["dusk"];
+        assert_eq!(theme.label, "Dusk");
+        assert_eq!(
+            theme.light["accent"], "#7a4a8c",
+            "colours are kept in lower case"
+        );
+        assert_eq!(theme.dark["bg"], "#101014");
+        assert_eq!(theme.shape["radius"], "10px");
+    }
+
+    #[test]
+    fn a_palette_names_a_theme_the_settings_hold_or_one_the_app_has() {
+        let error = apply(&Settings::default(), &json!({ "palette": "dusk" })).unwrap_err();
+        assert!(error.contains("palette is one of teal"), "{error}");
+        let with = apply(
+            &Settings::default(),
+            &json!({ "themes": { "dusk": dusk() } }),
+        )
+        .unwrap();
+        assert!(apply(&with, &json!({ "palette": "dusk" })).is_ok());
+        let error = apply(&with, &json!({ "palette": "night" })).unwrap_err();
+        assert!(error.contains("dusk"), "names the themes too: {error}");
+    }
+
+    #[test]
+    fn taking_away_the_theme_in_use_goes_back_to_the_default_palette() {
+        let with = apply(
+            &Settings::default(),
+            &json!({ "palette": "dusk", "themes": { "dusk": dusk() } }),
+        )
+        .unwrap();
+        let without = apply(&with, &json!({ "themes": {} })).unwrap();
+        assert!(without.themes.is_empty());
+        assert_eq!(without.palette, "teal");
+    }
+
+    #[test]
+    fn a_theme_sets_only_the_tokens_it_may_and_only_in_their_form() {
+        let bad = |theme: Value| {
+            apply(
+                &Settings::default(),
+                &json!({ "themes": { "dusk": theme } }),
+            )
+            .unwrap_err()
+        };
+        assert!(bad(json!({ "light": { "font": "#fff" } })).contains("not a colour a theme sets"));
+        assert!(bad(json!({ "light": { "accent": "red" } })).contains("hex colour"));
+        assert!(bad(json!({ "light": { "accent": "#12345" } })).contains("hex colour"));
+        assert!(bad(json!({ "dark": { "accent": "#fff; }" } })).contains("hex colour"));
+        assert!(bad(json!({ "light": { "accent": "url(x)" } })).contains("hex colour"));
+        assert!(bad(json!({ "shape": { "radius": "100px" } })).contains("up to 16px"));
+        assert!(bad(json!({ "shape": { "radius": "4em" } })).contains("whole pixels"));
+        assert!(bad(json!({ "shape": { "margin": "4px" } })).contains("not a measure"));
+        assert!(bad(json!({ "label": "" })).contains("label"));
+        assert!(bad(json!({ "css": "body{}" })).contains("not css"));
+        assert!(bad(json!("#fff")).contains("table"));
+    }
+
+    #[test]
+    fn a_theme_s_name_is_one_the_page_can_carry() {
+        assert!(is_theme_name("dusk"));
+        assert!(is_theme_name("solar-2"));
+        for name in [
+            "",
+            "Dusk",
+            "2dusk",
+            "dusk night",
+            "dusk\"]",
+            "teal",
+            "a".repeat(33).as_str(),
+        ] {
+            assert!(!is_theme_name(name), "{name:?}");
+        }
+        let error = apply(
+            &Settings::default(),
+            &json!({ "themes": { "teal": dusk() } }),
+        )
+        .unwrap_err();
+        assert!(error.contains("not a theme's name"), "{error}");
+    }
+
+    #[test]
+    fn a_theme_without_a_label_is_called_by_its_name() {
+        let next = apply(
+            &Settings::default(),
+            &json!({ "themes": { "dusk": { "light": { "accent": "#123456" } } } }),
+        )
+        .unwrap();
+        assert_eq!(next.themes["dusk"].label, "dusk");
+        assert!(next.themes["dusk"].dark.is_empty());
+    }
+
+    #[test]
+    fn a_file_keeps_the_themes_that_read_and_leaves_out_the_rest() {
+        let settings = parse(
+            r##"{
+                "palette": "dusk",
+                "themes": {
+                    "dusk": { "label": "Dusk", "light": { "accent": "#7a4a8c" } },
+                    "broken": { "light": { "accent": "red" } },
+                    "Bad Name": {}
+                }
+            }"##,
+        )
+        .unwrap();
+        assert_eq!(settings.themes.keys().collect::<Vec<_>>(), ["dusk"]);
+        assert_eq!(
+            settings.palette, "dusk",
+            "the palette is read after the themes"
+        );
+        let settings = parse(
+            r#"{ "palette": "broken", "themes": { "broken": { "light": { "accent": "red" } } } }"#,
+        )
+        .unwrap();
+        assert_eq!(settings.palette, "teal");
     }
 
     #[test]

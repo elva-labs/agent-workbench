@@ -1,5 +1,6 @@
 <script lang="ts">
   import { coversBrowser } from "$lib/browser.svelte";
+  import { DEFAULTS, type CustomTheme } from "$lib/customThemes";
   import {
     allowChange,
     declineChange,
@@ -10,6 +11,11 @@
 
   let ask = $derived(settingsAsk.asking);
   let undo = $derived(settingsAsk.undo);
+
+  /** A colour of a theme being saved, the default palette's where it sets none. */
+  function tone(shown: CustomTheme, appearance: "light" | "dark", token: string): string {
+    return shown[appearance][token] ?? DEFAULTS[appearance][token];
+  }
 </script>
 
 {#if ask !== null}
@@ -35,6 +41,32 @@
         </li>
       {/each}
     </ul>
+    {#if ask.theme !== null}
+      {@const shown = ask.theme}
+      <div class="previews" data-testid="settings-ask-theme">
+        {#each ["light", "dark"] as const as appearance (appearance)}
+          <div
+            class="preview"
+            data-appearance={appearance}
+            style:background={tone(shown, appearance, "bg")}
+            style:border-radius={shown.shape.radius ?? "var(--radius)"}
+          >
+            <div
+              class="card"
+              style:background={tone(shown, appearance, "surface")}
+              style:border-color={tone(shown, appearance, "rule")}
+              style:border-radius={shown.shape["radius-sm"] ?? "var(--radius-sm)"}
+            >
+              <span class="bar" style:background={tone(shown, appearance, "accent")}></span>
+              <span class="ink" style:color={tone(shown, appearance, "ink")}>{appearance === "light" ? "Light" : "Dark"}</span>
+              <span class="ink-2" style:color={tone(shown, appearance, "ink-2")}>Aa</span>
+              <span class="add" style:color={tone(shown, appearance, "add")}>+2</span>
+              <span class="del" style:color={tone(shown, appearance, "del")}>−1</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
     <div class="actions">
       <button class="go" onclick={allowChange} data-testid="settings-allow">Allow</button>
       <button class="later" onclick={declineChange} data-testid="settings-decline">Decline</button>
@@ -141,6 +173,39 @@
   .actions {
     display: flex;
     gap: 8px;
+  }
+
+  /* The theme as it would paint, one small card on its ground for each
+     appearance. */
+  .previews {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 0 0 10px;
+  }
+
+  .preview {
+    padding: 8px;
+    border: 1px solid var(--rule);
+  }
+
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid;
+    font-size: 12px;
+  }
+
+  .bar {
+    width: 3px;
+    height: 14px;
+    border-radius: 1px;
+  }
+
+  .ink {
+    font-weight: 600;
   }
 
   button {

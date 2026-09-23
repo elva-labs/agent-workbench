@@ -140,7 +140,7 @@ export interface BrowserRequest {
 export interface SettingsRequest {
   /** What the answer is named after, unique to this call. */
   id: string;
-  tool: "settings" | "settings_change";
+  tool: "settings" | "settings_change" | "theme_save";
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which machine waits. */
   cwd: string;
@@ -513,6 +513,16 @@ export interface Settings {
   /** The whole chord table, by action. Empty is the default preset. */
   keys: Record<string, KeyChord>;
   hooks: { everywhere: boolean; overrides: Record<string, boolean> };
+  /** The user's own themes, by name. A palette may name one. */
+  themes: Record<
+    string,
+    {
+      label: string;
+      light: Record<string, string>;
+      dark: Record<string, string>;
+      shape: Record<string, string>;
+    }
+  >;
 }
 
 /** The settings, and whether a file held them: none held means the window

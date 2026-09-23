@@ -241,7 +241,7 @@ pub struct BrowserRequest {
 /// The tools an agent reads and changes the workbench's own settings with.
 /// The window answers each of these: a change is put to the user first, and
 /// the settings it changes are the ones of the machine the window runs on.
-pub const SETTINGS_TOOLS: &[&str] = &["settings", "settings_change"];
+pub const SETTINGS_TOOLS: &[&str] = &["settings", "settings_change", "theme_save"];
 
 /// A call the agent made on one of the settings tools. The window answers
 /// it, and the answer goes where the tool server waits.

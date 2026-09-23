@@ -282,6 +282,7 @@ export async function installFakeCore(
         interfaceFont: "system",
         keys: {},
         hooks: { everywhere: true, overrides: {} },
+        themes: {},
       };
       const allowed: Record<string, string[]> = {
         appearance: ["system", "light", "dark"],
@@ -1006,15 +1007,22 @@ export async function installFakeCore(
             : { stored: true, settings: found };
         },
         settingsSet: async (change: Record<string, unknown>) => {
+          const before = readSettings() ?? settingsDefaults;
+          const themes = (change.themes ?? before.themes ?? {}) as Record<string, unknown>;
           for (const [field, value] of Object.entries(change)) {
-            if (field in allowed) {
+            if (field === "palette") {
+              if (!allowed.palette.includes(value as string) && !(value as string in themes))
+                throw new Error(`palette is one of ${[...allowed.palette, ...Object.keys(themes)].join(", ")}`);
+            } else if (field in allowed) {
               if (!allowed[field].includes(value as string))
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
-            } else if (field !== "keys" && field !== "hooks") {
+            } else if (!["keys", "hooks", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }
           }
-          const next = { ...(readSettings() ?? settingsDefaults), ...change };
+          const next: Record<string, unknown> = { ...before, ...change };
+          if (!allowed.palette.includes(next.palette as string) && !((next.palette as string) in themes))
+            next.palette = "teal";
           localStorage.setItem(settingsFile, JSON.stringify(next));
           settingsChanged(next);
           return next;

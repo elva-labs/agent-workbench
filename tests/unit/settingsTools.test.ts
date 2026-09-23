@@ -37,11 +37,12 @@ import {
   dismissUndo,
   handle,
   plan,
+  planTheme,
   resetSettingsTools,
   settingsAsk,
   undoChange,
 } from "$lib/settingsTools.svelte";
-import { theme } from "$lib/theme.svelte";
+import { setThemes, theme } from "$lib/theme.svelte";
 
 let next = 0;
 function request(
@@ -56,6 +57,7 @@ function request(
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
+  theme.themes = {};
   answers.length = 0;
   sets.length = 0;
   resetSettingsTools();
@@ -283,5 +285,76 @@ describe("describeSettings", () => {
     for (const action of Object.keys(PRESETS.default)) {
       expect(text).toContain(`  ${action}: `);
     }
+  });
+});
+
+describe("a theme", () => {
+  const dusk = {
+    name: "dusk",
+    label: "Dusk",
+    light: { accent: "#7a4a8c" },
+    dark: { accent: "#c39ad4" },
+    shape: { radius: "10px" },
+  };
+
+  it("is a new theme and a switch to it", () => {
+    const { next, changes, theme: shown } = planTheme(dusk);
+    expect(shown.label).toBe("Dusk");
+    expect(next.palette).toBe("dusk");
+    expect(next.themes?.dusk.light.accent).toBe("#7a4a8c");
+    expect(changes).toEqual([
+      { field: "theme", label: "Theme", from: "none", to: "Dusk, new" },
+      { field: "palette", label: "Palette", from: "Teal", to: "Dusk" },
+    ]);
+  });
+
+  it("saved again under its name while in use is one change", () => {
+    setThemes({ dusk: { label: "Dusk", light: {}, dark: {}, shape: {} } }, "dusk");
+    const { changes } = planTheme(dusk);
+    expect(changes).toEqual([
+      { field: "theme", label: "Theme", from: "Dusk as it was", to: "Dusk, changed" },
+    ]);
+    setThemes({ dusk: planTheme(dusk).theme }, "dusk");
+    expect(planTheme(dusk).changes).toEqual([]);
+  });
+
+  it("is refused when it cannot be read, or breaks the rules", () => {
+    expect(() => planTheme({ ...dusk, light: { ink: "#dddddd" } })).toThrow(/contrast/);
+    expect(() => planTheme({ ...dusk, name: "Teal" })).toThrow(/not a theme's name/);
+    expect(() => planTheme({ ...dusk, light: { accent: "blue" } })).toThrow(/hex colour/);
+    expect(() => planTheme({ ...dusk, extra: true })).toThrow(/not extra/);
+  });
+
+  it("is shown to the user as swatches, and kept only if allowed", async () => {
+    const done = handle(request("theme_save", { ...dusk, reason: "Purple, as asked." }));
+    await settle();
+    expect(settingsAsk.asking?.theme?.light.accent).toBe("#7a4a8c");
+    expect(settingsAsk.asking?.reason).toBe("Purple, as asked.");
+    expect(theme.themes).toEqual({});
+    allowChange();
+    await done;
+    expect(theme.palette).toBe("dusk");
+    expect(theme.themes.dusk.shape.radius).toBe("10px");
+    expect(sets.at(-1)).toMatchObject({ palette: "dusk", themes: { dusk: { label: "Dusk" } } });
+    expect(answers[0].content).toMatch(/allowed the change/);
+  });
+
+  it("is taken away again by undo, with the palette it replaced", async () => {
+    theme.palette = "rose";
+    const done = handle(request("theme_save", dusk));
+    await settle();
+    allowChange();
+    await done;
+    undoChange();
+    expect(theme.themes).toEqual({});
+    expect(theme.palette).toBe("rose");
+  });
+
+  it("the user has can be chosen by settings_change", () => {
+    setThemes({ dusk: planTheme(dusk).theme });
+    const { changes } = plan({ palette: "dusk" });
+    expect(changes).toEqual([{ field: "palette", label: "Palette", from: "Teal", to: "Dusk" }]);
+    expect(describeSettings()).toContain("dusk (Dusk)");
+    expect(describeSettings()).toMatch(/palette: teal \(one of teal, indigo, amber, rose, mono, dusk\)/);
   });
 });

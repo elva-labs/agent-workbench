@@ -57,9 +57,11 @@
     setPalette,
     setSans,
     setTheme,
+    deleteTheme,
     theme,
     type ThemeChoice,
   } from "$lib/theme.svelte";
+  import { DEFAULTS } from "$lib/customThemes";
 
   /**
    * The settings, over the workbench. Reached from the native menu or its
@@ -399,7 +401,38 @@
                 {palette.label}
               </button>
             {/each}
+            {#each Object.entries(theme.themes) as [name, own] (name)}
+              <span class="own" class:on={theme.palette === name}>
+                <button
+                  class="swatch"
+                  role="radio"
+                  aria-checked={theme.palette === name}
+                  class:on={theme.palette === name}
+                  onclick={() => setPalette(name)}
+                  data-testid="palette-{name}"
+                >
+                  <span
+                    class="dot"
+                    style:background={own[resolvedTheme()].accent ?? DEFAULTS[resolvedTheme()].accent}
+                  ></span>
+                  {own.label}
+                </button>
+                <button
+                  class="forget"
+                  onclick={() => deleteTheme(name)}
+                  aria-label="Delete the theme {own.label}"
+                  title="Delete the theme"
+                  data-testid="theme-delete-{name}">×</button
+                >
+              </span>
+            {/each}
           </div>
+          {#if Object.keys(theme.themes).length > 0}
+            <p class="note">
+              Your own themes, made by an agent you asked or by hand, are kept with the settings
+              in <code>~/.agent-workbench/settings.json</code>.
+            </p>
+          {/if}
         {:else if tab === "live"}
           <section class="live" class:lit bind:this={live} data-testid="settings-live">
             <h3>Live updates</h3>
@@ -1039,6 +1072,38 @@
     height: 10px;
     border-radius: 50%;
     flex: none;
+  }
+
+  /* One of the user's own themes: its swatch, and a way to delete it, held
+     together so the pair wraps as one. */
+  .own {
+    display: inline-flex;
+    align-items: stretch;
+  }
+
+  .own .swatch {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .forget {
+    padding: 0 7px;
+    border: 1px solid var(--rule);
+    border-left: none;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: none;
+    color: var(--ink-3);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .own.on .forget {
+    border-color: var(--accent);
+  }
+
+  .forget:hover {
+    color: var(--del);
   }
 
   .custom {

@@ -5,7 +5,9 @@ import {
   LOOKS,
   PALETTES,
   TERMINAL_FONTS,
+  adoptTheme,
   cycleTheme,
+  deleteTheme,
   loadTheme,
   resolvedTheme,
   setLook,
@@ -13,10 +15,12 @@ import {
   setPalette,
   setSans,
   setTheme,
+  setThemes,
   theme,
 } from "$lib/theme.svelte";
 
 beforeEach(() => {
+  theme.themes = {};
   theme.choice = "system";
   theme.palette = "teal";
   theme.look = "modern";
@@ -243,5 +247,66 @@ describe("resolvedTheme", () => {
     setTheme("system");
     vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
     expect(resolvedTheme()).toBe("dark");
+  });
+});
+
+describe("the user's own themes", () => {
+  const dusk = {
+    label: "Dusk",
+    light: { accent: "#7a4a8c" },
+    dark: { accent: "#c39ad4" },
+    shape: {},
+  };
+  const sheet = () => document.getElementById("workbench-themes")?.textContent ?? "";
+
+  it("are painted from a stylesheet of their own and can be chosen", () => {
+    setThemes({ dusk }, "dusk");
+    expect(theme.palette).toBe("dusk");
+    expect(document.documentElement.dataset.palette).toBe("dusk");
+    expect(sheet()).toContain(':root:root[data-palette="dusk"]');
+    expect(sheet()).toContain("--accent: #7a4a8c;");
+    setPalette("teal");
+    setPalette("dusk");
+    expect(theme.palette).toBe("dusk");
+  });
+
+  it("are not a palette until they are among the themes", () => {
+    setPalette("dusk");
+    expect(theme.palette).toBe("teal");
+  });
+
+  it("are kept for the first frame of the next start", () => {
+    setThemes({ dusk }, "dusk");
+    theme.themes = {};
+    theme.palette = "teal";
+    loadTheme();
+    expect(theme.themes.dusk?.label).toBe("Dusk");
+    expect(theme.palette).toBe("dusk");
+  });
+
+  it("go back to the default palette when the one in use is deleted", () => {
+    setThemes({ dusk }, "dusk");
+    deleteTheme("dusk");
+    expect(theme.themes).toEqual({});
+    expect(theme.palette).toBe("teal");
+    expect(sheet()).toBe("");
+  });
+
+  it("leave out what does not pass when adopted", () => {
+    adoptTheme({
+      themes: {
+        dusk,
+        broken: { label: "x", light: { accent: "red" }, dark: {}, shape: {} },
+      },
+      palette: "broken",
+    });
+    expect(Object.keys(theme.themes)).toEqual(["dusk"]);
+    expect(theme.palette).toBe("teal");
+  });
+
+  it("count every repaint, for the terminals to follow", () => {
+    const before = theme.painted;
+    setThemes({ dusk: { ...dusk, light: { accent: "#123456" } } }, "dusk");
+    expect(theme.painted).toBeGreaterThan(before);
   });
 });

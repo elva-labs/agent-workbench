@@ -21,6 +21,7 @@ const DEFAULTS: Settings = {
   interfaceFont: "system",
   keys: {},
   hooks: { everywhere: true, overrides: {} },
+  themes: {},
 };
 
 vi.mock("$lib/core", () => ({
