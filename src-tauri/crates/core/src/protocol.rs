@@ -439,7 +439,7 @@ pub fn dispatch(
             core.set_selection(p.selection)?;
             Ok(Value::Null)
         }
-        "conduct_answer" | "browser_answer" => {
+        "conduct_answer" | "browser_answer" | "settings_answer" => {
             let p: AnswerParams = parse(params)?;
             core.conduct_answer(&p.id, p.content, p.error)?;
             Ok(Value::Null)
@@ -649,6 +649,30 @@ mod tests {
         assert_eq!(
             answer.content.as_deref(),
             Some("1  https://example.com/  Example")
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_settings_call_is_answered_the_same_way_as_a_conduct_call() {
+        let core = core();
+        let Some(home) = core.home().map(|home| home.to_path_buf()) else {
+            return;
+        };
+        let sent = dispatch(
+            &core,
+            "settings_answer",
+            json!({ "id": "workbench-protocol-settings", "error": "The user declined the change." }),
+            no_output,
+        )
+        .unwrap();
+        assert_eq!(sent, Value::Null);
+        let path = crate::show::answer_path(&home, "workbench-protocol-settings");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let answer: crate::show::Answer = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            answer.error.as_deref(),
+            Some("The user declined the change.")
         );
         std::fs::remove_file(&path).unwrap();
     }

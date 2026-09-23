@@ -73,6 +73,33 @@ checking and updating do is in [plugins](plugins.md).
 The whole chord table, with two presets and room for your own. What the app
 may claim and why is in [focus](focus-model.md).
 
+## An agent changing them
+
+An agent can read the settings and ask to change them, with two tools the
+workbench offers it alongside the others in [hooks](hooks.md). They are for
+when the user asks the agent for a change to the workbench itself, a darker
+appearance or a chord of their own, and the agent is told so.
+
+Reading answers at once, with every setting, what it takes, and the chord
+of every action. A change names only what should change, and the agent may
+give a reason in the user's terms. It is checked whole before the user
+sees it: a value a setting does not take, an action that does not exist, a
+chord two actions would share or one the agent's terminal needs, and the
+agent is told why without the user being troubled. The agent hooks and the
+plugins are refused outright, as the user's to change.
+
+A change that will do is put to the user over the agent pane: who is
+asking, the reason, and each setting from what it is to what it would be.
+Nothing changes unless they allow it, and the agent waits for the answer,
+which says which it was. A change the user allows can be undone, from a
+word where the question was, for twenty seconds; undoing puts back only the
+settings that change moved. Changes asked at once are put one after
+another, each read against the settings as they are by the time it comes
+up.
+
+The settings an agent changes are those of the machine the window runs
+on, whichever machine the agent runs on.
+
 ## Where they are kept
 
 The appearance, the look, the palette, the fonts, the chords and the answer

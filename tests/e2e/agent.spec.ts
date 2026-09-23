@@ -251,6 +251,16 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         conductAnswer: async () => {},
         onBrowserRequest: async () => () => {},
         browserAnswer: async () => {},
+        onSettingsRequest: async () => () => {},
+        settingsAnswer: async () => {},
+        // A machine that keeps no settings: the window's own copy holds.
+        settingsGet: async () => {
+          throw new Error("no settings here");
+        },
+        settingsSet: async () => {
+          throw new Error("no settings here");
+        },
+        onSettingsChanged: async () => () => {},
         onBrowserTabs: async () => () => {},
         browserTabs: async () => ({ tabs: [], active: null }),
         browserKeys: async () => {},

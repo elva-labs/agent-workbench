@@ -30,6 +30,7 @@ pub const TERMINAL_REQUEST: &str = "terminal_request";
 pub const NOTIFY_REQUEST: &str = "notify_request";
 pub const CONDUCT_REQUEST: &str = "conduct_request";
 pub const BROWSER_REQUEST: &str = "browser_request";
+pub const SETTINGS_REQUEST: &str = "settings_request";
 
 /// The kinds the `present` tool takes, by extension: images, PDFs, and
 /// Markdown, which the window renders. Video is not among them yet.
@@ -237,6 +238,29 @@ pub struct BrowserRequest {
     pub session: Option<String>,
 }
 
+/// The tools an agent reads and changes the workbench's own settings with.
+/// The window answers each of these: a change is put to the user first, and
+/// the settings it changes are the ones of the machine the window runs on.
+pub const SETTINGS_TOOLS: &[&str] = &["settings", "settings_change"];
+
+/// A call the agent made on one of the settings tools. The window answers
+/// it, and the answer goes where the tool server waits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsRequest {
+    /// What the answer file is named after, unique to this call.
+    pub id: String,
+    /// One of [`SETTINGS_TOOLS`].
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    /// Where the calling agent runs, which says which machine waits for the
+    /// answer.
+    pub cwd: String,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
 /// A line of the log, whichever tool wrote it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -249,6 +273,7 @@ pub enum Request {
     Tool(ToolRequest),
     Conduct(ConductRequest),
     Browser(BrowserRequest),
+    Settings(SettingsRequest),
 }
 
 /// What a plugin answered a tool call with: the text for the agent, or
@@ -373,6 +398,15 @@ pub fn classify(line: &str) -> Option<Request> {
             }
             Some(Request::Browser(browser))
         }
+        Request::Settings(settings) => {
+            if !valid_id(&settings.id)
+                || !SETTINGS_TOOLS.contains(&settings.tool.as_str())
+                || settings.cwd.is_empty()
+            {
+                return None;
+            }
+            Some(Request::Settings(settings))
+        }
     }
 }
 
@@ -433,6 +467,9 @@ pub fn watch(
                 on_browser(browser);
                 None
             }
+            Request::Settings(settings) => serde_json::to_value(settings)
+                .ok()
+                .map(|value| (SETTINGS_REQUEST.to_string(), value)),
         })
     })
 }
@@ -486,7 +523,8 @@ mod tests {
             | Request::Notify(_)
             | Request::Tool(_)
             | Request::Conduct(_)
-            | Request::Browser(_) => None,
+            | Request::Browser(_)
+            | Request::Settings(_) => None,
         }
     }
 
@@ -608,6 +646,69 @@ mod tests {
         assert!(
             classify(r#"{"kind":"browser","id":"","tool":"browser_open","cwd":"/p"}"#).is_none()
         );
+    }
+
+    #[test]
+    fn reads_a_settings_call_and_refuses_a_tool_it_does_not_serve() {
+        let line = r#"{"kind":"settings","id":"s-1","tool":"settings_change","arguments":{"palette":"amber"},"cwd":"/p","session":"a-1"}"#;
+        let Some(Request::Settings(request)) = classify(line) else {
+            panic!("not a settings request");
+        };
+        assert_eq!(request.id, "s-1");
+        assert_eq!(request.tool, "settings_change");
+        assert_eq!(request.arguments["palette"], "amber");
+        assert_eq!(request.cwd, "/p");
+        assert_eq!(request.session.as_deref(), Some("a-1"));
+        for tool in SETTINGS_TOOLS {
+            let line = format!(r#"{{"kind":"settings","id":"s-1","tool":"{tool}","cwd":"/p"}}"#);
+            assert!(classify(&line).is_some(), "{tool}");
+        }
+        assert!(
+            classify(r#"{"kind":"settings","id":"s-1","tool":"plugins","cwd":"/p"}"#).is_none()
+        );
+        assert!(classify(r#"{"kind":"settings","id":"s-1","tool":"settings","cwd":""}"#).is_none());
+        assert!(
+            classify(r#"{"kind":"settings","id":"../out","tool":"settings","cwd":"/p"}"#).is_none()
+        );
+    }
+
+    #[test]
+    fn a_settings_call_reaches_the_window_as_an_event() {
+        use crate::events::testing::Recorder;
+        let home = std::env::temp_dir().join("workbench-show-settings-event");
+        let _ = std::fs::remove_dir_all(&home);
+        let recorder = Arc::new(Recorder::default());
+        watch(
+            recorder.clone(),
+            requests_path(&home),
+            |_| {},
+            |_| {},
+            |_| {},
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        append(
+            &home,
+            &Request::Settings(SettingsRequest {
+                id: "s-2".into(),
+                tool: "settings".into(),
+                arguments: serde_json::json!({}),
+                cwd: "/p".into(),
+                session: None,
+            }),
+        )
+        .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let events = recorder.events.lock().unwrap().clone();
+            if let Some((_, payload)) = events.iter().find(|(name, _)| name == SETTINGS_REQUEST) {
+                assert_eq!(payload["id"], "s-2");
+                assert_eq!(payload["tool"], "settings");
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "no settings request");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     #[test]

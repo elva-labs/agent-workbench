@@ -616,6 +616,22 @@ export async function installFakeCore(
           const w = window as unknown as { __browserAnswers?: unknown[] };
           (w.__browserAnswers ??= []).push({ id, cwd, content, error });
         },
+        // The settings tools' calls, pushed by a test through the handler,
+        // and the window's answers, read back from the list.
+        onSettingsRequest: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__settingsRequest =
+            handler;
+          return () => {};
+        },
+        settingsAnswer: async (
+          id: string,
+          cwd: string,
+          content: string | null,
+          error: string | null,
+        ) => {
+          const w = window as unknown as { __settingsAnswers?: unknown[] };
+          (w.__settingsAnswers ??= []).push({ id, cwd, content, error });
+        },
         worktreeAdd: async (project: string, name: string) =>
           `${project}/.claude/worktrees/${name}`,
         orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",

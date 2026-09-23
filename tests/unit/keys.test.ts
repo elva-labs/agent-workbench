@@ -3,9 +3,14 @@ import {
   ACTIONS,
   PRESETS,
   actionOf,
+  adoptKeys,
   applyPreset,
   chordFor,
   chordFromEvent,
+  chordText,
+  parseChord,
+  setBindings,
+  tableProblem,
   describe as spell,
   keys,
   loadKeys,
@@ -142,5 +147,69 @@ describe("persistence", () => {
     loadKeys();
     expect(chordFor("review")).toEqual(chord("g"));
     expect(chordFor("view")).toEqual(chord("e"));
+  });
+});
+
+describe("chords as text", () => {
+  it("reads a key with shift and alt before it, the modifier implied", () => {
+    expect(parseChord("k")).toEqual(chord("k"));
+    expect(parseChord("Shift+K")).toEqual(chord("k", true));
+    expect(parseChord("alt+shift+down")).toEqual(chord("ArrowDown", true, true));
+    expect(parseChord("cmd+option+ArrowUp")).toEqual(chord("ArrowUp", false, true));
+    expect(parseChord("ctrl+space")).toEqual(chord(" "));
+    expect(parseChord("shift+,")).toEqual(chord(",", true));
+    expect(parseChord("\\")).toEqual(chord("\\"));
+    expect(parseChord("shift++")).toEqual(chord("+", true));
+    expect(parseChord("Enter")).toEqual(chord("Enter"));
+  });
+
+  it("reads nothing from text that is not one chord", () => {
+    expect(parseChord("")).toBeNull();
+    expect(parseChord("hyper+k")).toBeNull();
+    expect(parseChord("shift+")).toBeNull();
+    expect(parseChord("two words")).toBeNull();
+    expect(parseChord("<script>")).toBeNull();
+  });
+
+  it("writes a chord the way it is read", () => {
+    for (const table of Object.values(PRESETS)) {
+      for (const bound of Object.values(table)) {
+        expect(parseChord(chordText(bound))).toEqual(bound);
+      }
+    }
+    expect(chordText(chord("ArrowDown", true, true))).toBe("alt+shift+down");
+    expect(chordText(chord(" "))).toBe("space");
+  });
+});
+
+describe("a whole table", () => {
+  it("is refused with a chord two actions share", () => {
+    const table = { ...PRESETS.default, review: chord("e") };
+    expect(tableProblem(table)).toMatch(/would be both/);
+  });
+
+  it("is refused with a chord the agent needs", () => {
+    const table = { ...PRESETS.default, review: chord("r") };
+    expect(tableProblem(table)).toMatch(/stays with the agent/);
+  });
+
+  it("is taken whole, with the preset it matches", () => {
+    expect(tableProblem(PRESETS.vim)).toBeNull();
+    setBindings(PRESETS.vim);
+    expect(keys.preset).toBe("vim");
+    setBindings({ ...PRESETS.vim, review: chord("g") });
+    expect(keys.preset).toBe("custom");
+    resetKeys();
+    loadKeys();
+    expect(chordFor("review")).toEqual(chord("g"));
+  });
+
+  it("is adopted from the core, filling what it lacks from the default", () => {
+    adoptKeys({ review: chord("g"), unknown: chord("q") } as never);
+    expect(chordFor("review")).toEqual(chord("g"));
+    expect(chordFor("view")).toEqual(chord("e"));
+    expect(keys.preset).toBe("custom");
+    adoptKeys({});
+    expect(keys.preset).toBe("default");
   });
 });

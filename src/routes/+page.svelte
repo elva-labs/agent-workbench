@@ -12,8 +12,10 @@
   import Resume from "$lib/components/Resume.svelte";
   import { resume } from "$lib/resume.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
+  import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
+  import { handle as settingsRequested } from "$lib/settingsTools.svelte";
   import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
@@ -147,6 +149,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onBrowserRequest((request) => void browserRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onSettingsRequest((request) => void settingsRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onBrowserFocused(() => browserFocused())
@@ -547,6 +552,7 @@
 {#if conductor.asking !== null}
   <ConductAsk />
 {/if}
+<SettingsAsk />
 
 
 <footer class="status no-select">

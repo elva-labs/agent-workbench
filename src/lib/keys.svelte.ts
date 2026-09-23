@@ -174,6 +174,85 @@ export function setBinding(action: ActionKey, chord: Chord): string | null {
   return null;
 }
 
+/** Why a whole table cannot be used, or null when it can: a chord two
+    actions share, or one the agent needs. */
+export function tableProblem(table: Keymap): string | null {
+  for (const { key } of ACTIONS) {
+    const chord = table[key];
+    if (!chord.shift && RESERVED.has(chord.key)) {
+      return `${describe(chord)} stays with the agent: it interrupts, or searches history, there.`;
+    }
+    const other = ACTIONS.find(
+      (action) => action.key !== key && sameChord(table[action.key], chord),
+    );
+    if (other !== undefined) {
+      return `${describe(chord)} would be both ${labelOf(key)} and ${labelOf(other.key)}.`;
+    }
+  }
+  return null;
+}
+
+/** Takes a whole table at once, one `tableProblem` has passed. */
+export function setBindings(table: Keymap) {
+  keys.bindings = { ...table };
+  keys.preset = presetOf(keys.bindings);
+  save();
+}
+
+/** The names a chord's key may be written with, besides itself. */
+const KEY_NAMES: Record<string, string> = {
+  up: "ArrowUp",
+  down: "ArrowDown",
+  left: "ArrowLeft",
+  right: "ArrowRight",
+  space: " ",
+  arrowup: "ArrowUp",
+  arrowdown: "ArrowDown",
+  arrowleft: "ArrowLeft",
+  arrowright: "ArrowRight",
+};
+
+const MODIFIER_NAMES = new Set(["mod", "cmd", "command", "ctrl", "control", "meta", "super"]);
+
+/**
+ * A chord as it is written in text: its key, with shift and alt before it
+ * when wanted, joined by +, such as `shift+k` or `alt+shift+down`. The
+ * platform modifier is part of every chord, so writing it is allowed and
+ * changes nothing. Null for text that is not one chord.
+ */
+export function parseChord(text: string): Chord | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  // A lone plus is the key itself, and so is a plus at the end.
+  const parts = trimmed.endsWith("++")
+    ? [...trimmed.slice(0, -2).split("+"), "+"]
+    : trimmed === "+"
+      ? ["+"]
+      : trimmed.split("+");
+  const name = parts.pop()!.trim();
+  if (name === "") return null;
+  let shift = false;
+  let alt = false;
+  for (const part of parts) {
+    const modifier = part.trim().toLowerCase();
+    if (modifier === "shift") shift = true;
+    else if (modifier === "alt" || modifier === "option" || modifier === "opt") alt = true;
+    else if (!MODIFIER_NAMES.has(modifier)) return null;
+  }
+  const key =
+    KEY_NAMES[name.toLowerCase()] ?? (name.length === 1 ? name.toLowerCase() : name);
+  if (key.length > 1 && !/^[A-Z][A-Za-z0-9]*$/.test(key)) return null;
+  return { key, shift, alt };
+}
+
+/** A chord written the way `parseChord` reads it. */
+export function chordText(chord: Chord): string {
+  const named = Object.entries(KEY_NAMES).find(([, key]) => key === chord.key)?.[0];
+  return [chord.alt ? "alt" : null, chord.shift ? "shift" : null, named ?? chord.key]
+    .filter((part) => part !== null)
+    .join("+");
+}
+
 /** Back to what the default preset has for this action, if that chord is
     free, else the binding stays as it is. */
 export function resetBinding(action: ActionKey): string | null {

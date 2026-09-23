@@ -88,7 +88,8 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         workbench_core::show::TERMINAL_REQUEST
         | workbench_core::show::NOTIFY_REQUEST
         | workbench_core::show::CONDUCT_REQUEST
-        | workbench_core::show::BROWSER_REQUEST => {
+        | workbench_core::show::BROWSER_REQUEST
+        | workbench_core::show::SETTINGS_REQUEST => {
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
         workbench_core::show::DIFF_REQUEST => {
@@ -468,6 +469,24 @@ mod tests {
         assert_eq!(call["tool"], "browser_open");
         assert_eq!(call["arguments"]["url"], "https://example.com");
         assert_eq!(call["session"], "s-1");
+    }
+
+    #[test]
+    fn a_settings_call_comes_home_with_the_host_on_where_it_was_made() {
+        let call = homeward(
+            "lab",
+            workbench_core::show::SETTINGS_REQUEST,
+            json!({
+                "id": "s-1",
+                "tool": "settings_change",
+                "arguments": { "palette": "amber" },
+                "cwd": "/srv/api",
+                "session": "a-1"
+            }),
+        );
+        assert_eq!(call["cwd"], "ssh://lab/srv/api");
+        assert_eq!(call["tool"], "settings_change");
+        assert_eq!(call["arguments"]["palette"], "amber");
     }
 
     #[test]

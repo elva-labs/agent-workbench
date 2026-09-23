@@ -134,6 +134,20 @@ export interface BrowserRequest {
   session: string | null;
 }
 
+/** A call an agent made on one of the settings tools: reading the
+    workbench's own settings, or asking to change them. The window answers
+    every one; a change is put to the user first. */
+export interface SettingsRequest {
+  /** What the answer is named after, unique to this call. */
+  id: string;
+  tool: "settings" | "settings_change";
+  arguments: Record<string, unknown>;
+  /** Where the calling agent runs, which says which machine waits. */
+  cwd: string;
+  /** The session the calling agent runs as, when its environment named one. */
+  session: string | null;
+}
+
 /** A plugin as its manifest declares it, plus what is on and running. */
 export interface PluginInfo {
   name: string;
@@ -625,6 +639,18 @@ export interface Core {
     content: string | null,
     error: string | null,
   ): Promise<void>;
+  /** A session called one of the settings tools. */
+  onSettingsRequest(
+    handler: (request: SettingsRequest) => void,
+  ): Promise<() => void>;
+  /** The window's one answer to a settings call. The directory the call
+      came from says which machine's tool server waits for it. */
+  settingsAnswer(
+    id: string,
+    cwd: string,
+    content: string | null,
+    error: string | null,
+  ): Promise<void>;
   /** Makes a worktree of the project, and answers with its absolute path. */
   worktreeAdd(project: string, name: string): Promise<string>;
   /** Where an orchestrator session runs, made if it is not there yet. */
@@ -929,6 +955,13 @@ const tauriCore: Core = {
   },
   browserAnswer: (id, cwd, content, error) =>
     invoke<void>("browser_answer", { id, cwd, content, error }),
+  async onSettingsRequest(handler) {
+    return listen<SettingsRequest>("settings_request", (event) =>
+      handler(event.payload),
+    );
+  },
+  settingsAnswer: (id, cwd, content, error) =>
+    invoke<void>("settings_answer", { id, cwd, content, error }),
   worktreeAdd: (project, name) =>
     invoke<string>("worktree_add", { project, name }),
   orchestratorDir: () => invoke<string>("orchestrator_dir"),
@@ -1147,6 +1180,10 @@ const detachedCore: Core = {
     return () => {};
   },
   async browserAnswer() {},
+  async onSettingsRequest() {
+    return () => {};
+  },
+  async settingsAnswer() {},
   async worktreeAdd() {
     throw new Error("no core");
   },
