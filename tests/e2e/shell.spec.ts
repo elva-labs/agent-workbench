@@ -1807,6 +1807,31 @@ test.describe("the window's own controls", () => {
     ).toEqual(["minimize", "maximize", "close"]);
   });
 
+  test("on macOS, keep room for the traffic lights out of full screen and give it up in it", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+    });
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    const indent = async () => {
+      const pane = (await page.locator(SESSIONS).boundingBox())!;
+      const title = (await page.locator(`${SESSIONS} header .title`).boundingBox())!;
+      return title.x - pane.x;
+    };
+    await expect(page.locator(`${SESSIONS} [data-testid='app-menu']`)).toHaveCount(0);
+    expect(await indent()).toBeGreaterThan(40);
+    await page.evaluate(() =>
+      (window as unknown as { __fullScreen: (on: boolean) => void }).__fullScreen(true),
+    );
+    await expect.poll(indent).toBeLessThan(20);
+    await page.evaluate(() =>
+      (window as unknown as { __fullScreen: (on: boolean) => void }).__fullScreen(false),
+    );
+    await expect.poll(indent).toBeGreaterThan(40);
+  });
+
   test("put a menu button at the leftmost header that asks the core for the native menu", async ({
     page,
   }) => {

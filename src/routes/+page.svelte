@@ -178,6 +178,9 @@
     core()
       .onOpenSettings(openSettings)
       .then((unlisten) => offs.push(unlisten));
+    core()
+      .onFullScreen((fullScreen) => (layout.fullScreen = fullScreen))
+      .then((unlisten) => offs.push(unlisten));
     // A connection going away takes every pty on it: each ends the way a
     // killed one does, and the pane says why.
     core()

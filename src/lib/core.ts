@@ -556,6 +556,9 @@ export interface Core {
   /** Where the middle of the leftmost header is, in CSS pixels from the
       window's top, for the platform's own controls to sit on. */
   controlsCentre(centre: number): Promise<void>;
+  /** The window started into full screen, with true, or back out, with
+      false. Only macOS says; its controls are away while it is in. */
+  onFullScreen(handler: (fullScreen: boolean) => void): Promise<() => void>;
   /** A count on the app's icon, or none. Sessions waiting for the user. */
   setBadge(count: number | null): Promise<void>;
   spawn(
@@ -860,6 +863,9 @@ const tauriCore: Core = {
 
   openAppMenu: () => invoke("app_menu"),
   controlsCentre: (centre) => invoke("controls_centre", { centre }),
+  async onFullScreen(handler) {
+    return listen<boolean>("full_screen", (event) => handler(event.payload));
+  },
 
   async setBadge(count) {
     await getCurrentWindow().setBadgeCount(count === null ? undefined : count);
@@ -1119,6 +1125,9 @@ const detachedCore: Core = {
   async windowControl() {},
   async openAppMenu() {},
   async controlsCentre() {},
+  async onFullScreen() {
+    return () => {};
+  },
   async setBadge() {},
   async spawn() {
     throw new Error("not connected to the workbench core");

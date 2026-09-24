@@ -122,6 +122,9 @@ export const layout = $state({
   focusRequest: 0,
   width: 1200,
   height: 800,
+  /** The window is full screen, or on its way in, which on macOS takes the
+      traffic lights off the header. */
+  fullScreen: false,
 });
 
 export function sessionsVisible() {

@@ -152,7 +152,9 @@ time. The window keeps its plain title bar rather than a toolbar, because
 macOS 26 rounds a toolbar window's corners far more than every other window's.
 In full screen macOS keeps the buttons in a bar of its own that shows under
 the pointer, and the app places nothing from the start of the way in until
-the window is back out.
+the window is back out. The headers keep no room for the buttons from the
+start of the way in to the start of the way out, so the leftmost title sits
+at the pane's edge like any other.
 The pane headers are drag regions: grab one to move the window, double-click
 to zoom.
 

@@ -33,10 +33,13 @@
   // move the window. Open, the sessions pane's header holds them; the header
   // of the pane beside its column clears them by whatever the column, folded
   // or on its way, leaves short of them, so its title stands still as the
-  // column moves.
+  // column moves. In full screen the lights are in a bar of their own, and
+  // no header keeps room for them.
   const mac = isMac();
   let beside = $derived(id === (agentVisible() ? "agent" : "changes"));
-  let inset = $derived(mac && (id === "sessions" ? sessionsVisible() : beside));
+  let inset = $derived(
+    mac && !layout.fullScreen && (id === "sessions" ? sessionsVisible() : beside),
+  );
   // Elsewhere the window is undecorated and the app draws the controls
   // itself, at the end of the rightmost header, where the platform has them.
   let controls = $derived(!mac && !bare && rightmost() === id);

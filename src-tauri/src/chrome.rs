@@ -20,7 +20,13 @@
 //! shows under the pointer, and sizes the title bar's views itself on the
 //! way in and out, laying them out again until they hold the frames it
 //! asked for. The app places nothing from the start of the way in until the
-//! window is back out.
+//! window is back out, and tells the window as each way starts, so the
+//! header gives up the room it keeps for the buttons while they are gone.
+
+/// Sent to the window as it starts into full screen, with true, and as it
+/// starts back out, with false.
+#[cfg(target_os = "macos")]
+const FULL_SCREEN: &str = "full_screen";
 
 /// Where the close button's left edge goes, in points from the window's
 /// left edge: past the frame's padding and the pane's border, with the same
@@ -100,6 +106,7 @@ pub fn inset_window_controls(window: &tauri::Window) {
     };
     use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue, NSRect};
     use std::ptr::NonNull;
+    use tauri::Emitter;
 
     let Ok(ptr) = window.ns_window() else { return };
     let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
@@ -184,6 +191,26 @@ pub fn inset_window_controls(window: &tauri::Window) {
                     placer.setNeedsLayout(true);
                 }
             }
+        });
+        let token = unsafe {
+            centre.addObserverForName_object_queue_usingBlock(
+                Some(name),
+                Some(window_object),
+                None,
+                &block,
+            )
+        };
+        std::mem::forget(token);
+    }
+
+    // The window hears where each way starts.
+    for (name, entering) in [
+        (unsafe { NSWindowWillEnterFullScreenNotification }, true),
+        (unsafe { NSWindowWillExitFullScreenNotification }, false),
+    ] {
+        let again = window.clone();
+        let block = block2::RcBlock::new(move |_: NonNull<NSNotification>| {
+            let _ = again.emit(FULL_SCREEN, entering);
         });
         let token = unsafe {
             centre.addObserverForName_object_queue_usingBlock(

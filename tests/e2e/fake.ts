@@ -344,6 +344,12 @@ export async function installFakeCore(
             window as unknown as { __controlsCentre?: number }
           ).__controlsCentre = centre;
         },
+        // The way a test takes the window into full screen and back: calling
+        // the handler `onFullScreen` stored here.
+        onFullScreen: async (handler: (fullScreen: boolean) => void) => {
+          (window as unknown as Record<string, unknown>).__fullScreen = handler;
+          return () => {};
+        },
         setBadge: async () => {},
         spawn: async (
           spawnOptions: { session?: string },
