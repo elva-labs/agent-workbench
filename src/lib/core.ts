@@ -58,6 +58,8 @@ export interface Spawned {
 export interface SessionEvent {
   sessionId: string;
   kind: "prompt" | "stop" | "permission" | "idle";
+  /** With a stop, the first line of what the agent last said. */
+  note?: string;
 }
 
 /** A place in a file the agent asked to show, through the daemon's MCP

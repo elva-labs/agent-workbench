@@ -216,6 +216,7 @@ pub fn observe(
                 &crate::activity::SessionEvent {
                     session_id: activity.id.clone().unwrap(),
                     kind: kind.to_string(),
+                    note: None,
                 },
             );
         }

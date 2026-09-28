@@ -128,7 +128,9 @@
       .onSessionIdentified((event) => identified(event.ptyId, event.sessionId, event.title))
       .then((unlisten) => offs.push(unlisten));
     core()
-      .onSessionEvent((event) => exact(event.sessionId, event.kind))
+      .onSessionEvent((event) =>
+        exact(event.sessionId, event.kind, event.note ?? null),
+      )
       .then((unlisten) => offs.push(unlisten));
     core()
       .onShowRequest((request) => void showRequested(request))

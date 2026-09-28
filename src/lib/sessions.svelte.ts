@@ -958,16 +958,25 @@ export function noted(key: string, text: string) {
 
 // Only the latest transition matters when identification catches up. The
 // bound also covers hooks from sessions outside this window.
-const pendingActivity = new Map<string, SessionEvent["kind"]>();
+const pendingActivity = new Map<
+  string,
+  { kind: SessionEvent["kind"]; note: string | null }
+>();
 
 function replayActivity(sessionId: string) {
-  const kind = pendingActivity.get(sessionId);
+  const pending = pendingActivity.get(sessionId);
   pendingActivity.delete(sessionId);
-  if (kind !== undefined) exact(sessionId, kind);
+  if (pending !== undefined) exact(sessionId, pending.kind, pending.note);
 }
 
-/** A hook or rollout reports a turn transition. */
-export function exact(sessionId: string, kind: SessionEvent["kind"]) {
+/** A hook or rollout reports a turn transition. With a stop comes the
+    first line of what the agent said, which the row takes when the agent
+    left no line of its own through its notify tool. */
+export function exact(
+  sessionId: string,
+  kind: SessionEvent["kind"],
+  note: string | null = null,
+) {
   const session = sessions.all.find((candidate) =>
     candidate.id === sessionId &&
     (candidate.status === "running" || candidate.status === "starting"),
@@ -975,7 +984,7 @@ export function exact(sessionId: string, kind: SessionEvent["kind"]) {
   if (session === undefined) {
     if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
     pendingActivity.delete(sessionId);
-    pendingActivity.set(sessionId, kind);
+    pendingActivity.set(sessionId, { kind, note });
     if (pendingActivity.size > 256)
       pendingActivity.delete(pendingActivity.keys().next().value!);
     return;
@@ -992,10 +1001,13 @@ export function exact(sessionId: string, kind: SessionEvent["kind"]) {
       session.working = true;
       session.needs = null;
       session.unread = false;
+      // A new turn: whatever line the last one left is stale.
+      session.note = null;
       break;
     case "stop":
       session.working = false;
       session.needs = null;
+      if (session.note === null && note !== null) session.note = note;
       if (!isViewed(session)) session.unread = true;
       break;
     case "permission":

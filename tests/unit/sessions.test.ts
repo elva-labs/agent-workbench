@@ -1020,6 +1020,31 @@ describe("working, and waiting for you", () => {
     expect(heard.unread).toBe(false);
   });
 
+  // The hooks bring the first line of what the agent said with the stop,
+  // so the row says how the turn ended even when the agent left no line
+  // of its own; a line it did leave is kept, and the next turn clears it.
+  it("takes the agent's last words for the row on a stop", () => {
+    const heard = live(A, "pty-1");
+    const behind = live(A, "pty-2");
+    select(heard.key);
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Tests green, ready to merge.");
+    expect(behind.note).toBe("Tests green, ready to merge.");
+    expect(behind.unread).toBe(true);
+    exact("session-pty-2", "prompt");
+    expect(behind.note).toBeNull();
+    noted(behind.key, "Need the API key");
+    exact("session-pty-2", "stop", "I could not find the key.");
+    expect(behind.note).toBe("Need the API key");
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop");
+    expect(behind.note).toBeNull();
+    // On screen: the line shows, but nothing rings.
+    exact("session-pty-1", "stop", "Done.");
+    expect(heard.note).toBe("Done.");
+    expect(heard.unread).toBe(false);
+  });
+
   it("marks a ring for attention at once, unless it was heard on screen", () => {
     const heard = live(A, "pty-1");
     const behind = live(A, "pty-2");

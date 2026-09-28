@@ -31,6 +31,11 @@ pub struct SessionEvent {
     /// finished its turn. `permission`: it is asking. `idle`: it has been
     /// waiting a while and said so.
     pub kind: String,
+    /// With a stop, the first line of what the agent last said, for the
+    /// row: how the turn ended, in the agent's own words, when the agent
+    /// left no line of its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One line of the log, as an event, if it is one the rows care about.
@@ -49,10 +54,46 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
         },
         _ => return None,
     };
+    let note = if kind == "stop" {
+        value
+            .get("last_assistant_message")
+            .and_then(|v| v.as_str())
+            .and_then(first_line)
+    } else {
+        None
+    };
     Some(SessionEvent {
         session_id,
         kind: kind.to_string(),
+        note,
     })
+}
+
+/// The first line of a message with something to say, as plain words: a
+/// heading's marks, a list's bullet, a quote's bar and emphasis are taken
+/// off, a code fence is skipped, and the line is cut to what a row holds.
+pub fn first_line(message: &str) -> Option<String> {
+    let mut in_fence = false;
+    for line in message.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let bare = trimmed
+            .trim_start_matches(['#', '>', '-', '*', ' '])
+            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
+            .trim_start();
+        let words = bare.replace("**", "").replace("__", "").replace('`', "");
+        let line = crate::show::one_line(&words);
+        if !line.is_empty() {
+            return Some(line);
+        }
+    }
+    None
 }
 
 /// The lines added since `offset`, and where the log ends now. A log that
@@ -201,6 +242,14 @@ mod tests {
             Some(("s1".into(), "stop".into()))
         );
         assert_eq!(
+            classify(r#"{"session_id":"s1","hook_event_name":"Stop","last_assistant_message":"\n## Done\n\nAll **green**."}"#).unwrap().note.as_deref(),
+            Some("Done")
+        );
+        assert_eq!(
+            classify(r#"{"session_id":"s1","hook_event_name":"UserPromptSubmit","last_assistant_message":"x"}"#).unwrap().note,
+            None
+        );
+        assert_eq!(
             event(
                 r#"{"session_id":"s1","hook_event_name":"Notification","notification_type":"permission_prompt"}"#
             ),
@@ -230,6 +279,27 @@ mod tests {
         );
         assert_eq!(event(r#"{"hook_event_name":"Stop"}"#), None);
         assert_eq!(event("not json"), None);
+    }
+
+    #[test]
+    fn takes_the_first_line_that_says_something_as_plain_words() {
+        assert_eq!(first_line("").as_deref(), None);
+        assert_eq!(first_line("\n\n  \n").as_deref(), None);
+        assert_eq!(
+            first_line("- **Tests green**, ready to `merge`.\nMore.").as_deref(),
+            Some("Tests green, ready to merge.")
+        );
+        assert_eq!(first_line("1. First step").as_deref(), Some("First step"));
+        assert_eq!(first_line("> quoted\nplain").as_deref(), Some("quoted"));
+        assert_eq!(
+            first_line("```\ncode\n```\nAfter the fence").as_deref(),
+            Some("After the fence")
+        );
+        assert_eq!(first_line("```\nnever closed").as_deref(), None);
+        assert_eq!(
+            first_line(&"word ".repeat(60)).unwrap().chars().count(),
+            120
+        );
     }
 
     #[test]

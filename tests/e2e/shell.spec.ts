@@ -542,6 +542,43 @@ test.describe("the file viewer", () => {
     await expect(first.locator(".dot")).not.toHaveClass(/unread/);
   });
 
+  // The stop hook brings the agent's last words: the row says how the turn
+  // ended without the agent calling anything.
+  test("puts the agent's last words on its row when it stops unwatched", async ({
+    page,
+  }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
+    const event = (kind: string, note: string | null = null) =>
+      page.evaluate(
+        ([kind, note]) =>
+          (
+            window as unknown as {
+              __sessionEvent?: (event: {
+                sessionId: string;
+                kind: string;
+                note?: string;
+              }) => void;
+            }
+          ).__sessionEvent?.({
+            sessionId: "session-1",
+            kind: kind!,
+            note: note ?? undefined,
+          }),
+        [kind, note],
+      );
+    await event("prompt");
+    await event("stop", "Tests green, ready to merge.");
+    const note = page.getByTestId("session-note");
+    await expect(note).toHaveText("Tests green, ready to merge.");
+    const first = page.locator("[data-testid='session-row']").first();
+    await expect(first.locator(".dot")).toHaveClass(/unread/);
+    await first.click();
+    await expect(note).toHaveCount(0);
+  });
+
   // A page runs in a frame with no origin; a diagram is drawn in the window.
   test("presents an HTML page in a frame of its own and a Mermaid diagram drawn", async ({
     page,
