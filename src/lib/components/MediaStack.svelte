@@ -1,14 +1,19 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { load, type Loaded, type MediaItem } from "$lib/media.svelte";
   import { core } from "$lib/core";
+  import { files as changes } from "$lib/files.svelte";
   import { fences, renderDiagram } from "$lib/mermaid";
   import { lastSegment } from "$lib/paths";
   import MediaPage from "$lib/components/MediaPage.svelte";
 
   /**
-   * What one `present` call brought, down the viewer: each file under its
-   * name, an image at width, a PDF in its own frame, a document rendered,
-   * a page in a frame of its own, a diagram drawn.
+   * What one item of the media list holds, down the viewer: each file
+   * under its name, an image at width, a PDF in its own frame, a document
+   * rendered, a page in a frame of its own, a diagram drawn. The files are
+   * read again when the agent presents them again and when the working
+   * tree moves, and what is shown is replaced only where the file differs,
+   * so an edit shows as it is now and an unchanged image stays still.
    */
 
   interface Props {
@@ -23,14 +28,36 @@
   /** Diagrams drawn, by path: the SVG, or why not. */
   let drawn = $state<Record<string, { svg: string } | { error: string }>>({});
 
+  /** Which read is the current one: a slow read for an earlier state of a
+      file must not land over a newer one. */
+  let read = 0;
+
+  const same = (a: Loaded | undefined, b: Loaded) =>
+    a !== undefined && JSON.stringify(a) === JSON.stringify(b);
+
   $effect(() => {
-    for (const file of item.files) {
-      if (file in loaded) continue;
-      loaded[file] = { error: "" };
+    const paths = item.files;
+    // A later call for the same files, or the tree moving under them.
+    item.at;
+    changes.treeReads;
+    const current = ++read;
+    untrack(() => {
+      for (const path of Object.keys(loaded)) {
+        if (!paths.includes(path)) {
+          delete loaded[path];
+          delete drawn[path];
+        }
+      }
+    });
+    for (const file of paths) {
       void load(file).then((result) => {
+        if (current !== read) return;
+        if (same(untrack(() => loaded[file]), result)) return;
         loaded[file] = result;
+        delete drawn[file];
         if ("diagram" in result) {
           void renderDiagram(result.diagram).then((picture) => {
+            if (current !== read) return;
             drawn[file] = picture;
           });
         }

@@ -1,7 +1,9 @@
 /**
  * Media the agent presented: images, PDFs, documents, pages and diagrams, kept per session
- * as one item per call and opened in the changes pane's viewer, every file
- * of the call down the page.
+ * as one item per set of files and opened in the changes pane's viewer,
+ * every file of the set down the page. Presenting the same files again
+ * brings the item to the top with the new caption and shows the files as
+ * they are now, so a document worked on over many turns is one row.
  *
  * The agent's request names files and where the agent runs; the session on
  * that directory, in the project it is under, is the one the files belong
@@ -26,7 +28,7 @@ export interface MediaItem {
   project: string;
   files: string[];
   caption: string | null;
-  /** Seconds since the epoch. */
+  /** Seconds since the epoch, of the latest call for these files. */
   at: number;
 }
 
@@ -90,6 +92,14 @@ export function ownerFor(request: PresentRequest, project: string): string {
   return `project:${project}`;
 }
 
+/** The same files, in any order: the same item, whichever way the agent
+    listed them this time. */
+function sameFiles(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sorted = [...b].sort();
+  return [...a].sort().every((file, i) => file === sorted[i]);
+}
+
 /** The items for a session, newest first, and the project's own when it
     is asked for. */
 export function itemsFor(owner: string): MediaItem[] {
@@ -120,14 +130,24 @@ export function presented(request: PresentRequest, now = Date.now()) {
   });
   if (project === null) return;
   if (workspace.active !== project) activate(project);
+  const owner = ownerFor(request, project);
+  const again = media.items.find(
+    (candidate) =>
+      candidate.owner === owner && sameFiles(candidate.files, request.files),
+  );
   const item: MediaItem = {
-    id: `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    owner: ownerFor(request, project),
+    id:
+      again?.id ??
+      `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    owner,
     project,
     files: request.files,
     caption: request.caption,
     at: Math.floor(now / 1000),
   };
+  if (again !== undefined) {
+    media.items = media.items.filter((candidate) => candidate !== again);
+  }
   media.items.push(item);
   const mine = media.items.filter(
     (candidate) => candidate.owner === item.owner,

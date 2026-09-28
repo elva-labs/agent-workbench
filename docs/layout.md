@@ -224,7 +224,7 @@ a divider to drag above them when one is open; the share and the folds are
 remembered, and the open ones share the height.
 
 **Media** is what the agent has presented for the session on screen, one
-row per call under its caption, opening in the viewer. **Processes** is
+row per set of files under its caption, opening in the viewer. **Processes** is
 what runs under the project's sessions and shells: the dev server the agent
 typed for you, the test run it started, each with what it runs under, how
 long it has run, its share of a CPU and its memory, read every couple of

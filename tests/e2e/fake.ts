@@ -686,12 +686,13 @@ export async function installFakeCore(
             throw new Error(`could not read ${path}: No such file`);
           if (path.endsWith(".pdf"))
             return { mime: "application/pdf", data: "JVBERi0=", size: 5 };
-          if (path.endsWith(".md"))
-            return {
-              mime: "text/markdown",
-              data: btoa("# Draft\n\nHello *there*, <b>plain</b>.\n"),
-              size: 30,
-            };
+          if (path.endsWith(".md")) {
+            // What the document says now: a test edits it behind the viewer.
+            const text =
+              (window as unknown as { __markdown?: string }).__markdown ??
+              "# Draft\n\nHello *there*, <b>plain</b>.\n";
+            return { mime: "text/markdown", data: btoa(text), size: text.length };
+          }
           if (path.endsWith(".html"))
             return {
               mime: "text/html",

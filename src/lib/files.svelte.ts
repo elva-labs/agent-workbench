@@ -111,6 +111,10 @@ export const files = $state({
   } | null,
   loading: false,
   error: null as string | null,
+  /** Counts the reads of the working tree, for what shows a file of it
+      and reads the file again when the tree moves: the media the agent
+      presented above all. */
+  treeReads: 0,
 
   /**
    * Folders you opened and folders you closed, as overrides. A folder with no
@@ -157,6 +161,7 @@ export async function refresh() {
     if (read !== treeRead) return;
     files.changed = changed;
     files.error = null;
+    files.treeReads += 1;
   } catch (error) {
     if (read !== treeRead) return;
     files.changed = [];

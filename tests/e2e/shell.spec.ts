@@ -1402,6 +1402,56 @@ test.describe("the file viewer", () => {
     await expect(document.locator("b")).toHaveCount(0);
   });
 
+  // A document worked on over many turns is one row, and what it shows
+  // is the file as it is now: after the agent presents it again, and after
+  // the tree moves under it.
+  test("shows a document presented again as it is now, on the same row", async ({
+    page,
+  }) => {
+    const present = (caption: string) =>
+      page.evaluate(
+        ([project, caption]) =>
+          (
+            window as unknown as {
+              __presentRequest: (request: unknown) => void;
+            }
+          ).__presentRequest({
+            files: [`${project}/docs/draft.md`],
+            caption,
+            cwd: project,
+          }),
+        [PROJECT, caption],
+      );
+    const edit = (text: string) =>
+      page.evaluate((text) => {
+        (window as unknown as { __markdown?: string }).__markdown = text;
+      }, text);
+
+    await present("The draft.");
+    const document = page.getByTestId("media-document");
+    await expect(document.locator("h1")).toHaveText("Draft");
+    await page.getByTestId("media-fold").click();
+    await expect(page.getByTestId("media-item")).toHaveCount(1);
+
+    await edit("# Second draft\n\nBetter.\n");
+    await present("The draft, again.");
+    await expect(document.locator("h1")).toHaveText("Second draft");
+    await expect(page.getByTestId("media-caption")).toHaveText(
+      "The draft, again.",
+    );
+    await expect(page.getByTestId("media-item")).toHaveCount(1);
+    await expect(page.getByTestId("media-item")).toContainText(
+      "The draft, again.",
+    );
+
+    await edit("# Third draft\n\nBest.\n");
+    await page.evaluate(() =>
+      (window as unknown as { __gitChanged: () => void }).__gitChanged(),
+    );
+    await expect(document.locator("h1")).toHaveText("Third draft");
+    await expect(page.getByTestId("media-item")).toHaveCount(1);
+  });
+
   test("opens by clicking a file, and the changes pane grows", async ({
     page,
   }) => {

@@ -134,6 +134,33 @@ describe("presenting", () => {
     expect(listed()).toHaveLength(1);
   });
 
+  it("keeps one item for the same files, newest, with the latest caption", () => {
+    const session = create("/one");
+    started(session.key, "pty-1", "s1");
+    presented(request(["/one/draft.md"], "/one", "First."), 1_700_000_000_000);
+    presented(request(["/one/other.png"], "/one", "Other."), 1_700_000_001_000);
+    const first = itemsFor("s1")[1];
+    // The same file again, however it is listed: the item, not another.
+    presented(request(["/one/draft.md"], "/one", "Second."), 1_700_000_002_000);
+    expect(itemsFor("s1")).toHaveLength(2);
+    expect(itemsFor("s1")[0].id).toBe(first.id);
+    expect(itemsFor("s1")[0].caption).toBe("Second.");
+    expect(itemsFor("s1")[0].at).toBe(1_700_000_002);
+    expect(files.media?.id).toBe(first.id);
+    // A set is the same set in any order; a different set is another item.
+    presented(request(["/one/b.png", "/one/a.png"]), 1_700_000_003_000);
+    presented(request(["/one/a.png", "/one/b.png"]), 1_700_000_004_000);
+    presented(request(["/one/a.png"]), 1_700_000_005_000);
+    expect(itemsFor("s1")).toHaveLength(4);
+    expect(itemsFor("s1")[1].files).toEqual(["/one/a.png", "/one/b.png"]);
+    // Another session's item is its own.
+    const other = create("/one");
+    started(other.key, "pty-2", "s2");
+    presented(request(["/one/draft.md"], "/one", "Theirs.", "s2"));
+    expect(itemsFor("s1")).toHaveLength(4);
+    expect(itemsFor("s2")).toHaveLength(1);
+  });
+
   it("does nothing for files outside every open project", () => {
     presented(request(["/nowhere/a.png"], "/nowhere"));
     expect(files.media).toBeNull();
