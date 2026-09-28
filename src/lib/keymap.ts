@@ -129,7 +129,7 @@ export function bindingsFor(mac: boolean): Binding[] {
     { keys: d("toggle.terminal"), does: "terminal" },
     { keys: `${d("session.next")} ${d("session.previous")}`, does: "switch session" },
     { keys: d("review"), does: "review" },
-    { keys: d("view"), does: "diff/content" },
+    { keys: d("view"), does: "view" },
     { keys: d("scope"), does: "scope", minor: true },
     { keys: d("findLines"), does: "search", minor: true },
     { keys: d("settings"), does: "settings", minor: true },

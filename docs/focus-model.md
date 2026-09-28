@@ -22,7 +22,7 @@ default preset:
 | <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd>               | Next or previous session, or shell when the panel has focus |
 | <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer                               |
-| <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff or whole file                                          |
+| <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff, whole file or rendered                                |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
 | <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus                    |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |

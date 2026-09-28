@@ -10,6 +10,8 @@
   import { onMount, untrack } from "svelte";
   import {
     canDiff,
+    canRender,
+    effectiveView,
     clear,
     clearQuery,
     closeViewer,
@@ -87,6 +89,8 @@
       while it shows, and comes back with its folds and its selection. */
   let fullView = $derived(files.pluginView?.width === "full");
   let diffable = $derived(canDiff(selectedEntry()));
+  let renderable = $derived(canRender(selectedEntry()));
+  let view = $derived(effectiveView());
   let root = $derived(watchRoot());
   let worktree = $derived(followedWorktree());
   let notGit = $derived(activeProject() !== null && root === null);
@@ -901,7 +905,7 @@
             <hr />
             <button
               role="menuitemradio"
-              aria-checked={files.view === "diff" && diffable}
+              aria-checked={view === "diff"}
               disabled={!diffable}
               onclick={() => choose(() => setView("diff"))}
               data-testid="menu-view-diff"
@@ -910,12 +914,21 @@
             </button>
             <button
               role="menuitemradio"
-              aria-checked={files.view === "content" || !diffable}
+              aria-checked={view === "content"}
               disabled={files.selected === null}
               onclick={() => choose(() => setView("content"))}
               data-testid="menu-view-content"
             >
               <span>Whole file</span><kbd>{describe(chordFor("view"))}</kbd>
+            </button>
+            <button
+              role="menuitemradio"
+              aria-checked={view === "rendered"}
+              disabled={!renderable}
+              onclick={() => choose(() => setView("rendered"))}
+              data-testid="menu-view-rendered"
+            >
+              <span>Rendered</span><kbd>{describe(chordFor("view"))}</kbd>
             </button>
             <hr />
             <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">

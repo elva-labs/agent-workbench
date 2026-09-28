@@ -1,7 +1,17 @@
 <script lang="ts">
+  import MediaFile from "$lib/components/MediaFile.svelte";
   import MediaStack from "$lib/components/MediaStack.svelte";
   import PluginView from "$lib/components/PluginView.svelte";
-  import { closeViewer, effectiveView, files, pick, selectedEntry } from "$lib/files.svelte";
+  import {
+    absolute,
+    closeViewer,
+    effectiveView,
+    files,
+    isPicture,
+    pick,
+    selectedEntry,
+  } from "$lib/files.svelte";
+  import { lastSegment } from "$lib/paths";
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
   // read-only EditorView on content, which is also where side-by-side comes
@@ -111,6 +121,15 @@
     <MediaStack item={files.media} />
   {:else if entry === null}
     <p class="empty">Pick a file to read it.</p>
+  {:else if isPicture(entry) || view === "rendered"}
+    <!-- A picture, or a document rendered: read where it is, as what the
+         agent presents is, and read again when the tree moves. -->
+    {@const path = absolute(entry.path)}
+    {#if path !== null}
+      <div class="rendered" data-testid="viewer-rendered">
+        <MediaFile {path} alt={lastSegment(entry.path)} reload={String(files.treeReads)} />
+      </div>
+    {/if}
   {:else if entry.binary}
     <p class="empty">Binary file, not shown.</p>
   {:else if view === "diff" && diff !== null && diff.lines.length > 0}
@@ -225,6 +244,10 @@
     height: 100%;
     overflow: auto;
     background: var(--surface);
+  }
+
+  .rendered {
+    padding: 12px var(--pane-pad) 24px;
   }
 
   .lines {

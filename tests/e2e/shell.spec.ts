@@ -73,7 +73,7 @@ async function chooseAll(page: Page) {
   await page.getByTestId("menu-scope-all").click();
 }
 
-async function chooseView(page: Page, view: "diff" | "content") {
+async function chooseView(page: Page, view: "diff" | "content" | "rendered") {
   await page.getByTestId("changes-menu").click();
   await page.getByTestId(`menu-view-${view}`).click();
 }
@@ -1450,6 +1450,55 @@ test.describe("the file viewer", () => {
     );
     await expect(document.locator("h1")).toHaveText("Third draft");
     await expect(page.getByTestId("media-item")).toHaveCount(1);
+  });
+
+  // A picture git calls binary is shown as one, and a Markdown document
+  // has a rendered view beside its diff and its lines.
+  test("shows a picture and a rendered document from the tree", async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      const state = (
+        window as unknown as {
+          __fixture: { fixture: { status: unknown[]; files: string[] } };
+          __gitChanged: () => void;
+        }
+      );
+      state.__fixture.fixture.status.push(
+        { path: "docs/logo.png", status: "A", add: 0, del: 0, binary: true },
+        { path: "docs/draft.md", status: "M", add: 2, del: 1, binary: false },
+      );
+      state.__gitChanged();
+    });
+    await row(page, "logo.png").click();
+    const viewer = page.getByTestId("viewer");
+    await expect(viewer).toHaveAttribute("data-view", "content");
+    await expect(viewer.getByTestId("viewer-rendered").locator("img")).toBeVisible();
+    await expect(viewer.getByText("Binary file, not shown.")).toHaveCount(0);
+
+    await row(page, "draft.md").click();
+    await expect(viewer).toHaveAttribute("data-view", "diff");
+    await chooseView(page, "rendered");
+    await expect(viewer).toHaveAttribute("data-view", "rendered");
+    await expect(viewer.getByTestId("media-document").locator("h1")).toHaveText("Draft");
+    await page.getByTestId("changes-menu").click();
+    await expect(page.getByTestId("menu-view-rendered")).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+
+    // The chord walks on round: rendered, diff, whole file, rendered.
+    await page.keyboard.press(`${MOD}+e`);
+    await expect(viewer).toHaveAttribute("data-view", "diff");
+    await page.keyboard.press(`${MOD}+e`);
+    await expect(viewer).toHaveAttribute("data-view", "content");
+    await page.keyboard.press(`${MOD}+e`);
+    await expect(viewer).toHaveAttribute("data-view", "rendered");
+
+    // A file with no rendered view has the entry greyed.
+    await row(page, "mod.rs").click();
+    await expect(viewer).toHaveAttribute("data-view", "diff");
+    await page.getByTestId("changes-menu").click();
+    await expect(page.getByTestId("menu-view-rendered")).toBeDisabled();
+    await page.keyboard.press("Escape");
   });
 
   test("opens by clicking a file, and the changes pane grows", async ({

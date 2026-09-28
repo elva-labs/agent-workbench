@@ -9,6 +9,7 @@ import {
 } from "$lib/browser.svelte";
 import { enterReview, exitReview, layout, togglePane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
+import { pathOn } from "$lib/remote.svelte";
 import { watchRoot } from "$lib/workspace.svelte";
 
 /**
@@ -19,11 +20,14 @@ import { watchRoot } from "$lib/workspace.svelte";
  *   scope — which files are listed. Changed is `git status`; all files is the
  *           index plus untracked, honouring .gitignore. A second data source,
  *           not a filter over the first.
- *   view  — how the selected file is shown. Diff or content.
+ *   view  — how the selected file is shown. Diff, content, or rendered,
+ *           which a Markdown file has: the document as a reader sees it.
  *
  * The connection: a file with no changes has no diff to show, so widening the
  * scope is exactly what puts files in the list that can only be read as
- * content. The viewer resolves that itself rather than making you notice.
+ * content. The viewer resolves that itself rather than making you notice,
+ * and a Markdown file with no diff opens rendered. A picture git calls
+ * binary, an image or a PDF, is shown as one whatever the view.
  *
  * Everything here comes from the core. The core holds no state of its own for
  * this: the watcher says the tree moved and the pane asks again, because
@@ -32,7 +36,7 @@ import { watchRoot } from "$lib/workspace.svelte";
  */
 
 export type Scope = "changed" | "all";
-export type View = "diff" | "content";
+export type View = "diff" | "content" | "rendered";
 
 export interface FileEntry {
   path: string;
@@ -366,12 +370,56 @@ export function canDiff(entry: FileEntry | null): boolean {
   return entry !== null && entry.status !== null && entry.binary !== true;
 }
 
+/** A file can be shown rendered if it is a Markdown document still there. */
+export function canRender(entry: FileEntry | null): boolean {
+  return (
+    entry !== null &&
+    entry.status !== "D" &&
+    entry.binary !== true &&
+    /\.(md|markdown)$/i.test(entry.path)
+  );
+}
+
+/** A binary file the viewer shows as a picture rather than declining: an
+    image or a PDF, by its extension, read where it is. */
+export function isPicture(entry: FileEntry | null): boolean {
+  return (
+    entry !== null &&
+    entry.status !== "D" &&
+    entry.binary === true &&
+    /\.(png|jpe?g|gif|webp|bmp|pdf)$/i.test(entry.path)
+  );
+}
+
+/** A file of the tree, absolute, on the machine the project is on. */
+export function absolute(path: string): string | null {
+  const root = watchRoot();
+  if (root === null) return null;
+  return `${pathOn(root).replace(/[\\/]+$/, "")}/${path}`;
+}
+
+/** The views the selected file has, in the order the chord walks them. */
+export function views(entry = selectedEntry()): View[] {
+  const own: View[] = [];
+  if (canDiff(entry)) own.push("diff");
+  own.push("content");
+  if (canRender(entry)) own.push("rendered");
+  return own;
+}
+
 /**
- * What the viewer actually renders. Falls back to content rather than showing
- * an empty diff, so widening the scope never lands you on a blank pane.
+ * What the viewer actually renders. A view the file does not have falls
+ * to the richest one it does rather than showing an empty diff, so
+ * widening the scope never lands you on a blank pane: a Markdown file
+ * with no diff opens rendered, a changed code file on its diff, anything
+ * else as content.
  */
 export function effectiveView(): View {
-  return canDiff(selectedEntry()) ? files.view : "content";
+  const entry = selectedEntry();
+  const own = views(entry);
+  if (own.includes(files.view)) return files.view;
+  if (canRender(entry)) return "rendered";
+  return own[0];
 }
 
 async function loadSelected() {
@@ -516,8 +564,11 @@ export function setView(view: View) {
   files.view = view;
 }
 
+/** The chord walks the views the file has, round and round. */
 export function toggleView() {
-  setView(files.view === "diff" ? "content" : "diff");
+  const own = views();
+  const at = own.indexOf(effectiveView());
+  setView(own[(at + 1) % own.length]);
 }
 
 export function toggleScope() {

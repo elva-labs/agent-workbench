@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  absolute,
   basename,
   canDiff,
+  canRender,
   changedCount,
   clear,
   closeViewer,
   deselect,
   effectiveView,
   filtering,
+  isPicture,
   openAt,
   showRange,
   requestField,
@@ -34,6 +37,7 @@ import {
   toggleDir,
   toggleScope,
   toggleView,
+  views,
 } from "$lib/files.svelte";
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { browser, resetBrowser } from "$lib/browser.svelte";
@@ -652,6 +656,72 @@ describe("view", () => {
     await select("src/lib.rs");
     toggleView();
     expect(effectiveView()).toBe("content");
+    toggleView();
+    expect(effectiveView()).toBe("diff");
+  });
+
+  // A Markdown document has a third view, the document as a reader sees
+  // it, and opens on it when there is no diff to open on.
+  it("renders a Markdown file, first when it has no diff", async () => {
+    fake.status = [
+      { path: "docs/plan.md", status: "M", add: 1, del: 1, binary: false },
+      { path: "src/lib.rs", status: "M", add: 1, del: 1, binary: false },
+    ];
+    fake.fileList = ["docs/plan.md", "README.md", "src/lib.rs"];
+    await refresh();
+    await select("docs/plan.md");
+    expect(canRender(selectedEntry())).toBe(true);
+    expect(views()).toEqual(["diff", "content", "rendered"]);
+    expect(effectiveView()).toBe("diff");
+    toggleView();
+    expect(effectiveView()).toBe("content");
+    toggleView();
+    expect(effectiveView()).toBe("rendered");
+    toggleView();
+    expect(effectiveView()).toBe("diff");
+
+    await setScope("all");
+    await select("README.md");
+    expect(views()).toEqual(["content", "rendered"]);
+    expect(effectiveView()).toBe("rendered");
+    setView("content");
+    expect(effectiveView()).toBe("content");
+
+    // Rendered is remembered for the next document, and falls to the diff
+    // of a file that has none of that.
+    setView("rendered");
+    await select("src/lib.rs");
+    expect(effectiveView()).toBe("diff");
+    await select("docs/plan.md");
+    expect(effectiveView()).toBe("rendered");
+  });
+
+  it("shows a binary image or PDF as a picture, and not a deleted one", () => {
+    expect(isPicture({ path: "shots/a.png", status: "A", binary: true })).toBe(
+      true,
+    );
+    expect(
+      isPicture({ path: "docs/plan.PDF", status: "M", binary: true }),
+    ).toBe(true);
+    expect(isPicture({ path: "shots/a.png", status: "D", binary: true })).toBe(
+      false,
+    );
+    expect(isPicture({ path: "blob.bin", status: "A", binary: true })).toBe(
+      false,
+    );
+    expect(isPicture({ path: "icon.svg", status: "M", binary: false })).toBe(
+      false,
+    );
+    expect(
+      canRender({ path: "docs/plan.md", status: "D", binary: false }),
+    ).toBe(false);
+    expect(canRender({ path: "docs/plan.txt", status: null })).toBe(false);
+  });
+
+  it("names a file of the tree where it is on the machine", () => {
+    expect(absolute("docs/plan.md")).toBe(`${ROOT}/docs/plan.md`);
+    workspace.active = null;
+    expect(absolute("docs/plan.md")).toBeNull();
   });
 });
 

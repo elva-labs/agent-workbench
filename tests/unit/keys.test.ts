@@ -74,7 +74,7 @@ describe("a chord of one's own", () => {
   // side effect of the first.
   it("refuses a chord another action holds, and says which", () => {
     const text = setBinding("review", chord("e"));
-    expect(text).toContain("Diff or whole file");
+    expect(text).toContain("Diff, whole file or rendered");
     expect(chordFor("review")).toEqual(chord("d"));
     expect(chordFor("view")).toEqual(chord("e"));
   });

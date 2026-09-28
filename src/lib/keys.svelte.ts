@@ -59,7 +59,7 @@ export const ACTIONS: ActionInfo[] = [
   { key: "session.next", label: "Next session or shell", group: "Sessions" },
   { key: "session.previous", label: "Previous session or shell", group: "Sessions" },
   { key: "review", label: "Open or close the file viewer", group: "Changes" },
-  { key: "view", label: "Diff or whole file", group: "Changes" },
+  { key: "view", label: "Diff, whole file or rendered", group: "Changes" },
   { key: "scope", label: "Changed files or all files", group: "Changes" },
   { key: "find", label: "Filter files (in the changes pane)", group: "Changes" },
   { key: "findLines", label: "Search in files", group: "Changes" },

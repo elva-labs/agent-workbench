@@ -190,7 +190,7 @@ describe("the settings", () => {
       metaKey: true,
     });
     expect(screen.getByTestId("chord-problem")).toHaveTextContent(
-      "Diff or whole file",
+      "Diff, whole file or rendered",
     );
     expect(chordFor("review")).toEqual({ key: "d", shift: false, alt: false });
   });

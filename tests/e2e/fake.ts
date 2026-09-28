@@ -1006,8 +1006,10 @@ export async function installFakeCore(
           truncated: false,
         }),
         gitContent: async (_root: string, file: string) => ({
-          lines: ["use std::collections::HashMap;", "", `// ${file}`],
-          binary: false,
+          lines: file.endsWith(".png")
+            ? []
+            : ["use std::collections::HashMap;", "", `// ${file}`],
+          binary: file.endsWith(".png"),
           truncated: false,
         }),
         gitWatch: async () => {},
