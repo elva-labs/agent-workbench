@@ -4,15 +4,37 @@
 # named. The app's Homebrew cask links it onto the PATH.
 #
 #   awb [folder ...]
+#   awb help | -h | --help
+#   awb -v | --version
 #
 # The folders go through `open` to the app bundle this sits in, which starts
 # the app when it is not running and hands them to it when it is.
 set -eu
 
+# The bundle is what is left of this file's own path, with Homebrew's link
+# resolved, once everything from its Contents on is taken off.
+self=$(realpath "$0")
+app=${self%/Contents/*}
+case "$app" in
+  *.app) ;;
+  *) app="Agent Workbench" ;;
+esac
+
 case "${1:-}" in
-  -h | --help)
+  help | -h | --help)
     echo "usage: awb [folder ...]"
     echo "Opens each folder in Agent Workbench, the current one when none is named."
+    echo
+    echo "  help, -h, --help  show this help"
+    echo "  -v, --version     show the version of Agent Workbench"
+    exit 0
+    ;;
+  -v | --version)
+    if [ ! -f "$app/Contents/Info.plist" ]; then
+      echo "awb: not inside the Agent Workbench app bundle" >&2
+      exit 1
+    fi
+    echo "awb $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
     exit 0
     ;;
 esac
@@ -27,12 +49,4 @@ for folder; do
   shift
 done
 
-# The bundle is what is left of this file's own path, with Homebrew's link
-# resolved, once everything from its Contents on is taken off.
-self=$(realpath "$0")
-app=${self%/Contents/*}
-case "$app" in
-  *.app) ;;
-  *) app="Agent Workbench" ;;
-esac
 exec open -a "$app" "$@"

@@ -44,7 +44,8 @@ On macOS the Homebrew cask puts `awb` on the PATH. `awb` opens the folder
 the terminal is in as a project, and `awb <folder> ...` the folders it names.
 It hands them to the app through `open`, so the system starts the app when
 it is not running and sends them to it when it is. Folders named to
-`open -a "Agent Workbench"` arrive the same way.
+`open -a "Agent Workbench"` arrive the same way. `awb --version` prints the
+version of the app it belongs to, and `awb help` how it is used.
 
 On Linux and Windows the app takes folders as arguments. Started again while
 it runs, it hands its folders to the running app, which comes to the front,
