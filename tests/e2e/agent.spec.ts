@@ -429,9 +429,9 @@ test.describe("one project", () => {
     expect(await typed(page)).not.toMatch(/(^|[^\x1b])\r/);
   });
 
-  // The process is told one column fewer than the grid, so a glyph in the
-  // last written column has room to overhang.
-  test("keeps one column of slack at the right edge", async ({ page }) => {
+  // The process is told the grid xterm draws. A shell wraps a long line
+  // where it believes the edge is, so a narrower size garbles its redraw.
+  test("tells the process the width of the grid", async ({ page }) => {
     await running(page);
     const cols = await page.evaluate(
       () =>
@@ -439,7 +439,7 @@ test.describe("one project", () => {
           .__WORKBENCH_TERMINALS__?.["s1"]?.cols,
     );
     const spawned = await spawns(page);
-    expect(spawned[0].cols).toBe(cols - 1);
+    expect(spawned[0].cols).toBe(cols);
   });
 
   // Cmd+click on a link is the terminal convention; a plain click stays

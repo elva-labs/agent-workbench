@@ -67,12 +67,6 @@
     onFileRef,
   }: Props = $props();
 
-  /**
-   * The size the process is told, one column short of the grid. A glyph can
-   * overhang its cell to the right, an italic d most of all, and the renderer
-   * clips at the last column; with the last column never written to, there
-   * is always room for the overhang.
-   */
   /** What WebGL here draws with, unmasked where the browser allows. */
   function glRenderer(): string | null {
     const canvas = document.createElement("canvas");
@@ -84,10 +78,6 @@
       : gl.getParameter(gl.RENDERER);
     gl.getExtension("WEBGL_lose_context")?.loseContext();
     return typeof renderer === "string" ? renderer : null;
-  }
-
-  function reported(cols: number) {
-    return Math.max(1, cols - 1);
   }
 
   let host: HTMLDivElement;
@@ -288,8 +278,7 @@
       return;
     }
 
-    const cols = reported(terminal.cols);
-    const rows = terminal.rows;
+    const { cols, rows } = terminal;
     if (cols === sent.cols && rows === sent.rows) return;
     sent = { cols, rows };
     if (ptyId !== null) core().resize(ptyId, cols, rows).catch(() => {});
@@ -297,9 +286,9 @@
 
   async function spawn() {
     if (!terminal) return;
-    const up = await start(reported(terminal.cols), terminal.rows, (bytes) => queue?.push(bytes));
+    const up = await start(terminal.cols, terminal.rows, (bytes) => queue?.push(bytes));
     if (!up || !terminal) return;
-    sent = { cols: reported(terminal.cols), rows: terminal.rows };
+    sent = { cols: terminal.cols, rows: terminal.rows };
     if (focused && active && shown) terminal.focus();
   }
 

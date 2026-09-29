@@ -174,10 +174,9 @@ sends nothing; and the frame's content box is what gets measured, not the
 window, so padding is never counted as usable width. Scrollback wrapped at
 the old width stays wrapped that way, as in every terminal.
 
-The process is told one column fewer than the grid has. A glyph can overhang
-its cell to the right, an italic _d_ most of all, and the renderer clips at
-the last column; with that column never written, the overhang always has
-room.
+The process is told the same size as the grid xterm draws. A shell wraps a
+long line where it believes the right edge is and redraws on that belief, so
+any other width garbles what it shows.
 
 ## The field above the tree
 
