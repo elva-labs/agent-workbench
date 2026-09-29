@@ -399,6 +399,11 @@ pub fn daemon_target(uname: &str) -> Option<&'static str> {
     })
 }
 
+/// Where the bundle keeps the daemon builds, one folder a target, inside
+/// the app's resource folder. The bundle keeps the path its configuration
+/// names them by.
+const BUNDLED_DAEMONS: &str = "resources/remote";
+
 /// Where a daemon build for a target is on this machine, when one is:
 /// named outright for a developer, or bundled with the app.
 pub fn daemon_build(target: &str, resources: Option<&Path>) -> Option<PathBuf> {
@@ -408,7 +413,7 @@ pub fn daemon_build(target: &str, resources: Option<&Path>) -> Option<PathBuf> {
             return Some(named);
         }
     }
-    let bundled = resources.map(|dir| dir.join("remote").join(target).join(DAEMON_NAME));
+    let bundled = resources.map(|dir| dir.join(BUNDLED_DAEMONS).join(target).join(DAEMON_NAME));
     if let Some(bundled) = bundled.filter(|path| path.is_file()) {
         return Some(bundled);
     }
@@ -692,13 +697,24 @@ mod tests {
     #[test]
     fn a_build_named_outright_wins_over_the_bundle() {
         let dir = std::env::temp_dir().join("workbench-ssh-build");
-        std::fs::create_dir_all(dir.join("remote/linux-x86_64")).unwrap();
-        let bundled = dir.join("remote/linux-x86_64").join(DAEMON_NAME);
+        let folder = dir.join(BUNDLED_DAEMONS).join("linux-x86_64");
+        std::fs::create_dir_all(&folder).unwrap();
+        let bundled = folder.join(DAEMON_NAME);
         std::fs::write(&bundled, "").unwrap();
         std::env::remove_var("WORKBENCH_REMOTE_BIN");
         assert_eq!(daemon_build("linux-x86_64", Some(&dir)), Some(bundled));
         assert_eq!(daemon_build("linux-aarch64", Some(&dir)), None);
         assert_eq!(daemon_build("linux-x86_64", None), None);
+    }
+
+    #[test]
+    fn looks_for_the_daemons_where_the_bundle_puts_them() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let resources = config["bundle"]["resources"].as_array().unwrap();
+        assert!(resources
+            .iter()
+            .any(|glob| glob.as_str() == Some(&format!("{BUNDLED_DAEMONS}/*/*"))));
     }
 
     #[test]
