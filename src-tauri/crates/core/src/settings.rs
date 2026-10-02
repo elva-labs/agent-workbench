@@ -144,6 +144,11 @@ pub struct Settings {
     pub themes: BTreeMap<String, Theme>,
     /// Whether the user's own stylesheet is laid over the app's.
     pub user_styles: bool,
+    /// Whether a session that starts waiting for the user while the window
+    /// is in the background says so with a system notification.
+    pub notifications: bool,
+    /// Whether it says so with a chime as well.
+    pub chime: bool,
 }
 
 impl Default for Settings {
@@ -161,6 +166,8 @@ impl Default for Settings {
             },
             themes: BTreeMap::new(),
             user_styles: false,
+            notifications: true,
+            chime: false,
         }
     }
 }
@@ -390,6 +397,10 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "userStyles" => {
             settings.user_styles = value.as_bool().ok_or("userStyles is true or false")?;
         }
+        "notifications" => {
+            settings.notifications = value.as_bool().ok_or("notifications is true or false")?;
+        }
+        "chime" => settings.chime = value.as_bool().ok_or("chime is true or false")?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => settings.keys = keys(value)?,
@@ -933,6 +944,20 @@ mod tests {
         let next = apply(&Settings::default(), &json!({ "userStyles": true })).unwrap();
         assert!(next.user_styles);
         assert!(apply(&next, &json!({ "userStyles": "yes" })).is_err());
+    }
+
+    #[test]
+    fn notifications_are_on_and_the_chime_off_until_changed() {
+        let defaults = Settings::default();
+        assert!(defaults.notifications);
+        assert!(!defaults.chime);
+        let next = apply(&defaults, &json!({ "notifications": false, "chime": true })).unwrap();
+        assert!(!next.notifications);
+        assert!(next.chime);
+        assert!(apply(&next, &json!({ "chime": "loud" })).is_err());
+        assert!(apply(&next, &json!({ "notifications": 1 })).is_err());
+        let read = parse(r#"{ "chime": true }"#).unwrap();
+        assert!(read.notifications && read.chime);
     }
 
     #[test]

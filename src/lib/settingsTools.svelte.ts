@@ -125,7 +125,15 @@ const APPEARANCES: { name: ThemeChoice; label: string }[] = [
 ];
 
 /** Names an agent might reach for that are the user's alone. */
-const USERS_OWN = new Set(["hooks", "hooksEverywhere", "liveUpdates", "plugins", "plugin"]);
+const USERS_OWN = new Set([
+  "hooks",
+  "hooksEverywhere",
+  "liveUpdates",
+  "plugins",
+  "plugin",
+  "notifications",
+  "chime",
+]);
 
 /** The ids of the calls handled lately, so a call delivered twice is
     handled once. */
@@ -227,7 +235,7 @@ export function describeSettings(): string {
         ? "The user has no stylesheet of their own."
         : `The user's stylesheet, which styles_write replaces whole:\n\`\`\`css\n${sheetExcerpt(userStyles.css)}\n\`\`\``,
     "",
-    "Change them with settings_change, naming only what should change. The agent hooks and the plugins are the user's to change, in the settings.",
+    "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the notifications and the chime are the user's to change, in the settings.",
   ];
   return lines.join("\n");
 }

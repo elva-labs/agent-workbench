@@ -681,7 +681,7 @@ export function ended(event: SessionEnded): boolean {
   session.status = event.clean ? "exited" : "crashed";
   // An ending is something to see too, and not a thing still working.
   session.working = false;
-  if (!isViewed(session)) session.unread = true;
+  unseen(session);
   // The transcript is complete now, so the history it belongs in has moved.
   loadHistory(session.project);
   return true;
@@ -909,7 +909,7 @@ function stillLater(session: Session) {
       const now = byKey(session.key);
       if (now === null || !now.exact || !now.working) return;
       now.working = false;
-      if (!isViewed(now)) now.unread = true;
+      unseen(now);
     }, QUIET_EXACT_MS),
   );
 }
@@ -927,7 +927,25 @@ function settle(key: string) {
   }
   if (session === null || !session.working) return;
   session.working = false;
-  if (!isViewed(session)) session.unread = true;
+  unseen(session);
+}
+
+let waiting: ((session: Session) => void) | null = null;
+
+/** Who is told when a session starts waiting for the user: it was read,
+    and something nobody saw has made it unread. */
+export function onWaiting(handler: ((session: Session) => void) | null) {
+  waiting = handler;
+}
+
+/** Something happened that nobody saw: the session is unread until it is
+    looked at. One already unread is still waiting, and is not news unless
+    what happened is: an ask for a permission is, whatever came before it. */
+function unseen(session: Session, asking = false) {
+  if (isViewed(session)) return;
+  const news = asking || !session.unread;
+  session.unread = true;
+  if (news) waiting?.(session);
 }
 
 /** The agent rang the bell, or sent a notification: it wants the user,
@@ -936,7 +954,7 @@ function settle(key: string) {
 export function rang(key: string) {
   const session = byKey(key);
   if (session === null) return;
-  if (!isViewed(session)) session.unread = true;
+  unseen(session);
 }
 
 /** The user looked: the session is on screen in a focused window. */
@@ -953,7 +971,7 @@ export function noted(key: string, text: string) {
   const session = byKey(key);
   if (session === null) return;
   session.note = text;
-  if (!isViewed(session)) session.unread = true;
+  unseen(session);
 }
 
 // Only the latest transition matters when identification catches up. The
@@ -1008,15 +1026,17 @@ export function exact(
       session.working = false;
       session.needs = null;
       if (session.note === null && note !== null) session.note = note;
-      if (!isViewed(session)) session.unread = true;
+      unseen(session);
       break;
-    case "permission":
+    case "permission": {
+      const asking = session.needs !== "permission";
       session.working = false;
       session.needs = "permission";
-      if (!isViewed(session)) session.unread = true;
+      unseen(session, asking);
       break;
+    }
     case "idle":
-      if (!isViewed(session)) session.unread = true;
+      unseen(session);
       break;
   }
 }

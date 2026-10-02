@@ -49,6 +49,9 @@ declare global {
       opened: string[];
       /** Counts put on the app's icon. */
       badges: (number | null)[];
+      /** What the window asked the system to say. */
+      notified: { title: string; body: string }[];
+      chimes: number;
       picked: string | null;
       outputs: Record<string, (bytes: Uint8Array) => void>;
       enders: ((ended: unknown) => void)[];
@@ -111,6 +114,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         titles: [],
         opened: [],
         badges: [],
+        notified: [],
+        chimes: 0,
         picked: null,
         outputs: {},
         enders: [],
@@ -179,6 +184,12 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         openAppMenu: async () => {},
         setBadge: async (count: number | null) => {
           fake.badges.push(count);
+        },
+        notify: async (title: string, body: string) => {
+          fake.notified.push({ title, body });
+        },
+        chime: async () => {
+          fake.chimes += 1;
         },
         spawn: async (
           spawnOptions: any,
@@ -861,6 +872,25 @@ test.describe("working, and waiting for you", () => {
     await expect(rows(page).first()).not.toContainText("waiting for you");
     await expect(page.getByTestId("waiting-readout")).toHaveCount(0);
     expect((await page.evaluate(() => window.__fake.badges)).at(-1)).toBeNull();
+  });
+
+  test("says so through the system only while the window is in the background", async ({
+    page,
+  }) => {
+    await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
+    expect(await page.evaluate(() => window.__fake.notified)).toEqual([]);
+
+    await rows(page).first().click();
+    await rows(page).nth(1).click();
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
+    await expect(rows(page).first().locator(".dot")).toHaveClass(/unread/);
+    await expect
+      .poll(() => page.evaluate(() => window.__fake.notified))
+      .toEqual([{ title: "one · session 1", body: "Waiting for you" }]);
+    // The chime is off until the user turns it on.
+    expect(await page.evaluate(() => window.__fake.chimes)).toBe(0);
   });
 
   test("marks a session that rings behind another at once", async ({

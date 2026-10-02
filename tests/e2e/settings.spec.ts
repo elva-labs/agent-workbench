@@ -27,7 +27,7 @@ test("opens on the chord and from the menu, and closes on Escape", async ({
   await expect(page.getByTestId("settings")).toBeHidden();
 });
 
-// Four tabs down the left, one section's worth of settings beside them.
+// Tabs down the left, one section's worth of settings beside them.
 test.describe("the tabs", () => {
   test("show one section at a time", async ({ page }) => {
     await page.keyboard.press(`${MOD}+,`);
@@ -550,4 +550,32 @@ test.describe("plugins", () => {
       )
       .toEqual([PROJECT]);
   });
+});
+
+test("turns the notifications and the chime on and off, and keeps them", async ({ page }) => {
+  const file = () =>
+    page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "{}"),
+      SETTINGS_FILE,
+    );
+  const chimes = () =>
+    page.evaluate(() => (window as unknown as { __chimes?: number }).__chimes ?? 0);
+
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-notifications").click();
+  await expect(page.getByTestId("notifications-on")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("chime-off")).toHaveAttribute("aria-checked", "true");
+
+  await page.getByTestId("chime-on").click();
+  await page.getByTestId("notifications-off").click();
+  await expect.poll(file).toMatchObject({ notifications: false, chime: true });
+  // Turning it on lets the user hear what they chose.
+  expect(await chimes()).toBe(1);
+
+  await page.reload();
+  await expect(page.locator(AGENT)).toBeVisible();
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-notifications").click();
+  await expect(page.getByTestId("notifications-off")).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByTestId("chime-on")).toHaveAttribute("aria-checked", "true");
 });

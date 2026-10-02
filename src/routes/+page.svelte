@@ -58,11 +58,14 @@
     followHistory,
     refreshHistory,
     identified,
+    onWaiting,
     sessions,
     unreadCount,
     viewed,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
+  import { primeChime } from "$lib/chime";
+  import { announce } from "$lib/notify.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
   import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -205,6 +208,9 @@
     offs.push(followCwd());
     offs.push(followHistory());
     offs.push(followFocus());
+    offs.push(primeChime());
+    onWaiting(announce);
+    offs.push(() => onWaiting(null));
     return () => offs.forEach((off) => off());
   });
 

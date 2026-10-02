@@ -4,9 +4,9 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 (<kbd>Ctrl</kbd> on Windows and Linux), over the workbench. A choice applies
 at once.
 
-The settings are in four tabs down the left. Appearance carries the
+The settings are in five tabs down the left. Appearance carries the
 appearance, theme, font, colour and custom styles sections; live updates,
-plugins and keys each carry the section of that name. Opening the settings again lands on the
+plugins, keys and notifications each carry the section of that name. Opening the settings again lands on the
 tab last used, for as long as the window is open. The dialog follows the look
 the panes are drawn in.
 
@@ -111,6 +111,15 @@ checking and updating do is in [plugins](plugins.md).
 The whole chord table, with two presets and room for your own. What the app
 may claim and why is in [focus](focus-model.md).
 
+## Notifications
+
+Two switches for a session that starts waiting for you while the window is
+in the background, as [sessions](sessions.md) describes. System
+notifications are on to begin with: the system shows the project and the
+session, and what it waits on. The chime is off to begin with: a short,
+quiet tone, played once as it is turned on. Each is kept with the rest of
+the settings.
+
 ## An agent changing them
 
 An agent can read the settings and ask to change them, with two tools the
@@ -123,8 +132,9 @@ of every action. A change names only what should change, and the agent may
 give a reason in the user's terms. It is checked whole before the user
 sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
-agent is told why without the user being troubled. The agent hooks and the
-plugins are refused outright, as the user's to change.
+agent is told why without the user being troubled. The agent hooks, the
+plugins, the notifications and the chime are refused outright, as the
+user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
@@ -157,7 +167,7 @@ on, whichever machine the agent runs on.
 ## Where they are kept
 
 The appearance, the look, the palette, the fonts, the chords, the answer
-on hooks and your own themes are kept for the machine, in `settings.json` under
+on hooks, the notifications and your own themes are kept for the machine, in `settings.json` under
 `~/.agent-workbench`, and every window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which

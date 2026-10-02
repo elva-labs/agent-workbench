@@ -291,6 +291,8 @@ export async function installFakeCore(
         hooks: { everywhere: true, overrides: {} },
         themes: {},
         userStyles: false,
+        notifications: true,
+        chime: false,
       };
       const allowed: Record<string, string[]> = {
         appearance: ["system", "light", "dark"],
@@ -351,6 +353,15 @@ export async function installFakeCore(
           return () => {};
         },
         setBadge: async () => {},
+        // What the window asked the system to say, for a test to read.
+        notify: async (title: string, body: string) => {
+          const fake = window as unknown as { __notified?: { title: string; body: string }[] };
+          (fake.__notified ??= []).push({ title, body });
+        },
+        chime: async () => {
+          const fake = window as unknown as { __chimes?: number };
+          fake.__chimes = (fake.__chimes ?? 0) + 1;
+        },
         spawn: async (
           spawnOptions: { session?: string },
           onOutput: (bytes: Uint8Array) => void,
@@ -1033,8 +1044,8 @@ export async function installFakeCore(
             } else if (field in allowed) {
               if (!allowed[field].includes(value as string))
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
-            } else if (field === "userStyles") {
-              if (typeof value !== "boolean") throw new Error("userStyles is true or false");
+            } else if (["userStyles", "notifications", "chime"].includes(field)) {
+              if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
             } else if (!["keys", "hooks", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }

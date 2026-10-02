@@ -3,7 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { openUrl as openWithSystem } from "@tauri-apps/plugin-opener";
+import { playChime } from "$lib/chime";
 
 /**
  * The one place the frontend talks to the Rust core.
@@ -527,6 +533,11 @@ export interface Settings {
   >;
   /** Whether the user's own stylesheet is laid over the app's. */
   userStyles: boolean;
+  /** Whether a session that starts waiting for the user while the window
+      is in the background says so with a system notification. */
+  notifications: boolean;
+  /** Whether it says so with a chime as well. */
+  chime: boolean;
 }
 
 /** The user's own stylesheet: its text, or none and why the one on disk
@@ -563,6 +574,11 @@ export interface Core {
   onFullScreen(handler: (fullScreen: boolean) => void): Promise<() => void>;
   /** A count on the app's icon, or none. Sessions waiting for the user. */
   setBadge(count: number | null): Promise<void>;
+  /** A notification from the system, asking for leave to show one first
+      if the system has not been asked yet. */
+  notify(title: string, body: string): Promise<void>;
+  /** A short, quiet chime. */
+  chime(): Promise<void>;
   spawn(
     options: SpawnOptions,
     onOutput: (bytes: Uint8Array) => void,
@@ -873,6 +889,15 @@ const tauriCore: Core = {
     await getCurrentWindow().setBadgeCount(count === null ? undefined : count);
   },
 
+  async notify(title, body) {
+    if (!(await isPermissionGranted()) && (await requestPermission()) !== "granted") return;
+    sendNotification({ title, body });
+  },
+
+  async chime() {
+    playChime();
+  },
+
   async spawn(options, onOutput) {
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => onOutput(toBytes(message));
@@ -1131,6 +1156,8 @@ const detachedCore: Core = {
     return () => {};
   },
   async setBadge() {},
+  async notify() {},
+  async chime() {},
   async spawn() {
     throw new Error("not connected to the workbench core");
   },

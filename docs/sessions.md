@@ -70,7 +70,13 @@ header spells the state out. A session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the
 name in ink, `waiting for you` in the agent pane, a count in the status bar,
 and the same count on the app's icon. Having it on
-screen in a focused window reads it. Attention comes through the pty for
+screen in a focused window reads it. A session that goes unread while the
+window is in the background also says so through the system, once each time
+it goes unread: a notification with the project, the session and what it
+waits on, the line the agent left when there is one, and a chime if that is
+turned on. A session an orchestrator started says so only when it needs a
+permission, since the orchestrator answers for the rest. Both are switched
+in the [settings](settings.md#notifications). Attention comes through the pty for
 both agents, as the bell or a terminal notification, with nothing installed.
 With hooks on, a row also carries a line under its name from the turn
 that just ended: the first line of what the agent last said, as plain
