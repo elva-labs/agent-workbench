@@ -23,6 +23,8 @@ const DEFAULTS: Settings = {
   hooks: { everywhere: true, overrides: {} },
   themes: {},
   userStyles: false,
+  notifications: true,
+  chime: false,
 };
 
 vi.mock("$lib/core", () => ({
@@ -71,6 +73,7 @@ import { PRESETS, applyPreset, keys, resetKeys, setBinding } from "$lib/keys.sve
 import { resetPersist } from "$lib/persist";
 import { adopt, currentSettings, followSettings } from "$lib/preferences.svelte";
 import { loadTheme, setLook, setPalette, theme } from "$lib/theme.svelte";
+import { notify, resetNotify, setChime, setNotifications } from "$lib/notify.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -88,6 +91,7 @@ beforeEach(() => {
   resetPersist();
   resetKeys();
   resetHooks();
+  resetNotify();
   theme.choice = "system";
   theme.palette = "teal";
   theme.look = "modern";
@@ -119,6 +123,16 @@ describe("followSettings", () => {
     expect(hook.everywhere).toBe(false);
     expect(hook.overrides).toEqual({ "/p": true });
     expect(state.sets).toEqual([]);
+  });
+
+  it("takes the notifications and the chime from the machine's settings", async () => {
+    state.stored = { ...DEFAULTS, notifications: false, chime: true };
+    await followSettings();
+    expect(notify.notifications).toBe(false);
+    expect(notify.chime).toBe(true);
+    state.changed?.({ ...DEFAULTS });
+    expect(notify.notifications).toBe(true);
+    expect(notify.chime).toBe(false);
   });
 
   it("keeps a copy for the first frame of the next start", async () => {
@@ -185,6 +199,14 @@ describe("a change in the window", () => {
   beforeEach(async () => {
     state.stored = { ...DEFAULTS };
     await followSettings();
+  });
+
+  it("sends the notifications and the chime on their own", async () => {
+    setNotifications(false);
+    setChime(true);
+    await settle();
+    expect(state.sets).toEqual([{ notifications: false }, { chime: true }]);
+    expect(currentSettings()).toMatchObject({ notifications: false, chime: true });
   });
 
   it("sends only what changed", async () => {

@@ -1,6 +1,6 @@
 <script module lang="ts">
-  /** The four columns of settings, one on screen at a time. */
-  type Tab = "appearance" | "live" | "plugins" | "keys";
+  /** The columns of settings, one on screen at a time. */
+  type Tab = "appearance" | "live" | "plugins" | "keys" | "notifications";
 
   /** The tab last chosen. It belongs to the module rather than the dialog, so
       closing the settings and opening them again lands where you were; a new
@@ -63,6 +63,7 @@
   } from "$lib/theme.svelte";
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
+  import { notify, setChime, setNotifications } from "$lib/notify.svelte";
 
   /**
    * The settings, over the workbench. Reached from the native menu or its
@@ -83,6 +84,7 @@
     { name: "live", label: "Live updates" },
     { name: "plugins", label: "Plugins" },
     { name: "keys", label: "Keys" },
+    { name: "notifications", label: "Notifications" },
   ];
 
   let dialog: HTMLElement;
@@ -690,6 +692,42 @@
               >Add a source…</button
             >
           {/if}
+        {:else if tab === "notifications"}
+          <h3>System notifications</h3>
+          <div class="seg" role="radiogroup" aria-label="System notifications">
+            <button
+              role="radio"
+              aria-checked={notify.notifications}
+              class:on={notify.notifications}
+              onclick={() => setNotifications(true)}
+              data-testid="notifications-on">On</button
+            >
+            <button
+              role="radio"
+              aria-checked={!notify.notifications}
+              class:on={!notify.notifications}
+              onclick={() => setNotifications(false)}
+              data-testid="notifications-off">Off</button
+            >
+          </div>
+
+          <h3>Chime</h3>
+          <div class="seg" role="radiogroup" aria-label="Chime">
+            <button
+              role="radio"
+              aria-checked={notify.chime}
+              class:on={notify.chime}
+              onclick={() => setChime(true)}
+              data-testid="chime-on">On</button
+            >
+            <button
+              role="radio"
+              aria-checked={!notify.chime}
+              class:on={!notify.chime}
+              onclick={() => setChime(false)}
+              data-testid="chime-off">Off</button
+            >
+          </div>
         {:else}
           <h3>Keys</h3>
           <p class="note">

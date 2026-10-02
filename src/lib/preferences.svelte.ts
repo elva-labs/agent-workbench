@@ -12,6 +12,7 @@
 import { core, type Settings } from "$lib/core";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptKeys, keys } from "$lib/keys.svelte";
+import { adoptNotify, notifySettings } from "$lib/notify.svelte";
 import { onSettled, sending } from "$lib/persist";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
 import { adoptUserStylesSetting, followStyles, userStyles } from "$lib/userStyles.svelte";
@@ -24,6 +25,7 @@ export function currentSettings(): Settings {
     keys: { ...keys.bindings },
     hooks: hooksSettings(),
     userStyles: userStyles.on,
+    ...notifySettings(),
   };
 }
 
@@ -32,6 +34,7 @@ export function adopt(settings: Settings) {
   adoptTheme(settings);
   adoptKeys(settings.keys ?? {});
   adoptUserStylesSetting(settings.userStyles);
+  adoptNotify(settings);
   adoptHooks(
     settings.hooks ?? { everywhere: false, overrides: {} },
     workspace.open.map((project) => project.path),

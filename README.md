@@ -18,7 +18,8 @@ state at a glance, and projects on other machines over ssh.
 - **Sessions.** Open a folder and start a session in it, or resume one the
   agent had there before. Several projects and sessions run side by side;
   switching between them stops nothing. A session's row says whether the
-  agent is working, waiting for you, or asking for permission.
+  agent is working, waiting for you, or asking for permission, and with the
+  window in the background a system notification says so too.
 - **Changes.** The changed files and their diffs, refreshed as the agent
   edits, with a file viewer and search over the tree. Under the tree sit what
   the agent has presented and what runs under the project's sessions. A

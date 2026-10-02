@@ -132,6 +132,8 @@ describe("plan", () => {
   it("refuses the hooks and the plugins as the user's own", () => {
     expect(() => plan({ hooks: { everywhere: false } })).toThrow(/user's to change/);
     expect(() => plan({ plugins: [] })).toThrow(/user's to change/);
+    expect(() => plan({ notifications: false })).toThrow(/user's to change/);
+    expect(() => plan({ chime: true })).toThrow(/user's to change/);
   });
 
   it("reads chords as text, the modifier implied", () => {
