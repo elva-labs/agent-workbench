@@ -1423,10 +1423,9 @@ mod tests {
         ] {
             assert!(properties.contains_key(name), "{name}");
         }
-        assert!(
-            !properties.contains_key("hooks"),
-            "the hooks are the user's alone"
-        );
+        for name in ["hooks", "notifications", "chime"] {
+            assert!(!properties.contains_key(name), "{name} is the user's alone");
+        }
         assert!(INSTRUCTIONS.contains("settings_change"));
     }
 

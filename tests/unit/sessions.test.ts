@@ -18,6 +18,7 @@ import {
   QUIET_MS,
   rang,
   noted,
+  onWaiting,
   unreadCount,
   typed,
   GRACE_MS,
@@ -1145,6 +1146,47 @@ describe("working, and waiting for you", () => {
     disown(A, "session-pty-1");
     expect(isMine(A, "session-pty-1")).toBe(false);
     expect(() => disown(A, "not-ours")).not.toThrow();
+  });
+
+  // Claude Code rings the bell and its stop hook fires as one turn ends:
+  // the session started waiting once, so it is said once.
+  it("says once when a session starts waiting, however many signs there are", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const behind = live(A, "pty-1");
+      const watched = live(A, "pty-2");
+      exact("session-pty-1", "stop", "Done.");
+      rang(behind.key);
+      noted(behind.key, "Over to you.");
+      expect(told).toEqual([behind.key]);
+
+      // On screen, nothing is news.
+      rang(watched.key);
+      expect(told).toEqual([behind.key]);
+
+      // Read, then waiting again: that is news again.
+      viewed(behind.key);
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "permission");
+      expect(told).toEqual([behind.key, behind.key]);
+
+      // Asked again: the same ask, not news.
+      exact("session-pty-1", "permission");
+      expect(told).toHaveLength(2);
+      ended({ id: "pty-1", code: 0, clean: true });
+      expect(told).toHaveLength(2);
+
+      // Waiting already, then asking for a permission with no prompt
+      // between: the ask is news of its own.
+      const other = live(A, "pty-3");
+      select(watched.key);
+      exact("session-pty-3", "stop");
+      exact("session-pty-3", "permission");
+      expect(told.filter((key) => key === other.key)).toHaveLength(2);
+    } finally {
+      onWaiting(null);
+    }
   });
 
   it("does nothing for a key it does not have", () => {

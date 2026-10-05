@@ -1067,6 +1067,7 @@ pub fn run() {
         .manage(launch::Launches::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let core = Arc::new(Core::new(Arc::new(TauriSink(app.handle().clone()))));
             if let Err(error) = core.start() {
