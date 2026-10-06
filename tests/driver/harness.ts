@@ -508,8 +508,16 @@ export function watchNotifications(): { seen: () => string; stop: () => void } {
     ],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
+  // The monitor is no reason for the test run to stay up.
+  monitor.unref();
   monitor.stdout?.on("data", (chunk: Buffer) => said.push(chunk.toString()));
-  return { seen: () => said.join(""), stop: () => monitor.kill() };
+  return {
+    seen: () => said.join(""),
+    stop: () => {
+      monitor.stdout?.destroy();
+      monitor.kill("SIGKILL");
+    },
+  };
 }
 
 export async function launch(): Promise<App> {
