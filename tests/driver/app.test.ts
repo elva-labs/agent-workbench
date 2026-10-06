@@ -13,6 +13,7 @@ import {
   type,
   waitForPaneText,
   waitForText,
+  watchNotifications,
   type App,
 } from "./harness";
 
@@ -88,6 +89,8 @@ const SETTINGS_BUILT = settingsPlugin("driverbuilt");
 
 let app: App;
 let repo: string;
+/** The system's side of the notifications, read where it can be: Linux. */
+let notifications: ReturnType<typeof watchNotifications> | null = null;
 
 function git(args: string[]) {
   execFileSync("git", args, { cwd: repo, stdio: "ignore" });
@@ -105,11 +108,13 @@ beforeAll(async () => {
   // A change to see in the pane.
   writeFileSync(join(repo, "lib.rs"), 'fn main() { println!("hi"); }\n');
 
+  if (process.platform === "linux") notifications = watchNotifications();
   app = await launch();
 }, 120_000);
 
 afterAll(async () => {
   await app?.stop();
+  notifications?.stop();
 });
 
 describe("the real app", () => {
@@ -179,6 +184,38 @@ describe("the real app", () => {
     await type(driver, "hello there\n");
     await waitForText(driver, "echo: hello there");
   });
+
+  // On Linux the system's notifications are calls on the session bus, which
+  // the harness watches. A Windows toast is out of its reach.
+  it.skipIf(process.platform !== "linux")(
+    "says through the system that the agent waits while the window is behind",
+    async () => {
+      const { driver } = app;
+      await driver.executeScript(() => window.dispatchEvent(new Event("blur")));
+      try {
+        await type(driver, "bell\n");
+        await waitForText(driver, "rang");
+        await driver
+          .wait(
+            async () =>
+              notifications!.seen().includes('string "Waiting for you"'),
+            15_000,
+          )
+          .catch(() => {
+            throw new Error(
+              `no notification on the session bus; it carried:\n${notifications!.seen() || "nothing"}`,
+            );
+          });
+        expect(notifications!.seen()).toContain(
+          `string "${repo.split(/[\\/]/).pop()} · `,
+        );
+      } finally {
+        await driver.executeScript(() =>
+          window.dispatchEvent(new Event("focus")),
+        );
+      }
+    },
+  );
 
   it("sees the agent's own edit through the watcher", async () => {
     const { driver } = app;

@@ -6,8 +6,9 @@
 # and the webkit2gtk-driver package. On Windows only Edge WebDriver, matching
 # the WebView2 runtime, in TAURI_NATIVE_DRIVER -- the harness starts the app
 # and attaches, so tauri-driver is not in the picture there. On a headless
-# machine it brings up Xvfb and a window manager first. The debug binary
-# loads the dev server, which is started here if it is not up.
+# Linux machine it brings up Xvfb and a window manager first, and a session
+# bus with dunst serving notifications on it. The debug binary loads the dev
+# server, which is started here if it is not up.
 #
 #   scripts/driver.sh [vitest args]
 #
@@ -37,6 +38,19 @@ if [[ "$(uname -s)" == "Linux" && -z "${DISPLAY:-}" ]]; then
   PIDS+=($!)
   sleep 2
   openbox >/dev/null 2>&1 &
+  PIDS+=($!)
+  sleep 1
+fi
+
+# The system's notifications on Linux are calls on the session bus, to
+# whatever serves them. A headless machine has neither, so it gets a bus of
+# its own and dunst to answer on it.
+if [[ "$(uname -s)" == "Linux" && -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+  { read -r DBUS_SESSION_BUS_ADDRESS; read -r bus; } \
+    < <(dbus-daemon --session --fork --print-address=1 --print-pid=1)
+  export DBUS_SESSION_BUS_ADDRESS
+  PIDS+=("$bus")
+  dunst >/dev/null 2>&1 &
   PIDS+=($!)
   sleep 1
 fi
