@@ -64,12 +64,14 @@ that prints its arguments and echoes what it is told, on a PATH that a fake
 login shell puts first, because the core asks the login shell for its
 environment rather than trusting its own. Each run gets a home of its own.
 On Linux the tier needs `tauri-driver` and the `webkit2gtk-driver` package,
-and brings up Xvfb and a window manager on a headless machine. The binary
-loads the built frontend served static rather than from the dev server,
-whose on-demand compile can hand the first request a component's source as
-its stylesheet, and asks the terminals for the DOM renderer, since the
-software GL behind a headless X server paints a third WebGL terminal late
-or never and WebKit names every GPU the same.
+and brings up Xvfb and a window manager on a headless machine, with a
+session bus and `dunst` to serve the system's notifications on it. The
+notifications the app sends are read off that bus as they are asked for.
+The binary loads the built frontend served static rather than from the dev
+server, whose on-demand compile can hand the first request a component's
+source as its stylesheet, and asks the terminals for the DOM renderer, since
+the software GL behind a headless X server paints a third WebGL terminal
+late or never and WebKit names every GPU the same.
 
 On Linux the tier also drives the embedded browser. A tab's page is a
 native view the WebDriver session cannot see into, so where it sits and what

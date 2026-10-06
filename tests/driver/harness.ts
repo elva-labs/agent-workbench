@@ -57,7 +57,8 @@ export interface App {
 const WINDOWS = process.platform === "win32";
 
 /** A tool that prints its arguments, then echoes each line it is given
-    until told to exit. What a pty test needs from an agent. */
+    until told to exit, or to ring the bell the way Claude Code asks for
+    attention. What a pty test needs from an agent. */
 const FAKE_AGENT = (name: string) => `#!/bin/sh
 echo "FAKE ${name} $*"
 echo "in $PWD"
@@ -65,6 +66,7 @@ while IFS= read -r line; do
   case "$line" in
     exit) exit 0 ;;
     crash) exit 3 ;;
+    bell) printf 'rang\\007\\n' ;;
   esac
   echo "echo: $line"
 done
@@ -489,6 +491,25 @@ async function bridge(home: string, bin: string): Promise<App> {
       tauriDriver.kill();
     },
   };
+}
+
+/** The notifications the app asks the system for, read off the session bus
+    as calls to the freedesktop notification service: each call's title and
+    body appear in what `seen` returns. Linux only. */
+export function watchNotifications(): { seen: () => string; stop: () => void } {
+  if (!process.env.DBUS_SESSION_BUS_ADDRESS)
+    throw new Error("no session bus to watch: scripts/driver.sh starts one");
+  const said: string[] = [];
+  const monitor = spawn(
+    "dbus-monitor",
+    [
+      "--session",
+      "type='method_call',interface='org.freedesktop.Notifications',member='Notify'",
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
+  );
+  monitor.stdout?.on("data", (chunk: Buffer) => said.push(chunk.toString()));
+  return { seen: () => said.join(""), stop: () => monitor.kill() };
 }
 
 export async function launch(): Promise<App> {
