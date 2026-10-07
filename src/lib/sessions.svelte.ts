@@ -3,9 +3,12 @@ import {
   type AgentId,
   type SessionEnded,
   type SessionEvent,
+  type PastSessions,
+  type Settings,
   type Transcript,
 } from "$lib/core";
 import { accountOf, dirFor } from "$lib/accounts.svelte";
+import { persist } from "$lib/persist";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { isReady } from "$lib/agent.svelte";
@@ -127,7 +130,66 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
+  /** How long a past session stays listed under its project. Older than
+      that, it goes behind the fold with the rest of the history, where it
+      is still there to resume and to search. */
+  pastSessions: "forever" as PastSessions,
 });
+
+/** The spans a past session may stay listed for, in the order they are
+    offered, with the seconds each stands for. Forever has no limit. */
+export const PAST_SESSIONS: { choice: PastSessions; label: string; seconds: number | null }[] = [
+  { choice: "forever", label: "Forever", seconds: null },
+  { choice: "month", label: "30 days", seconds: 30 * 24 * 60 * 60 },
+  { choice: "week", label: "7 days", seconds: 7 * 24 * 60 * 60 },
+  { choice: "day", label: "1 day", seconds: 24 * 60 * 60 },
+];
+
+function isPastSessions(value: unknown): value is PastSessions {
+  return PAST_SESSIONS.some((span) => span.choice === value);
+}
+
+/** The past sessions' part of the settings. */
+export function pastSessionsSettings(): Pick<Settings, "pastSessions"> {
+  return { pastSessions: sessions.pastSessions };
+}
+
+/** Takes the core's word for how long past sessions stay listed. A value
+    it does not know is forever, which lists everything as before. */
+export function adoptPastSessions(value: unknown) {
+  sessions.pastSessions = isPastSessions(value) ? value : "forever";
+  pruneDormant();
+}
+
+export function setPastSessions(value: PastSessions) {
+  if (sessions.pastSessions === value) return;
+  sessions.pastSessions = value;
+  persist({ pastSessions: value });
+  pruneDormant();
+}
+
+/** Whether a transcript has gone unchanged for longer than past sessions
+    stay listed. */
+export function aged(transcript: { modified: number }): boolean {
+  const limit = PAST_SESSIONS.find((span) => span.choice === sessions.pastSessions)?.seconds;
+  if (limit === null || limit === undefined) return false;
+  return Date.now() / 1000 - transcript.modified > limit;
+}
+
+/** A row left from the last quit, with nothing running behind it, is a
+    past session that happens to be drawn as a row. One whose transcript has
+    aged past the limit goes behind the fold like the rest; the row goes,
+    and nothing is stopped, since nothing was running. */
+function pruneDormant(project: string | null = null) {
+  for (const session of [...sessions.all]) {
+    if (session.status !== "dormant" || session.id === null) continue;
+    if (project !== null && session.project !== project) continue;
+    const transcript = (sessions.history[session.project] ?? []).find(
+      (entry) => entry.id === session.id,
+    );
+    if (transcript !== undefined && aged(transcript)) close(session.key);
+  }
+}
 
 export async function loadHistory(project: string) {
   const lists = await Promise.all(
@@ -146,6 +208,7 @@ export async function loadHistory(project: string) {
     if (!newest.has(entry.id)) newest.set(entry.id, entry);
   }
   sessions.history[project] = [...newest.values()];
+  pruneDormant(project);
 }
 
 /** How often a project's history is read again while the window is
@@ -282,13 +345,20 @@ function closed(project: string): HistoryEntry[] {
   return known.filter((transcript) => !open.has(transcript.id));
 }
 
-/** Past sessions this app ran, ready to resume. */
-export function historyFor(project: string): HistoryEntry[] {
-  return closed(project).filter((transcript) => isMine(project, transcript.id));
+/** Whether a past session is listed under its project: one this app ran,
+    and not left unchanged for longer than past sessions stay listed. */
+function listed(project: string, transcript: HistoryEntry): boolean {
+  return isMine(project, transcript.id) && !aged(transcript);
 }
 
-/** Past sessions from outside the app: an agent run in a terminal in the
-    same directory. Just as resumable, but not the first thing to show. One
+/** Past sessions this app ran lately, ready to resume. */
+export function historyFor(project: string): HistoryEntry[] {
+  return closed(project).filter((transcript) => listed(project, transcript));
+}
+
+/** Past sessions behind the fold: from outside the app, an agent run in a
+    terminal in the same directory, and the app's own that have aged past
+    the limit. Just as resumable, but not the first thing to show. One
     agent's, or every agent's. */
 export function outsideFor(
   project: string,
@@ -296,7 +366,7 @@ export function outsideFor(
 ): HistoryEntry[] {
   return closed(project).filter(
     (transcript) =>
-      !isMine(project, transcript.id) &&
+      !listed(project, transcript) &&
       (agent === null || transcript.agent === agent),
   );
 }
@@ -1073,6 +1143,7 @@ export function reset() {
   sessions.mine = {};
   sessions.names = {};
   sessions.preferred = {};
+  sessions.pastSessions = "forever";
   counter = 0;
   ordinals = {};
   resetExits();

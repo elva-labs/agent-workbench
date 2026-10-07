@@ -42,6 +42,9 @@ pub const LOOKS: &[&str] = &["modern", "terminal"];
 pub const PALETTES: &[&str] = &["teal", "indigo", "amber", "rose", "mono"];
 pub const TERMINAL_FONTS: &[&str] = &["system", "plex", "jetbrains"];
 pub const INTERFACE_FONTS: &[&str] = &["system", "plex", "inter"];
+/// How long a past session stays listed under its project before it goes
+/// behind the fold with the rest of the history.
+pub const PAST_SESSIONS: &[&str] = &["forever", "month", "week", "day"];
 
 /// How many chords the table may hold, and how long a key or an action's
 /// name may be: far past what the app has, and short of what a file can
@@ -170,6 +173,8 @@ pub struct Settings {
     pub hooks: Hooks,
     /// The agents' logins kept apart, and which project runs under which.
     pub accounts: Accounts,
+    /// How long a past session stays listed under its project.
+    pub past_sessions: String,
     /// The user's own themes, by name. A palette may name one.
     pub themes: BTreeMap<String, Theme>,
     /// Whether the user's own stylesheet is laid over the app's.
@@ -195,6 +200,7 @@ impl Default for Settings {
                 overrides: BTreeMap::new(),
             },
             accounts: Accounts::default(),
+            past_sessions: "forever".into(),
             themes: BTreeMap::new(),
             user_styles: false,
             notifications: true,
@@ -489,6 +495,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "keys" => settings.keys = keys(value)?,
         "hooks" => settings.hooks = hooks(value)?,
         "accounts" => settings.accounts = accounts(value)?,
+        "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
         other => return Err(format!("there is no setting called {other}")),
     }
     Ok(())
@@ -919,6 +926,20 @@ mod tests {
             parse(r#"{ "accounts": { "list": { "work": { "claude": "~/.claude-work" } } } }"#)
                 .unwrap();
         assert_eq!(parsed.accounts.list.len(), 1);
+    }
+
+    #[test]
+    fn how_long_a_past_session_stays_listed_is_one_of_a_few_spans() {
+        let settings = Settings::default();
+        assert_eq!(settings.past_sessions, "forever");
+        let next = apply(&settings, &json!({ "pastSessions": "week" })).unwrap();
+        assert_eq!(next.past_sessions, "week");
+        let error = apply(&settings, &json!({ "pastSessions": "fortnight" })).unwrap_err();
+        assert!(error.contains("forever, month, week, day"), "{error}");
+        assert_eq!(
+            parse(r#"{ "pastSessions": 7 }"#).unwrap().past_sessions,
+            "forever"
+        );
     }
 
     #[test]

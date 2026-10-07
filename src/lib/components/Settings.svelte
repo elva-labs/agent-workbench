@@ -1,6 +1,6 @@
 <script module lang="ts">
   /** The columns of settings, one on screen at a time. */
-  type Tab = "appearance" | "live" | "accounts" | "plugins" | "keys" | "notifications";
+  type Tab = "appearance" | "live" | "sessions" | "accounts" | "plugins" | "keys" | "notifications";
 
   /** The tab last chosen. It belongs to the module rather than the dialog, so
       closing the settings and opening them again lands where you were; a new
@@ -57,6 +57,7 @@
     suggest,
   } from "$lib/accounts.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
+  import { PAST_SESSIONS, sessions, setPastSessions } from "$lib/sessions.svelte";
   import {
     INTERFACE_FONTS,
     LOOKS,
@@ -93,6 +94,7 @@
   const TABS: { name: Tab; label: string }[] = [
     { name: "appearance", label: "Appearance" },
     { name: "live", label: "Live updates" },
+    { name: "sessions", label: "Sessions" },
     { name: "accounts", label: "Accounts" },
     { name: "plugins", label: "Plugins" },
     { name: "keys", label: "Keys" },
@@ -625,6 +627,27 @@
             {#if hook.error}
               <p class="error" data-testid="hook-error">{hook.error}</p>
             {/if}
+          </section>
+        {:else if tab === "sessions"}
+          <section data-testid="settings-sessions">
+            <h3>Past sessions</h3>
+            <p class="note">
+              A session this app ran stays listed under its project, greyed, ready to resume. Left
+              unchanged for longer than this, it goes behind the fold with the rest of the project's
+              history instead, where it is still there to resume and to search. A session left from
+              the last quit goes the same way. Nothing is deleted.
+            </p>
+            <div class="seg" role="radiogroup" aria-label="How long past sessions stay listed">
+              {#each PAST_SESSIONS as span (span.choice)}
+                <button
+                  role="radio"
+                  aria-checked={sessions.pastSessions === span.choice}
+                  class:on={sessions.pastSessions === span.choice}
+                  onclick={() => setPastSessions(span.choice)}
+                  data-testid="past-sessions-{span.choice}">{span.label}</button
+                >
+              {/each}
+            </div>
           </section>
         {:else if tab === "accounts"}
           <section data-testid="settings-accounts">

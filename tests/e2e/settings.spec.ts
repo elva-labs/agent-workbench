@@ -89,7 +89,7 @@ test.describe("the tabs", () => {
     await current("live");
     await expect(page.getByTestId("settings-live")).toBeVisible();
     await page.keyboard.press("ArrowRight");
-    await current("accounts");
+    await current("sessions");
     await page.keyboard.press("ArrowUp");
     await current("live");
     await page.keyboard.press("ArrowLeft");

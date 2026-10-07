@@ -158,11 +158,15 @@ running.
 
 Ours first, the rest behind a row. The agent's history holds every session
 run in the project, including ones started from a plain terminal, and months
-of those would bury the app's own. The sessions this app has run are
+of those would bury the app's own. The sessions this app has run lately are
 remembered by id and listed outright; the others sit behind a single row per
 agent that counts them and opens a dialog over them, with a filter that
 takes every word you type against a session's name, its id and the worktree
 it ran in, and Enter or a click on one to resume it. Resuming one adopts it.
+How long lately is, is a [setting](settings.md#sessions): forever to begin
+with, or a span after which a session of the app's own that has not changed
+goes behind the row with the rest, and a row left from the last quit with
+nothing running behind it goes with them.
 Nothing is deleted or moved, and the split does not survive a wiped local
 storage, which only means everything shows as from outside until it is
 resumed again.

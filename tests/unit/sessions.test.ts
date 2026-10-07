@@ -5,8 +5,12 @@ import { stash } from "$lib/exits";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import {
   activeSession,
+  adoptPastSessions,
+  aged,
   ago,
   historyFor,
+  reopened,
+  setPastSessions,
   historyLabel,
   loadHistory,
   isMine,
@@ -1193,5 +1197,85 @@ describe("working, and waiting for you", () => {
     expect(() => output("nope", 999)).not.toThrow();
     expect(() => rang("nope")).not.toThrow();
     expect(() => viewed("nope")).not.toThrow();
+  });
+});
+
+describe("how long past sessions stay listed", () => {
+  const now = Math.floor(Date.now() / 1000);
+  const DAY = 24 * 60 * 60;
+  const transcript = (id: string, modified: number) => ({
+    id,
+    title: id,
+    modified,
+    size: 100,
+    agent: "claude-code" as const,
+  });
+
+  function ours(...ids: string[]) {
+    for (const id of ids) {
+      const session = create(A);
+      started(session.key, `pty-${id}`, id);
+      close(session.key);
+    }
+  }
+
+  it("lists everything forever to begin with", () => {
+    sessions.history[A] = [transcript("old", now - 400 * DAY), transcript("new", now - 60)];
+    ours("old", "new");
+    expect(aged(transcript("old", now - 400 * DAY))).toBe(false);
+    expect(historyFor(A).map((t) => t.id)).toEqual(["old", "new"]);
+    expect(outsideFor(A)).toHaveLength(0);
+  });
+
+  it("moves one left unchanged past the span behind the fold, and back when the span grows", () => {
+    sessions.history[A] = [
+      transcript("old", now - 10 * DAY),
+      transcript("new", now - 2 * DAY),
+    ];
+    ours("old", "new");
+    setPastSessions("week");
+    expect(historyFor(A).map((t) => t.id)).toEqual(["new"]);
+    expect(outsideFor(A).map((t) => t.id)).toEqual(["old"]);
+    expect(outsideFor(A, "claude-code")).toHaveLength(1);
+    expect(outsideFor(A, "codex")).toHaveLength(0);
+    setPastSessions("day");
+    expect(historyFor(A)).toHaveLength(0);
+    setPastSessions("month");
+    expect(historyFor(A)).toHaveLength(2);
+    // Still ours: resuming is not needed to bring it back.
+    expect(isMine(A, "old")).toBe(true);
+  });
+
+  it("takes a value the core does not know as forever", () => {
+    sessions.history[A] = [transcript("old", now - 10 * DAY)];
+    ours("old");
+    adoptPastSessions("week");
+    expect(historyFor(A)).toHaveLength(0);
+    adoptPastSessions("fortnight");
+    expect(historyFor(A)).toHaveLength(1);
+  });
+
+  it("lets a row left from the last quit go behind the fold once its transcript has aged", async () => {
+    reopened(A, "stale", "claude-code", null, null, null);
+    reopened(A, "fresh", "claude-code", null, null, null);
+    ours("stale", "fresh");
+    historyAnswer = [
+      { id: "stale", title: "stale", modified: now - 10 * DAY, size: 1, cwd: null },
+      { id: "fresh", title: "fresh", modified: now - DAY, size: 1, cwd: null },
+    ];
+    await loadHistory(A);
+    expect(forProject(A).map((s) => s.id)).toEqual(["stale", "fresh"]);
+
+    const stopped = killed.length;
+    setPastSessions("week");
+    expect(forProject(A).map((s) => s.id)).toEqual(["fresh"]);
+    // Nothing was running behind the row, so nothing is stopped.
+    expect(killed).toHaveLength(stopped);
+    expect(outsideFor(A).map((t) => t.id)).toEqual(["stale"]);
+
+    // Read again later with the span unchanged, the next one to age goes too.
+    historyAnswer[1].modified = now - 8 * DAY;
+    await loadHistory(A);
+    expect(forProject(A)).toHaveLength(0);
   });
 });

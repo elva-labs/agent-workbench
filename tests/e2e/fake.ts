@@ -66,10 +66,12 @@ export async function installFakeCore(
     settings?: Record<string, unknown>;
     /** A stylesheet of the user's already on the machine. */
     styles?: string;
+    /** Past Claude Code sessions the core reports for the first project. */
+    transcripts?: { id: string; modified: number; size: number; title: string | null }[];
   } = {},
 ) {
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -290,6 +292,7 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
+        pastSessions: "forever",
         themes: {},
         userStyles: false,
         notifications: true,
@@ -301,6 +304,7 @@ export async function installFakeCore(
         palette: ["teal", "indigo", "amber", "rose", "mono"],
         terminalFont: ["system", "plex", "jetbrains"],
         interfaceFont: ["system", "plex", "inter"],
+        pastSessions: ["forever", "month", "week", "day"],
       };
       const readSettings = (): Record<string, unknown> | null => {
         const raw = localStorage.getItem(settingsFile);
@@ -956,7 +960,8 @@ export async function installFakeCore(
           return JSON.stringify({ ran: script.length > 0, url: tab.url });
         },
 
-        transcripts: async () => [],
+        transcripts: async (project: string, agent: string) =>
+          project === open[0] && agent === "claude-code" ? transcripts : [],
         sessionTitle: async () => null,
         hookStatus: async () => ({
           installed: false,
@@ -1096,6 +1101,7 @@ export async function installFakeCore(
       settingsFile: SETTINGS_FILE,
       styles: options.styles ?? null,
       stylesFile: STYLES_FILE,
+      transcripts: options.transcripts ?? [],
     },
   );
 }

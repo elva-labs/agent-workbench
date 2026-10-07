@@ -4,10 +4,10 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 (<kbd>Ctrl</kbd> on Windows and Linux), over the workbench. A choice applies
 at once.
 
-The settings are in six tabs down the left. Appearance carries the
+The settings are in seven tabs down the left. Appearance carries the
 appearance, theme, font, colour and custom styles sections; live updates,
-accounts, plugins, keys and notifications each carry the section of that
-name. Opening the settings again lands on the tab last used, for as long as
+sessions, accounts, plugins, keys and notifications each carry the section
+of that name. Opening the settings again lands on the tab last used, for as long as
 the window is open. The dialog follows the look the panes are drawn in.
 
 ![The settings over the workbench: the four tabs down the left, and the Appearance tab with its appearance, theme, font and colour choices.](settings.png)
@@ -96,6 +96,18 @@ at this section. What each means for the changes pane and for a session's
 row is in [sessions](sessions.md); what the hooks write and where, and the
 tools they bring the agent, is in [hooks](hooks.md).
 
+## Sessions
+
+How long a past session stays listed under its project: forever, 30 days,
+7 days or 1 day, forever to begin with. A session this app ran is listed
+under its project, greyed, ready to resume, as [sessions](sessions.md#past-sessions)
+describes. Left unchanged for longer than the span chosen, it goes behind
+the fold with the rest of the project's history instead, where it is still
+there to resume and to search; a row left from the last quit, with nothing
+running behind it, goes the same way. Resuming one brings it back to the
+list. Nothing is deleted: the transcripts are the agent's own and stay where
+they are.
+
 ## Accounts
 
 An account is a login kept apart from the others. Claude Code keeps its
@@ -174,8 +186,8 @@ give a reason in the user's terms. It is checked whole before the user
 sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
 agent is told why without the user being troubled. The agent hooks, the
-plugins, the accounts, the notifications and the chime are refused
-outright, as the user's to change.
+plugins, the accounts, how long past sessions stay listed, the
+notifications and the chime are refused outright, as the user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
@@ -208,8 +220,8 @@ on, whichever machine the agent runs on.
 ## Where they are kept
 
 The appearance, the look, the palette, the fonts, the chords, the answer
-on hooks, the accounts, the notifications and your own themes are kept for
-the machine, in `settings.json` under `~/.agent-workbench`, and every
+on hooks, the accounts, how long past sessions stay listed, the
+notifications and your own themes are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which

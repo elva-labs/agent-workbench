@@ -524,6 +524,9 @@ export interface KeyChord {
   alt: boolean;
 }
 
+/** The spans a past session may stay listed for. */
+export type PastSessions = "forever" | "month" | "week" | "day";
+
 /** The user's preferences, one set per machine, kept by the core. */
 export interface Settings {
   appearance: "system" | "light" | "dark";
@@ -543,6 +546,9 @@ export interface Settings {
     everywhere: string | null;
     overrides: Record<string, string | null>;
   };
+  /** How long a past session stays listed under its project before it
+      goes behind the fold with the rest of the history. */
+  pastSessions: PastSessions;
   /** The user's own themes, by name. A palette may name one. */
   themes: Record<
     string,

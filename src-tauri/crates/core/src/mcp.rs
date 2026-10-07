@@ -1424,7 +1424,13 @@ mod tests {
         ] {
             assert!(properties.contains_key(name), "{name}");
         }
-        for name in ["hooks", "accounts", "notifications", "chime"] {
+        for name in [
+            "hooks",
+            "accounts",
+            "pastSessions",
+            "notifications",
+            "chime",
+        ] {
             assert!(!properties.contains_key(name), "{name} is the user's alone");
         }
         assert!(INSTRUCTIONS.contains("settings_change"));

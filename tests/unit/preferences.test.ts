@@ -22,6 +22,7 @@ const DEFAULTS: Settings = {
   keys: {},
   hooks: { everywhere: true, overrides: {} },
   accounts: { list: {}, everywhere: null, overrides: {} },
+  pastSessions: "forever",
   themes: {},
   userStyles: false,
   notifications: true,

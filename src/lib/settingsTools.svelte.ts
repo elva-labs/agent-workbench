@@ -133,6 +133,7 @@ const USERS_OWN = new Set([
   "plugin",
   "accounts",
   "account",
+  "pastSessions",
   "notifications",
   "chime",
 ]);
@@ -237,7 +238,7 @@ export function describeSettings(): string {
         ? "The user has no stylesheet of their own."
         : `The user's stylesheet, which styles_write replaces whole:\n\`\`\`css\n${sheetExcerpt(userStyles.css)}\n\`\`\``,
     "",
-    "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the accounts, the notifications and the chime are the user's to change, in the settings.",
+    "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the accounts, how long past sessions stay listed, the notifications and the chime are the user's to change, in the settings.",
   ];
   return lines.join("\n");
 }
