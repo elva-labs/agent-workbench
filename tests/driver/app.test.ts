@@ -18,6 +18,13 @@ import {
 } from "./harness";
 
 const SESSIONS = "section[data-pane='sessions']";
+/** An element found once it is there, rather than assumed on the first
+    look: the page can be a frame behind the driver, with the dialog up and
+    its contents not yet drawn. */
+function located(driver: WebDriver, selector: string, ms = 10_000) {
+  return driver.wait(until.elementLocated(By.css(selector)), ms);
+}
+
 /** Clicks until what the click does has shown, since a window that has lost
     the foreground on Windows spends the first click on getting it back. */
 async function clickUntil(
@@ -155,7 +162,7 @@ describe("the real app", () => {
   it("starts the agent in a pty, in the project, with the id it was given", async () => {
     const { driver } = app;
     // Both fakes are on PATH, so the row opens into the choice first.
-    await driver.findElement(By.css("[data-testid='new-session']")).click();
+    await (await located(driver, "[data-testid='new-session']")).click();
     await driver
       .findElement(
         By.css("[data-testid='agent-option'][data-agent='claude-code']"),
@@ -255,7 +262,7 @@ describe("the real app", () => {
       until.elementLocated(By.css("[data-testid='settings']")),
       10_000,
     );
-    await driver.findElement(By.css("[data-testid='settings-close']")).click();
+    await (await located(driver, "[data-testid='settings-close']")).click();
     await driver.wait(
       async () =>
         (await driver.findElements(By.css("[data-testid='settings']")))
@@ -267,18 +274,18 @@ describe("the real app", () => {
   // Lines search runs git grep in the real repository.
   it("finds lines inside the files", async () => {
     const { driver } = app;
-    await driver.findElement(By.css("[data-testid='mode-lines']")).click();
+    await (await located(driver, "[data-testid='mode-lines']")).click();
     const field = await driver.findElement(
       By.css("[data-testid='search-field']"),
     );
     await field.sendKeys("println");
     await waitForPaneText(driver, "[data-testid='search-results']", "println");
     await waitForPaneText(driver, "[data-testid='search-results']", "lib.rs");
-    await driver.findElement(By.css("[data-testid='search-hit']")).click();
+    await (await located(driver, "[data-testid='search-hit']")).click();
     await waitForPaneText(driver, "[data-testid='viewer']", "println");
     await field.clear();
-    await driver.findElement(By.css("[data-testid='mode-files']")).click();
-    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+    await (await located(driver, "[data-testid='mode-files']")).click();
+    await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
 
   // The agent's show tool, through the daemon as the agent would call it:
@@ -357,7 +364,7 @@ describe("the real app", () => {
     expect(asked).toContain(
       "The user is looking at README.md in the viewer, the file as it is, lines 1 to 2 highlighted.",
     );
-    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+    await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
 
   it("types the agent's command into a new terminal", async () => {
@@ -489,7 +496,7 @@ describe("the real app", () => {
     expect(await textOf(driver, "[data-testid='viewer-note']")).toBe(
       "It says hi now.",
     );
-    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+    await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
 
   // The present tool the same way: a real PNG in the repository, presented
@@ -547,7 +554,7 @@ describe("the real app", () => {
     expect(
       (await textOf(driver, "[data-testid='media-fold']")).toLowerCase(),
     ).toContain("media (1)");
-    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+    await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
 
   // The whole of the plugin system, end to end: a directory added as a
@@ -585,8 +592,7 @@ describe("the real app", () => {
             5_000,
           );
           // The plugins are on a tab of their own.
-          await driver
-            .findElement(By.css("[data-testid='settings-tab-plugins']"))
+          await (await located(driver, "[data-testid='settings-tab-plugins']"))
             .click();
           return;
         } catch (failure) {
@@ -595,8 +601,7 @@ describe("the real app", () => {
       }
     };
     const closeSettings = async () => {
-      await driver
-        .findElement(By.css("[data-testid='settings-close']"))
+      await (await located(driver, "[data-testid='settings-close']"))
         .click();
       await driver.wait(
         async () =>
@@ -650,13 +655,11 @@ describe("the real app", () => {
     // The source: a directory on this machine, added by path. The form is
     // behind the link, beneath the sources the app offers.
     await openSettings();
-    await driver
-      .findElement(By.css("[data-testid='plugin-add-source']"))
+    await (await located(driver, "[data-testid='plugin-add-source']"))
       .click();
-    await driver
-      .findElement(By.css("[data-testid='plugin-location']"))
+    await (await located(driver, "[data-testid='plugin-location']"))
       .sendKeys(PLUGIN_SOURCE);
-    await driver.findElement(By.css("[data-testid='plugin-add']")).click();
+    await (await located(driver, "[data-testid='plugin-add']")).click();
     const own = "[data-testid='plugin-source']:not([data-known])";
     await driver.wait(until.elementLocated(By.css(own)), 20_000);
     expect(await textOf(driver, own)).toContain("directory");
@@ -671,10 +674,9 @@ describe("the real app", () => {
     );
 
     // On, after the question that comes with it, and started.
-    await driver
-      .findElement(By.css(`${SETTINGS_PLUGIN} [data-testid='plugin-on']`))
+    await (await located(driver, `${SETTINGS_PLUGIN} [data-testid='plugin-on']`))
       .click();
-    await driver.findElement(By.css("[data-testid='plugin-agree']")).click();
+    await (await located(driver, "[data-testid='plugin-agree']")).click();
     await driver.wait(
       async () => {
         const state = await pluginState();
@@ -688,10 +690,9 @@ describe("the real app", () => {
     // and the process starts on what the build left behind.
     const builtState = () =>
       textOf(driver, `${SETTINGS_BUILT} [data-testid='plugin-state']`);
-    await driver
-      .findElement(By.css(`${SETTINGS_BUILT} [data-testid='plugin-on']`))
+    await (await located(driver, `${SETTINGS_BUILT} [data-testid='plugin-on']`))
       .click();
-    await driver.findElement(By.css("[data-testid='plugin-agree']")).click();
+    await (await located(driver, "[data-testid='plugin-agree']")).click();
     await driver.wait(
       async () => (await builtState()).includes("running 0.4.0"),
       60_000,
@@ -763,10 +764,9 @@ describe("the real app", () => {
     expect(
       (await textOf(driver, "[data-testid='action-input']")).toLowerCase(),
     ).toContain("note");
-    await driver
-      .findElement(By.css("[data-testid='action-text']"))
+    await (await located(driver, "[data-testid='action-text']"))
       .sendKeys("from the dialog");
-    await driver.findElement(By.css("[data-testid='action-run']")).click();
+    await (await located(driver, "[data-testid='action-run']")).click();
     await driver.wait(
       async () =>
         (await driver.findElements(By.css("[data-testid='action-input']")))
@@ -783,8 +783,7 @@ describe("the real app", () => {
       until.elementLocated(By.css("[data-testid='plugin-view-open']")),
       15_000,
     );
-    await driver
-      .findElement(By.css("[data-testid='plugin-view-open']"))
+    await (await located(driver, "[data-testid='plugin-view-open']"))
       .click();
     await driver.wait(
       until.elementLocated(
@@ -799,7 +798,7 @@ describe("the real app", () => {
       until.elementLocated(By.css("[data-testid='plugin-page']")),
       10_000,
     );
-    await driver.findElement(By.css("[data-testid='viewer'] .close")).click();
+    await (await located(driver, "[data-testid='viewer'] .close")).click();
 
     // The tool, as the agent meets it: under the plugin's name on the
     // tool server, and answered by the process a call away.
@@ -853,8 +852,7 @@ describe("the real app", () => {
       30_000,
       "the settings never said the plugin was running",
     );
-    await driver
-      .findElement(By.css(`${SETTINGS_PLUGIN} [data-testid='plugin-off']`))
+    await (await located(driver, `${SETTINGS_PLUGIN} [data-testid='plugin-off']`))
       .click();
     await driver.wait(
       async () => (await pluginState()).includes("off"),
