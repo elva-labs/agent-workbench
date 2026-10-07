@@ -33,6 +33,7 @@ import {
   setView,
   showBrowser,
   showMedia,
+  shownChanged,
   showPluginView,
   toggleDir,
   toggleScope,
@@ -205,6 +206,18 @@ describe("refresh", () => {
 
     await refresh();
     expect(fake.diffCalls).toBeGreaterThan(before);
+  });
+
+  // A file shown from outside the tree changed: what shows it reads it
+  // again, without the tree being asked for.
+  it("counts a change to a shown file apart from the tree moving", async () => {
+    await refresh();
+    const reads = files.treeReads;
+    const calls = fake.statusCalls;
+    shownChanged();
+    expect(files.shownReads).toBe(1);
+    expect(files.treeReads).toBe(reads);
+    expect(fake.statusCalls).toBe(calls);
   });
 });
 

@@ -81,6 +81,17 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
                 return Value::String(with_host(host, root));
             }
         }
+        workbench_core::watch::SHOWN_CHANGED => {
+            if let Some(files) = payload.as_array() {
+                return Value::Array(
+                    files
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|file| Value::String(with_host(host, file)))
+                        .collect(),
+                );
+            }
+        }
         workbench_core::show::SHOW_REQUEST => {
             put_back(&mut payload, "path", |path| with_host(host, path));
             put_back(&mut payload, "cwd", |path| with_host(host, path));
@@ -427,6 +438,10 @@ mod tests {
         assert_eq!(
             homeward("lab", "git_changed", json!("/repo")),
             json!("ssh://lab/repo")
+        );
+        assert_eq!(
+            homeward("lab", "shown_changed", json!(["/tmp/a.md", "/tmp/b.png"])),
+            json!(["ssh://lab/tmp/a.md", "ssh://lab/tmp/b.png"])
         );
         let other = homeward(
             "lab",

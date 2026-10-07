@@ -862,6 +862,12 @@ export interface Core {
   /** Starts watching a worktree, replacing whatever was watched before. */
   gitWatch(root: string): Promise<void>;
   onGitChanged(handler: (root: string) => void): Promise<() => void>;
+  /** The files the viewer shows as they are on disk, on the machine the
+      project is on, for the core there to watch where they are. Replaces
+      the set; an empty one is none. */
+  watchShown(project: string, files: string[]): Promise<void>;
+  /** One of those files changed: the paths that did. */
+  onShownChanged(handler: (files: string[]) => void): Promise<() => void>;
 
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
@@ -1168,6 +1174,12 @@ const tauriCore: Core = {
   async onGitChanged(handler) {
     return listen<string>("git_changed", (event) => handler(event.payload));
   },
+  watchShown: (project, files) => invoke("watch_shown", { project, files }),
+  async onShownChanged(handler) {
+    return listen<string[]>("shown_changed", (event) =>
+      handler(event.payload),
+    );
+  },
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
   remoteConnect: (host) =>
@@ -1431,6 +1443,10 @@ const detachedCore: Core = {
   },
   async gitWatch() {},
   async onGitChanged() {
+    return () => {};
+  },
+  async watchShown() {},
+  async onShownChanged() {
     return () => {};
   },
   async remoteHosts() {

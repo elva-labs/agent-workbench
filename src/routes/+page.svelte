@@ -22,6 +22,7 @@
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
+  import { watchViewed } from "$lib/viewed.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import {
     stateChanged as pluginStateChanged,
@@ -103,9 +104,11 @@
   loadMedia();
   loadNotices();
 
-  // What is on screen, on record for the agent's tools, and what runs
-  // under the sessions, for the section under the tree.
+  // What is on screen, on record for the agent's tools and for the core
+  // to watch where it is, and what runs under the sessions, for the
+  // section under the tree.
   watchSelection();
+  watchViewed();
   watchProcesses();
   watchPluginUpdates();
   // Which projects are open, told to the core of each machine they are on,

@@ -168,6 +168,12 @@ struct RootParams {
 }
 
 #[derive(Deserialize)]
+struct ShownParams {
+    #[serde(default)]
+    files: Vec<PathBuf>,
+}
+
+#[derive(Deserialize)]
 struct IdParams {
     id: String,
 }
@@ -368,6 +374,11 @@ pub fn dispatch(
         }
         "git_unwatch" => {
             core.git_unwatch();
+            Ok(Value::Null)
+        }
+        "watch_shown" => {
+            let p: ShownParams = parse(params)?;
+            core.watch_shown(&p.files);
             Ok(Value::Null)
         }
         "pty_write" => {

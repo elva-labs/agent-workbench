@@ -1,11 +1,17 @@
-//! Noticing that the working tree moved.
+//! Noticing that the working tree moved, and that a file on screen did.
 //!
 //! The agent edits files; the pane has to react without being asked. A
 //! filesystem watcher on the worktree, debounced, that emits one event the
 //! frontend answers by asking for the status again. The core does not diff the
 //! two states, because re-running `git status` is cheap and being right is
 //! worth more than being clever.
+//!
+//! The files the viewer shows as they are on disk are watched too, wherever
+//! they are: a document presented from a scratchpad, a picture in an ignored
+//! directory. A change to one of them is news of its own, since the tree
+//! watcher ignores or never sees it, and the viewer reads the file again.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -26,15 +32,23 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
 pub const GIT_CHANGED: &str = "git_changed";
+/// A file the viewer shows changed on disk. The payload is the paths that
+/// did, as the window gave them.
+pub const SHOWN_CHANGED: &str = "shown_changed";
 
 pub struct Watchers {
     current: Mutex<Option<Active>>,
+    /// The files the viewer shows, kept apart from the watcher so they
+    /// outlive it: a new watcher on another tree takes them up again.
+    shown: Arc<Shown>,
 }
 
 struct Active {
     root: PathBuf,
     /// The hook's file, once it has joined the watch.
     extra: Option<PathBuf>,
+    /// The directories of the shown files outside the tree, watched flat.
+    dirs: HashSet<PathBuf>,
     watcher: RecommendedWatcher,
     stop: Arc<Stop>,
 }
@@ -43,7 +57,79 @@ impl Default for Watchers {
     fn default() -> Self {
         Self {
             current: Mutex::new(None),
+            shown: Arc::new(Shown::default()),
         }
+    }
+}
+
+/// The files the viewer shows, as the window gave them and resolved, since
+/// a watcher reports a file by its real path and the window may know it
+/// through a symlink.
+#[derive(Default)]
+struct Shown {
+    given: Mutex<Vec<PathBuf>>,
+    known: Mutex<HashSet<PathBuf>>,
+    /// The directories watched for them outside the tree, as given and
+    /// resolved: a change in one of those is not the tree moving.
+    outside: Mutex<HashSet<PathBuf>>,
+}
+
+impl Shown {
+    fn set(&self, files: &[PathBuf]) {
+        let mut known = HashSet::new();
+        for file in files {
+            known.insert(file.clone());
+            known.insert(real(file));
+        }
+        *self.known.lock().expect("shown lock") = known;
+        *self.given.lock().expect("shown lock") = files.to_vec();
+    }
+
+    fn set_outside(&self, dirs: &HashSet<PathBuf>) {
+        let mut outside = HashSet::new();
+        for dir in dirs {
+            outside.insert(dir.clone());
+            outside.insert(real(dir));
+        }
+        *self.outside.lock().expect("shown lock") = outside;
+    }
+
+    /// Whether every path of an event is in a directory watched only for
+    /// a shown file, outside the tree.
+    fn only_outside(&self, event: &notify::Result<Event>) -> bool {
+        let Ok(event) = event else { return false };
+        let outside = self.outside.lock().expect("shown lock");
+        if outside.is_empty() || event.paths.is_empty() {
+            return false;
+        }
+        event.paths.iter().all(|path| {
+            path.parent()
+                .map(|dir| outside.contains(dir) || outside.contains(&real(dir)))
+                .unwrap_or(false)
+        })
+    }
+
+    /// The paths of an event that are shown files, as the window gave
+    /// them. Empty when none is.
+    fn hits(&self, event: &notify::Result<Event>) -> Vec<PathBuf> {
+        let Ok(event) = event else { return Vec::new() };
+        let known = self.known.lock().expect("shown lock");
+        if known.is_empty() {
+            return Vec::new();
+        }
+        let given = self.given.lock().expect("shown lock");
+        event
+            .paths
+            .iter()
+            .filter(|path| known.contains(*path) || known.contains(&real(path)))
+            .filter_map(|path| {
+                let resolved = real(path);
+                given
+                    .iter()
+                    .find(|file| *file == path || real(file) == resolved)
+                    .cloned()
+            })
+            .collect()
     }
 }
 
@@ -109,7 +195,7 @@ fn real(path: &Path) -> PathBuf {
 
 /// Watches a worktree, and optionally one more path: the file the PostToolUse
 /// hook writes. Both mean the same thing to the pane, which is that the tree
-/// may have moved.
+/// may have moved. The shown files, when there are any, join the new watcher.
 pub fn watch(
     sink: Arc<dyn Sink>,
     watchers: &Watchers,
@@ -153,18 +239,60 @@ pub fn watch(
     std::thread::spawn({
         let stop = Arc::clone(&stop);
         let root = root.clone();
-        move || debounce(sink, receiver, root, stop)
+        let shown = Arc::clone(&watchers.shown);
+        move || debounce(sink, receiver, root, stop, shown)
     });
 
     let mut active = Active {
         root,
         extra: None,
+        dirs: HashSet::new(),
         watcher,
         stop,
     };
     attach_extra(&mut active, also);
+    let shown = watchers.shown.given.lock().expect("shown lock").clone();
+    attach_shown(&mut active, &watchers.shown, &shown);
     *current = Some(active);
     Ok(())
+}
+
+/// Watches the files the viewer shows, replacing the set each time; an
+/// empty set, which is a viewer showing none, stops it. A file under the
+/// tree is already seen by the watcher on it; one outside is watched
+/// through its directory, flat, so an editor that saves by writing a new
+/// file and renaming it over the old is seen too. A change to any of them
+/// is `SHOWN_CHANGED`, whatever the tree watcher makes of it.
+pub fn watch_shown(watchers: &Watchers, files: &[PathBuf]) {
+    watchers.shown.set(files);
+    let mut current = watchers.current.lock().expect("watchers lock");
+    if let Some(active) = current.as_mut() {
+        attach_shown(active, &watchers.shown, files);
+    }
+}
+
+/// The directories to watch for the shown files: each file's, when it is
+/// outside the tree and there to be watched.
+fn shown_dirs(root: &Path, files: &[PathBuf]) -> HashSet<PathBuf> {
+    let root = real(root);
+    files
+        .iter()
+        .filter_map(|file| file.parent())
+        .filter(|dir| dir.is_dir() && !real(dir).starts_with(&root))
+        .map(Path::to_path_buf)
+        .collect()
+}
+
+fn attach_shown(active: &mut Active, shown: &Shown, files: &[PathBuf]) {
+    let wanted = shown_dirs(&active.root, files);
+    for gone in active.dirs.difference(&wanted) {
+        let _ = active.watcher.unwatch(gone);
+    }
+    for new in wanted.difference(&active.dirs) {
+        let _ = active.watcher.watch(new, RecursiveMode::NonRecursive);
+    }
+    shown.set_outside(&wanted);
+    active.dirs = wanted;
 }
 
 /// Absent until the hook has been installed, which is not an error: the
@@ -190,11 +318,15 @@ pub fn unwatch(watchers: &Watchers) {
     }
 }
 
+/// One event per burst to the pane, and one more naming the shown files
+/// a burst touched, when it touched any. The shown files come down the
+/// same channel as the tree and are told apart by path.
 fn debounce(
     sink: Arc<dyn Sink>,
     receiver: Receiver<notify::Result<Event>>,
     root: PathBuf,
     stop: Arc<Stop>,
+    shown: Arc<Shown>,
 ) {
     let ignored = Ignored::for_root(&root);
     loop {
@@ -205,13 +337,24 @@ fn debounce(
         }
 
         let started = std::time::Instant::now();
-        let mut worth_it = interesting(&first) && !ignored.covers(&first);
+        let tree = |event: &notify::Result<Event>| {
+            interesting(event) && !ignored.covers(event) && !shown.only_outside(event)
+        };
+        let mut worth_it = tree(&first);
+        let mut hits: Vec<PathBuf> = shown.hits(&first);
         loop {
             if started.elapsed() >= MAX_WAIT {
                 break;
             }
             match receiver.recv_timeout(DEBOUNCE) {
-                Ok(event) => worth_it |= interesting(&event) && !ignored.covers(&event),
+                Ok(event) => {
+                    worth_it |= tree(&event);
+                    for hit in shown.hits(&event) {
+                        if !hits.contains(&hit) {
+                            hits.push(hit);
+                        }
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -224,6 +367,16 @@ fn debounce(
             sink.emit(
                 GIT_CHANGED,
                 serde_json::Value::String(root.to_string_lossy().to_string()),
+            );
+        }
+        if !hits.is_empty() {
+            sink.emit(
+                SHOWN_CHANGED,
+                serde_json::Value::Array(
+                    hits.iter()
+                        .map(|path| serde_json::Value::String(path.to_string_lossy().to_string()))
+                        .collect(),
+                ),
             );
         }
     }
@@ -417,6 +570,102 @@ mod tests {
     fn a_plain_repository_has_nothing_else_to_watch() {
         let (dir, _) = repo_with_worktree("admin-own");
         assert_eq!(admin_dir(&dir), None);
+    }
+
+    // A shown file under the tree is already seen by the watcher on it; one
+    // outside is watched through its directory, when the directory exists.
+    #[test]
+    fn shown_files_are_watched_by_directory_outside_the_tree_only() {
+        let dir = repo_with_ignore("shown-dirs");
+        let elsewhere = std::env::temp_dir().join("workbench-watch-shown-elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let dirs = shown_dirs(
+            &dir,
+            &[
+                dir.join("docs/a.md"),
+                dir.join("target/b.md"),
+                elsewhere.join("c.md"),
+                PathBuf::from("/nowhere/at/all/d.md"),
+            ],
+        );
+        assert_eq!(dirs, HashSet::from([elsewhere]));
+    }
+
+    /// What the sink saw of an event, waiting for it to arrive.
+    fn wait_for(recorder: &crate::events::testing::Recorder, event: &str) -> Option<Value> {
+        let started = std::time::Instant::now();
+        while started.elapsed() < Duration::from_secs(5) {
+            let seen = recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(name, _)| name == event)
+                .map(|(_, payload)| payload.clone());
+            if seen.is_some() {
+                return seen;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        None
+    }
+
+    use serde_json::Value;
+
+    // A document presented from outside the tree, or a file the tree
+    // watcher would ignore, is still news when it changes.
+    #[test]
+    fn a_change_to_a_shown_file_is_emitted_wherever_it_is() {
+        let dir = repo_with_ignore("shown-change");
+        let elsewhere = std::env::temp_dir().join("workbench-watch-shown-change-elsewhere");
+        std::fs::remove_dir_all(&elsewhere).ok();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let outside = elsewhere.join("draft.md");
+        std::fs::write(&outside, "one\n").unwrap();
+        std::fs::create_dir_all(dir.join("target")).unwrap();
+        let ignored = dir.join("target/shot.png");
+        std::fs::write(&ignored, "x").unwrap();
+
+        let recorder = Arc::new(crate::events::testing::Recorder::default());
+        let sink: Arc<dyn Sink> = Arc::clone(&recorder) as Arc<dyn Sink>;
+        let watchers = Watchers::default();
+        watch(sink, &watchers, dir.clone(), None).unwrap();
+        watch_shown(&watchers, &[outside.clone(), ignored.clone()]);
+        // The watcher takes a moment to be looking.
+        std::thread::sleep(Duration::from_millis(300));
+
+        std::fs::write(&outside, "two\n").unwrap();
+        let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the shown file's change");
+        assert_eq!(
+            shown,
+            Value::Array(vec![Value::String(outside.to_string_lossy().to_string())])
+        );
+        assert!(
+            !recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(name, _)| name == GIT_CHANGED),
+            "a file outside the tree is not the tree moving"
+        );
+
+        recorder.events.lock().unwrap().clear();
+        std::fs::write(&ignored, "y").unwrap();
+        let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the ignored file's change");
+        assert_eq!(
+            shown,
+            Value::Array(vec![Value::String(ignored.to_string_lossy().to_string())])
+        );
+
+        // Shown no more: a change is nobody's news.
+        watch_shown(&watchers, &[]);
+        recorder.events.lock().unwrap().clear();
+        std::thread::sleep(Duration::from_millis(300));
+        std::fs::write(&outside, "three\n").unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(recorder.events.lock().unwrap().is_empty());
+        unwatch(&watchers);
     }
 
     #[test]

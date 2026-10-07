@@ -30,6 +30,7 @@
     openBrowser,
     setView,
     showBrowser,
+    shownChanged,
     visible,
   } from "$lib/files.svelte";
   import {
@@ -421,14 +422,19 @@
   }
 
   onMount(() => {
-    let off: (() => void) | null = null;
+    const offs: (() => void)[] = [];
     // The agent edits a file and the pane reacts without being asked. The core
     // does not say what changed, only that something did: re-reading status is
     // cheap, and being right beats diffing two states.
     core()
       .onGitChanged(() => refresh())
-      .then((unlisten) => (off = unlisten));
-    return () => off?.();
+      .then((unlisten) => offs.push(unlisten));
+    // A file the viewer shows from outside the tree, or one the tree
+    // watcher ignores, changed: the viewer reads it again.
+    core()
+      .onShownChanged(() => shownChanged())
+      .then((unlisten) => offs.push(unlisten));
+    return () => offs.forEach((off) => off());
   });
 
   // A new project means a different worktree to watch and a tree that shares

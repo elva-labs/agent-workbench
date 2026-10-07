@@ -250,7 +250,8 @@ at highlighted and the tool's note above. A Markdown document has a third
 view, rendered as a reader sees it, which it opens on when it has no diff;
 the view chord walks the views a file has, round and round. An image or a
 PDF git calls binary is shown as the picture it is, read where it is and
-read again when the working tree moves; any other binary file says so. Lines selected with the mouse
+read again when it changes there, whether or not git would notice; any
+other binary file says so. Lines selected with the mouse
 stay marked once the keyboard has moved on, to the agent above all, so they
 are still the answer to "this" while the question is typed; a click in the
 viewer lets them go, and the line numbers are never part of a selection.

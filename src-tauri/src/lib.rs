@@ -20,7 +20,7 @@ pub mod remote;
 pub mod ssh;
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -650,6 +650,31 @@ async fn git_watch(
     .await
 }
 
+/// The files the viewer shows, on the machine the project is on: the
+/// core there watches them where they are.
+#[tauri::command]
+async fn watch_shown(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    files: Vec<String>,
+) -> Result<Value, String> {
+    let sent = files.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "watch_shown",
+        move |_| json!({ "files": sent }),
+        move |core, _| {
+            let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+            core.watch_shown(&paths);
+            Ok(())
+        },
+    )
+    .await
+}
+
 /// Nothing to route by, so every core stops watching.
 #[tauri::command]
 async fn git_unwatch(
@@ -1132,6 +1157,7 @@ pub fn run() {
             git_content,
             git_watch,
             git_unwatch,
+            watch_shown,
             pty_spawn,
             pty_shell,
             pty_write,

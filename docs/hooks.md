@@ -94,8 +94,9 @@ under its caption, to open again after a restart too. The same files
 presented again take their row to the top with the new caption rather than
 adding one, so a document the agent and the user work on over many turns
 is one row, and what the row opens is the files as they are now: the
-viewer reads them again on every call and whenever the working tree moves,
-and redraws only what differs. The rows are the file
+viewer reads them again on every call and whenever one of them changes on
+disk, wherever it is, a scratchpad as much as the tree, and redraws only
+what differs. The rows are the file
 tree's to walk: the arrows run off the end of the tree onto them, Enter
 opens a call, and Left and Right fold and unfold the section as they close
 and open a folder;

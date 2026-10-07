@@ -621,6 +621,12 @@ impl Core {
         watch::unwatch(&self.watchers);
     }
 
+    /// The files the viewer shows as they are on disk, wherever they are,
+    /// so a change to one reaches the viewer. An empty list is none.
+    pub fn watch_shown(&self, files: &[PathBuf]) {
+        watch::watch_shown(&self.watchers, files);
+    }
+
     pub fn pty_write(&self, id: &str, data: &[u8]) -> Result<(), String> {
         pty::write(&self.sessions, id, data)
     }

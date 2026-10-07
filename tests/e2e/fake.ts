@@ -1034,6 +1034,14 @@ export async function installFakeCore(
           (window as unknown as Record<string, unknown>).__gitChanged = handler;
           return () => {};
         },
+        watchShown: async (_project: string, files: string[]) => {
+          (window as unknown as Record<string, unknown>).__shownFiles = files;
+        },
+        onShownChanged: async (handler: (files: string[]) => void) => {
+          (window as unknown as Record<string, unknown>).__shownChanged =
+            handler;
+          return () => {};
+        },
         settingsGet: async () => {
           const found = readSettings();
           return found === null

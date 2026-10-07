@@ -123,11 +123,12 @@
     <p class="empty">Pick a file to read it.</p>
   {:else if isPicture(entry) || view === "rendered"}
     <!-- A picture, or a document rendered: read where it is, as what the
-         agent presents is, and read again when the tree moves. -->
+         agent presents is, and read again when the tree moves or the core
+         sees the file change. -->
     {@const path = absolute(entry.path)}
     {#if path !== null}
       <div class="rendered" data-testid="viewer-rendered">
-        <MediaFile {path} alt={lastSegment(entry.path)} reload={String(files.treeReads)} />
+        <MediaFile {path} alt={lastSegment(entry.path)} reload="{files.treeReads}:{files.shownReads}" />
       </div>
     {/if}
   {:else if entry.binary}

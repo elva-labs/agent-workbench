@@ -7,7 +7,8 @@
   /**
    * What one item of the media list holds, down the viewer: each file
    * under its name, rendered. The files are read again when the agent
-   * presents them again and when the working tree moves.
+   * presents them again, when the working tree moves, and when the core
+   * sees one of them change where it is.
    */
 
   interface Props {
@@ -24,7 +25,7 @@
       <MediaFile
         path={file}
         alt={item.caption ?? lastSegment(file)}
-        reload="{item.at}:{changes.treeReads}"
+        reload="{item.at}:{changes.treeReads}:{changes.shownReads}"
       />
     </section>
   {/each}

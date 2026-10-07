@@ -1520,6 +1520,35 @@ test.describe("the file viewer", () => {
     );
     await expect(document.locator("h1")).toHaveText("Third draft");
     await expect(page.getByTestId("media-item")).toHaveCount(1);
+
+    // The core watches the presented files where they are, and says so
+    // when one changes: a document outside the tree shows as it is now.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __shownFiles?: string[] }).__shownFiles,
+        ),
+      )
+      .toEqual([`${PROJECT}/docs/draft.md`]);
+    await edit("# Fourth draft\n\nDone.\n");
+    await page.evaluate(
+      ([file]) =>
+        (
+          window as unknown as { __shownChanged: (files: string[]) => void }
+        ).__shownChanged([file]),
+      [`${PROJECT}/docs/draft.md`],
+    );
+    await expect(document.locator("h1")).toHaveText("Fourth draft");
+
+    // Closed, the viewer shows none of them, and the core is told.
+    await page.keyboard.press("Escape");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as unknown as { __shownFiles?: string[] }).__shownFiles,
+        ),
+      )
+      .toEqual([]);
   });
 
   // A picture git calls binary is shown as one, and a Markdown document

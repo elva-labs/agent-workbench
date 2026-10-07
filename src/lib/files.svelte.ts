@@ -119,6 +119,10 @@ export const files = $state({
       and reads the file again when the tree moves: the media the agent
       presented above all. */
   treeReads: 0,
+  /** Counts the changes the core saw to the files the viewer shows as
+      they are on disk, wherever they are: a document presented from
+      outside the tree, a picture in an ignored directory. */
+  shownReads: 0,
 
   /**
    * Folders you opened and folders you closed, as overrides. A folder with no
@@ -448,6 +452,12 @@ async function loadSelected() {
   } finally {
     if (read === fileRead) files.loading = false;
   }
+}
+
+/** The core saw a file the viewer shows change: what shows it reads it
+    again. */
+export function shownChanged() {
+  files.shownReads += 1;
 }
 
 /** Puts away whatever other kind the viewer was holding: media, a plugin's
