@@ -2,7 +2,7 @@
   import { core } from "$lib/core";
   import { type PluginPage, pluginViews, send } from "$lib/pluginView.svelte";
   import { activeSession } from "$lib/sessions.svelte";
-  import { showRequested } from "$lib/show.svelte";
+  import { showPlace } from "$lib/show.svelte";
   import { printable } from "$lib/terminals.svelte";
 
   /**
@@ -44,12 +44,12 @@
   }
 
   /** A place the page asked for, taken as relative to the project, opened
-      the way the agent's own show request is. */
+      the way a clicked reference is. */
   function openPlace(data: Record<string, unknown>) {
     const path = typeof data.path === "string" ? data.path : "";
     if (path === "") return;
     const from = lineAt(data.from, 1);
-    void showRequested({
+    void showPlace({
       path: `${page.project.replace(/[\\/]+$/, "")}/${path.replace(/^[\\/]+/, "")}`,
       from,
       to: lineAt(data.to, from),

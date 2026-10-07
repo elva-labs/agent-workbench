@@ -84,7 +84,8 @@ commands reachable from it.
 
 With the hooks on, ten more tools join the six every session already has:
 `browser_open` opens a tab at a `url` and shows the browser in the viewer,
-and `browser_close` closes one. `browser_tabs` answers with the open tabs and
+now for the session on screen and on switching to it for another, as the
+[show tool](hooks.md#the-agents-tools) does; `browser_close` closes one. `browser_tabs` answers with the open tabs and
 which is active. `browser_navigate` sends a tab to a `url`, or steps it
 back, forward or reloads it. Opening and navigating answer once the page
 has stopped loading, with where the tab landed or why it did not load, so

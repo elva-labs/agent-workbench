@@ -542,6 +542,39 @@ test.describe("the file viewer", () => {
     await expect(first.locator(".dot")).not.toHaveClass(/unread/);
   });
 
+  // What an agent asks to show is for its own session: a call from a
+  // session the user is not looking at waits on that session, and opens
+  // when they switch to it, in place of taking the viewer over.
+  test("holds a show from another session until it is switched to", async ({
+    page,
+  }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
+    // The first session, by its id, while the second is on screen.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __showRequest: (request: unknown) => void }
+      ).__showRequest({
+        path: "/home/ada/dev/demo/src/main.rs",
+        from: 2,
+        to: 3,
+        note: "The entry point.",
+        cwd: "/home/ada/dev/demo",
+        session: "session-1",
+      }),
+    );
+    await expect(page.getByTestId("mode-readout")).not.toHaveText("reviewing");
+    await expect(page.getByTestId("viewer-note")).toHaveCount(0);
+    await page.locator("[data-testid='session-row']").first().click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer-note")).toHaveText(
+      "The entry point.",
+    );
+    await expect(page.getByTestId("viewer").locator("tr.target")).toHaveCount(2);
+  });
+
   // The stop hook brings the agent's last words: the row says how the turn
   // ended without the agent calling anything.
   test("puts the agent's last words on its row when it stops unwatched", async ({

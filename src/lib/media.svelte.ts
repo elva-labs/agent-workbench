@@ -16,7 +16,7 @@
 import { marked } from "marked";
 import { core, type Media, type PresentRequest } from "$lib/core";
 import { forProject, sessions } from "$lib/sessions.svelte";
-import { projectFor, within } from "$lib/show.svelte";
+import { held, projectFor, within } from "$lib/show.svelte";
 import { activate, workspace } from "$lib/workspace.svelte";
 import { showMedia } from "$lib/files.svelte";
 
@@ -118,7 +118,8 @@ export function listed(): MediaItem[] {
   return itemsFor(`project:${project}`);
 }
 
-/** The agent presented files: kept on the session, and opened. */
+/** The agent presented files: kept on the session, and opened, now or
+    when the user switches to the session. */
 export function presented(request: PresentRequest, now = Date.now()) {
   if (!loaded) loadMedia();
   const project = projectFor({
@@ -129,7 +130,6 @@ export function presented(request: PresentRequest, now = Date.now()) {
     note: null,
   });
   if (project === null) return;
-  if (workspace.active !== project) activate(project);
   const owner = ownerFor(request, project);
   const again = media.items.find(
     (candidate) =>
@@ -159,7 +159,12 @@ export function presented(request: PresentRequest, now = Date.now()) {
     media.items = media.items.filter((candidate) => !drop.has(candidate.id));
   }
   save();
-  showMedia(item);
+  const open = () => {
+    if (workspace.active !== project) activate(project);
+    showMedia(item);
+  };
+  if (held(request, project, open)) return;
+  open();
 }
 
 /** A call from the list, opened in the viewer again. */

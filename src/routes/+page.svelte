@@ -20,7 +20,7 @@
   import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
-  import { diffRequested, notified, showRequested, terminalRequested } from "$lib/show.svelte";
+  import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import {
@@ -219,6 +219,14 @@
   $effect(() => {
     const key = sessions.active;
     if (attention.focused && key !== null) viewed(key);
+  });
+
+  // Switching to a session opens what its agent asked to show while the
+  // user was looking at another, outside the effect's own reads: opening
+  // may move the viewer and the project.
+  $effect(() => {
+    const key = sessions.active;
+    if (key !== null) untrack(() => switched(key));
   });
 
   // The platform's own window controls sit on the leftmost header's text,

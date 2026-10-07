@@ -91,6 +91,14 @@ vi.mock("$lib/core", () => ({
 
 import { browser, resetBrowser } from "$lib/browser.svelte";
 import { handle, resetBrowserTools } from "$lib/browserTools.svelte";
+import { resetHeld, switched } from "$lib/show.svelte";
+import {
+  create,
+  reset as resetSessions,
+  select,
+  started,
+} from "$lib/sessions.svelte";
+import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): BrowserTab {
   return {
@@ -129,6 +137,9 @@ const last = () => answers[answers.length - 1];
 beforeEach(() => {
   resetBrowser();
   resetBrowserTools();
+  resetHeld();
+  resetSessions();
+  resetWorkspace();
   answers.length = 0;
   opened.length = 0;
   activated.length = 0;
@@ -157,6 +168,28 @@ describe("browser_open", () => {
     expect(opened).toEqual([{ url: "https://example.com", session: null }]);
     expect(last().error).toBeNull();
     expect(last().content).toBe("Opened tab 1: https://example.com/, Example");
+  });
+
+  it("opens the tab at once but shows the browser only when the user switches to the session", async () => {
+    workspace.open.push({
+      path: "/home/ada/dev/demo",
+      name: "demo",
+      repository: "/home/ada/dev/demo",
+      isGit: true,
+    });
+    workspace.active = "/home/ada/dev/demo";
+    const a = create("/home/ada/dev/demo");
+    started(a.key, "pty-1", "s1");
+    const b = create("/home/ada/dev/demo");
+    started(b.key, "pty-2", "s2");
+    openResult = { tabs: [tab(1, "https://example.com/")], active: 1 };
+    await handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    expect(opened).toEqual([{ url: "https://example.com", session: "s1" }]);
+    expect(last().content).toContain("Opened tab 1");
+    expect(browser.showing).toBe(false);
+    select(a.key);
+    switched(a.key);
+    expect(browser.showing).toBe(true);
   });
 
   it("refuses without a url", async () => {

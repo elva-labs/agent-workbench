@@ -21,6 +21,7 @@ import {
   started,
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { resetHeld, switched } from "$lib/show.svelte";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -68,6 +69,7 @@ const request = (
 beforeEach(() => {
   localStorage.clear();
   resetMedia();
+  resetHeld();
   closeViewer();
   resetWorkspace();
   resetSessions();
@@ -132,6 +134,24 @@ describe("presenting", () => {
     expect(itemsFor("s1")).toHaveLength(1);
     expect(itemsFor("s1")[0].caption).toBe("Shots.");
     expect(listed()).toHaveLength(1);
+  });
+
+  it("keeps the files on a session the user is not looking at, and opens them on switching", () => {
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    presented(
+      request(["/one/a.png"], "/one", "Shot.", "s1"),
+      1_700_000_000_000,
+    );
+    expect(itemsFor("s1")).toHaveLength(1);
+    expect(files.media).toBeNull();
+    expect(layout.mode).not.toBe("reviewing");
+    select(a.key);
+    switched(a.key);
+    expect(files.media?.files).toEqual(["/one/a.png"]);
+    expect(layout.mode).toBe("reviewing");
   });
 
   it("keeps one item for the same files, newest, with the latest caption", () => {

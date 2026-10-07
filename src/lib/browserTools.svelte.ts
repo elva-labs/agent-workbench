@@ -11,6 +11,7 @@
 import { core, type BrowserRequest, type BrowserTab } from "$lib/core";
 import { activate as activateTab, activeTab, browser } from "$lib/browser.svelte";
 import { showBrowser } from "$lib/files.svelte";
+import { held, projectOf } from "$lib/show.svelte";
 
 /** The ids of the calls handled lately, so a call delivered twice is
     handled once. */
@@ -93,7 +94,10 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
   }
   browser.tabs = snapshot.tabs;
   browser.active = snapshot.active;
-  showBrowser();
+  // The tab is open and loading either way; the viewer shows the browser
+  // now for the session on screen, and on switching for another.
+  const project = projectOf(request.cwd);
+  if (project === null || !held(request, project, showBrowser)) showBrowser();
   const tab = activeTab();
   if (tab === null) return refused("The tab could not be opened.");
   return arrived("Opened", await settled(tab.id), tab.id);

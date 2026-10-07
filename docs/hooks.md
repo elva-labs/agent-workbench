@@ -57,6 +57,15 @@ alone rather than replaces. A machine kind the app has no daemon build for
 gets the hooks without the tool. An app run from the source uses the daemon
 built beside it.
 
+What a session's agent asks to show is for that session. While the user is
+looking at another session, the call waits on the agent's own rather than
+opening over what the user is reading, and opens when they switch to it;
+one viewer holds one thing, so only the agent's latest call is kept. This
+goes for `diff`, `present`, `terminal` and the browser's `browser_open` as
+well. A call from the session on screen opens at once, as does one from a
+session the window does not know, an agent run in a terminal outside the
+app.
+
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
 
