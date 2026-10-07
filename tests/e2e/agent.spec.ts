@@ -327,6 +327,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         }),
         gitWatch: async () => {},
         onGitChanged: async () => () => {},
+        watchShown: async () => {},
+        onShownChanged: async () => () => {},
       };
     },
     {
