@@ -72,6 +72,8 @@ vi.mock("$lib/core", () => ({
     }),
     gitWatch: async () => {},
     onGitChanged: async () => () => {},
+    watchShown: async () => {},
+    onShownChanged: async () => () => {},
     kill: async () => {},
     transcripts: async (_project: string, agent: string) =>
       agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,

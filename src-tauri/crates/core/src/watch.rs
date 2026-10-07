@@ -633,6 +633,11 @@ mod tests {
         watch_shown(&watchers, &[outside.clone(), ignored.clone()]);
         // The watcher takes a moment to be looking.
         std::thread::sleep(Duration::from_millis(300));
+        let before = recorder.events.lock().unwrap().clone();
+        assert!(
+            before.is_empty(),
+            "nothing changed yet, but the sink saw {before:?}"
+        );
 
         std::fs::write(&outside, "two\n").unwrap();
         let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the shown file's change");
@@ -640,14 +645,10 @@ mod tests {
             shown,
             Value::Array(vec![Value::String(outside.to_string_lossy().to_string())])
         );
+        let seen = recorder.events.lock().unwrap().clone();
         assert!(
-            !recorder
-                .events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|(name, _)| name == GIT_CHANGED),
-            "a file outside the tree is not the tree moving"
+            !seen.iter().any(|(name, _)| name == GIT_CHANGED),
+            "a file outside the tree is not the tree moving, but the sink saw {seen:?}"
         );
 
         recorder.events.lock().unwrap().clear();
