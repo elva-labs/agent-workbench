@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
+use crate::account::{self, Dirs};
+
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
 
@@ -66,12 +68,6 @@ pub fn daemon_path(home: &Path) -> PathBuf {
         } else {
             "agent-workbench-remote"
         })
-}
-
-/// Claude Code's own file of per-project state, where a server added for
-/// one project and this user goes; nothing of it is in the project.
-fn claude_json_path(home: &Path) -> PathBuf {
-    home.join(".claude.json")
 }
 
 fn codex_config_path(project: &Path) -> PathBuf {
@@ -246,7 +242,7 @@ fn session_entry(home: &Path) -> Value {
 
 /// Installed is all of ours in Claude Code's settings. The Codex file is
 /// written alongside and not asked about: a project without Codex has none.
-pub fn status(home: &Path, project: &Path) -> HookStatus {
+pub fn status(home: &Path, project: &Path, accounts: &[Dirs]) -> HookStatus {
     let settings = settings_path(project);
     let read = read_settings(&settings);
     let hooks = has_ours(&read, "PostToolUse", home)
@@ -256,7 +252,8 @@ pub fn status(home: &Path, project: &Path) -> HookStatus {
     // With a daemon here the server is part of what is installed: a project
     // that got the hooks before there was a server is brought up to date
     // by the next install.
-    let installed = hooks && (!daemon_path(home).is_file() || server_installed(home, project));
+    let installed =
+        hooks && (!daemon_path(home).is_file() || server_installed(home, project, accounts));
     HookStatus {
         installed,
         settings: settings.to_string_lossy().to_string(),
@@ -268,10 +265,15 @@ pub fn status(home: &Path, project: &Path) -> HookStatus {
 /// time they run in a directory, whether its files are to be trusted, and
 /// a worktree is the project's own files under another path: what the user
 /// said of the project holds for it. Claude Code keeps the answer in its
-/// state under the user's home, Codex in its own config there; each is
-/// copied only where the project's says yes, and a file that cannot be
-/// read is left alone.
-pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), String> {
+/// state file, Codex in its own config; each account has its own of both,
+/// and each is copied only where the project's says yes. A file that
+/// cannot be read is left alone.
+pub fn trust_like(
+    home: &Path,
+    project: &Path,
+    worktree: &Path,
+    accounts: &[Dirs],
+) -> Result<(), String> {
     let canonical = |path: &Path| {
         dunce::canonicalize(path)
             .unwrap_or_else(|_| path.to_path_buf())
@@ -279,12 +281,20 @@ pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), St
             .to_string()
     };
     let (from, to) = (canonical(project), canonical(worktree));
+    for claude in account::claude_jsons(home, accounts) {
+        trust_claude(&claude, &from, &to)?;
+    }
+    for codex in account::codex_homes(home, accounts) {
+        trust_codex(&codex.join("config.toml"), &from, &to)?;
+    }
+    Ok(())
+}
 
-    let claude = claude_json_path(home);
-    let mut state = read_for_writing(&claude)?;
+fn trust_claude(claude: &Path, from: &str, to: &str) -> Result<(), String> {
+    let mut state = read_for_writing(claude)?;
     let trusted = state
         .get("projects")
-        .and_then(|projects| projects.get(&from))
+        .and_then(|projects| projects.get(from))
         .and_then(|project| project.get("hasTrustDialogAccepted"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
@@ -294,18 +304,20 @@ pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), St
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or("Claude's projects state is not an object")?
-            .entry(to.clone())
+            .entry(to.to_string())
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or("Claude's project state is not an object")?;
         if entry.get("hasTrustDialogAccepted") != Some(&Value::Bool(true)) {
             entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
-            write_settings(&claude, &state)?;
+            write_settings(claude, &state)?;
         }
     }
+    Ok(())
+}
 
-    let codex = crate::codex::home(home).join("config.toml");
-    let Ok(text) = std::fs::read_to_string(&codex) else {
+fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
+    let Ok(text) = std::fs::read_to_string(codex) else {
         return Ok(());
     };
     let mut document = text
@@ -313,7 +325,7 @@ pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), St
         .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
     let level = document
         .get("projects")
-        .and_then(|projects| projects.get(&from))
+        .and_then(|projects| projects.get(from))
         .and_then(|project| project.get("trust_level"))
         .and_then(|level| level.as_str())
         .map(str::to_string);
@@ -321,15 +333,15 @@ pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), St
         let projects =
             document["projects"].or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
         let already = projects
-            .get(&to)
+            .get(to)
             .and_then(|project| project.get("trust_level"))
             .and_then(|level| level.as_str())
             == Some("trusted");
         if !already {
             let mut table = toml_edit::Table::new();
             table["trust_level"] = toml_edit::value("trusted");
-            projects[&to] = toml_edit::Item::Table(table);
-            std::fs::write(&codex, document.to_string())
+            projects[to] = toml_edit::Item::Table(table);
+            std::fs::write(codex, document.to_string())
                 .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
         }
     }
@@ -337,7 +349,9 @@ pub fn trust_like(home: &Path, project: &Path, worktree: &Path) -> Result<(), St
 }
 
 /// Adds the hooks, leaving every other setting and every other hook alone.
-pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
+/// The server goes into every account's Claude Code state, so a session
+/// under any of them has the tools.
+pub fn install(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookStatus, String> {
     let path = settings_path(project);
     let mut settings = read_for_writing(&path)?;
     let mut changed = add_entry(
@@ -368,58 +382,62 @@ pub fn install(home: &Path, project: &Path) -> Result<HookStatus, String> {
 
     touch_events(home)?;
     if daemon_path(home).is_file() {
-        install_server(home, project)?;
+        install_server(home, project, accounts)?;
     }
     exclude_from_git(project);
-    Ok(status(home, project))
+    Ok(status(home, project, accounts))
 }
 
-/// Whether Claude Code is pointed at the daemon here for the project.
-fn server_installed(home: &Path, project: &Path) -> bool {
+/// Whether Claude Code is pointed at the daemon here for the project,
+/// under every account.
+fn server_installed(home: &Path, project: &Path, accounts: &[Dirs]) -> bool {
     let key = dunce::canonicalize(project)
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
     let daemon = daemon_path(home).to_string_lossy().to_string();
-    read_settings(&claude_json_path(home))
-        .get("projects")
-        .and_then(|projects| projects.get(&key))
-        .and_then(|project| project.get("mcpServers"))
-        .and_then(|servers| servers.get(SERVER_NAME))
-        .and_then(|server| server.get("command"))
-        .and_then(Value::as_str)
-        == Some(daemon.as_str())
+    account::claude_jsons(home, accounts).iter().all(|claude| {
+        read_settings(claude)
+            .get("projects")
+            .and_then(|projects| projects.get(&key))
+            .and_then(|project| project.get("mcpServers"))
+            .and_then(|servers| servers.get(SERVER_NAME))
+            .and_then(|server| server.get("command"))
+            .and_then(Value::as_str)
+            == Some(daemon.as_str())
+    })
 }
 
 /// Points both agents at the daemon as an MCP server for the project:
-/// Claude Code in its own per-project state under the user's home, Codex
+/// Claude Code in its per-project state, under every account, and Codex
 /// in the project's own config, beside its hooks file.
-fn install_server(home: &Path, project: &Path) -> Result<(), String> {
+fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), String> {
     let daemon = daemon_path(home).to_string_lossy().to_string();
     let key = dunce::canonicalize(project)
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
 
-    let claude = claude_json_path(home);
-    let mut state = read_for_writing(&claude)?;
-    let servers = state
-        .entry("projects")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("Claude's projects state is not an object")?
-        .entry(key)
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("Claude's project state is not an object")?
-        .entry("mcpServers")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("Claude's mcpServers state is not an object")?;
-    let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
-    if servers.get(SERVER_NAME) != Some(&entry) {
-        servers.insert(SERVER_NAME.into(), entry);
-        write_settings(&claude, &state)?;
+    for claude in account::claude_jsons(home, accounts) {
+        let mut state = read_for_writing(&claude)?;
+        let servers = state
+            .entry("projects")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Claude's projects state is not an object")?
+            .entry(key.clone())
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Claude's project state is not an object")?
+            .entry("mcpServers")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Claude's mcpServers state is not an object")?;
+        let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
+        if servers.get(SERVER_NAME) != Some(&entry) {
+            servers.insert(SERVER_NAME.into(), entry);
+            write_settings(&claude, &state)?;
+        }
     }
 
     let codex = codex_config_path(project);
@@ -459,13 +477,15 @@ fn install_server(home: &Path, project: &Path) -> Result<(), String> {
 
 /// Takes the server out of both agents' configuration, and a Codex config
 /// that held nothing but it goes too.
-fn uninstall_server(home: &Path, project: &Path) -> Result<(), String> {
+fn uninstall_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), String> {
     let key = dunce::canonicalize(project)
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
-    let claude = claude_json_path(home);
-    if claude.exists() {
+    for claude in account::claude_jsons(home, accounts) {
+        if !claude.exists() {
+            continue;
+        }
         let mut state = read_for_writing(&claude)?;
         let mut changed = false;
         if let Some(servers) = state
@@ -560,7 +580,7 @@ fn exclude_from_git(project: &Path) {
 
 /// Removes only our entries. Anything else in the files stays, and a Codex
 /// file that held nothing but ours goes with them.
-pub fn uninstall(home: &Path, project: &Path) -> Result<HookStatus, String> {
+pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookStatus, String> {
     let path = settings_path(project);
     if path.exists() {
         let mut settings = read_for_writing(&path)?;
@@ -582,9 +602,9 @@ pub fn uninstall(home: &Path, project: &Path) -> Result<HookStatus, String> {
             write_settings(&codex, &hooks)?;
         }
     }
-    uninstall_server(home, project)?;
+    uninstall_server(home, project, accounts)?;
 
-    Ok(status(home, project))
+    Ok(status(home, project, accounts))
 }
 
 fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
@@ -599,6 +619,10 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn claude_json_path(home: &Path) -> PathBuf {
+        account::claude_json(home, None)
+    }
 
     fn fixture(name: &str) -> (PathBuf, PathBuf) {
         let base = std::env::temp_dir().join(format!("workbench-hook-{name}"));
@@ -620,7 +644,7 @@ mod tests {
             "{\"projects\": {\"/a\": {\"hasTrust",
         )
         .unwrap();
-        let error = install(&home, &project).unwrap_err();
+        let error = install(&home, &project, &[]).unwrap_err();
         assert!(error.contains("leaving it alone"), "{error}");
         assert_eq!(
             std::fs::read_to_string(claude_json_path(&home)).unwrap(),
@@ -630,7 +654,7 @@ mod tests {
         std::fs::write(claude_json_path(&home), "{}").unwrap();
         std::fs::create_dir_all(settings_path(&project).parent().unwrap()).unwrap();
         std::fs::write(settings_path(&project), "[1, 2").unwrap();
-        let error = install(&home, &project).unwrap_err();
+        let error = install(&home, &project, &[]).unwrap_err();
         assert!(error.contains("leaving it alone"), "{error}");
         assert_eq!(
             std::fs::read_to_string(settings_path(&project)).unwrap(),
@@ -652,7 +676,7 @@ mod tests {
 
         // Neither agent has been told anything: nothing is written, and a
         // missing Codex config is left missing.
-        trust_like(&home, &project, &worktree).unwrap();
+        trust_like(&home, &project, &worktree, &[]).unwrap();
         assert!(!claude_json_path(&home).exists());
         assert!(!crate::codex::home(&home).join("config.toml").exists());
 
@@ -677,7 +701,7 @@ mod tests {
             ),
         )
         .unwrap();
-        trust_like(&home, &project, &worktree).unwrap();
+        trust_like(&home, &project, &worktree, &[]).unwrap();
         let state = read_settings(&claude_json_path(&home));
         assert_eq!(
             state["projects"][key(&worktree)]["hasTrustDialogAccepted"],
@@ -697,7 +721,7 @@ mod tests {
         let other = project.parent().unwrap().join("other");
         let tree = other.join("tree");
         std::fs::create_dir_all(&tree).unwrap();
-        trust_like(&home, &other, &tree).unwrap();
+        trust_like(&home, &other, &tree, &[]).unwrap();
         let state = read_settings(&claude_json_path(&home));
         assert!(state["projects"].get(key(&tree)).is_none());
     }
@@ -709,15 +733,15 @@ mod tests {
     #[test]
     fn reports_not_installed_when_there_are_no_settings() {
         let (home, project) = fixture("none");
-        assert!(!status(&home, &project).installed);
+        assert!(!status(&home, &project, &[]).installed);
     }
 
     #[test]
     fn keeps_both_files_out_of_the_repository() {
         let (home, project) = fixture("exclude");
         git2::Repository::init(&project).unwrap();
-        install(&home, &project).unwrap();
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[]).unwrap();
         let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
         let ours: Vec<&str> = exclude
             .lines()
@@ -732,7 +756,7 @@ mod tests {
         git2::Repository::init(&project).unwrap();
         let sub = project.join("packages").join("app");
         std::fs::create_dir_all(&sub).unwrap();
-        install(&home, &sub).unwrap();
+        install(&home, &sub, &[]).unwrap();
         let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
         assert!(exclude.contains("/packages/app/.claude/settings.local.json"));
     }
@@ -755,7 +779,7 @@ mod tests {
             "model = \"o3\"\n\n[mcp_servers.other]\ncommand = \"other\"\n",
         )
         .unwrap();
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
 
         let key = dunce::canonicalize(&project)
             .unwrap()
@@ -774,7 +798,7 @@ mod tests {
         assert!(codex.contains("[mcp_servers.agent_workbench]"));
         assert!(codex.contains("args = [\"mcp\"]"));
 
-        uninstall(&home, &project).unwrap();
+        uninstall(&home, &project, &[]).unwrap();
         let state = read_settings(&claude_json_path(&home));
         assert!(state["projects"][&key]["mcpServers"]
             .get("agent-workbench")
@@ -788,19 +812,19 @@ mod tests {
     fn a_codex_config_of_only_the_server_goes_with_it() {
         let (home, project) = fixture("server-only");
         with_daemon(&home);
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         assert!(project.join(".codex/config.toml").exists());
-        uninstall(&home, &project).unwrap();
+        uninstall(&home, &project, &[]).unwrap();
         assert!(!project.join(".codex/config.toml").exists());
     }
 
     #[test]
     fn without_a_daemon_here_only_the_hooks_go_in() {
         let (home, project) = fixture("no-daemon");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         assert!(!claude_json_path(&home).exists());
         assert!(!project.join(".codex/config.toml").exists());
-        assert!(status(&home, &project).installed);
+        assert!(status(&home, &project, &[]).installed);
     }
 
     // Hooks from before there was a server: once a daemon is here, they
@@ -808,25 +832,25 @@ mod tests {
     #[test]
     fn a_daemon_arriving_later_asks_for_the_server() {
         let (home, project) = fixture("daemon-later");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         with_daemon(&home);
-        assert!(!status(&home, &project).installed);
-        install(&home, &project).unwrap();
-        assert!(status(&home, &project).installed);
+        assert!(!status(&home, &project, &[]).installed);
+        install(&home, &project, &[]).unwrap();
+        assert!(status(&home, &project, &[]).installed);
     }
 
     #[test]
     fn installs_and_reports_itself() {
         let (home, project) = fixture("install");
-        assert!(install(&home, &project).unwrap().installed);
-        assert!(status(&home, &project).installed);
+        assert!(install(&home, &project, &[]).unwrap().installed);
+        assert!(status(&home, &project, &[]).installed);
     }
 
     // The untracked settings file, so nobody finds this in a diff.
     #[test]
     fn writes_to_settings_local_not_the_shared_one() {
         let (home, project) = fixture("local");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
 
         assert!(project.join(".claude/settings.local.json").exists());
         assert!(!project.join(".claude/settings.json").exists());
@@ -835,7 +859,7 @@ mod tests {
     #[test]
     fn only_reacts_to_tools_that_change_files() {
         let (home, project) = fixture("matcher");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
 
         let entry = &settings_of(&project)["hooks"]["PostToolUse"][0];
         assert_eq!(entry["matcher"], MATCHER);
@@ -845,7 +869,7 @@ mod tests {
     #[test]
     fn writes_outside_the_project() {
         let (home, project) = fixture("outside");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
 
         let command = settings_of(&project)["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
             .as_str()
@@ -874,8 +898,8 @@ mod tests {
     #[test]
     fn installing_twice_adds_one_entry() {
         let (home, project) = fixture("twice");
-        install(&home, &project).unwrap();
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[]).unwrap();
 
         assert_eq!(
             settings_of(&project)["hooks"]["PostToolUse"]
@@ -897,7 +921,7 @@ mod tests {
         )
         .unwrap();
 
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         let settings = settings_of(&project);
         assert_eq!(settings["model"], "opus");
         assert_eq!(settings["permissions"]["allow"][0], "Bash(ls:*)");
@@ -913,14 +937,14 @@ mod tests {
         )
         .unwrap();
 
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         let entries = settings_of(&project)["hooks"]["PostToolUse"]
             .as_array()
             .unwrap()
             .clone();
         assert_eq!(entries.len(), 2);
 
-        uninstall(&home, &project).unwrap();
+        uninstall(&home, &project, &[]).unwrap();
         let after = settings_of(&project)["hooks"]["PostToolUse"]
             .as_array()
             .unwrap()
@@ -932,16 +956,16 @@ mod tests {
     #[test]
     fn uninstalling_removes_it() {
         let (home, project) = fixture("uninstall");
-        install(&home, &project).unwrap();
-        assert!(!uninstall(&home, &project).unwrap().installed);
+        install(&home, &project, &[]).unwrap();
+        assert!(!uninstall(&home, &project, &[]).unwrap().installed);
     }
 
     // Nothing left behind that was not there before.
     #[test]
     fn uninstalling_the_only_hook_leaves_no_empty_scaffolding() {
         let (home, project) = fixture("scaffolding");
-        install(&home, &project).unwrap();
-        uninstall(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[]).unwrap();
 
         let settings = settings_of(&project);
         assert!(settings.get("hooks").is_none(), "{settings}");
@@ -950,7 +974,7 @@ mod tests {
     #[test]
     fn uninstalling_when_it_was_never_there_is_not_an_error() {
         let (home, project) = fixture("absent");
-        assert!(!uninstall(&home, &project).unwrap().installed);
+        assert!(!uninstall(&home, &project, &[]).unwrap().installed);
     }
 
     #[test]
@@ -961,13 +985,13 @@ mod tests {
 
         // The file may be one being written, or one the user is mid-way
         // through: it is theirs, and not ours to start over.
-        let error = install(&home, &project).unwrap_err();
+        let error = install(&home, &project, &[]).unwrap_err();
         assert!(error.contains("leaving it alone"), "{error}");
         assert_eq!(
             std::fs::read_to_string(settings_path(&project)).unwrap(),
             "{ not json"
         );
-        assert!(!status(&home, &project).installed);
+        assert!(!status(&home, &project, &[]).installed);
     }
 
     #[test]
@@ -989,7 +1013,7 @@ mod tests {
     #[test]
     fn installing_creates_the_events_file() {
         let (home, project) = fixture("touch");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         assert!(events_path(&home).exists());
     }
 
@@ -1011,7 +1035,7 @@ mod tests {
     #[test]
     fn installs_the_session_hooks_for_both_agents() {
         let (home, project) = fixture("sessions");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
 
         let claude = settings_of(&project);
         for event in ["UserPromptSubmit", "Stop", "Notification"] {
@@ -1029,17 +1053,17 @@ mod tests {
                 .contains("sessions.jsonl"));
         }
         assert!(activity_path(&home).exists());
-        assert!(status(&home, &project).installed);
+        assert!(status(&home, &project, &[]).installed);
     }
 
     #[test]
     fn uninstalling_takes_the_session_hooks_too_and_an_empty_codex_file_with_them() {
         let (home, project) = fixture("sessions-off");
-        install(&home, &project).unwrap();
-        uninstall(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[]).unwrap();
         assert!(settings_of(&project).get("hooks").is_none());
         assert!(!codex_hooks_path(&project).exists());
-        assert!(!status(&home, &project).installed);
+        assert!(!status(&home, &project, &[]).installed);
     }
 
     #[test]
@@ -1051,10 +1075,10 @@ mod tests {
             r#"{"description":"mine","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#,
         )
         .unwrap();
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         let hooks = codex_hooks_of(&project);
         assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 2);
-        uninstall(&home, &project).unwrap();
+        uninstall(&home, &project, &[]).unwrap();
         let hooks = codex_hooks_of(&project);
         assert_eq!(hooks["description"], "mine");
         assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 1);
@@ -1064,12 +1088,12 @@ mod tests {
     #[test]
     fn is_not_installed_until_every_hook_is_there() {
         let (home, project) = fixture("partial");
-        install(&home, &project).unwrap();
+        install(&home, &project, &[]).unwrap();
         let mut settings = read_settings(&settings_path(&project));
         remove_entries(&mut settings, "Stop", &home);
         write_settings(&settings_path(&project), &settings).unwrap();
-        assert!(!status(&home, &project).installed);
-        install(&home, &project).unwrap();
-        assert!(status(&home, &project).installed);
+        assert!(!status(&home, &project, &[]).installed);
+        install(&home, &project, &[]).unwrap();
+        assert!(status(&home, &project, &[]).installed);
     }
 }

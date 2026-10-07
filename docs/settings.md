@@ -4,11 +4,11 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 (<kbd>Ctrl</kbd> on Windows and Linux), over the workbench. A choice applies
 at once.
 
-The settings are in five tabs down the left. Appearance carries the
+The settings are in six tabs down the left. Appearance carries the
 appearance, theme, font, colour and custom styles sections; live updates,
-plugins, keys and notifications each carry the section of that name. Opening the settings again lands on the
-tab last used, for as long as the window is open. The dialog follows the look
-the panes are drawn in.
+accounts, plugins, keys and notifications each carry the section of that
+name. Opening the settings again lands on the tab last used, for as long as
+the window is open. The dialog follows the look the panes are drawn in.
 
 ![The settings over the workbench: the four tabs down the left, and the Appearance tab with its appearance, theme, font and colour choices.](settings.png)
 
@@ -96,6 +96,47 @@ at this section. What each means for the changes pane and for a session's
 row is in [sessions](sessions.md); what the hooks write and where, and the
 tools they bring the agent, is in [hooks](hooks.md).
 
+## Accounts
+
+An account is a login kept apart from the others. Claude Code keeps its
+login, its settings and its past sessions in a configuration directory,
+`~/.claude` unless `CLAUDE_CONFIG_DIR` names another; Codex keeps its own
+in a home, `~/.codex` unless `CODEX_HOME` names another. An account names
+a directory of each, so a work login and a personal one can both be on the
+machine and a session run under either. The agents' own directories are
+the account every setup has, called Default where a name is shown, and a
+setup with no other account named is what it always was.
+
+The tab lists the accounts, Default first, each with where it keeps each
+agent. Add an account… opens a form: a name, and under it the two
+directories the name suggests, `~/.claude-work` and `~/.codex-work` for an
+account called Work, shown as they will be. A pencil beside either opens
+it for editing, and a directory opened that way keeps what is typed into
+it while the other goes on following the name. A directory left blank
+means the agent's own, so an account can be for one agent alone. Nothing
+exists until Add. Remove takes an account away; the projects that named
+it follow the rest again.
+
+Naming an account does not log anything in. The directory is empty until
+the agent has been run with it once: in a terminal, with
+`CLAUDE_CONFIG_DIR` or `CODEX_HOME` set to the directory, the agent asks
+for a login the first time and keeps it there. Whatever of the agent's
+global configuration the account should share, Claude Code's `CLAUDE.md`
+and skills most of all, is copied or linked in by hand.
+
+Under the list, Which account is chosen the way live updates are: one
+account for every project, and a fold of project overrides where a project
+can name an account of its own, or Default, whatever the rest. A session
+runs under its project's account: it starts with the agent's directory set,
+its past sessions are read from there, and the tools the hooks bring are
+registered there too, as [hooks](hooks.md) describes. What a project's row
+shows, and how one session can go another way, is in
+[sessions](sessions.md#accounts).
+
+On a remote project the directories are on the remote machine, spelled
+with `~` for its home; the accounts themselves are kept with the settings
+of the machine the window runs on.
+
 ## Plugins
 
 Sources of plugins, each a git repository or a directory on this machine, with
@@ -133,8 +174,8 @@ give a reason in the user's terms. It is checked whole before the user
 sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
 agent is told why without the user being troubled. The agent hooks, the
-plugins, the notifications and the chime are refused outright, as the
-user's to change.
+plugins, the accounts, the notifications and the chime are refused
+outright, as the user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
@@ -167,8 +208,9 @@ on, whichever machine the agent runs on.
 ## Where they are kept
 
 The appearance, the look, the palette, the fonts, the chords, the answer
-on hooks, the notifications and your own themes are kept for the machine, in `settings.json` under
-`~/.agent-workbench`, and every window on the machine follows the same file.
+on hooks, the accounts, the notifications and your own themes are kept for
+the machine, in `settings.json` under `~/.agent-workbench`, and every
+window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
 reaches an open window at once. A value in the file that the app does not

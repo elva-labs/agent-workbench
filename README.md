@@ -108,8 +108,8 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Sessions](docs/sessions.md): what a session is, what its row says, past
   sessions, and how the changes pane keeps up.
 - [Focus](docs/focus-model.md): who owns the keyboard.
-- [Settings](docs/settings.md): the four tabs, the appearance and the look,
-  fonts and colours, live updates, plugins, keys.
+- [Settings](docs/settings.md): the six tabs, the appearance and the look,
+  fonts and colours, live updates, accounts, plugins, keys.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
   what it gives, the agent's tools among it.
 - [Browser](docs/browser.md): the tab beside the agent, how it is built, and

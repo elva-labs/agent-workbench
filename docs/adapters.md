@@ -10,8 +10,20 @@ above it sees a session with an agent id, a project, and an id to resume by.
 | Start         | `claude --session-id <uuid>`                                       | `codex`                                                  |
 | Resume        | `claude --resume <id>`                                             | `codex resume <id>`                                      |
 | Session id    | Chosen by the workbench, known from the first byte                 | Minted by Codex; the core watches for it                 |
-| Past sessions | Its transcripts under the user's home                              | Its SQLite index under the user's home                   |
+| Past sessions | Its transcripts under its configuration directory                  | Its SQLite index under its home                          |
+| Account       | `CLAUDE_CONFIG_DIR`, its configuration directory                   | `CODEX_HOME`, its home                                   |
 | Session name  | The terminal title, stripped of the glyph and the agent's own name | The thread's name, else its title, else the first prompt |
+
+## Accounts
+
+Each agent keeps its login, its settings and its record of past sessions in
+one directory, `~/.claude` and `~/.codex` by default, and reads another
+from the variable named above. An account in the settings names a
+directory of each, and a session under it is started with the agent's
+variable set, so the agent logs in, reads its settings and files its
+transcript there. The past sessions a project lists are read from the same
+directory. The core is given directories rather than names, so a session on
+a remote machine runs under directories on that machine.
 
 ## Detection
 

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use portable_pty::PtySize;
 use serde::Serialize;
 
+use crate::account;
 use crate::adapter::{self, adapter_for, LaunchCtx, Surface};
 use crate::events::{self, Output, Sink};
 use crate::pty::Sessions;
@@ -314,7 +315,9 @@ impl Core {
     }
 
     /// `cwd` is where the agent runs when that is not the project itself:
-    /// a worktree under it that a resumed session belongs to.
+    /// a worktree under it that a resumed session belongs to. `config_dir`
+    /// is where the agent keeps its configuration when the session runs
+    /// under an account of the user's own, spelled with `~` for the home.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -324,6 +327,7 @@ impl Core {
         session: Option<String>,
         prompt: Option<&str>,
         model: Option<&str>,
+        config_dir: Option<&str>,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -345,12 +349,16 @@ impl Core {
             None if adapter.mints_id() => Some(new_session_id()),
             None => None,
         };
+        let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
+        let expanded =
+            config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
         let ctx = LaunchCtx {
             project,
             env: &environment.vars,
             session: session_id.as_deref(),
             prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
             model: model.filter(|model| !model.trim().is_empty()),
+            config_dir: expanded.as_deref(),
             orchestrator,
         };
         let surface = match &session_id {
@@ -363,7 +371,7 @@ impl Core {
         let codex_activity = (agent == "codex")
             .then(|| {
                 self.home.as_ref().map(|home| {
-                    let home = codex::home(home);
+                    let home = account::codex_home(home, config_dir);
                     let activity = codex::Activity::new(&home, session_id.clone());
                     (home, activity)
                 })
@@ -420,39 +428,60 @@ impl Core {
         project::describe(path)
     }
 
-    pub fn hook_status(&self, project: &Path) -> Result<hook::HookStatus, String> {
+    /// The accounts are the user's own, so the server the hooks point the
+    /// agents at is written for every one of them.
+    pub fn hook_status(
+        &self,
+        project: &Path,
+        accounts: &[account::Dirs],
+    ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        Ok(hook::status(home, project))
+        Ok(hook::status(home, project, accounts))
     }
 
-    pub fn hook_install(&self, project: &Path) -> Result<hook::HookStatus, String> {
+    pub fn hook_install(
+        &self,
+        project: &Path,
+        accounts: &[account::Dirs],
+    ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        hook::install(home, project)
+        hook::install(home, project, accounts)
     }
 
-    pub fn hook_uninstall(&self, project: &Path) -> Result<hook::HookStatus, String> {
+    pub fn hook_uninstall(
+        &self,
+        project: &Path,
+        accounts: &[account::Dirs],
+    ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        hook::uninstall(home, project)
+        hook::uninstall(home, project, accounts)
     }
 
-    /// Sessions an agent has already had in this project, newest first.
-    pub fn sessions_list(&self, project: &Path, agent: &str) -> Vec<transcripts::Transcript> {
+    /// Sessions an agent has already had in this project, newest first,
+    /// from the account whose configuration directory is given, or the
+    /// agent's own.
+    pub fn sessions_list(
+        &self,
+        project: &Path,
+        agent: &str,
+        config_dir: Option<&str>,
+    ) -> Vec<transcripts::Transcript> {
         let Some(home) = &self.home else {
             return Vec::new();
         };
         match agent {
-            "claude-code" => transcripts::list(home, project),
-            "codex" => codex::list(&codex::home(home), project),
+            "claude-code" => transcripts::list(&account::claude_dir(home, config_dir), project),
+            "codex" => codex::list(&account::codex_home(home, config_dir), project),
             _ => Vec::new(),
         }
     }
 
     /// What an agent calls a session now, for agents that keep that in an
     /// index of their own rather than in the terminal title.
-    pub fn session_title(&self, agent: &str, id: &str) -> Option<String> {
+    pub fn session_title(&self, agent: &str, id: &str, config_dir: Option<&str>) -> Option<String> {
         let home = self.home.as_ref()?;
         match agent {
-            "codex" => codex::title_of(&codex::home(home), id),
+            "codex" => codex::title_of(&account::codex_home(home, config_dir), id),
             _ => None,
         }
     }
@@ -549,12 +578,18 @@ impl Core {
     /// A worktree of the project, on a branch of the same name, for a
     /// session to work in without touching the branch the user is on.
     /// Answers with where it is.
-    pub fn worktree_add(&self, project: &Path, name: &str) -> Result<String, String> {
+    pub fn worktree_add(
+        &self,
+        project: &Path,
+        name: &str,
+        accounts: &[account::Dirs],
+    ) -> Result<String, String> {
         let path = git::worktree_add(project, name)?;
         // The agents ask about a directory they have not run in; a worktree
-        // is the project under another path, and has the project's answer.
+        // is the project under another path, and has the project's answer,
+        // under every account.
         if let Some(home) = &self.home {
-            hook::trust_like(home, project, Path::new(&path))?;
+            hook::trust_like(home, project, Path::new(&path), accounts)?;
         }
         Ok(path)
     }

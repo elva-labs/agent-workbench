@@ -23,6 +23,7 @@
  * the app are listed as stopped and can be resumed where they ran.
  */
 
+import { accountOf, accounts, dirsOf, names } from "$lib/accounts.svelte";
 import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
@@ -116,6 +117,9 @@ export interface Started {
   agent: AgentId;
   /** The name the caller gave the work, when it gave one. */
   name: string | null;
+  /** The account it ran under, by name; null for the agents' own. A record
+      from before there were accounts has none, which reads as null. */
+  account?: string | null;
 }
 
 const STARTED_KEY = "workbench.started";
@@ -154,7 +158,7 @@ export function loadStarted() {
 
 function isStarted(entry: unknown): entry is Started {
   if (typeof entry !== "object" || entry === null) return false;
-  const { id, project, worktree, agent, name } = entry as Record<
+  const { id, project, worktree, agent, name, account } = entry as Record<
     string,
     unknown
   >;
@@ -163,7 +167,8 @@ function isStarted(entry: unknown): entry is Started {
     typeof project === "string" &&
     (worktree === null || typeof worktree === "string") &&
     (agent === "claude-code" || agent === "codex") &&
-    (name === null || typeof name === "string")
+    (name === null || typeof name === "string") &&
+    (account === undefined || account === null || typeof account === "string")
   );
 }
 
@@ -392,6 +397,15 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     );
   if (!workspace.open.some((open) => open.path === project))
     return refused(`No project at ${project} is open in the workbench.`);
+  // An account is one the user named in the settings, or the project's.
+  const wanted = text(request, "account");
+  if (wanted !== null && !(wanted in accounts.list))
+    return refused(
+      names().length === 0
+        ? "There are no accounts in the workbench's settings; leave the account out."
+        : `There is no account called ${wanted}. The accounts are ${names().join(", ")}.`,
+    );
+  const account = wanted ?? accountOf(project);
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
@@ -405,7 +419,11 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     // The core numbers a name the project already has, so the path it
     // answers with is the one to run in.
     try {
-      startIn = await core().worktreeAdd(project, worktreeName(name ?? prompt));
+      startIn = await core().worktreeAdd(
+        project,
+        worktreeName(name ?? prompt),
+        dirsOf(),
+      );
     } catch (error) {
       return refused(`The worktree could not be made: ${String(error)}`);
     }
@@ -423,6 +441,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     startIn,
     `${oneLine(prompt)} ${OUTCOME_ASK}`,
     text(request, "model"),
+    account,
   );
   conductor.startedBy[session.key] = caller;
   // The name the caller gave is the row's, until the agent names it.
@@ -444,6 +463,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     worktree: startIn,
     agent,
     name: name === null ? null : oneLine(name),
+    account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
   return said(
@@ -514,6 +534,7 @@ async function resumeSession(
     worktree,
     prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
     text(request, "model"),
+    entry.account ?? null,
   );
   conductor.startedBy[session.key] = caller;
   if (session.title === null && entry.name !== null) session.title = entry.name;

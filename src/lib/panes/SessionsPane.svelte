@@ -1,6 +1,7 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
   import { AGENTS, agentLabel, agentTag, installed, isReady } from "$lib/agent.svelte";
+  import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
   import type { AgentId } from "$lib/core";
   import {
     ago,
@@ -48,23 +49,42 @@
       new-session row offers the choice. With one, nothing changes. */
   let several = $derived(installed().length > 1);
 
+  /** Whether the new-session row has anything to choose: an agent, or an
+      account to run under. */
+  let choosable = $derived(several || hasAccounts());
+
   /** The project whose new-session row is open on the choice of agent. */
   let choosing = $state<string | null>(null);
 
-  /** New session: with one agent it starts; with several the row opens
-      into the choice, the cursor on the one the project used last. */
+  /** The account the open choice would start under: the project's own to
+      begin with, and whatever the footer was switched to. */
+  let picked = $state<string | null>(null);
+
+  /** New session: with nothing to choose it starts; otherwise the row
+      opens into the choice, the cursor on the agent the project used last
+      and the account the project runs under. */
   function offer(path: string) {
-    if (!several) {
+    if (!choosable) {
       start(path, defaultAgent(path));
       return;
     }
     choosing = path;
+    picked = accountOf(path);
     cursor = `pick:${path}:${defaultAgent(path)}`;
   }
 
   function startWith(path: string, agent: AgentId) {
     choosing = null;
-    start(path, agent);
+    start(path, agent, picked);
+  }
+
+  /** The accounts the footer offers, the agents' own first. */
+  let offered = $derived<(string | null)[]>([null, ...names()]);
+
+  /** Left and Right in the choice walk the accounts. */
+  function pickNext(step: number) {
+    const at = offered.indexOf(picked);
+    picked = offered[(at + step + offered.length) % offered.length] ?? null;
   }
 
   /** The projects under the orchestrator's own: opening the directory it
@@ -200,7 +220,7 @@
       while it is open, else the new-session row. */
   function starting(path: string): Row[] {
     if (!isReady()) return [];
-    if (several && choosing === path) {
+    if (choosable && choosing === path) {
       return installed().map((agent) => ({
         id: `pick:${path}:${agent}`,
         run: () => startWith(path, agent),
@@ -277,8 +297,8 @@
     focusPane("agent");
   }
 
-  function start(path: string, agent: AgentId) {
-    create(path, null, agent);
+  function start(path: string, agent: AgentId, account: string | null = accountOf(path)) {
+    create(path, null, agent, null, null, null, account);
     focusPane("agent");
   }
 
@@ -303,6 +323,11 @@
         break;
       case "End":
         moveTo(rows.length - 1);
+        break;
+      case "ArrowLeft":
+      case "ArrowRight":
+        if (choosing === null || !hasAccounts()) return;
+        pickNext(e.key === "ArrowLeft" ? -1 : 1);
         break;
       case "Escape":
         // Closes the menu or an open choice of agent, and goes no further:
@@ -449,10 +474,11 @@
     </div>
 {/snippet}
 
-<!-- With several agents the row opens, in place, into the choice of
-     agent; with one there is nothing to choose and it starts. -->
+<!-- With several agents, or accounts to run under, the row opens, in
+     place, into the choice; with neither there is nothing to choose and it
+     starts. -->
 {#snippet newSession(path: string)}
-  {#if several && choosing === path}
+  {#if choosable && choosing === path}
     <div class="choice" role="group" aria-label="Agent for the new session" data-testid="agent-choice">
       <div class="choice-head">
         <span>new session with</span>
@@ -475,6 +501,24 @@
           {#if sessions.preferred[path] === id}<span class="state">last used</span>{/if}
         </button>
       {/each}
+      {#if hasAccounts()}
+        <div class="choice-foot" data-testid="account-choice">
+          <span>as</span>
+          <div class="mini" role="radiogroup" aria-label="Account for the new session">
+            {#each offered as account (account ?? "")}
+              <button
+                role="radio"
+                tabindex="-1"
+                aria-checked={picked === account}
+                class:on={picked === account}
+                onclick={() => (picked = account)}
+                data-testid="account-option"
+                data-account={account ?? ""}>{accountLabel(account)}</button
+              >
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
   {:else}
     <div class="new-row" class:cursor={current === `new:${path}`} data-row="new:{path}">
@@ -641,6 +685,7 @@
       >
         <button class="row project-row" tabindex="-1" onclick={() => activate(project.path)} title={project.path}>
           <span class="name">{projectLabel(project.path)}</span>
+          {#if accountOf(project.path) !== null}<span class="tag account" data-testid="project-account">{accountOf(project.path)}</span>{/if}
           {#if hostOf(project.path) !== null}<span class="host" data-testid="project-host">{hostOf(project.path)}</span>{/if}
           {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
         </button>
@@ -1193,6 +1238,61 @@
 
   .choice {
     margin: 2px 0 10px;
+  }
+
+  /* The account a project runs under, when it is not the agents' own. */
+  .tag.account {
+    color: var(--accent);
+    border-color: var(--accent-soft);
+    max-width: 10ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The account the choice starts under, switched for this one session. */
+  .choice-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px var(--row-pad-x) 2px var(--row-indent);
+    font-family: var(--chrome);
+    font-size: var(--label-size);
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+  }
+
+  .mini {
+    display: inline-flex;
+    min-width: 0;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-tag);
+    overflow: hidden;
+  }
+
+  .mini button {
+    padding: 1px 7px;
+    border: 0;
+    border-right: 1px solid var(--rule);
+    background: none;
+    font-family: var(--chrome);
+    font-size: 10.5px;
+    letter-spacing: var(--label-track-fine);
+    color: var(--ink-3);
+    cursor: pointer;
+    max-width: 12ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mini button:last-child {
+    border-right: 0;
+  }
+
+  .mini button.on {
+    background: var(--accent-soft);
+    color: var(--accent);
   }
 
   .choice-head {

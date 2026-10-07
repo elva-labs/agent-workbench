@@ -49,9 +49,10 @@ and the note above, in the project the agent runs in, brought forward if it
 was not on screen. The daemon tells the agent when to reach for it as it
 connects: when the user asks where something is, or an answer points at a
 place in a file, once, for the place being talked about. Claude Code is
-pointed at the server in its own per-project state under the user's home;
-Codex in the project's `.codex/config.toml`, kept out of the repository like
-the hooks file. Such a file is the agent's own: the core changes its one entry
+pointed at the server in its own per-project state, the state file of
+every account in the settings as well as the agent's own, so a session
+under any of them has the tools; Codex in the project's
+`.codex/config.toml`, kept out of the repository like the hooks file. Such a file is the agent's own: the core changes its one entry
 and writes the rest back as it found it, and one it cannot parse it leaves
 alone rather than replaces. A machine kind the app has no daemon build for
 gets the hooks without the tool. An app run from the source uses the daemon

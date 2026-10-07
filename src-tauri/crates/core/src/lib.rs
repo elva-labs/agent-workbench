@@ -5,6 +5,7 @@
 //! remote daemon in a stream of JSON lines, and both hear from it through a
 //! [`Sink`]. Rust owns state; whatever is on the other side owns pixels.
 
+pub mod account;
 pub mod activity;
 pub mod adapter;
 pub mod api;

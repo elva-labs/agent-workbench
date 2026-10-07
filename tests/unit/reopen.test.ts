@@ -107,6 +107,7 @@ describe("keeping the record", () => {
       agent: "claude-code",
       startIn: "/home/ada/dev/one/tree",
       model: "opus",
+      account: null,
     });
   });
 });

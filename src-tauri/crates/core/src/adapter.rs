@@ -50,6 +50,11 @@ pub struct LaunchCtx<'a> {
     /// The model to run on, by the name the agent takes on its command
     /// line, when the caller chose one. The agent's own default otherwise.
     pub model: Option<&'a str>,
+    /// Where the agent keeps its configuration and its login, when the
+    /// session runs under an account of the user's own: Claude Code reads
+    /// it as `CLAUDE_CONFIG_DIR`, Codex as `CODEX_HOME`. The agent's own
+    /// directory otherwise.
+    pub config_dir: Option<&'a Path>,
     /// Whether this session is the one that directs the others. It runs in
     /// the workbench's own orchestrator directory, and the tools it starts
     /// tell it what directing work means.
@@ -187,10 +192,19 @@ impl ClaudeCode {
         let mut command = program(binary, args, ctx.env);
         prepare(&mut command, ctx.project, ctx.env);
         name_session(&mut command, ctx);
+        if let Some(dir) = ctx.config_dir {
+            command.env(CLAUDE_CONFIG_VAR, dir);
+        }
 
         Ok(Surface::Pty(command))
     }
 }
+
+/// The variable Claude Code reads its configuration directory from.
+pub const CLAUDE_CONFIG_VAR: &str = "CLAUDE_CONFIG_DIR";
+
+/// The variable Codex reads its home from.
+pub const CODEX_HOME_VAR: &str = "CODEX_HOME";
 
 /// Puts the session's id in the agent's environment when it is known, and
 /// its role when it has one. The agent passes both on to the tool server it
@@ -245,6 +259,9 @@ impl Codex {
         let mut command = program(binary, args, ctx.env);
         prepare(&mut command, ctx.project, ctx.env);
         name_session(&mut command, ctx);
+        if let Some(dir) = ctx.config_dir {
+            command.env(CODEX_HOME_VAR, dir);
+        }
 
         Ok(Surface::Pty(command))
     }
@@ -340,6 +357,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -381,6 +399,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: Some("abc"),
             prompt: Some("--dangerously-skip-permissions and fix it"),
             model: None,
@@ -412,6 +431,46 @@ mod tests {
     }
 
     #[test]
+    fn an_account_s_directory_reaches_each_agent_as_its_own_variable() {
+        let dir = std::env::temp_dir().join("workbench-adapter-account");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let vars = vars_with_path(&dir);
+        let own = Path::new("/home/ada/.claude-work");
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: Some(own),
+            session: None,
+            prompt: None,
+            model: None,
+            orchestrator: false,
+        };
+        let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
+        assert_eq!(claude.get_env(CLAUDE_CONFIG_VAR), Some(own.as_os_str()));
+        assert!(claude.get_env(CODEX_HOME_VAR).is_none());
+        let Surface::Pty(codex) = Codex.launch(&ctx, "").unwrap();
+        assert_eq!(codex.get_env(CODEX_HOME_VAR), Some(own.as_os_str()));
+        assert!(codex.get_env(CLAUDE_CONFIG_VAR).is_none());
+
+        // Without one, neither variable is set by the workbench.
+        let ctx = LaunchCtx {
+            config_dir: None,
+            ..ctx
+        };
+        let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
+        assert!(claude.get_env(CLAUDE_CONFIG_VAR).is_none());
+    }
+
+    #[test]
     fn the_model_goes_on_the_command_line_before_the_prompt_for_a_launch_and_a_resume() {
         let dir = std::env::temp_dir().join("workbench-adapter-model");
         std::fs::create_dir_all(&dir).unwrap();
@@ -428,6 +487,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: Some("abc"),
             prompt: Some("Go on with the cache test"),
             model: Some("sonnet"),
@@ -500,6 +560,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: Some("abc-123"),
             prompt: None,
             model: None,
@@ -515,6 +576,7 @@ mod tests {
         let unnamed = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -542,6 +604,7 @@ mod tests {
             let ctx = LaunchCtx {
                 project: Path::new("/tmp"),
                 env: &vars,
+                config_dir: None,
                 session: Some("abc"),
                 prompt: None,
                 model: None,
@@ -569,6 +632,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -586,6 +650,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -609,6 +674,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -638,6 +704,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -664,6 +731,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,
@@ -685,6 +753,7 @@ mod tests {
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
+            config_dir: None,
             session: None,
             prompt: None,
             model: None,

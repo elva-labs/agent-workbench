@@ -33,6 +33,15 @@ export interface DetectReport {
   fromLoginShell: boolean;
 }
 
+/** The directories of one account: where Claude Code keeps its
+    configuration and where Codex keeps its home, either null for the
+    agent's own. Spelled as the user wrote them, `~` standing for the home
+    of the machine the session runs on. */
+export interface AccountDirs {
+  claude: string | null;
+  codex: string | null;
+}
+
 export interface SpawnOptions {
   agent: AgentId;
   project: string;
@@ -45,6 +54,10 @@ export interface SpawnOptions {
   /** The model to run on, by the name the agent takes on its command
       line. The agent's own default when left out. */
   model?: string;
+  /** Where the agent keeps its configuration and login, when the session
+      runs under an account of the user's own. The agent's own directory
+      when left out. */
+  configDir?: string;
   cols: number;
   rows: number;
 }
@@ -521,6 +534,15 @@ export interface Settings {
   /** The whole chord table, by action. Empty is the default preset. */
   keys: Record<string, KeyChord>;
   hooks: { everywhere: boolean; overrides: Record<string, boolean> };
+  /** The agents' logins kept apart, by name. The one every project runs
+      under, or null for the agents' own directories, and the projects
+      that say otherwise, each naming an account or null for the agents'
+      own. */
+  accounts: {
+    list: Record<string, AccountDirs>;
+    everywhere: string | null;
+    overrides: Record<string, string | null>;
+  };
   /** The user's own themes, by name. A palette may name one. */
   themes: Record<
     string,
@@ -692,7 +714,11 @@ export interface Core {
     error: string | null,
   ): Promise<void>;
   /** Makes a worktree of the project, and answers with its absolute path. */
-  worktreeAdd(project: string, name: string): Promise<string>;
+  worktreeAdd(
+    project: string,
+    name: string,
+    accounts: AccountDirs[],
+  ): Promise<string>;
   /** Where an orchestrator session runs, made if it is not there yet. */
   orchestratorDir(): Promise<string>;
   /** The worktrees the app made under a project, with what is in them. */
@@ -794,15 +820,28 @@ export interface Core {
       answers with its result, JSON encoded. */
   browserEval(id: number | null, script: string): Promise<string>;
 
-  /** Sessions the agent already has on disk for this project, newest first. */
-  transcripts(project: string, agent: AgentId): Promise<Transcript[]>;
+  /** Sessions the agent already has on disk for this project, newest
+      first, from the account whose configuration directory is given, or
+      the agent's own. */
+  transcripts(
+    project: string,
+    agent: AgentId,
+    configDir?: string,
+  ): Promise<Transcript[]>;
   /** What the agent calls a session now, for agents that keep that in an
       index of their own rather than in the terminal title. */
-  sessionTitle(agent: AgentId, id: string): Promise<string | null>;
+  sessionTitle(
+    agent: AgentId,
+    id: string,
+    configDir?: string,
+  ): Promise<string | null>;
 
-  hookStatus(project: string): Promise<HookStatus>;
-  hookInstall(project: string): Promise<HookStatus>;
-  hookUninstall(project: string): Promise<HookStatus>;
+  /** The hooks go into the project; the server they point the agents at
+      goes into the agents' state under every account given, as well as
+      the agents' own. */
+  hookStatus(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
+  hookInstall(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
+  hookUninstall(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
 
   gitStatus(root: string): Promise<ChangedFile[]>;
   gitFiles(root: string): Promise<string[]>;
@@ -1021,8 +1060,8 @@ const tauriCore: Core = {
   },
   settingsAnswer: (id, cwd, content, error) =>
     invoke<void>("settings_answer", { id, cwd, content, error }),
-  worktreeAdd: (project, name) =>
-    invoke<string>("worktree_add", { project, name }),
+  worktreeAdd: (project, name, accounts) =>
+    invoke<string>("worktree_add", { project, name, accounts }),
   orchestratorDir: () => invoke<string>("orchestrator_dir"),
   worktrees: (project) => invoke<Worktree[]>("worktrees", { project }),
   worktreeRemove: (project, name) =>
@@ -1099,14 +1138,17 @@ const tauriCore: Core = {
     });
   },
 
-  transcripts: (project, agent) =>
-    invoke<Transcript[]>("sessions_list", { project, agent }),
-  sessionTitle: (agent, id) =>
-    invoke<string | null>("session_title", { agent, id }),
+  transcripts: (project, agent, configDir) =>
+    invoke<Transcript[]>("sessions_list", { project, agent, configDir }),
+  sessionTitle: (agent, id, configDir) =>
+    invoke<string | null>("session_title", { agent, id, configDir }),
 
-  hookStatus: (project) => invoke<HookStatus>("hook_status", { project }),
-  hookInstall: (project) => invoke<HookStatus>("hook_install", { project }),
-  hookUninstall: (project) => invoke<HookStatus>("hook_uninstall", { project }),
+  hookStatus: (project, accounts) =>
+    invoke<HookStatus>("hook_status", { project, accounts }),
+  hookInstall: (project, accounts) =>
+    invoke<HookStatus>("hook_install", { project, accounts }),
+  hookUninstall: (project, accounts) =>
+    invoke<HookStatus>("hook_uninstall", { project, accounts }),
 
   gitStatus: (root) => invoke<ChangedFile[]>("git_status", { root }),
   gitFiles: (root) => invoke<string[]>("git_files", { root }),

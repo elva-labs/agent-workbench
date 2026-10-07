@@ -96,6 +96,24 @@ agent went on, and, for Claude Code, a screen that goes still, give or take a
 redraw, for five seconds while the hooks still say working means the turn ended
 without them, which is what an Escape at the keyboard does.
 
+## Accounts
+
+With accounts named in the [settings](settings.md#accounts), a project
+runs under one of them, and its row carries the account's name as a tag
+when that is not the agents' own. The new-session row then opens into the
+choice whether or not there is more than one agent, and the choice carries
+a footer, `as`, with the accounts in a row and the project's own marked.
+The session starts under the one marked; a click on another, or Left and
+Right at the keyboard, switches it for this one session, and the next
+choice starts on the project's account again. A session an orchestrator
+starts runs under the project's account unless the start names another,
+and a session resumed runs under the account it ran under.
+
+The past sessions under a project are the ones its account has had there,
+read from that account's directory. A session started under another
+account is listed where that account keeps it, which is to say under the
+project once the project is moved to that account.
+
 ## Names
 
 A project is its folder's name. Two open projects with the same name each

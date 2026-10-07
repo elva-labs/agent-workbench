@@ -12,6 +12,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::account::Dirs;
 use crate::events::Output;
 use crate::Core;
 
@@ -103,6 +104,8 @@ struct SpawnParams {
     prompt: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    config_dir: Option<String>,
     cols: u16,
     rows: u16,
 }
@@ -136,6 +139,8 @@ struct AnswerParams {
 struct WorktreeParams {
     project: PathBuf,
     name: String,
+    #[serde(default)]
+    accounts: Vec<Dirs>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +151,15 @@ struct SelectionParams {
 #[derive(Deserialize)]
 struct ProjectParams {
     project: PathBuf,
+}
+
+/// A project and the user's accounts, for what is written into each
+/// account's agent state for the project.
+#[derive(Deserialize)]
+struct HookParams {
+    project: PathBuf,
+    #[serde(default)]
+    accounts: Vec<Dirs>,
 }
 
 #[derive(Deserialize)]
@@ -210,15 +224,21 @@ struct AgentParams {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionsParams {
     project: PathBuf,
     agent: String,
+    #[serde(default)]
+    config_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TitleParams {
     agent: String,
     id: String,
+    #[serde(default)]
+    config_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -287,6 +307,7 @@ pub fn dispatch(
                 p.session,
                 p.prompt.as_deref(),
                 p.model.as_deref(),
+                p.config_dir.as_deref(),
                 p.cols,
                 p.rows,
                 make_output,
@@ -301,24 +322,24 @@ pub fn dispatch(
             value(core.project_info(&p.path)?)
         }
         "hook_status" => {
-            let p: ProjectParams = parse(params)?;
-            value(core.hook_status(&p.project)?)
+            let p: HookParams = parse(params)?;
+            value(core.hook_status(&p.project, &p.accounts)?)
         }
         "hook_install" => {
-            let p: ProjectParams = parse(params)?;
-            value(core.hook_install(&p.project)?)
+            let p: HookParams = parse(params)?;
+            value(core.hook_install(&p.project, &p.accounts)?)
         }
         "hook_uninstall" => {
-            let p: ProjectParams = parse(params)?;
-            value(core.hook_uninstall(&p.project)?)
+            let p: HookParams = parse(params)?;
+            value(core.hook_uninstall(&p.project, &p.accounts)?)
         }
         "sessions_list" => {
             let p: SessionsParams = parse(params)?;
-            value(core.sessions_list(&p.project, &p.agent))
+            value(core.sessions_list(&p.project, &p.agent, p.config_dir.as_deref()))
         }
         "session_title" => {
             let p: TitleParams = parse(params)?;
-            value(core.session_title(&p.agent, &p.id))
+            value(core.session_title(&p.agent, &p.id, p.config_dir.as_deref()))
         }
         "git_status" => {
             let p: RootParams = parse(params)?;
@@ -446,7 +467,7 @@ pub fn dispatch(
         }
         "worktree_add" => {
             let p: WorktreeParams = parse(params)?;
-            value(core.worktree_add(&p.project, &p.name)?)
+            value(core.worktree_add(&p.project, &p.name, &p.accounts)?)
         }
         "worktrees" => {
             let p: ProjectParams = parse(params)?;

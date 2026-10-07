@@ -128,6 +128,34 @@ pub struct Hooks {
     pub overrides: BTreeMap<String, bool>,
 }
 
+/// A login kept apart from the others: Claude Code's in a configuration
+/// directory of its own, Codex's in a home of its own. Either left out
+/// means that agent runs on its own directory under the home.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Account {
+    #[serde(default)]
+    pub claude: Option<String>,
+    #[serde(default)]
+    pub codex: Option<String>,
+}
+
+/// The user's own accounts by name, the one every project uses, and the
+/// projects that say otherwise, by path. No name is the agents' own
+/// directories, which every setup has without naming them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Accounts {
+    #[serde(default)]
+    pub list: BTreeMap<String, Account>,
+    #[serde(default)]
+    pub everywhere: Option<String>,
+    #[serde(default)]
+    pub overrides: BTreeMap<String, Option<String>>,
+}
+
+/// How many accounts the file may hold, and how long a name may be.
+const MOST_ACCOUNTS: usize = 16;
+const LONGEST_ACCOUNT: usize = 40;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -140,6 +168,8 @@ pub struct Settings {
     /// window fills in whatever an action has no chord for.
     pub keys: BTreeMap<String, Chord>,
     pub hooks: Hooks,
+    /// The agents' logins kept apart, and which project runs under which.
+    pub accounts: Accounts,
     /// The user's own themes, by name. A palette may name one.
     pub themes: BTreeMap<String, Theme>,
     /// Whether the user's own stylesheet is laid over the app's.
@@ -164,6 +194,7 @@ impl Default for Settings {
                 everywhere: true,
                 overrides: BTreeMap::new(),
             },
+            accounts: Accounts::default(),
             themes: BTreeMap::new(),
             user_styles: false,
             notifications: true,
@@ -220,6 +251,58 @@ fn keys(value: &Value) -> Result<BTreeMap<String, Chord>, String> {
 fn hooks(value: &Value) -> Result<Hooks, String> {
     serde_json::from_value(value.clone())
         .map_err(|_| "hooks is everywhere, on or off, and the projects that say otherwise".into())
+}
+
+/// A directory as an account gives it: a few words of path, not empty.
+fn is_directory(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty() && text.len() <= 512 && !text.contains('\0')
+}
+
+/// The accounts a value holds, each with a name that will do and
+/// directories that will, and every project and the default naming one of
+/// them or none.
+fn accounts(value: &Value) -> Result<Accounts, String> {
+    let shape = "accounts is a table of accounts by name, the one every project uses, and the projects that say otherwise";
+    if !value.is_object() {
+        return Err(shape.to_string());
+    }
+    let accounts: Accounts =
+        serde_json::from_value(value.clone()).map_err(|_| shape.to_string())?;
+    if accounts.list.len() > MOST_ACCOUNTS {
+        return Err(format!(
+            "the settings hold {MOST_ACCOUNTS} accounts at most"
+        ));
+    }
+    for (name, account) in &accounts.list {
+        if name.trim().is_empty() || name.chars().count() > LONGEST_ACCOUNT {
+            return Err(format!(
+                "an account's name is a few words, {LONGEST_ACCOUNT} characters at most"
+            ));
+        }
+        for dir in [&account.claude, &account.codex].into_iter().flatten() {
+            if !is_directory(dir) {
+                return Err(format!("a directory of {name} is a path, not {dir:?}"));
+            }
+        }
+    }
+    let named = |choice: &Option<String>| match choice {
+        Some(name) if !accounts.list.contains_key(name) => Err(format!(
+            "there is no account called {name}; the accounts are {}",
+            accounts
+                .list
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        _ => Ok(()),
+    };
+    named(&accounts.everywhere)?;
+    for choice in accounts.overrides.values() {
+        named(choice)?;
+    }
+    Ok(accounts)
 }
 
 /// A colour as a theme gives it: `#` and three or six hex digits.
@@ -405,6 +488,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => settings.keys = keys(value)?,
         "hooks" => settings.hooks = hooks(value)?,
+        "accounts" => settings.accounts = accounts(value)?,
         other => return Err(format!("there is no setting called {other}")),
     }
     Ok(())
@@ -446,7 +530,7 @@ pub fn parse(text: &str) -> Option<Settings> {
 }
 
 /// The settings with a change laid over them. The change names only the
-/// fields it changes; keys, hooks and themes are replaced whole.
+/// fields it changes; keys, hooks, accounts and themes are replaced whole.
 pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     let fields = change
         .as_object()
@@ -775,6 +859,66 @@ mod tests {
             })
             .collect();
         assert!(apply(&settings, &json!({ "keys": many })).is_err());
+    }
+
+    #[test]
+    fn accounts_name_directories_and_every_choice_names_an_account() {
+        let settings = Settings::default();
+        let next = apply(
+            &settings,
+            &json!({ "accounts": {
+                "list": { "work": { "claude": "~/.claude-work", "codex": "~/.codex-work" }, "lab": { "claude": "/srv/claude" } },
+                "everywhere": "work",
+                "overrides": { "/home/ada/toy": null, "/home/ada/lab": "lab" }
+            } }),
+        )
+        .unwrap();
+        assert_eq!(
+            next.accounts.list["work"].claude.as_deref(),
+            Some("~/.claude-work")
+        );
+        assert_eq!(next.accounts.list["lab"].codex, None);
+        assert_eq!(next.accounts.everywhere.as_deref(), Some("work"));
+        assert_eq!(next.accounts.overrides["/home/ada/toy"], None);
+        assert_eq!(
+            next.accounts.overrides["/home/ada/lab"].as_deref(),
+            Some("lab")
+        );
+
+        // A choice has to name an account the list holds.
+        let error = apply(
+            &settings,
+            &json!({ "accounts": { "list": {}, "everywhere": "work" } }),
+        )
+        .unwrap_err();
+        assert!(error.contains("no account called work"), "{error}");
+        assert!(apply(
+            &settings,
+            &json!({ "accounts": { "list": { "work": {} }, "overrides": { "/p": "home" } } }),
+        )
+        .is_err());
+        // A directory is a path, and a name is a few words.
+        assert!(apply(
+            &settings,
+            &json!({ "accounts": { "list": { "work": { "claude": "" } } } }),
+        )
+        .is_err());
+        assert!(apply(
+            &settings,
+            &json!({ "accounts": { "list": { "": { "claude": "~/.c" } } } }),
+        )
+        .is_err());
+        assert!(apply(&settings, &json!({ "accounts": [] })).is_err());
+
+        // Read leniently, a bad value leaves the default, which is no
+        // accounts at all.
+        let parsed = parse(r#"{ "accounts": { "list": {}, "everywhere": "gone" } }"#).unwrap();
+        assert!(parsed.accounts.list.is_empty());
+        assert_eq!(parsed.accounts.everywhere, None);
+        let parsed =
+            parse(r#"{ "accounts": { "list": { "work": { "claude": "~/.claude-work" } } } }"#)
+                .unwrap();
+        assert_eq!(parsed.accounts.list.len(), 1);
     }
 
     #[test]

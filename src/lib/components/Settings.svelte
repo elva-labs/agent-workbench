@@ -1,6 +1,6 @@
 <script module lang="ts">
   /** The columns of settings, one on screen at a time. */
-  type Tab = "appearance" | "live" | "plugins" | "keys" | "notifications";
+  type Tab = "appearance" | "live" | "accounts" | "plugins" | "keys" | "notifications";
 
   /** The tab last chosen. It belongs to the module rather than the dialog, so
       closing the settings and opening them again lands where you were; a new
@@ -44,7 +44,18 @@
   } from "$lib/plugins.svelte";
   import { lastSegment } from "$lib/paths";
   import type { PluginInfo, PluginSource } from "$lib/core";
-  import { hook, overrideOf, setEverywhere, setOverride } from "$lib/hook.svelte";
+  import { hook, overrideOf, reapply, setEverywhere, setOverride } from "$lib/hook.svelte";
+  import {
+    OWN_LABEL,
+    accounts,
+    addAccount,
+    names,
+    overrideOf as accountOverrideOf,
+    removeAccount,
+    setEverywhere as setAccountEverywhere,
+    setOverride as setAccountOverride,
+    suggest,
+  } from "$lib/accounts.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import {
     INTERFACE_FONTS,
@@ -82,6 +93,7 @@
   const TABS: { name: Tab; label: string }[] = [
     { name: "appearance", label: "Appearance" },
     { name: "live", label: "Live updates" },
+    { name: "accounts", label: "Accounts" },
     { name: "plugins", label: "Plugins" },
     { name: "keys", label: "Keys" },
     { name: "notifications", label: "Notifications" },
@@ -231,6 +243,65 @@
   /** A project's own word, or none to follow the rest; asking for what it has is nothing. */
   function setHooks(path: string, value: boolean | null) {
     if (overrideOf(path) !== value) void setOverride(path, value);
+  }
+
+  /** The form for an account of your own: a name, and the two directories
+      it suggests, each shown as it will be and opened for editing with
+      the pencil. A directory not opened follows the name as it is typed;
+      one that was keeps what was typed into it. */
+  let addingAccount = $state(false);
+  let accountName = $state("");
+  let ownClaude = $state<string | null>(null);
+  let ownCodex = $state<string | null>(null);
+  let accountProblem = $state<string | null>(null);
+  const suggested = $derived(suggest(accountName));
+  const claudeDir = $derived(ownClaude ?? suggested.claude ?? "");
+  const codexDir = $derived(ownCodex ?? suggested.codex ?? "");
+
+  function openAccountForm() {
+    accountName = "";
+    ownClaude = null;
+    ownCodex = null;
+    accountProblem = null;
+    addingAccount = true;
+  }
+
+  /** The account is added, and every open project is brought to the hooks
+      answer again, since the server goes into each account's state. */
+  function submitAccount(e: SubmitEvent) {
+    e.preventDefault();
+    const problem = addAccount(accountName, { claude: claudeDir, codex: codexDir });
+    if (problem !== null) {
+      accountProblem = problem;
+      return;
+    }
+    addingAccount = false;
+    void reapply(workspace.open.map((project) => project.path));
+  }
+
+  function dropAccount(name: string) {
+    removeAccount(name);
+    void reapply(workspace.open.map((project) => project.path));
+  }
+
+  /** How many open projects have an account of their own. */
+  let accountOverridden = $derived(
+    workspace.open.filter((project) => accountOverrideOf(project.path) !== undefined).length,
+  );
+  let accountOverridesOpen = $state(false);
+  $effect(() => {
+    if (accountOverridden > 0) accountOverridesOpen = true;
+  });
+
+  /** What a row says of where an account keeps each agent. */
+  function dirsLine(name: string): string {
+    const dirs = accounts.list[name];
+    return [
+      dirs.claude === null ? null : `Claude Code ${dirs.claude}`,
+      dirs.codex === null ? null : `Codex ${dirs.codex}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
 
   function record(action: ActionKey) {
@@ -553,6 +624,133 @@
             {/if}
             {#if hook.error}
               <p class="error" data-testid="hook-error">{hook.error}</p>
+            {/if}
+          </section>
+        {:else if tab === "accounts"}
+          <section data-testid="settings-accounts">
+            <h3>Accounts</h3>
+            <p class="note">
+              An account is a login kept apart from the others: Claude Code's in a configuration
+              directory of its own, Codex's in a home of its own, each with that agent's settings and
+              past sessions. A session runs under the account its project uses. Name one here, then log
+              in once from a terminal with <code>CLAUDE_CONFIG_DIR</code> or <code>CODEX_HOME</code> set
+              to its directory.
+            </p>
+            <div class="account" data-testid="account-row" data-account="">
+              <span class="account-name">{OWN_LABEL}</span>
+              <span class="account-meta">Claude Code ~/.claude · Codex ~/.codex</span>
+            </div>
+            {#each names() as name (name)}
+              <div class="account" data-testid="account-row" data-account={name}>
+                <span class="account-name">{name}</span>
+                <span class="account-meta">{dirsLine(name)}</span>
+                <button class="tool" onclick={() => dropAccount(name)} data-testid="account-remove">Remove</button>
+              </div>
+            {/each}
+            {#if addingAccount}
+              <form class="account-form" onsubmit={submitAccount} data-testid="account-form">
+                <label class="field">
+                  <span class="field-what">Name</span>
+                  <input
+                    type="text"
+                    bind:value={accountName}
+                    placeholder="Work"
+                    data-testid="account-name"
+                  />
+                </label>
+                {#each [["claude", "Claude Code"], ["codex", "Codex"]] as [agent, what] (agent)}
+                  {@const own = agent === "claude" ? ownClaude : ownCodex}
+                  {@const dir = agent === "claude" ? claudeDir : codexDir}
+                  <div class="field">
+                    <span class="field-what">{what}</span>
+                    {#if own === null}
+                      <span class="path" data-testid="account-{agent}">{dir}</span>
+                      <button
+                        type="button"
+                        class="pencil"
+                        aria-label="Change the {what} directory"
+                        onclick={() => {
+                          if (agent === "claude") ownClaude = dir;
+                          else ownCodex = dir;
+                        }}
+                        data-testid="account-{agent}-edit">✎</button
+                      >
+                    {:else if agent === "claude"}
+                      <input type="text" class="dir" bind:value={ownClaude} data-testid="account-claude-dir" />
+                    {:else}
+                      <input type="text" class="dir" bind:value={ownCodex} data-testid="account-codex-dir" />
+                    {/if}
+                  </div>
+                {/each}
+                {#if accountProblem !== null}
+                  <p class="error" data-testid="account-problem">{accountProblem}</p>
+                {/if}
+                <div class="form-actions">
+                  <button type="submit" class="go" disabled={accountName.trim() === ""} data-testid="account-add">Add</button>
+                  <button type="button" class="tool" onclick={() => (addingAccount = false)} data-testid="account-cancel">Cancel</button>
+                </div>
+              </form>
+            {:else}
+              <button class="link" onclick={openAccountForm} data-testid="account-add-open">Add an account…</button>
+            {/if}
+
+            <h3>Which account</h3>
+            <div class="project" data-testid="account-everywhere">
+              <span class="project-name">Every project</span>
+              <div class="seg" role="radiogroup" aria-label="The account for every project">
+                {#each [null, ...names()] as account (account ?? "")}
+                  <button
+                    role="radio"
+                    aria-checked={accounts.everywhere === account}
+                    class:on={accounts.everywhere === account}
+                    onclick={() => setAccountEverywhere(account)}
+                    data-testid="account-everywhere-option"
+                    data-account={account ?? ""}>{account ?? OWN_LABEL}</button
+                  >
+                {/each}
+              </div>
+            </div>
+            {#if workspace.open.length === 0}
+              <p class="note quiet">Every project you open follows that.</p>
+            {:else}
+              <button
+                class="fold"
+                onclick={() => (accountOverridesOpen = !accountOverridesOpen)}
+                aria-expanded={accountOverridesOpen}
+                data-testid="account-overrides"
+              >
+                <span class="chevron">{accountOverridesOpen ? "▾" : "▸"}</span>
+                Project overrides{accountOverridden > 0 ? ` (${accountOverridden})` : ""}
+              </button>
+            {/if}
+            {#if accountOverridesOpen}
+              <div class="projects">
+                {#each workspace.open as project (project.path)}
+                  {@const own = accountOverrideOf(project.path)}
+                  <div class="project" data-testid="account-project-row" data-project={project.path}>
+                    <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
+                    <div class="seg" role="radiogroup" aria-label="The account for {projectLabel(project.path)}">
+                      <button
+                        role="radio"
+                        aria-checked={own === undefined}
+                        class:on={own === undefined}
+                        onclick={() => setAccountOverride(project.path, undefined)}
+                        data-testid="account-project-default">As every project</button
+                      >
+                      {#each [null, ...names()] as account (account ?? "")}
+                        <button
+                          role="radio"
+                          aria-checked={own === account}
+                          class:on={own === account}
+                          onclick={() => setAccountOverride(project.path, account)}
+                          data-testid="account-project-option"
+                          data-account={account ?? ""}>{account ?? OWN_LABEL}</button
+                        >
+                      {/each}
+                    </div>
+                  </div>
+                {/each}
+              </div>
             {/if}
           </section>
         {:else if tab === "plugins"}
@@ -1268,6 +1466,142 @@
     font-size: 12px;
     color: var(--del);
   }
+  /* Accounts: a row per account, and the form for one of your own under
+     them, its directories shown as they will be until the pencil opens one. */
+  .account {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 6px 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .account:first-of-type {
+    border-top: 0;
+  }
+
+  .account-name {
+    flex: 0 0 90px;
+    font-family: var(--chrome);
+    font-size: 12.5px;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-meta {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    max-width: 520px;
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .field-what {
+    flex: 0 0 76px;
+    font-family: var(--chrome);
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+
+  .field input,
+  .field .path {
+    flex: 0 0 260px;
+    width: 260px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 5px 8px;
+    font-family: var(--chrome);
+    font-size: var(--field-size);
+    color: var(--ink);
+  }
+
+  .field input {
+    border: 1px solid var(--field-border);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .field input.dir,
+  .field .path {
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+
+  .field .path {
+    color: var(--ink-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pencil {
+    flex: none;
+    border: 0;
+    background: none;
+    font-size: 12px;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+
+  .pencil:hover {
+    color: var(--accent);
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .form-actions button,
+  .account .tool {
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    padding: 4px 10px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: none;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .form-actions .go {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .form-actions .go:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
   /* Plugin sources: each source with its plugins, and a form under them
      for one of your own. */
   .add-source {

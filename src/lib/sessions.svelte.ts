@@ -5,6 +5,7 @@ import {
   type SessionEvent,
   type Transcript,
 } from "$lib/core";
+import { accountOf, dirFor } from "$lib/accounts.svelte";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { isReady } from "$lib/agent.svelte";
@@ -62,6 +63,10 @@ export interface Session {
       given to the agent on its command line, so it holds from the first
       turn. Null for the agent's own default. */
   model: string | null;
+  /** The account the session runs under, by name: the project's unless
+      one was chosen for the session. Null for the agents' own
+      directories. */
+  account: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -128,7 +133,7 @@ export async function loadHistory(project: string) {
   const lists = await Promise.all(
     AGENTS.map((agent) =>
       core()
-        .transcripts(project, agent)
+        .transcripts(project, agent, dirFor(accountOf(project), agent))
         .then((list) => list.map((transcript) => ({ ...transcript, agent })))
         // No history is a shorter list, never an error.
         .catch(() => [] as HistoryEntry[]),
@@ -463,14 +468,14 @@ export function followCwd(): () => void {
       session.status !== "running"
     )
       return;
-    const { key, ptyId, agent, id } = session;
+    const { key, ptyId, agent, id, account } = session;
     core()
       .ptyCwd(ptyId)
       .then((cwd) => located(key, cwd))
       .catch(() => {});
     if (agent === "codex" && id !== null) {
       core()
-        .sessionTitle(agent, id)
+        .sessionTitle(agent, id, dirFor(account, agent))
         .then((title) => {
           if (title !== null) named(key, title);
         })
@@ -507,10 +512,11 @@ export function create(
   startIn: string | null = null,
   prompt: string | null = null,
   model: string | null = null,
+  account: string | null = accountOf(project),
 ): Session {
   prefer(project, agent);
   const live = added(
-    row(project, resumedFrom, agent, startIn, prompt, model, "starting"),
+    row(project, resumedFrom, agent, startIn, prompt, model, account, "starting"),
   );
   sessions.active = live.key;
   return live;
@@ -528,8 +534,11 @@ export function reopened(
   agent: AgentId,
   startIn: string | null,
   model: string | null,
+  account: string | null,
 ): Session {
-  return added(row(project, id, agent, startIn, null, model, "dormant"));
+  return added(
+    row(project, id, agent, startIn, null, model, account, "dormant"),
+  );
 }
 
 /** Starts the process behind a row that was open when the app last quit:
@@ -546,6 +555,7 @@ function row(
   startIn: string | null,
   prompt: string | null,
   model: string | null,
+  account: string | null,
   status: SessionStatus,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
@@ -564,6 +574,7 @@ function row(
     startIn,
     prompt,
     model,
+    account,
     worktree: null,
     working: false,
     engaged: false,
@@ -609,6 +620,7 @@ export async function launch(
         session: session.resumedFrom ?? undefined,
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
+        configDir: dirFor(session.account, session.agent),
         cols,
         rows,
       },

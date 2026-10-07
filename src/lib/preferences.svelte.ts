@@ -9,6 +9,7 @@
  * is taken the same way.
  */
 
+import { adoptAccounts, accountsSettings } from "$lib/accounts.svelte";
 import { core, type Settings } from "$lib/core";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptKeys, keys } from "$lib/keys.svelte";
@@ -24,6 +25,7 @@ export function currentSettings(): Settings {
     ...themeSettings(),
     keys: { ...keys.bindings },
     hooks: hooksSettings(),
+    accounts: accountsSettings(),
     userStyles: userStyles.on,
     ...notifySettings(),
   };
@@ -35,6 +37,9 @@ export function adopt(settings: Settings) {
   adoptKeys(settings.keys ?? {});
   adoptUserStylesSetting(settings.userStyles);
   adoptNotify(settings);
+  // The accounts before the hooks: bringing a project to the hooks answer
+  // writes into every account's agent state.
+  adoptAccounts(settings.accounts);
   adoptHooks(
     settings.hooks ?? { everywhere: false, overrides: {} },
     workspace.open.map((project) => project.path),

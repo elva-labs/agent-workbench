@@ -27,6 +27,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
+use workbench_core::account::Dirs;
 use workbench_core::{Core, Output, Sink};
 
 use remote::{route, with_host, with_host_id, Remotes, Route};
@@ -106,6 +107,7 @@ async fn pty_spawn(
     session: Option<String>,
     prompt: Option<String>,
     model: Option<String>,
+    config_dir: Option<String>,
     cols: u16,
     rows: u16,
     on_output: Channel,
@@ -127,6 +129,7 @@ async fn pty_spawn(
                 session,
                 prompt.as_deref(),
                 model.as_deref(),
+                config_dir.as_deref(),
                 cols,
                 rows,
                 |_| to_channel(on_output),
@@ -137,7 +140,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "prompt": prompt, "model": model, "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "prompt": prompt, "model": model, "configDir": config_dir, "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));
@@ -203,6 +206,7 @@ async fn hook_status(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
+    accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
     // The daemon is put in place before the status is read, so a project
     // with hooks from before there was a server reads as wanting one.
@@ -217,8 +221,11 @@ async fn hook_status(
         Arc::clone(&remotes),
         route(&project),
         "hook_status",
-        |rest| json!({ "project": rest }),
-        |core, project| core.hook_status(Path::new(project)),
+        {
+            let accounts = accounts.clone();
+            move |rest| json!({ "project": rest, "accounts": accounts })
+        },
+        move |core, project| core.hook_status(Path::new(project), &accounts),
     )
     .await
 }
@@ -229,6 +236,7 @@ async fn hook_install(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
+    accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
     // The server the hooks point the agents at is the daemon; on this
     // machine the app puts its own build in place first. A remote has it
@@ -244,8 +252,11 @@ async fn hook_install(
         Arc::clone(&remotes),
         route(&project),
         "hook_install",
-        |rest| json!({ "project": rest }),
-        |core, project| core.hook_install(Path::new(project)),
+        {
+            let accounts = accounts.clone();
+            move |rest| json!({ "project": rest, "accounts": accounts })
+        },
+        move |core, project| core.hook_install(Path::new(project), &accounts),
     )
     .await
 }
@@ -255,14 +266,18 @@ async fn hook_uninstall(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
+    accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&project),
         "hook_uninstall",
-        |rest| json!({ "project": rest }),
-        |core, project| core.hook_uninstall(Path::new(project)),
+        {
+            let accounts = accounts.clone();
+            move |rest| json!({ "project": rest, "accounts": accounts })
+        },
+        move |core, project| core.hook_uninstall(Path::new(project), &accounts),
     )
     .await
 }
@@ -273,15 +288,18 @@ async fn sessions_list(
     remotes: State<'_, Arc<Remotes>>,
     project: String,
     agent: String,
+    config_dir: Option<String>,
 ) -> Result<Value, String> {
-    let for_local = agent.clone();
+    let for_local = (agent.clone(), config_dir.clone());
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&project),
         "sessions_list",
-        move |rest| json!({ "project": rest, "agent": agent }),
-        move |core, project| Ok(core.sessions_list(Path::new(project), &for_local)),
+        move |rest| json!({ "project": rest, "agent": agent, "configDir": config_dir }),
+        move |core, project| {
+            Ok(core.sessions_list(Path::new(project), &for_local.0, for_local.1.as_deref()))
+        },
     )
     .await
 }
@@ -294,15 +312,16 @@ async fn session_title(
     remotes: State<'_, Arc<Remotes>>,
     agent: String,
     id: String,
+    config_dir: Option<String>,
 ) -> Result<Option<String>, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
     blocking(move || {
-        if let Some(title) = core.session_title(&agent, &id) {
+        if let Some(title) = core.session_title(&agent, &id, config_dir.as_deref()) {
             return Ok(Some(title));
         }
         for connection in remotes.all() {
-            let params = json!({ "agent": agent, "id": id });
+            let params = json!({ "agent": agent, "id": id, "configDir": config_dir });
             if let Ok(Value::String(title)) = connection.call("session_title", params) {
                 return Ok(Some(title));
             }
@@ -542,15 +561,16 @@ async fn worktree_add(
     remotes: State<'_, Arc<Remotes>>,
     project: String,
     name: String,
+    accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
-    let wanted = name.clone();
+    let wanted = (name.clone(), accounts.clone());
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&project),
         "worktree_add",
-        move |rest| json!({ "project": rest, "name": name }),
-        move |core, project| core.worktree_add(Path::new(project), &wanted),
+        move |rest| json!({ "project": rest, "name": name, "accounts": accounts }),
+        move |core, project| core.worktree_add(Path::new(project), &wanted.0, &wanted.1),
     )
     .await
 }

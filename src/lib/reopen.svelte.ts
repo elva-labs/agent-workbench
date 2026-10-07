@@ -29,6 +29,9 @@ interface Open {
   agent: AgentId;
   startIn: string | null;
   model: string | null;
+  /** The account it ran under, by name; null for the agents' own. A record
+      from before there were accounts has none, which reads as null. */
+  account?: string | null;
 }
 
 function onRecord(session: Session): boolean {
@@ -43,7 +46,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model } = entry as Record<
+  const { project, id, agent, startIn, model, account } = entry as Record<
     string,
     unknown
   >;
@@ -52,7 +55,8 @@ function isOpenEntry(entry: unknown): entry is Open {
     typeof id === "string" &&
     (agent === "claude-code" || agent === "codex") &&
     (startIn === null || typeof startIn === "string") &&
-    (model === null || typeof model === "string")
+    (model === null || typeof model === "string") &&
+    (account === undefined || account === null || typeof account === "string")
   );
 }
 
@@ -92,7 +96,14 @@ export function reopen(): () => void {
   for (const entry of open) {
     if (!isOpen(entry.project)) continue;
     if (sessions.all.some((session) => session.id === entry.id)) continue;
-    reopened(entry.project, entry.id, entry.agent, entry.startIn, entry.model);
+    reopened(
+      entry.project,
+      entry.id,
+      entry.agent,
+      entry.startIn,
+      entry.model,
+      entry.account ?? null,
+    );
   }
 
   // The session on screen at the quit, when its project is the one in front;
@@ -113,6 +124,7 @@ export function reopen(): () => void {
           agent: session.agent,
           startIn: session.startIn,
           model: session.model,
+          account: session.account,
         })),
         activeSession()?.id ?? null,
       );

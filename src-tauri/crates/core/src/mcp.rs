@@ -534,6 +534,7 @@ pub fn start_tool() -> Value {
                 "name": { "type": "string", "description": "A few words naming the work, the way a commit subject reads: the session's row and its worktree take the name." },
                 "agent": { "type": "string", "enum": ["claude-code", "codex"], "description": "Which agent to run. Required with a model, since a model's name belongs to one agent. The one this project last used when left out otherwise." },
                 "model": { "type": "string", "description": "The model to run the session on, by the name the agent takes on its command line: an alias such as sonnet or opus, or a model's full name. The agent is named with it, since a model's name belongs to one agent. Chosen here, before the session's first turn, rather than sent to it afterwards. The agent's own default when left out." },
+                "account": { "type": "string", "description": "The account to run the session under, by the name the user gave it in the workbench's settings: a login kept apart from the others. The project's own account when left out, which is what the user set for it. Name one only when the user asked for the work under a particular account." },
                 "worktree": { "type": "boolean", "description": "True to run in a worktree of its own, on a branch named after it, so its changes stay off the branch the user is on." },
                 "session": { "type": "string", "description": "The id of a session you started before, as the sessions tool lists it, to resume it instead of starting a new one. It comes back where it ran, worktree and all, with its conversation; project and worktree are then taken from it, and the prompt is optional." }
             },
@@ -1423,7 +1424,7 @@ mod tests {
         ] {
             assert!(properties.contains_key(name), "{name}");
         }
-        for name in ["hooks", "notifications", "chime"] {
+        for name in ["hooks", "accounts", "notifications", "chime"] {
             assert!(!properties.contains_key(name), "{name} is the user's alone");
         }
         assert!(INSTRUCTIONS.contains("settings_change"));

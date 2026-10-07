@@ -865,6 +865,7 @@ describe("what a caller started, between runs", () => {
         worktree: `${A}/.worktrees/cache-flake`,
         agent: "claude-code",
         name: "Cache flake",
+        account: null,
       },
       {
         id: "sid-2",
@@ -872,6 +873,7 @@ describe("what a caller started, between runs", () => {
         worktree: null,
         agent: "claude-code",
         name: null,
+        account: null,
       },
     ]);
 

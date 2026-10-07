@@ -12,6 +12,7 @@
  * The place to go is the orchestrator, not the session it started.
  */
 
+import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Worktree } from "$lib/core";
 import { startedBy, startedFor } from "$lib/conductor.svelte";
 import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
@@ -37,7 +38,7 @@ export async function load(): Promise<void> {
   // runs in. The directory is the app's own, so they are always there,
   // whatever the projects were told about live updates.
   await core()
-    .hookInstall(orchestrator.dir)
+    .hookInstall(orchestrator.dir, dirsOf())
     .catch(() => {
       // A directory that cannot take them is one no session will get far
       // in either; the session's own start says so.

@@ -289,6 +289,7 @@ export async function installFakeCore(
         interfaceFont: "system",
         keys: {},
         hooks: { everywhere: true, overrides: {} },
+        accounts: { list: {}, everywhere: null, overrides: {} },
         themes: {},
         userStyles: false,
         notifications: true,
@@ -1046,7 +1047,7 @@ export async function installFakeCore(
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
-            } else if (!["keys", "hooks", "themes"].includes(field)) {
+            } else if (!["keys", "hooks", "accounts", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }
           }

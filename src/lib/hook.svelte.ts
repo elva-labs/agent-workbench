@@ -1,3 +1,4 @@
+import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Settings } from "$lib/core";
 import { persist } from "$lib/persist";
 
@@ -142,7 +143,9 @@ export function isKnown(project: string | null): boolean {
 
 export async function check(project: string) {
   try {
-    hook.installed[project] = (await core().hookStatus(project)).installed;
+    hook.installed[project] = (
+      await core().hookStatus(project, dirsOf())
+    ).installed;
   } catch {
     // Not knowing is not an error worth showing: the watcher works regardless.
     hook.installed[project] = false;
@@ -159,13 +162,23 @@ export async function apply(project: string) {
     const want = wanted(project);
     if (want === isInstalled(project)) return;
     const status = want
-      ? await core().hookInstall(project)
-      : await core().hookUninstall(project);
+      ? await core().hookInstall(project, dirsOf())
+      : await core().hookUninstall(project, dirsOf());
     hook.installed[project] = status.installed;
   } catch (error) {
     hook.error = String(error);
   } finally {
     hook.busy = false;
+  }
+}
+
+/** The accounts changed: the server the hooks point the agents at lives
+    in every account's state, so each project is read again and brought
+    to the answer. */
+export async function reapply(projects: string[]) {
+  for (const project of projects) {
+    delete hook.installed[project];
+    await apply(project);
   }
 }
 

@@ -50,6 +50,10 @@ an orchestrator chooses the model for a piece of work when it starts it
 rather than sending a model command afterwards. A model's name belongs to
 one agent, so a start that names a model names the agent too, and one
 that leaves the agent out is refused rather than given the project's last.
+A start can name an account as well, by the name it has in the settings,
+for work under a login other than the project's own; one that names an
+account there is not is refused with the names there are. A session
+resumed comes back under the account it ran under.
 
 ## What is remembered
 

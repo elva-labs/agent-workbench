@@ -53,8 +53,11 @@ pub fn mangle(project: &Path) -> String {
         .collect()
 }
 
-pub fn directory_for(home: &Path, project: &Path) -> PathBuf {
-    home.join(".claude").join("projects").join(mangle(project))
+/// Where Claude Code files a project's transcripts, under the directory it
+/// keeps its configuration in: `.claude` under the home for the agent's
+/// own account, or the account's own directory.
+pub fn directory_for(claude_dir: &Path, project: &Path) -> PathBuf {
+    claude_dir.join("projects").join(mangle(project))
 }
 
 /// Newest first. A project Claude Code has never been used in has none, which
@@ -66,10 +69,10 @@ pub fn directory_for(home: &Path, project: &Path) -> PathBuf {
 /// the project's is read, and each transcript in one is kept when it says
 /// it ran under the project: the names alone would take a sibling project
 /// with a longer name for a subdirectory.
-pub fn list(home: &Path, project: &Path) -> Vec<Transcript> {
+pub fn list(claude_dir: &Path, project: &Path) -> Vec<Transcript> {
     let own = mangle(project);
     let under = format!("{own}-");
-    let Ok(directories) = std::fs::read_dir(home.join(".claude").join("projects")) else {
+    let Ok(directories) = std::fs::read_dir(claude_dir.join("projects")) else {
         return Vec::new();
     };
     let root = project.to_string_lossy().to_string();
