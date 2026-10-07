@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use git2::Repository;
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as _};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use crate::events::Sink;
 
@@ -110,9 +110,13 @@ impl Shown {
     }
 
     /// The paths of an event that are shown files, as the window gave
-    /// them. Empty when none is.
+    /// them. Empty when none is, and for a file merely opened, which is
+    /// what the viewer itself does to read it.
     fn hits(&self, event: &notify::Result<Event>) -> Vec<PathBuf> {
         let Ok(event) = event else { return Vec::new() };
+        if accessed(event) {
+            return Vec::new();
+        }
         let known = self.known.lock().expect("shown lock");
         if known.is_empty() {
             return Vec::new();
@@ -422,9 +426,16 @@ impl Ignored {
 
 fn interesting(event: &notify::Result<Event>) -> bool {
     match event {
-        Ok(event) => event.paths.iter().any(|path| is_interesting(path)),
+        Ok(event) => !accessed(event) && event.paths.iter().any(|path| is_interesting(path)),
         Err(_) => false,
     }
+}
+
+/// A file opened or closed, which Linux reports and nothing else does:
+/// reading the index to answer a status, or a shown file to draw it, moved
+/// nothing, and counting it would have every read ask for the next.
+fn accessed(event: &Event) -> bool {
+    matches!(event.kind, EventKind::Access(_))
 }
 
 #[cfg(test)]
@@ -472,6 +483,33 @@ mod tests {
             event = event.add_path(path.clone());
         }
         Ok(event)
+    }
+
+    // Linux reports every open; reading HEAD to answer a status is not a
+    // change, and neither is the viewer reading the file it shows.
+    #[test]
+    fn opening_a_file_is_not_a_change() {
+        use notify::event::{AccessKind, AccessMode};
+        let opened = Ok(
+            Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)))
+                .add_path(PathBuf::from("/repo/.git/HEAD")),
+        );
+        assert!(!interesting(&opened));
+        let shown = Shown::default();
+        shown.set(&[PathBuf::from("/elsewhere/draft.md")]);
+        let read = Ok(
+            Event::new(EventKind::Access(AccessKind::Close(AccessMode::Read)))
+                .add_path(PathBuf::from("/elsewhere/draft.md")),
+        );
+        assert!(shown.hits(&read).is_empty());
+        let written = Ok(
+            Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(PathBuf::from("/elsewhere/draft.md")),
+        );
+        assert_eq!(
+            shown.hits(&written),
+            vec![PathBuf::from("/elsewhere/draft.md")]
+        );
     }
 
     fn repo_with_ignore(name: &str) -> PathBuf {
