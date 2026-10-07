@@ -30,12 +30,16 @@ vi.mock("$lib/files.svelte", () => ({
     diffed.push(args);
   },
 }));
-vi.mock(import("$lib/terminals.svelte"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  create: (...args: unknown[]) => {
-    shells.push(args);
-  },
-}));
+vi.mock(import("$lib/terminals.svelte"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    create: ((...args: unknown[]) => {
+      shells.push(args);
+      return null;
+    }) as unknown as typeof actual.create,
+  };
+});
 vi.mock("$lib/core", () => ({
   core: () => ({
     async setWindowTitle() {},
