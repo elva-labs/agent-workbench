@@ -1473,6 +1473,36 @@ test.describe("the file viewer", () => {
   });
 
   // A document worked on over many turns is one row, and what it shows
+  // A table lays its columns out by words: a narrow column beside a wide
+  // one keeps its heading on one line rather than one letter a line.
+  test("keeps a table's narrow column readable beside a wide one", async ({
+    page,
+  }) => {
+    const wide = "a long cell that goes on and on about one thing and another ".repeat(3);
+    await page.evaluate((text) => {
+      (window as unknown as { __markdown?: string }).__markdown = text;
+    }, `# Options\n\n| Option | Summary | Pros |\n| --- | --- | --- |\n| A. Per workload | ${wide} | ${wide} |\n`);
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as {
+            __presentRequest: (request: unknown) => void;
+          }
+        ).__presentRequest({
+          files: [`${project}/docs/table.md`],
+          caption: "The table.",
+          cwd: project,
+        }),
+      PROJECT,
+    );
+    const heading = page.getByTestId("media-document").locator("th").first();
+    await expect(heading).toHaveText("Option");
+    const box = await heading.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeLessThan(40);
+    expect(box!.width).toBeGreaterThan(50);
+  });
+
   // is the file as it is now: after the agent presents it again, and after
   // the tree moves under it.
   test("shows a document presented again as it is now, on the same row", async ({

@@ -181,8 +181,16 @@
     color: var(--ink-2);
   }
 
+  /* A table lays its columns out by their words, not by their letters:
+     the document wraps anywhere so a long path never widens it, but a
+     cell given that freedom is squeezed to one letter a line. A table
+     wider than the document scrolls sideways on its own. */
   .document :global(table) {
     border-collapse: collapse;
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-wrap: normal;
   }
 
   .document :global(th),
