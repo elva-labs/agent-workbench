@@ -8,7 +8,7 @@
     agentVisible,
     leftmost,
     rightmost,
-    sessionsVisible,
+    sessionsShown,
     type PaneId,
   } from "$lib/layout.svelte";
 
@@ -38,7 +38,7 @@
   const mac = isMac();
   let beside = $derived(id === (agentVisible() ? "agent" : "changes"));
   let inset = $derived(
-    mac && !layout.fullScreen && (id === "sessions" ? sessionsVisible() : beside),
+    mac && !layout.fullScreen && (id === "sessions" ? sessionsShown() : beside),
   );
   // Elsewhere the window is undecorated and the app draws the controls
   // itself, at the end of the rightmost header, where the platform has them.

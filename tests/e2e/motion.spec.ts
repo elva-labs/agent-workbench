@@ -172,14 +172,88 @@ test.describe("the sessions pane's motion", () => {
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
   });
 
-  // Reviewing is what folds it there, so opening it closes the viewer.
-  test("closes the viewer when it is opened from its fold while reviewing", async ({ page }) => {
+  // Reviewing is what folds it there, so opening it for real would close
+  // the viewer: Cmd+B still does, and the column peeks the pane instead.
+  test("closes the viewer when it is opened with its chord while reviewing", async ({ page }) => {
     await page.keyboard.press("ControlOrMeta+d");
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
     await expect(page.getByTestId("unfold-sessions")).toBeVisible();
 
-    await page.getByTestId("unfold-sessions").click({ position: { x: 20, y: 20 } });
+    await page.keyboard.press("ControlOrMeta+b");
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
+  });
+});
+
+// Peeked, the pane is drawn at its open width over the agent while its
+// column stays folded: the viewer, the agent and the column do not move.
+test.describe("the sessions pane peeked over the agent", () => {
+  const CHANGES = "section[data-pane='changes']";
+  const width = (page: Page, selector: string) =>
+    page.locator(selector).boundingBox().then((b) => b!.width);
+
+  test.beforeEach(async ({ page }) => {
+    await installFakeCore(page);
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+d");
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+    // The columns ease into the reviewing shape; the baseline is taken
+    // once they have arrived.
+    await expect
+      .poll(async () => {
+        const before = await width(page, CHANGES);
+        await page.waitForTimeout(120);
+        return (await width(page, CHANGES)) === before && (await width(page, SLOT)) < 100;
+      })
+      .toBe(true);
+  });
+
+  test("peeks when its column is clicked, and the viewer stays", async ({ page }) => {
+    const viewer = (await page.locator(CHANGES).boundingBox())!;
+    const agent = (await page.locator(AGENT).boundingBox())!;
+    await page.getByTestId("unfold-sessions").click({ position: { x: 20, y: 20 } });
+    await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
+    await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    expect(await page.locator(CHANGES).boundingBox()).toEqual(viewer);
+    expect(await page.locator(AGENT).boundingBox()).toEqual(agent);
+    expect(await width(page, SLOT)).toBeLessThan(100);
+  });
+
+  test("peeks when the pointer rests on its column, and goes back when it leaves", async ({ page }) => {
+    const column = (await page.locator(SLOT).boundingBox())!;
+    const viewer = (await page.locator(CHANGES).boundingBox())!;
+    await page.mouse.move(column.x + 20, column.y + column.height / 2);
+    await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    // The pointer did not take the keyboard with it.
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
+    expect(await page.locator(CHANGES).boundingBox()).toEqual(viewer);
+
+    await page.mouse.move(viewer.x + viewer.width / 2, viewer.y + viewer.height / 2);
+    await expect.poll(() => width(page, SESSIONS)).toBe(FOLDED);
+    await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+  });
+
+  test("peeks on the focus chord, and the chord or Escape puts it back with the keyboard in the viewer", async ({
+    page,
+  }) => {
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect.poll(() => width(page, SESSIONS)).toBe(FOLDED);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
+    await page.keyboard.press("Escape");
+    await expect.poll(() => width(page, SESSIONS)).toBe(FOLDED);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
   });
 });

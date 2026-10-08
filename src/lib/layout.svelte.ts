@@ -14,8 +14,11 @@
  *
  * The sessions pane is never gone, only open or folded: folded, its column is
  * `FOLDED` wide and shows its projects and the dots of their sessions where
- * they stand when it is open. Two kinds of collapse, for it and the changes
- * pane, and they must not be confused:
+ * they stand when it is open. While reviewing it can also be peeked: drawn
+ * at its open width over the agent pane, with the column still folded, so
+ * a session can be picked without the viewer closing or anything moving.
+ * Two kinds of collapse, for it and the changes pane, and they must not be
+ * confused:
  *
  *   chosen  — you pressed the toggle. Persisted.
  *   forced  — the window is too narrow to hold the pane. Transient.
@@ -103,6 +106,9 @@ export const layout = $state({
   changesForced: false,
   terminalForced: false,
   agentHidden: false,
+  /** The folded sessions pane drawn over the agent at its open width, while
+      reviewing: from a hover on its column or the focus chord. Transient. */
+  sessionsPeek: false,
   /** Set once you drag the viewer's splitter, so we stop sizing it for you. */
   reviewTouched: false,
   /** The sections under the tree, media, processes and the browser: their
@@ -129,6 +135,26 @@ export const layout = $state({
 
 export function sessionsVisible() {
   return layout.sessionsChosen && !layout.sessionsForced;
+}
+
+/** Whether the sessions pane is drawn open: in its column, or peeked over
+    the agent while reviewing. */
+export function sessionsShown() {
+  return sessionsVisible() || layout.sessionsPeek;
+}
+
+/** Peeks the folded sessions pane over the agent, or puts it back. Only
+    while reviewing, where the fold is the shape's and opening the pane for
+    real would close the viewer. Putting it back takes the keyboard with
+    it, to the viewer. */
+export function peekSessions(on: boolean) {
+  if (on && (layout.mode !== "reviewing" || sessionsVisible())) return;
+  if (layout.sessionsPeek === on) return;
+  layout.sessionsPeek = on;
+  if (!on && layout.focus === "sessions") {
+    layout.focus = "changes";
+    layout.focusRequest += 1;
+  }
 }
 
 /**
@@ -227,6 +253,7 @@ export function applyLayout(width: number, height: number = layout.height) {
   if (layout.mode === "reviewing") {
     layout.sessionsForced = true;
     layout.changesForced = false;
+    layout.sessionsPeek &&= !sessionsVisible();
     layout.agentHidden = width < NEEDS_AGENT_WHILE_REVIEWING;
 
     const beside = width - FOLDED - SPLITTER;
@@ -246,6 +273,7 @@ export function applyLayout(width: number, height: number = layout.height) {
   }
 
   layout.agentHidden = false;
+  layout.sessionsPeek = false;
   layout.sessionsForced = width < NEEDS_SESSIONS;
   layout.changesForced = width < NEEDS_CHANGES;
 
@@ -355,7 +383,7 @@ export function hideTerminal() {
 }
 
 export function focusPane(id: PaneId) {
-  if (id === "sessions" && !sessionsVisible()) return;
+  if (id === "sessions" && !sessionsShown()) return;
   if (id === "changes" && !changesVisible()) return;
   if (id === "agent" && !agentVisible()) return;
   if (id === "terminal" && !terminalVisible()) return;

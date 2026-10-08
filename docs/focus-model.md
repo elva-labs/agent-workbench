@@ -16,7 +16,7 @@ default preset:
 
 | Keys                                                                    | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal                 |
+| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal; while reviewing, <kbd>Cmd</kbd><kbd>1</kbd> peeks the sessions pane over the agent and puts it back |
 | <kbd>Cmd</kbd><kbd>B</kbd>                                              | Show or hide the sessions pane                              |
 | <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the changes pane                               |
 | <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |

@@ -38,7 +38,14 @@
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
-  import { focusPane, layout, sessionsVisible, type PaneId } from "$lib/layout.svelte";
+  import {
+    focusPane,
+    layout,
+    peekSessions,
+    sessionsShown,
+    sessionsVisible,
+    type PaneId,
+  } from "$lib/layout.svelte";
   import { unfoldSessions } from "$lib/files.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import { flip } from "svelte/animate";
@@ -330,10 +337,14 @@
         pickNext(e.key === "ArrowLeft" ? -1 : 1);
         break;
       case "Escape":
-        // Closes the menu or an open choice of agent, and goes no further:
-        // Escape elsewhere is the agent's.
+        // Closes the menu or an open choice of agent, then puts a peeked
+        // pane back, and goes no further: Escape elsewhere is the agent's,
+        // or closes the viewer.
         if (menuOpen) menuOpen = false;
-        else if (!dismiss()) return;
+        else if (dismiss()) {
+          // The choice is gone; the pane stays.
+        } else if (layout.sessionsPeek) peekSessions(false);
+        else return;
         e.stopPropagation();
         break;
       case "Enter":
@@ -373,16 +384,60 @@
   });
 
   /** Folded to its narrow column: the rows keep their places, and the pane
-      is one button that opens it. */
-  let folded = $derived(!sessionsVisible());
-  /** Reviewing folds the pane, and opening it closes the viewer; a window
-      too narrow for it has nothing to open it into. */
+      is one button that opens it. Peeked over the agent, it is open. */
+  let folded = $derived(!sessionsShown());
+  /** Reviewing folds the pane, and the column peeks it over the agent; a
+      window too narrow for it has nothing to open it into. */
   let unfoldable = $derived(layout.mode === "reviewing" || !layout.sessionsForced);
 
+  /** The column was clicked: while reviewing the pane peeks over the
+      agent, so the viewer stays; otherwise it opens for real. */
   function unfold() {
-    unfoldSessions();
+    if (layout.mode === "reviewing") peekSessions(true);
+    else unfoldSessions();
     focusPane("sessions");
   }
+
+  /** How long the pointer rests on the column before the pane peeks, so a
+      pointer crossing it on the way to the agent does not flash it, and
+      how long it is gone before the pane goes back. */
+  const PEEK_AFTER = 200;
+  const UNPEEK_AFTER = 300;
+
+  // The pointer resting on the folded column peeks the pane over the agent
+  // while reviewing, and leaving the pane puts it back, unless the keyboard
+  // is in it: then Escape, Enter or the focus chord put it back.
+  $effect(() => {
+    const pane = nav?.closest<HTMLElement>('[data-pane="sessions"]');
+    if (!pane) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const later = (what: () => void, after: number) => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        what();
+      }, after);
+    };
+    const enter = () => {
+      if (layout.mode !== "reviewing" || sessionsVisible() || layout.sessionsPeek) return;
+      later(() => peekSessions(true), PEEK_AFTER);
+    };
+    const leave = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (!layout.sessionsPeek || layout.focus === "sessions") return;
+      later(() => peekSessions(false), UNPEEK_AFTER);
+    };
+    pane.addEventListener("pointerenter", enter);
+    pane.addEventListener("pointerleave", leave);
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      pane.removeEventListener("pointerenter", enter);
+      pane.removeEventListener("pointerleave", leave);
+    };
+  });
 
 </script>
 

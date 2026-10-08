@@ -21,9 +21,11 @@ import {
   layout,
   leftmost,
   loadLayout,
+  peekSessions,
   returnFocus,
   rightmost,
   saveLayout,
+  sessionsShown,
   sessionsVisible,
   terminalVisible,
   togglePane,
@@ -44,6 +46,7 @@ function reset() {
   layout.changesForced = false;
   layout.terminalForced = false;
   layout.agentHidden = false;
+  layout.sessionsPeek = false;
   layout.reviewTouched = false;
   layout.mode = "working";
   layout.focus = "agent";
@@ -265,6 +268,59 @@ describe("review mode", () => {
     expect(
       JSON.parse(localStorage.getItem("workbench.layout")!),
     ).not.toHaveProperty("mode");
+  });
+});
+
+// Reviewing folds the sessions pane, and opening it for real would close
+// the viewer: peeked, it is drawn over the agent instead, and nothing moves.
+describe("peeking the sessions pane", () => {
+  it("is for reviewing only", () => {
+    applyLayout(1600);
+    peekSessions(true);
+    expect(layout.sessionsPeek).toBe(false);
+    expect(sessionsShown()).toBe(true);
+  });
+
+  it("shows the pane open while its column stays folded", () => {
+    applyLayout(1600);
+    enterReview();
+    expect(sessionsShown()).toBe(false);
+    peekSessions(true);
+    expect(layout.sessionsPeek).toBe(true);
+    expect(sessionsShown()).toBe(true);
+    expect(sessionsVisible()).toBe(false);
+    expect(layout.mode).toBe("reviewing");
+  });
+
+  it("lets the pane take the keyboard, and hands it to the viewer when put back", () => {
+    applyLayout(1600);
+    enterReview();
+    peekSessions(true);
+    focusPane("sessions");
+    expect(layout.focus).toBe("sessions");
+    const asked = layout.focusRequest;
+    peekSessions(false);
+    expect(layout.sessionsPeek).toBe(false);
+    expect(layout.focus).toBe("changes");
+    expect(layout.focusRequest).toBe(asked + 1);
+  });
+
+  it("leaves the keyboard alone when it was elsewhere", () => {
+    applyLayout(1600);
+    enterReview();
+    peekSessions(true);
+    layout.focus = "agent";
+    peekSessions(false);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("ends with the review", () => {
+    applyLayout(1600);
+    enterReview();
+    peekSessions(true);
+    exitReview();
+    expect(layout.sessionsPeek).toBe(false);
+    expect(sessionsVisible()).toBe(true);
   });
 });
 

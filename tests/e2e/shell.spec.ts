@@ -542,6 +542,40 @@ test.describe("the file viewer", () => {
     await expect(first.locator(".dot")).not.toHaveClass(/unread/);
   });
 
+  // What the viewer holds is the session's: switching to another shows
+  // what that one had, and coming back finds it as it was left.
+  test("keeps each session's viewer, and brings it back on return", async ({
+    page,
+  }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.locator(TREE).focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    const hunk = page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@");
+    await expect(hunk).toBeVisible();
+
+    // A second session, started from the peeked pane: it has nothing to
+    // show, so the viewer empties and stays open, and the pane goes back.
+    await page.keyboard.press(`${MOD}+1`);
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(hunk).toHaveCount(0);
+    await expect(page.getByTestId("viewer")).toContainText("Pick a file");
+    await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+
+    // Back to the first: its diff is where it was.
+    await page.keyboard.press(`${MOD}+1`);
+    await page.locator("[data-testid='session-row']").first().click();
+    await expect(page.locator(".session.on")).toContainText("session 1");
+    await expect(hunk).toBeVisible();
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  });
+
   // What an agent asks to show is for its own session: a call from a
   // session the user is not looking at waits on that session, and opens
   // when they switch to it, in place of taking the viewer over.

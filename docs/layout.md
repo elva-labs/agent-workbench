@@ -57,9 +57,19 @@ the line down the column's edge starts under that row.
 
 The folded column is one button. A click anywhere on it opens the pane and
 gives it the keyboard, and so does focusing the pane by its key or pressing
-<kbd>Cmd</kbd><kbd>B</kbd>. Reviewing folds the pane as part of its shape,
-so opening it while reviewing closes the viewer. In a window too narrow for
-the pane, the fold is all there is and there is nothing to open.
+<kbd>Cmd</kbd><kbd>B</kbd>. In a window too narrow for the pane, the fold is
+all there is and there is nothing to open.
+
+Reviewing folds the pane as part of its shape, so opening it for real there
+closes the viewer, which is what <kbd>Cmd</kbd><kbd>B</kbd> still does.
+Instead the pane peeks: the pointer resting on the column, a click on it,
+or <kbd>Cmd</kbd><kbd>1</kbd> draws the pane at its open width over the
+agent pane, with the column, the viewer and the agent exactly where they
+were and nothing resized. Every row is where it stands in the column, so
+the dots do not move and the names appear beside them. Picking a session
+puts the pane back; so does the pointer leaving it, <kbd>Esc</kbd>, or the
+chord again, and the keyboard then returns to the viewer. A pane peeked
+from the keyboard stays while the pointer wanders.
 
 ## Forced is not chosen
 
@@ -259,3 +269,11 @@ What the agent presented opens in the same place, every file of the call
 down the viewer. The embedded browser takes the same place again, in place
 of a file or what was presented; [browser](browser.md) has what it shows
 there.
+
+What the viewer holds belongs to the session on screen. Switching to
+another session shows what that one had, the file at its place or what was
+presented, and a session with nothing to show empties the viewer without
+closing it, so the agent is not resized on every switch. Coming back to a
+session finds its viewer as it was left, open again if it had been closed
+in the meantime. A viewer closed with <kbd>Esc</kbd> is closed for its
+session too.

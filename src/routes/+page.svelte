@@ -23,6 +23,7 @@
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
+  import { sessionShown } from "$lib/viewers.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import {
     stateChanged as pluginStateChanged,
@@ -86,8 +87,10 @@
     exitReview,
     focusPane,
     layout,
+    peekSessions,
     saveLayout,
     sessionsOpen,
+    sessionsShown,
     sessionsVisible,
     sliding,
     terminalOpen,
@@ -224,12 +227,19 @@
     if (attention.focused && key !== null) viewed(key);
   });
 
-  // Switching to a session opens what its agent asked to show while the
-  // user was looking at another, outside the effect's own reads: opening
-  // may move the viewer and the project.
+  // Switching to a session puts its viewer back as it was left, then opens
+  // what its agent asked to show while the user was looking at another,
+  // outside the effect's own reads: either may move the viewer and the
+  // project.
   $effect(() => {
     const key = sessions.active;
-    if (key !== null) untrack(() => switched(key));
+    untrack(() => {
+      // Picked from the peeked pane, or started there: the pane goes back.
+      peekSessions(false);
+      void sessionShown(key).then(() => {
+        if (key !== null) switched(key);
+      });
+    });
   });
 
   // The platform's own window controls sit on the leftmost header's text,
@@ -405,8 +415,16 @@
     e.preventDefault();
     switch (action.type) {
       case "focus":
-        // Going to the sessions pane opens it out of its fold.
-        if (action.pane === "sessions") unfoldSessions();
+        // Going to the sessions pane opens it out of its fold. While
+        // reviewing it peeks over the agent instead, so the viewer stays,
+        // and the chord again puts it back.
+        if (action.pane === "sessions" && reviewing) {
+          if (layout.sessionsPeek) {
+            peekSessions(false);
+            break;
+          }
+          peekSessions(true);
+        } else if (action.pane === "sessions") unfoldSessions();
         focusPane(action.pane);
         break;
       case "toggle":
@@ -493,7 +511,8 @@
          splitter gives way to a plain edge: there is nothing to drag. -->
     <div
       class="sessions-slot"
-      class:folded={!sessionsVisible()}
+      class:folded={!sessionsShown()}
+      class:peeking={layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
       style:--head-h="{sessionsHead}px"
     >
@@ -648,6 +667,31 @@
   .sessions-slot :global(.pane) {
     flex: 1;
     min-width: 0;
+  }
+
+  /* Peeked: the pane takes its open width over the agent beside it, and
+     the column, the splitter and everything else stay where they are. */
+  .sessions-slot.peeking {
+    position: relative;
+    z-index: 4;
+  }
+
+  .sessions-slot.peeking :global(.pane) {
+    flex: none;
+    width: var(--sessions-w);
+    box-shadow: var(--pane-shadow-on), 12px 0 28px rgba(0, 0, 0, 0.3);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .sessions-slot.peeking :global(.pane) {
+      animation: sessions-peek 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+  }
+
+  @keyframes -global-sessions-peek {
+    from {
+      width: var(--folded);
+    }
   }
 
   /* What the pane holds keeps the open width, and the pane cuts it off
