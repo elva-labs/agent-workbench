@@ -61,7 +61,7 @@ export const LINES_MAX = 200;
 /** The sentence every started session gets after the caller's own line, so
     what became of it comes back on its row instead of being watched for. */
 export const OUTCOME_ASK =
-  "When you are done, or stuck, call the notify tool with one line saying which.";
+  "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
 
 /** How long after a line is typed its Enter follows. An agent takes a
     chunk that arrives at once for a paste, and an Enter inside a paste is
