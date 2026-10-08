@@ -226,6 +226,9 @@ test.describe("the sessions pane peeked over the agent", () => {
   test("peeks when the pointer rests on its column, and goes back when it leaves", async ({ page }) => {
     const column = (await page.locator(SLOT).boundingBox())!;
     const viewer = (await page.locator(CHANGES).boundingBox())!;
+    // From the viewer into the column: a pointer that was already over the
+    // pane, as it is at the window's corner on Linux, never enters it.
+    await page.mouse.move(viewer.x + viewer.width / 2, viewer.y + viewer.height / 2);
     await page.mouse.move(column.x + 20, column.y + column.height / 2);
     await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");

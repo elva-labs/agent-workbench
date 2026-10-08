@@ -669,13 +669,10 @@ mod tests {
         let watchers = Watchers::default();
         watch(sink, &watchers, dir.clone(), None).unwrap();
         watch_shown(&watchers, &[outside.clone(), ignored.clone()]);
-        // The watcher takes a moment to be looking.
-        std::thread::sleep(Duration::from_millis(300));
-        let before = recorder.events.lock().unwrap().clone();
-        assert!(
-            before.is_empty(),
-            "nothing changed yet, but the sink saw {before:?}"
-        );
+        // The watcher takes a moment to be looking, and macOS may still
+        // deliver the writes made before it was: those are let through.
+        std::thread::sleep(Duration::from_millis(1500));
+        recorder.events.lock().unwrap().clear();
 
         std::fs::write(&outside, "two\n").unwrap();
         let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the shown file's change");
