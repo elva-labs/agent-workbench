@@ -374,6 +374,11 @@ struct Inner {
     /// Where the build of a plugin with no process has got to: building,
     /// or the build that failed. What a row says until a process is there.
     building: Mutex<HashMap<Key, (State, Option<String>)>>,
+    /// Held for the whole of a start, from the look at what is running or
+    /// building to the claim on the build or the process, so two starts
+    /// of one plugin, a restart after a crash and the user's own, cannot
+    /// both find nothing there and both go ahead.
+    starting: Mutex<()>,
     /// The projects open on this machine, as the window last said.
     projects: Mutex<Vec<String>>,
     /// The agents' ptys, by pty id, so a session that ends is named by the
@@ -672,6 +677,7 @@ impl Plugins {
                 views: Mutex::new(HashMap::new()),
                 pending: Mutex::new(HashSet::new()),
                 building: Mutex::new(HashMap::new()),
+                starting: Mutex::new(()),
                 projects: Mutex::new(Vec::new()),
                 ptys: Mutex::new(HashMap::new()),
             }),
@@ -1427,6 +1433,7 @@ impl Inner {
     }
 
     fn start(self: &Arc<Self>, source: &StoredSource, name: &str) {
+        let _one_at_a_time = self.starting.lock().expect("plugins lock");
         let key: Key = (source.id.clone(), name.to_string());
         let failures = {
             let running = self.running.lock().expect("plugins lock");
@@ -1621,21 +1628,24 @@ impl Inner {
     }
 
     /// The process is gone: said so, and started again after a pause when
-    /// it is still on.
+    /// it is still on and nothing here asked it to go. A process stop ended
+    /// is marked off before it is told, and whoever stopped it starts the
+    /// next one, so the reader does not start one of its own as well.
     fn exited(self: &Arc<Self>, source_id: &str, name: &str, greeted: bool) {
         let key: Key = (source_id.to_string(), name.to_string());
-        let still_on = {
+        let enabled = {
             let stored = self.stored.lock().expect("plugins lock");
             stored
                 .sources
                 .iter()
                 .any(|s| s.id == source_id && s.enabled.iter().any(|n| n == name))
         };
-        let (failures, detail) = {
+        let (still_on, failures, detail) = {
             let mut running = self.running.lock().expect("plugins lock");
             let Some(live) = running.get_mut(&key) else {
                 return;
             };
+            let still_on = enabled && live.state != State::Off;
             // Its output has ended, which is as gone as a plugin gets: a
             // process that closed its output and stayed is ended here, or
             // the wait would hold the lock for as long as it lived.
@@ -1666,7 +1676,7 @@ impl Inner {
             } else {
                 live.state = if still_on { State::Stopped } else { State::Off };
             }
-            let out = (live.failures, live.detail.clone());
+            let out = (still_on, live.failures, live.detail.clone());
             if !still_on {
                 running.remove(&key);
             }
