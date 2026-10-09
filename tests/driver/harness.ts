@@ -62,6 +62,7 @@ const WINDOWS = process.platform === "win32";
 const FAKE_AGENT = (name: string) => `#!/bin/sh
 echo "FAKE ${name} $*"
 echo "in $PWD"
+echo "home \${CLAUDE_CONFIG_DIR:-}\${CODEX_HOME:-}"
 while IFS= read -r line; do
   case "$line" in
     exit) exit 0 ;;
@@ -77,6 +78,7 @@ done
 const FAKE_AGENT_CMD = (name: string) => `@echo off
 echo FAKE ${name} %*
 echo in %CD%
+echo home %CLAUDE_CONFIG_DIR%%CODEX_HOME%
 :loop
 set line=
 set /p line=

@@ -352,6 +352,12 @@ impl Core {
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
+        // An account's directory exists before the agent is pointed at it:
+        // Claude Code makes its own, Codex refuses to start without one.
+        if let Some(dir) = &expanded {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        }
         let ctx = LaunchCtx {
             project,
             env: &environment.vars,

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -951,5 +951,51 @@ describe("the real app", () => {
     const tags = await driver.findElements(By.css("[data-testid='agent-tag']"));
     const texts = await Promise.all(tags.map((tag) => tag.getText()));
     expect(texts.slice(-2)).toEqual(["claude", "codex"]);
+  });
+
+  it("runs codex under an account, making its home first", async () => {
+    const { driver, home } = app;
+    // An account for the project, written into the machine's settings the
+    // way an edit by hand would be: the window hears of it through the
+    // watcher. Its Codex home is one nothing has made yet.
+    const file = join(home, ".agent-workbench", "settings.json");
+    const before = JSON.parse(readFileSync(file, "utf8"));
+    const codexHome = join(home, ".codex-work");
+    expect(existsSync(codexHome)).toBe(false);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        ...before,
+        accounts: {
+          list: { Work: { claude: null, codex: "~/.codex-work" } },
+          everywhere: null,
+          overrides: { [repo]: "Work" },
+        },
+      }),
+    );
+    await driver.wait(
+      until.elementLocated(By.css("[data-testid='project-account']")),
+      15_000,
+    );
+    try {
+      const choice = By.css("[data-testid='agent-option']");
+      const opened = async () =>
+        (await driver.findElements(choice)).length === 2;
+      await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
+      // The choice starts on the project's account.
+      expect(
+        await (
+          await located(driver, "[data-testid='account-option'][data-account='Work']")
+        ).getAttribute("aria-checked"),
+      ).toBe("true");
+      const options = await driver.findElements(choice);
+      await options[1].click();
+      // Codex was pointed at the account's home, which exists by the time
+      // it starts: Codex refuses one that does not.
+      await waitForText(driver, `home ${codexHome}`);
+      expect(existsSync(codexHome)).toBe(true);
+    } finally {
+      writeFileSync(file, JSON.stringify(before));
+    }
   });
 });
