@@ -57,8 +57,9 @@ export interface App {
 const WINDOWS = process.platform === "win32";
 
 /** A tool that prints its arguments, then echoes each line it is given
-    until told to exit, or to ring the bell the way Claude Code asks for
-    attention. What a pty test needs from an agent. */
+    until told to exit, ring the bell the way Claude Code asks for
+    attention, or say the size its terminal has. What a pty test needs from
+    an agent. */
 const FAKE_AGENT = (name: string) => `#!/bin/sh
 echo "FAKE ${name} $*"
 echo "in $PWD"
@@ -68,6 +69,7 @@ while IFS= read -r line; do
     exit) exit 0 ;;
     crash) exit 3 ;;
     bell) printf 'rang\\007\\n' ;;
+    size) stty size ;;
   esac
   echo "echo: $line"
 done

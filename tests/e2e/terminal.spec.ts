@@ -203,3 +203,33 @@ test("remembers being open across a reload", async ({ page }) => {
   await page.reload();
   await expect(page.locator(TERMINAL)).toBeVisible();
 });
+
+test("zooms the shell that has the keyboard, and only that one", async ({ page }) => {
+  await page.keyboard.press(`${MOD}+j`);
+  await expect(page.locator(ROW)).toHaveCount(1);
+  const grid = (key: string) =>
+    page.evaluate((key) => {
+      const terminal = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
+        .__WORKBENCH_TERMINALS__?.[key];
+      return terminal ? { cols: terminal.cols, size: terminal.options.fontSize } : null;
+    }, key);
+  // The grid is fitted once the panel has slid up and stopped.
+  await expect
+    .poll(async () => {
+      const first = (await grid("t1"))!.cols;
+      await page.waitForTimeout(100);
+      return first === (await grid("t1"))!.cols && first > 80;
+    })
+    .toBe(true);
+  const before = (await grid("t1"))!;
+  await page.keyboard.press(`${MOD}+=`);
+  await expect.poll(async () => (await grid("t1"))?.size).toBe(13);
+  await expect(page.getByTestId("flash-readout")).toHaveText("13 px");
+  await expect.poll(async () => (await grid("t1"))!.cols).toBeLessThan(before.cols);
+
+  // A second shell is drawn at its own size.
+  await page.getByTestId("new-terminal").click();
+  await expect(page.locator(ROW)).toHaveCount(2);
+  await expect.poll(async () => (await grid("t2"))?.size).toBe(12);
+  expect((await grid("t1"))!.size).toBe(13);
+});

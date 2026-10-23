@@ -213,6 +213,61 @@ describe("the real app", () => {
     await waitForText(driver, "echo: hello there");
   });
 
+  // The batch-file agent on Windows has no stty to ask.
+  it.skipIf(process.platform === "win32")(
+    "zooms the agent and tells its pty the grid that leaves",
+    async () => {
+      const { driver } = app;
+      const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+      // The visible terminal is the agent's; its session id keys the xterm.
+      const grid = () =>
+        driver.executeScript<{ cols: number; rows: number; size: number }>(
+          () => {
+            const id = document
+              .querySelector("[data-testid='terminal']:not(.hidden)")
+              ?.getAttribute("data-session");
+            const terminal = (
+              window as unknown as {
+                __WORKBENCH_TERMINALS__: Record<string, any>;
+              }
+            ).__WORKBENCH_TERMINALS__[id!];
+            return {
+              cols: terminal.cols,
+              rows: terminal.rows,
+              size: terminal.options.fontSize,
+            };
+          },
+        );
+      const before = await grid();
+      await driver.actions().keyDown(key).sendKeys("=").keyUp(key).perform();
+      try {
+        // xterm keeps its grid when the font changes; only the terminal's
+        // own measure moves it, so a larger font must leave fewer columns.
+        let after = before;
+        await driver
+          .wait(async () => {
+            after = await grid();
+            return after.size === 13 && after.cols < before.cols;
+          }, 5_000)
+          .catch(() => {
+            throw new Error("the grid never followed the font");
+          });
+        await type(driver, "size\n");
+        await waitForText(driver, `${after.rows} ${after.cols}`);
+      } finally {
+        await driver.actions().keyDown(key).sendKeys("0").keyUp(key).perform();
+        await driver.wait(async () => {
+          const now = await grid();
+          return (
+            now.size === 12 &&
+            now.cols === before.cols &&
+            now.rows === before.rows
+          );
+        }, 5_000);
+      }
+    },
+  );
+
   // On Linux the system's notifications are calls on the session bus, which
   // the harness watches. A Windows toast is out of its reach.
   it.skipIf(process.platform !== "linux")(

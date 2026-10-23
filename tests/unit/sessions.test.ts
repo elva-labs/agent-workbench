@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcript } from "$lib/core";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { stash } from "$lib/exits";
+import { resetZoom, zoom, zoomed } from "$lib/zoom.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import {
@@ -37,6 +38,8 @@ import {
   titled,
   byKey,
   byStatus,
+  nextNeedingYou,
+  waitingOnYou,
   close,
   closeProject,
   create,
@@ -103,6 +106,7 @@ beforeEach(() => {
   reset();
   resetAttention();
   resetAccounts();
+  resetZoom();
   killed.length = 0;
   historyReads = 0;
   historyAnswer = [];
@@ -169,6 +173,13 @@ describe("creating sessions", () => {
     expect(session.id).toBeNull();
     expect(started(session.key, "pty-1", "fresh-id")).toBe(true);
     expect(session.id).toBe("fresh-id");
+  });
+
+  it("keeps a size set before it started under the id it starts with", () => {
+    const session = create(A);
+    zoomed(session.key, null, 1);
+    started(session.key, "pty-1", "id-fresh");
+    expect(zoom.kept["id-fresh"]?.size).toBe(13);
   });
 
   it("knows its id from the start when resuming", () => {
@@ -639,6 +650,14 @@ describe("an agent that mints its own id", () => {
     expect(isMine(A, "cx-1")).toBe(true);
     expect(label(session)).toBe("Refactor billing");
     expect(sessions.names["cx-1"]).toBe("Refactor billing");
+  });
+
+  it("keeps a size set before the id was minted under the minted id", () => {
+    const session = create(A, null, "codex");
+    started(session.key, "pty-1", null);
+    zoomed(session.key, null, 1);
+    identified("pty-1", "minted", null);
+    expect(zoom.kept["minted"]?.size).toBe(13);
   });
 
   it("ignores an identification for a pty it does not have", () => {
@@ -1445,5 +1464,101 @@ describe("how long past sessions stay listed", () => {
     historyAnswer[1].modified = now - 8 * DAY;
     await loadHistory(A);
     expect(forProject(A)).toHaveLength(0);
+  });
+});
+
+describe("the next session that needs you", () => {
+  it("lists askers first, then the longest waiting, the one on screen included", () => {
+    vi.useFakeTimers();
+    attention.focused = false;
+    try {
+      vi.setSystemTime(1_000_000);
+      const first = live(A, "pty-1");
+      exact("session-pty-1", "stop");
+      vi.setSystemTime(1_001_000);
+      const second = live(B, "pty-2");
+      exact("session-pty-2", "stop");
+      vi.setSystemTime(1_002_000);
+      const asking = live(A, "pty-3");
+      exact("session-pty-3", "permission");
+      vi.setSystemTime(1_003_000);
+      const here = live(B, "pty-4");
+      exact("session-pty-4", "stop");
+      expect(sessions.active).toBe(here.key);
+
+      expect(waitingOnYou().map((session) => session.key)).toEqual([
+        asking.key,
+        first.key,
+        second.key,
+        here.key,
+      ]);
+      expect(nextNeedingYou()?.key).toBe(asking.key);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("steps from the one on screen, so repeating it reaches every waiting session", () => {
+    vi.useFakeTimers();
+    attention.focused = false;
+    try {
+      vi.setSystemTime(1_000_000);
+      const a = live(A, "pty-1");
+      exact("session-pty-1", "permission");
+      vi.setSystemTime(1_001_000);
+      const b = live(B, "pty-2");
+      exact("session-pty-2", "permission");
+      vi.setSystemTime(1_002_000);
+      const c = live(A, "pty-3");
+      exact("session-pty-3", "permission");
+      vi.setSystemTime(1_003_000);
+      const stopped = live(B, "pty-4");
+      exact("session-pty-4", "stop");
+      vi.setSystemTime(1_004_000);
+      const fresh = live(A, "pty-5");
+      expect(sessions.active).toBe(fresh.key);
+
+      attention.focused = true;
+      const path: string[] = [];
+      for (let step = 0; step < 8; step++) {
+        const next = nextNeedingYou();
+        expect(next).not.toBeNull();
+        path.push(next!.key);
+        select(next!.key);
+        viewed(next!.key);
+        vi.advanceTimersByTime(1000);
+      }
+      // Looking at an unread asker moves it behind the others that ask, so
+      // the walk passes the stopped session after the first one, and settles
+      // into going round the askers once it is read.
+      expect(path).toEqual(
+        [a, stopped, b, c, a, b, c, a].map((session) => session.key),
+      );
+      expect(new Set(path.slice(0, 4))).toEqual(
+        new Set([a, b, c, stopped].map((session) => session.key)),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is nobody when nothing waits", () => {
+    const idle = live(A, "pty-1");
+    exact("session-pty-1", "stop");
+    viewed(idle.key);
+    live(A, "pty-2");
+    exact("session-pty-2", "prompt");
+    live(B, "pty-3");
+    expect(waitingOnYou()).toEqual([]);
+    expect(nextNeedingYou()).toBeNull();
+  });
+
+  it("is nobody when the only one waiting is on screen", () => {
+    attention.focused = false;
+    const only = live(A, "pty-1");
+    exact("session-pty-1", "stop");
+    expect(sessions.active).toBe(only.key);
+    expect(waitingOnYou()).toHaveLength(1);
+    expect(nextNeedingYou()).toBeNull();
   });
 });

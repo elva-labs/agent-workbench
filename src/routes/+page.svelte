@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import Splitter from "$lib/components/Splitter.svelte";
   import SessionsPane from "$lib/panes/SessionsPane.svelte";
@@ -11,12 +11,14 @@
   import { remote } from "$lib/remote.svelte";
   import Resume from "$lib/components/Resume.svelte";
   import { resume } from "$lib/resume.svelte";
+  import Palette from "$lib/components/Palette.svelte";
+  import { closePalette, openPalette, palette } from "$lib/palette.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
   import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
-  import { handle as settingsRequested } from "$lib/settingsTools.svelte";
+  import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
   import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
@@ -36,10 +38,12 @@
   import { loadMedia, presented } from "$lib/media.svelte";
   import { initBrowser } from "$lib/browser.svelte";
   import { loadNotices } from "$lib/notice.svelte";
+  import { loadZoom, zoomed } from "$lib/zoom.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
-  import { isMac, resolveAction } from "$lib/keymap";
+  import { isMac, resolveAction, type Action } from "$lib/keymap";
   import { keys } from "$lib/keys.svelte";
+  import { flash, say } from "$lib/flash.svelte";
   import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import {
@@ -60,6 +64,7 @@
     followHistory,
     refreshHistory,
     identified,
+    nextNeedingYou,
     onWaiting,
     sessions,
     unreadCount,
@@ -71,7 +76,7 @@
   import { announce } from "$lib/notify.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
   import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
-  import { workspace } from "$lib/workspace.svelte";
+  import { goTo, workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
     DEFAULT,
@@ -107,6 +112,7 @@
   // and which words to the user were already taken.
   loadMedia();
   loadNotices();
+  loadZoom();
 
   // What is on screen, on record for the agent's tools and for the core
   // to watch where it is, and what runs under the sessions, for the
@@ -188,7 +194,14 @@
       .onFileDrag(handleDrag)
       .then((unlisten) => offs.push(unlisten));
     core()
-      .onOpenSettings(openSettings)
+      .onOpenSettings(async () => {
+        // The palette gives the keyboard back before the settings take it.
+        if (palette.open) {
+          closePalette();
+          await tick();
+        }
+        openSettings();
+      })
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFullScreen((fullScreen) => (layout.fullScreen = fullScreen))
@@ -411,10 +424,46 @@
     saveLayout();
   }
 
+  /** Whether a modal dialog other than the palette is on screen: the
+      settings, the remote and resume lists, an action's input, or a prompt
+      for the user's say. */
+  function dialogUp(): boolean {
+    return (
+      settings.open ||
+      remote.open ||
+      resume.open ||
+      pluginSections.pending !== null ||
+      conductor.asking !== null ||
+      settingsAsk.asking !== null
+    );
+  }
+
   function onKeydown(e: KeyboardEvent) {
     const action = resolveAction(e, { focus: layout.focus, reviewing });
     if (!action) return;
+    // Opening the palette and the jump move the keyboard, so with a dialog up
+    // they do nothing and the webview gets nothing from them either. The
+    // chord still puts an open palette away.
+    if (
+      (action.type === "attention" || (action.type === "palette" && !palette.open)) &&
+      dialogUp()
+    ) {
+      e.preventDefault();
+      return;
+    }
+    // The palette holds the keyboard while it is up: only its own chord,
+    // which puts it away, gets past it. The others are swallowed so the
+    // native menu does not act on them.
+    if (palette.open && action.type !== "palette") {
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
+    perform(action);
+  }
+
+  /** Does what a bound action does, from its chord or from the palette. */
+  function perform(action: Action) {
     switch (action.type) {
       case "focus":
         // Going to the sessions pane opens it out of its fold. While
@@ -477,7 +526,43 @@
       case "exitReview":
         closeViewer();
         break;
+      case "attention":
+        nextSession();
+        break;
+      case "zoom":
+        zoomTerminal(action.step);
+        break;
+      case "palette":
+        if (palette.open) closePalette();
+        else openPalette();
+        break;
+      default:
+        action satisfies never;
     }
+  }
+
+  /** The next session waiting on the user, brought forward with the
+      keyboard in it. */
+  function nextSession() {
+    const next = nextNeedingYou();
+    if (next === null) {
+      say("Nothing else needs you");
+      return;
+    }
+    goTo(next.key);
+    focusPane("agent");
+  }
+
+  /** Zooms the terminal the keyboard belongs to: the panel's shell when the
+      panel has it, the agent on screen otherwise. */
+  function zoomTerminal(step: 1 | -1 | 0) {
+    if (layout.focus === "terminal" && terminals.active !== null) {
+      say(`${zoomed(terminals.active, null, step)} px`);
+      return;
+    }
+    const session = activeSession();
+    if (session === null) return;
+    say(`${zoomed(session.key, session.id, step)} px`);
   }
 
   // Clamp against the grid's own content box rather than the window: the frame
@@ -590,6 +675,9 @@
 {#if resume.open}
   <Resume />
 {/if}
+{#if palette.open}
+  <Palette {perform} />
+{/if}
 {#if pluginSections.pending !== null}
   <ActionInput />
 {/if}
@@ -615,6 +703,7 @@
       {unreadCount()} waiting for you
     </span>
   {/if}
+  <span class="flash" role="status" data-testid="flash-readout">{flash.text ?? ""}</span>
 </footer>
 
 <style>
@@ -783,6 +872,9 @@
 
 
   .waiting {
+    color: var(--accent);
+  }
+  .flash {
     color: var(--accent);
   }
 

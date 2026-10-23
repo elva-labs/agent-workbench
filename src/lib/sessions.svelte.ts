@@ -9,6 +9,7 @@ import {
 } from "$lib/core";
 import { accountOf, dirFor, names } from "$lib/accounts.svelte";
 import { persist } from "$lib/persist";
+import { identifiedZoom } from "$lib/zoom.svelte";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { isReady } from "$lib/agent.svelte";
@@ -503,6 +504,7 @@ export function identified(
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   session.id = sessionId;
+  identifiedZoom(session.key, sessionId);
   adopt(session.project, sessionId);
   replayActivity(sessionId);
   if (title !== null) named(session.key, title);
@@ -795,6 +797,7 @@ export function started(
   changed(session);
   if (sessionId !== null) {
     session.id = sessionId;
+    identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
     replayActivity(sessionId);
   }
@@ -1286,6 +1289,29 @@ export function byStatus(
       .filter((session) => groupOf(session, atWork) === group.id)
       .sort((a, b) => b.changedAt - a.changedAt),
   })).filter((group) => group.sessions.length > 0);
+}
+
+/** The sessions that need the user: those asking for a permission, and
+    those that stopped, ended or rang while nobody looked. Askers come
+    first, then the longest unchanged. The one on screen is included while
+    it still needs the user. */
+export function waitingOnYou(): Session[] {
+  return sessions.all
+    .filter((session) => groupOf(session) === "needs")
+    .sort((a, b) => {
+      const asking = Number(b.needs === "permission") - Number(a.needs === "permission");
+      return asking !== 0 ? asking : a.changedAt - b.changedAt;
+    });
+}
+
+/** The session after the one on screen in the order of `waitingOnYou`,
+    wrapping round to the first. With the one on screen not among them it is
+    the first. Null when none is left to go to. */
+export function nextNeedingYou(): Session | null {
+  const waiting = waitingOnYou();
+  const at = waiting.findIndex((session) => session.key === sessions.active);
+  const next = at === -1 ? waiting[0] : waiting[(at + 1) % waiting.length];
+  return next === undefined || next.key === sessions.active ? null : next;
 }
 
 /** Test seam: the counter is module state and rows outlive a component. */

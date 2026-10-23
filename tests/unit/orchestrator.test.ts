@@ -22,12 +22,14 @@ import { conductor, resetConductor } from "$lib/conductor.svelte";
 import {
   create,
   exact,
+  nextNeedingYou,
   noted,
   rang,
   reset as resetSessions,
   sessions,
   started,
   unreadCount,
+  waitingOnYou,
   type Session,
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -299,6 +301,24 @@ describe("what an orchestrator has out", () => {
     expect(child.unread).toBe(true);
     expect(summaryLine(one)).toBe("1 running, 1 asking");
     expect(groupsFor(A)[0].asking).toBe(1);
+  });
+
+  it("leaves a started session that only stopped out of the jump", () => {
+    const one = live(DIR, "pty-1", "sid-1");
+    const own = live(A, "pty-2", "sid-2");
+    const child = startedIn(A, one, "pty-3", "sid-3");
+    sessions.active = one.key;
+    exact("sid-2", "stop");
+    exact("sid-3", "stop");
+    expect(waitingOnYou().map((session) => session.key)).toEqual([own.key]);
+
+    exact("sid-3", "prompt");
+    exact("sid-3", "permission");
+    expect(waitingOnYou().map((session) => session.key)).toEqual([
+      child.key,
+      own.key,
+    ]);
+    expect(nextNeedingYou()?.key).toBe(child.key);
   });
 
   it("counts only what the orchestrator itself started", () => {

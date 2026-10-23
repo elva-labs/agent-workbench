@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -21,6 +21,7 @@
     tokenReader,
   } from "$lib/terminal";
   import { theme } from "$lib/theme.svelte";
+  import { DEFAULT_SIZE } from "$lib/zoom.svelte";
 
   /**
    * One xterm over one pty. What the pty runs is the caller's business: the
@@ -52,6 +53,8 @@
     /** A reference to a place in a file in the output, `path:line`, was
         opened with the same modifier and click as a link. */
     onFileRef?: (path: string, line: number) => void;
+    /** How large the terminal is drawn, in pixels: its own zoom. */
+    fontSize?: number;
   }
 
   let {
@@ -65,6 +68,7 @@
     onAttention,
     newlineOnShiftEnter = false,
     onFileRef,
+    fontSize = DEFAULT_SIZE,
   }: Props = $props();
 
   /** What WebGL here draws with, unmasked where the browser allows. */
@@ -110,7 +114,7 @@
       // thickens the regular one, and the glyphs no longer fit their cells.
       fontWeight: 400,
       fontWeightBold: 700,
-      fontSize: 12,
+      fontSize,
       lineHeight: 1.35,
       scrollback: 10_000,
       theme: buildTheme(tokenReader(document.documentElement)),
@@ -286,9 +290,16 @@
 
   async function spawn() {
     if (!terminal) return;
-    const up = await start(terminal.cols, terminal.rows, (bytes) => queue?.push(bytes));
+    const spawned = { cols: terminal.cols, rows: terminal.rows };
+    const up = await start(spawned.cols, spawned.rows, (bytes) => queue?.push(bytes));
     if (!up || !terminal) return;
-    sent = { cols: terminal.cols, rows: terminal.rows };
+    // The process has the grid it was spawned with. The grid may have changed
+    // while it started, so it is measured once the pty id has reached this
+    // component, and a difference is sent.
+    sent = spawned;
+    await tick();
+    if (!terminal) return;
+    measure();
     if (focused && active && shown) terminal.focus();
   }
 
@@ -297,13 +308,18 @@
   // the keyboard again re-runs this: a dialog closing leaves the document's
   // focus on nothing. Another control of the same pane, a splitter or a
   // button, keeps the keyboard it was given; the terminal takes it from
-  // anywhere else.
+  // anywhere else, another terminal's own input included: that one is about
+  // to be hidden and would leave the keyboard on nothing.
   $effect(() => {
     layout.focusRequest;
     if (!focused || !active || !shown || !terminal || !host) return;
     const owner = document.activeElement;
     if (owner !== null && owner !== document.body && !host.contains(owner)) {
-      if (host.closest("section[data-pane]")?.contains(owner)) return;
+      if (
+        host.closest("section[data-pane]")?.contains(owner) &&
+        owner.closest("[data-terminal]") === null
+      )
+        return;
     }
     untrack(() => terminal!.focus());
   });
@@ -327,6 +343,18 @@
       terminal!.options.fontFamily = getComputedStyle(document.body)
         .getPropertyValue("--mono")
         .trim();
+      queueMicrotask(() => measure());
+    });
+  });
+
+  // The terminal is drawn at its own size. A larger cell is a smaller grid,
+  // so the grid is measured again and the process told what it now has.
+  $effect(() => {
+    const size = fontSize;
+    if (!terminal) return;
+    untrack(() => {
+      if (terminal!.options.fontSize === size) return;
+      terminal!.options.fontSize = size;
       queueMicrotask(() => measure());
     });
   });

@@ -22,11 +22,16 @@ export type ActionKey =
   | "toggle.terminal"
   | "session.next"
   | "session.previous"
+  | "session.attention"
   | "review"
   | "view"
   | "scope"
   | "find"
   | "findLines"
+  | "zoom.in"
+  | "zoom.out"
+  | "zoom.reset"
+  | "palette"
   | "theme"
   | "settings";
 
@@ -58,11 +63,16 @@ export const ACTIONS: ActionInfo[] = [
   { key: "toggle.terminal", label: "Show or hide the terminal", group: "Panes" },
   { key: "session.next", label: "Next session or shell", group: "Sessions" },
   { key: "session.previous", label: "Previous session or shell", group: "Sessions" },
+  { key: "session.attention", label: "Next session that needs you", group: "Sessions" },
   { key: "review", label: "Open or close the file viewer", group: "Changes" },
   { key: "view", label: "Diff, whole file or rendered", group: "Changes" },
   { key: "scope", label: "Changed files or all files", group: "Changes" },
   { key: "find", label: "Filter files (in the changes pane)", group: "Changes" },
   { key: "findLines", label: "Search in files", group: "Changes" },
+  { key: "zoom.in", label: "Zoom the terminal in", group: "Terminal" },
+  { key: "zoom.out", label: "Zoom the terminal out", group: "Terminal" },
+  { key: "zoom.reset", label: "Reset the terminal's zoom", group: "Terminal" },
+  { key: "palette", label: "Open the command palette", group: "App" },
   { key: "theme", label: "Cycle the theme", group: "App" },
   { key: "settings", label: "Open settings", group: "App" },
 ];
@@ -81,11 +91,16 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "toggle.terminal": plain("j"),
     "session.next": shifted("ArrowDown"),
     "session.previous": shifted("ArrowUp"),
+    "session.attention": plain("."),
     review: plain("d"),
     view: plain("e"),
     scope: shifted("a"),
     find: plain("f"),
     findLines: shifted("f"),
+    "zoom.in": plain("="),
+    "zoom.out": plain("-"),
+    "zoom.reset": plain("0"),
+    palette: shifted("p"),
     theme: shifted("t"),
     settings: plain(","),
   },
@@ -101,11 +116,18 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "toggle.terminal": shifted("j"),
     "session.next": shifted("n"),
     "session.previous": shifted("p"),
+    "session.attention": plain("."),
     review: plain("d"),
     view: plain("e"),
     scope: shifted("a"),
     find: plain("f"),
     findLines: shifted("f"),
+    "zoom.in": plain("="),
+    "zoom.out": plain("-"),
+    "zoom.reset": plain("0"),
+    // Shift+Cmd+P steps sessions here, so the palette sits where vim keeps
+    // its command line.
+    palette: plain(";"),
     theme: shifted("t"),
     settings: plain(","),
   },
@@ -306,17 +328,49 @@ export function describe(chord: Chord, mac: boolean = isMac()): string {
   return `Ctrl+${chord.shift ? "Shift+" : ""}${chord.alt ? "Alt+" : ""}${key}`;
 }
 
-/** A stored table as a whole keymap: every action it has a chord for
-    takes it, and the rest take the default preset's. */
+/** A stored table as a whole keymap. Every action it has a chord for takes
+    it. An action it lacks takes the chord of the preset the rest of the
+    table follows, or another preset's where that chord is already held, or
+    one of those with Alt, or with Shift and Alt, so an action the table
+    never had does not land on a chord the table gives to something else.
+    Only when every one of those is held does it take the followed preset's
+    chord regardless, and the table then fails `tableProblem`. */
 function fromTable(table: unknown): Keymap {
-  const bindings = { ...PRESETS.default };
+  const stored: Partial<Keymap> = {};
   if (typeof table === "object" && table !== null) {
     for (const { key } of ACTIONS) {
       const chord = (table as Record<string, unknown>)[key];
-      if (isChord(chord)) bindings[key] = { key: chord.key, shift: chord.shift, alt: chord.alt };
+      if (isChord(chord)) stored[key] = { key: chord.key, shift: chord.shift, alt: chord.alt };
     }
   }
-  return bindings;
+  const followed = followedPreset(stored);
+  const bindings: Partial<Keymap> = { ...stored };
+  const held = (chord: Chord) =>
+    Object.values(bindings).some((other) => other !== undefined && sameChord(other, chord));
+  for (const { key } of ACTIONS) {
+    if (bindings[key] !== undefined) continue;
+    const presets = [PRESETS[followed][key], ...Object.values(PRESETS).map((preset) => preset[key])];
+    const candidates = [
+      ...presets,
+      ...presets.map((chord) => ({ ...chord, alt: true })),
+      ...presets.map((chord) => ({ ...chord, shift: true, alt: true })),
+    ];
+    bindings[key] = { ...(candidates.find((chord) => !held(chord)) ?? PRESETS[followed][key]) };
+  }
+  return bindings as Keymap;
+}
+
+/** The preset a partial table follows: the first whose chord it has
+    wherever it has one, else the default. */
+function followedPreset(stored: Partial<Keymap>): PresetName {
+  const names = Object.keys(PRESETS) as PresetName[];
+  return (
+    names.find((name) =>
+      ACTIONS.every(
+        ({ key }) => stored[key] === undefined || sameChord(PRESETS[name][key], stored[key]),
+      ),
+    ) ?? "default"
+  );
 }
 
 export function loadKeys() {

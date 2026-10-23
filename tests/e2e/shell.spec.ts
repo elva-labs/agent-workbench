@@ -810,6 +810,10 @@ test.describe("the file viewer", () => {
     const row = (line: number) =>
       page.locator(`[data-testid='viewer'] tr[data-line='${line}'] td.text`);
     await expect(row(6)).toBeVisible();
+    // The changes column eases wider as the viewer opens. The rows are
+    // measured and dragged across once it is still: a drag begun while the
+    // text slides under the pointer loses its anchor in Chromium.
+    await settled(page);
     const start = (await row(1).boundingBox())!;
     const end = (await row(6).boundingBox())!;
     await page.mouse.move(start.x + 4, start.y + start.height / 2);
