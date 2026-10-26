@@ -213,3 +213,66 @@ describe("a whole table", () => {
     expect(keys.preset).toBe("default");
   });
 });
+
+describe("the palette, the jump and the zoom", () => {
+  it("have chords of their own in the default preset", () => {
+    expect(chordFor("palette")).toEqual(chord("p", true));
+    expect(chordFor("session.attention")).toEqual(chord("."));
+    expect(chordFor("zoom.in")).toEqual(chord("="));
+    expect(chordFor("zoom.out")).toEqual(chord("-"));
+    expect(chordFor("zoom.reset")).toEqual(chord("0"));
+  });
+
+  // Shift+Cmd+P steps to the previous session in the vim preset.
+  it("open the palette on Cmd+; in the vim preset", () => {
+    applyPreset("vim");
+    expect(chordFor("palette")).toEqual(chord(";"));
+    expect(chordFor("session.previous")).toEqual(chord("p", true));
+  });
+});
+
+describe("actions a stored table does not have yet", () => {
+  const without = (table: Record<string, unknown>, ...gone: string[]) => {
+    const copy = { ...table };
+    for (const key of gone) delete copy[key];
+    return copy as Record<string, ReturnType<typeof chord>>;
+  };
+
+  it("take the default's chords in a table that follows the default", () => {
+    adoptKeys(without(PRESETS.default, "palette", "zoom.in"));
+    expect(chordFor("palette")).toEqual(chord("p", true));
+    expect(chordFor("zoom.in")).toEqual(chord("="));
+  });
+
+  it("take vim's chords in a table that follows vim", () => {
+    adoptKeys(without(PRESETS.vim, "palette"));
+    expect(chordFor("palette")).toEqual(chord(";"));
+    expect(chordFor("session.previous")).toEqual(chord("p", true));
+  });
+
+  it("take another preset's chord where the table gave the default's away", () => {
+    adoptKeys(without({ ...PRESETS.default, review: chord("p", true) }, "palette"));
+    expect(chordFor("review")).toEqual(chord("p", true));
+    expect(chordFor("palette")).toEqual(chord(";"));
+  });
+
+  it("never land on a chord the table gives to another action", () => {
+    adoptKeys(without({ ...PRESETS.default, theme: chord("=") }, "zoom.in", "zoom.out", "zoom.reset"));
+    expect(chordFor("theme")).toEqual(chord("="));
+    expect(chordFor("zoom.in")).not.toEqual(chord("="));
+    expect(tableProblem(keys.bindings)).toBeNull();
+  });
+
+  it("keep the chord the table holds for another action, a dot included", () => {
+    adoptKeys(without({ ...PRESETS.default, review: chord(".") }, "session.attention"));
+    expect(chordFor("review")).toEqual(chord("."));
+    expect(chordFor("session.attention")).not.toEqual(chord("."));
+    expect(tableProblem(keys.bindings)).toBeNull();
+  });
+
+  it("give exactly the default preset for an empty table", () => {
+    adoptKeys({});
+    expect(keys.bindings).toEqual(PRESETS.default);
+    expect(keys.preset).toBe("default");
+  });
+});

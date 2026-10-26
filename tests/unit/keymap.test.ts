@@ -23,6 +23,47 @@ const resolveAction = (e: KeyState, ctx: Partial<KeyContext> = {}) =>
 const reviewing: KeyContext = { focus: "changes", reviewing: true };
 
 describe("resolveAction", () => {
+  it("maps the palette, the jump to who needs you, and the zoom", () => {
+    expect(resolveAction(mod("p", { shiftKey: true }))).toEqual({ type: "palette" });
+    expect(resolveAction(mod("."))).toEqual({ type: "attention" });
+    expect(resolveAction(mod("="))).toEqual({ type: "zoom", step: 1 });
+    expect(resolveAction(mod("-"))).toEqual({ type: "zoom", step: -1 });
+    expect(resolveAction(mod("0"))).toEqual({ type: "zoom", step: 0 });
+  });
+
+  it("takes the zoom from a terminal, as it does every chord", () => {
+    expect(resolveAction(mod("="), { focus: "terminal" })).toEqual({ type: "zoom", step: 1 });
+  });
+
+  // A layout that puts = under Shift, or gives + a key of its own.
+  it("zooms in on + and on a shifted =", () => {
+    expect(resolveAction(mod("+", { shiftKey: true }))).toEqual({ type: "zoom", step: 1 });
+    expect(resolveAction(mod("+"))).toEqual({ type: "zoom", step: 1 });
+    expect(resolveAction(mod("=", { shiftKey: true }))).toEqual({ type: "zoom", step: 1 });
+  });
+
+  it("leaves a chord bound to Shift+= with what it is bound to", () => {
+    expect(setBinding("theme", { key: "=", shift: true, alt: false })).toBeNull();
+    expect(resolveAction(mod("=", { shiftKey: true }))).toEqual({ type: "cycleTheme" });
+  });
+
+  it("resolves the new chords with Ctrl where Ctrl is the modifier", () => {
+    const ctrl = (key: string, extra: Partial<KeyState> = {}): KeyState => ({
+      key,
+      ctrlKey: true,
+      ...extra,
+    });
+    expect(resolveAction(ctrl("p", { shiftKey: true }), { mac: false })).toEqual({
+      type: "palette",
+    });
+    expect(resolveAction(ctrl("="), { mac: false })).toEqual({ type: "zoom", step: 1 });
+  });
+
+  it("opens the palette on Cmd+; in the vim preset", () => {
+    applyPreset("vim");
+    expect(resolveAction(mod(";"))).toEqual({ type: "palette" });
+  });
+
   it("maps modifier digits to pane focus", () => {
     expect(resolveAction(mod("1"))).toEqual({ type: "focus", pane: "sessions" });
     expect(resolveAction(mod("2"))).toEqual({ type: "focus", pane: "agent" });

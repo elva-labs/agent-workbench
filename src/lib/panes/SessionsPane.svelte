@@ -5,7 +5,6 @@
   import type { AgentId } from "$lib/core";
   import {
     ago,
-    byKey,
     byStatus,
     close as closeSession,
     create,
@@ -16,14 +15,13 @@
     label,
     loadHistory,
     outsideFor,
-    select,
     sessions,
     statusLabel,
     disown,
     type HistoryEntry,
     type Session,
   } from "$lib/sessions.svelte";
-  import { activate, close as closeProject, pick, projectLabel, workspace } from "$lib/workspace.svelte";
+  import { activate, close as closeProject, goTo, pick, projectLabel, workspace } from "$lib/workspace.svelte";
   import {
     LABEL,
     conducting,
@@ -337,11 +335,7 @@
   /** Picking a session is wanting to type into it, and to see its project:
       one under another project brings that project forward first. */
   function choose(key: string) {
-    const session = byKey(key);
-    if (session === null) return;
-    if (session.project !== workspace.active) activate(session.project);
-    select(key);
-    focusPane("agent");
+    if (goTo(key)) focusPane("agent");
   }
 
   /** A past session resumes where it ran: in its worktree when it had

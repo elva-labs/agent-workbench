@@ -242,6 +242,21 @@ test("the settings hide the native view while they are up, and it comes back whe
   expect((await browserWindowState(page))!.rect).toEqual(before);
 });
 
+test("the palette hides the native view while it is up, and it comes back where it was", async ({
+  page,
+}) => {
+  const before = await showPage(page);
+
+  await page.keyboard.press(`${MOD}+Shift+P`);
+  await expect(page.getByTestId("palette")).toBeVisible();
+  await expect.poll(() => showing(page)).toBe(false);
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("palette")).toHaveCount(0);
+  await expect.poll(() => showing(page)).toBe(true);
+  expect((await browserWindowState(page))!.rect).toEqual(before);
+});
+
 test("an orchestrator's question hides the native view until it is answered", async ({ page }) => {
   await page.getByTestId("start-agent").click();
   await showPage(page);

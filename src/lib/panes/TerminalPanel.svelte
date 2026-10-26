@@ -34,6 +34,7 @@
     type Shell,
   } from "$lib/terminals.svelte";
   import { workspace } from "$lib/workspace.svelte";
+  import { sizeOf } from "$lib/zoom.svelte";
 
   let current = $derived(activeShell());
   let shown = $derived(shownGroup());
@@ -114,6 +115,7 @@
             shown={terminalVisible()}
             focused={layout.focus === "terminal" && shell.key === terminals.active}
             start={(cols, rows, onOutput) => launch(shell.key, cols, rows, onOutput)}
+            fontSize={sizeOf(shell.key)}
           />
         </div>
       {/each}

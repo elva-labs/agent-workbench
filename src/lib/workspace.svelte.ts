@@ -2,8 +2,10 @@ import { core, type ProjectInfo } from "$lib/core";
 import { lastSegment } from "$lib/paths";
 import {
   activeSession,
+  byKey,
   closeProject,
   forProject,
+  select,
   sessions,
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
@@ -135,6 +137,16 @@ export function activate(path: string) {
       .setWindowTitle(`${projectLabel(project.path)} — Agent Workbench`)
       .catch(() => {});
   }
+}
+
+/** Brings a session forward, and its project with it when that is another.
+    False for a key no row has. */
+export function goTo(key: string): boolean {
+  const session = byKey(key);
+  if (session === null) return false;
+  if (session.project !== workspace.active) activate(session.project);
+  select(key);
+  return true;
 }
 
 /** Opens the native picker. Returns false when the user cancels. */

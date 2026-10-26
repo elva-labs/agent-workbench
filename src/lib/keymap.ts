@@ -1,5 +1,12 @@
 import type { PaneId } from "$lib/layout.svelte";
-import { actionOf, chordFor, chordFromEvent, describe, type ActionKey } from "$lib/keys.svelte";
+import {
+  actionOf,
+  chordFor,
+  chordFromEvent,
+  describe,
+  type ActionKey,
+  type Chord,
+} from "$lib/keys.svelte";
 import { isMac } from "$lib/platform";
 
 export { isMac };
@@ -36,7 +43,14 @@ export type Action =
   /** The search field: narrowing the tree, or searching inside files. */
   | { type: "find"; mode: "files" | "lines" }
   /** Next or previous session, or shell when the terminal panel has focus. */
-  | { type: "cycle"; direction: 1 | -1 };
+  | { type: "cycle"; direction: 1 | -1 }
+  /** The command palette, opened or put away. */
+  | { type: "palette" }
+  /** The next session waiting on the user. */
+  | { type: "attention" }
+  /** The terminal with the keyboard drawn a pixel larger, smaller, or at
+      its default size. */
+  | { type: "zoom"; step: 1 | -1 | 0 };
 
 export interface KeyState {
   key: string;
@@ -72,6 +86,11 @@ const ACTION_OF: Record<ActionKey, Action> = {
   "toggle.terminal": { type: "toggleTerminal" },
   "session.next": { type: "cycle", direction: 1 },
   "session.previous": { type: "cycle", direction: -1 },
+  "session.attention": { type: "attention" },
+  "zoom.in": { type: "zoom", step: 1 },
+  "zoom.out": { type: "zoom", step: -1 },
+  "zoom.reset": { type: "zoom", step: 0 },
+  palette: { type: "palette" },
   review: { type: "toggleReview" },
   view: { type: "toggleView" },
   scope: { type: "toggleScope" },
@@ -80,6 +99,21 @@ const ACTION_OF: Record<ActionKey, Action> = {
   theme: { type: "cycleTheme" },
   settings: { type: "openSettings" },
 };
+
+/** What a bound action does, for a caller that has the action rather than
+    a key event: the palette. */
+export function actionFor(key: ActionKey): Action {
+  return ACTION_OF[key];
+}
+
+/** On a layout where = needs Shift, or + has a key of its own, Cmd+= arrives
+    as + or Shift+=. Those read as the plain = when no chord holds them. */
+function plainEquals(chord: Chord): Chord | null {
+  if (chord.key === "+" || (chord.key === "=" && chord.shift)) {
+    return { key: "=", shift: false, alt: chord.alt };
+  }
+  return null;
+}
 
 /** Returns the chrome action for a key event, or null to pass it to the pane. */
 export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): Action | null {
@@ -97,7 +131,11 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
     return null;
   }
 
-  const action = actionOf(chord);
+  let action = actionOf(chord);
+  if (action === null) {
+    const plain = plainEquals(chord);
+    if (plain !== null) action = actionOf(plain);
+  }
   if (action === null) return null;
   // Filtering the tree is the changes pane's own: in a terminal the same
   // chord is the process's, Ctrl+F most of all.
@@ -119,6 +157,7 @@ export interface Binding {
 export function bindingsFor(mac: boolean): Binding[] {
   const d = (action: ActionKey) => describe(chordFor(action), mac);
   return [
+    { keys: d("palette"), does: "palette" },
     {
       keys: `${d("focus.sessions")} ${d("focus.agent")} ${d("focus.changes")} ${d("focus.terminal")}`,
       does: "focus",
