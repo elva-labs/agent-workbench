@@ -149,15 +149,27 @@ test.describe("the orchestrator", () => {
     await started.click();
     await expect(page.locator(".session.kid")).toHaveClass(/on/);
 
-    // Folded, the started sessions are a dot each and a count on the
-    // orchestrator's row; let out, they hang under it again.
+    // Its own name comes first, and the project it runs in after it.
+    const name = (await started.locator(".label").boundingBox())!;
+    const where = (await started.getByTestId("started-where").boundingBox())!;
+    expect(where.x).toBeGreaterThanOrEqual(name.x + name.width - 1);
+
+    // The chevron at the end of the orchestrator's second line folds the
+    // started sessions into a dot each, with what they are doing in words
+    // once; the row's × on hover sits on the first line, clear of it.
+    const chevron = page.getByTestId("collapse-started");
+    const second = (await parent.locator(".second").boundingBox())!;
+    const fold = (await chevron.boundingBox())!;
+    expect(Math.abs(fold.y + fold.height / 2 - (second.y + second.height / 2))).toBeLessThan(3);
     await parent.hover();
-    await page.getByTestId("collapse-started").click();
+    const close = (await parent.locator("..").getByTestId("close-session").first().boundingBox())!;
+    expect(close.y + close.height).toBeLessThanOrEqual(fold.y + 1);
+    await chevron.click();
     await expect(started).toHaveCount(0);
     const dots = page.getByTestId("started-dots");
-    await expect(dots).toHaveText(/1 started/);
+    await expect(dots).toHaveText("");
     await expect(dots.locator(".dot")).toHaveCount(1);
-    await parent.hover();
+    await expect(page.getByTestId("orchestrator-summary")).toHaveText("1 running");
     await page.getByTestId("collapse-started").click();
     await expect(started).toHaveCount(1);
     await expect(dots).toHaveCount(0);
@@ -325,11 +337,10 @@ test.describe("the orchestrator", () => {
     const parent = page
       .getByTestId("session-row")
       .filter({ has: page.getByTestId("orchestrator-summary") });
-    await parent.hover();
     await page.getByTestId("collapse-started").click();
     await expect(started).toHaveCount(0);
     const dots = page.getByTestId("started-dots");
-    await expect(dots).toHaveText(/2 started/);
+    await expect(dots).toHaveText("");
     await expect(dots.locator(".dot")).toHaveCount(2);
     // Where the model stands otherwise, at the end of the second line.
     const line = (await parent.getByTestId("orchestrator-summary").boundingBox())!;

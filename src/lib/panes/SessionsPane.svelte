@@ -318,6 +318,21 @@
       and nothing about it is remembered. */
   let collapsed = $state<Record<string, boolean>>({});
 
+  /** What the sessions a session started are doing, in words: how many
+      run, how many of those ask for a permission, and how many are done. */
+  function startedWords(kids: Session[]): string {
+    const live = kids.filter(isLive).length;
+    const asking = kids.filter(isAsking).length;
+    const done = kids.length - live;
+    return [
+      live > 0 ? `${live} running` : null,
+      asking > 0 ? `${asking} asking` : null,
+      done > 0 ? `${done} done` : null,
+    ]
+      .filter((part) => part !== null)
+      .join(", ");
+  }
+
   function toggleKids(key: string) {
     collapsed[key] = !collapsed[key];
   }
@@ -753,83 +768,95 @@
 
 </script>
 
-<!-- A session's row. One with something running behind it, or that ran
-     this time, takes two lines: its name and when it last changed, then
-     what the agent left for the row, or what the session has out for one
-     that started sessions, or else what it is doing, with the model at the
-     end where the app knows it. A row left from the last quit takes one
-     line with its time. -->
+<!-- The one glyph for a row that opens: pointing at what it holds while
+     closed, and down at what it let out once open. -->
+{#snippet chevron(open: boolean)}
+  <svg class="chev" class:open viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+{/snippet}
+
+<!-- A session's row. Its first line is its name and, at the end, when it
+     last changed. A second line holds what the agent left for the row,
+     with the model at its end, and for a session that started others what
+     those are doing; a row with neither, and a row left from the last
+     quit, takes the one line. The row's own buttons take the time's place
+     on hover, and a session that started others has a chevron of its own
+     at the end of its second line that folds them away. -->
 {#snippet sessionRow(session: Session)}
-  {@const quiet = session.status === "dormant"}
   {@const kids = childrenOf(session)}
-  {@const line = session.note ?? summaryLine(session) ?? statusLabel(session)}
+  {@const folded = kids.length > 0 && collapsed[session.key] === true}
+  {@const said = session.note ?? summaryLine(session)}
+  {@const line = folded ? startedWords(kids) : (said ?? (kids.length > 0 ? startedWords(kids) : null))}
+  {@const owned = session.note !== null && !folded}
   <div
     class="session"
     class:on={sessions.active === session.key}
     class:cursor={current === `session:${session.key}`}
+    class:starter={kids.length > 0}
     data-row="session:{session.key}"
   >
     <button
       class="row line"
-      class:two={!quiet}
+      class:two={line !== null}
       tabindex="-1"
       onclick={() => choose(session.key)}
+      title={session.model === null ? undefined : modelLabel(session.model)}
       data-testid="session-row"
     >
       <span
         class="dot"
         class:live={isLive(session)}
-        class:dormant={quiet}
+        class:dormant={session.status === "dormant"}
         class:working={conducting(session)}
         class:unread={session.unread}
         class:permission={session.needs === "permission"}
         title={statusLabel(session)}
       ></span>
-      <span class="label" class:strong={!quiet} class:unread={session.unread}>{label(session)}</span>
-      <span class="when" data-testid="session-when">{since(lastChanged(session), now)}</span>
-      {#if !quiet}
-        <span
-          class="note"
-          class:asking={session.needs === "permission"}
-          class:said={session.note !== null || summaryLine(session) !== null}
-          title={line}
-          data-testid={session.note !== null ? "session-note" : summaryLine(session) !== null ? "orchestrator-summary" : "session-state"}
-          >{line}</span
+      <span class="first">
+        <span class="label" class:strong={session.status !== "dormant"} class:unread={session.unread}
+          >{label(session)}</span
         >
-        {#if kids.length > 0 && collapsed[session.key]}
-          <!-- Folded, the sessions it started are a dot each and a count,
-               where the model stands otherwise. -->
-          <span class="model kids-meta" data-testid="started-dots">
-            {#each kids as kid (kid.key)}<span
-                class="dot mini"
-                class:live={isLive(kid)}
-                class:working={kid.working}
-                class:permission={kid.needs === "permission"}
-              ></span>{/each}{kids.length} started
-          </span>
-        {:else}
-          <span class="model" data-testid="session-model">{session.model === null ? "" : modelLabel(session.model)}</span>
-        {/if}
+        <span class="when" data-testid="session-when">{since(lastChanged(session), now)}</span>
+      </span>
+      {#if line !== null}
+        <span class="second">
+          <span
+            class="note"
+            class:asking={owned ? session.needs === "permission" : kids.some(isAsking)}
+            title={line}
+            data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
+          >
+          {#if folded}
+            <!-- Folded, each session it started is a dot where the model
+                 stands otherwise. -->
+            <span class="meta" data-testid="started-dots">
+              {#each kids as kid (kid.key)}<span
+                  class="dot mini"
+                  class:live={isLive(kid)}
+                  class:working={kid.working}
+                  class:permission={kid.needs === "permission"}
+                ></span>{/each}
+            </span>
+          {:else if session.model !== null}
+            <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
+          {/if}
+        </span>
       {/if}
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
       <span class="state told">{statusLabel(session)}</span>
     </button>
-    <!-- Over the row's end rather than beside it, so a name is never
-         squeezed to make room for it. -->
+    {#if kids.length > 0}
+      <button
+        class="disclose"
+        tabindex="-1"
+        onclick={() => toggleKids(session.key)}
+        aria-expanded={!folded}
+        aria-label={folded ? "Show the sessions it started" : "Fold the sessions it started"}
+        title={folded ? "Show the sessions it started" : "Fold the sessions it started"}
+        data-testid="collapse-started">{@render chevron(!folded)}</button
+      >
+    {/if}
     <span class="actions">
-      {#if kids.length > 0}
-        <button
-          class="icon fold-kids"
-          class:folded={collapsed[session.key]}
-          tabindex="-1"
-          onclick={() => toggleKids(session.key)}
-          aria-expanded={!collapsed[session.key]}
-          aria-label={collapsed[session.key] ? "Show the sessions it started" : "Fold the sessions it started"}
-          title={collapsed[session.key] ? "Show the sessions it started" : "Fold the sessions it started"}
-          data-testid="collapse-started">▾</button
-        >
-      {/if}
       <button
         class="icon"
         tabindex="-1"
@@ -843,9 +870,9 @@
 {/snippet}
 
 <!-- The sessions a session started, hanging under it on a rail from its
-     dot, one line each: the state, the name, the model or, in the accent,
-     that it is asking for a permission, and when it last changed. One
-     running in another project says which in front of its name. Delete
+     dot, one line each: the state, the name, the project it runs in when
+     that is another, the model or, in the accent, that it is asking for a
+     permission, and when it last changed. The name gives way last. Delete
      does nothing on these rows; their own × stops them. -->
 {#snippet rail(parent: Session)}
   {@const kids = childrenOf(parent)}
@@ -873,15 +900,14 @@
               class:permission={kid.needs === "permission"}
               title={statusLabel(kid)}
             ></span>
-            <span class="label" class:unread={kid.unread}
-              >{#if kid.project !== parent.project}<span class="where">{projectLabel(kid.project)}</span>{/if}{label(
-                kid,
-              )}</span
-            >
+            <span class="label" class:unread={kid.unread}>{label(kid)}</span>
+            {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
+                >{projectLabel(kid.project)}</span
+              >{/if}
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
-            {:else}
-              <span class="model">{kid.model === null ? "" : modelLabel(kid.model)}</span>
+            {:else if kid.model !== null}
+              <span class="model">{modelLabel(kid.model)}</span>
             {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
             <span class="state told">{statusLabel(kid)}</span>
@@ -1035,7 +1061,7 @@
       data-row="more:{path}"
       data-testid="quiet-more"
     >
-      <span class="chevron">▸</span>
+      {@render chevron(false)}
       <span class="fold-text">{moreLabel(hidden.length, Math.min(...hidden.map((entry) => entry.at)), now)}</span>
     </button>
   {/if}
@@ -1055,7 +1081,7 @@
           data-row="earlier:{path}"
           data-testid="earlier-sessions"
         >
-          <span class="chevron">▸</span>
+          {@render chevron(false)}
           <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}</span>
         </button>
       {/if}
@@ -1297,7 +1323,7 @@
             data-row="inactive"
             data-testid="inactive-fold"
           >
-            <span class="chevron" class:open={opened.inactive}>▸</span>
+            {@render chevron(opened.inactive === true)}
             <span class="inactive-title">Inactive</span>
             <span class="inactive-count"
               >{split.inactive.length} {split.inactive.length === 1 ? "project" : "projects"}</span
@@ -1353,7 +1379,8 @@
                 tabindex="-1"
                 onclick={() => toggle("idle-more")}
                 data-row="idle-more"
-                data-testid="inactive-more">{split.inactive.length - idle.length} more</button
+                data-testid="inactive-more"
+                >{@render chevron(false)}<span class="fold-text">{split.inactive.length - idle.length} more</span></button
               >
             {/if}
           {/if}
@@ -1441,8 +1468,10 @@
   .nav.folded .head,
   .nav.folded .label,
   .nav.folded .when,
-  .nav.folded .note,
+  .nav.folded .second,
   .nav.folded .model,
+  .nav.folded .where,
+  .nav.folded .disclose,
   .nav.folded .tag,
   .nav.folded .state,
   .nav.folded .actions,
@@ -1886,23 +1915,32 @@
     background: var(--row-bg);
   }
 
-  /* The row's own buttons, over its end on hover, on the row's own colour
-     so they read; the text runs under the fade. */
+  /* The row's own button takes the time's place on its first line while
+     the pointer is on the row, so it never covers a word. */
   .actions {
     position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
+    top: var(--row-pad-y);
+    right: calc(var(--row-pad-x) - 5px);
+    height: calc(var(--row-size) * 1.5);
     display: flex;
     align-items: center;
-    padding: 0 4px 0 14px;
-    background: linear-gradient(to right, transparent, var(--row-bg) 12px);
     opacity: 0;
   }
 
   .session:hover .actions,
+  .idle:hover .actions,
   .actions:focus-within {
     opacity: 1;
+  }
+
+  .session:hover > .row .when,
+  .idle:hover > .row .when {
+    visibility: hidden;
+  }
+
+  .kid .actions {
+    top: 3px;
+    height: calc(var(--fold-size) * 1.5);
   }
 
   .past-row .past {
@@ -1915,6 +1953,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
+    line-height: 1.5;
     text-align: left;
     padding: var(--row-pad-y) var(--row-pad-x);
     border: 0;
@@ -1940,14 +1979,14 @@
     flex: none;
   }
 
-  /* A session's row: the dot in a column of its own, the name and its
-     time on the first line, and on the second what the agent left with
-     the model at its end. The dot sits under the project's name, so the
-     folded column keeps it in view. */
+  /* A session's row: the dot in a column of its own beside the first
+     line, and each line laid out on its own, so what the second carries
+     at its end takes nothing from the name on the first. The dot sits
+     under the project's name, so the folded column keeps it in view. */
   .row.line {
     display: grid;
-    grid-template-columns: calc(var(--dot) + 10px) minmax(0, 1fr) auto;
-    gap: 1px 0;
+    grid-template-columns: calc(var(--dot) + 10px) minmax(0, 1fr);
+    row-gap: 1px;
     align-items: center;
   }
 
@@ -1956,24 +1995,64 @@
     grid-row: 1;
   }
 
-  .row.line .label {
+  .first,
+  .second {
     grid-column: 2;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+  }
+
+  .first {
     grid-row: 1;
   }
 
-  .row.line .when {
-    grid-column: 3;
-    grid-row: 1;
+  .second {
+    grid-row: 2;
+    font-size: var(--label-size);
+    line-height: 1.35;
+    color: var(--ink-3);
   }
 
-  .row.line .note {
-    grid-column: 2;
-    grid-row: 2;
+  .first .label,
+  .second .note {
+    flex: 1;
   }
 
-  .row.line .model {
-    grid-column: 3;
-    grid-row: 2;
+  /* The model, or a folded starter's dots, at the second line's end. */
+  .meta {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding-left: 10px;
+    white-space: nowrap;
+    color: var(--ink-3);
+  }
+
+  /* A starter keeps the end of its second line for its chevron. */
+  .starter .second {
+    padding-right: 18px;
+  }
+
+  .disclose {
+    position: absolute;
+    right: calc(var(--row-pad-x) - 4px);
+    top: calc(var(--row-pad-y) + var(--row-size) * 1.5 + 1px);
+    width: 18px;
+    height: calc(var(--label-size) * 1.35);
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .disclose:hover {
+    color: var(--ink);
   }
 
   .label.strong {
@@ -1987,10 +2066,11 @@
 
   .model {
     min-width: 0;
-    padding-left: 10px;
+    padding-left: 8px;
     font-size: var(--label-size);
-    text-align: right;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--ink-3);
   }
 
@@ -2262,8 +2342,7 @@
 
     .project,
     .session,
-    .chevron,
-    .fold-kids {
+    .chev {
       transition: none;
     }
   }
@@ -2331,15 +2410,20 @@
     color: var(--ink-2);
   }
 
-  .chevron {
-    display: inline-block;
-    font-size: 9px;
-    transition: transform 90ms ease;
+  /* The one glyph for a row that opens. */
+  .chev {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 150ms ease;
   }
 
-  /* Closed, the triangle points at what it is holding; open, it points down
-     at the rows it let out. */
-  .chevron.open {
+  .chev.open {
     transform: rotate(90deg);
   }
 
@@ -2349,7 +2433,7 @@
      dot itself. */
   .kids {
     --rail-x: calc(var(--row-pad-x) + var(--dot) / 2 - 0.5px);
-    --rail-reach: calc(var(--row-pad-y) + var(--label-size) * 1.35 + var(--row-size) * 0.75 - var(--dot) / 2);
+    --rail-reach: calc(var(--row-pad-y) + var(--label-size) * 1.35 + 1px + var(--row-size) * 0.75 - var(--dot) / 2);
     margin-bottom: 3px;
   }
 
@@ -2379,53 +2463,55 @@
     bottom: 0;
   }
 
+  /* A started session on one line. Short of room, the project it runs in
+     gives way first, then the model, and the name last. */
   .kid-row {
-    display: grid;
-    grid-template-columns: calc(var(--dot) + 8px) minmax(0, 1fr) auto auto;
-    gap: 0;
+    display: flex;
     align-items: center;
+    gap: 0;
     padding: 3px var(--row-pad-x) 3px calc(var(--rail-x) + 15px);
     font-size: var(--fold-size);
   }
 
+  .kid-row .dot {
+    margin-right: 8px;
+  }
+
+  /* The name keeps its width up to most of the row, and the rest give way
+     around it. */
+  .kid-row .label {
+    flex: 0 0 auto;
+    max-width: 62%;
+  }
+
   .kid-row .where {
-    margin-right: 6px;
+    flex: 0 1000 auto;
+    min-width: 0;
+    margin-left: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--ink-3);
   }
 
   .kid-row .model {
-    padding-left: 8px;
+    flex: 0 1 auto;
+    margin-left: auto;
+  }
+
+  .kid-row .model + .when {
+    margin-left: 0;
   }
 
   .model.asking {
+    flex-shrink: 0;
     color: var(--accent);
   }
 
-  /* A starter folded: a small dot for each session it started, and the
-     count. */
-  .kids-meta {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 3px;
-  }
-
+  /* A starter folded: a small dot for each session it started. */
   .dot.mini {
     width: calc(var(--dot) - 2px);
     height: calc(var(--dot) - 2px);
-  }
-
-  .dot.mini:last-of-type {
-    margin-right: 2px;
-  }
-
-  .fold-kids {
-    font-size: 11px;
-    transition: transform 90ms ease;
-  }
-
-  .fold-kids.folded {
-    transform: rotate(-90deg);
   }
 
   /* The projects nobody has used for a while: one fold at the foot, behind
@@ -2506,15 +2592,20 @@
 
   .when {
     flex: none;
+    min-width: 2.2em;
     margin-left: auto;
     padding-left: 10px;
+    text-align: right;
     font-size: var(--label-size);
     font-variant-numeric: tabular-nums;
     color: var(--ink-3);
   }
 
   .idle-more {
-    padding-left: var(--row-indent);
+    width: calc(100% - 2 * var(--row-inset));
+    margin: 0 var(--row-inset);
+    padding: var(--row-pad-y) var(--row-pad-x) var(--row-pad-y) var(--row-indent);
+    font-size: var(--fold-size);
   }
 
   .open-first {

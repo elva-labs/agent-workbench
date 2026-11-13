@@ -124,6 +124,7 @@ import { offered, pickResume, resetResume, resume } from "$lib/resume.svelte";
 import { projects, resetProjects, touch } from "$lib/projects.svelte";
 import { palette, resetPalette } from "$lib/palette.svelte";
 import { settings } from "$lib/settings.svelte";
+import { conductor, resetConductor } from "$lib/conductor.svelte";
 
 beforeEach(() => {
   resetRemote();
@@ -143,6 +144,7 @@ beforeEach(() => {
   layout.width = 1600;
   layout.projectSort = "used";
   resetProjects();
+  resetConductor();
   resetPalette();
   settings.open = false;
 
@@ -245,8 +247,12 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     expect(screen.getByText("one")).toBeInTheDocument();
     expect(screen.getByText("session 1")).toBeInTheDocument();
-    // Nothing left for the row, so its second line says what it is doing.
-    expect(screen.getByTestId("session-state")).toHaveTextContent("running");
+    // Nothing left for the row: one line, and the dot says what it is
+    // doing, in words only for a screen reader.
+    const row = screen.getByTestId("session-row");
+    expect(row).not.toHaveClass("two");
+    expect(row.querySelector(".second")).toBeNull();
+    expect(row.querySelector(".state.told")).toHaveTextContent("running");
   });
 
   // The right pane is entirely git-based, so say so rather than sit there empty.
@@ -782,6 +788,47 @@ describe("SessionsPane", () => {
     live.needs = "permission";
     await tick();
     expect(within(row(live.key)).getByTestId("session-note")).toHaveClass("asking");
+  });
+
+  // A session that started others says what they are doing on its
+  // second line. Folded, that line says it once in words, with a dot for
+  // each beside it, and the chevron at its end lets them out again.
+  it("folds the sessions a session started into words and dots, behind a chevron", async () => {
+    workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
+    workspace.active = "/repo";
+    const starter = create("/repo", null, "claude-code", null, null, "claude-opus-4-1");
+    started(starter.key, "pty-1", "starter-1");
+    const here = create("/repo", null, "claude-code", null, null, "sonnet");
+    started(here.key, "pty-2", "kid-1");
+    const there = create("/other", null, "claude-code", null, null, "sonnet");
+    started(there.key, "pty-3", "kid-2");
+    const done = create("/repo", null, "claude-code", null, null, "sonnet");
+    started(done.key, "pty-4", "kid-3");
+    for (const kid of [here, there, done]) conductor.startedBy[kid.key] = "starter-1";
+    there.needs = "permission";
+    done.status = "exited";
+
+    render(SessionsPane);
+    const row = () => document.querySelector<HTMLElement>(`[data-row="session:${starter.key}"]`)!;
+    const kids = screen.getAllByTestId("started-session");
+    expect(kids).toHaveLength(3);
+    // Its own name first, then the project it runs in, which gives way first.
+    const elsewhere = kids.find((kid) => kid.querySelector(".where") !== null)!;
+    expect(elsewhere.querySelector(".label")!.nextElementSibling).toHaveClass("where");
+    expect(elsewhere.querySelector(".where")).toHaveTextContent("other");
+    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("2 running, 1 asking");
+    expect(within(row()).getByTestId("session-model")).toHaveTextContent("Opus 4.1");
+
+    const chevron = within(row()).getByTestId("collapse-started");
+    expect(chevron).toHaveAttribute("aria-expanded", "true");
+    await fireEvent.click(chevron);
+    expect(screen.queryAllByTestId("started-session")).toHaveLength(0);
+    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("2 running, 1 asking, 1 done");
+    const dots = within(row()).getByTestId("started-dots");
+    expect(dots.querySelectorAll(".dot")).toHaveLength(3);
+    expect(dots).toHaveTextContent(/^$/);
+    expect(within(row()).queryByTestId("session-model")).toBeNull();
+    expect(within(row()).getByTestId("collapse-started")).toHaveAttribute("aria-expanded", "false");
   });
 
   // More than a few rows with nothing running fold their tail into one row

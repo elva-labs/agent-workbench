@@ -895,10 +895,10 @@ test.describe("several sessions in one project", () => {
     await expect(row).toContainText("running");
   });
 
-  // A session with something running takes two lines, its time at the
-  // end of the first and the line under the name; a row left from the
-  // last quit takes one, with its time.
-  test("draws a running session on two lines and a row left from the last quit on one", async ({
+  // A running session with nothing from the agent takes one line, like a
+  // row left from the last quit: the dot says it is running. On hover the
+  // row's × takes the time's place and covers no word of the name.
+  test("draws a running session with nothing to say on one line, its button in the time's place", async ({
     page,
   }) => {
     await page.reload();
@@ -909,20 +909,25 @@ test.describe("several sessions in one project", () => {
 
     const name = (await live.locator(".label").boundingBox())!;
     const when = (await live.locator(".when").boundingBox())!;
-    const line = (await live.getByTestId("session-state").boundingBox())!;
     await expect(live.locator(".when")).toHaveText("now");
-    await expect(live.getByTestId("session-state")).toHaveText("running");
     expect(Math.abs(when.y + when.height / 2 - (name.y + name.height / 2))).toBeLessThan(3);
     expect(when.x).toBeGreaterThan(name.x + name.width - 1);
-    expect(line.y).toBeGreaterThanOrEqual(name.y + name.height - 1);
-    expect(Math.abs(line.x - name.x)).toBeLessThan(1);
-
-    await expect(left.getByTestId("session-state")).toHaveCount(0);
+    await expect(live.locator(".second")).toHaveCount(0);
+    await expect(left.locator(".second")).toHaveCount(0);
     await expect(left.locator(".when")).toBeVisible();
     const one = (await left.boundingBox())!;
     const two = (await live.boundingBox())!;
-    expect(two.height).toBeGreaterThan(one.height + 8);
+    expect(Math.abs(two.height - one.height)).toBeLessThan(1.5);
     await expect(page.getByTestId("agent-tag")).toHaveCount(0);
+
+    const slot = live.locator("..");
+    await live.hover();
+    const close = slot.getByTestId("close-session");
+    await expect(close).toBeVisible();
+    await expect(live.locator(".when")).toBeHidden();
+    const button = (await close.boundingBox())!;
+    expect(button.x).toBeGreaterThanOrEqual(name.x + name.width - 1);
+    expect(button.x + button.width).toBeLessThanOrEqual(two.x + two.width + 1);
   });
 
   test("a session closed before a restart stays closed", async ({ page }) => {
@@ -1271,7 +1276,7 @@ test.describe("several projects", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 440 });
-    for (let n = 1; n <= 8; n += 1) {
+    for (let n = 1; n <= 12; n += 1) {
       await page.getByTestId("new-session").click();
       await expect(rows(page)).toHaveCount(n);
     }
