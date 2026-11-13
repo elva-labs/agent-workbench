@@ -16,7 +16,8 @@ is asked once whether its daemon is in place, and each account's agent state
 is read once for all of its projects. The projects on another machine are
 checked once they have all arrived, in a single request to that machine, so
 local projects never wait on a remote one. A project opened later is checked
-on its own.
+on its own. Installs and removals on one machine take turns writing the
+agents' per-project state, so several at once keep every project's entry.
 
 ## What is installed
 

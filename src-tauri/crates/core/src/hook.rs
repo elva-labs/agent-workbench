@@ -22,11 +22,23 @@
 //! a growing log of nothing.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
+
+/// Held across every read, change and write of an account's agent state, so
+/// two installs, removals or trust copies at the same moment cannot each
+/// write back a copy that lacks the other's entry.
+static STATE: Mutex<()> = Mutex::new(());
+
+fn lock_state() -> MutexGuard<'static, ()> {
+    STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
@@ -301,6 +313,7 @@ pub fn trust_like(
             .to_string()
     };
     let (from, to) = (canonical(project), canonical(worktree));
+    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         trust_claude(&claude, &from, &to)?;
     }
@@ -453,6 +466,7 @@ fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), 
         .to_string_lossy()
         .to_string();
 
+    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         let mut state = read_for_writing(&claude)?;
         let servers = state
@@ -517,6 +531,7 @@ fn uninstall_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<()
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
+    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         if !claude.exists() {
             continue;
@@ -1254,5 +1269,45 @@ mod tests {
     fn a_batch_of_none_is_none() {
         let (home, _) = fixture("batch-empty");
         assert!(status_many(&home, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn installs_and_removals_at_the_same_moment_lose_no_entry() {
+        let count = 24;
+        let (home, projects) = many_projects("concurrent", count);
+        with_daemon(&home);
+        let accounts = work_account();
+        let run = |projects: &[PathBuf], remove: bool| {
+            std::thread::scope(|scope| {
+                for project in projects {
+                    let (home, accounts) = (&home, &accounts);
+                    scope.spawn(move || {
+                        if remove {
+                            uninstall(home, project, accounts).unwrap();
+                        } else {
+                            install(home, project, accounts).unwrap();
+                        }
+                    });
+                }
+            });
+        };
+        let all = |home: &Path| -> Vec<bool> {
+            status_many(home, &projects, &accounts)
+                .iter()
+                .map(|answer| answer.installed)
+                .collect()
+        };
+
+        run(&projects, false);
+        assert_eq!(all(&home), vec![true; count]);
+
+        let (gone, kept) = projects.split_at(count / 2);
+        run(gone, true);
+        let mut expected = vec![false; count / 2];
+        expected.extend(vec![true; count - count / 2]);
+        assert_eq!(all(&home), expected);
+        assert!(kept
+            .iter()
+            .all(|project| status(&home, project, &accounts).installed));
     }
 }
