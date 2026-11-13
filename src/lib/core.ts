@@ -866,6 +866,13 @@ export interface Core {
     agent: AgentId,
     configDir?: string,
   ): Promise<Transcript[]>;
+  /** The same for several projects at once, one list each in the order
+      given: the agent's directory is read once for all of them. */
+  transcriptsMany(
+    projects: string[],
+    agent: AgentId,
+    configDir?: string,
+  ): Promise<Transcript[][]>;
   /** What the agent calls a session now, for agents that keep that in an
       index of their own rather than in the terminal title. */
   sessionTitle(
@@ -1193,6 +1200,12 @@ const tauriCore: Core = {
 
   transcripts: (project, agent, configDir) =>
     invoke<Transcript[]>("sessions_list", { project, agent, configDir }),
+  transcriptsMany: (projects, agent, configDir) =>
+    invoke<Transcript[][]>("sessions_list_many", {
+      projects,
+      agent,
+      configDir,
+    }),
   sessionTitle: (agent, id, configDir) =>
     invoke<string | null>("session_title", { agent, id, configDir }),
 
@@ -1463,6 +1476,9 @@ const detachedCore: Core = {
   },
   async transcripts() {
     return [];
+  },
+  async transcriptsMany(projects) {
+    return projects.map(() => []);
   },
   async sessionTitle() {
     return null;
