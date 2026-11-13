@@ -22,23 +22,6 @@ import { persist } from "$lib/persist";
  * from another window, is taken as it comes.
  */
 
-export const workflows = $state({
-  /** The workflows in the order they are shown. */
-  list: [] as Workflow[],
-  /** The one new sessions start with; null is none. */
-  default: null as string | null,
-  /** The projects with a word of their own: a workflow's name, or null
-      for none, whatever the default. */
-  overrides: {} as Record<string, string | null>,
-});
-
-/** What the core holds the settings to. */
-export const MOST_WORKFLOWS = 16;
-export const MOST_STEPS = 12;
-export const LONGEST_NAME = 40;
-export const MOST_PARALLEL = 8;
-export const MOST_ROUNDS = 10;
-
 /** The workflow a fresh install has: the orchestrator on Claude's most
     capable model, work on Sonnet, and a review on Opus that sends the work
     back up to three times and then asks. */
@@ -65,6 +48,24 @@ export function defaultWorkflow(): Workflow {
     ],
   };
 }
+
+export const workflows = $state({
+  /** The workflows in the order they are shown. A window that has heard
+      nothing yet has the one a fresh install has. */
+  list: [defaultWorkflow()] as Workflow[],
+  /** The one new sessions start with; null is none. */
+  default: defaultWorkflow().name as string | null,
+  /** The projects with a word of their own: a workflow's name, or null
+      for none, whatever the default. */
+  overrides: {} as Record<string, string | null>,
+});
+
+/** What the core holds the settings to. */
+export const MOST_WORKFLOWS = 16;
+export const MOST_STEPS = 12;
+export const LONGEST_NAME = 40;
+export const MOST_PARALLEL = 8;
+export const MOST_ROUNDS = 10;
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

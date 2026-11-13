@@ -1,6 +1,6 @@
 <script module lang="ts">
   /** The columns of settings, one on screen at a time. */
-  type Tab = "appearance" | "live" | "sessions" | "accounts" | "plugins" | "keys" | "notifications";
+  type Tab = "appearance" | "live" | "sessions" | "workflows" | "accounts" | "plugins" | "keys" | "notifications";
 
   /** The tab last chosen. It belongs to the module rather than the dialog, so
       closing the settings and opening them again lands where you were; a new
@@ -76,6 +76,7 @@
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
+  import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
 
   /**
    * The settings, over the workbench. Reached from the native menu or its
@@ -95,6 +96,7 @@
     { name: "appearance", label: "Appearance" },
     { name: "live", label: "Live updates" },
     { name: "sessions", label: "Sessions" },
+    { name: "workflows", label: "Workflows" },
     { name: "accounts", label: "Accounts" },
     { name: "plugins", label: "Plugins" },
     { name: "keys", label: "Keys" },
@@ -649,6 +651,8 @@
               {/each}
             </div>
           </section>
+        {:else if tab === "workflows"}
+          <WorkflowsTab />
         {:else if tab === "accounts"}
           <section data-testid="settings-accounts">
             <h3>Accounts</h3>

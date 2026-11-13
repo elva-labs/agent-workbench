@@ -61,3 +61,24 @@ export function sameModel(
 ): boolean {
   return a.agent === b.agent && a.model === b.model;
 }
+
+/** The agents a model can be chosen from: the installed ones, then any a
+    workflow already uses so its choice can be shown. When none is found,
+    both, so a workflow can still be edited. */
+export function offeredAgents(installed: AgentId[], inUse: AgentId[]): AgentId[] {
+  const wanted = installed.length === 0 ? AGENT_ORDER : installed;
+  return AGENT_ORDER.filter((agent) => wanted.includes(agent) || inUse.includes(agent));
+}
+
+/** A model as one string, for a control that holds a single value. */
+export function modelKey(model: { agent: AgentId; model: string }): string {
+  return `${model.agent}:${model.model}`;
+}
+
+export function modelFromKey(key: string): { agent: AgentId; model: string } | null {
+  const at = key.indexOf(":");
+  if (at < 0) return null;
+  const agent = key.slice(0, at);
+  if (agent !== "claude-code" && agent !== "codex") return null;
+  return { agent, model: key.slice(at + 1) };
+}
