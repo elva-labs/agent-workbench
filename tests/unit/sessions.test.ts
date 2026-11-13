@@ -17,6 +17,7 @@ import {
   loadHistory,
   loadHistories,
   loadMissingHistories,
+  groupByHost,
   refreshHistory,
   isMine,
   isViewed,
@@ -76,6 +77,16 @@ const manyCalls: string[][] = [];
 let historyAnswer: Transcript[] = [];
 /** What each account's directory holds, by directory. */
 let historyByDir: Record<string, Transcript[]> = {};
+/** Requests for a host's projects wait for the promise held here. */
+let holds: Record<string, Promise<void>> = {};
+function hold(host: string): () => void {
+  let release = () => {};
+  holds[host] = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return release;
+}
+const LAB = "ssh://ada@lab/srv/one";
 let cwdAnswer: string | null = null;
 let cwdAsks = 0;
 vi.mock("$lib/core", () => ({
@@ -104,12 +115,20 @@ vi.mock("$lib/core", () => ({
       historyReads += 1;
       return historyAnswer;
     },
+    // What is answered is what the directory held when the request was
+    // made, whenever the answer arrives.
     transcriptsMany: async (projects: string[], agent: string, dir?: string) => {
       manyCalls.push(projects);
-      if (agent !== "claude-code") return projects.map(() => []);
-      if (dir !== undefined) return projects.map(() => historyByDir[dir] ?? []);
-      historyReads += 1;
-      return projects.map(() => historyAnswer);
+      const answer =
+        agent !== "claude-code"
+          ? []
+          : dir !== undefined
+            ? (historyByDir[dir] ?? [])
+            : historyAnswer;
+      if (agent === "claude-code" && dir === undefined) historyReads += 1;
+      const hold = holds[projects[0]?.split("/")[2] ?? ""];
+      if (hold !== undefined) await hold;
+      return projects.map(() => answer);
     },
   }),
 }));
@@ -122,6 +141,7 @@ beforeEach(() => {
   killed.length = 0;
   historyReads = 0;
   manyCalls.length = 0;
+  holds = {};
   historyAnswer = [];
   historyByDir = {};
   cwdAnswer = null;
@@ -552,16 +572,65 @@ describe("history", () => {
     expect(sessions.history[B]).toBeDefined();
   });
 
-  it("reads again every project that has a history, in one request each", async () => {
-    await loadHistories([A, B]);
-    manyCalls.length = 0;
+  it("splits the projects by the machine they are on", () => {
+    const groups = groupByHost([A, LAB, B, "ssh://ada@lab/srv/two", "ssh://ada@box/x"]);
+    expect([...groups]).toEqual([
+      [null, [A, B]],
+      ["ada@lab", [LAB, "ssh://ada@lab/srv/two"]],
+      ["ada@box", ["ssh://ada@box/x"]],
+    ]);
+    expect(groupByHost([]).size).toBe(0);
+  });
+
+  it("never asks for a project here and one elsewhere in the same request", async () => {
+    await loadHistories([A, LAB, B]);
+    expect(manyCalls.some((projects) => projects.join() === [A, B].join())).toBe(true);
+    expect(manyCalls.some((projects) => projects.join() === LAB)).toBe(true);
+    expect(manyCalls.every((projects) => projects.join() === LAB || !projects.includes(LAB))).toBe(true);
+  });
+
+  it("puts a machine's answer in when it arrives, whatever the others are doing", async () => {
+    const release = hold("ada@lab");
+    const pending = loadHistories([A, LAB]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sessions.history[A]).toBeDefined();
+    expect(sessions.history[LAB]).toBeUndefined();
+    release();
+    await pending;
+    expect(sessions.history[LAB]).toBeDefined();
+  });
+
+  it("reads again the projects it is told to watch, in one request each per machine", async () => {
+    const stop = followHistory(() => [A, B]);
+    sessions.history[B] = [];
+    sessions.history["/closed"] = [];
     await refreshHistory();
     expect(manyCalls.length).toBeGreaterThan(0);
-    expect(manyCalls.every((projects) => projects.length === 2)).toBe(true);
+    expect(manyCalls.every((projects) => projects.join() === [A, B].join())).toBe(true);
+    stop();
+  });
+
+  it("does not let a host that does not answer hold up the refresh of the others", async () => {
+    const stop = followHistory(() => [A, LAB]);
+    const release = hold("ada@lab");
+    const stalled = refreshHistory();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sessions.history[A]).toBeDefined();
+    // A later refresh reads the local projects again while the host is
+    // still being waited for.
+    manyCalls.length = 0;
+    const second = refreshHistory();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(manyCalls.some((projects) => projects.join() === A)).toBe(true);
+    expect(manyCalls.some((projects) => projects.join() === LAB)).toBe(false);
+    release();
+    await Promise.all([stalled, second]);
+    stop();
   });
 
   it("leaves a history that has not changed as the same list", async () => {
     historyAnswer = [{ id: "own", title: "own", modified: 1000, size: 1 }];
+    followHistory(() => [A]);
     await loadHistory(A);
     const first = sessions.history[A];
     await refreshHistory();
@@ -573,15 +642,17 @@ describe("history", () => {
   });
 
   it("serves a refresh asked for while one is under way with that one", async () => {
+    followHistory(() => [A]);
     await loadHistory(A);
     manyCalls.length = 0;
     const first = refreshHistory();
     const second = refreshHistory();
-    expect(second).toBe(first);
-    await first;
+    await Promise.all([first, second]);
     const asked = manyCalls.length;
     await refreshHistory();
     expect(manyCalls.length).toBeGreaterThan(asked);
+    // Both the first two were served by one reading.
+    expect(asked).toBe(manyCalls.length - asked);
   });
 
   it("reads only the histories not read or being read", async () => {
@@ -595,20 +666,82 @@ describe("history", () => {
     expect(sessions.history[B]).toBeDefined();
   });
 
-  it("reads a project again when an account arrives while it is being read", async () => {
-    await loadHistory(A);
-    sessions.history = {};
-    manyCalls.length = 0;
-    const pending = loadMissingHistories([A]);
-    const asked = manyCalls.length;
+  it("reads a project again when an account arrives, and lists that account's sessions", async () => {
+    historyAnswer = [{ id: "own", title: "own", modified: 1000, size: 1 }];
+    await loadMissingHistories([A]);
+    expect(sessions.history[A].map((t) => t.id)).toEqual(["own"]);
+    historyByDir["~/.claude-work"] = [
+      { id: "work", title: "work", modified: 2000, size: 1 },
+    ];
     adoptAccounts({
       list: { Work: { claude: "~/.claude-work", codex: null } },
       everywhere: null,
       overrides: {},
     });
     await loadMissingHistories([A]);
-    await pending;
-    expect(manyCalls.length).toBeGreaterThan(asked);
+    expect(sessions.history[A].map((t) => [t.id, t.account])).toEqual([
+      ["work", "Work"],
+      ["own", null],
+    ]);
+  });
+
+  it("lists a session id held by two accounts once, as the newest copy", async () => {
+    adoptAccounts({
+      list: {
+        Work: { claude: "~/.claude-work", codex: null },
+        Play: { claude: "~/.claude-play", codex: null },
+      },
+      everywhere: null,
+      overrides: {},
+    });
+    historyAnswer = [{ id: "same", title: "default", modified: 1000, size: 1 }];
+    historyByDir["~/.claude-work"] = [
+      { id: "same", title: "work", modified: 3000, size: 1 },
+    ];
+    historyByDir["~/.claude-play"] = [
+      { id: "same", title: "play", modified: 2000, size: 1 },
+    ];
+    await loadHistory(A);
+    expect(sessions.history[A].map((t) => [t.id, t.title, t.account])).toEqual([
+      ["same", "work", "Work"],
+    ]);
+  });
+
+  // A reading that began earlier and lands later must not undo a newer one.
+  it("does not let an older answer overwrite a newer one", async () => {
+    followHistory(() => [LAB]);
+    historyAnswer = [{ id: "s", title: "before", modified: 1000, size: 1 }];
+    const release = hold("ada@lab");
+    const slow = loadHistory(LAB);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    historyAnswer = [{ id: "s", title: "after", modified: 2000, size: 2 }];
+    delete holds["ada@lab"];
+    await loadHistory(LAB);
+    expect(sessions.history[LAB][0].title).toBe("after");
+    release();
+    await slow;
+    expect(sessions.history[LAB][0].title).toBe("after");
+  });
+
+  it("does not let a read from before an account was removed land after one from after", async () => {
+    adoptAccounts({
+      list: { Work: { claude: "~/.claude-work", codex: null } },
+      everywhere: null,
+      overrides: {},
+    });
+    historyByDir["~/.claude-work"] = [
+      { id: "work", title: "work", modified: 2000, size: 1 },
+    ];
+    const release = hold("ada@lab");
+    const slow = loadMissingHistories([LAB]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resetAccounts();
+    delete holds["ada@lab"];
+    await loadMissingHistories([LAB]);
+    expect(sessions.history[LAB].map((t) => t.id)).toEqual([]);
+    release();
+    await slow;
+    expect(sessions.history[LAB].map((t) => t.id)).toEqual([]);
   });
 
   // What ran outside the app shows up without a restart: the histories
@@ -618,7 +751,7 @@ describe("history", () => {
     try {
       await loadHistory(A);
       const before = historyReads;
-      const stop = followHistory();
+      const stop = followHistory(() => [A]);
       attention.focused = true;
       await vi.advanceTimersByTimeAsync(HISTORY_EVERY);
       expect(historyReads).toBe(before + 1);

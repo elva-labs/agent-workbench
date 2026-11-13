@@ -247,21 +247,57 @@ export async function restore() {
     ? stored.open.filter((path): path is string => typeof path === "string")
     : [];
 
-  // All asked at once, and put in the list at once in the order they were
-  // stored. A directory that is gone is dropped quietly rather than opening
-  // on an error.
-  const described = await Promise.all(
-    paths.map((path) => core().projectInfo(path).catch(() => null)),
-  );
-  for (const info of described) {
-    if (info !== null && !isOpen(info.path)) workspace.open.push(info);
-  }
-
+  // Every project is asked for at once. Those on this machine are put in the
+  // list together, in the order they were stored; one on another machine is
+  // put in when it answers, at its stored place among those already there,
+  // so a host that is slow or gone holds nothing else up. A directory that
+  // is gone is dropped quietly rather than opening on an error.
   const wanted = typeof stored.active === "string" ? stored.active : null;
-  const target =
-    workspace.open.find((project) => project.path === wanted) ??
-    workspace.open[0];
-  if (target !== undefined) activate(target.path);
+  const asked = paths.map((path) => ({
+    path,
+    info: core()
+      .projectInfo(path)
+      .catch(() => null),
+  }));
+
+  const insert = (at: number, info: ProjectInfo) => {
+    if (isOpen(info.path)) return;
+    const before = workspace.open.filter(
+      (project) => paths.indexOf(project.path) < at,
+    ).length;
+    workspace.open.splice(before, 0, info);
+  };
+  let chosen = false;
+  const choose = (final: boolean) => {
+    if (chosen || workspace.active !== null) return;
+    const target = workspace.open.find((project) => project.path === wanted);
+    if (target !== undefined) {
+      chosen = true;
+      activate(target.path);
+    } else if (final && workspace.open[0] !== undefined) {
+      chosen = true;
+      activate(workspace.open[0].path);
+    }
+  };
+
+  const here = asked.filter((entry) => !entry.path.startsWith("ssh://"));
+  const there = asked.filter((entry) => entry.path.startsWith("ssh://"));
+  const remaining = there.map(async (entry) => {
+    const info = await entry.info;
+    if (info !== null) insert(paths.indexOf(entry.path), info);
+    choose(false);
+  });
+
+  const local = await Promise.all(here.map((entry) => entry.info));
+  here.forEach((entry, at) => {
+    const info = local[at];
+    if (info !== null) insert(paths.indexOf(entry.path), info);
+  });
+  // A stored active project still on its way is waited for; any other
+  // choice is made now.
+  choose(!there.some((entry) => entry.path === wanted));
+  await Promise.all(remaining);
+  choose(true);
 }
 
 /** Test seam. */
