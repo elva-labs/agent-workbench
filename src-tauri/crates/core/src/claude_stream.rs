@@ -1135,6 +1135,8 @@ impl Stream {
     }
 
     /// Where the agent stands with a message: queued, started or done.
+    /// A message it cancelled, discarded or refused before taking it is
+    /// dropped.
     fn lifecycle(&mut self, line: &Value, out: &mut Reading) {
         let Some(message) = line["command_uuid"].as_str() else {
             return;
@@ -1142,7 +1144,7 @@ impl Stream {
         match line["state"].as_str() {
             Some("started") => self.took(message, out),
             Some("completed") => self.done_with(message, out, false),
-            Some("cancelled") => self.done_with(message, out, true),
+            Some("cancelled" | "discarded" | "refused") => self.done_with(message, out, true),
             _ => {}
         }
     }
@@ -1155,9 +1157,15 @@ impl Stream {
             (!task.background && !task.nested) || task.unlisted
         });
         let failed = line["is_error"].as_bool().unwrap_or(false);
+        // The agent names an abort as the reason its loop ended; an older
+        // one says only that the turn failed during execution.
+        let aborted = matches!(
+            line["terminal_reason"].as_str(),
+            Some("aborted_streaming" | "aborted_tools")
+        );
         let outcome = match line["subtype"].as_str() {
             Some("success") if !failed => Outcome::Done,
-            Some("error_during_execution") if self.interrupting => Outcome::Interrupted,
+            Some("error_during_execution") if self.interrupting || aborted => Outcome::Interrupted,
             _ => Outcome::Failed,
         };
         self.interrupting = false;
@@ -1464,11 +1472,15 @@ impl Driver for Stream {
                 "behavior": "deny",
                 "message": said.unwrap_or("The user declined this."),
             }),
-            Choice::Cancel => json!({
-                "behavior": "deny",
-                "message": said.unwrap_or("The user declined this and stopped the turn."),
-                "interrupt": true,
-            }),
+            Choice::Cancel => {
+                // The turn this stops ends as interrupted, not as failed.
+                self.interrupting = self.turn;
+                json!({
+                    "behavior": "deny",
+                    "message": said.unwrap_or("The user declined this and stopped the turn."),
+                    "interrupt": true,
+                })
+            }
         };
         self.asked.remove(request);
         Ok(json!({
@@ -1726,6 +1738,87 @@ mod tests {
         assert!(matches!(
             &out[0],
             Event::Message { message, state: MessageState::Dropped, .. } if message == M1
+        ));
+    }
+
+    #[test]
+    fn a_refused_or_discarded_message_is_dropped() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        sent(&mut stream, M2);
+        // Refused before it was queued, and discarded from the queue.
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(M1, "refused"),
+                lifecycle(M2, "queued"),
+                lifecycle(M2, "discarded"),
+            ],
+        );
+        let dropped: Vec<&str> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::Message {
+                    message,
+                    state: MessageState::Dropped,
+                    ..
+                } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dropped, [M1, M2]);
+        assert!(stream.ours.is_empty());
+    }
+
+    #[test]
+    fn cancelling_a_permission_ends_the_turn_as_interrupted() {
+        // As the real agent ends it: an error during execution, aborted at
+        // the tools, and the message it was answering cancelled.
+        for reason in [Some("aborted_tools"), None] {
+            let mut stream = stream();
+            sent(&mut stream, M1);
+            events(
+                &mut stream,
+                &[
+                    lifecycle(M1, "started"),
+                    init(),
+                    json!({"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch x"}}}),
+                ],
+            );
+            stream.answer("p1", Choice::Cancel, None).unwrap();
+            let mut ended = json!({"type":"result","subtype":"error_during_execution","is_error":true,"errors":["[ede_diagnostic] result_type=user"]});
+            if let Some(reason) = reason {
+                ended["terminal_reason"] = json!(reason);
+            }
+            let out = events(&mut stream, &[ended, lifecycle(M1, "cancelled")]);
+            assert!(
+                matches!(
+                    out[0],
+                    Event::TurnEnded {
+                        outcome: Outcome::Interrupted,
+                        error: None,
+                        ..
+                    }
+                ),
+                "{reason:?}: {out:?}"
+            );
+            assert_eq!(out.len(), 1, "the message was answered: {out:?}");
+        }
+        // An abort the agent reports needs no interrupt of this side's.
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                json!({"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming"}),
+            ],
+        );
+        assert!(matches!(
+            out[1],
+            Event::TurnEnded {
+                outcome: Outcome::Interrupted,
+                ..
+            }
         ));
     }
 
