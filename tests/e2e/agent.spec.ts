@@ -268,6 +268,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         onTerminalRequest: async () => () => {},
         onNotifyRequest: async () => () => {},
         onConductRequest: async () => () => {},
+        onConductCancel: async () => () => {},
         conductAnswer: async () => {},
         onBrowserRequest: async () => () => {},
         browserAnswer: async () => {},

@@ -16,7 +16,11 @@
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
-  import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
+  import {
+    cancelled as conductCancelled,
+    conductor,
+    handle as conductRequested,
+  } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
   import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
@@ -165,6 +169,9 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onConductRequest((request) => void conductRequested(request))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onConductCancel((request) => conductCancelled(request.id))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onBrowserRequest((request) => void browserRequested(request))
