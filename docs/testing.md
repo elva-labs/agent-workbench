@@ -123,3 +123,26 @@ and anything else runs as a script in the main webview. `WORKBENCH_PROBE_REPORT`
 names where the report goes, defaulting to a file in the system's temp
 directory; it is written as JSON, a step's own result beside the frames
 found after it, and echoed to stderr too.
+
+Further steps act on the window the way the system or another app would.
+`window:float` raises it above other apps' windows without making the app
+active, `window:at:<x>,<y>` moves it, `window:cover` lays a plain window of
+the app's own over it and `window:uncover` takes that away,
+`window:minimise` and `window:restore` send it to the Dock and back, and
+`window:state` reports whether the app is active, whether the window is
+key, covered or minimised, and which view holds the keyboard.
+`window:focus` makes the app active, for a run that needs the keyboard.
+`shot:<tab id>` takes a tab's screenshot the way the agent's tool does and
+reports its size in pixels, a digest of the file, how long it took and
+when; two digests a moment apart tell a page that is painting from one
+that is frozen. `quit` quits the app once the report is written.
+
+The probe is meant to run while the person at the machine goes on working.
+The app never makes itself active while it runs, but a program started
+from a terminal is still let take over from the app in front, so the debug
+binary is started through the system with `open -g`, from a bundle of its
+own wrapped around it. Pointing `HOME` and `CFFIXED_USER_HOME` at a
+scratch folder keeps its settings, sessions and browser data apart from
+the installed app's, and building with `TAURI_CONFIG` setting the
+development address and the window's size and place lets it load the built
+frontend from a port of its own in a small window out of the way.

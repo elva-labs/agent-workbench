@@ -1108,6 +1108,10 @@ pub fn run() {
     } else {
         builder.plugin(launch::single_instance())
     };
+    // The placement probe drives the app in the background, while the user
+    // goes on working in another one.
+    #[cfg(all(debug_assertions, target_os = "macos"))]
+    let builder = builder.activate_ignoring_other_apps(!probe::wanted());
     builder
         .manage(launch::Launches::default())
         .plugin(tauri_plugin_opener::init())

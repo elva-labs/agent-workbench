@@ -27,16 +27,38 @@
 //! of whichever view currently holds the keyboard or sits under the
 //! pointer.
 //!
+//! `window:<action>` acts on the main window the way the system or another
+//! app would, without the app taking the keyboard unless asked: `focus`
+//! activates the app and makes the window key; `float` raises the window
+//! above other apps' windows without activating it; `at:<x>,<y>` moves its
+//! top left corner to that point on screen; `cover` lays a plain window of
+//! the app's own over it, which never takes the pointer or the keyboard,
+//! and `uncover` takes that away; `minimise` and `restore` minimise it to
+//! the Dock and bring it back; `state` reports whether the app is active,
+//! whether the window is key, visible, covered or minimised, and which
+//! view holds the keyboard.
+//!
+//! `shot:<tab id>` takes the tab's screenshot the way the agent's
+//! `browser_screenshot` tool does, and reports the file, its size in
+//! pixels, a digest of its bytes, how long it took and the time it was
+//! done, or why it was refused. `quit` quits the app once the report is written.
+//!
+//! The probe never brings the app forward on its own; a step file that
+//! needs the keyboard starts with `window:focus`.
+//!
 //! The report is written as pretty JSON to `WORKBENCH_PROBE_REPORT`
 //! (default: `workbench-probe.json` in the system temp directory) and to
 //! stderr.
 
-use std::sync::mpsc;
-use std::time::Duration;
+use std::cell::RefCell;
+use std::sync::{mpsc, Arc};
+use std::time::{Duration, Instant};
 
+use objc2::rc::Retained;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSResponder, NSView, NSWindow,
+    NSApplication, NSBackingStoreType, NSColor, NSEvent, NSEventModifierFlags, NSEventType,
+    NSResponder, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSError, NSPoint, NSString};
 use serde_json::{json, Value};
@@ -421,15 +443,201 @@ fn post_click_events(window: &Window, webview: &tauri::Webview) -> Result<(), St
     Ok(())
 }
 
+thread_local! {
+    /// The window `window:cover` lays over the main one. Only the main
+    /// thread touches it.
+    static COVER: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
+}
+
+/// Runs `action` on the main thread and hands back what it answered.
+async fn on_main<T: Send + 'static>(
+    window: &Window,
+    action: impl FnOnce(MainThreadMarker, &NSWindow) -> T + Send + 'static,
+) -> Result<T, String> {
+    let ptr = window.ns_window().map_err(|e| e.to_string())? as usize;
+    let (tx, rx) = mpsc::channel();
+    window
+        .run_on_main_thread(move || {
+            let mtm = MainThreadMarker::new().expect("run on the main thread");
+            let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+            let _ = tx.send(action(mtm, ns_window));
+        })
+        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(5)))
+        .await
+        .map_err(|e| format!("the task failed: {e}"))?
+        .map_err(|_| "timed out on the main thread".to_string())
+}
+
+/// A `window:` step: see the module's own documentation for each action.
+async fn window_step(window: &Window, action: &str) -> Result<Value, String> {
+    if let Some(point) = action.strip_prefix("at:") {
+        let mut parts = point.split(',').filter_map(|part| part.parse::<f64>().ok());
+        let (Some(x), Some(y)) = (parts.next(), parts.next()) else {
+            return Err("at: needs <x>,<y>".to_string());
+        };
+        window
+            .set_position(tauri::LogicalPosition::new(x, y))
+            .map_err(|e| e.to_string())?;
+        return Ok(json!("moved"));
+    }
+    match action {
+        "focus" => {
+            window.set_focus().map_err(|e| e.to_string())?;
+            Ok(json!("focused"))
+        }
+        "minimise" => {
+            window.minimize().map_err(|e| e.to_string())?;
+            Ok(json!("minimised"))
+        }
+        "restore" => {
+            window.unminimize().map_err(|e| e.to_string())?;
+            Ok(json!("restored"))
+        }
+        "float" => {
+            on_main(window, |_, ns_window| {
+                ns_window.setLevel(objc2_app_kit::NSFloatingWindowLevel);
+                ns_window.orderFrontRegardless();
+                json!("floating")
+            })
+            .await
+        }
+        "cover" => {
+            on_main(window, |mtm, ns_window| {
+                let cover = COVER.with_borrow_mut(|cover| {
+                    cover
+                        .get_or_insert_with(|| unsafe {
+                            let cover = NSWindow::initWithContentRect_styleMask_backing_defer(
+                                mtm.alloc::<NSWindow>(),
+                                ns_window.frame(),
+                                NSWindowStyleMask::Borderless,
+                                NSBackingStoreType::Buffered,
+                                false,
+                            );
+                            cover.setReleasedWhenClosed(false);
+                            cover.setIgnoresMouseEvents(true);
+                            cover.setBackgroundColor(Some(&NSColor::grayColor()));
+                            cover
+                        })
+                        .clone()
+                });
+                cover.setFrame_display(ns_window.frame(), true);
+                cover.setLevel(ns_window.level() + 1);
+                cover.orderFrontRegardless();
+                json!("covered")
+            })
+            .await
+        }
+        "uncover" => {
+            on_main(window, |_, _| {
+                COVER.with_borrow(|cover| {
+                    if let Some(cover) = cover {
+                        cover.orderOut(None);
+                    }
+                });
+                json!("uncovered")
+            })
+            .await
+        }
+        "state" => {
+            let views: Vec<(String, usize)> = {
+                let mut views = Vec::new();
+                for webview in window.webviews() {
+                    let (tx, rx) = mpsc::channel();
+                    let label = webview.label().to_string();
+                    let _ = webview.with_webview(move |platform| {
+                        let _ = tx.send(platform.inner() as usize);
+                    });
+                    let ptr = tauri::async_runtime::spawn_blocking(move || {
+                        rx.recv_timeout(Duration::from_secs(5))
+                    })
+                    .await;
+                    if let Ok(Ok(ptr)) = ptr {
+                        views.push((label, ptr));
+                    }
+                }
+                views
+            };
+            on_main(window, move |mtm, ns_window| {
+                let app = NSApplication::sharedApplication(mtm);
+                let responder = ns_window.firstResponder();
+                let holder = responder.as_ref().map(|responder| {
+                    let ptr = Retained::as_ptr(responder) as usize;
+                    views
+                        .iter()
+                        .find(|(_, view)| *view == ptr)
+                        .map(|(label, _)| label.clone())
+                        .unwrap_or_else(|| responder.class().name().to_string_lossy().to_string())
+                });
+                json!({
+                    "appActive": app.isActive(),
+                    "key": ns_window.isKeyWindow(),
+                    "visible": ns_window.isVisible(),
+                    "unoccluded": ns_window.occlusionState().contains(
+                        objc2_app_kit::NSWindowOcclusionState::Visible
+                    ),
+                    "minimised": ns_window.isMiniaturized(),
+                    "keyboard": holder,
+                })
+            })
+            .await
+        }
+        other => Err(format!("unknown window action {other}")),
+    }
+}
+
+/// The width and height a PNG's header gives.
+fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let header = bytes.get(16..24)?;
+    let width = u32::from_be_bytes(header[0..4].try_into().ok()?);
+    let height = u32::from_be_bytes(header[4..8].try_into().ok()?);
+    Some((width, height))
+}
+
+/// A 64-bit FNV-1a digest of `bytes`: enough to tell two images apart.
+fn digest(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// A `shot:` step: the tab's screenshot, as `browser_screenshot` takes it.
+async fn shot(window: &Window, id: &str) -> Result<Value, String> {
+    let id: u32 = id
+        .trim()
+        .parse()
+        .map_err(|_| "shot: needs a tab id".to_string())?;
+    let browser = Arc::clone(&window.app_handle().state::<Arc<crate::browser::Browser>>());
+    let started = Instant::now();
+    let path = crate::browser_page::screenshot(window, &browser, Some(id)).await?;
+    let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or(0);
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "path": path,
+        "pixels": png_size(&bytes),
+        "digest": digest(&bytes),
+        "ms": (elapsed * 10.0).round() / 10.0,
+        "at": at,
+    }))
+}
+
 /// Runs the steps named by `steps_path` against the main window and webview,
 /// recording what changed after each one. A step is `resize:<W>x<H>`,
-/// `focus:<label>`, `key:<spec>`, `click:<label>`,
-/// `evalin:<label>:<script>` to run `script` as a function body (an explicit
-/// `return` captures a value) in the webview `label` names, without going
-/// by way of `eval`, or otherwise `script` run in the main webview.
-async fn run_steps(window: tauri::Window, main: tauri::Webview, steps_path: &str) -> Value {
+/// `focus:<label>`, `key:<spec>`, `click:<label>`, `window:<action>`,
+/// `shot:<tab id>`, `quit`, `evalin:<label>:<script>` to run `script` as a
+/// function body (an explicit `return` captures a value) in the webview
+/// `label` names, without going by way of `eval`, or otherwise `script` run
+/// in the main webview. Answers with the report and whether a `quit` step
+/// asked for the app to quit.
+async fn run_steps(window: tauri::Window, main: tauri::Webview, steps_path: &str) -> (Value, bool) {
     let text = std::fs::read_to_string(steps_path).unwrap_or_default();
     let mut steps = Vec::new();
+    let mut quit = false;
 
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let script: String = serde_json::from_str(line).unwrap_or_else(|_| line.to_string());
@@ -456,6 +664,13 @@ async fn run_steps(window: tauri::Window, main: tauri::Webview, steps_path: &str
             format!("{:?}", post_key(&window, spec).await)
         } else if let Some(label) = script.strip_prefix("click:") {
             format!("{:?}", post_click(&window, label).await)
+        } else if let Some(action) = script.strip_prefix("window:") {
+            format!("{:?}", window_step(&window, action).await)
+        } else if let Some(id) = script.strip_prefix("shot:") {
+            format!("{:?}", shot(&window, id).await)
+        } else if script.trim() == "quit" {
+            quit = true;
+            "the app quits once the report is written".to_string()
         } else {
             format!("{:?}", eval_in(&main, &script).await)
         };
@@ -474,7 +689,7 @@ async fn run_steps(window: tauri::Window, main: tauri::Webview, steps_path: &str
         }));
     }
 
-    json!({ "steps": steps })
+    (json!({ "steps": steps }), quit)
 }
 
 async fn run_probe(app: AppHandle, steps_path: String) {
@@ -490,11 +705,11 @@ async fn run_probe(app: AppHandle, steps_path: String) {
         return;
     };
 
-    let _ = window.set_focus();
-    std::thread::sleep(Duration::from_secs(1));
-
-    let report = run_steps(window, main, &steps_path).await;
+    let (report, quit) = run_steps(window, main, &steps_path).await;
     write_report(&report);
+    if quit {
+        app.exit(0);
+    }
 }
 
 fn write_report(value: &Value) {
@@ -507,6 +722,12 @@ fn write_report(value: &Value) {
     let text = serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string());
     let _ = std::fs::write(&path, &text);
     eprintln!("{text}");
+}
+
+/// Whether the probe is to run: the app then starts without taking the
+/// keyboard from whatever app the user is in.
+pub fn wanted() -> bool {
+    std::env::var_os("WORKBENCH_PROBE_STEPS").is_some()
 }
 
 /// If `WORKBENCH_PROBE_STEPS` names a file, runs it against the app a few
