@@ -4,10 +4,10 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 (<kbd>Ctrl</kbd> on Windows and Linux), over the workbench. A choice applies
 at once.
 
-The settings are in seven tabs down the left. Appearance carries the
+The settings are in eight tabs down the left. Appearance carries the
 appearance, theme, font, colour and custom styles sections; live updates,
-sessions, accounts, plugins, keys and notifications each carry the section
-of that name. Opening the settings again lands on the tab last used, for as long as
+sessions, workflows, accounts, plugins, keys and notifications each carry
+the section of that name. Opening the settings again lands on the tab last used, for as long as
 the window is open. The dialog follows the look the panes are drawn in.
 
 ![The settings over the workbench: the four tabs down the left, and the Appearance tab with its appearance, theme, font and colour choices.](settings.png)
@@ -108,6 +108,77 @@ running behind it, goes the same way. Resuming one brings it back to the
 list. Nothing is deleted: the transcripts are the agent's own and stay where
 they are.
 
+## Workflows
+
+A workflow says which model a session starts on and which models it may hand
+work and review to. It holds a name, the orchestrator's model, and steps in
+order. The roles are fixed: the orchestrator is the session the user talks
+to, a worker does a piece of work, and a reviewer checks it.
+
+A model is an agent and a model name, since a model's name belongs to one
+agent. Claude Code offers the aliases its command line takes, fable, opus,
+sonnet and haiku. Codex offers one, called Codex, which means whatever Codex
+runs by default. Only the agents found on the machine are offered, with any
+a workflow already names so that its choice can still be shown.
+
+A step has a name, a kind and the models it may use. The models are any, or
+a chosen set across the agents, and the first one chosen is the one used
+unless the orchestrator has a reason to pick another. A step that does work
+says how many sessions may run at once, from one to eight. A step that
+reviews says when the work passes: the reviewer approves, the orchestrator
+agrees, or both, so at least one is on. Otherwise the work goes back to a
+named earlier step, at most so many times, from one to ten, and then the
+user is asked.
+
+A workflow has from one to twelve steps and the first does work. A name is
+a few words, forty characters at most, and is unique among the steps of a
+workflow and among the workflows, of which there are sixteen at most, the
+upper and lower case of a letter counting as the same.
+
+A fresh install has one workflow, Build and review. Its orchestrator is on
+Claude's most capable model alias, its Work step is on Sonnet, and its
+Review step is on Opus, passes when the reviewer approves and the
+orchestrator agrees, and goes back to Work up to three times before it asks.
+A settings file from before workflows existed gets the same one.
+
+One workflow is marked as the one new sessions start with, and none is a
+valid choice. A project can choose another, or none, whatever the default
+is. Deleting a workflow that was the default leaves new sessions with none,
+and a project that chose it follows the default again.
+
+The tab lists the workflows across the top, with the default tagged, and
+New workflow after them. The picked one has its name above the diagram,
+with Duplicate and Delete. The diagram draws the orchestrator as the frame,
+since it is the session the user talks to, with its model in a menu on it.
+Inside sit the steps in order with an arrow between each, each showing its
+role and its models. A plus on every arrow adds a step there, as work or as
+a review. A review that goes back draws a line under the row from itself to
+the step it repeats, with the step's name and the limit written beneath.
+
+Picking a step shows its settings beside the diagram, or under it when the
+dialog is narrow: its name, whether it does work or reviews it, the models it
+may use with the first chosen marked, and the settings of its kind. A model
+other than the first can be made the one used first. A step can be moved
+earlier or later and removed. Renaming a step carries the reviews that go
+back to it, and removing or moving one points a review that went back to it
+at the step before the review. A change the rules refuse is said under the
+settings and not made. Every control can be reached with the keyboard.
+
+Under the diagram, What the orchestrator is told unfolds into the
+instructions the workflow comes to: a short numbered list. The first tells
+the orchestrator to direct the work rather than do it, and to delegate by
+starting sessions with the workbench's `start` tool, not with its own
+subagents. Then each step has a sentence naming the step, the models it may
+use with the first as the one to use, how many sessions may run at once, or
+for a review when the work passes and where it goes back, how many times, and
+that the user is asked after that. The last sentence says to report to the
+user once every piece has come out of the last step.
+
+A switch under the diagram marks the workflow as the default for new
+sessions, and turning it off leaves them with none. Under it, Project
+choices lists each open project with a menu: as the default, no workflow, or
+one of the workflows. The choices are kept with the settings, by project path.
+
 ## Accounts
 
 An account is a login kept apart from the others. Claude Code keeps its
@@ -186,8 +257,9 @@ give a reason in the user's terms. It is checked whole before the user
 sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
 agent is told why without the user being troubled. The agent hooks, the
-plugins, the accounts, how long past sessions stay listed, the
-notifications and the chime are refused outright, as the user's to change.
+plugins, the accounts, which workflow a project follows, how long past
+sessions stay listed, the notifications and the chime are refused outright,
+as the user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
@@ -197,6 +269,15 @@ word where the question was, for twenty seconds; undoing puts back only the
 settings that change moved. Changes asked at once are put one after
 another, each read against the settings as they are by the time it comes
 up.
+
+An agent can add a workflow, replace the one of the same name, delete one,
+and name the workflow new sessions start with, or none. It reads the
+workflows with the other settings, as they are stored, with what each
+field takes. A workflow it writes is checked whole against the rules under
+[workflows](#workflows) and read strictly, so a field the shape does not have
+is refused. The user is shown the workflow as one line each from and to: the
+orchestrator's model and then each step with its models and its limits.
+Undoing puts the workflows back as they were.
 
 An agent can also save a theme of the user's own, for a look the palettes
 do not give, and switch to it in the same step. The theme is checked the
@@ -220,7 +301,8 @@ on, whichever machine the agent runs on.
 ## Where they are kept
 
 The appearance, the look, the palette, the fonts, the chords, the answer
-on hooks, the accounts, how long past sessions stay listed, the
+on hooks, the accounts, the workflows and the projects' choices among them,
+how long past sessions stay listed, the
 notifications and your own themes are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made

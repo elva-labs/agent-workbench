@@ -7,7 +7,7 @@ import type {
   WorkflowModel,
   WorkflowStep,
 } from "$lib/core";
-import { mostCapable } from "$lib/models";
+import { AGENT_ORDER, modelLabel, mostCapable } from "$lib/models";
 import { persist } from "$lib/persist";
 
 /**
@@ -426,15 +426,111 @@ export function setStepKind(name: string, at: number, kind: WorkflowStep["kind"]
             backTo: draft.steps[at - 1].name,
             limit: 3,
           };
-    // A review that went back to a step now a review keeps its name; the
-    // rules do not ask the target to be work.
     return null;
   });
 }
 
-/** The agents a model set holds, for showing a step's models. */
-export function agentsOf(models: WorkflowModel[]): AgentId[] {
-  return [...new Set(models.map((model) => model.agent))];
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function only(value: Record<string, unknown>, allowed: string[], what: string) {
+  const other = Object.keys(value).find((field) => !allowed.includes(field));
+  if (other !== undefined) throw new Error(`${what} has ${allowed.join(", ")}, not ${other}.`);
+}
+
+function readModel(value: unknown, what: string): WorkflowModel {
+  if (!isObject(value)) throw new Error(`${what} is a model: {"agent": ..., "model": ...}.`);
+  only(value, ["agent", "model"], what);
+  if (!AGENT_ORDER.includes(value.agent as AgentId)) {
+    throw new Error(`${what} names an agent that is one of ${AGENT_ORDER.join(", ")}.`);
+  }
+  if (typeof value.model !== "string") throw new Error(`${what} names its model as text.`);
+  return { agent: value.agent as AgentId, model: value.model.trim() };
+}
+
+function readModels(value: unknown, what: string): WorkflowModel[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`${what} lists models as an array; empty means any.`);
+  return value.map((model) => readModel(model, what));
+}
+
+/** A workflow as an agent writes it, read strictly: every field the shape
+    has and no other, then held to the rules. Throws the reason when it
+    will not do. */
+export function readWorkflow(value: unknown): Workflow {
+  if (!isObject(value)) {
+    throw new Error("A workflow is an object of a name, an orchestrator and steps.");
+  }
+  only(value, ["name", "orchestrator", "steps"], "A workflow");
+  if (typeof value.name !== "string") throw new Error("A workflow has a name.");
+  if (!Array.isArray(value.steps)) throw new Error("A workflow's steps are an array.");
+  const steps = value.steps.map((raw, at): WorkflowStep => {
+    if (!isObject(raw)) throw new Error(`Step ${at + 1} is an object.`);
+    const what = `Step ${at + 1}`;
+    if (typeof raw.name !== "string") throw new Error(`${what} has a name.`);
+    const models = readModels(raw.models, what);
+    if (raw.kind === "work") {
+      only(raw, ["kind", "name", "models", "parallel"], what);
+      return { kind: "work", name: raw.name.trim(), models, parallel: raw.parallel as number };
+    }
+    if (raw.kind === "review") {
+      only(
+        raw,
+        ["kind", "name", "models", "reviewerApproves", "orchestratorAgrees", "backTo", "limit"],
+        what,
+      );
+      if (typeof raw.reviewerApproves !== "boolean" || typeof raw.orchestratorAgrees !== "boolean") {
+        throw new Error(`${what} says with reviewerApproves and orchestratorAgrees, each true or false, when the work passes.`);
+      }
+      if (typeof raw.backTo !== "string") throw new Error(`${what} names the step it goes back to as backTo.`);
+      return {
+        kind: "review",
+        name: raw.name.trim(),
+        models,
+        reviewerApproves: raw.reviewerApproves,
+        orchestratorAgrees: raw.orchestratorAgrees,
+        backTo: raw.backTo,
+        limit: raw.limit as number,
+      };
+    }
+    throw new Error(`${what} has a kind that is work or review.`);
+  });
+  const workflow: Workflow = {
+    name: value.name.trim(),
+    orchestrator: readModel(value.orchestrator, "The orchestrator"),
+    steps,
+  };
+  const problem = workflowProblem(workflow);
+  if (problem !== null) throw new Error(problem);
+  return workflow;
+}
+
+/** A model as a few words: its name, or any when none is chosen. */
+function modelsText(models: WorkflowModel[]): string {
+  return models.length === 0
+    ? "any model"
+    : models.map((model) => modelLabel(model.agent, model.model)).join(" / ");
+}
+
+/** A workflow in a line, for showing what a change makes of it. */
+export function describeWorkflow(workflow: Workflow): string {
+  const steps = workflow.steps.map((step) =>
+    step.kind === "work"
+      ? `${step.name} (${modelsText(step.models)}, ${step.parallel} at once)`
+      : `${step.name} (${modelsText(step.models)}, back to ${step.backTo} ${step.limit} times at most)`,
+  );
+  return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}`;
+}
+
+/** Replaces the whole set, as an agent's allowed change does. Says why not
+    when it will not do. */
+export function setWorkflows(next: Settings["workflows"]): string | null {
+  const problem = listProblem(next.list);
+  if (problem !== null) return problem;
+  adoptWorkflows(next);
+  save();
+  return null;
 }
 
 function save() {

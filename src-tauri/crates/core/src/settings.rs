@@ -1,8 +1,8 @@
 //! The user's preferences for the workbench, kept in one file per machine.
 //!
 //! The appearance, the look, the palette, the two fonts, the chords the app
-//! claims, the answer on agent hooks and the user's own themes are the
-//! user's, not a window's, so
+//! claims, the answer on agent hooks, the workflows and the user's own
+//! themes are the user's, not a window's, so
 //! they live here under the app's home and every window on the machine
 //! reads the same ones. A change is written whole and moved into place, and
 //! announced as an event carrying the settings as they now are. The file is

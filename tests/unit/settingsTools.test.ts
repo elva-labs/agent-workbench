@@ -52,6 +52,7 @@ import {
 } from "$lib/settingsTools.svelte";
 import { setThemes, theme } from "$lib/theme.svelte";
 import { resetUserStyles, userStyles } from "$lib/userStyles.svelte";
+import { adoptWorkflows, defaultWorkflow, workflows } from "$lib/workflows.svelte";
 
 let next = 0;
 function request(
@@ -74,6 +75,7 @@ beforeEach(() => {
   sets.length = 0;
   resetSettingsTools();
   resetPersist();
+  adoptWorkflows(undefined);
   resetKeys();
   theme.choice = "system";
   theme.palette = "teal";
@@ -443,5 +445,183 @@ describe("the user's stylesheet", () => {
     userStyles.css = "";
     userStyles.problem = "the stylesheet imports another";
     expect(describeSettings()).toContain("is not used: the stylesheet imports another");
+  });
+});
+
+describe("workflows", () => {
+  const quick = {
+    name: "Quick fix",
+    orchestrator: { agent: "claude-code", model: "opus" },
+    steps: [{ kind: "work", name: "Fix", models: [], parallel: 2 }],
+  };
+
+  it("are read with the shape a change writes them in", async () => {
+    await handle(request("settings"));
+    const text = answers[0].content!;
+    expect(text).toContain("workflows: a workflow says which model a session starts on");
+    expect(text).toContain('"name": "Build and review"');
+    expect(text).toContain('"backTo": "Work"');
+    expect(text).toContain("New sessions start with the workflow Build and review.");
+    expect(text).toContain("workflow argument");
+    expect(text).toContain("claude-code takes the models fable, opus, sonnet, haiku");
+    expect(text).toContain("codex takes default");
+    expect(text).toContain("Which workflow a project follows is the user's to choose.");
+  });
+
+  it("are said to be none when there are none", async () => {
+    adoptWorkflows({ list: [], default: null, overrides: {} });
+    await handle(request("settings"));
+    expect(answers[0].content).toContain("none.");
+    expect(answers[0].content).toContain("New sessions start with no workflow.");
+  });
+
+  it("add one by name, shown to the user as what it makes of the workflows", () => {
+    const { next, changes } = plan({ workflow: quick });
+    expect(next.workflows?.list.map((workflow) => workflow.name)).toEqual([
+      "Build and review",
+      "Quick fix",
+    ]);
+    expect(next.workflows?.default).toBe("Build and review");
+    expect(changes).toEqual([
+      {
+        field: "workflow.Quick fix",
+        label: "Workflow Quick fix",
+        from: "none",
+        to: "Opus directs Fix (any model, 2 at once), new",
+      },
+    ]);
+  });
+
+  it("replace the one of the name written, and are shown from what it was", () => {
+    const written = { ...defaultWorkflow(), orchestrator: { agent: "claude-code", model: "opus" } };
+    const { next, changes } = plan({ workflow: written });
+    expect(next.workflows?.list).toHaveLength(1);
+    expect(next.workflows?.list[0].orchestrator.model).toBe("opus");
+    expect(changes).toHaveLength(1);
+    expect(changes[0].from).toMatch(/^Fable directs Work/);
+    expect(changes[0].to).toMatch(/^Opus directs Work/);
+  });
+
+  it("a workflow already so changes nothing", () => {
+    expect(plan({ workflow: defaultWorkflow() }).changes).toEqual([]);
+  });
+
+  it("are deleted by name, and the default goes with the one that was it", () => {
+    const { next, changes } = plan({ deleteWorkflow: "Build and review" });
+    expect(next.workflows).toEqual({ list: [], default: null, overrides: {} });
+    expect(changes.map((change) => change.field)).toEqual([
+      "workflow.Build and review",
+      "defaultWorkflow",
+    ]);
+    expect(changes[1]).toMatchObject({ from: "Build and review", to: "none" });
+  });
+
+  it("name the default, or none", () => {
+    expect(plan({ defaultWorkflow: null }).next.workflows?.default).toBeNull();
+    const added = plan({ workflow: quick, defaultWorkflow: "Quick fix" });
+    expect(added.next.workflows?.default).toBe("Quick fix");
+    expect(added.changes.map((change) => change.field)).toEqual([
+      "workflow.Quick fix",
+      "defaultWorkflow",
+    ]);
+  });
+
+  it("are refused with the reason when they will not do", () => {
+    expect(() => plan({ defaultWorkflow: "Gone" })).toThrow(/no workflow called Gone/);
+    expect(() => plan({ deleteWorkflow: "Gone" })).toThrow(/no workflow called Gone/);
+    expect(() => plan({ workflow: "quick" })).toThrow(/object/);
+    expect(() => plan({ workflow: { ...quick, extra: 1 } })).toThrow(/not extra/);
+    expect(() => plan({ workflow: { ...quick, steps: [] } })).toThrow(/at least one step/);
+    expect(() =>
+      plan({ workflow: { ...quick, orchestrator: { agent: "gpt", model: "x" } } }),
+    ).toThrow(/one of claude-code, codex/);
+    const step = (extra: object) => ({
+      ...quick,
+      steps: [{ kind: "work", name: "Fix", models: [], parallel: 2 }, extra],
+    });
+    expect(() =>
+      plan({ workflow: step({ kind: "work", name: "fix", models: [], parallel: 1 }) }),
+    ).toThrow(/taken/);
+    expect(() =>
+      plan({ workflow: step({ kind: "work", name: "More", models: [], parallel: 9 }) }),
+    ).toThrow(/between 1 and 8/);
+    expect(() =>
+      plan({
+        workflow: step({
+          kind: "review",
+          name: "Check",
+          models: [],
+          reviewerApproves: false,
+          orchestratorAgrees: false,
+          backTo: "Fix",
+          limit: 2,
+        }),
+      }),
+    ).toThrow(/passes the work/);
+    expect(() =>
+      plan({
+        workflow: step({
+          kind: "review",
+          name: "Check",
+          models: [],
+          reviewerApproves: true,
+          orchestratorAgrees: true,
+          backTo: "Later",
+          limit: 2,
+        }),
+      }),
+    ).toThrow(/before it/);
+    expect(() =>
+      plan({
+        workflow: step({ kind: "review", name: "Check", models: [], backTo: "Fix", limit: 2 }),
+      }),
+    ).toThrow(/reviewerApproves/);
+    expect(() => plan({ workflow: step({ kind: "plan", name: "P" }) })).toThrow(/work or review/);
+  });
+
+  it("are asked about, and made and sent when the user allows it", async () => {
+    const done = handle(request("settings_change", { workflow: quick, reason: "for small fixes" }));
+    await settle();
+    expect(workflows.list).toHaveLength(1);
+    expect(settingsAsk.asking?.changes[0].field).toBe("workflow.Quick fix");
+    allowChange();
+    await done;
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual([
+      "Build and review",
+      "Quick fix",
+    ]);
+    expect(sets.at(-1)).toMatchObject({ workflows: { default: "Build and review" } });
+    expect(answers[0].content).toMatch(/allowed the change\. Workflow Quick fix is now/);
+  });
+
+  it("are left as they were when the user declines", async () => {
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    declineChange();
+    await done;
+    expect(workflows.list).toHaveLength(1);
+    expect(workflows.default).toBe("Build and review");
+    expect(sets).toEqual([]);
+  });
+
+  it("can be undone, which puts back the workflows as they were", async () => {
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    allowChange();
+    await done;
+    expect(workflows.list).toEqual([]);
+    undoChange();
+    expect(workflows.list).toEqual([defaultWorkflow()]);
+    expect(workflows.default).toBe("Build and review");
+  });
+
+  it("are refused at once, without asking, when a call writes one that will not do", async () => {
+    await handle(request("settings_change", { workflow: { ...quick, steps: [] } }));
+    expect(settingsAsk.asking).toBeNull();
+    expect(answers[0].error).toMatch(/at least one step/);
+  });
+
+  it("which a project follows is not the agent's to change", () => {
+    expect(() => plan({ workflowOverrides: {} })).toThrow(/no setting called/);
   });
 });

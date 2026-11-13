@@ -23,7 +23,7 @@
  * refused with a word saying they are the user's, in the settings.
  */
 
-import { core, type SettingsRequest } from "$lib/core";
+import { core, type Settings, type SettingsRequest } from "$lib/core";
 import {
   COLOUR_TOKENS,
   SHAPE_TOKENS,
@@ -49,6 +49,17 @@ import {
   type PresetName,
 } from "$lib/keys.svelte";
 import { label, sessions } from "$lib/sessions.svelte";
+import { AGENT_ORDER, CODEX_DEFAULT, modelsOf } from "$lib/models";
+import {
+  describeWorkflow,
+  listProblem,
+  readWorkflow,
+  MOST_PARALLEL,
+  MOST_ROUNDS,
+  MOST_STEPS,
+  setWorkflows,
+  workflowsSettings,
+} from "$lib/workflows.svelte";
 import { setUserStyles, styleProblem, userStyles } from "$lib/userStyles.svelte";
 import {
   INTERFACE_FONTS,
@@ -90,6 +101,9 @@ interface Next {
   terminalFont?: MonoName;
   interfaceFont?: SansName;
   keys?: Keymap;
+  /** The whole set of workflows, when one is added, changed, deleted or
+      marked the default. */
+  workflows?: Settings["workflows"];
 }
 
 export interface Ask {
@@ -231,6 +245,8 @@ export function describeSettings(): string {
       .map(([token, most]) => `${token} up to ${most}px`)
       .join(", ")}. A token left out keeps the default palette's value.`,
     "",
+    ...describeWorkflows(),
+    "",
     `userStyles: ${userStyles.on} (true or false): whether the user's own stylesheet is laid over the app's.`,
     userStyles.problem !== null
       ? `The user's stylesheet on disk is not used: ${userStyles.problem}.`
@@ -241,6 +257,22 @@ export function describeSettings(): string {
     "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the accounts, how long past sessions stay listed, the notifications and the chime are the user's to change, in the settings.",
   ];
   return lines.join("\n");
+}
+
+/** The workflows as the agent reads them, with the shape it writes one in. */
+function describeWorkflows(): string[] {
+  const held = workflowsSettings();
+  return [
+    "",
+    "workflows: a workflow says which model a session starts on, the orchestrator, and the steps it hands out in order. The user's:",
+    held.list.length === 0
+      ? "  none."
+      : `\`\`\`json\n${JSON.stringify(held.list, null, 2)}\n\`\`\``,
+    held.default === null
+      ? "New sessions start with no workflow."
+      : `New sessions start with the workflow ${held.default}.`,
+    `Change one with settings_change's workflow argument, a whole workflow that replaces the one of its name or adds one: {"name", "orchestrator": {"agent", "model"}, "steps": [...]}. A step is {"kind": "work", "name", "models", "parallel"} or {"kind": "review", "name", "models", "reviewerApproves", "orchestratorAgrees", "backTo", "limit"}. models is a list of {"agent", "model"} and empty means any model; the first is used unless there is a reason to pick another. parallel is how many sessions run at once, 1 to ${MOST_PARALLEL}. A review passes when the reviewer approves, the orchestrator agrees, or both, so one is true; backTo names an earlier step and limit, 1 to ${MOST_ROUNDS}, is how many times it goes back before the user is asked. Names are unique, a workflow has 1 to ${MOST_STEPS} steps and the first does work. The agents are ${AGENT_ORDER.join(" and ")}: claude-code takes the models ${modelsOf("claude-code").map((option) => option.model).join(", ")}, and codex takes ${CODEX_DEFAULT}, its own default. deleteWorkflow takes a workflow's name away and defaultWorkflow names the one new sessions start with, or null for none. Which workflow a project follows is the user's to choose.`,
+  ];
 }
 
 /** How much of the user's sheet the settings tool reads out. */
@@ -295,6 +327,9 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
         break;
       case "keyPreset":
       case "keys":
+      case "workflow":
+      case "deleteWorkflow":
+      case "defaultWorkflow":
         break;
       case "userStyles":
         if (typeof value !== "boolean") throw new Error("userStyles is true or false.");
@@ -346,7 +381,93 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
     next.keys = table;
   }
 
-  return { next, changes: changesOf(next) };
+  const planned = planWorkflows(args);
+  if (planned !== null) next.workflows = planned.next;
+
+  return {
+    next,
+    changes: [...changesOf(next), ...(planned === null ? [] : planned.changes)],
+  };
+}
+
+/** What the workflow arguments of a call would make of the workflows: one
+    added or replaced by its name, one deleted, the default named. Checked
+    whole. Null when the call has none of them. */
+function planWorkflows(
+  args: Record<string, unknown>,
+): { next: Settings["workflows"]; changes: Change[] } | null {
+  const { workflow, deleteWorkflow, defaultWorkflow } = args;
+  if (workflow === undefined && deleteWorkflow === undefined && defaultWorkflow === undefined) {
+    return null;
+  }
+  const before = workflowsSettings();
+  const list = [...before.list];
+  let chosen = before.default;
+  const overrides = { ...before.overrides };
+  const changes: Change[] = [];
+
+  if (workflow !== undefined) {
+    const written = readWorkflow(workflow);
+    const at = list.findIndex((held) => held.name === written.name);
+    const was = at < 0 ? undefined : list[at];
+    if (at < 0) list.push(written);
+    else list[at] = written;
+    if (was === undefined || JSON.stringify(was) !== JSON.stringify(written)) {
+      changes.push({
+        field: `workflow.${written.name}`,
+        label: `Workflow ${written.name}`,
+        from: was === undefined ? "none" : describeWorkflow(was),
+        to: `${describeWorkflow(written)}${was === undefined ? ", new" : ""}`,
+      });
+    }
+  }
+
+  if (deleteWorkflow !== undefined) {
+    if (typeof deleteWorkflow !== "string") {
+      throw new Error("deleteWorkflow is the name of a workflow.");
+    }
+    const at = list.findIndex((held) => held.name === deleteWorkflow);
+    if (at < 0) {
+      throw new Error(
+        `There is no workflow called ${deleteWorkflow}; the workflows are ${list.map((held) => held.name).join(", ") || "none"}.`,
+      );
+    }
+    changes.push({
+      field: `workflow.${deleteWorkflow}`,
+      label: `Workflow ${deleteWorkflow}`,
+      from: describeWorkflow(list[at]),
+      to: "deleted",
+    });
+    list.splice(at, 1);
+    if (chosen === deleteWorkflow) chosen = null;
+    for (const [project, choice] of Object.entries(overrides)) {
+      if (choice === deleteWorkflow) delete overrides[project];
+    }
+  }
+
+  if (defaultWorkflow !== undefined) {
+    if (defaultWorkflow !== null && typeof defaultWorkflow !== "string") {
+      throw new Error("defaultWorkflow is the name of a workflow, or null for none.");
+    }
+    chosen = defaultWorkflow;
+  }
+  if (chosen !== null && !list.some((held) => held.name === chosen)) {
+    throw new Error(
+      `There is no workflow called ${chosen}; the workflows are ${list.map((held) => held.name).join(", ") || "none"}.`,
+    );
+  }
+  if (chosen !== before.default) {
+    changes.push({
+      field: "defaultWorkflow",
+      label: "Workflow for new sessions",
+      from: before.default ?? "none",
+      to: chosen ?? "none",
+    });
+  }
+
+  const problem = listProblem(list);
+  if (problem !== null) throw new Error(problem);
+  return { next: { list, default: chosen, overrides }, changes };
 }
 
 /** The lines a change shows the user: only what actually moves. */
@@ -567,6 +688,7 @@ async function take(next: Next): Promise<() => void> {
     keys: { ...keys.bindings },
     themes: { ...theme.themes },
     userStyles: userStyles.on,
+    workflows: workflowsSettings(),
   };
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
@@ -576,6 +698,7 @@ async function take(next: Next): Promise<() => void> {
   if (next.interfaceFont !== undefined) setSans(next.interfaceFont);
   if (next.keys !== undefined) setBindings(next.keys);
   if (next.userStyles !== undefined) setUserStyles(next.userStyles);
+  if (next.workflows !== undefined) setWorkflows(next.workflows);
   return () => {
     if (next.css !== undefined) void core().stylesSet(sheet).catch(() => {});
     if (next.userStyles !== undefined) setUserStyles(before.userStyles);
@@ -586,6 +709,7 @@ async function take(next: Next): Promise<() => void> {
     if (next.terminalFont !== undefined) setMono(before.terminalFont);
     if (next.interfaceFont !== undefined) setSans(before.interfaceFont);
     if (next.keys !== undefined) setBindings(before.keys);
+    if (next.workflows !== undefined) setWorkflows(before.workflows);
   };
 }
 
