@@ -1,4 +1,5 @@
 import { core, type ProjectInfo } from "$lib/core";
+import { closeOwner } from "$lib/browser.svelte";
 import { lastSegment } from "$lib/paths";
 import {
   activeSession,
@@ -195,6 +196,7 @@ async function openRequested() {
 export function close(path: string) {
   closeProject(path);
   closeShells(path);
+  void closeOwner({ kind: "project", path });
   workspace.open = workspace.open.filter((project) => project.path !== path);
 
   if (workspace.active !== path) {

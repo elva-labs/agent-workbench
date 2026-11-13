@@ -4,6 +4,7 @@ import type { MediaItem } from "$lib/media.svelte";
 import {
   browser,
   hide as hideBrowser,
+  ownTabs,
   open as openBrowserTab,
   show as showBrowserView,
 } from "$lib/browser.svelte";
@@ -543,7 +544,7 @@ export function showBrowser() {
 /** Shows the browser, opening a tab first when none is open yet: what the
     "⋯" menu's Browser item does. */
 export async function openBrowser() {
-  if (browser.tabs.length === 0) await openBrowserTab();
+  if (ownTabs().length === 0) await openBrowserTab();
   showBrowser();
 }
 

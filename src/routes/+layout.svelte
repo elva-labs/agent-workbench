@@ -29,7 +29,7 @@
   import { followSettings } from "$lib/preferences.svelte";
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
-  import { loadStarted } from "$lib/conductor.svelte";
+  import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
   import { reopen } from "$lib/reopen.svelte";
@@ -50,6 +50,7 @@
     loadRemembered();
     loadUsed();
     loadStarted();
+    const stopStops = watchStops();
     let closed = false;
     let stopSettings = () => {};
     void followSettings().then((stop) => {
@@ -66,6 +67,7 @@
     return () => {
       closed = true;
       stopSettings();
+      stopStops();
       stopOpening();
       stopReopen();
     };

@@ -13,15 +13,17 @@
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
 use crate::plugins::{self, PublishedTool};
 use crate::show::{
-    self, resolve, Answer, BrowserRequest, ConductRequest, DiffRequest, NotifyRequest,
-    PresentRequest, Request, SettingsRequest, ShowRequest, TerminalRequest, ToolRequest,
-    BROWSER_TOOLS, CONDUCT_TOOLS, MEDIA_EXTENSIONS, SETTINGS_TOOLS,
+    self, resolve, Answer, BrowserRequest, ConductCancel, ConductRequest, DiffRequest,
+    NotifyRequest, PresentRequest, Request, SettingsRequest, ShowRequest, TerminalRequest,
+    ToolRequest, BROWSER_TOOLS, CONDUCT_TOOLS, MEDIA_EXTENSIONS, SETTINGS_TOOLS,
 };
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -126,6 +128,62 @@ impl Default for Waits {
             answer: ANSWER_WAIT,
             watching: WATCH_WAIT,
             longest: WATCH_CAP,
+        }
+    }
+}
+
+/// The calls being waited on in this process, by the agent's request id, so
+/// a cancellation arriving on another thread reaches the one it names.
+static IN_FLIGHT: Mutex<Vec<(String, Arc<AtomicBool>)>> = Mutex::new(Vec::new());
+
+/// A call's place among those in flight, for as long as it is held.
+struct InFlight(String);
+
+impl InFlight {
+    fn new(id: &Value, cancelled: &Arc<AtomicBool>) -> Self {
+        let key = id.to_string();
+        if let Ok(mut calls) = IN_FLIGHT.lock() {
+            calls.push((key.clone(), Arc::clone(cancelled)));
+        }
+        Self(key)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        if let Ok(mut calls) = IN_FLIGHT.lock() {
+            if let Some(at) = calls.iter().position(|(key, _)| *key == self.0) {
+                calls.remove(at);
+            }
+        }
+    }
+}
+
+/// Marks the call with this request id as given up on.
+fn cancel_call(request: &Value) {
+    let key = request.to_string();
+    if let Ok(calls) = IN_FLIGHT.lock() {
+        for (id, cancelled) in calls.iter() {
+            if *id == key {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+/// Marks every call in flight as given up on.
+fn cancel_all() {
+    cancel_where(|_| true);
+}
+
+/// Marks the calls in flight whose request id satisfies `which` as given
+/// up on.
+fn cancel_where(which: impl Fn(&str) -> bool) {
+    if let Ok(calls) = IN_FLIGHT.lock() {
+        for (id, cancelled) in calls.iter() {
+            if which(id) {
+                cancelled.store(true, Ordering::SeqCst);
+            }
         }
     }
 }
@@ -254,7 +312,7 @@ pub fn browser_tools() -> Vec<Value> {
 pub fn browser_open_tool() -> Value {
     json!({
         "name": "browser_open",
-        "description": "Opens a url in a new tab in the user's Agent Workbench browser and shows it in the viewer: at once when the user is looking at this session, else behind what they have in front, coming forward when they switch to this session. Use this when the user asks to see a page or a web app, or when you want to look at one yourself. Answers with the tab's id, its url and its title.",
+        "description": "Opens a url in a new tab of this session's, in the user's Agent Workbench browser, and makes it the session's front tab. It shows in the viewer at once when the user is looking at this session, else behind what they have in front, coming forward when they switch to this session. Use this when the user asks to see a page or a web app, or when you want to look at one yourself. Answers with the tab's id, its url and its title.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -268,7 +326,7 @@ pub fn browser_open_tool() -> Value {
 pub fn browser_tabs_tool() -> Value {
     json!({
         "name": "browser_tabs",
-        "description": "The tabs open in the user's Agent Workbench browser: each one's id, url and title, whether it is the active tab, whether it is loading, and its last load error. Call it to see what is open before acting on a tab by id.",
+        "description": "The tabs this session has open in the user's Agent Workbench browser, and only those: each one's id, url and title, whether it is the session's front tab, marked active, whether it is loading, and its last load error. Tabs that belong to other sessions or to the project are not listed and cannot be acted on. Call it to see what is open before acting on a tab by id.",
         "inputSchema": { "type": "object", "properties": {} }
     })
 }
@@ -280,7 +338,7 @@ pub fn browser_navigate_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." },
                 "url": { "type": "string", "description": "The address to go to." },
                 "action": { "type": "string", "enum": ["back", "forward", "reload"], "description": "A step to take instead of going to an address." }
             }
@@ -295,7 +353,7 @@ pub fn browser_snapshot_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." }
             }
         }
     })
@@ -308,7 +366,7 @@ pub fn browser_click_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." },
                 "ref": { "type": "string", "description": "An element's ref, from browser_snapshot." }
             },
             "required": ["ref"]
@@ -323,7 +381,7 @@ pub fn browser_type_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." },
                 "ref": { "type": "string", "description": "An element's ref, from browser_snapshot." },
                 "text": { "type": "string", "description": "The text to type." },
                 "submit": { "type": "boolean", "description": "Press Enter and submit the element's form after typing." }
@@ -340,7 +398,7 @@ pub fn browser_console_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." }
             }
         }
     })
@@ -349,11 +407,11 @@ pub fn browser_console_tool() -> Value {
 pub fn browser_screenshot_tool() -> Value {
     json!({
         "name": "browser_screenshot",
-        "description": "A screenshot of the tab, as a PNG you can read as an image. The tab is brought to the front and the browser shown first, since a hidden view cannot be captured; while the user is looking at another session the call is refused rather than shown over their work. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
+        "description": "A screenshot of the tab, as a PNG you can read as an image. The tab is brought to the front of this session's tabs and the browser shown first, since a hidden view cannot be captured; while the user is looking at another session the call is refused rather than shown over their work. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." }
             }
         }
     })
@@ -366,7 +424,7 @@ pub fn browser_eval_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab this session does not own is refused." },
                 "script": { "type": "string", "description": "The function body to run." }
             },
             "required": ["script"]
@@ -377,11 +435,11 @@ pub fn browser_eval_tool() -> Value {
 pub fn browser_close_tool() -> Value {
     json!({
         "name": "browser_close",
-        "description": "Closes a tab.",
+        "description": "Closes one of this session's tabs.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. A tab this session does not own is refused." }
             },
             "required": ["tab"]
         }
@@ -661,9 +719,10 @@ pub fn serve(home: &Path) {
         }));
         answering.retain(|thread| !thread.is_finished());
     }
-    // Stdin ending is the agent done asking, not necessarily done
-    // listening: an answer on its way out is still written before the
-    // process ends. Each one is bounded by its own wait.
+    // Stdin ending is the agent gone, so no call still waiting has anyone
+    // to answer. Each one stops, tells the window, and is joined before
+    // the process ends.
+    cancel_all();
     for thread in answering {
         let _ = thread.join();
     }
@@ -714,8 +773,14 @@ pub fn handle_with(
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     if id.is_null() {
-        // A notification: initialized, cancelled, whatever else. Nothing
-        // to say back.
+        // A notification: initialized, whatever else. Nothing to say back.
+        // A call the agent gives up on is the one that matters here: the
+        // call waiting on it stops, and the window is told.
+        if method == "notifications/cancelled" {
+            if let Some(request) = params.get("requestId") {
+                cancel_call(request);
+            }
+        }
         return None;
     }
     let result = match method {
@@ -727,7 +792,11 @@ pub fn handle_with(
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": all_tools(home) })),
-        "tools/call" => call(home, cwd, session, &params, waits),
+        "tools/call" => {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let _registered = InFlight::new(&id, &cancelled);
+            call(home, cwd, session, &params, waits, &cancelled)
+        }
         _ => return Some(error(id, -32601, &format!("no such method: {method}"))),
     };
     Some(match result {
@@ -752,6 +821,7 @@ fn call(
     session: Option<&str>,
     params: &Value,
     waits: Waits,
+    cancelled: &AtomicBool,
 ) -> Result<Value, String> {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -763,7 +833,7 @@ fn call(
         "terminal" => terminal_call(home, cwd, session, &arguments),
         "notify" => notify_call(home, cwd, session, &arguments),
         _ if CONDUCT_TOOLS.contains(&name) => {
-            conduct_call(home, cwd, session, name, &arguments, waits)
+            conduct_call(home, cwd, session, name, &arguments, waits, cancelled)
         }
         _ if BROWSER_TOOLS.contains(&name) => {
             browser_call(home, cwd, session, name, &arguments, waits)
@@ -794,6 +864,7 @@ fn conduct_call(
     name: &str,
     arguments: &Value,
     waits: Waits,
+    cancelled: &AtomicBool,
 ) -> Result<Value, String> {
     let id = uuid::Uuid::new_v4().to_string();
     show::append(
@@ -819,7 +890,19 @@ fn conduct_call(
     } else {
         waits.answer
     };
-    let Some(answer) = await_answer(home, &id, wait) else {
+    let Some(answer) = await_answer_unless(home, &id, wait, cancelled) else {
+        if cancelled.load(Ordering::SeqCst) {
+            // The window is told so it does not report to a call no one is
+            // listening to.
+            let _ = show::append(
+                home,
+                &Request::ConductCancel(ConductCancel {
+                    id: id.clone(),
+                    cwd: cwd.to_string_lossy().to_string(),
+                }),
+            );
+            return Err(format!("the {name} call was cancelled"));
+        }
         return Err(if watching {
             "nothing happened within that time: no session stopped and none asked anything. Call wait again to go on waiting.".to_string()
         } else {
@@ -940,6 +1023,16 @@ fn plugin_call(
 
 /// Waits for the plugin's answer, and takes it away once it is read.
 fn await_answer(home: &Path, id: &str, wait: Duration) -> Option<Answer> {
+    await_answer_unless(home, id, wait, &AtomicBool::new(false))
+}
+
+/// The same, giving up as soon as the call is cancelled.
+fn await_answer_unless(
+    home: &Path,
+    id: &str,
+    wait: Duration,
+    cancelled: &AtomicBool,
+) -> Option<Answer> {
     let path = show::answer_path(home, id);
     let until = Instant::now() + wait;
     loop {
@@ -950,7 +1043,7 @@ fn await_answer(home: &Path, id: &str, wait: Duration) -> Option<Answer> {
                 error: Some("the plugin answered with something unreadable".to_string()),
             }));
         }
-        if Instant::now() >= until {
+        if Instant::now() >= until || cancelled.load(Ordering::SeqCst) {
             return None;
         }
         std::thread::sleep(POLL);
@@ -2122,6 +2215,115 @@ mod tests {
             answer["result"]["content"][0]["text"],
             "s-2 is asking: which branch?"
         );
+    }
+
+    #[test]
+    fn a_cancelled_wait_stops_waiting_and_tells_the_window() {
+        let home = home("conduct-wait-cancelled");
+        let waiting = {
+            let home = home.clone();
+            std::thread::spawn(move || {
+                handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":"cancel-me","method":"tools/call","params":{"name":"wait","arguments":{"seconds":30}}}"#, Waits::default()).unwrap()
+            })
+        };
+        // The cancellation is sent once the call is being waited on.
+        while !show::requests_path(&home).exists() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let started = Instant::now();
+        let none = handle(
+            &home,
+            Path::new("/p"),
+            None,
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"cancel-me"}}"#,
+        );
+        assert!(none.is_none());
+        let answer = waiting.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(answer["result"]["isError"], true);
+        let text = std::fs::read_to_string(show::requests_path(&home)).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        let Some(Request::Conduct(call)) = show::classify(lines[0]) else {
+            panic!("not a conduct request");
+        };
+        let Some(Request::ConductCancel(cancel)) = show::classify(lines[1]) else {
+            panic!("not a cancel");
+        };
+        assert_eq!(cancel.id, call.id);
+    }
+
+    /// A wait in a thread of its own, with the id the agent called it by.
+    fn wait_in_thread(
+        home: &Path,
+        id: &str,
+        seconds: u64,
+        waits: Waits,
+    ) -> std::thread::JoinHandle<Value> {
+        let home = home.to_path_buf();
+        let line = format!(
+            r#"{{"jsonrpc":"2.0","id":"{id}","method":"tools/call","params":{{"name":"wait","arguments":{{"seconds":{seconds}}}}}}}"#
+        );
+        std::thread::spawn(move || handle_with(&home, Path::new("/p"), None, &line, waits).unwrap())
+    }
+
+    /// How many of this kind of line the request log holds.
+    fn logged(home: &Path, kind: &str) -> usize {
+        std::fs::read_to_string(show::requests_path(home))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains(kind))
+            .count()
+    }
+
+    #[test]
+    fn cancelling_one_call_leaves_another_waiting() {
+        let home = home("conduct-wait-other");
+        let waits = Waits {
+            answer: Duration::from_millis(50),
+            watching: Duration::from_millis(1500),
+            longest: Duration::from_secs(30),
+        };
+        let cancelled = wait_in_thread(&home, "cancel-me", 30, waits);
+        let other = wait_in_thread(&home, "keep-me", 1, waits);
+        while logged(&home, r#""kind":"conduct""#) < 2 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let none = handle(
+            &home,
+            Path::new("/p"),
+            None,
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"cancel-me"}}"#,
+        );
+        assert!(none.is_none());
+        let answer = cancelled.join().unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        // The other call was still waiting and ran out its own time.
+        let answer = other.join().unwrap();
+        let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.starts_with("nothing happened within that time"),
+            "{text}"
+        );
+        assert_eq!(logged(&home, "conductCancel"), 1);
+    }
+
+    #[test]
+    fn calls_still_waiting_when_the_agent_goes_are_cancelled() {
+        let home = home("conduct-wait-eof");
+        let waits = Waits::default();
+        let first = wait_in_thread(&home, "eof-1", 30, waits);
+        let second = wait_in_thread(&home, "eof-2", 30, waits);
+        while logged(&home, r#""kind":"conduct""#) < 2 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let started = Instant::now();
+        // Other tests hold calls of their own in this process.
+        cancel_where(|id| id.starts_with("\"eof-"));
+        assert_eq!(first.join().unwrap()["result"]["isError"], true);
+        assert_eq!(second.join().unwrap()["result"]["isError"], true);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(logged(&home, "conductCancel"), 2);
     }
 
     #[test]

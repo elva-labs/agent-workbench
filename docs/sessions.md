@@ -43,6 +43,9 @@ which files the session with the earlier ones, behind their row. Two steps,
 so nothing running is archived by accident. On the keyboard, Delete does
 either for the row under the cursor.
 
+Closing a session also closes the browser tabs it owns; see
+[browser](browser.md#whose-tabs-they-are).
+
 The kill lives in one place: closing a session stops its pty and clears the
 id, and the terminal's own teardown does not, so a second signal never lands
 on an id that may since have been reused. On shutdown the pty master closes
