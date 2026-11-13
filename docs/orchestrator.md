@@ -39,10 +39,14 @@ prompt, on a worktree of its own if it asks for one, and answers with the
 new session's id. `send` types a line into a running session, and Enter after it on its
 own, as a person does. `wait` sits
 until a session stops working, asks for permission or ends, or until the
-seconds it was given run out. A stop is told once: the wait that answers with it
-and a listing that shows it each count, so a session that stopped between two
-waits is answered by the next one at once, and one that went back to work in
-the meantime is waited out as usual. `read` answers with the last lines on a
+seconds it was given run out. A stop is told once: the wait that answers with
+it and a listing that shows it each count, so a session that stopped between two waits is answered
+by the next one at once, and one that went back to work in the meantime is
+waited out as usual. A wait over all of a caller's sessions answers first with a
+stop the caller has not been told of; a session that ended or asked, and
+was told so, is answered again only when none of the others is still running.
+A wait the agent gave up on, because the user interrupted it, ends without
+telling anything. `read` answers with the last lines on a
 session's screen, as you see them. `stop` stops a session and files it
 with the sessions to resume, behind the fold, rather than leaving a row
 of it under the project. A start can carry a name for the work, which the

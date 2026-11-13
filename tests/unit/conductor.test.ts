@@ -3,6 +3,7 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import {
   CAP,
+  cancelled,
   ENTER_AFTER,
   OUTCOME_ASK,
   allow,
@@ -17,6 +18,7 @@ import {
   startedBy,
   startedFor,
   stopAll,
+  watchStops,
   worktreeName,
 } from "$lib/conductor.svelte";
 import {
@@ -159,8 +161,11 @@ async function startAllowed(
   return row;
 }
 
+let unwatch: () => void;
+
 beforeEach(() => {
   vi.useFakeTimers();
+  unwatch = watchStops();
   resetWorkspace();
   resetSessions();
   resetConductor();
@@ -198,6 +203,7 @@ function restarted() {
 }
 
 afterEach(() => {
+  unwatch();
   vi.useRealTimers();
 });
 
@@ -243,7 +249,7 @@ describe("the sessions tool", () => {
     session.needs = "permission";
     await handle(call("sessions"));
     expect(last().content).toBe(
-      `sid-1  fix the cache  ${A}  claude-code  asking for permission  stopped and not reported yet  last line: which cache did you mean?`,
+      `sid-1  fix the cache  ${A}  claude-code  asking for permission  not reported to you yet  last line: which cache did you mean?`,
     );
   });
 
@@ -294,7 +300,7 @@ describe("the sessions tool", () => {
     row.working = false;
     flushSync();
     await handle(call("sessions"));
-    expect(last().content).toContain("waiting  stopped and not reported yet");
+    expect(last().content).toContain("waiting  not reported to you yet");
     await handle(call("sessions"));
     expect(last().content).not.toContain("not reported");
     const again = handle(call("wait", { session: "sid-1", seconds: 5 }));
@@ -834,14 +840,112 @@ describe("waiting", () => {
     expect(last().content).toContain("stopped working");
   });
 
-  it("answers at once with an untold end or permission request", async () => {
+  it("tells a permission request once in a listing, and again when it ends instead", async () => {
     const row = own(A, "pty-1", "sid-1");
     row.working = true;
     flushSync();
     exact("sid-1", "permission");
     flushSync();
+    await handle(call("sessions"));
+    expect(last().content).toContain(
+      "asking for permission  not reported to you yet",
+    );
+    await handle(call("sessions"));
+    expect(last().content).not.toContain("not reported");
+    row.status = "exited";
+    flushSync();
+    await handle(call("sessions"));
+    expect(last().content).toContain("exited  not reported to you yet");
+  });
+
+  it("reports a stop that follows a told one when it is another kind of rest", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    row.working = true;
+    flushSync();
+    row.working = false;
+    flushSync();
     await handle(call("wait", { session: "sid-1" }));
-    expect(last().content).toContain("asking for permission");
+    expect(last().content).toContain("stopped working");
+    row.status = "exited";
+    flushSync();
+    await handle(call("wait", { session: "sid-1" }));
+    expect(last().content).toContain("exited");
+  });
+
+  it("answers an untold stop before a sibling that ended and was told", async () => {
+    const gone = own(A, "pty-1", "sid-1", "caller-1");
+    const other = own(A, "pty-2", "sid-2", "caller-1");
+    gone.working = true;
+    other.working = true;
+    flushSync();
+    gone.status = "exited";
+    flushSync();
+    await handle(call("wait", {}, { session: "caller-1" }));
+    expect(last().content).toContain("sid-1 exited");
+    other.working = false;
+    flushSync();
+    await handle(call("wait", {}, { session: "caller-1" }));
+    expect(last().content).toContain("Session sid-2 stopped working");
+  });
+
+  it("waits out a working session rather than repeating a sibling that ended and was told", async () => {
+    const gone = own(A, "pty-1", "sid-1", "caller-1");
+    const other = own(A, "pty-2", "sid-2", "caller-1");
+    gone.working = true;
+    other.working = true;
+    flushSync();
+    gone.status = "exited";
+    flushSync();
+    await handle(call("wait", {}, { session: "caller-1" }));
+    const answering = handle(call("wait", {}, { session: "caller-1" }));
+    await settle();
+    expect(answers).toHaveLength(1);
+    other.working = false;
+    flushSync();
+    await answering;
+    expect(last().content).toContain("sid-2 stopped working");
+  });
+
+  it("repeats an ended session when nothing else can move", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    row.working = true;
+    flushSync();
+    row.status = "exited";
+    flushSync();
+    await handle(call("wait", { session: "sid-1" }));
+    await handle(call("wait", { session: "sid-1" }));
+    expect(answers).toHaveLength(2);
+    expect(last().content).toContain("exited");
+  });
+
+  it("does not tell a wait the agent gave up on, and answers it nothing", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    row.working = true;
+    const abandoned = call("wait", { session: "sid-1" });
+    const answering = handle(abandoned);
+    await settle();
+    cancelled(abandoned.id);
+    await answering;
+    expect(answers).toHaveLength(0);
+    row.working = false;
+    flushSync();
+    await handle(call("wait", { session: "sid-1" }));
+    expect(last().content).toBe(
+      "Session sid-1 stopped working. It has left no line.",
+    );
+  });
+
+  it("ignores the cancellation of a call it is not holding", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    row.working = true;
+    const held = call("wait", { session: "sid-1" });
+    const answering = handle(held);
+    await settle();
+    cancelled("someone-else");
+    row.working = false;
+    flushSync();
+    await answering;
+    expect(last().content).toContain("stopped working");
   });
 
   it("gives up after the seconds it was given", async () => {

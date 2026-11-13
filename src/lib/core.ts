@@ -116,6 +116,13 @@ export interface NotifyRequest {
   session: string | null;
 }
 
+/** A conductor call the agent gave up on. */
+export interface ConductCancel {
+  /** The call, as the request named it. */
+  id: string;
+  cwd: string;
+}
+
 /** A call an agent made on one of the conductor's tools: what one session
     asks about the projects, the sessions, and the ones it starts. The
     window answers every one, by id. */
@@ -685,6 +692,11 @@ export interface Core {
   onConductRequest(
     handler: (request: ConductRequest) => void,
   ): Promise<() => void>;
+  /** The agent gave up on a conductor call: nobody is waiting for its
+      answer any more. */
+  onConductCancel(
+    handler: (request: ConductCancel) => void,
+  ): Promise<() => void>;
   /** The window's one answer to a conductor call: the text the agent
       reads, or the reason it could not be done. The directory the call
       came from says which machine waits for it. */
@@ -1059,6 +1071,11 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onConductCancel(handler) {
+    return listen<ConductCancel>("conduct_cancel", (event) =>
+      handler(event.payload),
+    );
+  },
   conductAnswer: (id, cwd, content, error) =>
     invoke<void>("conduct_answer", { id, cwd, content, error }),
   async onBrowserRequest(handler) {
@@ -1307,6 +1324,9 @@ const detachedCore: Core = {
     return () => {};
   },
   async onConductRequest() {
+    return () => {};
+  },
+  async onConductCancel() {
     return () => {};
   },
   async conductAnswer() {},
