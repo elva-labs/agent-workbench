@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrowserRequest, BrowserTab } from "$lib/core";
+import type { BrowserOwner, BrowserRequest, BrowserTab } from "$lib/core";
 
 const answers: {
   id: string;
@@ -7,21 +7,24 @@ const answers: {
   content: string | null;
   error: string | null;
 }[] = [];
-const opened: { url: string | null; session: string | null; behind: boolean }[] = [];
+const opened: { url: string | null; owner: BrowserOwner; agent: boolean }[] = [];
 const activated: number[] = [];
 const closed: number[] = [];
+const closedOwners: BrowserOwner[] = [];
 const navigated: { id: number; address: string }[] = [];
 const stepped: { kind: string; id: number }[] = [];
 const clicked: { id: number | null; ref: string }[] = [];
 const typed: { id: number | null; ref: string; text: string; submit: boolean }[] = [];
 const evaluated: { id: number | null; script: string }[] = [];
 
-let openResult: unknown = { tabs: [], active: null };
+let openResult: unknown = { tabs: [], owner: null, active: null };
 let openError: string | null = null;
+/** When set, an open waits for it before answering. */
+let openGate: Promise<void> | null = null;
 let navigateError: string | null = null;
 let clickError: string | null = null;
 let typeError: string | null = null;
-let nextSnapshot: unknown = { tabs: [], active: null };
+let nextSnapshot: unknown = { tabs: [], owner: null, active: null };
 let snapshotText = "page text [ref=e1]";
 let consoleEntries: { level: string; text: string; time: number; url: string }[] = [];
 let screenshotPath = "/tmp/workbench-browser/1-fake.png";
@@ -29,14 +32,20 @@ let evalResult = "null";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
-    browserOpen: async (
-      url: string | null,
-      session: string | null,
-      behind = false,
-    ) => {
-      opened.push({ url, session, behind });
+    browserFocus: async () => ({
+      tabs: browser.tabs,
+      owner: browser.owner,
+      active: browser.active,
+    }),
+    browserOpen: async (url: string | null, owner: BrowserOwner, agent = false) => {
+      opened.push({ url, owner, agent });
+      if (openGate !== null) await openGate;
       if (openError !== null) throw new Error(openError);
       return openResult;
+    },
+    browserCloseOwner: async (owner: BrowserOwner) => {
+      closedOwners.push(owner);
+      return nextSnapshot;
     },
     browserClose: async (id: number) => {
       closed.push(id);
@@ -62,7 +71,7 @@ vi.mock("$lib/core", () => ({
     browserHome: async () => {},
     browserPlace: async () => {},
     browserHide: async () => {},
-    browserTabs: async () => ({ tabs: [], active: null }),
+    browserTabs: async () => ({ tabs: [], owner: null, active: null }),
     onBrowserTabs: async () => () => {},
     browserSnapshot: async (id: number | null) => {
       if (id === 999) throw new Error("no such tab");
@@ -100,9 +109,13 @@ import {
   create,
   reset as resetSessions,
   select,
+  sessions,
   started,
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+
+const PROJECT = "/home/ada/dev/demo";
+const HERE: BrowserOwner = { kind: "project", path: PROJECT };
 
 function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): BrowserTab {
   return {
@@ -111,6 +124,8 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
     title: "",
     home: url,
     opener: { kind: "user" },
+    owner: HERE,
+    front: true,
     loading: false,
     canGoBack: false,
     canGoForward: false,
@@ -136,6 +151,15 @@ function call(
   };
 }
 
+/** Drops every session but the one with the key given, as closing the
+    others would. */
+function resetSessionsKeeping(key: string) {
+  sessions.all = sessions.all.filter((session) => session.key !== key);
+}
+
+/** Lets a call run on to the point where it waits on the core. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 const last = () => answers[answers.length - 1];
 
 beforeEach(() => {
@@ -144,21 +168,31 @@ beforeEach(() => {
   resetHeld();
   resetSessions();
   resetWorkspace();
+  workspace.open.push({
+    path: PROJECT,
+    name: "demo",
+    repository: PROJECT,
+    isGit: true,
+  });
+  workspace.active = PROJECT;
+  browser.owner = HERE;
   answers.length = 0;
   opened.length = 0;
   activated.length = 0;
   closed.length = 0;
+  closedOwners.length = 0;
+  openGate = null;
   navigated.length = 0;
   stepped.length = 0;
   clicked.length = 0;
   typed.length = 0;
   evaluated.length = 0;
-  openResult = { tabs: [], active: null };
+  openResult = { tabs: [], owner: null, active: null };
   openError = null;
   navigateError = null;
   clickError = null;
   typeError = null;
-  nextSnapshot = { tabs: [], active: null };
+  nextSnapshot = { tabs: [], owner: null, active: null };
   snapshotText = "page text [ref=e1]";
   consoleEntries = [];
   screenshotPath = "/tmp/workbench-browser/1-fake.png";
@@ -168,34 +202,47 @@ beforeEach(() => {
 /** Two sessions in the demo project, the user looking at the second: a
     call from the first is from a session not on screen. */
 function twoSessions() {
-  workspace.open.push({
-    path: "/home/ada/dev/demo",
-    name: "demo",
-    repository: "/home/ada/dev/demo",
-    isGit: true,
-  });
-  workspace.active = "/home/ada/dev/demo";
-  const a = create("/home/ada/dev/demo");
+  const a = create(PROJECT);
   started(a.key, "pty-1", "s1");
-  const b = create("/home/ada/dev/demo");
+  const b = create(PROJECT);
   started(b.key, "pty-2", "s2");
-  return { a, b };
+  const owner = (key: string): BrowserOwner => ({ kind: "session", key });
+  browser.owner = owner(b.key);
+  return { a, b, ownerA: owner(a.key), ownerB: owner(b.key) };
 }
 
 describe("browser_open", () => {
-  it("opens the url, shows the browser, and answers with the tab", async () => {
-    openResult = { tabs: [tab(1, "https://example.com/", { title: "Example" })], active: 1 };
+  it("opens the url for the project on screen, shows the browser, and answers with the tab", async () => {
+    openResult = { tabs: [tab(1, "https://example.com/", { title: "Example" })], owner: HERE, active: 1 };
     await handle(call("browser_open", { url: "https://example.com" }));
-    expect(opened).toEqual([{ url: "https://example.com", session: null, behind: false }]);
+    expect(opened).toEqual([{ url: "https://example.com", owner: HERE, agent: true }]);
     expect(last().error).toBeNull();
     expect(last().content).toBe("Opened tab 1: https://example.com/, Example");
+    expect(browser.showing).toBe(true);
   });
 
-  it("opens the tab at once but shows the browser only when the user switches to the session", async () => {
-    const { a } = twoSessions();
-    openResult = { tabs: [tab(1, "https://example.com/")], active: 1 };
+  it("opens for the calling session, and shows it at once when that session is on screen", async () => {
+    const { b, ownerB } = twoSessions();
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerB })],
+      owner: ownerB,
+      active: 1,
+    };
+    await handle(call("browser_open", { url: "https://example.com" }, { session: "s2" }));
+    expect(opened).toEqual([{ url: "https://example.com", owner: ownerB, agent: true }]);
+    expect(b.key).toBeDefined();
+    expect(browser.showing).toBe(true);
+  });
+
+  it("opens the tab for its session at once but shows the browser only when the user switches to it", async () => {
+    const { a, ownerA } = twoSessions();
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: browser.owner,
+      active: null,
+    };
     await handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
-    expect(opened).toEqual([{ url: "https://example.com", session: "s1", behind: true }]);
+    expect(opened).toEqual([{ url: "https://example.com", owner: ownerA, agent: true }]);
     expect(last().content).toContain("Opened tab 1");
     expect(browser.showing).toBe(false);
     select(a.key);
@@ -204,23 +251,22 @@ describe("browser_open", () => {
     expect(browser.showing).toBe(true);
   });
 
-  it("opens behind the tab the user is on in another session, and brings it to the front on switching", async () => {
-    const { a } = twoSessions();
-    const theirs = tab(1, "http://localhost:4000/", { opener: { kind: "user" } });
+  it("leaves the tab the user is on alone, and brings the session's own to the front on switching", async () => {
+    const { a, b, ownerA, ownerB } = twoSessions();
+    const theirs = tab(1, "http://localhost:4000/", { owner: ownerB });
     browser.tabs = [theirs];
     browser.active = 1;
     browser.showing = true;
-    const mine = tab(2, "http://localhost:3000/", {
-      opener: { kind: "agent", session: "s1" },
-    });
-    openResult = { tabs: [theirs, mine], active: 1 };
+    const mine = tab(2, "http://localhost:3000/", { owner: ownerA, opener: { kind: "agent" }, front: false });
+    openResult = { tabs: [theirs, mine], owner: ownerB, active: 1 };
     await handle(call("browser_open", { url: "http://localhost:3000" }, { session: "s1" }));
-    expect(opened).toEqual([{ url: "http://localhost:3000", session: "s1", behind: true }]);
+    expect(opened).toEqual([{ url: "http://localhost:3000", owner: ownerA, agent: true }]);
     expect(last().content).toContain("Opened tab 2");
     expect(browser.active).toBe(1);
     expect(activated).toEqual([]);
+    expect(b.key).toBeDefined();
 
-    nextSnapshot = { tabs: [theirs, mine], active: 2 };
+    nextSnapshot = { tabs: [theirs, mine], owner: ownerA, active: 2 };
     select(a.key);
     switched(a.key);
     await Promise.resolve();
@@ -230,15 +276,13 @@ describe("browser_open", () => {
     expect(browser.showing).toBe(true);
   });
 
-  it("does nothing on switching when the tab it opened behind has since been closed", async () => {
-    const { a } = twoSessions();
+  it("does nothing on switching when the tab it opened has since been closed", async () => {
+    const { a, ownerA } = twoSessions();
     browser.showing = false;
-    const mine = tab(2, "http://localhost:3000/", {
-      opener: { kind: "agent", session: "s1" },
-    });
-    openResult = { tabs: [tab(1, "http://localhost:4000/"), mine], active: 1 };
+    const mine = tab(2, "http://localhost:3000/", { owner: ownerA, opener: { kind: "agent" } });
+    openResult = { tabs: [mine], owner: browser.owner, active: null };
     await handle(call("browser_open", { url: "http://localhost:3000" }, { session: "s1" }));
-    browser.tabs = [tab(1, "http://localhost:4000/")];
+    browser.tabs = [];
     select(a.key);
     switched(a.key);
     await Promise.resolve();
@@ -268,13 +312,36 @@ describe("browser_tabs", () => {
   it("lists each tab with its state", async () => {
     browser.tabs = [
       tab(1, "https://a.example/", { title: "A" }),
-      tab(2, "https://b.example/", { loading: true }),
+      tab(2, "https://b.example/", { loading: true, front: false }),
     ];
     browser.active = 1;
     await handle(call("browser_tabs"));
     const text = last().content!;
     expect(text).toContain("1  https://a.example/  A  active");
     expect(text).toContain("2  https://b.example/  (no title)  loading");
+  });
+
+  it("lists only the calling session's tabs, whichever session is on screen", async () => {
+    const { ownerA, ownerB } = twoSessions();
+    browser.tabs = [
+      tab(1, "https://a.example/", { owner: ownerA }),
+      tab(2, "https://b.example/", { owner: ownerB }),
+      tab(3, "https://a2.example/", { owner: ownerA, front: false }),
+    ];
+    await handle(call("browser_tabs", {}, { session: "s1" }));
+    expect(last().content).toContain("1  https://a.example/");
+    expect(last().content).toContain("3  https://a2.example/");
+    expect(last().content).not.toContain("b.example");
+    await handle(call("browser_tabs", {}, { session: "s2" }));
+    expect(last().content).toContain("2  https://b.example/");
+    expect(last().content).not.toContain("a.example");
+  });
+
+  it("says nothing is open for a session whose tabs are none, however many others have", async () => {
+    const { ownerB } = twoSessions();
+    browser.tabs = [tab(2, "https://b.example/", { owner: ownerB })];
+    await handle(call("browser_tabs", {}, { session: "s1" }));
+    expect(last().content).toBe("No tabs are open.");
   });
 });
 
@@ -414,9 +481,9 @@ describe("browser_console", () => {
 
 describe("browser_screenshot", () => {
   it("shows the browser, activates the named tab, and answers with the path", async () => {
-    browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/")];
+    browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/", { front: false })];
     browser.active = 1;
-    nextSnapshot = { tabs: browser.tabs, active: 2 };
+    nextSnapshot = { tabs: browser.tabs, owner: HERE, active: 2 };
     screenshotPath = "/tmp/workbench-browser/2-fake.png";
     await handle(call("browser_screenshot", { tab: 2 }));
     expect(activated).toEqual([2]);
@@ -424,10 +491,10 @@ describe("browser_screenshot", () => {
   });
 
   it("refuses from a session the user is not looking at, leaving the viewer alone", async () => {
-    twoSessions();
+    const { ownerA, ownerB } = twoSessions();
     browser.tabs = [
-      tab(1, "http://localhost:4000/"),
-      tab(2, "http://localhost:3000/", { opener: { kind: "agent", session: "s1" } }),
+      tab(1, "http://localhost:4000/", { owner: ownerB }),
+      tab(2, "http://localhost:3000/", { owner: ownerA, opener: { kind: "agent" } }),
     ];
     browser.active = 1;
     await handle(call("browser_screenshot", { tab: 2 }, { session: "s1" }));
@@ -439,13 +506,13 @@ describe("browser_screenshot", () => {
   });
 });
 
-describe("a call from a session the user is not looking at", () => {
-  it("falls to the last tab that session opened rather than the user's", async () => {
-    twoSessions();
+describe("a call acts within the calling session's own tabs", () => {
+  it("falls to the session's own front tab, not the one the user is on", async () => {
+    const { ownerA, ownerB } = twoSessions();
     browser.tabs = [
-      tab(2, "http://localhost:3000/", { opener: { kind: "agent", session: "s1" } }),
-      tab(3, "http://localhost:3000/b", { opener: { kind: "agent", session: "s1" } }),
-      tab(1, "http://localhost:4000/"),
+      tab(2, "http://localhost:3000/", { owner: ownerA, front: false }),
+      tab(3, "http://localhost:3000/b", { owner: ownerA }),
+      tab(1, "http://localhost:4000/", { owner: ownerB }),
     ];
     browser.active = 1;
     await handle(call("browser_click", { ref: "e1" }, { session: "s1" }));
@@ -454,24 +521,65 @@ describe("a call from a session the user is not looking at", () => {
     expect(last().content).toBe("page text [ref=e1]");
   });
 
-  it("acts on the active tab when it opened none of its own", async () => {
-    twoSessions();
-    browser.tabs = [tab(1, "http://localhost:4000/")];
+  it("refuses when it has no tab of its own, though the user is on another's", async () => {
+    const { ownerB } = twoSessions();
+    browser.tabs = [tab(1, "http://localhost:4000/", { owner: ownerB })];
+    browser.active = 1;
+    await handle(call("browser_click", { ref: "e1" }, { session: "s1" }));
+    expect(clicked).toEqual([]);
+    expect(last().error).toBe("No tab is open.");
+  });
+
+  it("acts on its own front tab from the session on screen", async () => {
+    const { a, ownerA, ownerB } = twoSessions();
+    select(a.key);
+    browser.owner = ownerA;
+    browser.tabs = [
+      tab(2, "http://localhost:3000/", { owner: ownerA, front: false }),
+      tab(1, "http://localhost:4000/", { owner: ownerA }),
+      tab(5, "http://localhost:5000/", { owner: ownerB }),
+    ];
     browser.active = 1;
     await handle(call("browser_click", { ref: "e1" }, { session: "s1" }));
     expect(clicked).toEqual([{ id: 1, ref: "e1" }]);
   });
 
-  it("acts on the active tab from the session on screen whichever tabs it opened", async () => {
-    const { a } = twoSessions();
-    select(a.key);
+  it("refuses a tab another session owns, for every tool that takes one", async () => {
+    const { ownerA, ownerB } = twoSessions();
     browser.tabs = [
-      tab(2, "http://localhost:3000/", { opener: { kind: "agent", session: "s1" } }),
-      tab(1, "http://localhost:4000/"),
+      tab(1, "http://localhost:3000/", { owner: ownerA }),
+      tab(2, "http://localhost:4000/", { owner: ownerB }),
     ];
-    browser.active = 1;
-    await handle(call("browser_click", { ref: "e1" }, { session: "s1" }));
-    expect(clicked).toEqual([{ id: 1, ref: "e1" }]);
+    const mine = { session: "s1" };
+    const calls: [BrowserRequest["tool"], Record<string, unknown>][] = [
+      ["browser_navigate", { tab: 2, url: "https://x.example/" }],
+      ["browser_snapshot", { tab: 2 }],
+      ["browser_click", { tab: 2, ref: "e1" }],
+      ["browser_type", { tab: 2, ref: "e1", text: "x" }],
+      ["browser_console", { tab: 2 }],
+      ["browser_screenshot", { tab: 2 }],
+      ["browser_eval", { tab: 2, script: "return 1" }],
+      ["browser_close", { tab: 2 }],
+    ];
+    for (const [tool, args] of calls) {
+      await handle(call(tool, args, mine));
+      expect(last().error, tool).toBe("Tab 2 belongs to another session.");
+    }
+    expect(navigated).toEqual([]);
+    expect(clicked).toEqual([]);
+    expect(typed).toEqual([]);
+    expect(evaluated).toEqual([]);
+    expect(closed).toEqual([]);
+  });
+
+  it("acts on a named tab of its own", async () => {
+    const { ownerA } = twoSessions();
+    browser.tabs = [
+      tab(1, "http://localhost:3000/", { owner: ownerA }),
+      tab(2, "http://localhost:3001/", { owner: ownerA, front: false }),
+    ];
+    await handle(call("browser_close", { tab: 2 }, { session: "s1" }));
+    expect(closed).toEqual([2]);
   });
 });
 
@@ -510,6 +618,128 @@ describe("browser_close", () => {
     await handle(call("browser_close", { tab: 1 }));
     expect(closed).toEqual([1]);
     expect(last().content).toBe("Closed tab 1.");
+  });
+});
+
+describe("a call that has no owner", () => {
+  const tools: [BrowserRequest["tool"], Record<string, unknown>][] = [
+    ["browser_open", { url: "https://x.example/" }],
+    ["browser_tabs", {}],
+    ["browser_navigate", { url: "https://x.example/" }],
+    ["browser_snapshot", {}],
+    ["browser_click", { ref: "e1" }],
+    ["browser_type", { ref: "e1", text: "x" }],
+    ["browser_console", {}],
+    ["browser_screenshot", {}],
+    ["browser_eval", { script: "return 1" }],
+    ["browser_close", { tab: 1 }],
+  ];
+
+  it("from a folder no open project holds is refused by every tool, though a tab is on screen", async () => {
+    browser.tabs = [tab(1, "https://a.example/")];
+    for (const [name, args] of tools) {
+      await handle(call(name, args, { cwd: "/home/ada/elsewhere" }));
+      expect(last().error, name).toBe("No project the workbench has open runs here.");
+      expect(last().content, name).toBeNull();
+    }
+    expect(opened).toEqual([]);
+    expect(closed).toEqual([]);
+    expect(navigated).toEqual([]);
+    expect(clicked).toEqual([]);
+    expect(typed).toEqual([]);
+    expect(evaluated).toEqual([]);
+    expect(browser.showing).toBe(false);
+  });
+
+  it("from a session working in a project nested inside another open one acts on its own tabs", async () => {
+    const INNER = `${PROJECT}/packages/inner`;
+    workspace.open.push({ path: INNER, name: "inner", repository: INNER, isGit: true });
+    const inner = create(INNER);
+    started(inner.key, "pty-9", "s9");
+    const own: BrowserOwner = { kind: "session", key: inner.key };
+    browser.tabs = [tab(7, "https://inner.example/", { owner: own })];
+    await handle(call("browser_tabs", {}, { cwd: PROJECT, session: "s9" }));
+    expect(last().error).toBeNull();
+    expect(last().content).toContain("https://inner.example/");
+  });
+
+  it("from a session id the window has no row for is refused, not credited to another session", async () => {
+    const { ownerB } = twoSessions();
+    browser.tabs = [tab(2, "https://b.example/", { owner: ownerB })];
+    for (const [name, args] of tools) {
+      await handle(call(name, args, { session: "ghost" }));
+      expect(last().error, name).toBe("That session is not open in the workbench.");
+    }
+    expect(opened).toEqual([]);
+    expect(closed).toEqual([]);
+    expect(evaluated).toEqual([]);
+  });
+});
+
+describe("the user switching while a tab opens", () => {
+  it("does not show the browser in the session they moved to", async () => {
+    const { a, b, ownerA } = twoSessions();
+    select(a.key);
+    browser.owner = ownerA;
+    let release: () => void = () => {};
+    openGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: ownerA,
+      active: 1,
+    };
+    const pending = handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    await settle();
+    select(b.key);
+    release();
+    await pending;
+    expect(browser.showing).toBe(false);
+
+    select(a.key);
+    switched(a.key);
+    await Promise.resolve();
+    expect(browser.showing).toBe(true);
+  });
+
+  it("shows the browser when they moved to the calling session meanwhile", async () => {
+    const { a, ownerA } = twoSessions();
+    let release: () => void = () => {};
+    openGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: ownerA,
+      active: 1,
+    };
+    const pending = handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    await settle();
+    select(a.key);
+    release();
+    await pending;
+    expect(browser.showing).toBe(true);
+  });
+
+  it("closes the tab when its session closed while it opened", async () => {
+    const { a, ownerA } = twoSessions();
+    let release: () => void = () => {};
+    openGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: ownerA,
+      active: 1,
+    };
+    const pending = handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    await settle();
+    resetSessionsKeeping(a.key);
+    release();
+    await pending;
+    expect(closedOwners).toEqual([ownerA]);
+    expect(last().error).toBe("The session or project this call is from has closed.");
   });
 });
 

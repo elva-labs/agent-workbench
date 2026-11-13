@@ -258,10 +258,10 @@ long it has run, its share of a CPU and its memory, read every couple of
 seconds while the section is open and less often while it is folded. A
 stop button on the row ends the process, and nothing outside a session's
 own tree can be reached from there. **Browser** is the embedded browser's
-tabs, one row per tab, standing even with none open since it is where a tab
-is opened from; see [browser](browser.md). A plugin that sends sections
-adds a fold of its own under those three; [plugins](plugins.md) says what
-it holds.
+tabs for the session on screen, one row per tab, standing even with none
+open since it is where a tab is opened from; see [browser](browser.md). A
+plugin that sends sections adds a fold of its own under those three;
+[plugins](plugins.md) says what it holds.
 
 The tree's cursor walks on into the sections: <kbd>Down</kbd> past the
 last file lands on the first header, <kbd>Enter</kbd> opens a media call

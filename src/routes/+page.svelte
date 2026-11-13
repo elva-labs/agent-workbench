@@ -40,7 +40,7 @@
   import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
-  import { initBrowser } from "$lib/browser.svelte";
+  import { initBrowser, syncOwner } from "$lib/browser.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { loadZoom, zoomed } from "$lib/zoom.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -262,6 +262,16 @@
         if (key !== null) switched(key);
       });
     });
+  });
+
+  // The browser shows the tabs of the session on screen, or of the project
+  // on screen with no session selected: the core is told whenever that
+  // changes.
+  $effect(() => {
+    sessions.active;
+    workspace.active;
+    sessions.all.length;
+    void syncOwner();
   });
 
   // The platform's own window controls sit on the leftmost header's text,

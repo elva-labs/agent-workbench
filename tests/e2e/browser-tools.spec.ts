@@ -62,6 +62,8 @@ test.describe("the browser's tools", () => {
   });
 
   test("browser_open opens a tab, shows it, and answers with its id and url", async ({ page }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
     await push(page, {
       id: "b-1",
       tool: "browser_open",
@@ -78,14 +80,14 @@ test.describe("the browser's tools", () => {
     expect(answer.content).toContain("example.com");
   });
 
-  test("browser_open from a session the user is not looking at opens behind, and comes forward on switching", async ({
+  test("browser_open from a session the user is not looking at opens for that session, and comes forward on switching", async ({
     page,
   }) => {
     await page.getByTestId("new-session").click();
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
     await expect(page.locator(".session.on")).toContainText("session 2");
-    // The user is looking at a page of their own beside session 2.
+    // The user is looking at a page of session 2's own.
     await push(page, {
       id: "b-h0",
       tool: "browser_open",
@@ -104,8 +106,8 @@ test.describe("the browser's tools", () => {
     });
     await expect.poll(() => answerTo(page, "b-h1")).not.toBeNull();
     expect((await answerTo(page, "b-h1"))!.content).toContain("Opened tab 2");
-    // Open, but behind: the user's own tab stays in front.
-    await expect(page.getByTestId("browser-tab")).toHaveCount(2);
+    // Session 1's tab is not among session 2's: the strip keeps showing one.
+    await expect(page.getByTestId("browser-tab")).toHaveCount(1);
     await expect(page.locator("[data-testid='browser-tab'].active")).toHaveAttribute("data-tab-id", "1");
     // A tab-less call from session 1 reads its own tab, not the user's.
     await push(page, { id: "b-h2", tool: "browser_snapshot", session: "session-1" });
@@ -121,11 +123,13 @@ test.describe("the browser's tools", () => {
     await page.keyboard.press("ControlOrMeta+Shift+ArrowUp");
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("browser-tab")).toHaveCount(1);
     await expect(page.locator("[data-testid='browser-tab'].active")).toHaveAttribute("data-tab-id", "2");
 
     // Back to session 2: its own tab is in front again.
     await page.keyboard.press("ControlOrMeta+Shift+ArrowDown");
     await expect(page.locator(".session.on")).toContainText("session 2");
+    await expect(page.getByTestId("browser-tab")).toHaveCount(1);
     await expect(page.locator("[data-testid='browser-tab'].active")).toHaveAttribute("data-tab-id", "1");
   });
 
