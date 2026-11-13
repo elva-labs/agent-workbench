@@ -7,7 +7,9 @@
 //! `@UUID@` by its uuid, `sleep`, `exit` and `die` do what they say,
 //! `drain` reads until stdin closes, `err` writes a line to stderr, `big`
 //! writes a line of that many bytes, and `spawn` leaves a command running
-//! in the background with its pid in a file beside the scenario. It writes
+//! in the background with its pid in a file beside the scenario, and
+//! `linger` ignores the end of its stdin and, asked to end, writes a file
+//! beside the scenario and ends cleanly. It writes
 //! its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 
@@ -48,6 +50,9 @@ while IFS= read -r step || [ -n "$step" ]; do
     "big "*) head -c "${step#big }" /dev/zero | tr '\0' x; printf '\n' ;;
     "spawn") sleep 300 & echo $! > "$dir/child" ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
+    "linger")
+      trap 'echo yes > "$dir/termed"; exit 0' TERM
+      while :; do sleep 1 & wait $!; done ;;
   esac
 done < "$FAKE_CLAUDE_SCENARIO"
 "#;
@@ -327,8 +332,15 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     assert_eq!(after("--resume"), h.session);
     assert_eq!(after("--model"), "haiku");
     assert_eq!(after("--permission-mode"), "default");
-    // The tool server's configuration is a file of the session's own.
+    // The tool server's configuration is a file of the session's own, with
+    // a name that cannot be guessed, that its owner alone can read.
     let file = PathBuf::from(after("--mcp-config"));
+    assert!(!file.to_string_lossy().contains(&h.session), "{file:?}");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
     let mcp: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(
         mcp["mcpServers"]["agent-workbench"],
@@ -348,6 +360,11 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     assert!(has("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1"), "{env}");
     assert!(!env.lines().any(|l| l.starts_with("ANTHROPIC_API_KEY=")));
     h.stop();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while file.exists() {
+        assert!(Instant::now() < deadline, "{file:?} outlived the session");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -918,6 +935,18 @@ fn what_the_agent_left_running_goes_with_it() {
 }
 
 #[test]
+fn a_session_that_lingers_is_asked_to_end_before_it_is_killed() {
+    // The agent ends what it left running in the background when it is
+    // asked to end; killed outright, it cannot.
+    let h = start("linger", &format!("{READY}\nlinger"));
+    h.until_type("ready");
+    let end = h.stop();
+    assert!(h.dir.join("termed").exists(), "asked to end first");
+    assert_eq!(end["clean"], true);
+    assert!(!kinds(&h.events()).contains(&"error".to_string()));
+}
+
+#[test]
 fn stop_all_ends_every_session() {
     let sessions = Arc::new(Sessions::default());
     let a = start_in(
@@ -936,7 +965,7 @@ fn stop_all_ends_every_session() {
     b.until_type("ready");
     let started = Instant::now();
     stop_all(&sessions);
-    assert!(started.elapsed() < STOP_GRACE + Duration::from_secs(2));
+    assert!(started.elapsed() < STOP_GRACE + TERM_GRACE + Duration::from_secs(2));
     assert!(sessions.ids().is_empty(), "both gone when it returns");
     a.until_type("ended");
     b.until_type("ended");

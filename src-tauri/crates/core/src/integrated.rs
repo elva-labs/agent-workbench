@@ -56,8 +56,14 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long a stopped session has to end once its stdin is closed before it
-/// is killed.
+/// is asked to end.
 const STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// How long an agent asked to end has before it is killed with its group.
+#[cfg(not(test))]
+const TERM_GRACE: Duration = Duration::from_secs(3);
+#[cfg(test)]
+const TERM_GRACE: Duration = Duration::from_secs(1);
 
 /// How often the waiter looks at the child between kill requests.
 const POLL: Duration = Duration::from_millis(50);
@@ -1709,19 +1715,45 @@ fn end_group(child: &Child) {
     let _ = child;
 }
 
-/// Waits for the child to end, killing it and its group when asked, then
-/// for the last of its output.
+/// Asks the agent alone to end, as a terminal's close would. Claude Code
+/// ends the commands it left running in the background then, which run in
+/// process groups of their own that killing its group does not reach.
+/// Whether there was a way to ask.
+fn ask_to_end(child: &Child) -> bool {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        return true;
+    }
+    let _ = child;
+    false
+}
+
+/// Waits for the child to end, then for the last of its output. Asked to
+/// end it, the waiter asks the agent to end, and kills it and its group
+/// if it is still there a little later.
 fn wait(
     live: &Live,
     mut child: Child,
     killed: Receiver<()>,
     read_done: Receiver<()>,
 ) -> Option<std::process::ExitStatus> {
+    let mut deadline: Option<std::time::Instant> = None;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
-                if killed.recv_timeout(POLL).is_ok() {
+                let asked = killed.recv_timeout(POLL).is_ok();
+                if asked && deadline.is_none() {
+                    if ask_to_end(&child) {
+                        deadline = Some(std::time::Instant::now() + TERM_GRACE);
+                    } else {
+                        kill_tree(&mut child);
+                    }
+                }
+                if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
                     kill_tree(&mut child);
                 }
             }
@@ -1973,9 +2005,9 @@ pub fn configure(
 }
 
 /// Ends a session: its stdin closes, which the agent takes as the end of
-/// the conversation, and it is killed with its group if it is still there
-/// a few seconds later. Comes back at once; [`Event::Ended`] says when it
-/// is gone.
+/// the conversation. One still there a few seconds later is asked to end,
+/// and killed with its group if it is still there after that. Comes back
+/// at once; [`Event::Ended`] says when it is gone.
 pub fn stop(sessions: &Arc<Sessions>, id: &str) -> Result<(), String> {
     let live = sessions.get(id)?;
     live.stopping.store(true, Ordering::SeqCst);
@@ -2004,7 +2036,7 @@ pub fn stop_all(sessions: &Arc<Sessions>) {
     for id in sessions.ids() {
         let _ = stop(sessions, &id);
     }
-    let deadline = std::time::Instant::now() + STOP_GRACE + Duration::from_secs(1);
+    let deadline = std::time::Instant::now() + STOP_GRACE + TERM_GRACE + Duration::from_secs(1);
     while !sessions.ids().is_empty() && std::time::Instant::now() < deadline {
         std::thread::sleep(POLL);
     }

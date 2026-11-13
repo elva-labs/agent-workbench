@@ -163,12 +163,13 @@ impl Protocol for ClaudeStream {
                 }
             });
             // A file of the session's own rather than an argument, so that
-            // no JSON passes through a command interpreter.
+            // no JSON passes through a command interpreter. Its name cannot
+            // be guessed, it is made new, and only its owner can read it.
             let file = std::env::temp_dir().join(format!(
-                "agent-workbench-mcp-{session}-{}.json",
-                std::process::id()
+                "agent-workbench-mcp-{}.json",
+                uuid::Uuid::new_v4().simple()
             ));
-            std::fs::write(&file, config.to_string())
+            write_private(&file, config.to_string().as_bytes())
                 .map_err(|e| format!("could not write {}: {e}", file.display()))?;
             // Last, since the flag takes as many values as follow it.
             command.arg("--mcp-config").arg(&file);
@@ -205,6 +206,19 @@ impl Protocol for ClaudeStream {
     fn trust(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> Result<(), String> {
         hook::claude_trust(&state_file(home, config_dir), folder)
     }
+}
+
+/// Writes a file that must not exist yet, readable by its owner alone.
+fn write_private(file: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(file)?.write_all(contents)
 }
 
 /// The file Claude Code keeps its state in, trust among it: in the
