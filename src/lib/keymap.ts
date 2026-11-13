@@ -44,6 +44,8 @@ export type Action =
   | { type: "find"; mode: "files" | "lines" }
   /** Next or previous session, or shell when the terminal panel has focus. */
   | { type: "cycle"; direction: 1 | -1 }
+  /** The palette that goes to a session or project, opened or put away. */
+  | { type: "goto" }
   /** The command palette, opened or put away. */
   | { type: "palette" }
   /** The next session waiting on the user. */
@@ -90,6 +92,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   "zoom.in": { type: "zoom", step: 1 },
   "zoom.out": { type: "zoom", step: -1 },
   "zoom.reset": { type: "zoom", step: 0 },
+  goto: { type: "goto" },
   palette: { type: "palette" },
   review: { type: "toggleReview" },
   view: { type: "toggleView" },
@@ -157,7 +160,8 @@ export interface Binding {
 export function bindingsFor(mac: boolean): Binding[] {
   const d = (action: ActionKey) => describe(chordFor(action), mac);
   return [
-    { keys: d("palette"), does: "palette" },
+    { keys: d("goto"), does: "go to" },
+    { keys: d("palette"), does: "commands" },
     {
       keys: `${d("focus.sessions")} ${d("focus.agent")} ${d("focus.changes")} ${d("focus.terminal")}`,
       does: "focus",
