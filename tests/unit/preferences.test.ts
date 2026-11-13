@@ -70,7 +70,7 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 
-import { hook, loadHooks, reset as resetHooks, setEverywhere } from "$lib/hook.svelte";
+import { ensure, hook, loadHooks, reset as resetHooks, setEverywhere } from "$lib/hook.svelte";
 import { PRESETS, applyPreset, keys, resetKeys, setBinding } from "$lib/keys.svelte";
 import { resetPersist } from "$lib/persist";
 import { adopt, currentSettings, followSettings } from "$lib/preferences.svelte";
@@ -284,6 +284,10 @@ describe("adopt", () => {
     workspace.open = [
       { path: "/a", name: "a", repository: "/a", isGit: true } as never,
     ];
+    hook.everywhere = false;
+    ensure("/a");
+    await settle();
+    state.hookCalls = [];
     adopt({ ...DEFAULTS, hooks: { everywhere: true, overrides: {} } });
     await settle();
     expect(state.hookCalls).toContain("install:/a");

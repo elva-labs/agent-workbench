@@ -38,6 +38,9 @@ export const hook = $state({
 let loaded = false;
 /** Projects brought to the answer since the window opened. */
 const applied = new Set<string>();
+/** Projects inside a batch that has not finished applying them: they read
+    the answer as it stands when the batch gets to them. */
+const batching = new Set<string>();
 /** Projects on other machines still on their way, by host: they are asked
     about together with the rest of their machine once all have arrived or
     been given up, and ask for nothing themselves meanwhile. */
@@ -111,8 +114,10 @@ export function hooksSettings(): Settings["hooks"] {
 }
 
 /** Takes the answer the core has for the machine, and brings the projects
-    given to it when it differs from what the window had. Nothing is sent
-    back, since this is the core's word. */
+    given to it when it differs from what the window had. Only projects
+    already brought to the answer are applied; one still held back for its
+    machine's batch, or inside a batch, reads the new answer when that
+    batch applies it. Nothing is sent back, since this is the core's word. */
 export function adoptHooks(settings: Settings["hooks"], projects: string[]) {
   if (!loaded) loadHooks();
   const overrides: Record<string, boolean> = {};
@@ -127,7 +132,9 @@ export function adoptHooks(settings: Settings["hooks"], projects: string[]) {
   hook.everywhere = everywhere;
   hook.overrides = overrides;
   remember();
-  for (const project of projects) void apply(project);
+  for (const project of projects) {
+    if (applied.has(project) && !batching.has(project)) void apply(project);
+  }
 }
 
 function sorted(record: Record<string, boolean>): [string, boolean][] {
@@ -251,6 +258,7 @@ export function startChecks(
 /** What is on disk for the projects of one machine, from one request, and
     then each brought to the answer in turn. */
 async function applyMany(projects: string[]) {
+  for (const project of projects) batching.add(project);
   try {
     const answers = await core().hookStatusMany(projects, dirsOf());
     projects.forEach((project, at) => {
@@ -260,7 +268,10 @@ async function applyMany(projects: string[]) {
     // Not knowing is not an error worth showing, as with one project.
     for (const project of projects) hook.installed[project] = false;
   }
-  for (const project of projects) await apply(project);
+  for (const project of projects) {
+    await apply(project);
+    batching.delete(project);
+  }
 }
 
 /** The answer for every project, applied to the ones open now. */
@@ -284,6 +295,7 @@ export async function setOverride(project: string, value: boolean | null) {
 export function reset() {
   loaded = true;
   applied.clear();
+  batching.clear();
   waiting.clear();
   hook.starting = false;
   hook.everywhere = false;

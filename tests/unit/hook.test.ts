@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  adoptHooks,
   apply,
   check,
   ensure,
@@ -310,6 +311,43 @@ describe("starting", () => {
     expect(state.calls).toEqual([
       `many:${A},${B}`,
       `many:${box("a")},${box("b")}`,
+    ]);
+  });
+
+  it("leaves projects held back for their machine to its batch when the core's answer differs", async () => {
+    hook.starting = true;
+    hook.everywhere = false;
+    const box = (name: string) => `ssh://ada@box/srv/${name}`;
+    const open = [A, box("a")];
+    let arriveB = () => {};
+    const arriving = new Map([
+      [box("a"), Promise.resolve()],
+      [
+        box("b"),
+        new Promise<void>((resolve) => {
+          arriveB = () => {
+            open.push(box("b"));
+            resolve();
+          };
+        }),
+      ],
+    ]);
+    startChecks(() => open, arriving);
+    await vi.waitFor(() => expect(isKnown(A)).toBe(true));
+    ensure(box("a"));
+    state.calls = [];
+
+    // The core's answer is on, while box/a waits for box/b.
+    adoptHooks({ everywhere: true, overrides: {} }, [A, box("a")]);
+    await vi.waitFor(() => expect(state.calls).toEqual([`install:${A}`]));
+
+    arriveB();
+    await vi.waitFor(() => expect(isInstalled(box("b"))).toBe(true));
+    expect(state.calls).toEqual([
+      `install:${A}`,
+      `many:${box("a")},${box("b")}`,
+      `install:${box("a")}`,
+      `install:${box("b")}`,
     ]);
   });
 
