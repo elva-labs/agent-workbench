@@ -52,7 +52,13 @@ npx playwright show-report                   # after a failure
 
 ## Running from a second checkout
 
-The browser tier starts the dev server on port 1420 and, outside CI, reuses a server that already answers there. With two checkouts on one machine, a run in one would drive the other's server. Setting `WORKBENCH_DEV_PORT` moves the dev server, and its HMR port beside it, to another port, for example `WORKBENCH_DEV_PORT=14420 npm run test:e2e`. When it is set the tests never reuse a server and fail if the port is taken. The Tauri dev flow stays on 1420; the variable is only for running the browser tests.
+The browser tier starts the dev server on port 1420 and, outside CI, reuses
+a server that already answers there. With two checkouts on one machine, a
+run in one would drive the other's server. Setting `WORKBENCH_DEV_PORT`
+moves the dev server, and its HMR port beside it, to another port, for
+example `WORKBENCH_DEV_PORT=14420 npm run test:e2e`. When it is set the
+tests never reuse a server and fail if the port is taken. The Tauri dev
+flow stays on 1420; the variable is only for running the browser tests.
 
 ## The real app
 
