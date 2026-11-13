@@ -10,6 +10,7 @@ import {
   forProject,
   isLive,
   reset as resetSessions,
+  select,
   sessions,
   started,
   statusLabel,
@@ -270,6 +271,48 @@ describe("a project on another machine", () => {
     expect(workspace.active).toBe(R);
     expect(activeSession()?.id).toBe("there");
     expect(record().active).toBe("there");
+  });
+
+  it("starts nothing in the project in front while the one on screen waits", async () => {
+    const arrived = await restoring("there", R);
+    expect(workspace.active).toBe(A);
+    expect(sessions.active).toBeNull();
+    expect(forProject(A).map((session) => session.status)).toEqual(["dormant"]);
+    host.release(true);
+    await arrived();
+    flushSync();
+    expect(activeSession()?.id).toBe("there");
+    expect(forProject(A).map((session) => session.status)).toEqual(["dormant"]);
+  });
+
+  it("selects the most recent in front when the one on screen cannot come back", async () => {
+    const arrived = await restoring("there", R);
+    host.release(false);
+    await arrived();
+    flushSync();
+    expect(workspace.active).toBe(A);
+    expect(activeSession()?.id).toBe("here");
+  });
+
+  it("keeps a session picked while it waited across a quit", async () => {
+    await restoring("there", R);
+    select(forProject(A)[0].key);
+    flushSync();
+    expect(record().active).toBe("here");
+    // Quit before the host answers, and start again.
+    stop();
+    resetSessions();
+    resetWorkspace();
+    const arriving = await restore();
+    stop = reopen(arriving);
+    flushSync();
+    expect(workspace.active).toBe(A);
+    expect(activeSession()?.id).toBe("here");
+    host.release(true);
+    await Promise.all(arriving.values());
+    flushSync();
+    expect(workspace.active).toBe(A);
+    expect(activeSession()?.id).toBe("here");
   });
 
   it("takes its sessions off the record when it cannot be described", async () => {

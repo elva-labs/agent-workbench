@@ -89,9 +89,11 @@ not hold up the rest, nor a folder opened from outside the app. Until it
 answers it keeps its place, and its sessions theirs, in what is remembered
 for the next start; a project that cannot be reached is left out from then
 on. When the project that was in front is one of those still waiting, the
-first project on this machine is put in front meanwhile, and the one that
-was in front takes its place when it appears, with the session that was on
-screen, unless another project or session has been chosen by then.
+first project open is put in front meanwhile, with no session selected, and
+the one that was in front takes its place when it appears, with the session
+that was on screen, unless another project or session has been chosen by
+then. If its machine cannot be reached and no session has been chosen, the
+project in front selects its most recent session.
 
 The sessions that were open when the app quit come back as rows in their
 projects, in the order they had and under the names they had, with nothing

@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import { core, type ProjectInfo } from "$lib/core";
 import { lastSegment } from "$lib/paths";
 import {
@@ -215,7 +216,7 @@ function save() {
   // machine answers loses neither.
   if (restoring !== null) {
     for (const path of restoring.paths) {
-      if (restoring.pending.has(path))
+      if (restoring.pending.has(path) && !open.includes(path))
         open.splice(placeAmong(open, path, restoring.paths), 0, path);
     }
     const wanted = restoring.wanted;
@@ -244,6 +245,34 @@ let restoring: {
 /** Counts restores, so the answers of one that was reset are ignored. */
 let restores = 0;
 
+/** Whether a project or session has been chosen during the restore under
+    way, which then leaves what is in front alone from then on. */
+let chosen = $state(false);
+
+/** Stops watching for a choice during the restore under way. */
+let unwatch: () => void = () => {};
+
+/** Watches what is in front while a restore waits, and takes the first time
+    it differs from what the restore put there as chosen, stored at once. */
+function watchChoice() {
+  unwatch();
+  chosen = false;
+  unwatch = $effect.root(() => {
+    $effect(() => {
+      const project = workspace.active;
+      const session = sessions.active;
+      if (restoring === null || untrack(() => chosen)) return;
+      if (
+        restoring.placed.project !== project ||
+        restoring.placed.session !== session
+      ) {
+        chosen = true;
+        save();
+      }
+    });
+  });
+}
+
 /** Where a stored project goes among the open ones: before the first that
     was stored after it or was not stored at all, else at the end. */
 function placeAmong(open: string[], path: string, paths: string[]): number {
@@ -260,6 +289,7 @@ function placeAmong(open: string[], path: string, paths: string[]): number {
 export function untouched(): boolean {
   return (
     restoring !== null &&
+    !chosen &&
     restoring.placed.project === workspace.active &&
     restoring.placed.session === sessions.active
   );
@@ -319,11 +349,14 @@ export async function restore(): Promise<Map<string, Promise<void>>> {
     placed: { project: workspace.active, session: sessions.active },
   };
   restoring = state;
+  watchChoice();
   const mine = (restores += 1);
   let localIn = false;
   const finish = () => {
-    if (localIn && state.pending.size === 0 && restoring === state)
+    if (localIn && state.pending.size === 0 && restoring === state) {
       restoring = null;
+      unwatch();
+    }
   };
 
   const asked = paths.map((path) => ({
@@ -378,6 +411,8 @@ export async function restore(): Promise<Map<string, Promise<void>>> {
 /** Test seam. */
 export function reset() {
   restoring = null;
+  unwatch();
+  chosen = false;
   restores += 1;
   workspace.open = [];
   workspace.active = null;

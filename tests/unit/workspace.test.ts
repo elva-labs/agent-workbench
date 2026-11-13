@@ -1,3 +1,4 @@
+import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   followOpenRequests,
@@ -228,9 +229,29 @@ describe("restoring the open projects", () => {
     const arriving = await restore();
     const row = reopened("/p/one", "s1", "claude-code", null, null, null);
     select(row.key);
+    flushSync();
+    // A quit now starts the next time with this project in front.
+    expect(stored().active).toBe("/p/one");
     await Promise.all(arriving.values());
     expect(workspace.active).toBe("/p/one");
     expect(sessions.active).toBe(row.key);
+  });
+
+  it("stores a project opened by hand while on its way only once", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x"],
+        active: "/p/one",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 40 };
+    const arriving = await restore();
+    fake.state.delays = {};
+    await openPath("ssh://ada@lab/srv/x");
+    expect(stored().open).toEqual(["/p/one", "ssh://ada@lab/srv/x"]);
+    await Promise.all(arriving.values());
+    expect(stored().open).toEqual(["/p/one", "ssh://ada@lab/srv/x"]);
   });
 
   it("activates the first project when the stored one cannot be described", async () => {

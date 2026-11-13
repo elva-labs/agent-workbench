@@ -118,11 +118,15 @@ export function reopen(
   };
   // The session on screen at the quit, when its project is the one in front
   // and nothing else is on screen; otherwise the project's most recent, as
-  // bringing a project forward does.
+  // bringing a project forward does. While the one on screen at the quit
+  // waits for its machine, the project in front meanwhile gets none.
   const front = (project: string | null) => {
     if (project === null || activeSession() !== null) return;
     const own = forProject(project);
-    const wanted = own.find((session) => session.id === active) ?? own.at(-1);
+    const waits = held.some((entry) => entry.id === active);
+    const wanted =
+      own.find((session) => session.id === active) ??
+      (waits ? undefined : own.at(-1));
     if (wanted === undefined) return;
     sessions.active = wanted.key;
     restoredInFront();
@@ -144,6 +148,7 @@ export function reopen(
       held = held.filter((entry) => entry.project !== project);
       for (const entry of theirs) bring(entry);
       if (workspace.active === project) front(project);
+      else if (!isOpen(project)) front(workspace.active);
     };
     void arrived.then(settle, settle);
   }
