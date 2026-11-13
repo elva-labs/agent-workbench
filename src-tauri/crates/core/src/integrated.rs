@@ -124,13 +124,18 @@ pub enum Event {
         efforts: Vec<String>,
     },
     /// Where a message the window sent stands, between `send` and the turn
-    /// that answers it: `queued` while it waits behind a turn already
-    /// running, `taken` when the running turn took it in, and `dropped`,
-    /// with `error`, when it will not be answered at all.
+    /// that answers it: `sent` when it went to the agent with nothing ahead
+    /// of it, `queued` while it waits behind a turn already running,
+    /// `taken` when the running turn took it in, and `dropped`, with
+    /// `error`, when it will not be answered at all. The first event for a
+    /// message, `sent` or `queued`, carries its `text` and `images` as they
+    /// were sent, so that any window can draw it; the others carry neither.
     Message {
         message: String,
         state: MessageState,
         error: Option<String>,
+        text: Option<String>,
+        images: Vec<Image>,
     },
     /// The agent began a turn. `messages` are the ids of the messages it
     /// answers, as the window chose them; several sent while the last turn
@@ -241,6 +246,16 @@ pub enum Event {
         parent: Option<String>,
         questions: Vec<Question>,
     },
+    /// A permission request or a question was answered, from this window
+    /// or another: with `choice` for a permission, and for a question with
+    /// `allow` and the `answers`, or `deny` with none when it was declined.
+    /// `message` is what went to the agent with a denial.
+    Answered {
+        request: String,
+        choice: Choice,
+        answers: Option<Vec<Vec<String>>>,
+        message: Option<String>,
+    },
     /// The agent no longer waits for an answer to a permission request or
     /// a question: the turn was interrupted, or the session ended.
     Withdrawn { request: String },
@@ -333,6 +348,7 @@ pub struct CommandInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MessageState {
+    Sent,
     Queued,
     Taken,
     Dropped,
@@ -539,6 +555,20 @@ pub struct Image {
 pub struct Started {
     pub id: String,
     pub session_id: String,
+}
+
+impl Event {
+    /// Where a message stands after it was sent, with nothing of what it
+    /// said.
+    pub fn message(message: &str, state: MessageState, error: Option<String>) -> Self {
+        Event::Message {
+            message: message.to_string(),
+            state,
+            error,
+            text: None,
+            images: vec![],
+        }
+    }
 }
 
 /// An event, with the session it belongs to, as it goes out.
@@ -811,14 +841,7 @@ impl Tracker {
                     // A second start with no end between is the same turn,
                     // and what it names was taken into it.
                     for message in messages {
-                        self.observe(
-                            Event::Message {
-                                message,
-                                state: MessageState::Taken,
-                                error: None,
-                            },
-                            out,
-                        );
+                        self.observe(Event::message(&message, MessageState::Taken, None), out);
                     }
                     return;
                 }
@@ -887,7 +910,7 @@ impl Tracker {
             Event::PermissionAsked { request, .. } | Event::QuestionAsked { request, .. } => {
                 self.asking.insert(request.clone());
             }
-            Event::Withdrawn { request } => {
+            Event::Withdrawn { request } | Event::Answered { request, .. } => {
                 self.asking.remove(request);
             }
             Event::TaskStarted {
@@ -976,11 +999,11 @@ impl Tracker {
             out.push(Event::Withdrawn { request });
         }
         for message in std::mem::take(&mut self.pending) {
-            out.push(Event::Message {
-                message,
-                state: MessageState::Dropped,
-                error: Some("the agent ended before it took the message".into()),
-            });
+            out.push(Event::message(
+                &message,
+                MessageState::Dropped,
+                Some("the agent ended before it took the message".into()),
+            ));
         }
         self.subagents.clear();
         self.reporting = false;
@@ -1607,14 +1630,17 @@ pub fn send(
                 }
             }
         };
-        let mut out = Vec::new();
-        if queued {
-            out.push(Event::Message {
-                message: message.to_string(),
-                state: MessageState::Queued,
-                error: None,
-            });
-        }
+        let mut out = vec![Event::Message {
+            message: message.to_string(),
+            state: if queued {
+                MessageState::Queued
+            } else {
+                MessageState::Sent
+            },
+            error: None,
+            text: Some(text.to_string()),
+            images: images.to_vec(),
+        }];
         machine.tracker.push_state(&mut out);
         live.emit(&out);
         went
@@ -1635,7 +1661,16 @@ pub fn answer(
     message: Option<&str>,
 ) -> Result<(), String> {
     let live = sessions.get(id)?;
-    settle(&live, request, |driver| {
+    let said = message
+        .map(str::trim)
+        .filter(|said| !said.is_empty() && matches!(choice, Choice::Deny | Choice::Cancel));
+    let answered = Event::Answered {
+        request: request.to_string(),
+        choice,
+        answers: None,
+        message: said.map(str::to_string),
+    };
+    settle(&live, answered, |driver| {
         driver.answer(request, choice, message)
     })
 }
@@ -1649,22 +1684,32 @@ pub fn reply(
     answers: Option<&[Vec<String>]>,
 ) -> Result<(), String> {
     let live = sessions.get(id)?;
-    settle(&live, request, |driver| driver.reply(request, answers))
+    let answered = Event::Answered {
+        request: request.to_string(),
+        choice: if answers.is_some() {
+            Choice::Allow
+        } else {
+            Choice::Deny
+        },
+        answers: answers.map(<[Vec<String>]>::to_vec),
+        message: None,
+    };
+    settle(&live, answered, |driver| driver.reply(request, answers))
 }
 
-/// Writes the line that settles a request the agent is waiting on.
+/// Writes the line that settles a request the agent is waiting on, and
+/// says it was answered.
 fn settle(
     live: &Live,
-    request: &str,
+    answered: Event,
     line: impl FnOnce(&mut dyn Driver) -> Result<String, String>,
 ) -> Result<(), String> {
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
         let line = line(machine.driver.as_mut())?;
         let went = live.enqueue(line)?;
-        machine.tracker.asking.remove(request);
         let mut out = Vec::new();
-        machine.tracker.push_state(&mut out);
+        machine.tracker.observe(answered, &mut out);
         live.emit(&out);
         went
     };
@@ -1898,11 +1943,7 @@ mod tests {
         tracker.send(M1).unwrap();
         tracker.observe(turn(&[M1]), &mut out);
         assert_eq!(started(&out).len(), 1, "the same turn");
-        assert!(out.contains(&Event::Message {
-            message: M1.into(),
-            state: MessageState::Taken,
-            error: None
-        }));
+        assert!(out.contains(&Event::message(M1, MessageState::Taken, None)));
         tracker.observe(ended(), &mut out);
         assert_eq!(tracker.state(), SessionState::Idle);
     }

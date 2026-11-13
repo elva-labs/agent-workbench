@@ -254,6 +254,7 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
         [
             "ready",
             "state",
+            "message",
             "state",
             "turnStarted",
             "configured",
@@ -264,12 +265,18 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
         ]
     );
     assert_eq!(states(&events), ["idle", "working"]);
-    assert_eq!(events[3]["messages"], json!([message]));
-    assert_eq!(events[4]["model"], "claude-haiku");
-    assert_eq!(events[7]["text"], "hello");
-    assert_eq!(events[7]["done"], true);
-    assert_eq!(events[5]["block"], events[7]["block"]);
-    let ended = &events[8];
+    // The message as it was sent, for any window to draw.
+    assert_eq!(
+        events[2],
+        json!({"id": h.id, "type": "message", "message": message, "state": "sent",
+               "error": null, "text": "say hello", "images": []})
+    );
+    assert_eq!(events[4]["messages"], json!([message]));
+    assert_eq!(events[5]["model"], "claude-haiku");
+    assert_eq!(events[8]["text"], "hello");
+    assert_eq!(events[8]["done"], true);
+    assert_eq!(events[6]["block"], events[8]["block"]);
+    let ended = &events[9];
     assert_eq!(ended["outcome"], "done");
     assert_eq!(ended["totalCostUsd"], 0.01);
     assert_eq!(ended["usage"]["outputTokens"], 4);
@@ -451,6 +458,22 @@ fn each_answer_to_a_permission_reaches_the_agent() {
     assert_eq!(answered["p4"]["behavior"], "deny");
     assert_eq!(answered["p4"]["message"], "not that one");
 
+    // Every window hears what each request was answered with.
+    let told: Vec<Value> = events
+        .iter()
+        .filter(|e| e["type"] == "answered")
+        .map(|e| json!([e["request"], e["choice"], e["message"]]))
+        .collect();
+    assert_eq!(
+        told,
+        [
+            json!(["p1", "allow", null]),
+            json!(["p2", "allowSession", null]),
+            json!(["p3", "allowAlways", null]),
+            json!(["p4", "deny", "not that one"]),
+        ]
+    );
+
     assert!(
         answer(&h.sessions, &h.id, "p1", Choice::Allow, None).is_err(),
         "a request is answered once"
@@ -480,7 +503,11 @@ fn a_question_is_answered_with_a_reply_of_its_own() {
     assert_eq!(h.until_states(3).last().unwrap(), "asking");
     assert!(answer(&h.sessions, &h.id, "q1", Choice::Allow, None).is_err());
     reply(&h.sessions, &h.id, "q1", Some(&[vec!["Green".into()]])).unwrap();
-    h.until_type("turnEnded");
+    let events = h.until_type("turnEnded");
+    let answered = events.iter().find(|e| e["type"] == "answered").unwrap();
+    assert_eq!(answered["request"], "q1");
+    assert_eq!(answered["choice"], "allow");
+    assert_eq!(answered["answers"], json!([["Green"]]));
     let replied = h
         .stdin()
         .into_iter()
@@ -655,6 +682,7 @@ fn a_message_sent_during_a_turn_is_queued_and_gets_its_own_turn() {
     let second = h.send("second");
     let queued = h.until(|e| e["type"] == "message" && e["state"] == "queued");
     assert_eq!(queued.last().unwrap()["message"], second.as_str());
+    assert_eq!(queued.last().unwrap()["text"], "second");
     h.until(|_| {
         h.events()
             .iter()

@@ -715,11 +715,8 @@ impl Stream {
             return;
         }
         if self.turn {
-            out.events.push(Event::Message {
-                message: message.to_string(),
-                state: MessageState::Taken,
-                error: None,
-            });
+            out.events
+                .push(Event::message(message, MessageState::Taken, None));
         } else {
             self.starting.push(message.to_string());
         }
@@ -732,11 +729,11 @@ impl Stream {
         }
         if !self.taken.remove(message) && dropped {
             self.starting.retain(|m| m != message);
-            out.events.push(Event::Message {
-                message: message.to_string(),
-                state: MessageState::Dropped,
-                error: Some("the agent cancelled the message".into()),
-            });
+            out.events.push(Event::message(
+                message,
+                MessageState::Dropped,
+                Some("the agent cancelled the message".into()),
+            ));
         }
     }
 
@@ -1688,14 +1685,7 @@ mod tests {
         events(&mut stream, &[init()]);
         sent(&mut stream, M1);
         let out = events(&mut stream, &[lifecycle(M1, "started")]);
-        assert_eq!(
-            out,
-            [Event::Message {
-                message: M1.into(),
-                state: MessageState::Taken,
-                error: None
-            }]
-        );
+        assert_eq!(out, [Event::message(M1, MessageState::Taken, None)]);
     }
 
     #[test]
