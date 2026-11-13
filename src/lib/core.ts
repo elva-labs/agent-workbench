@@ -27,7 +27,13 @@ export type AgentId = "claude-code" | "codex";
 export interface DetectReport {
   id: string;
   path: string | null;
-  caps: { resumable: boolean; titles: boolean; acp: boolean } | null;
+  caps: {
+    resumable: boolean;
+    titles: boolean;
+    acp: boolean;
+    /** Can run as an integrated session, drawn by the window. */
+    integrated: boolean;
+  } | null;
   /** False when the login shell could not be read, which changes what a
       missing binary means. */
   fromLoginShell: boolean;
@@ -70,6 +76,187 @@ export interface Spawned {
   ptyId: string;
   sessionId: string | null;
 }
+
+/** An integrated session: the agent run as a process the core talks to in
+    messages, with no terminal. Started like a pty session, except that the
+    window draws the conversation from `onIntegratedEvent`. */
+export interface IntegratedStartOptions {
+  agent: AgentId;
+  project: string;
+  /** Where to run when that is not the project: a worktree under it. */
+  cwd?: string;
+  /** Resume an existing session rather than starting a new one. */
+  session?: string;
+  /** The model to run on, by the name the agent takes. */
+  model?: string;
+  /** The permission mode to start in, by the agent's own name for it. */
+  permissionMode?: string;
+  /** The account's configuration directory, as for `spawn`. */
+  configDir?: string;
+}
+
+/** What starting an integrated session hands back: the id every other
+    command and every event names it by, and the agent's own id for the
+    conversation, which resuming takes. */
+export interface IntegratedStarted {
+  id: string;
+  sessionId: string;
+}
+
+/** An image attached to a message: base64 data and its media type, one of
+    png, jpeg, gif or webp. */
+export interface IntegratedImage {
+  mediaType: string;
+  data: string;
+}
+
+/** An answer to a permission request. `allowProject` is offered only when
+    the request names a rule to remember. */
+export type PermissionChoice =
+  | "allowOnce"
+  | "allowSession"
+  | "allowProject"
+  | "deny";
+
+/** What a session is doing, for its row. `working` while a turn runs, a
+    message waits, the conversation is compacted or a subagent is at work;
+    `asking` while a permission waits for an answer; `idle` otherwise. */
+export type IntegratedState = "working" | "asking" | "idle";
+
+export interface IntegratedHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  /** Each starting with `+`, `-` or a space. */
+  lines: string[];
+}
+
+/** A file a tool call changed: a new one with its content, or an update
+    with its hunks. The path has the host on it for a remote session. */
+export interface IntegratedFileChange {
+  path: string;
+  kind: "create" | "update";
+  hunks: IntegratedHunk[];
+  content: string | null;
+}
+
+export interface IntegratedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/** A session's news, by `type`. Text, thinking and tool calls carry
+    `parent`: the tool call that started the subagent they belong to, or
+    null in the main conversation. */
+export type IntegratedEventBody =
+  /** Sent once, before anything else. */
+  | {
+      type: "ready";
+      sessionId: string;
+      model: string | null;
+      permissionMode: string | null;
+      version: string | null;
+      models: { value: string; name: string | null; description: string | null }[];
+      commands: { name: string; description: string | null; hint: string | null }[];
+    }
+  /** The model or the permission mode changed; both as they now are. */
+  | { type: "configured"; model: string | null; permissionMode: string | null }
+  /** A message sent during a turn waits; `turnStarted` names it later. */
+  | { type: "messageQueued"; message: string }
+  /** `message` is the id `integratedSend` returned, or null for a turn
+      the agent began by itself after its background work finished. */
+  | { type: "turnStarted"; message: string | null }
+  | {
+      type: "turnEnded";
+      outcome: "done" | "interrupted" | "failed";
+      error: string | null;
+      costUsd: number | null;
+      durationMs: number | null;
+      usage: IntegratedUsage | null;
+    }
+  /** While a block streams `done` is false and `text` the piece that came;
+      once complete `done` is true and `text` the whole block. */
+  | { type: "text"; block: string; parent: string | null; text: string; done: boolean }
+  | { type: "thinking"; block: string; parent: string | null; text: string; done: boolean }
+  | { type: "toolStarted"; call: string; parent: string | null; name: string }
+  /** `delta` while the input streams as JSON text; `input` once whole. */
+  | {
+      type: "toolInput";
+      call: string;
+      parent: string | null;
+      delta: string | null;
+      input: unknown;
+    }
+  | {
+      type: "toolFinished";
+      call: string;
+      parent: string | null;
+      output: string;
+      error: boolean;
+      change: IntegratedFileChange | null;
+    }
+  /** Answered with `integratedAnswer` and one of `choices`. `rule` is what
+      allowing for the project remembers. */
+  | {
+      type: "permissionAsked";
+      request: string;
+      call: string | null;
+      parent: string | null;
+      tool: string;
+      input: unknown;
+      description: string | null;
+      path: string | null;
+      rule: string | null;
+      choices: PermissionChoice[];
+    }
+  /** The agent stopped waiting for that answer. */
+  | { type: "permissionWithdrawn"; request: string }
+  | {
+      type: "taskStarted";
+      task: string;
+      call: string | null;
+      kind: "agent" | "shell" | "other";
+      description: string | null;
+      prompt: string | null;
+      background: boolean;
+    }
+  | {
+      type: "taskProgress";
+      task: string;
+      call: string | null;
+      tool: string | null;
+      description: string | null;
+    }
+  | {
+      type: "taskFinished";
+      task: string;
+      call: string | null;
+      status: string;
+      summary: string | null;
+    }
+  | { type: "compacting" }
+  | {
+      type: "compacted";
+      trigger: string | null;
+      tokensBefore: number | null;
+      tokensAfter: number | null;
+    }
+  /** Sent on every change; the last one is the session's state. */
+  | { type: "state"; state: IntegratedState }
+  /** `notLoggedIn`: the user signs in with the agent in a terminal. */
+  | {
+      type: "error";
+      kind: "notLoggedIn" | "agent" | "protocol" | "process";
+      message: string;
+    }
+  /** The process is gone; nothing follows. */
+  | { type: "ended"; code: number | null; clean: boolean };
+
+/** An event with the session it belongs to. */
+export type IntegratedEvent = IntegratedEventBody & { id: string };
 
 /** A transition reported by an agent hook or session log, by session id:
     `prompt` (the user sent one), `stop` (the turn ended), `permission` (it
@@ -611,6 +798,35 @@ export interface Core {
     options: SpawnOptions,
     onOutput: (bytes: Uint8Array) => void,
   ): Promise<Spawned>;
+  /** Starts an agent as an integrated session. Its news arrives through
+      `onIntegratedEvent`, `ready` first. */
+  integratedStart(options: IntegratedStartOptions): Promise<IntegratedStarted>;
+  /** Sends the user's message, with any images. Resolves to the message's
+      id, which the turn that answers it names. */
+  integratedSend(
+    id: string,
+    text: string,
+    images?: IntegratedImage[],
+  ): Promise<string>;
+  /** Stops the running turn. Queued messages stay queued. */
+  integratedInterrupt(id: string): Promise<void>;
+  /** Answers a permission request; `message` goes with a denial. */
+  integratedAnswer(
+    id: string,
+    request: string,
+    choice: PermissionChoice,
+    message?: string,
+  ): Promise<void>;
+  /** Resolves to the model the agent resolved it to, when it says. */
+  integratedSetModel(id: string, model: string): Promise<string | null>;
+  /** Resolves to the mode the agent is now in, when it says. */
+  integratedSetPermissionMode(id: string, mode: string): Promise<string | null>;
+  /** Ends the session. Resolves at once; `ended` follows. */
+  integratedStop(id: string): Promise<void>;
+  /** Every integrated session's news, each event naming its session. */
+  onIntegratedEvent(
+    handler: (event: IntegratedEvent) => void,
+  ): Promise<() => void>;
   /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
   spawnShell(
     options: ShellOptions,
@@ -964,6 +1180,29 @@ const tauriCore: Core = {
     return invoke<string>("pty_shell", { ...options, onOutput: channel });
   },
 
+  integratedStart: (options) =>
+    invoke<IntegratedStarted>("integrated_start", { ...options }),
+  integratedSend: (id, text, images) =>
+    invoke<string>("integrated_send", { id, text, images: images ?? [] }),
+  integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
+  integratedAnswer: (id, request, choice, message) =>
+    invoke<void>("integrated_answer", {
+      id,
+      request,
+      choice,
+      message: message ?? null,
+    }),
+  integratedSetModel: (id, model) =>
+    invoke<string | null>("integrated_set_model", { id, model }),
+  integratedSetPermissionMode: (id, mode) =>
+    invoke<string | null>("integrated_set_permission_mode", { id, mode }),
+  integratedStop: (id) => invoke<void>("integrated_stop", { id }),
+  async onIntegratedEvent(handler) {
+    return listen<IntegratedEvent>("integrated_event", (event) =>
+      handler(event.payload),
+    );
+  },
+
   write: (id, data) => invoke("pty_write", { id, data }),
   resize: (id, cols, rows) => invoke("pty_resize", { id, cols, rows }),
   kill: (id) => invoke("pty_kill", { id }),
@@ -1226,6 +1465,24 @@ const detachedCore: Core = {
   },
   async spawnShell() {
     throw new Error("not connected to the workbench core");
+  },
+  async integratedStart() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedSend() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedInterrupt() {},
+  async integratedAnswer() {},
+  async integratedSetModel() {
+    return null;
+  },
+  async integratedSetPermissionMode() {
+    return null;
+  },
+  async integratedStop() {},
+  async onIntegratedEvent() {
+    return () => {};
   },
   async write() {},
   async resize() {},

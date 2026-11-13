@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 
 /**
  * A fake core, installed at the seam `src/lib/core.ts` already checks.
@@ -77,6 +78,11 @@ export async function installFakeCore(
     }[];
   } = {},
 ) {
+  // The scripted integrated session, as `window.__integrated`, for a test
+  // to drive with `page.evaluate`.
+  await page.addInitScript(
+    `window.__integrated = (${fakeIntegrated.toString()})();`,
+  );
   await page.addInitScript(
     ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts }) => {
       const state = { fixture, changed: null as unknown, opened };
@@ -103,6 +109,10 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+
+      // Installed by the script before this one.
+      const integrated = () =>
+        (window as unknown as { __integrated: FakeIntegrated }).__integrated;
 
       // The embedded browser's tabs, kept the way the Rust model keeps
       // them: ids from 1, never reused; opening activates; closing the
@@ -374,6 +384,28 @@ export async function installFakeCore(
           const fake = window as unknown as { __chimes?: number };
           fake.__chimes = (fake.__chimes ?? 0) + 1;
         },
+        integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) =>
+          integrated().start(options),
+        integratedSend: async (
+          id: string,
+          text: string,
+          images?: Parameters<FakeIntegrated["send"]>[2],
+        ) => integrated().send(id, text, images),
+        integratedInterrupt: async (id: string) => integrated().interrupt(id),
+        integratedAnswer: async (
+          id: string,
+          request: string,
+          choice: Parameters<FakeIntegrated["answer"]>[2],
+          message?: string,
+        ) => integrated().answer(id, request, choice, message),
+        integratedSetModel: async (id: string, model: string) =>
+          integrated().setModel(id, model),
+        integratedSetPermissionMode: async (id: string, mode: string) =>
+          integrated().setPermissionMode(id, mode),
+        integratedStop: async (id: string) => integrated().stop(id),
+        onIntegratedEvent: async (
+          handler: Parameters<FakeIntegrated["subscribe"]>[0],
+        ) => integrated().subscribe(handler),
         spawn: async (
           spawnOptions: { session?: string },
           onOutput: (bytes: Uint8Array) => void,
