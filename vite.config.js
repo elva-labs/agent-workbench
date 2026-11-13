@@ -1,11 +1,12 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
+import { devPort } from "./dev-port.js";
 
 const host = process.env.TAURI_DEV_HOST;
 
 // The dev server's port. WORKBENCH_DEV_PORT overrides it for browser test runs
 // from a second checkout; the HMR port is the one after it.
-const port = Number(process.env.WORKBENCH_DEV_PORT) || 1420;
+const { port } = devPort();
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({

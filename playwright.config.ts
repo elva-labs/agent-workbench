@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { devPort } from "./dev-port.js";
 
 /**
  * End-to-end tests run against the real Vite dev server in a real browser.
@@ -10,8 +11,7 @@ import { defineConfig, devices } from "@playwright/test";
  */
 // WORKBENCH_DEV_PORT moves the dev server off the default port. When it is
 // set, a server already answering there is an error, never a server to reuse.
-const customPort = Boolean(process.env.WORKBENCH_DEV_PORT);
-const port = Number(process.env.WORKBENCH_DEV_PORT) || 1420;
+const { port, custom: customPort } = devPort();
 const origin = `http://localhost:${port}`;
 
 export default defineConfig({
