@@ -11,9 +11,12 @@ Nothing new starts by itself. Opening a project shows what the project has:
 live sessions if any, past ones to resume, and a new-session row. Opening the
 app brings back the sessions that were open when it quit, as described under
 [after a restart](#after-a-restart).
-The past ones are read again each time the window comes back into view and
-once a minute while it is looked at, so a session run in a terminal outside
-the app is there to resume without a restart. The menu beside Open project
+The past ones of every open project are read again, in one request per
+agent directory and per machine, each time the window comes back into view
+and once a minute while it is looked at, so a session run in a terminal
+outside the app is there to resume without a restart. A list that has not
+changed is left as it is, and a machine that does not answer holds up only
+its own projects. The menu beside Open project
 holds Open remote project, for a folder on another machine, and New
 orchestrator session; see [remote](remote.md) and
 [orchestrator](orchestrator.md). With more than one agent installed the row
@@ -80,6 +83,20 @@ you, the status bar says so. While a dialog or a question over the agent
 pane is up, the chord does nothing.
 
 ## After a restart
+
+The open projects are described all at once. Those on this machine appear
+together, in the order they had, with their sessions. A project on another
+machine appears when its machine answers, at its place among the others,
+and its sessions come back with it, so a machine that is slow or gone does
+not hold up the rest, nor a folder opened from outside the app. Until it
+answers it keeps its place, and its sessions theirs, in what is remembered
+for the next start; a project that cannot be reached is left out from then
+on. When the project that was in front is one of those still waiting, the
+first project open is put in front meanwhile, with no session selected, and
+the one that was in front takes its place when it appears, with the session
+that was on screen, unless another project or session has been chosen by
+then. If its machine cannot be reached and no session has been chosen, the
+project in front selects its most recent session.
 
 The sessions that were open when the app quit come back as rows in their
 projects, in the order they had and under the names they had, with nothing
@@ -240,6 +257,15 @@ The lists are built on filenames and stat data, not contents: the filename
 is the session id, mtime is recency, size a rough length. Titles are the
 exception, and every line that parses an agent's own format is quarantined
 so that a title that cannot be read is a missing title, never an error.
+
+What is read from inside a transcript, the directory it ran in and its
+title, is kept against the file's path, modification time, size and, where
+the system has them, its inode and change time, so a transcript that has not
+changed is not opened again and one that has, or that was replaced, is read
+afresh. A link is followed to the file it points at. A title is read only for
+a session listed under a project. The past sessions of several projects are
+listed from one read of an account's directory, and Codex's index is opened
+once for all of them.
 
 ## Live updates
 

@@ -77,6 +77,10 @@ vi.mock("$lib/core", () => ({
     kill: async () => {},
     transcripts: async (_project: string, agent: string) =>
       agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
+    transcriptsMany: async (projects: string[], agent: string) =>
+      projects.map(() =>
+        agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
+      ),
     hookStatus: async () => ({
       installed: fake.hookInstalled,
       settings: "",

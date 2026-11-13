@@ -7,7 +7,13 @@ import {
   sessions,
   type Session,
 } from "$lib/sessions.svelte";
-import { isOpen, workspace } from "$lib/workspace.svelte";
+import {
+  frontPending,
+  isOpen,
+  restoredInFront,
+  untouched,
+  workspace,
+} from "$lib/workspace.svelte";
 
 /**
  * The sessions that were open when the app quit.
@@ -88,14 +94,20 @@ function write(open: Open[], active: string | null) {
 
 /**
  * Brings back the sessions that were open, in the projects that are, and
- * from then on keeps the record current. Call once the workspace is back.
- * Returns a stop function.
+ * from then on keeps the record current. Call once the projects on this
+ * machine are back. `arriving` names the projects on other machines still
+ * on their way, each with a promise that settles once it is open or has
+ * been given up: their sessions stay on record meanwhile, come back when
+ * the project does, and leave the record when it does not. Returns a stop
+ * function.
  */
-export function reopen(): () => void {
+export function reopen(
+  arriving: ReadonlyMap<string, Promise<void>> = new Map(),
+): () => void {
   const { open, active } = read();
-  for (const entry of open) {
-    if (!isOpen(entry.project)) continue;
-    if (sessions.all.some((session) => session.id === entry.id)) continue;
+  const bring = (entry: Open) => {
+    if (!isOpen(entry.project)) return;
+    if (sessions.all.some((session) => session.id === entry.id)) return;
     reopened(
       entry.project,
       entry.id,
@@ -104,30 +116,69 @@ export function reopen(): () => void {
       entry.model,
       entry.account ?? null,
     );
-  }
-
-  // The session on screen at the quit, when its project is the one in front;
-  // otherwise the project's most recent, as bringing a project forward does.
-  const project = workspace.active;
-  if (project !== null && activeSession() === null) {
+  };
+  // The session on screen at the quit, when its project is the one in front
+  // and nothing else is on screen; otherwise the project's most recent, as
+  // bringing a project forward does. While the project or the session on
+  // screen at the quit waits for its machine, the project in front meanwhile
+  // gets none.
+  const front = (project: string | null) => {
+    if (project === null || activeSession() !== null) return;
     const own = forProject(project);
-    const wanted = own.find((session) => session.id === active) ?? own.at(-1);
-    if (wanted !== undefined) sessions.active = wanted.key;
+    const waits =
+      frontPending() || held.some((entry) => entry.id === active);
+    const wanted =
+      own.find((session) => session.id === active) ??
+      (waits ? undefined : own.at(-1));
+    if (wanted === undefined) return;
+    sessions.active = wanted.key;
+    restoredInFront();
+  };
+
+  const waiting = open.filter(
+    (entry) => !isOpen(entry.project) && arriving.has(entry.project),
+  );
+  let held = $state(waiting);
+  for (const entry of open) bring(entry);
+  front(workspace.active);
+
+  let stopped = false;
+  for (const [project, arrived] of arriving) {
+    const settle = () => {
+      if (stopped) return;
+      const theirs = held.filter((entry) => entry.project === project);
+      held = held.filter((entry) => entry.project !== project);
+      for (const entry of theirs) bring(entry);
+      if (workspace.active === project) front(project);
+      else if (!isOpen(project)) front(workspace.active);
+    };
+    void arrived.then(settle, settle);
   }
 
-  return $effect.root(() => {
+  const stop = $effect.root(() => {
     $effect(() => {
+      const shown = activeSession()?.id ?? null;
+      // While the session on screen at the quit waits for its machine and
+      // nothing has been chosen since, it stays the one on record.
+      const kept = held.some((entry) => entry.id === active) && untouched();
       write(
-        sessions.all.filter(onRecord).map((session) => ({
-          project: session.project,
-          id: session.id!,
-          agent: session.agent,
-          startIn: session.startIn,
-          model: session.model,
-          account: session.account,
-        })),
-        activeSession()?.id ?? null,
+        [
+          ...sessions.all.filter(onRecord).map((session) => ({
+            project: session.project,
+            id: session.id!,
+            agent: session.agent,
+            startIn: session.startIn,
+            model: session.model,
+            account: session.account,
+          })),
+          ...held,
+        ],
+        kept ? active : shown,
       );
     });
   });
+  return () => {
+    stopped = true;
+    stop();
+  };
 }
