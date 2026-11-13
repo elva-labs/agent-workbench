@@ -63,6 +63,8 @@ pub struct DirEntry {
 
 pub struct Core {
     pub sessions: Arc<Sessions>,
+    /// The integrated sessions, beside the ptys.
+    pub integrated: Arc<crate::integrated::Sessions>,
     pub watchers: Arc<Watchers>,
     pub sink: Arc<dyn Sink>,
     home: Option<PathBuf>,
@@ -124,6 +126,7 @@ impl Core {
             .map(|home| Arc::new(crate::settings::Store::new(home, Arc::clone(&sink))));
         Self {
             sessions: Arc::new(Sessions::default()),
+            integrated: Arc::new(crate::integrated::Sessions::default()),
             processes: crate::processes::Processes::default(),
             watchers: Arc::new(Watchers::default()),
             sink,
@@ -406,6 +409,134 @@ impl Core {
             );
         }
         Ok(Spawned { pty_id, session_id })
+    }
+
+    /// Starts an agent as an integrated session: a process spoken to in
+    /// messages, whose news goes out as `integrated_event`. A fresh
+    /// session's id is chosen here, as for a pty; `session` resumes one.
+    /// The rest is as for [`Core::spawn`], with the permission mode the
+    /// session starts in, and the workbench's tool server attached to the
+    /// session when the daemon is installed where the agents look for it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn integrated_start(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: Option<String>,
+        model: Option<&str>,
+        permission_mode: Option<&str>,
+        config_dir: Option<&str>,
+    ) -> Result<crate::integrated::Started, String> {
+        let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        let protocol = adapter
+            .integrated()
+            .ok_or_else(|| format!("{agent} cannot run as an integrated session"))?;
+        let environment = env::environment();
+        let opened = project.to_string_lossy().to_string();
+        let orchestrator = self.is_orchestrator(project);
+        let project = cwd.unwrap_or(project);
+        let resume = session.is_some();
+        let session = session.unwrap_or_else(new_session_id);
+        let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
+        let expanded =
+            config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
+        if let Some(dir) = &expanded {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        }
+        let tool_server = self
+            .home
+            .as_deref()
+            .map(hook::daemon_path)
+            .filter(|path| path.is_file());
+        let launch = crate::integrated::Launch {
+            project,
+            env: &environment.vars,
+            session: &session,
+            resume,
+            model: model.filter(|model| !model.trim().is_empty()),
+            permission_mode: permission_mode.filter(|mode| !mode.trim().is_empty()),
+            config_dir: expanded.as_deref(),
+            tool_server: tool_server.as_deref(),
+            orchestrator,
+        };
+        let plugins = self.plugins.clone();
+        let started = crate::integrated::start(
+            Arc::clone(&self.sink),
+            Arc::clone(&self.integrated),
+            protocol,
+            &launch,
+            Box::new(move |id| {
+                if let Some(plugins) = plugins {
+                    plugins.session_ended(id);
+                }
+            }),
+        )?;
+        if let Some(plugins) = &self.plugins {
+            plugins.session_started(&started.id, Some(&started.session_id), &opened);
+        }
+        Ok(started)
+    }
+
+    /// Sends the user's message, with any images. Answers with the
+    /// message's id, which the turn that answers it names.
+    pub fn integrated_send(
+        &self,
+        id: &str,
+        text: &str,
+        images: &[crate::integrated::Image],
+    ) -> Result<String, String> {
+        crate::integrated::send(&self.integrated, id, text, images)
+    }
+
+    /// Stops the turn that is running. Queued messages stay queued.
+    pub fn integrated_interrupt(&self, id: &str) -> Result<(), String> {
+        crate::integrated::control(&self.integrated, id, &crate::integrated::Control::Interrupt)
+            .map(|_| ())
+    }
+
+    /// Answers a permission request the session asked.
+    pub fn integrated_answer(
+        &self,
+        id: &str,
+        request: &str,
+        choice: crate::integrated::Choice,
+        message: Option<&str>,
+    ) -> Result<(), String> {
+        crate::integrated::answer(&self.integrated, id, request, choice, message)
+    }
+
+    /// Switches the session's model. Answers with the model the agent
+    /// resolved it to, when it says.
+    pub fn integrated_set_model(&self, id: &str, model: &str) -> Result<Option<String>, String> {
+        let reply = crate::integrated::control(
+            &self.integrated,
+            id,
+            &crate::integrated::Control::SetModel(model.to_string()),
+        )?;
+        Ok(reply["model"].as_str().map(str::to_string))
+    }
+
+    /// Switches the session's permission mode. Answers with the mode the
+    /// agent is now in, when it says.
+    pub fn integrated_set_permission_mode(
+        &self,
+        id: &str,
+        mode: &str,
+    ) -> Result<Option<String>, String> {
+        let reply = crate::integrated::control(
+            &self.integrated,
+            id,
+            &crate::integrated::Control::SetPermissionMode(mode.to_string()),
+        )?;
+        Ok(reply["mode"].as_str().map(str::to_string))
+    }
+
+    /// Ends an integrated session. Comes back at once; the session's
+    /// `ended` event follows.
+    pub fn integrated_stop(&self, id: &str) -> Result<(), String> {
+        crate::integrated::stop(&self.integrated, id)
     }
 
     /// The user's shell in a pty, for the terminal panel. Hands back the pty
