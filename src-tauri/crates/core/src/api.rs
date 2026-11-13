@@ -417,6 +417,11 @@ impl Core {
     /// The rest is as for [`Core::spawn`], with the permission mode the
     /// session starts in, and the workbench's tool server attached to the
     /// session when the daemon is installed where the agents look for it.
+    ///
+    /// The agent skips its own trust question when driven this way, so a
+    /// folder it does not hold as trusted is refused with an error that
+    /// starts with [`crate::integrated::UNTRUSTED`], until
+    /// [`Core::integrated_trust`] records the user's yes.
     #[allow(clippy::too_many_arguments)]
     pub fn integrated_start(
         &self,
@@ -444,6 +449,18 @@ impl Core {
         if let Some(dir) = &expanded {
             std::fs::create_dir_all(dir)
                 .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        }
+        let trusted = self
+            .home
+            .as_deref()
+            .is_some_and(|home| protocol.trusted(home, expanded.as_deref(), project));
+        if !trusted {
+            return Err(format!(
+                "{}: {} has not been trusted in {} yet",
+                crate::integrated::UNTRUSTED,
+                project.display(),
+                protocol.name()
+            ));
         }
         let tool_server = self
             .home
@@ -477,6 +494,27 @@ impl Core {
             plugins.session_started(&started.id, Some(&started.session_id), &opened);
         }
         Ok(started)
+    }
+
+    /// Records that the user trusts the folder an integrated session of the
+    /// agent would run in, under the account whose configuration directory
+    /// is given, where the agent's own trust question would.
+    pub fn integrated_trust(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        config_dir: Option<&str>,
+    ) -> Result<(), String> {
+        let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        let protocol = adapter
+            .integrated()
+            .ok_or_else(|| format!("{agent} cannot run as an integrated session"))?;
+        let home = self.home.as_deref().ok_or("no home directory")?;
+        let expanded = config_dir
+            .filter(|dir| !dir.trim().is_empty())
+            .map(|dir| account::expand(home, dir));
+        protocol.trust(home, expanded.as_deref(), cwd.unwrap_or(project))
     }
 
     /// Sends the user's message, with any images. Answers with the

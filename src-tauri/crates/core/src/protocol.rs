@@ -128,6 +128,17 @@ struct IntegratedStartParams {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IntegratedTrustParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct IntegratedSendParams {
     id: String,
     #[serde(default)]
@@ -377,6 +388,16 @@ pub fn dispatch(
                 p.permission_mode.as_deref(),
                 p.config_dir.as_deref(),
             )?)
+        }
+        "integrated_trust" => {
+            let p: IntegratedTrustParams = parse(params)?;
+            core.integrated_trust(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                p.config_dir.as_deref(),
+            )?;
+            Ok(Value::Null)
         }
         "integrated_send" => {
             let p: IntegratedSendParams = parse(params)?;
@@ -806,6 +827,14 @@ mod tests {
         )
         .expect_err("a start names its project");
         assert!(missing.contains("bad parameters"), "{missing}");
+        let missing = dispatch(
+            &core,
+            "integrated_trust",
+            json!({ "agent": "claude-code" }),
+            no_output,
+        )
+        .expect_err("a trust names its project");
+        assert!(missing.contains("bad parameters"), "{missing}");
         let codex = dispatch(
             &core,
             "integrated_start",
@@ -819,7 +848,7 @@ mod tests {
             ("integrated_interrupt", json!({ "id": "int-none" })),
             (
                 "integrated_answer",
-                json!({ "id": "int-none", "request": "r", "choice": "allowOnce" }),
+                json!({ "id": "int-none", "request": "r", "choice": "allow" }),
             ),
             (
                 "integrated_set_model",
@@ -840,7 +869,7 @@ mod tests {
             json!({ "id": "int-none", "request": "r", "choice": "allowForever" }),
             no_output,
         )
-        .expect_err("a choice is one of the four");
+        .expect_err("a choice is one of those a request offers");
         assert!(unknown.contains("bad parameters"), "{unknown}");
     }
 

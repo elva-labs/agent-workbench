@@ -194,6 +194,41 @@ async fn integrated_start(
     .await
 }
 
+/// Records that the user trusts the folder an integrated session would
+/// run in, on the machine the project is on.
+#[tauri::command]
+async fn integrated_trust(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => {
+            core.integrated_trust(
+                &agent,
+                Path::new(&project),
+                cwd.as_deref().map(Path::new),
+                config_dir.as_deref(),
+            )?;
+            Ok(Value::Null)
+        }
+        Route::Remote { host, rest } => remotes.connection(&host)?.call(
+            "integrated_trust",
+            json!({ "agent": agent, "project": rest, "cwd": cwd, "configDir": config_dir }),
+        ),
+    })
+    .await
+}
+
 #[tauri::command]
 async fn integrated_send(
     core: State<'_, Arc<Core>>,
@@ -1326,6 +1361,7 @@ pub fn run() {
             pty_processes,
             pty_stop_process,
             integrated_start,
+            integrated_trust,
             integrated_send,
             integrated_interrupt,
             integrated_answer,

@@ -360,9 +360,9 @@ fn each_answer_to_a_permission_reaches_the_agent() {
     h.until_type("ready");
     h.send("touch four files");
     let answers = [
-        ("p1", Choice::AllowOnce, None),
+        ("p1", Choice::Allow, None),
         ("p2", Choice::AllowSession, None),
-        ("p3", Choice::AllowProject, None),
+        ("p3", Choice::AllowAlways, None),
         ("p4", Choice::Deny, Some("not that one")),
     ];
     for (request, choice, message) in answers {
@@ -370,7 +370,14 @@ fn each_answer_to_a_permission_reaches_the_agent() {
         let asked = asked.last().unwrap();
         assert_eq!(asked["tool"], "Bash");
         assert_eq!(asked["call"], format!("call-{request}"));
-        assert_eq!(asked["rule"], format!("Bash(touch {request})"));
+        assert_eq!(
+            asked["choices"][1],
+            json!({
+                "choice": "allowSession",
+                "remembers": format!("Bash(touch {request}) for the rest of this session"),
+                "message": false,
+            })
+        );
         assert_eq!(states(&h.events()).last().unwrap(), "asking");
         answer(&h.sessions, &h.id, request, choice, message).unwrap();
         assert_eq!(states(&h.events()).last().unwrap(), "working");
@@ -408,7 +415,7 @@ fn each_answer_to_a_permission_reaches_the_agent() {
     assert_eq!(answered["p4"]["message"], "not that one");
 
     assert!(
-        answer(&h.sessions, &h.id, "p1", Choice::AllowOnce, None).is_err(),
+        answer(&h.sessions, &h.id, "p1", Choice::Allow, None).is_err(),
         "a request is answered once"
     );
     h.stop();

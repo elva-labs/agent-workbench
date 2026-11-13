@@ -316,6 +316,73 @@ fn trust_claude(claude: &Path, from: &str, to: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The keys Claude Code may file a folder's trust under: the path as given
+/// and as resolved, with forward slashes, as it writes them.
+fn claude_keys(folder: &Path) -> Vec<String> {
+    let mut keys = Vec::new();
+    for path in [
+        folder.to_path_buf(),
+        dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf()),
+    ] {
+        let key = path.to_string_lossy().replace('\\', "/");
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+/// Whether Claude Code holds a folder as trusted, by the record its own
+/// trust question writes in the state file given: the folder's, or that of
+/// a folder above it, says yes.
+pub fn claude_trusts(state: &Path, folder: &Path) -> bool {
+    let read = read_settings(state);
+    let Some(projects) = read.get("projects").and_then(Value::as_object) else {
+        return false;
+    };
+    let says_yes = |key: &str| {
+        projects
+            .get(key)
+            .and_then(|project| project.get("hasTrustDialogAccepted"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    claude_keys(folder).iter().any(|key| {
+        let mut at = Some(Path::new(key));
+        while let Some(path) = at {
+            let key = path.to_string_lossy().replace('\\', "/");
+            if !key.is_empty() && says_yes(&key) {
+                return true;
+            }
+            at = path.parent();
+        }
+        false
+    })
+}
+
+/// Records in the state file given that the user trusts a folder, as
+/// Claude Code's own trust question does when the answer is yes.
+pub fn claude_trust(state: &Path, folder: &Path) -> Result<(), String> {
+    let key = claude_keys(folder)
+        .pop()
+        .expect("a folder has at least one key");
+    let mut read = read_for_writing(state)?;
+    let entry = read
+        .entry("projects")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's projects state is not an object")?
+        .entry(key)
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's project state is not an object")?;
+    if entry.get("hasTrustDialogAccepted") != Some(&Value::Bool(true)) {
+        entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
+        write_settings(state, &read)?;
+    }
+    Ok(())
+}
+
 fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
     let Ok(text) = std::fs::read_to_string(codex) else {
         return Ok(());
@@ -660,6 +727,42 @@ mod tests {
             std::fs::read_to_string(settings_path(&project)).unwrap(),
             "[1, 2"
         );
+    }
+
+    #[test]
+    fn a_folder_is_trusted_by_its_own_record_or_one_above_it() {
+        let (home, project) = fixture("claude-trust");
+        let state = home.join(".claude.json");
+        let inner = project.join("src");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert!(!claude_trusts(&state, &project), "no state file, no trust");
+
+        std::fs::write(&state, r#"{"numStartups": 3, "projects": {}}"#).unwrap();
+        assert!(!claude_trusts(&state, &project));
+        claude_trust(&state, &project).unwrap();
+        assert!(claude_trusts(&state, &project));
+        assert!(
+            claude_trusts(&state, &inner),
+            "a folder inside a trusted one"
+        );
+        assert!(!claude_trusts(&state, &home), "nothing above it");
+
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        assert_eq!(written["numStartups"], 3, "the rest of the file stays");
+        let key = dunce::canonicalize(&project)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert_eq!(written["projects"][&key]["hasTrustDialogAccepted"], true);
+
+        // A record that says no is no.
+        std::fs::write(
+            &state,
+            json!({"projects": {key: {"hasTrustDialogAccepted": false}}}).to_string(),
+        )
+        .unwrap();
+        assert!(!claude_trusts(&state, &inner));
     }
 
     #[test]

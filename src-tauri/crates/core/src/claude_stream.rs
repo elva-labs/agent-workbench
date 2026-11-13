@@ -13,6 +13,7 @@
 //! sessions; nothing Claude-shaped goes past this file.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
@@ -20,9 +21,10 @@ use crate::adapter::{
     prepare_process, process, CLAUDE_CONFIG_VAR, ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR,
 };
 use crate::env::find_on_path;
+use crate::hook;
 use crate::integrated::{
     Choice, CommandInfo, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch,
-    ModelInfo, Outcome, Protocol, Reading, TaskKind, Usage,
+    ModelInfo, Offer, Outcome, Protocol, Reading, TaskKind, Usage,
 };
 
 pub struct ClaudeStream;
@@ -124,6 +126,24 @@ impl Protocol for ClaudeStream {
             launch.permission_mode,
         ))
     }
+
+    fn trusted(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> bool {
+        hook::claude_trusts(&state_file(home, config_dir), folder)
+    }
+
+    fn trust(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> Result<(), String> {
+        hook::claude_trust(&state_file(home, config_dir), folder)
+    }
+}
+
+/// The file Claude Code keeps its state in, trust among it: in the
+/// account's configuration directory, or in the home directory for its
+/// own.
+fn state_file(home: &Path, config_dir: Option<&Path>) -> PathBuf {
+    match config_dir {
+        Some(dir) => dir.join(".claude.json"),
+        None => home.join(".claude.json"),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,61 +166,29 @@ enum Sent {
 /// withdrawn, since the answer carries the tool's input back.
 #[derive(Debug, Clone)]
 struct Asked {
-    tool: String,
     input: Value,
     /// The agent's own suggestions of what to remember, as it sent them.
     suggestions: Vec<Value>,
 }
 
 impl Asked {
-    /// The first suggestion that adds an allow rule: what "always" means
-    /// for this call.
+    /// The first suggestion that adds an allow rule.
     fn rule(&self) -> Option<&Value> {
         self.suggestions
             .iter()
             .find(|s| s["type"] == "addRules" && s["behavior"] == "allow")
     }
 
-    /// What allowing it for the session remembers: the suggested rule, or
-    /// the suggested mode when there is no rule, or the tool itself, each
-    /// for the session alone.
-    fn for_session(&self) -> Vec<Value> {
-        let chosen: Vec<Value> = match self.rule() {
-            Some(rule) => vec![rule.clone()],
-            None => self
-                .suggestions
-                .iter()
-                .filter(|s| s["type"] == "setMode")
-                .cloned()
-                .collect(),
-        };
-        let chosen = if chosen.is_empty() {
-            vec![json!({
-                "type": "addRules",
-                "rules": [{ "toolName": self.tool }],
-                "behavior": "allow",
-            })]
-        } else {
-            chosen
-        };
-        chosen
-            .into_iter()
-            .map(|mut suggestion| {
-                suggestion["destination"] = json!("session");
-                suggestion
-            })
-            .collect()
+    /// The first suggestion that switches the permission mode, for a tool
+    /// that has no rule of its own to remember, such as a file write.
+    fn mode(&self) -> Option<&Value> {
+        self.suggestions
+            .iter()
+            .find(|s| s["type"] == "setMode" && s["mode"].is_string())
     }
 
-    /// What allowing it for the project remembers: the suggested rule, in
-    /// the project's own uncommitted settings.
-    fn for_project(&self) -> Option<Vec<Value>> {
-        let mut rule = self.rule()?.clone();
-        rule["destination"] = json!("localSettings");
-        Some(vec![rule])
-    }
-
-    /// The rule as the agent writes it in its settings, `Bash(touch x)`.
+    /// The rules of the suggested rule as the agent writes them in its
+    /// settings, `Bash(touch x)`.
     fn described(&self) -> Option<String> {
         let rules = self.rule()?["rules"].as_array()?;
         let named: Vec<String> = rules
@@ -214,6 +202,66 @@ impl Asked {
             })
             .collect();
         (!named.is_empty()).then(|| named.join(", "))
+    }
+
+    /// The suggestion a choice remembers, sent back with the destination
+    /// the choice means, and what it remembers in words. None for a choice
+    /// that has nothing the agent suggested to remember.
+    fn remembered(&self, choice: Choice) -> Option<(Value, String)> {
+        match choice {
+            Choice::AllowSession => {
+                if let Some(rule) = self.described() {
+                    let mut suggestion = self.rule()?.clone();
+                    suggestion["destination"] = json!("session");
+                    Some((suggestion, format!("{rule} for the rest of this session")))
+                } else {
+                    let mut suggestion = self.mode()?.clone();
+                    let mode = suggestion["mode"].as_str()?.to_string();
+                    suggestion["destination"] = json!("session");
+                    Some((
+                        suggestion,
+                        format!("the {mode} permission mode for the rest of this session"),
+                    ))
+                }
+            }
+            Choice::AllowAlways => {
+                let rule = self.described()?;
+                let mut suggestion = self.rule()?.clone();
+                suggestion["destination"] = json!("localSettings");
+                Some((
+                    suggestion,
+                    format!("{rule} in this project's uncommitted local settings"),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// The answers this request takes: a choice that would remember
+    /// something is offered only when the agent suggested what.
+    fn offers(&self) -> Vec<Offer> {
+        let mut offers = vec![Offer {
+            choice: Choice::Allow,
+            remembers: None,
+            message: false,
+        }];
+        for choice in [Choice::AllowSession, Choice::AllowAlways] {
+            if let Some((_, remembers)) = self.remembered(choice) {
+                offers.push(Offer {
+                    choice,
+                    remembers: Some(remembers),
+                    message: false,
+                });
+            }
+        }
+        for choice in [Choice::Deny, Choice::Cancel] {
+            offers.push(Offer {
+                choice,
+                remembers: None,
+                message: true,
+            });
+        }
+        offers
     }
 }
 
@@ -697,11 +745,11 @@ impl Stream {
             );
             return;
         }
+        let tool = request["tool_name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let asked = Asked {
-            tool: request["tool_name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
             input: request["input"].clone(),
             suggestions: request["permission_suggestions"]
                 .as_array()
@@ -709,24 +757,18 @@ impl Stream {
                 .unwrap_or_default(),
         };
         let call = text(&request["tool_use_id"]);
-        let mut choices = vec![Choice::AllowOnce, Choice::AllowSession];
-        if asked.rule().is_some() {
-            choices.push(Choice::AllowProject);
-        }
-        choices.push(Choice::Deny);
         out.events.push(Event::PermissionAsked {
             request: id.to_string(),
             parent: call
                 .as_deref()
                 .and_then(|call| self.calls.get(call).cloned().flatten()),
             call,
-            tool: asked.tool.clone(),
+            tool,
             input: asked.input.clone(),
             description: text(&request["description"])
                 .or_else(|| text(&request["input"]["description"])),
             path: text(&request["blocked_path"]),
-            rule: asked.described(),
-            choices,
+            choices: asked.offers(),
         });
         self.asked.insert(id.to_string(), asked);
     }
@@ -889,26 +931,27 @@ impl Driver for Stream {
             .asked
             .get(request)
             .ok_or("the agent is not waiting on that request")?;
+        let said = message.map(str::trim).filter(|m| !m.is_empty());
         let response = match choice {
-            Choice::AllowOnce => json!({ "behavior": "allow", "updatedInput": asked.input }),
-            Choice::AllowSession => json!({
-                "behavior": "allow",
-                "updatedInput": asked.input,
-                "updatedPermissions": asked.for_session(),
-            }),
-            Choice::AllowProject => json!({
-                "behavior": "allow",
-                "updatedInput": asked.input,
-                "updatedPermissions": asked
-                    .for_project()
-                    .ok_or("this request cannot be remembered for the project")?,
-            }),
+            Choice::Allow => json!({ "behavior": "allow", "updatedInput": asked.input }),
+            Choice::AllowSession | Choice::AllowAlways => {
+                let (suggestion, _) = asked
+                    .remembered(choice)
+                    .ok_or("that choice was not offered for this request")?;
+                json!({
+                    "behavior": "allow",
+                    "updatedInput": asked.input,
+                    "updatedPermissions": [suggestion],
+                })
+            }
             Choice::Deny => json!({
                 "behavior": "deny",
-                "message": message
-                    .map(str::trim)
-                    .filter(|m| !m.is_empty())
-                    .unwrap_or("The user declined this."),
+                "message": said.unwrap_or("The user declined this."),
+            }),
+            Choice::Cancel => json!({
+                "behavior": "deny",
+                "message": said.unwrap_or("The user declined this and stopped the turn."),
+                "interrupt": true,
             }),
         };
         self.asked.remove(request);
@@ -1061,18 +1104,39 @@ mod tests {
         assert!(file_change(&json!("Error: no")).is_none());
     }
 
+    fn offered(out: &[Event]) -> Vec<(Choice, Option<String>)> {
+        let Event::PermissionAsked { choices, .. } = &out[0] else {
+            panic!("{out:?}");
+        };
+        choices
+            .iter()
+            .map(|offer| (offer.choice, offer.remembers.clone()))
+            .collect()
+    }
+
+    fn answered(
+        stream: &mut Stream,
+        request: &str,
+        choice: Choice,
+        message: Option<&str>,
+    ) -> Value {
+        let line: Value =
+            serde_json::from_str(&stream.answer(request, choice, message).unwrap()).unwrap();
+        assert_eq!(line["response"]["request_id"], request);
+        line["response"]["response"].clone()
+    }
+
     #[test]
     fn permission_answers_carry_the_input_back_and_only_the_chosen_rule() {
         let mut stream = stream();
         let asked = json!({"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"touch c.txt"},"tool_use_id":"t9","blocked_path":"/p/c.txt",
             "permission_suggestions":[
                 {"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch c.txt"}],"behavior":"allow","destination":"localSettings"},
+                {"type":"addDirectories","directories":["/p"],"destination":"session"},
                 {"type":"setMode","mode":"acceptEdits","destination":"session"}]}});
         let out = events(&mut stream, std::slice::from_ref(&asked));
         let Event::PermissionAsked {
             request,
-            rule,
-            choices,
             path,
             call,
             ..
@@ -1081,51 +1145,63 @@ mod tests {
             panic!("{out:?}");
         };
         assert_eq!(request, "p1");
-        assert_eq!(rule.as_deref(), Some("Bash(touch c.txt)"));
         assert_eq!(path.as_deref(), Some("/p/c.txt"));
         assert_eq!(call.as_deref(), Some("t9"));
         assert_eq!(
-            choices,
-            &[
-                Choice::AllowOnce,
-                Choice::AllowSession,
-                Choice::AllowProject,
-                Choice::Deny
+            offered(&out),
+            [
+                (Choice::Allow, None),
+                (
+                    Choice::AllowSession,
+                    Some("Bash(touch c.txt) for the rest of this session".into())
+                ),
+                (
+                    Choice::AllowAlways,
+                    Some("Bash(touch c.txt) in this project's uncommitted local settings".into())
+                ),
+                (Choice::Deny, None),
+                (Choice::Cancel, None),
             ]
         );
 
-        let line: Value =
-            serde_json::from_str(&stream.answer("p1", Choice::AllowSession, None).unwrap())
-                .unwrap();
-        let response = &line["response"]["response"];
-        assert_eq!(line["response"]["request_id"], "p1");
+        let response = answered(&mut stream, "p1", Choice::AllowSession, None);
         assert_eq!(response["updatedInput"]["command"], "touch c.txt");
-        assert_eq!(response["updatedPermissions"].as_array().unwrap().len(), 1);
-        assert_eq!(response["updatedPermissions"][0]["destination"], "session");
+        assert_eq!(
+            response["updatedPermissions"],
+            json!([{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch c.txt"}],"behavior":"allow","destination":"session"}]),
+            "the rule alone, never the mode or the directory beside it"
+        );
         assert!(
-            stream.answer("p1", Choice::AllowOnce, None).is_err(),
+            stream.answer("p1", Choice::Allow, None).is_err(),
             "answered once"
         );
 
         events(&mut stream, std::slice::from_ref(&asked));
-        let line: Value =
-            serde_json::from_str(&stream.answer("p1", Choice::AllowProject, None).unwrap())
-                .unwrap();
+        let response = answered(&mut stream, "p1", Choice::AllowAlways, None);
+        assert_eq!(response["updatedPermissions"].as_array().unwrap().len(), 1);
         assert_eq!(
-            line["response"]["response"]["updatedPermissions"][0]["destination"],
+            response["updatedPermissions"][0]["destination"],
             "localSettings"
         );
 
+        events(&mut stream, std::slice::from_ref(&asked));
+        let response = answered(&mut stream, "p1", Choice::Allow, None);
+        assert!(response.get("updatedPermissions").is_none());
+
+        events(&mut stream, std::slice::from_ref(&asked));
+        let response = answered(&mut stream, "p1", Choice::Deny, Some("not now"));
+        assert_eq!(response["behavior"], "deny");
+        assert_eq!(response["message"], "not now");
+        assert!(response.get("interrupt").is_none());
+
         events(&mut stream, &[asked]);
-        let line: Value =
-            serde_json::from_str(&stream.answer("p1", Choice::Deny, Some("not now")).unwrap())
-                .unwrap();
-        assert_eq!(line["response"]["response"]["behavior"], "deny");
-        assert_eq!(line["response"]["response"]["message"], "not now");
+        let response = answered(&mut stream, "p1", Choice::Cancel, None);
+        assert_eq!(response["behavior"], "deny");
+        assert_eq!(response["interrupt"], true);
     }
 
     #[test]
-    fn a_request_with_no_rule_to_remember_offers_the_session_alone() {
+    fn a_request_that_suggests_a_mode_remembers_the_mode_for_the_session_alone() {
         let mut stream = stream();
         let out = events(
             &mut stream,
@@ -1134,22 +1210,50 @@ mod tests {
                 "permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}}),
             ],
         );
-        let Event::PermissionAsked { choices, rule, .. } = &out[0] else {
-            panic!("{out:?}");
-        };
         assert_eq!(
-            choices,
-            &[Choice::AllowOnce, Choice::AllowSession, Choice::Deny]
+            offered(&out),
+            [
+                (Choice::Allow, None),
+                (
+                    Choice::AllowSession,
+                    Some("the acceptEdits permission mode for the rest of this session".into())
+                ),
+                (Choice::Deny, None),
+                (Choice::Cancel, None),
+            ]
         );
-        assert_eq!(rule, &None);
-        assert!(stream.answer("p2", Choice::AllowProject, None).is_err());
-        let line: Value =
-            serde_json::from_str(&stream.answer("p2", Choice::AllowSession, None).unwrap())
-                .unwrap();
+        assert!(stream.answer("p2", Choice::AllowAlways, None).is_err());
+        let response = answered(&mut stream, "p2", Choice::AllowSession, None);
         assert_eq!(
-            line["response"]["response"]["updatedPermissions"][0]["type"],
-            "setMode"
+            response["updatedPermissions"],
+            json!([{"type":"setMode","mode":"acceptEdits","destination":"session"}])
         );
+    }
+
+    #[test]
+    fn a_request_that_suggests_nothing_remembers_nothing() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"control_request","request_id":"p3","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"rm -rf build"}}}),
+            ],
+        );
+        assert_eq!(
+            offered(&out),
+            [
+                (Choice::Allow, None),
+                (Choice::Deny, None),
+                (Choice::Cancel, None),
+            ]
+        );
+        assert!(
+            stream.answer("p3", Choice::AllowSession, None).is_err(),
+            "no rule is made up for the whole tool"
+        );
+        assert!(stream.answer("p3", Choice::AllowAlways, None).is_err());
+        let response = answered(&mut stream, "p3", Choice::Allow, None);
+        assert!(response.get("updatedPermissions").is_none());
     }
 
     #[test]

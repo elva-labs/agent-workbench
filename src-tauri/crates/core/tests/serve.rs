@@ -229,10 +229,13 @@ while read -r line; do :; done
         let events = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
         // No login shell to ask, so the daemon's own PATH, with the
         // stand-in first, is the one the agent is looked up on.
+        let home = dir.join("home");
+        std::fs::create_dir_all(&home).unwrap();
         let connection = Connection::open(
             Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
                 .arg("serve")
                 .env_remove("SHELL")
+                .env("HOME", &home)
                 .env("PATH", format!("{}:/usr/bin:/bin", dir.display())),
             Box::new({
                 let events = Arc::clone(&events);
@@ -240,12 +243,22 @@ while read -r line; do :; done
             }),
         )
         .unwrap();
-        let started = connection
+        // A folder the agent has not been told to trust is refused, until
+        // the user's yes is recorded where the agent keeps it.
+        let start = json!({ "agent": "claude-code", "project": dir, "model": "haiku" });
+        let refused = connection
+            .call("integrated_start", start.clone())
+            .unwrap_err();
+        assert!(refused.starts_with("untrusted:"), "{refused}");
+        connection
             .call(
-                "integrated_start",
-                json!({ "agent": "claude-code", "project": dir, "model": "haiku" }),
+                "integrated_trust",
+                json!({ "agent": "claude-code", "project": dir }),
             )
             .unwrap();
+        let state = std::fs::read_to_string(home.join(".claude.json")).unwrap();
+        assert!(state.contains("hasTrustDialogAccepted"), "{state}");
+        let started = connection.call("integrated_start", start).unwrap();
         let id = started["id"].as_str().unwrap().to_string();
         assert!(started["sessionId"].is_string());
 

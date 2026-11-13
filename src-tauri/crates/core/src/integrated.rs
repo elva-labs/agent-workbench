@@ -152,8 +152,8 @@ pub enum Event {
     },
     /// The agent asks to use a tool. `request` is what the answer names;
     /// `call` the tool call it is for; `path` the file or directory that
-    /// made it ask, when there is one; `rule` what allowing it for the
-    /// project would remember; `choices` the answers it takes.
+    /// made it ask, when there is one; `choices` the answers it takes, each
+    /// with what it remembers.
     PermissionAsked {
         request: String,
         call: Option<String>,
@@ -162,8 +162,7 @@ pub enum Event {
         input: Value,
         description: Option<String>,
         path: Option<String>,
-        rule: Option<String>,
-        choices: Vec<Choice>,
+        choices: Vec<Offer>,
     },
     /// The agent no longer waits for an answer to a permission request: the
     /// turn was interrupted, or the session ended.
@@ -304,18 +303,35 @@ pub enum ErrorKind {
     Process,
 }
 
-/// An answer to a permission request, as the window gives it.
+/// An answer to a permission request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Choice {
     /// This call only.
-    AllowOnce,
-    /// This call and the like of it, for as long as the session lives.
+    Allow,
+    /// This call, and what the offer remembers for as long as the session
+    /// lives.
     AllowSession,
-    /// This call and the like of it, remembered in the project's own
-    /// uncommitted settings.
-    AllowProject,
+    /// This call, and what the offer remembers from now on, where the offer
+    /// says.
+    AllowAlways,
+    /// Not this call; the turn goes on, and the agent is told, with the
+    /// user's message where the offer takes one.
     Deny,
+    /// Not this call, and the turn stops.
+    Cancel,
+}
+
+/// One answer a permission request takes. `remembers` says, in words the
+/// window can show, what the choice keeps beyond this call; a choice with
+/// nothing precise to remember is not offered. `message` is whether the
+/// choice carries a message from the user to the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Offer {
+    pub choice: Choice,
+    pub remembers: Option<String>,
+    pub message: bool,
 }
 
 /// An image attached to a message: base64 data and its media type.
@@ -375,7 +391,21 @@ pub trait Protocol: Send + Sync {
 
     /// A fresh reader and writer of the agent's lines for one session.
     fn driver(&self, launch: &Launch) -> Box<dyn Driver>;
+
+    /// Whether the agent holds a folder as trusted to run its project's
+    /// own hooks and servers, by the record the agent's own question
+    /// writes, under the account whose configuration directory is given.
+    fn trusted(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> bool;
+
+    /// Records that the user trusts a folder, where the agent's own
+    /// question would.
+    fn trust(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> Result<(), String>;
 }
+
+/// What a start in a folder the agent does not trust fails with, before
+/// the folder: the window asks the user, and records the answer with the
+/// trust command.
+pub const UNTRUSTED: &str = "untrusted";
 
 /// A control request the window sends while the session runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1102,7 +1132,6 @@ mod tests {
                 input: Value::Null,
                 description: None,
                 path: None,
-                rule: None,
                 choices: vec![],
             },
             Event::PermissionWithdrawn {
@@ -1186,7 +1215,6 @@ mod tests {
                 input: Value::Null,
                 description: None,
                 path: None,
-                rule: None,
                 choices: vec![],
             },
         ]);
