@@ -482,6 +482,26 @@ impl Core {
         }
     }
 
+    /// The past sessions of several projects at once, in the order given,
+    /// from one read of the account's directory.
+    pub fn sessions_list_many(
+        &self,
+        projects: &[PathBuf],
+        agent: &str,
+        config_dir: Option<&str>,
+    ) -> Vec<Vec<transcripts::Transcript>> {
+        let Some(home) = &self.home else {
+            return vec![Vec::new(); projects.len()];
+        };
+        match agent {
+            "claude-code" => {
+                transcripts::list_many(&account::claude_dir(home, config_dir), projects)
+            }
+            "codex" => codex::list_many(&account::codex_home(home, config_dir), projects),
+            _ => vec![Vec::new(); projects.len()],
+        }
+    }
+
     /// What an agent calls a session now, for agents that keep that in an
     /// index of their own rather than in the terminal title.
     pub fn session_title(&self, agent: &str, id: &str, config_dir: Option<&str>) -> Option<String> {

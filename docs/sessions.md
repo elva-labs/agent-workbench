@@ -238,6 +238,12 @@ is the session id, mtime is recency, size a rough length. Titles are the
 exception, and every line that parses an agent's own format is quarantined
 so that a title that cannot be read is a missing title, never an error.
 
+What is read from inside a transcript, the directory it ran in and its
+title, is kept against the file's path, modification time and size, so a
+transcript that has not changed is not opened again and one that has is
+read afresh. The past sessions of several projects are listed from one read
+of an account's directory, and Codex's index is opened once for all of them.
+
 ## Live updates
 
 The changes pane learns that the tree moved in one of two ways, chosen per
