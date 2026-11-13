@@ -341,12 +341,20 @@ async fn hook_install(
 ) -> Result<Value, String> {
     // The server the hooks point the agents at is the daemon; on this
     // machine the app puts its own build in place first. A remote has it
-    // already, since the connection runs it.
+    // already, since the connection runs it. The check can wait on the
+    // daemon's lock, so it runs off the async runtime.
     if let Route::Local(_) = route(&project) {
-        if let Some(home) = core.home() {
-            let resources = app.path().resource_dir().ok();
-            daemon.ensure_again(|| ssh::ensure_local_daemon(home, resources.as_deref()))?;
-        }
+        let core = Arc::clone(&core);
+        let daemon = Arc::clone(&daemon);
+        let app = app.clone();
+        blocking(move || {
+            if let Some(home) = core.home() {
+                let resources = app.path().resource_dir().ok();
+                daemon.ensure_again(|| ssh::ensure_local_daemon(home, resources.as_deref()))?;
+            }
+            Ok(())
+        })
+        .await?;
     }
     routed(
         Arc::clone(&core),
