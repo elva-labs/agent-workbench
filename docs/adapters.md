@@ -1,7 +1,9 @@
 # Agents
 
 The workbench drives two agents, both full-screen TUIs in a pty: Claude Code
-and Codex CLI. The differences between them sit behind one seam; everything
+and Codex CLI. Claude Code can also run as an
+[integrated session](integrated.md), driven in messages with the
+conversation drawn by the window. The differences between them sit behind one seam; everything
 above it sees a session with an agent id, a project, and an id to resume by.
 
 |               | Claude Code                                                        | Codex CLI                                                |

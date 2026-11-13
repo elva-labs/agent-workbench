@@ -121,6 +121,8 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Plugins](docs/plugins.md): where they come from, the sources offered out
   of the box, what one may add to the workbench, and how one is written.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
+- [Integrated sessions](docs/integrated.md): an agent driven in messages
+  rather than in a terminal, and the events it gives the window.
 - [Remote](docs/remote.md): projects on other machines.
 - [Platforms](docs/platforms.md): what differs on each.
 - [Testing](docs/testing.md) and [CI and releases](docs/release.md).
