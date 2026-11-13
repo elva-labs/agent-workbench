@@ -242,11 +242,51 @@ async fn hook_status(
     answer
 }
 
+/// Answers a batched command for projects on several machines: the ones on
+/// this machine go to `local` as paths, and each host's go to `remote` as
+/// the paths on it, one call per host, every host on a thread of its own.
+/// `local` runs on the calling thread without waiting for any host, and its
+/// error is returned the moment it happens. An answer comes back at the
+/// place of its project in the request; a host that fails or answers
+/// something other than a list leaves `fill` at its projects' places.
+fn batched<L, R>(projects: &[String], fill: Value, local: L, remote: R) -> Result<Value, String>
+where
+    L: FnOnce(&[PathBuf]) -> Result<Vec<Value>, String>,
+    R: Fn(&str, Vec<String>) -> Result<Value, String> + Send + Sync + 'static,
+{
+    let Routed { here, elsewhere } = split_by_host(projects);
+    let remote = Arc::new(remote);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    for (host, group) in &elsewhere {
+        let sender = sender.clone();
+        let remote = Arc::clone(&remote);
+        let host = host.clone();
+        let rests: Vec<String> = group.iter().map(|(_, rest)| rest.clone()).collect();
+        std::thread::spawn(move || {
+            let _ = sender.send((host.clone(), remote(&host, rests)));
+        });
+    }
+    drop(sender);
+
+    let mut answers = vec![fill; projects.len()];
+    if !here.is_empty() {
+        let paths: Vec<PathBuf> = here.iter().map(|(_, path)| path.clone()).collect();
+        put_back(&mut answers, &here, local(&paths)?);
+    }
+    for (host, answer) in receiver {
+        if let (Ok(Value::Array(answer)), Some((_, group))) =
+            (answer, elsewhere.iter().find(|(known, _)| *known == host))
+        {
+            put_back(&mut answers, group, answer);
+        }
+    }
+    Ok(Value::Array(answers))
+}
+
 /// The hook status of several projects at once, in the order given. The
 /// projects on this machine are read together, from one read of each
-/// account's state, and those on each host go to it as one request, the
-/// hosts in parallel. A host that cannot be reached answers null for its
-/// projects.
+/// account's state, and those on each host go to it as one request. A host
+/// that cannot be reached answers null for its projects.
 #[tauri::command]
 async fn hook_status_many(
     app: tauri::AppHandle,
@@ -260,54 +300,27 @@ async fn hook_status_many(
     let remotes = Arc::clone(&remotes);
     let daemon = Arc::clone(&daemon);
     blocking(move || {
-        let mut answers = vec![Value::Null; projects.len()];
-        let Routed { here, elsewhere } = split_by_host(&projects);
-
-        std::thread::scope(|scope| {
-            let hosts: Vec<_> = elsewhere
-                .iter()
-                .map(|(host, group)| {
-                    let remotes = &remotes;
-                    let accounts = &accounts;
-                    scope.spawn(move || {
-                        let rests: Vec<&str> =
-                            group.iter().map(|(_, rest)| rest.as_str()).collect();
-                        remotes.connection(host).and_then(|connection| {
-                            connection.call(
-                                "hook_status_many",
-                                json!({ "projects": rests, "accounts": accounts }),
-                            )
-                        })
-                    })
-                })
-                .collect();
-
-            if !here.is_empty() {
+        let here_accounts = accounts.clone();
+        batched(
+            &projects,
+            Value::Null,
+            move |paths| {
                 ensure_daemon_here(&app, &core, &daemon);
-                let paths: Vec<PathBuf> = here.iter().map(|(_, path)| path.clone()).collect();
-                match core.hook_status_many(&paths, &accounts) {
-                    Ok(found) => {
-                        let found = found
-                            .into_iter()
-                            .map(value)
-                            .collect::<Result<Vec<_>, _>>()?;
-                        put_back(&mut answers, &here, found);
-                    }
+                match core.hook_status_many(paths, &here_accounts) {
+                    Ok(found) => found.into_iter().map(value).collect(),
                     Err(error) => {
                         daemon.forget();
-                        return Err(error);
+                        Err(error)
                     }
                 }
-            }
-
-            for (handle, (_, group)) in hosts.into_iter().zip(&elsewhere) {
-                if let Ok(Ok(Value::Array(answer))) = handle.join() {
-                    put_back(&mut answers, group, answer);
-                }
-            }
-            Ok(())
-        })?;
-        Ok(Value::Array(answers))
+            },
+            move |host, rests| {
+                remotes.connection(host)?.call(
+                    "hook_status_many",
+                    json!({ "projects": rests, "accounts": accounts }),
+                )
+            },
+        )
     })
     .await
 }
@@ -440,31 +453,24 @@ async fn sessions_list_many(
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
     blocking(move || {
-        let mut lists = vec![Value::Array(Vec::new()); projects.len()];
-        let Routed { here, elsewhere } = split_by_host(&projects);
-
-        let paths: Vec<PathBuf> = here.iter().map(|(_, path)| path.clone()).collect();
-        let found = core.sessions_list_many(&paths, &agent, config_dir.as_deref());
-        let found = found
-            .into_iter()
-            .map(value)
-            .collect::<Result<Vec<_>, _>>()?;
-        put_back(&mut lists, &here, found);
-
-        for (host, group) in elsewhere {
-            let rests: Vec<&str> = group.iter().map(|(_, rest)| rest.as_str()).collect();
-            let answer = remotes.connection(&host).and_then(|connection| {
-                connection.call(
+        let here_agent = agent.clone();
+        let here_config = config_dir.clone();
+        batched(
+            &projects,
+            Value::Array(Vec::new()),
+            move |paths| {
+                core.sessions_list_many(paths, &here_agent, here_config.as_deref())
+                    .into_iter()
+                    .map(value)
+                    .collect()
+            },
+            move |host, rests| {
+                remotes.connection(host)?.call(
                     "sessions_list_many",
                     json!({ "projects": rests, "agent": agent, "configDir": config_dir }),
                 )
-            });
-            // A host that cannot be reached has no history.
-            if let Ok(Value::Array(answer)) = answer {
-                put_back(&mut lists, &group, answer);
-            }
-        }
-        Ok(Value::Array(lists))
+            },
+        )
     })
     .await
 }
@@ -1456,5 +1462,116 @@ mod tests {
         let mut lists = vec![json!([]); 2];
         put_back(&mut lists, &routed.elsewhere[0].1, vec![json!(["x"])]);
         assert_eq!(lists, vec![json!(["x"]), json!([])]);
+    }
+
+    fn answer_each(paths: &[PathBuf]) -> Result<Vec<Value>, String> {
+        Ok(paths.iter().map(|path| json!(path.to_str())).collect())
+    }
+
+    #[test]
+    fn a_batch_answers_each_project_at_its_place_from_its_own_machine() {
+        let projects = text(&[
+            "/a",
+            "ssh://ada@lab/x",
+            "/b",
+            "ssh://bob@box/y",
+            "ssh://ada@lab/z",
+        ]);
+        let answer = batched(&projects, json!(null), answer_each, |host, rests| {
+            Ok(json!(rests
+                .iter()
+                .map(|rest| format!("{host}:{rest}"))
+                .collect::<Vec<_>>()))
+        })
+        .unwrap();
+        assert_eq!(
+            answer,
+            json!(["/a", "ada@lab:/x", "/b", "bob@box:/y", "ada@lab:/z"])
+        );
+    }
+
+    #[test]
+    fn a_host_that_fails_leaves_the_fill_at_its_projects() {
+        let projects = text(&["/a", "ssh://ada@lab/x", "ssh://bob@box/y"]);
+        let answer = batched(&projects, json!([]), answer_each, |host, rests| {
+            if host == "ada@lab" {
+                Err("unreachable".to_string())
+            } else {
+                Ok(json!(rests))
+            }
+        })
+        .unwrap();
+        assert_eq!(answer, json!(["/a", [], "/y"]));
+    }
+
+    #[test]
+    fn hosts_are_asked_in_parallel() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let asked = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&asked);
+        let projects = text(&["ssh://ada@lab/x", "ssh://bob@box/y", "ssh://cy@far/z"]);
+        let answer = batched(&projects, json!(null), answer_each, move |_, rests| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            // Each waits for the others to have been asked, which only
+            // happens when none waits for another to finish.
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while seen.load(Ordering::SeqCst) < 3 {
+                if std::time::Instant::now() > until {
+                    return Err("asked one after another".to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Ok(json!(rests))
+        })
+        .unwrap();
+        assert_eq!(answer, json!(["/x", "/y", "/z"]));
+    }
+
+    #[test]
+    fn a_local_failure_returns_without_waiting_for_a_host() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = std::sync::Mutex::new(held);
+        let projects = text(&["/a", "ssh://ada@lab/x"]);
+        let started = std::time::Instant::now();
+        let answer = batched(
+            &projects,
+            json!(null),
+            |_| Err("no home directory".to_string()),
+            move |_, rests| {
+                let _ = held
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(10));
+                Ok(json!(rests))
+            },
+        );
+        assert_eq!(answer, Err("no home directory".to_string()));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        drop(release);
+    }
+
+    #[test]
+    fn local_work_starts_while_a_host_is_still_being_asked() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = std::sync::Mutex::new(held);
+        let projects = text(&["/a", "ssh://ada@lab/x"]);
+        let answer = batched(
+            &projects,
+            json!(null),
+            |paths| {
+                // The host is held until local work has run.
+                release.send(()).unwrap();
+                answer_each(paths)
+            },
+            move |_, rests| {
+                held.lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .map_err(|_| "local work never ran".to_string())?;
+                Ok(json!(rests))
+            },
+        )
+        .unwrap();
+        assert_eq!(answer, json!(["/a", "/x"]));
     }
 }
