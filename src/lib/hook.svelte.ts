@@ -30,14 +30,23 @@ export const hook = $state({
   installed: {} as Record<string, boolean>,
   busy: false,
   error: null as string | null,
-  /** True until the projects the window opened with are known, and asked
-      about together. */
+  /** True until the projects on this machine are in and asked about
+      together. */
   starting: true,
 });
 
 let loaded = false;
 /** Projects brought to the answer since the window opened. */
 const applied = new Set<string>();
+/** Projects on other machines still on their way, by host: they are asked
+    about together with the rest of their machine once all have arrived or
+    been given up, and ask for nothing themselves meanwhile. */
+const waiting = new Map<string, Set<string>>();
+
+function isWaiting(project: string): boolean {
+  const host = hostOf(project);
+  return host !== null && waiting.get(host)?.has(project) === true;
+}
 
 export function loadHooks() {
   loaded = true;
@@ -188,27 +197,55 @@ export async function reapply(projects: string[]) {
 
 /** Called for every open project: each is brought to the answer once per
     run, when it is first seen, asking for itself. Nothing is asked while
-    the window is still starting; `startChecks` asks for those together. */
+    the window is still starting, nor for a project on its way from another
+    machine; `startChecks` asks for those together. */
 export function ensure(project: string) {
-  if (hook.starting || applied.has(project)) return;
+  if (hook.starting || applied.has(project) || isWaiting(project)) return;
   applied.add(project);
   void apply(project);
 }
 
-/** The projects the window opened with are known: they are asked about in
-    one request for the machine here and one for each other machine, so
-    local projects never wait on a remote one, and each is then brought to
-    the answer. Projects opened from here on ask for themselves. */
-export function startChecks(projects: string[]) {
-  const groups = new Map<string | null, string[]>();
-  for (const project of projects) {
-    if (applied.has(project)) continue;
-    applied.add(project);
+/** The projects on this machine are in: they are asked about in one
+    request, and so are the projects of each other machine, local projects
+    never waiting on a remote one. `open` lists the paths of the projects
+    open now. `arriving` names the projects on other machines still on their
+    way, each with a promise that settles once it is open or given up; the
+    projects of such a machine are asked about in one request once all of
+    its arrivals have settled. Each project is then brought to the answer.
+    Projects opened from here on ask for themselves. */
+export function startChecks(
+  open: () => string[],
+  arriving: ReadonlyMap<string, Promise<void>> = new Map(),
+) {
+  const late = new Map<string, Promise<unknown>[]>();
+  for (const [project, arrived] of arriving) {
     const host = hostOf(project);
+    if (host === null || applied.has(project)) continue;
+    if (!waiting.has(host)) waiting.set(host, new Set());
+    waiting.get(host)!.add(project);
+    late.set(host, [...(late.get(host) ?? []), arrived]);
+  }
+
+  const groups = new Map<string | null, string[]>();
+  for (const project of open()) {
+    const host = hostOf(project);
+    if (applied.has(project) || (host !== null && late.has(host))) continue;
+    applied.add(project);
     groups.set(host, [...(groups.get(host) ?? []), project]);
   }
   hook.starting = false;
   for (const group of groups.values()) void applyMany(group);
+
+  for (const [host, arrivals] of late) {
+    void Promise.allSettled(arrivals).then(() => {
+      waiting.delete(host);
+      const group = open().filter(
+        (project) => hostOf(project) === host && !applied.has(project),
+      );
+      for (const project of group) applied.add(project);
+      if (group.length > 0) void applyMany(group);
+    });
+  }
 }
 
 /** What is on disk for the projects of one machine, from one request, and
@@ -247,6 +284,7 @@ export async function setOverride(project: string, value: boolean | null) {
 export function reset() {
   loaded = true;
   applied.clear();
+  waiting.clear();
   hook.starting = false;
   hook.everywhere = false;
   hook.overrides = {};

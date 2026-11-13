@@ -60,11 +60,16 @@
     // in front. A project on another machine brings its sessions back when
     // it arrives; nothing here waits for it.
     let stopReopen = () => {};
+    // The projects the window opened with are asked about together: those
+    // on this machine when they are in, and each other machine's when its
+    // projects have arrived or been given up.
+    const open = () => workspace.open.map((project) => project.path);
+    let arrivals: ReadonlyMap<string, Promise<void>> = new Map();
     const restored = restore().then((arriving) => {
+      arrivals = arriving;
       if (!closed) stopReopen = reopen(arriving);
     });
-    // The projects the window opened with are asked about once, together.
-    const startHooks = () => startChecks(workspace.open.map((project) => project.path));
+    const startHooks = () => startChecks(open, arrivals);
     void restored.then(startHooks, startHooks);
     const stopOpening = followOpenRequests(restored);
     return () => {

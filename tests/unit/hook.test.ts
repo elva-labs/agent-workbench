@@ -213,7 +213,7 @@ describe("starting", () => {
     for (const project of thirty) ensure(project);
     expect(state.calls).toEqual([]);
 
-    startChecks(thirty);
+    startChecks(() => thirty);
     await vi.waitFor(() =>
       expect(state.calls).toContain(`uninstall:${thirty[3]}`),
     );
@@ -233,7 +233,7 @@ describe("starting", () => {
     hook.starting = true;
     hook.everywhere = true;
     state.installed[B] = true;
-    startChecks([A, B]);
+    startChecks(() => [A, B]);
     await vi.waitFor(() => expect(isInstalled(A)).toBe(true));
     expect(state.calls.filter((call) => call.startsWith("install:"))).toEqual([
       `install:${A}`,
@@ -244,7 +244,7 @@ describe("starting", () => {
   it("asks for a project opened afterwards by itself", async () => {
     hook.starting = true;
     hook.everywhere = false;
-    startChecks([A, B]);
+    startChecks(() => [A, B]);
     await vi.waitFor(() => expect(isKnown(B)).toBe(true));
     state.calls = [];
 
@@ -262,7 +262,7 @@ describe("starting", () => {
       release = resolve;
     });
     const projects = [A, "ssh://ada@box/srv/a", B, "ssh://ada@box/srv/b", "ssh://bob@lab/x"];
-    startChecks(projects);
+    startChecks(() => projects);
 
     await vi.waitFor(() => expect(isKnown(A) && isKnown(B)).toBe(true));
     expect(isKnown("ssh://ada@box/srv/a")).toBe(false);
@@ -276,11 +276,48 @@ describe("starting", () => {
     await vi.waitFor(() => expect(isKnown("ssh://ada@box/srv/b")).toBe(true));
   });
 
+  it("asks once for a machine whose projects arrive after the local batch", async () => {
+    hook.starting = true;
+    hook.everywhere = false;
+    const box = (name: string) => `ssh://ada@box/srv/${name}`;
+    const open = [A, B];
+    const arrive: Record<string, () => void> = {};
+    const arriving = new Map(
+      ["a", "b", "c"].map((name) => [
+        box(name),
+        new Promise<void>((resolve) => {
+          arrive[name] = () => {
+            if (name !== "c") open.push(box(name));
+            resolve();
+          };
+        }),
+      ]),
+    );
+    startChecks(() => open, arriving);
+    await vi.waitFor(() => expect(isKnown(A) && isKnown(B)).toBe(true));
+
+    // Each arrival is seen by the window's effect, which asks nothing for it.
+    arrive.a();
+    ensure(box("a"));
+    arrive.b();
+    ensure(box("b"));
+    await Promise.resolve();
+    expect(state.calls).toEqual([`many:${A},${B}`]);
+
+    // The last one is given up; the machine is then asked once.
+    arrive.c();
+    await vi.waitFor(() => expect(isKnown(box("b"))).toBe(true));
+    expect(state.calls).toEqual([
+      `many:${A},${B}`,
+      `many:${box("a")},${box("b")}`,
+    ]);
+  });
+
   it("treats a failed request as not installed, without an error", async () => {
     hook.starting = true;
     hook.everywhere = false;
     state.fail = "no home directory";
-    startChecks([A, B]);
+    startChecks(() => [A, B]);
     await vi.waitFor(() => expect(isKnown(B)).toBe(true));
     expect(isInstalled(A)).toBe(false);
     expect(hook.error).toBeNull();

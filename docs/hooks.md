@@ -11,11 +11,12 @@ told once, in a word over the agent pane, what turning them on gives; its
 link opens the settings at the section, and the word goes for good when it
 is dismissed or when hooks are turned on.
 
-The projects the window opens with are checked together rather than one by
-one: the machine here is asked once whether its daemon is in place, each
-account's agent state is read once for all of them, and each other machine
-gets a single request for its projects, so local projects never wait on a
-remote one. A project opened later is checked on its own.
+The projects the window opens with are checked together: the machine here
+is asked once whether its daemon is in place, and each account's agent state
+is read once for all of its projects. The projects on another machine are
+checked once they have all arrived, in a single request to that machine, so
+local projects never wait on a remote one. A project opened later is checked
+on its own.
 
 ## What is installed
 
