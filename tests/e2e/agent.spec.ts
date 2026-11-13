@@ -268,6 +268,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         onTerminalRequest: async () => () => {},
         onNotifyRequest: async () => () => {},
         onConductRequest: async () => () => {},
+        onConductCancel: async () => () => {},
         conductAnswer: async () => {},
         onBrowserRequest: async () => () => {},
         browserAnswer: async () => {},
@@ -289,7 +290,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         },
         onStylesChanged: async () => () => {},
         onBrowserTabs: async () => () => {},
-        browserTabs: async () => ({ tabs: [], active: null }),
+        browserTabs: async () => ({ tabs: [], owner: null, active: null }),
+        browserFocus: async () => ({ tabs: [], owner: null, active: null }),
+        browserCloseOwner: async () => ({ tabs: [], owner: null, active: null }),
         browserKeys: async () => {},
         onBrowserFocused: async () => () => {},
         onFullScreen: async () => () => {},
@@ -310,6 +313,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         // changes pane still asks, and would break the page if it threw.
         transcripts: async (_project: string, agent: string) =>
           agent === "codex" ? fake.codexTranscripts : fake.transcripts,
+        transcriptsMany: async (projects: string[], agent: string) =>
+          projects.map(() =>
+            agent === "codex" ? fake.codexTranscripts : fake.transcripts,
+          ),
         hookStatus: async () => ({
           installed: false,
           settings: "",

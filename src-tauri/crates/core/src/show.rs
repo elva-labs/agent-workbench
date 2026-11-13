@@ -29,6 +29,7 @@ pub const DIFF_REQUEST: &str = "diff_request";
 pub const TERMINAL_REQUEST: &str = "terminal_request";
 pub const NOTIFY_REQUEST: &str = "notify_request";
 pub const CONDUCT_REQUEST: &str = "conduct_request";
+pub const CONDUCT_CANCEL: &str = "conduct_cancel";
 pub const BROWSER_REQUEST: &str = "browser_request";
 pub const SETTINGS_REQUEST: &str = "settings_request";
 
@@ -261,6 +262,16 @@ pub struct SettingsRequest {
     pub session: Option<String>,
 }
 
+/// The agent gave up on a conductor call, so the window need not answer it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConductCancel {
+    /// The call, as its request named it.
+    pub id: String,
+    /// Where the calling agent runs, which says which machine it is on.
+    pub cwd: String,
+}
+
 /// A line of the log, whichever tool wrote it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -272,6 +283,7 @@ pub enum Request {
     Notify(NotifyRequest),
     Tool(ToolRequest),
     Conduct(ConductRequest),
+    ConductCancel(ConductCancel),
     Browser(BrowserRequest),
     Settings(SettingsRequest),
 }
@@ -389,6 +401,12 @@ pub fn classify(line: &str) -> Option<Request> {
             }
             Some(Request::Conduct(conduct))
         }
+        Request::ConductCancel(cancel) => {
+            if !valid_id(&cancel.id) || cancel.cwd.is_empty() {
+                return None;
+            }
+            Some(Request::ConductCancel(cancel))
+        }
         Request::Browser(browser) => {
             if !valid_id(&browser.id)
                 || !BROWSER_TOOLS.contains(&browser.tool.as_str())
@@ -466,6 +484,9 @@ pub fn watch(
                 on_conduct(conduct);
                 None
             }
+            Request::ConductCancel(cancel) => serde_json::to_value(cancel)
+                .ok()
+                .map(|value| (CONDUCT_CANCEL.to_string(), value)),
             Request::Browser(browser) => {
                 on_browser(browser);
                 None
@@ -526,6 +547,7 @@ mod tests {
             | Request::Notify(_)
             | Request::Tool(_)
             | Request::Conduct(_)
+            | Request::ConductCancel(_)
             | Request::Browser(_)
             | Request::Settings(_) => None,
         }
@@ -656,6 +678,18 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_agent_giving_up_on_a_conduct_call() {
+        let line = r#"{"kind":"conductCancel","id":"c-9","cwd":"/p"}"#;
+        let Some(Request::ConductCancel(cancel)) = classify(line) else {
+            panic!("not a cancel");
+        };
+        assert_eq!(cancel.id, "c-9");
+        assert_eq!(cancel.cwd, "/p");
+        assert!(classify(r#"{"kind":"conductCancel","id":"../out","cwd":"/p"}"#).is_none());
+        assert!(classify(r#"{"kind":"conductCancel","id":"c-9","cwd":""}"#).is_none());
+    }
+
+    #[test]
     fn reads_a_browser_call_and_refuses_a_tool_it_does_not_serve() {
         let line = r#"{"kind":"browser","id":"b-1","tool":"browser_open","arguments":{"url":"https://example.com"},"cwd":"/p","session":"s-1"}"#;
         let Some(Request::Browser(request)) = classify(line) else {
@@ -743,6 +777,42 @@ mod tests {
                 break;
             }
             assert!(std::time::Instant::now() < until, "no settings request");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn a_cancelled_conduct_call_reaches_the_window_as_an_event() {
+        use crate::events::testing::Recorder;
+        let home = std::env::temp_dir().join("workbench-show-cancel-event");
+        let _ = std::fs::remove_dir_all(&home);
+        let recorder = Arc::new(Recorder::default());
+        watch(
+            recorder.clone(),
+            requests_path(&home),
+            |_| {},
+            |_| {},
+            |_| {},
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        append(
+            &home,
+            &Request::ConductCancel(ConductCancel {
+                id: "c-9".into(),
+                cwd: "/p".into(),
+            }),
+        )
+        .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let events = recorder.events.lock().unwrap().clone();
+            if let Some((_, payload)) = events.iter().find(|(name, _)| name == CONDUCT_CANCEL) {
+                assert_eq!(payload["id"], "c-9");
+                assert_eq!(payload["cwd"], "/p");
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "no cancel event");
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }

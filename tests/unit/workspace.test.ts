@@ -1,22 +1,51 @@
+import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  close,
   followOpenRequests,
+  openPath,
   projectLabel,
   reset,
+  restore,
   workspace,
 } from "$lib/workspace.svelte";
+import {
+  reopened,
+  reset as resetSessions,
+  select,
+  sessions,
+} from "$lib/sessions.svelte";
 
 /** Folders waiting to be taken, and the window's word that more are. */
 const fake = vi.hoisted(() => {
-  const state = { waiting: [] as string[], told: null as (() => void) | null };
+  const state = {
+    waiting: [] as string[],
+    told: null as (() => void) | null,
+    /** How long each path takes to be described, and how many are being. */
+    delays: {} as Record<string, number>,
+    describing: 0,
+    mostAtOnce: 0,
+    tabsClosed: [] as unknown[],
+  };
   const core = {
-    projectInfo: async (path: string) => ({
-      path,
-      name: path.split("/").pop()!,
-      repository: path,
-      isGit: true,
-    }),
+    projectInfo: async (path: string) => {
+      if (path.endsWith("/gone")) throw new Error("gone");
+      state.describing += 1;
+      state.mostAtOnce = Math.max(state.mostAtOnce, state.describing);
+      await new Promise((resolve) => setTimeout(resolve, state.delays[path] ?? 0));
+      state.describing -= 1;
+      return {
+        path,
+        name: path.split("/").pop()!,
+        repository: path,
+        isGit: true,
+      };
+    },
     setWindowTitle: async () => {},
+    browserCloseOwner: async (owner: unknown) => {
+      state.tabsClosed.push(owner);
+      return { tabs: [], owner: null, active: null };
+    },
     takeOpened: async () => state.waiting.splice(0),
     onOpenRequested: async (handler: () => void) => {
       state.told = handler;
@@ -35,10 +64,212 @@ const repo = (path: string) => ({
   isGit: true,
 });
 
+/** What is stored for the next start. */
+function stored(): { open: string[]; active: string | null } {
+  return JSON.parse(localStorage.getItem("workbench.workspace") ?? "null");
+}
+
 beforeEach(() => {
   reset();
+  resetSessions();
   fake.state.waiting = [];
+  fake.state.tabsClosed = [];
   fake.state.told = null;
+  fake.state.delays = {};
+  fake.state.describing = 0;
+  fake.state.mostAtOnce = 0;
+  localStorage.clear();
+});
+
+describe("restoring the open projects", () => {
+  it("describes them all at once and lists them in the stored order", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/slow", "/gone", "/p/quick", "/p/middle"],
+        active: "/p/middle",
+      }),
+    );
+    fake.state.delays = { "/p/slow": 30, "/p/middle": 10, "/p/quick": 0 };
+    await restore();
+    expect(workspace.open.map((project) => project.path)).toEqual([
+      "/p/slow",
+      "/p/quick",
+      "/p/middle",
+    ]);
+    expect(fake.state.mostAtOnce).toBe(3);
+    expect(workspace.active).toBe("/p/middle");
+  });
+
+  it("puts the projects here in together, and does not wait for a host", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+        active: "/p/two",
+      }),
+    );
+    fake.state.delays = { "/p/one": 20, "ssh://ada@lab/srv/x": 120 };
+    const sizes: number[] = [];
+    const watch = setInterval(() => sizes.push(workspace.open.length), 2);
+    const arriving = await restore();
+    // Both local projects are there, in order, and the active one is chosen,
+    // while the host has not answered.
+    expect(workspace.open.map((project) => project.path)).toEqual([
+      "/p/one",
+      "/p/two",
+    ]);
+    expect(workspace.active).toBe("/p/two");
+    expect([...arriving.keys()]).toEqual(["ssh://ada@lab/srv/x"]);
+    await Promise.all(arriving.values());
+    clearInterval(watch);
+    // Never one local project without the other.
+    expect(sizes.every((size) => size === 0 || size >= 2)).toBe(true);
+    // The host's project takes its stored place between them.
+    expect(workspace.open.map((project) => project.path)).toEqual([
+      "/p/one",
+      "ssh://ada@lab/srv/x",
+      "/p/two",
+    ]);
+    expect(workspace.active).toBe("/p/two");
+  });
+
+  it("keeps a project on its way in what is stored, and after it arrives", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+        active: "/p/two",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    // A quit now loses nothing.
+    expect(stored()).toEqual({
+      open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+      active: "/p/two",
+    });
+    await Promise.all(arriving.values());
+    expect(stored()).toEqual({
+      open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+      active: "/p/two",
+    });
+  });
+
+  it("drops a project on another machine from what is stored when it cannot be described", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["/p/one", "ssh://ada@lab/gone"], active: "/p/one" }),
+    );
+    const arriving = await restore();
+    await Promise.all(arriving.values());
+    expect(stored()).toEqual({ open: ["/p/one"], active: "/p/one" });
+  });
+
+  it("puts a late project before one opened while it was on its way", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["/p/zero", "ssh://ada@lab/srv/x", "/p/two"], active: "/p/zero" }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    await openPath("/p/asked");
+    expect(stored().open).toEqual([
+      "/p/zero",
+      "ssh://ada@lab/srv/x",
+      "/p/two",
+      "/p/asked",
+    ]);
+    await Promise.all(arriving.values());
+    expect(workspace.open.map((project) => project.path)).toEqual([
+      "/p/zero",
+      "ssh://ada@lab/srv/x",
+      "/p/two",
+      "/p/asked",
+    ]);
+    expect(workspace.active).toBe("/p/asked");
+  });
+
+  it("puts the first project in front while the stored one waits for its host", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x"],
+        active: "ssh://ada@lab/srv/x",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    expect(workspace.open).toHaveLength(1);
+    expect(workspace.active).toBe("/p/one");
+    // The stored one is still the one in front for the next start.
+    expect(stored().active).toBe("ssh://ada@lab/srv/x");
+    await Promise.all(arriving.values());
+    expect(workspace.active).toBe("ssh://ada@lab/srv/x");
+  });
+
+  it("leaves the project chosen while the stored one waited in front", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "/p/two", "ssh://ada@lab/srv/x"],
+        active: "ssh://ada@lab/srv/x",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    await openPath("/p/two");
+    expect(stored().active).toBe("/p/two");
+    await Promise.all(arriving.values());
+    expect(workspace.active).toBe("/p/two");
+  });
+
+  it("leaves the session chosen while the stored project waited in front", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x"],
+        active: "ssh://ada@lab/srv/x",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    const row = reopened("/p/one", "s1", "claude-code", null, null, null);
+    select(row.key);
+    flushSync();
+    // A quit now starts the next time with this project in front.
+    expect(stored().active).toBe("/p/one");
+    await Promise.all(arriving.values());
+    expect(workspace.active).toBe("/p/one");
+    expect(sessions.active).toBe(row.key);
+  });
+
+  it("stores a project opened by hand while on its way only once", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x"],
+        active: "/p/one",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 40 };
+    const arriving = await restore();
+    fake.state.delays = {};
+    await openPath("ssh://ada@lab/srv/x");
+    expect(stored().open).toEqual(["/p/one", "ssh://ada@lab/srv/x"]);
+    await Promise.all(arriving.values());
+    expect(stored().open).toEqual(["/p/one", "ssh://ada@lab/srv/x"]);
+  });
+
+  it("activates the first project when the stored one cannot be described", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["/p/one", "/gone"], active: "/gone" }),
+    );
+    await restore();
+    expect(workspace.open.map((project) => project.path)).toEqual(["/p/one"]);
+    expect(workspace.active).toBe("/p/one");
+  });
 });
 
 describe("what a project is called", () => {
@@ -114,5 +345,14 @@ describe("folders asked for from outside the window", () => {
     await vi.waitFor(() => expect(fake.state.told).not.toBeNull());
     stop();
     expect(fake.state.told).toBeNull();
+  });
+});
+
+describe("closing a project", () => {
+  it("closes the browser tabs the project owned", () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    close("/one");
+    expect(fake.state.tabsClosed).toEqual([{ kind: "project", path: "/one" }]);
   });
 });

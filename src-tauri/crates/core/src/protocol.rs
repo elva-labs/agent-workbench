@@ -240,6 +240,15 @@ struct SessionsParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SessionsManyParams {
+    projects: Vec<PathBuf>,
+    agent: String,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TitleParams {
     agent: String,
     id: String,
@@ -342,6 +351,10 @@ pub fn dispatch(
         "sessions_list" => {
             let p: SessionsParams = parse(params)?;
             value(core.sessions_list(&p.project, &p.agent, p.config_dir.as_deref()))
+        }
+        "sessions_list_many" => {
+            let p: SessionsManyParams = parse(params)?;
+            value(core.sessions_list_many(&p.projects, &p.agent, p.config_dir.as_deref()))
         }
         "session_title" => {
             let p: TitleParams = parse(params)?;
@@ -507,6 +520,44 @@ mod tests {
 
     fn no_output(_: &str) -> Output {
         Box::new(|_| true)
+    }
+
+    // The batch answers with one list per project, in the order asked, each
+    // the list a request for that project alone would give.
+    #[test]
+    fn sessions_for_several_projects_come_back_one_list_each_in_order() {
+        let dir = std::env::temp_dir().join("workbench-protocol-sessions-many");
+        std::fs::remove_dir_all(&dir).ok();
+        let project = std::path::Path::new("/home/ada/dev/demo");
+        let folder = crate::transcripts::directory_for(&dir, project);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("s1.jsonl"),
+            r#"{"type":"user","message":{"content":"hello"}}"#,
+        )
+        .unwrap();
+
+        let params = json!({
+            "projects": ["/home/ada/dev/other", "/home/ada/dev/demo"],
+            "agent": "claude-code",
+            "configDir": dir.to_string_lossy(),
+        });
+        let many = dispatch(&core(), "sessions_list_many", params, no_output).unwrap();
+        let lists = many.as_array().unwrap();
+        assert_eq!(lists.len(), 2);
+        assert!(lists[0].as_array().unwrap().is_empty());
+        assert_eq!(lists[1][0]["id"], "s1");
+        assert_eq!(lists[1][0]["title"], "hello");
+
+        let one = dispatch(
+            &core(),
+            "sessions_list",
+            json!({"project": "/home/ada/dev/demo", "agent": "claude-code", "configDir": dir.to_string_lossy()}),
+            no_output,
+        )
+        .unwrap();
+        assert_eq!(one, lists[1]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -800,8 +851,12 @@ mod tests {
             no_output,
         )
         .unwrap();
+        // The shell reads its own startup files before it reads the line, so
+        // the output comes when it comes; the bound is only for a shell that
+        // never answers.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         let mut text = String::new();
-        for _ in 0..100 {
+        while std::time::Instant::now() < deadline {
             text = frames
                 .lock()
                 .unwrap()
@@ -818,7 +873,7 @@ mod tests {
             if text.contains("marker-42") {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(text.contains("marker-42"), "{text}");
     }

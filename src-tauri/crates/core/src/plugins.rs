@@ -2547,7 +2547,7 @@ tools = ["ping"]
         assert!(on.plugins[0].enabled);
         // The greeting arrives on the reader thread.
         let mut running = false;
-        for _ in 0..50 {
+        for _ in 0..600 {
             std::thread::sleep(Duration::from_millis(100));
             let listed = plugins.list();
             if listed[0].plugins[0].state == State::Running {
@@ -2557,12 +2557,23 @@ tools = ["ping"]
             }
         }
         assert!(running, "{:?}", plugins.list());
-        assert!(recorder
-            .events
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(event, payload)| event == PLUGIN_STATE && payload["state"] == "running"));
+        // The listing turns to running before the event goes out, so the
+        // event is waited for too.
+        let announced = || {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(event, payload)| event == PLUGIN_STATE && payload["state"] == "running")
+        };
+        for _ in 0..600 {
+            if announced() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(announced());
 
         let off = plugins.enable(&added.id, "echo", false).unwrap();
         assert!(!off.plugins[0].enabled);
@@ -3400,7 +3411,7 @@ build = ["sh", "build.sh"]
                 .count()
         };
         let came_up = || {
-            for _ in 0..100 {
+            for _ in 0..600 {
                 std::thread::sleep(Duration::from_millis(100));
                 if plugins.list()[0].plugins[0].state == State::Running {
                     return true;

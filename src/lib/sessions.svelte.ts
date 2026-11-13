@@ -12,6 +12,8 @@ import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
+import { hostOf } from "$lib/remote.svelte";
+import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 
@@ -234,28 +236,118 @@ function historySources(): {
   return sources;
 }
 
-/** Reads the project's past sessions from every account's directory, so a
-    session run under any account is listed under its project. */
-export async function loadHistory(project: string) {
-  const lists = await Promise.all(
-    historySources().map(({ agent, account, dir }) =>
-      core()
-        .transcripts(project, agent, dir)
-        .then((list) =>
-          list.map((transcript) => ({ ...transcript, agent, account })),
-        )
-        // No history is a shorter list, never an error.
-        .catch(() => [] as HistoryEntry[]),
-    ),
-  );
-  // Listed once per id, as the newest: a session resumed from another
-  // directory can be reported from more than one place.
-  const newest = new Map<string, HistoryEntry>();
-  for (const entry of lists.flat().sort((a, b) => b.modified - a.modified)) {
-    if (!newest.has(entry.id)) newest.set(entry.id, entry);
+/** The projects split by the machine they are on, in the order given: null
+    for this one, the `user@host` for the rest. */
+export function groupByHost(projects: string[]): Map<string | null, string[]> {
+  const groups = new Map<string | null, string[]>();
+  for (const project of projects) {
+    const host = hostOf(project);
+    const group = groups.get(host);
+    if (group === undefined) groups.set(host, [project]);
+    else group.push(project);
   }
-  sessions.history[project] = [...newest.values()];
-  pruneDormant(project);
+  return groups;
+}
+
+/** The latest reading started for each project. An answer is put in only
+    while no later reading of that project has started. */
+const readings = new Map<string, number>();
+let readingCount = 0;
+
+/** Reads the past sessions of the projects from every account's directory,
+    so a session run under any account is listed under its project. Each
+    directory is asked for once per machine, for all the projects on it, and
+    each machine's answer is put in as it arrives, so a machine that is slow
+    holds back only its own projects. */
+export async function loadHistories(projects: string[]) {
+  if (projects.length === 0) return;
+  const sources = historySources();
+  const signature = JSON.stringify(sources);
+  const ticket = ++readingCount;
+  for (const project of projects) readings.set(project, ticket);
+  await Promise.all(
+    [...groupByHost(projects).values()].map(async (group) => {
+      const lists = await Promise.all(
+        sources.map(async ({ agent, account, dir }) => {
+          try {
+            const lists = await core().transcriptsMany(group, agent, dir);
+            return group.map((_, at) =>
+              (lists[at] ?? []).map((transcript) => ({
+                ...transcript,
+                agent,
+                account,
+              })),
+            );
+          } catch {
+            // No history is a shorter list, never an error.
+            return group.map(() => [] as HistoryEntry[]);
+          }
+        }),
+      );
+      group.forEach((project, at) => {
+        if (readings.get(project) !== ticket) return;
+        // Listed once per id, as the newest: a session resumed from another
+        // directory can be reported from more than one place.
+        const newest = new Map<string, HistoryEntry>();
+        const entries = lists.flatMap((source) => source[at] ?? []);
+        for (const entry of entries.sort((a, b) => b.modified - a.modified)) {
+          if (!newest.has(entry.id)) newest.set(entry.id, entry);
+        }
+        const next = [...newest.values()];
+        // A reading that found nothing new leaves the list as it is, so
+        // nothing that shows it is drawn again.
+        if (!sameHistory(sessions.history[project], next))
+          sessions.history[project] = next;
+        readFrom.set(project, signature);
+        pruneDormant(project);
+      });
+    }),
+  );
+}
+
+/** The directories each project's history was last read from, and is being
+    read from now. */
+const readFrom = new Map<string, string>();
+const loading = new Map<string, string>();
+
+/** Reads the past sessions of the projects whose history has not been read
+    from the directories there are now, leaving out those being read from
+    them. An account that arrives after a project was read reads it again. */
+export function loadMissingHistories(projects: string[]) {
+  const sources = JSON.stringify(historySources());
+  const wanted = projects.filter(
+    (project) =>
+      (sessions.history[project] === undefined ||
+        readFrom.get(project) !== sources) &&
+      loading.get(project) !== sources,
+  );
+  wanted.forEach((project) => loading.set(project, sources));
+  return loadHistories(wanted).finally(() =>
+    wanted.forEach((project) => {
+      if (loading.get(project) === sources) loading.delete(project);
+    }),
+  );
+}
+
+/** Reads one project's past sessions. */
+export function loadHistory(project: string) {
+  return loadHistories([project]);
+}
+
+function sameHistory(a: HistoryEntry[] | undefined, b: HistoryEntry[]) {
+  if (a === undefined || a.length !== b.length) return false;
+  return a.every((entry, at) => {
+    const other = b[at];
+    return (
+      entry.id === other.id &&
+      entry.agent === other.agent &&
+      entry.account === other.account &&
+      entry.modified === other.modified &&
+      entry.size === other.size &&
+      entry.title === other.title &&
+      entry.cwd === other.cwd
+    );
+  });
 }
 
 /** How often a project's history is read again while the window is
@@ -263,20 +355,54 @@ export async function loadHistory(project: string) {
     ended there, shows up on the next reading. */
 export const HISTORY_EVERY = 60_000;
 
-/** Reads the history of every project that has one again. */
+/** The projects whose history is kept fresh, set by `followHistory`. */
+let watched: () => string[] = () => [];
+
+/** The clock that reads the watched histories again, while one runs. */
+let historyClock: ReturnType<typeof setInterval> | null = null;
+
+/** The readings under way by machine. */
+const refreshing = new Map<string | null, Promise<void>>();
+
+/** Reads the history of the watched projects again, one reading per machine.
+    A reading still under way for a machine is the one that serves its
+    projects, so a window that gains and loses focus quickly does not queue
+    them up, and a machine that does not answer never holds up the others. */
 export function refreshHistory() {
-  for (const project of Object.keys(sessions.history))
-    void loadHistory(project);
+  const started: Promise<void>[] = [];
+  for (const [host, group] of groupByHost(watched())) {
+    let reading = refreshing.get(host);
+    if (reading === undefined) {
+      reading = loadHistories(group).finally(() => {
+        refreshing.delete(host);
+      });
+      refreshing.set(host, reading);
+    }
+    started.push(reading);
+  }
+  return Promise.all(started).then(() => {});
 }
 
-/** Keeps the histories fresh: read again on a clock while the window is
-    looked at, and each time it comes back into view. Returns a stop
-    function. */
-export function followHistory(): () => void {
+/** Keeps the histories of the projects `projects` names fresh: read again
+    on a clock while the window is looked at, and each time it comes back
+    into view. Returns a stop function. */
+export function followHistory(projects: () => string[]): () => void {
+  stopHistoryClock();
+  watched = projects;
   const timer = setInterval(() => {
-    if (attention.focused) refreshHistory();
+    if (attention.focused) void refreshHistory();
   }, HISTORY_EVERY);
-  return () => clearInterval(timer);
+  historyClock = timer;
+  return () => {
+    if (historyClock !== timer) return;
+    stopHistoryClock();
+    watched = () => [];
+  };
+}
+
+function stopHistoryClock() {
+  if (historyClock !== null) clearInterval(historyClock);
+  historyClock = null;
 }
 
 /** The agent a new session in the project starts with: the one last started
@@ -879,6 +1005,9 @@ export function close(key: string) {
   if (still !== undefined) clearTimeout(still);
   stills.delete(key);
 
+  // The browser tabs opened for the session go with the row.
+  void closeOwner({ kind: "session", key });
+
   const at = sessions.all.indexOf(session);
   sessions.all.splice(at, 1);
   // The row is gone, so its transcript is history again.
@@ -1326,6 +1455,12 @@ export function reset() {
   sessions.all = [];
   sessions.active = null;
   sessions.history = {};
+  readFrom.clear();
+  readings.clear();
+  refreshing.clear();
+  stopHistoryClock();
+  watched = () => [];
+  loading.clear();
   sessions.mine = {};
   sessions.names = {};
   sessions.preferred = {};

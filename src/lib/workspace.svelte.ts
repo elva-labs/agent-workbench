@@ -1,4 +1,6 @@
+import { untrack } from "svelte";
 import { core, type ProjectInfo } from "$lib/core";
+import { closeOwner } from "$lib/browser.svelte";
 import { lastSegment } from "$lib/paths";
 import {
   activeSession,
@@ -164,7 +166,9 @@ export async function pick(): Promise<boolean> {
 /**
  * Opens the folders the app is asked to open from outside the window: named
  * when it started, or later from a terminal or a second launch. None opens
- * before the stored workspace is back, so the one asked for is left in front.
+ * before the stored projects on this machine are back, so the one asked for
+ * is left in front; a project on another machine arriving later does not
+ * take its place.
  */
 export function followOpenRequests(restored: Promise<void>): () => void {
   let off: (() => void) | null = null;
@@ -193,6 +197,7 @@ async function openRequested() {
 export function close(path: string) {
   closeProject(path);
   closeShells(path);
+  void closeOwner({ kind: "project", path });
   workspace.open = workspace.open.filter((project) => project.path !== path);
 
   if (workspace.active !== path) {
@@ -206,17 +211,107 @@ export function close(path: string) {
 }
 
 function save() {
+  const open = workspace.open.map((project) => project.path);
+  let active = workspace.active;
+  // A project still being described keeps its stored place, and stays the
+  // one in front while nothing else has been chosen, so a quit before its
+  // machine answers loses neither.
+  if (restoring !== null) {
+    for (const path of restoring.paths) {
+      if (restoring.pending.has(path) && !open.includes(path))
+        open.splice(placeAmong(open, path, restoring.paths), 0, path);
+    }
+    const wanted = restoring.wanted;
+    if (wanted !== null && restoring.pending.has(wanted) && untouched())
+      active = wanted;
+  }
   try {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({
-        open: workspace.open.map((project) => project.path),
-        active: workspace.active,
-      }),
-    );
+    localStorage.setItem(KEY, JSON.stringify({ open, active }));
   } catch {
     // Non-fatal: the workspace simply does not survive a restart.
   }
+}
+
+/**
+ * A restore under way: the stored order, the stored projects not yet
+ * described, the one stored in front, and what the window last put in front
+ * by itself.
+ */
+let restoring: {
+  paths: string[];
+  pending: Set<string>;
+  wanted: string | null;
+  placed: { project: string | null; session: string | null };
+} | null = null;
+
+/** Counts restores, so the answers of one that was reset are ignored. */
+let restores = 0;
+
+/** Whether a project or session has been chosen during the restore under
+    way, which then leaves what is in front alone from then on. */
+let chosen = $state(false);
+
+/** Stops watching for a choice during the restore under way. */
+let unwatch: () => void = () => {};
+
+/** Watches what is in front while a restore waits, and takes the first time
+    it differs from what the restore put there as chosen, stored at once. */
+function watchChoice() {
+  unwatch();
+  chosen = false;
+  unwatch = $effect.root(() => {
+    $effect(() => {
+      const project = workspace.active;
+      const session = sessions.active;
+      if (restoring === null || untrack(() => chosen)) return;
+      if (
+        restoring.placed.project !== project ||
+        restoring.placed.session !== session
+      ) {
+        chosen = true;
+        save();
+      }
+    });
+  });
+}
+
+/** Where a stored project goes among the open ones: before the first that
+    was stored after it or was not stored at all, else at the end. */
+function placeAmong(open: string[], path: string, paths: string[]): number {
+  const at = paths.indexOf(path);
+  const index = open.findIndex((other) => {
+    const its = paths.indexOf(other);
+    return its === -1 || its > at;
+  });
+  return index === -1 ? open.length : index;
+}
+
+/** Whether the project and session in front are still the ones a restore
+    put there, with nothing chosen since. False once no restore is waiting. */
+export function untouched(): boolean {
+  return (
+    restoring !== null &&
+    !chosen &&
+    restoring.placed.project === workspace.active &&
+    restoring.placed.session === sessions.active
+  );
+}
+
+/** Whether the project stored in front is still waiting for its machine,
+    with nothing chosen since. */
+export function frontPending(): boolean {
+  return (
+    restoring !== null &&
+    restoring.wanted !== null &&
+    restoring.pending.has(restoring.wanted) &&
+    untouched()
+  );
+}
+
+/** Takes what is in front now as put there by the restore, not chosen. */
+export function restoredInFront() {
+  if (restoring === null) return;
+  restoring.placed = { project: workspace.active, session: sessions.active };
 }
 
 /**
@@ -224,47 +319,114 @@ function save() {
  *
  * Paths are re-described rather than restored from storage: a directory may
  * have been moved, or may have become a repository since, so the core is asked
- * afresh. The sessions that were open come back separately, once the projects
- * they belong to are.
+ * afresh. Every project is asked for at once. Those on this machine are put in
+ * the list together, in the order they were stored, and the returned promise
+ * settles then. One on another machine is put in when it answers, at its
+ * stored place among those open, so a host that is slow or gone holds nothing
+ * else up; the map returned names each such project with a promise that
+ * settles once it is in the list or has been given up. A directory that is
+ * gone is dropped quietly rather than opening on an error.
+ *
+ * The project stored in front is put in front. While it is on a machine that
+ * has not answered, the first project open is put in front instead, and the
+ * stored one replaces it on arrival unless a project or session has been
+ * chosen since.
  */
-export async function restore() {
+export async function restore(): Promise<Map<string, Promise<void>>> {
+  const arriving = new Map<string, Promise<void>>();
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(KEY);
   } catch {
-    return;
+    return arriving;
   }
-  if (raw === null) return;
+  if (raw === null) return arriving;
 
   let stored: { open?: unknown; active?: unknown };
   try {
     stored = JSON.parse(raw);
   } catch {
-    return;
+    return arriving;
   }
 
   const paths = Array.isArray(stored.open)
     ? stored.open.filter((path): path is string => typeof path === "string")
     : [];
+  const wanted = typeof stored.active === "string" ? stored.active : null;
+  const remote = (path: string) => path.startsWith("ssh://");
 
-  for (const path of paths) {
-    try {
-      const info = await core().projectInfo(path);
-      if (!isOpen(info.path)) workspace.open.push(info);
-    } catch {
-      // The directory is gone. Drop it quietly rather than opening on an error.
+  const state = {
+    paths,
+    pending: new Set(paths),
+    wanted,
+    placed: { project: workspace.active, session: sessions.active },
+  };
+  restoring = state;
+  watchChoice();
+  const mine = (restores += 1);
+  let localIn = false;
+  const finish = () => {
+    if (localIn && state.pending.size === 0 && restoring === state) {
+      restoring = null;
+      unwatch();
     }
+  };
+
+  const asked = paths.map((path) => ({
+    path,
+    info: core()
+      .projectInfo(path)
+      .catch(() => null),
+  }));
+
+  const insert = (info: ProjectInfo) => {
+    if (isOpen(info.path)) return;
+    const open = workspace.open.map((project) => project.path);
+    workspace.open.splice(placeAmong(open, info.path, paths), 0, info);
+  };
+  const front = () => {
+    if (!untouched()) return;
+    let target: string | null = null;
+    if (wanted !== null && isOpen(wanted)) {
+      if (workspace.active !== wanted) target = wanted;
+    } else if (localIn && workspace.active === null) {
+      target = workspace.open[0]?.path ?? null;
+    }
+    if (target === null) return;
+    activate(target);
+    restoredInFront();
+    save();
+  };
+
+  for (const entry of asked.filter((entry) => remote(entry.path))) {
+    const arrived = entry.info.then((info) => {
+      if (restores !== mine) return;
+      if (info !== null) insert(info);
+      state.pending.delete(entry.path);
+      front();
+      save();
+      finish();
+    });
+    arriving.set(entry.path, arrived);
   }
 
-  const wanted = typeof stored.active === "string" ? stored.active : null;
-  const target =
-    workspace.open.find((project) => project.path === wanted) ??
-    workspace.open[0];
-  if (target !== undefined) activate(target.path);
+  const here = asked.filter((entry) => !remote(entry.path));
+  const local = await Promise.all(here.map((entry) => entry.info));
+  if (restores !== mine) return arriving;
+  for (const info of local) if (info !== null) insert(info);
+  for (const entry of here) state.pending.delete(entry.path);
+  localIn = true;
+  front();
+  finish();
+  return arriving;
 }
 
 /** Test seam. */
 export function reset() {
+  restoring = null;
+  unwatch();
+  chosen = false;
+  restores += 1;
   workspace.open = [];
   workspace.active = null;
   workspace.error = null;
