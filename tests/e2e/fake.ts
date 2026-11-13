@@ -1045,6 +1045,16 @@ export async function installFakeCore(
           project === open[0] && agent === "claude-code"
             ? transcripts.filter((transcript) => transcript.configDir === configDir)
             : [],
+        transcriptsMany: async (
+          projects: string[],
+          agent: string,
+          configDir?: string,
+        ) =>
+          projects.map((project) =>
+            project === open[0] && agent === "claude-code"
+              ? transcripts.filter((transcript) => transcript.configDir === configDir)
+              : [],
+          ),
         sessionTitle: async () => null,
         hookStatus: async () => ({
           installed: false,
