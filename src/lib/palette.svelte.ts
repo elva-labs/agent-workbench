@@ -1,8 +1,14 @@
+import { tick } from "svelte";
 import { ACTIONS, chordFor, describe, type ActionKey } from "$lib/keys.svelte";
 import { actionFor, type Action } from "$lib/keymap";
 import { matches } from "$lib/files.svelte";
 import { openRemote } from "$lib/remote.svelte";
-import { focusPane } from "$lib/layout.svelte";
+import {
+  focusPane,
+  layout,
+  peekSessions,
+  sessionsShown,
+} from "$lib/layout.svelte";
 import {
   accountLabel,
   accountOf,
@@ -27,6 +33,7 @@ import {
   startSession,
   workspace,
 } from "$lib/workspace.svelte";
+import { unfoldSessions } from "$lib/viewers.svelte";
 
 /**
  * The palette: one field over the workbench in two lists. Go to narrows the
@@ -416,6 +423,8 @@ export function stepItems(
 ): PaletteItem[] {
   const asking = nextStep(steps);
   const project = projectOfSteps(steps);
+  if (asking !== "project" && (project === null || !isOpen(project)))
+    return [];
   const all =
     asking === "project"
       ? projectChoices()
@@ -470,11 +479,10 @@ function startOn(steps: Step[]) {
   if (path === null || !isOpen(path)) return;
   const account = steps.find((step) => step.kind === "account");
   const agent = steps.find((step) => step.kind === "agent");
-  if (workspace.active !== path) activate(path);
   startSession(
     path,
-    agent === undefined ? defaultAgent(path) : agent.agent,
-    account === undefined ? accountOf(path) : account.account,
+    agent?.agent,
+    account === undefined ? undefined : account.account,
   );
 }
 
@@ -510,6 +518,19 @@ export function stepBack() {
   palette.mode = "commands";
 }
 
+/** Gives the keyboard to the sessions pane, which a project with no session
+    has instead of a terminal. Called once the page has reacted to the
+    project coming forward, which puts a peeked pane back. The pane is opened first when it is folded:
+    while reviewing it peeks over the agent and the viewer stays. A window too
+    narrow for the pane leaves the keyboard with the agent. */
+function keyboardToSessions() {
+  if (!sessionsShown()) {
+    if (layout.mode === "reviewing") peekSessions(true);
+    else unfoldSessions();
+  }
+  focusPane(sessionsShown() ? "sessions" : "agent");
+}
+
 /** Picks an item. With `alone` held, a session or project starts a new
     session in its project instead of going to it. */
 export function pickItem(item: PaletteItem, alone = false): Outcome {
@@ -527,9 +548,8 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
         type: "close",
         then: () => {
           if (workspace.active !== item.path) activate(item.path);
-          // A project with no session has no terminal to give the keyboard
-          // to, so it goes to the project's row.
-          focusPane(sessions.active !== null ? "agent" : "sessions");
+          if (sessions.active !== null) focusPane("agent");
+          else void tick().then(keyboardToSessions);
         },
       };
     case "choice":

@@ -153,14 +153,15 @@ export function goTo(key: string): boolean {
   return true;
 }
 
-/** Starts a session in a project and gives it the keyboard. The agent is
-    the one the project used last and the account the one it runs under,
-    unless named. */
+/** Starts a session in a project, brought forward, and gives it the
+    keyboard. The agent is the one the project used last and the account the
+    one it runs under, unless named. */
 export function startSession(
   path: string,
   agent: AgentId = defaultAgent(path),
   account: string | null = accountOf(path),
 ) {
+  if (workspace.active !== path) activate(path);
   create(path, null, agent, null, null, null, account);
   focusPane("agent");
 }

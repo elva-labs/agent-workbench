@@ -227,68 +227,68 @@
       />
     </div>
     <div class="list" id="palette-list" role="listbox" aria-label={heading} bind:this={list}>
-      {#each sections as section (section.start)}
-       <div
-         class="section"
-         role={section.group === null ? "presentation" : "group"}
-         aria-labelledby={section.group === null ? undefined : `palette-group-${section.start}`}
-       >
-        {#if section.group !== null}
-          <div class="group" id="palette-group-{section.start}" data-testid="palette-group">{section.group}</div>
-        {/if}
-        {#each section.rows as item, offset (item.id)}
-        {@const index = section.start + offset}
-        <button
-          class="row"
-          class:cursor={index === cursor}
-          class:off={!pickable(item)}
-          id={optionId(item)}
-          role="option"
-          aria-selected={index === cursor}
-          aria-disabled={!pickable(item)}
-          tabindex="-1"
-          onclick={() => run(item)}
-          onpointerdown={(e) => e.preventDefault()}
-          onpointermove={(e) => {
-            if ((e.movementX !== 0 || e.movementY !== 0) && pickable(item)) chosen = item.id;
-          }}
-          data-testid="palette-row"
-          data-kind={item.kind}
+      {#each sections as section (section.group ?? "")}
+        <div
+          class="section"
+          role={section.group === null ? "presentation" : "group"}
+          aria-labelledby={section.group === null ? undefined : `palette-group-${section.start}`}
         >
-          {#if item.kind === "session"}
-            <span
-              class="dot"
-              class:live={isLive(item.session)}
-              class:working={isLive(item.session) && item.session.working}
-              class:dormant={item.session.status === "dormant"}
-              class:unread={item.session.unread}
-              class:permission={item.session.needs === "permission"}
-              data-testid="palette-dot"
-            ></span>
-          {:else if item.kind === "project" || (item.kind === "choice" && item.step.kind === "project")}
-            <svg class="folder" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"
-              />
-            </svg>
+          {#if section.group !== null}
+            <div class="group" id="palette-group-{section.start}" aria-hidden="true" data-testid="palette-group">{section.group}</div>
           {/if}
-          <span class="label" data-testid="palette-label">{item.label}</span>
-          {#if item.kind === "session"}
-            <span class="detail" data-testid="palette-detail">{item.project}</span>
-            <span class="end" data-testid="palette-end">{item.when}</span>
-          {:else if item.kind === "project" || item.kind === "choice"}
-            <span class="detail"></span>
-            <span class="end" data-testid="palette-end">{item.end}</span>
-          {:else if item.kind === "attention"}
-            <span class="detail">{item.waiting === 0 ? "nothing waiting" : `${item.waiting} waiting`}</span>
-            <kbd>{item.chord}</kbd>
-          {:else}
-            <span class="detail"></span>
-            {#if item.chord !== ""}<kbd>{item.chord}</kbd>{/if}
-          {/if}
-        </button>
-        {/each}
-       </div>
+          {#each section.rows as item, offset (item.id)}
+            {@const index = section.start + offset}
+            <button
+              class="row"
+              class:cursor={index === cursor}
+              class:off={!pickable(item)}
+              id={optionId(item)}
+              role="option"
+              aria-selected={index === cursor}
+              aria-disabled={!pickable(item)}
+              tabindex="-1"
+              onclick={() => run(item)}
+              onpointerdown={(e) => e.preventDefault()}
+              onpointermove={(e) => {
+                if ((e.movementX !== 0 || e.movementY !== 0) && pickable(item)) chosen = item.id;
+              }}
+              data-testid="palette-row"
+              data-kind={item.kind}
+            >
+              {#if item.kind === "session"}
+                <span
+                  class="dot"
+                  class:live={isLive(item.session)}
+                  class:working={isLive(item.session) && item.session.working}
+                  class:dormant={item.session.status === "dormant"}
+                  class:unread={item.session.unread}
+                  class:permission={item.session.needs === "permission"}
+                  data-testid="palette-dot"
+                ></span>
+              {:else if item.kind === "project" || (item.kind === "choice" && item.step.kind === "project")}
+                <svg class="folder" viewBox="0 0 16 16" aria-hidden="true">
+                  <path
+                    d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"
+                  />
+                </svg>
+              {/if}
+              <span class="label" data-testid="palette-label">{item.label}</span>
+              {#if item.kind === "session"}
+                <span class="detail" data-testid="palette-detail">{item.project}</span>
+                <span class="end" data-testid="palette-end">{item.when}</span>
+              {:else if item.kind === "project" || item.kind === "choice"}
+                <span class="detail"></span>
+                <span class="end" data-testid="palette-end">{item.end}</span>
+              {:else if item.kind === "attention"}
+                <span class="detail">{item.waiting === 0 ? "nothing waiting" : `${item.waiting} waiting`}</span>
+                <kbd>{item.chord}</kbd>
+              {:else}
+                <span class="detail"></span>
+                {#if item.chord !== ""}<kbd>{item.chord}</kbd>{/if}
+              {/if}
+            </button>
+          {/each}
+        </div>
       {/each}
     </div>
     {#if items.length === 0}

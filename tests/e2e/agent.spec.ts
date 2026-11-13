@@ -1817,6 +1817,47 @@ test.describe("the palettes", () => {
       expect(await writtenTo(page, "pty-2")).toBe("");
     });
 
+    // Where the keyboard is, as the page has it: inside the sessions pane.
+    const inSessions = (page: Page) =>
+      page.evaluate(
+        () => document.activeElement?.closest("[data-pane='sessions']") != null,
+      );
+
+    test("brings a project forward with the sessions pane hidden, and the keyboard goes to the pane it shows", async ({ page }) => {
+      await page.keyboard.press(`${MOD}+b`);
+      await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+      await page.keyboard.press(GOTO);
+      await page.keyboard.type("two");
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect(page.locator(".project.on")).toContainText("two");
+      await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+      await expect.poll(() => inSessions(page)).toBe(true);
+      await page.keyboard.type("y");
+      await page.waitForTimeout(200);
+      expect(await writtenTo(page, "pty-1")).toBe("");
+      expect(await writtenTo(page, "pty-2")).toBe("");
+    });
+
+    test("brings a project forward while reviewing, peeking the pane and keeping the viewer", async ({ page }) => {
+      await page.keyboard.press(`${MOD}+d`);
+      await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+      await page.keyboard.press(GOTO);
+      await page.keyboard.type("two");
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect(page.locator(".project.on")).toContainText("two");
+      await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+      await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+      await expect.poll(() => inSessions(page)).toBe(true);
+      await page.keyboard.type("y");
+      await page.waitForTimeout(200);
+      expect(await writtenTo(page, "pty-1")).toBe("");
+      expect(await writtenTo(page, "pty-2")).toBe("");
+    });
+
     test("picking go to from the commands opens that palette", async ({ page }) => {
       await page.keyboard.press(COMMANDS);
       await page.keyboard.type("go to a session");
@@ -1829,9 +1870,25 @@ test.describe("the palettes", () => {
     test("drops a session that is closed while the list is up", async ({ page }) => {
       await page.keyboard.press(GOTO);
       await expect(kind(page, "session")).toHaveCount(2);
+      await expect(chosen(page)).toContainText("session 2");
+      // Another way of stopping a session: through the scrim, from the
+      // pane behind the palette. Session 1 is not under the cursor.
       await rows(page).first().locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
       await expect(kind(page, "session")).toHaveCount(1);
+      await expect(kind(page, "session").first()).toContainText("session 2");
       await expect(chosen(page)).toHaveCount(1);
+      await expect(chosen(page)).toContainText("session 2");
+    });
+
+    test("moves the cursor on when the session under it is closed", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      await expect(kind(page, "session")).toHaveCount(2);
+      await expect(chosen(page)).toContainText("session 2");
+      await rows(page).nth(1).locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
+      await expect(kind(page, "session")).toHaveCount(1);
+      await expect(kind(page, "session").first()).toContainText("session 1");
+      await expect(chosen(page)).toHaveCount(1);
+      await expect(chosen(page)).toContainText("session 1");
     });
 
     test("keeps the cursor on its entry while sessions change under it", async ({ page }) => {

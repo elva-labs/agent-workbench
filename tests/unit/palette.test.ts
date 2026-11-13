@@ -1,3 +1,4 @@
+import { tick } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { attention } from "$lib/attention.svelte";
 import { chordFor, describe as spell, resetKeys } from "$lib/keys.svelte";
@@ -29,7 +30,7 @@ import { matches } from "$lib/files.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
-import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -243,6 +244,7 @@ describe("what picking does in go to", () => {
     const item = goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === B)!;
     const outcome = pickItem(item);
     if (outcome.type === "close") outcome.then();
+    await tick();
     expect(workspace.active).toBe(B);
     expect(sessions.active).toBeNull();
     expect(layout.focus).toBe("sessions");
@@ -545,6 +547,21 @@ describe("a new session", () => {
     workspace.open.splice(0, workspace.open.length, repo(B), repo(C));
     if (outcome.type === "close") outcome.then();
     expect(sessions.all).toEqual([]);
+  });
+
+  it("offers nothing at a later step once the project has closed", () => {
+    agent.installed = ["claude-code", "codex"];
+    beginNew(A);
+    expect(stepItems("")).not.toEqual([]);
+    workspace.open.splice(0, workspace.open.length, repo(B), repo(C));
+    expect(stepItems("")).toEqual([]);
+  });
+
+  it("brings the project forward when a session is started in it", () => {
+    workspace.active = A;
+    startSession(B);
+    expect(workspace.active).toBe(B);
+    expect(sessions.all[0]).toMatchObject({ project: B });
   });
 
   it("leaves the steps behind when a list is opened again", () => {
