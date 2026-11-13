@@ -1,6 +1,7 @@
 import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Settings } from "$lib/core";
 import { persist } from "$lib/persist";
+import { hostOf } from "$lib/remote.svelte";
 
 /**
  * The agents' hooks: one answer for every project, and a word for the rare
@@ -29,6 +30,9 @@ export const hook = $state({
   installed: {} as Record<string, boolean>,
   busy: false,
   error: null as string | null,
+  /** True until the projects the window opened with are known, and asked
+      about together. */
+  starting: true,
 });
 
 let loaded = false;
@@ -183,11 +187,43 @@ export async function reapply(projects: string[]) {
 }
 
 /** Called for every open project: each is brought to the answer once per
-    run, when it is first seen. */
+    run, when it is first seen, asking for itself. Nothing is asked while
+    the window is still starting; `startChecks` asks for those together. */
 export function ensure(project: string) {
-  if (applied.has(project)) return;
+  if (hook.starting || applied.has(project)) return;
   applied.add(project);
   void apply(project);
+}
+
+/** The projects the window opened with are known: they are asked about in
+    one request for the machine here and one for each other machine, so
+    local projects never wait on a remote one, and each is then brought to
+    the answer. Projects opened from here on ask for themselves. */
+export function startChecks(projects: string[]) {
+  const groups = new Map<string | null, string[]>();
+  for (const project of projects) {
+    if (applied.has(project)) continue;
+    applied.add(project);
+    const host = hostOf(project);
+    groups.set(host, [...(groups.get(host) ?? []), project]);
+  }
+  hook.starting = false;
+  for (const group of groups.values()) void applyMany(group);
+}
+
+/** What is on disk for the projects of one machine, from one request, and
+    then each brought to the answer in turn. */
+async function applyMany(projects: string[]) {
+  try {
+    const answers = await core().hookStatusMany(projects, dirsOf());
+    projects.forEach((project, at) => {
+      hook.installed[project] = answers[at]?.installed === true;
+    });
+  } catch {
+    // Not knowing is not an error worth showing, as with one project.
+    for (const project of projects) hook.installed[project] = false;
+  }
+  for (const project of projects) await apply(project);
 }
 
 /** The answer for every project, applied to the ones open now. */
@@ -211,6 +247,7 @@ export async function setOverride(project: string, value: boolean | null) {
 export function reset() {
   loaded = true;
   applied.clear();
+  hook.starting = false;
   hook.everywhere = false;
   hook.overrides = {};
   hook.installed = {};

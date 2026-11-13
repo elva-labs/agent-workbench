@@ -25,14 +25,14 @@
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
   import { loadKeys } from "$lib/keys.svelte";
-  import { loadHooks } from "$lib/hook.svelte";
+  import { loadHooks, startChecks } from "$lib/hook.svelte";
   import { followSettings } from "$lib/preferences.svelte";
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { reopen } from "$lib/reopen.svelte";
-  import { followOpenRequests, restore } from "$lib/workspace.svelte";
+  import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
 
   let { children } = $props();
 
@@ -61,6 +61,9 @@
     const restored = restore().then(() => {
       if (!closed) stopReopen = reopen();
     });
+    // The projects the window opened with are asked about once, together.
+    const startHooks = () => startChecks(workspace.open.map((project) => project.path));
+    void restored.then(startHooks, startHooks);
     const stopOpening = followOpenRequests(restored);
     return () => {
       closed = true;

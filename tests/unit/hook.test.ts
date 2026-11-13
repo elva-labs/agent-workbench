@@ -10,6 +10,7 @@ import {
   reset,
   setEverywhere,
   setOverride,
+  startChecks,
   wanted,
 } from "$lib/hook.svelte";
 
@@ -17,6 +18,8 @@ const state = {
   installed: {} as Record<string, boolean>,
   calls: [] as string[],
   fail: null as string | null,
+  /** Holds a batch for these projects until released, by its first one. */
+  held: {} as Record<string, Promise<void>>,
 };
 
 vi.mock("$lib/core", () => ({
@@ -29,6 +32,16 @@ vi.mock("$lib/core", () => ({
         settings: "",
         events: "",
       };
+    },
+    async hookStatusMany(projects: string[]) {
+      state.calls.push(`many:${projects.join(",")}`);
+      if (state.fail !== null) throw new Error(state.fail);
+      await state.held[projects[0]];
+      return projects.map((project) => ({
+        installed: state.installed[project] === true,
+        settings: "",
+        events: "",
+      }));
     },
     async hookInstall(project: string) {
       state.calls.push(`install:${project}`);
@@ -54,6 +67,7 @@ beforeEach(() => {
   state.installed = {};
   state.calls = [];
   state.fail = null;
+  state.held = {};
 });
 
 describe("check", () => {
@@ -186,5 +200,89 @@ describe("the answer for every project", () => {
     await apply(A);
     expect(hook.error).toBeNull();
     expect(hook.busy).toBe(false);
+  });
+});
+
+describe("starting", () => {
+  const thirty = Array.from({ length: 30 }, (_, at) => `/repo/p${at}`);
+
+  it("asks once for every project the window opened with", async () => {
+    hook.starting = true;
+    hook.everywhere = false;
+    state.installed[thirty[3]] = true;
+    for (const project of thirty) ensure(project);
+    expect(state.calls).toEqual([]);
+
+    startChecks(thirty);
+    await vi.waitFor(() =>
+      expect(state.calls).toContain(`uninstall:${thirty[3]}`),
+    );
+
+    const asked = state.calls.filter((call) => call.startsWith("status:"));
+    expect(asked).toEqual([]);
+    expect(state.calls.filter((call) => call.startsWith("many:"))).toEqual([
+      `many:${thirty.join(",")}`,
+    ]);
+    // The answers were applied: the one that had them is taken off, as the
+    // answer says none, and every project is known.
+    expect(state.calls).toContain(`uninstall:${thirty[3]}`);
+    expect(thirty.every((project) => isKnown(project))).toBe(true);
+  });
+
+  it("installs where the answer is on and the project has none", async () => {
+    hook.starting = true;
+    hook.everywhere = true;
+    state.installed[B] = true;
+    startChecks([A, B]);
+    await vi.waitFor(() => expect(isInstalled(A)).toBe(true));
+    expect(state.calls.filter((call) => call.startsWith("install:"))).toEqual([
+      `install:${A}`,
+    ]);
+    expect(isInstalled(B)).toBe(true);
+  });
+
+  it("asks for a project opened afterwards by itself", async () => {
+    hook.starting = true;
+    hook.everywhere = false;
+    startChecks([A, B]);
+    await vi.waitFor(() => expect(isKnown(B)).toBe(true));
+    state.calls = [];
+
+    ensure("/repo/three");
+    ensure(A);
+    await vi.waitFor(() => expect(isKnown("/repo/three")).toBe(true));
+    expect(state.calls).toEqual(["status:/repo/three"]);
+  });
+
+  it("asks once for each machine, and local projects do not wait on a remote one", async () => {
+    hook.starting = true;
+    hook.everywhere = false;
+    let release = () => {};
+    state.held["ssh://ada@box/srv/a"] = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const projects = [A, "ssh://ada@box/srv/a", B, "ssh://ada@box/srv/b", "ssh://bob@lab/x"];
+    startChecks(projects);
+
+    await vi.waitFor(() => expect(isKnown(A) && isKnown(B)).toBe(true));
+    expect(isKnown("ssh://ada@box/srv/a")).toBe(false);
+    expect(state.calls).toEqual([
+      `many:${A},${B}`,
+      "many:ssh://ada@box/srv/a,ssh://ada@box/srv/b",
+      "many:ssh://bob@lab/x",
+    ]);
+
+    release();
+    await vi.waitFor(() => expect(isKnown("ssh://ada@box/srv/b")).toBe(true));
+  });
+
+  it("treats a failed request as not installed, without an error", async () => {
+    hook.starting = true;
+    hook.everywhere = false;
+    state.fail = "no home directory";
+    startChecks([A, B]);
+    await vi.waitFor(() => expect(isKnown(B)).toBe(true));
+    expect(isInstalled(A)).toBe(false);
+    expect(hook.error).toBeNull();
   });
 });

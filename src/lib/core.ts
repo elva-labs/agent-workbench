@@ -878,6 +878,13 @@ export interface Core {
       goes into the agents' state under every account given, as well as
       the agents' own. */
   hookStatus(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
+  /** The status of each project, in the order given, from one read of every
+      account's state. A project on a machine that cannot be reached answers
+      null. */
+  hookStatusMany(
+    projects: string[],
+    accounts: AccountDirs[],
+  ): Promise<(HookStatus | null)[]>;
   hookInstall(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
   hookUninstall(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
 
@@ -1198,6 +1205,8 @@ const tauriCore: Core = {
 
   hookStatus: (project, accounts) =>
     invoke<HookStatus>("hook_status", { project, accounts }),
+  hookStatusMany: (projects, accounts) =>
+    invoke<(HookStatus | null)[]>("hook_status_many", { projects, accounts }),
   hookInstall: (project, accounts) =>
     invoke<HookStatus>("hook_install", { project, accounts }),
   hookUninstall: (project, accounts) =>
@@ -1469,6 +1478,13 @@ const detachedCore: Core = {
   },
   async hookStatus(project) {
     return { installed: false, settings: project, events: "" };
+  },
+  async hookStatusMany(projects) {
+    return projects.map((project) => ({
+      installed: false,
+      settings: project,
+      events: "",
+    }));
   },
   async hookInstall(project) {
     return { installed: false, settings: project, events: "" };
