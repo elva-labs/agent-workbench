@@ -118,12 +118,10 @@ test.describe("the conductor", () => {
 
     await page.getByTestId("conduct-allow").click();
     await expect(ask).toHaveCount(0);
-    // The session belongs to whoever started it, so the pane folds it under
-    // that session rather than drawing it among the project's own.
+    // The session belongs to whoever started it, so the pane hangs it
+    // under that session rather than drawing it among the project's own.
     await expect(rows(page)).toHaveCount(1);
-    await expect(page.getByTestId("started-fold")).toContainText(
-      "1 started by",
-    );
+    await expect(page.getByTestId("started-rail").getByTestId("started-session")).toHaveCount(1);
 
     await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
     const answer = (await answerTo(page, "c-1"))!;
@@ -231,7 +229,7 @@ test.describe("the conductor", () => {
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
     await expect(rows(page)).toHaveCount(1);
-    await expect(page.getByTestId("started-fold")).toHaveCount(0);
+    await expect(page.getByTestId("started-session")).toHaveCount(0);
     await expect.poll(async () => (await spawns()).map((spawn) => spawn.session)).toEqual([
       "session-1",
     ]);
@@ -256,10 +254,9 @@ test.describe("the conductor", () => {
     const answer = (await answerTo(page, "c-9"))!;
     expect(answer.error).toBeNull();
     expect(answer.content).toContain("Resumed session session-2");
-    // Back under the fold, resumed by id, with the prompt on its command line.
-    await expect(page.getByTestId("started-fold")).toContainText(
-      "1 started by",
-    );
+    // Back under its starter, resumed by id, with the prompt on its
+    // command line.
+    await expect(page.getByTestId("started-session")).toHaveCount(1);
     const resumed = (await spawns()).at(-1);
     expect(resumed?.session).toBe("session-2");
     expect(resumed?.prompt).toContain("Go on with the test");

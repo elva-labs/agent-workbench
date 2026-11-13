@@ -62,7 +62,7 @@ the worktree, the agent and the name, and kept between runs beside the
 sessions the app knows as its own. An orchestrator closed and resumed
 keeps its id, so the sessions it started are still its own: the ones
 still running answer to its tools as before, and a row with one of its
-ids, resumed from the pane by hand, is folded under it all the same. When
+ids, resumed from the pane by hand, hangs under it all the same. When
 the app itself was closed, the orchestrator comes back with the other
 sessions that were open, and the sessions it started do not. `sessions`
 then lists them as stopped, after the running ones, and `start` with one
@@ -77,7 +77,7 @@ record lives with the window's other memory, so a wiped local storage
 forgets it, which only means the orchestrator starts afresh.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
-its row when it is done or stuck, so the fold, the board and the wait tool
+its row when it is done or stuck, so the pane, the board and the wait tool
 all say how it went.
 
 The tools act on the sessions the caller started and on no others. A
@@ -102,13 +102,21 @@ may have more than eight running at a time.
 
 ## In the panes
 
-The sessions an orchestrator started stay in the project they run in, where
-the work is, and keep out of the way: the pane folds them into one quiet
-line per orchestrator, "2 started by Retry rollout", which opens into a row
-each. The line speaks up in the accent when one of them needs a
-permission, "1 asking", which only you can grant. Everything else they
-wait on, the orchestrator hears, so the place to go is still the
-orchestrator and not the session it started.
+The sessions a session started hang directly under it, one line each,
+joined to its dot by a thin rail: the state dot, the name, the model it was
+started on and when it last changed. One that runs in another project than
+its starter names that project in front of its own name. The line speaks
+up in the accent, `asking` where the model stands, when the session needs
+a permission, which only you can grant. Everything else they wait on, the
+starter hears, so the place to go is still the starter and not the
+session it started. A session whose starter the window no longer has
+stands in its own project like any other.
+
+A starter can be folded, from the button over its row's end or with Left
+on the keyboard, and Right lets them out again: folded, its row shows a
+small dot for each session it started and how many, `3 started`, where the
+model stands otherwise. Left on a started session moves the cursor up to
+its starter. Nothing about the fold is remembered.
 
 The orchestrator's own row says what it has out, "3 running, 1 asking", and
 its changes pane, headed Orchestrator, shows the sessions it started instead
@@ -120,10 +128,10 @@ to start sessions in, each with a way to take that back, and the worktrees its
 starts have left behind, with Clean up for the ones whose work is merged and
 whose trees are clean; the rest say why they stay.
 
-![An orchestrator on screen: its session under its own project, the two sessions it started folded under theirs, and the board in the changes pane with a row for each, what it is doing, and the project it may start in.](orchestrator-board.png)
+![An orchestrator on screen with the sessions it started, and the board in the changes pane with a row for each, what it is doing, and the project it may start in.](orchestrator-board.png)
 
 The sessions it started keep out of the keyboard's way too: Delete on one
-of them does nothing, and a fold stops the lot from its own hover action.
+of them does nothing, and only its own × stops it.
 
 ## Where the work happens
 

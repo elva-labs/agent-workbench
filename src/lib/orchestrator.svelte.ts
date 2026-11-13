@@ -6,10 +6,10 @@
  * is a project to run in, the workbench's orchestrator directory, which
  * the sessions pane pins above the projects you opened.
  *
- * The sessions it starts stay where the work is, in the project they run
- * in, and keep out of the way there: the pane folds them into one line per
- * orchestrator, and the line speaks up when one of them is waiting on you.
- * The place to go is the orchestrator, not the session it started.
+ * The sessions a session starts hang under it in the pane, one line each
+ * on a rail from its dot, wherever they run, and speak up only when one of
+ * them needs a permission. The place to go is the session that started
+ * them, not the session it started.
  */
 
 import { dirsOf } from "$lib/accounts.svelte";
@@ -58,7 +58,7 @@ export function conductors(): Session[] {
 
 /** A started session that is waiting on the user: it needs a permission,
     which only the user can grant. Everything else it waits on is its
-    orchestrator's to hear, so the folds speak up for nothing else. */
+    orchestrator's to hear, so its row speaks up for nothing else. */
 export function isAsking(session: Session): boolean {
   return isLive(session) && session.needs === "permission";
 }
@@ -101,49 +101,33 @@ export function summaryLine(session: Session): string | null {
     : `${running} running, ${asking} asking`;
 }
 
-/** The sessions one orchestrator started in one project, folded into a
-    line of the project's own. */
-export interface Group {
-  /** The orchestrator's id, as the started sessions name it. */
-  id: string;
-  /** What the orchestrator is called, for "started by …". */
-  label: string;
-  sessions: Session[];
-  asking: number;
-}
-
-/** The sessions of a project that no orchestrator started. */
-export function ownFor(project: string): Session[] {
-  return sessions.all.filter(
-    (session) =>
-      session.project === project && startedFor(session.key) === null,
+/** The row of the session that started this one, while the window has
+    it. A session whose starter is gone has no parent here and stands in
+    its own project like any other. */
+export function parentOf(session: Session): Session | null {
+  const id = startedFor(session.key);
+  if (id === null) return null;
+  return (
+    sessions.all.find(
+      (candidate) =>
+        candidate !== session && (candidate.id === id || candidate.key === id),
+    ) ?? null
   );
 }
 
-/** The folds under a project, one per orchestrator that has sessions
-    there, in the order the sessions were started. */
-export function groupsFor(project: string): Group[] {
-  const groups: Group[] = [];
-  for (const session of sessions.all) {
-    if (session.project !== project) continue;
-    const id = startedFor(session.key);
-    if (id === null) continue;
-    let group = groups.find((candidate) => candidate.id === id);
-    if (group === undefined) {
-      group = { id, label: conductorLabel(id), sessions: [], asking: 0 };
-      groups.push(group);
-    }
-    group.sessions.push(session);
-    if (isAsking(session)) group.asking += 1;
-  }
-  return groups;
+/** The sessions that hang under a session's row, in the order they were
+    started. */
+export function childrenOf(session: Session): Session[] {
+  return sessions.all.filter((child) => parentOf(child)?.key === session.key);
 }
 
-/** The line on a fold: how many sessions, and who started them. The count
-    of those waiting on you is drawn beside it, in the accent, rather than
-    said here. */
-export function foldLabel(group: Group): string {
-  return `${group.sessions.length} started by ${group.label}`;
+/** The sessions drawn under a project's name: its own, and any whose
+    starter the window no longer has. A session started by one still here
+    hangs under that one instead, whichever project it runs in. */
+export function ownFor(project: string): Session[] {
+  return sessions.all.filter(
+    (session) => session.project === project && parentOf(session) === null,
+  );
 }
 
 /** What an orchestrator is called where its own row is not in sight. */

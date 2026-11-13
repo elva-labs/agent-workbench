@@ -5,10 +5,9 @@ import { PROJECT, installFakeCore } from "./fake";
  * An orchestrator, driven by a fake core.
  *
  * The workbench's own directory is pinned above the projects you opened,
- * and a session started there directs the others. What it starts stays in
- * the project it runs in and keeps out of the way: the project's rows are
- * its own sessions, and the rest are behind a fold with the orchestrator's
- * name on it.
+ * and a session started there directs the others. What it starts hangs
+ * under it on a rail, a line each, wherever it runs, and can be folded into
+ * dots on the orchestrator's own row.
  */
 
 const AGENT = "section[data-pane='agent']";
@@ -96,7 +95,7 @@ test.describe("the orchestrator", () => {
     await expect(page.locator(AGENT)).toBeVisible();
   });
 
-  test("folds what it started into the project, and says what it has out", async ({
+  test("hangs what it started under it on a rail, and says what it has out", async ({
     page,
   }) => {
     // Nothing runs there and nothing waits to be resumed, so the project is
@@ -116,50 +115,69 @@ test.describe("the orchestrator", () => {
       row(page, ORCHESTRATOR).getByTestId("close-project"),
     ).toHaveCount(0);
 
-    // A row each for the two sessions a user started, and none for what
-    // the orchestrator started: that one is behind a fold in the project it
-    // runs in.
+    // A row each for the two sessions a user started, and the one the
+    // orchestrator started on a rail under it, above the project it runs
+    // in, which it names in front of its own name.
     await expect(page.getByTestId("session-row")).toHaveCount(2);
-    const fold = page.getByTestId("started-fold");
-    await expect(fold).toContainText("1 started by session 1");
-    await expect(page.getByTestId("started-session")).toHaveCount(0);
-    expect((await fold.boundingBox())!.y).toBeGreaterThan(opened.y);
+    const parent = page
+      .getByTestId("session-row")
+      .filter({ has: page.getByTestId("orchestrator-summary") });
+    const started = page.getByTestId("started-session");
+    await expect(started).toHaveCount(1);
+    await expect(started).toContainText("demo");
+    await expect(started).toContainText("session 2");
+    const above = (await parent.boundingBox())!;
+    const kid = (await started.boundingBox())!;
+    expect(kid.y).toBeGreaterThanOrEqual(above.y + above.height - 1);
+    expect(kid.y + kid.height).toBeLessThanOrEqual(opened.y + 1);
+
+    // The rail runs down from the orchestrator's dot to the started one's.
+    const dot = (await parent.locator(".dot").boundingBox())!;
+    const rail = (await page.locator(".kid .rail-in").boundingBox())!;
+    const own = (await started.locator(".dot").boundingBox())!;
+    expect(Math.abs(rail.x - (dot.x + dot.width / 2))).toBeLessThan(1.5);
+    expect(rail.y).toBeLessThanOrEqual(dot.y + dot.height + 1);
+    expect(rail.y + rail.height).toBeGreaterThan(own.y);
+    expect(rail.x + rail.width).toBeLessThanOrEqual(own.x + 1);
 
     // The orchestrator's own row says what it has running.
     await expect(page.getByTestId("orchestrator-summary")).toHaveText(
       "1 running",
     );
 
-    // The fold opens onto the session, indented past its triangle.
-    await fold.click();
-    const started = page.getByTestId("started-session");
-    await expect(started).toHaveCount(1);
-    await expect(started).toContainText("session 2");
-    const triangle = (await fold.locator(".chevron").boundingBox())!;
-    const name = (await started.locator(".label").boundingBox())!;
-    expect(name.x).toBeGreaterThan(triangle.x + triangle.width);
-    expect(name.y).toBeGreaterThan(triangle.y);
-
     // It is a session like any other: clicking it opens it.
     await started.click();
-    await expect(page.locator(".session.started")).toHaveClass(/on/);
+    await expect(page.locator(".session.kid")).toHaveClass(/on/);
 
-    // And the fold closes again on the row it opened from.
-    await fold.click();
-    await expect(page.getByTestId("started-session")).toHaveCount(0);
+    // Folded, the started sessions are a dot each and a count on the
+    // orchestrator's row; let out, they hang under it again.
+    await parent.hover();
+    await page.getByTestId("collapse-started").click();
+    await expect(started).toHaveCount(0);
+    const dots = page.getByTestId("started-dots");
+    await expect(dots).toHaveText(/1 started/);
+    await expect(dots.locator(".dot")).toHaveCount(1);
+    await parent.hover();
+    await page.getByTestId("collapse-started").click();
+    await expect(started).toHaveCount(1);
+    await expect(dots).toHaveCount(0);
 
-    // It is a row of the pane's one cursor as much as a thing to click:
-    // the open row, the menu, the view switch, the orchestrator's project
-    // and session, the project, its own session, and then the fold, which
-    // Enter opens.
+    // On the keyboard: Left folds the orchestrator's, Right lets them out,
+    // Down walks onto the started one and Left climbs back.
+    await parent.click();
     await page.keyboard.press(`${MOD}+1`);
-    await page.keyboard.press("Home");
-    for (let step = 0; step < 7; step += 1) {
-      await page.keyboard.press("ArrowDown");
-    }
-    await expect(fold).toHaveClass(/cursor/);
-    await page.keyboard.press("Enter");
-    await expect(page.getByTestId("started-session")).toHaveCount(1);
+    const at = () =>
+      page.evaluate(() => document.querySelector("[data-testid='sessions-nav'] .cursor")?.getAttribute("data-row"));
+    const own_row = await parent.locator("..").getAttribute("data-row");
+    await expect.poll(at).toBe(own_row);
+    await page.keyboard.press("ArrowLeft");
+    await expect(started).toHaveCount(0);
+    await page.keyboard.press("ArrowRight");
+    await expect(started).toHaveCount(1);
+    await page.keyboard.press("ArrowDown");
+    await expect(page.locator(".session.kid")).toHaveClass(/cursor/);
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(at).toBe(own_row);
   });
 
   test("breathes on the orchestrator's own dot while a started session works", async ({
@@ -202,7 +220,7 @@ test.describe("the orchestrator", () => {
     );
   });
 
-  test("speaks up on the fold only when a started session needs a permission", async ({
+  test("speaks up on the started row only when it needs a permission", async ({
     page,
   }) => {
     await orchestrate(page);
@@ -223,10 +241,10 @@ test.describe("the orchestrator", () => {
           ).__sessionEvent?.({ sessionId: "session-3", kind }),
         kind,
       );
-    const fold = page.getByTestId("started-fold");
+    const started = page.getByTestId("started-session");
     const summary = page.getByTestId("orchestrator-summary");
 
-    // A line the session leaves is the orchestrator's to read: the fold
+    // A line the session leaves is the orchestrator's to read: its row
     // stays quiet.
     await page.evaluate(
       (project) =>
@@ -240,18 +258,25 @@ test.describe("the orchestrator", () => {
       PROJECT,
     );
     await expect(summary).toHaveText("1 running");
-    await expect(fold).not.toContainText("asking");
+    await expect(page.getByTestId("started-asking")).toHaveCount(0);
 
-    // A permission is the user's to grant, so the fold speaks up.
+    // A permission is the user's to grant, so the row says so in the
+    // accent, where its model stands otherwise.
     await event("prompt");
     await event("permission");
-    await expect(fold).toContainText("1 asking");
-    await expect(fold.locator(".ring")).toBeVisible();
+    const asking = page.getByTestId("started-asking");
+    await expect(asking).toHaveText("asking");
+    const accent = await page.evaluate(() =>
+      getComputedStyle(document.querySelector("[data-testid='started-asking']")!).color,
+    );
+    const ink = await started.locator(".label").evaluate((label) => getComputedStyle(label).color);
+    expect(accent).not.toBe(ink);
+    await expect(started.locator(".dot")).toHaveClass(/permission/);
     await expect(summary).toHaveText("1 running, 1 asking");
 
-    // Granted, the agent goes on, and the fold goes quiet again.
+    // Granted, the agent goes on, and the row goes quiet again.
     await event("prompt");
-    await expect(fold).not.toContainText("asking");
+    await expect(asking).toHaveCount(0);
     await expect(summary).toHaveText("1 running");
   });
 
@@ -259,28 +284,27 @@ test.describe("the orchestrator", () => {
     page,
   }) => {
     await orchestrate(page);
-    await page.getByTestId("started-fold").click();
     const started = page.getByTestId("started-session");
     await expect(started).toHaveCount(1);
 
-    // Opening it puts the pane's cursor there, and the rows behind a fold
-    // are quiet: the key the cursor walks over does nothing.
+    // Opening it puts the pane's cursor there, and the rows on a rail are
+    // quiet: the key the cursor walks over does nothing.
     await started.click();
     await page.keyboard.press(`${MOD}+1`);
-    await expect(page.locator(".session.started")).toHaveClass(/cursor/);
+    await expect(page.locator(".session.kid")).toHaveClass(/cursor/);
     await page.keyboard.press("Delete");
     await page.keyboard.press("Backspace");
     await expect(started).toHaveCount(1);
 
     // Its own × still stops it.
-    const stop = page.locator(".session.started").getByTestId("close-session");
-    await page.locator(".session.started").hover();
+    const stop = page.locator(".session.kid").getByTestId("close-session");
+    await page.locator(".session.kid").hover();
     await expect(stop).toBeVisible();
     await stop.click();
     await expect(page.getByTestId("started-session")).toHaveCount(0);
   });
 
-  test("stops everything behind a fold from the fold's own button", async ({
+  test("folds two started sessions into two dots and a count", async ({
     page,
   }) => {
     await orchestrate(page);
@@ -292,23 +316,27 @@ test.describe("the orchestrator", () => {
     });
     // The first start was allowed for good, so this one needs no answer.
     await expect.poll(() => answerTo(page, "o-2")).not.toBeNull();
-    const fold = page.getByTestId("started-fold");
-    await expect(fold).toContainText("2 started by session 1");
+    const started = page.getByTestId("started-session");
+    await expect(started).toHaveCount(2);
+    // One rail: the first joins the orchestrator's dot and carries on down
+    // to the second.
+    await expect(page.locator(".kid .rail-on")).toHaveCount(1);
 
-    // Over the fold's end, as a session's × is over its own.
-    const stop = page.getByTestId("stop-started");
-    await expect(stop).toHaveAttribute("title", "Stop these");
-    await fold.hover();
-    await expect(stop).toBeVisible();
-    const line = (await fold.boundingBox())!;
-    const button = (await stop.boundingBox())!;
-    expect(button.x).toBeGreaterThan(line.x + line.width / 2);
-    expect(button.x + button.width).toBeLessThanOrEqual(line.x + line.width);
-
-    // Both go, and the fold with them; the sessions a user started stay.
-    await stop.click();
-    await expect(page.getByTestId("started-fold")).toHaveCount(0);
-    await expect(page.getByTestId("started-session")).toHaveCount(0);
+    const parent = page
+      .getByTestId("session-row")
+      .filter({ has: page.getByTestId("orchestrator-summary") });
+    await parent.hover();
+    await page.getByTestId("collapse-started").click();
+    await expect(started).toHaveCount(0);
+    const dots = page.getByTestId("started-dots");
+    await expect(dots).toHaveText(/2 started/);
+    await expect(dots.locator(".dot")).toHaveCount(2);
+    // Where the model stands otherwise, at the end of the second line.
+    const line = (await parent.getByTestId("orchestrator-summary").boundingBox())!;
+    const box = (await dots.boundingBox())!;
+    expect(box.x).toBeGreaterThan(line.x);
+    expect(Math.abs(box.y + box.height / 2 - (line.y + line.height / 2))).toBeLessThan(4);
+    // The sessions a user started stay.
     await expect(page.getByTestId("session-row")).toHaveCount(2);
   });
 });

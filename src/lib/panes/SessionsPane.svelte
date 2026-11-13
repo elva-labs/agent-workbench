@@ -5,6 +5,7 @@
   import type { AgentId } from "$lib/core";
   import {
     byChange,
+    byKey,
     close as closeSession,
     create,
     defaultAgent,
@@ -27,16 +28,16 @@
   import { activate, close as closeProject, goTo, pick, projectLabel, workspace } from "$lib/workspace.svelte";
   import {
     LABEL,
+    childrenOf,
     conducting,
     conductors,
-    foldLabel,
-    groupsFor,
+    isAsking,
     orchestrator,
     ownFor,
+    parentOf,
     summaryLine,
-    type Group,
   } from "$lib/orchestrator.svelte";
-  import { startedFor, stopStarted } from "$lib/conductor.svelte";
+  import { startedFor } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -208,7 +209,14 @@
     return shows ? dir : null;
   });
 
-  const foldId = (project: string, group: Group) => `started:${project}:${group.id}`;
+  /** The sessions whose started sessions are folded into dots on their
+      own row rather than hanging under it. Open is how a parent starts,
+      and nothing about it is remembered. */
+  let collapsed = $state<Record<string, boolean>>({});
+
+  function toggleKids(key: string) {
+    collapsed[key] = !collapsed[key];
+  }
 
   /** A row with nothing running behind it: one left from the last quit,
       or a past session of the project on screen, with when it changed. */
@@ -245,12 +253,6 @@
 
   function toggle(id: string) {
     opened[id] = !opened[id];
-  }
-
-  /** The × on a fold: every session behind it stops, and the fold goes with
-      the last of them. */
-  function stopGroup(group: Group) {
-    for (const session of group.sessions) stopStarted(session.key);
   }
 
   /** Closes the choice, the cursor back on the row it opened from. */
@@ -300,29 +302,24 @@
     return out;
   });
 
-  /** A project's rows in the order drawn: its sessions, the folds of
-      what an orchestrator started there, the quiet rows and the fold of
-      the rest of them, and under the project on screen the way to a new
+  /** A project's rows in the order drawn: its sessions, each with the
+      sessions it started under it, the quiet rows and the fold of the
+      rest of them, and under the project on screen the way to a new
       session and to its earlier ones. */
   function body(path: string): Row[] {
     const out: Row[] = [];
     const { live, quiet, hidden } = bodyOf(path);
-    for (const session of live) {
+    const withKids = (session: Session) => {
       out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
-    }
-    for (const group of groupsFor(path)) {
-      const id = foldId(path, group);
-      out.push({ id, run: () => toggle(id) });
-      if (!opened[id]) continue;
-      for (const session of group.sessions) {
-        out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
+      if (collapsed[session.key]) return;
+      for (const kid of childrenOf(session)) {
+        out.push({ id: `session:${kid.key}`, run: () => choose(kid.key) });
       }
-    }
+    };
+    for (const session of live) withKids(session);
     for (const row of quiet) {
-      out.push({
-        id: row.id,
-        run: row.kind === "session" ? () => choose(row.session.key) : () => resume(path, row.transcript),
-      });
+      if (row.kind === "session") withKids(row.session);
+      else out.push({ id: row.id, run: () => resume(path, row.transcript) });
     }
     const more = `more:${path}`;
     if (hidden.length > 0) out.push({ id: more, run: () => toggle(more) });
@@ -371,10 +368,10 @@
       const path = id.slice("project:".length);
       if (path !== orchestrator.dir) closeProject(path);
     } else if (id.startsWith("session:")) {
-      // A session an orchestrator started is quiet under the fold: the
-      // cursor walks through those rows, and a key pressed on the way past
-      // is no reason to stop work the orchestrator is waiting on. Its own ×
-      // on hover stops it, and the fold's stops the group.
+      // A session another started hangs quietly on its rail: the cursor
+      // walks through those rows, and a key pressed on the way past is no
+      // reason to stop work its starter is waiting on. Its own × on hover
+      // stops it.
       const key = id.slice("session:".length);
       if (startedFor(key) === null) closeSession(key);
     } else if (id.startsWith("past:") && workspace.active !== null) {
@@ -449,7 +446,7 @@
       case "ArrowLeft":
       case "ArrowRight":
         if (choosing !== null && hasAccounts()) pickNext(e.key === "ArrowLeft" ? -1 : 1);
-        else return;
+        else if (!onRail(e.key === "ArrowLeft")) return;
         break;
       case "Escape":
         // Closes the menu or an open choice of agent, then puts a peeked
@@ -479,6 +476,24 @@
     // under the cursor and not a button a click left focused.
     nav.focus();
     e.preventDefault();
+  }
+
+  /** Left and Right on a session that started others fold its started
+      sessions into dots and let them out again; Left on one of those
+      climbs to the session that started it. False when the row under the
+      cursor is neither. */
+  function onRail(left: boolean): boolean {
+    const session = current?.startsWith("session:") ? byKey(current.slice("session:".length)) : null;
+    if (session === null) return false;
+    const parent = parentOf(session);
+    if (parent !== null) {
+      if (!left) return false;
+      cursor = `session:${parent.key}`;
+      return true;
+    }
+    if (childrenOf(session).length === 0) return false;
+    collapsed[session.key] = left;
+    return true;
   }
 
   /** While the sort menu is open the arrows walk its items, Enter picks
@@ -587,6 +602,7 @@
      line with its time. -->
 {#snippet sessionRow(session: Session)}
   {@const quiet = session.status === "dormant"}
+  {@const kids = childrenOf(session)}
   {@const line = session.note ?? summaryLine(session) ?? statusLabel(session)}
   <div
     class="session"
@@ -621,7 +637,20 @@
           data-testid={session.note !== null ? "session-note" : summaryLine(session) !== null ? "orchestrator-summary" : "session-state"}
           >{line}</span
         >
-        <span class="model" data-testid="session-model">{session.model === null ? "" : modelLabel(session.model)}</span>
+        {#if kids.length > 0 && collapsed[session.key]}
+          <!-- Folded, the sessions it started are a dot each and a count,
+               where the model stands otherwise. -->
+          <span class="model kids-meta" data-testid="started-dots">
+            {#each kids as kid (kid.key)}<span
+                class="dot mini"
+                class:live={isLive(kid)}
+                class:working={kid.working}
+                class:permission={kid.needs === "permission"}
+              ></span>{/each}{kids.length} started
+          </span>
+        {:else}
+          <span class="model" data-testid="session-model">{session.model === null ? "" : modelLabel(session.model)}</span>
+        {/if}
       {/if}
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
@@ -630,6 +659,18 @@
     <!-- Over the row's end rather than beside it, so a name is never
          squeezed to make room for it. -->
     <span class="actions">
+      {#if kids.length > 0}
+        <button
+          class="icon fold-kids"
+          class:folded={collapsed[session.key]}
+          tabindex="-1"
+          onclick={() => toggleKids(session.key)}
+          aria-expanded={!collapsed[session.key]}
+          aria-label={collapsed[session.key] ? "Show the sessions it started" : "Fold the sessions it started"}
+          title={collapsed[session.key] ? "Show the sessions it started" : "Fold the sessions it started"}
+          data-testid="collapse-started">▾</button
+        >
+      {/if}
       <button
         class="icon"
         tabindex="-1"
@@ -640,6 +681,66 @@
       >
     </span>
   </div>
+{/snippet}
+
+<!-- The sessions a session started, hanging under it on a rail from its
+     dot, one line each: the state, the name, the model or, in the accent,
+     that it is asking for a permission, and when it last changed. One
+     running in another project says which in front of its name. Delete
+     does nothing on these rows; their own × stops them. -->
+{#snippet rail(parent: Session)}
+  {@const kids = childrenOf(parent)}
+  {#if kids.length > 0 && !collapsed[parent.key]}
+    <div class="kids" data-testid="started-rail">
+      {#each kids as kid, index (kid.key)}
+        <div
+          class="session kid"
+          class:first={index === 0}
+          class:on={sessions.active === kid.key}
+          class:cursor={current === `session:${kid.key}`}
+          data-row="session:{kid.key}"
+          in:rowFade|local
+          out:rowFade|local
+        >
+          <span class="rail-in" aria-hidden="true"></span>
+          {#if index < kids.length - 1}<span class="rail-on" aria-hidden="true"></span>{/if}
+          <button class="row kid-row" tabindex="-1" onclick={() => choose(kid.key)} data-testid="started-session">
+            <span
+              class="dot"
+              class:live={isLive(kid)}
+              class:dormant={kid.status === "dormant"}
+              class:working={kid.working}
+              class:unread={kid.unread}
+              class:permission={kid.needs === "permission"}
+              title={statusLabel(kid)}
+            ></span>
+            <span class="label" class:unread={kid.unread}
+              >{#if kid.project !== parent.project}<span class="where">{projectLabel(kid.project)}</span>{/if}{label(
+                kid,
+              )}</span
+            >
+            {#if isAsking(kid)}
+              <span class="model asking" data-testid="started-asking">asking</span>
+            {:else}
+              <span class="model">{kid.model === null ? "" : modelLabel(kid.model)}</span>
+            {/if}
+            <span class="when">{since(lastChanged(kid), now)}</span>
+            <span class="state told">{statusLabel(kid)}</span>
+          </button>
+          <span class="actions">
+            <button
+              class="icon"
+              tabindex="-1"
+              onclick={() => closeSession(kid.key)}
+              aria-label="Close {label(kid)}"
+              title="Stop"
+              data-testid="close-session">×</button
+            >
+          </span>
+        </div>
+      {/each}
+    </div>
+  {/if}
 {/snippet}
 
 <!-- A past session of the project on screen, to resume where it ran: one
@@ -728,83 +829,6 @@
   </div>
 {/snippet}
 
-<!-- What an orchestrator started in a project stays where the work is
-     and keeps out of the way: one line for each orchestrator, and the
-     sessions themselves behind it. -->
-{#snippet startedFolds(path: string)}
-  {#each groupsFor(path) as group (group.id)}
-    {@const id = foldId(path, group)}
-    <div class="fold-row">
-      <button
-        class="fold"
-        class:cursor={current === id}
-        tabindex="-1"
-        onclick={() => toggle(id)}
-        data-row={id}
-        data-testid="started-fold"
-      >
-        <span class="chevron" class:open={opened[id]}>▸</span>
-        <span class="fold-text">{foldLabel(group)}</span>
-        {#if group.asking > 0}
-          <span class="asking"><span class="ring"></span>{group.asking} asking</span>
-        {/if}
-      </button>
-      <!-- Over the row's end, as a session's own × is. -->
-      <span class="actions">
-        <button
-          class="icon"
-          tabindex="-1"
-          onclick={() => stopGroup(group)}
-          aria-label="Stop the sessions {group.label} started"
-          title="Stop these"
-          data-testid="stop-started">×</button
-        >
-      </span>
-    </div>
-    {#if opened[id]}
-      {#each group.sessions as session (session.key)}
-        <div
-          class="session started"
-          class:on={sessions.active === session.key}
-          class:cursor={current === `session:${session.key}`}
-          data-row="session:{session.key}"
-          animate:flip={rowMove()}
-          in:rowFade|local
-          out:rowFade|local
-        >
-          <button
-            class="row"
-            tabindex="-1"
-            onclick={() => choose(session.key)}
-            data-testid="started-session"
-          >
-            <span
-              class="dot"
-              class:live={isLive(session)}
-              class:working={session.working}
-              class:unread={session.unread}
-              class:permission={session.needs === "permission"}
-              title={statusLabel(session)}
-            ></span>
-            <span class="label" class:unread={session.unread}>{label(session)}</span>
-            <span class="state told">{statusLabel(session)}</span>
-          </button>
-          <span class="actions">
-            <button
-              class="icon"
-              tabindex="-1"
-              onclick={() => closeSession(session.key)}
-              aria-label="Close {label(session)}"
-              title="Stop"
-              data-testid="close-session">×</button
-            >
-          </span>
-        </div>
-      {/each}
-    {/if}
-  {/each}
-{/snippet}
-
 <!-- What stands under a project's name, in the order the keyboard walks
      it. Each row is drawn in a slot of its own, which is what fades and
      what moves: a row that goes leaves the ones below it to close the gap
@@ -814,15 +838,15 @@
   {#each live as session (session.key)}
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
       {@render sessionRow(session)}
+      {@render rail(session)}
     </div>
   {/each}
-
-  {@render startedFolds(path)}
 
   {#each quiet as row (row.id)}
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
       {#if row.kind === "session"}
         {@render sessionRow(row.session)}
+        {@render rail(row.session)}
       {:else}
         {@render pastRow(path, row.transcript)}
       {/if}
@@ -1882,7 +1906,9 @@
     }
 
     .project,
-    .session {
+    .session,
+    .chevron,
+    .fold-kids {
       transition: none;
     }
   }
@@ -1901,7 +1927,6 @@
 
   .project:hover .icon,
   .session:hover .icon,
-  .fold-row:hover .icon,
   .icon:focus-visible {
     opacity: 1;
   }
@@ -1963,30 +1988,6 @@
     font-size: var(--fold-size);
   }
 
-  /* A fold and the button that stops what is behind it, on one row. */
-  .fold-row {
-    --row-bg: var(--pane-bg);
-    position: relative;
-    display: flex;
-    align-items: center;
-    margin: 0 var(--row-inset) 4px;
-    border-radius: var(--radius);
-  }
-
-  .fold-row .fold {
-    margin: 0;
-  }
-
-  .fold-row:hover {
-    --row-bg: var(--surface-2);
-    background: var(--row-bg);
-  }
-
-  .fold-row:hover .actions,
-  .fold-row .actions:focus-within {
-    opacity: 1;
-  }
-
   .fold-text {
     min-width: 0;
     overflow: hidden;
@@ -2010,40 +2011,90 @@
     transform: rotate(90deg);
   }
 
-  /* One of the sessions behind the fold is waiting on you. */
-  .asking {
-    flex: none;
-    display: inline-flex;
+  /* The sessions a session started hang under it, a line each, joined to
+     its dot by a rail: down the dot's column, then across to each one's
+     own dot. The first reaches up past its starter's second line to the
+     dot itself. */
+  .kids {
+    --rail-x: calc(var(--row-pad-x) + var(--dot) / 2 - 0.5px);
+    --rail-reach: calc(var(--row-pad-y) + var(--label-size) * 1.35 + var(--row-size) * 0.75 - var(--dot) / 2);
+    margin-bottom: 3px;
+  }
+
+  .rail-in,
+  .rail-on {
+    position: absolute;
+    left: var(--rail-x);
+    width: 9px;
+    border-left: 1px solid var(--rule-strong);
+    pointer-events: none;
+  }
+
+  .rail-in {
+    top: 0;
+    height: 50%;
+    border-bottom: 1px solid var(--rule-strong);
+    border-bottom-left-radius: var(--radius-sm);
+  }
+
+  .kid.first .rail-in {
+    top: calc(-1 * var(--rail-reach));
+    height: calc(50% + var(--rail-reach));
+  }
+
+  .rail-on {
+    top: 50%;
+    bottom: 0;
+  }
+
+  .kid-row {
+    display: grid;
+    grid-template-columns: calc(var(--dot) + 8px) minmax(0, 1fr) auto auto;
+    gap: 0;
     align-items: center;
-    gap: 5px;
-    color: var(--accent);
+    padding: 3px var(--row-pad-x) 3px calc(var(--rail-x) + 15px);
+    font-size: var(--fold-size);
   }
 
-  .ring {
-    width: var(--dot);
-    height: var(--dot);
-    flex: none;
-    border: 1px solid var(--accent);
-    border-radius: 50%;
-  }
-
-  /* A session an orchestrator started, out from behind its fold: past the
-     triangle, and quieter than a session of the project's own. */
-  .session.started .row {
-    padding-left: calc(var(--row-indent) + 14px);
-    font-size: 11px;
+  .kid-row .where {
+    margin-right: 6px;
     color: var(--ink-3);
   }
 
-  .session.started .label {
-    flex: 1;
+  .kid-row .model {
+    padding-left: 8px;
   }
 
+  .model.asking {
+    color: var(--accent);
+  }
 
+  /* A starter folded: a small dot for each session it started, and the
+     count. */
+  .kids-meta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 3px;
+  }
 
+  .dot.mini {
+    width: calc(var(--dot) - 2px);
+    height: calc(var(--dot) - 2px);
+  }
 
+  .dot.mini:last-of-type {
+    margin-right: 2px;
+  }
 
+  .fold-kids {
+    font-size: 11px;
+    transition: transform 90ms ease;
+  }
 
+  .fold-kids.folded {
+    transform: rotate(-90deg);
+  }
 
   /* The projects nobody has used for a while: one fold at the foot, behind
      a hairline, each project a single line with when it was last used. */
