@@ -684,11 +684,13 @@ pub trait Driver: Send {
     fn read(&mut self, line: &str) -> Reading;
 
     /// Whether the agent takes a message while a turn runs. When it does
-    /// not, the core holds each message until no turn runs, and hands it
-    /// over then.
+    /// not, the core holds each message, and hands one over only when no
+    /// turn runs and the agent has named the last one handed over, in a
+    /// turn's start or as dropped. Its line is made then.
     fn takes_while_busy(&self) -> bool;
 
-    /// The line that sends the user's message, under the window's id.
+    /// The line that sends the user's message, under the window's id. An
+    /// error refuses the message: at once, or as dropped for one held.
     fn message(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String>;
 
     /// The line that answers a permission request.
@@ -807,6 +809,13 @@ impl Tracker {
     /// A message that could not be sent after all.
     fn unsend(&mut self, message: &str) {
         self.pending.retain(|m| m != message);
+    }
+
+    /// A message the agent refused before it went: as if it was never
+    /// sent, so its id can be used again.
+    fn refused(&mut self, message: &str) {
+        self.unsend(message);
+        self.used.remove(message);
     }
 
     /// Takes an event from the driver, fills in what the tracker knows, and
@@ -1023,17 +1032,43 @@ enum Out {
     Last(Box<dyn FnOnce() + Send>),
 }
 
+/// A message held for an agent that takes none while a turn runs. Its line
+/// is made when it is handed over, so that it goes with what the session
+/// runs on then.
+struct Held {
+    message: String,
+    text: String,
+    images: Vec<Image>,
+}
+
 struct Machine {
     driver: Box<dyn Driver>,
     tracker: Tracker,
-    /// Messages' lines held for an agent that takes none while a turn
-    /// runs, in the order sent.
-    held: VecDeque<String>,
+    /// Messages held for an agent that takes none while a turn runs, in
+    /// the order sent.
+    held: VecDeque<Held>,
+    /// The message last handed over to such an agent, until the agent
+    /// names it in a turn or drops it. Nothing more is handed over before.
+    handed: Option<String>,
     /// Control requests waiting for their reply, by key.
     replies: HashMap<String, Sender<Result<Value, String>>>,
     /// Told when the agent is ready, for the watchdog that bounds the wait.
     ready: Option<Sender<()>>,
     ended: bool,
+}
+
+impl Machine {
+    fn new(driver: Box<dyn Driver>, ready: Option<Sender<()>>) -> Self {
+        Self {
+            driver,
+            tracker: Tracker::default(),
+            held: VecDeque::new(),
+            handed: None,
+            replies: HashMap::new(),
+            ready,
+            ended: false,
+        }
+    }
 }
 
 struct Live {
@@ -1052,6 +1087,23 @@ struct Live {
 }
 
 impl Live {
+    fn new(
+        id: String,
+        machine: Machine,
+        outbox: Sender<Out>,
+        writer: Sender<Line>,
+        kill: Sender<()>,
+    ) -> Self {
+        Self {
+            id,
+            machine: Mutex::new(machine),
+            outbox: Mutex::new(outbox),
+            writer: Mutex::new(Some(writer)),
+            kill: Mutex::new(kill),
+            stopping: AtomicBool::new(false),
+        }
+    }
+
     fn emit(&self, events: &[Event]) {
         if !events.is_empty() {
             self.put(Out::Events(events.to_vec()));
@@ -1100,7 +1152,7 @@ impl Live {
             }
             machine.tracker.observe(bounded(event), &mut out);
         }
-        self.release(&mut machine);
+        self.release(&mut machine, &mut out);
         self.emit(&out);
         // After the events, so whoever waits on a reply wakes to a stream
         // that already holds what the reply changed.
@@ -1111,12 +1163,35 @@ impl Live {
         }
     }
 
-    /// Hands the agent the next held message, once no turn runs.
-    fn release(&self, machine: &mut Machine) {
-        if !machine.tracker.turn {
-            if let Some(line) = machine.held.pop_front() {
-                // A failure shows as the session ending.
-                let _ = self.enqueue(line);
+    /// Hands the agent the next held message, once no turn runs and the
+    /// agent has named the one handed over before. One the driver cannot
+    /// make a line of is dropped, and the next one goes.
+    fn release(&self, machine: &mut Machine, out: &mut Vec<Event>) {
+        if let Some(message) = &machine.handed {
+            if !machine.tracker.pending.contains(message) {
+                machine.handed = None;
+            }
+        }
+        while !machine.tracker.turn && machine.handed.is_none() {
+            let Some(held) = machine.held.pop_front() else {
+                return;
+            };
+            if !machine.tracker.pending.contains(&held.message) {
+                continue;
+            }
+            match machine
+                .driver
+                .message(&held.message, &held.text, &held.images)
+            {
+                Ok(line) => {
+                    // A failure to write shows as the session ending.
+                    let _ = self.enqueue(line);
+                    machine.handed = Some(held.message);
+                }
+                Err(error) => machine.tracker.observe(
+                    Event::message(&held.message, MessageState::Dropped, Some(error)),
+                    out,
+                ),
             }
         }
     }
@@ -1326,21 +1401,13 @@ pub fn start(
     let (outbox, outgoing) = mpsc::channel::<Out>();
     let mut driver = protocol.driver(launch);
     let opening = driver.opening();
-    let live = Arc::new(Live {
-        id: id.clone(),
-        machine: Mutex::new(Machine {
-            driver,
-            tracker: Tracker::default(),
-            held: VecDeque::new(),
-            replies: HashMap::new(),
-            ready: Some(ready),
-            ended: false,
-        }),
-        outbox: Mutex::new(outbox),
-        writer: Mutex::new(Some(lines)),
-        kill: Mutex::new(kill),
-        stopping: AtomicBool::new(false),
-    });
+    let live = Arc::new(Live::new(
+        id.clone(),
+        Machine::new(driver, Some(ready)),
+        outbox,
+        lines,
+        kill,
+    ));
     sessions
         .inner
         .lock()
@@ -1579,6 +1646,7 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
     }
     machine.ready.take();
     machine.held.clear();
+    machine.handed = None;
     let code = status.and_then(|status| status.code());
     let clean = status.is_some_and(|status| status.success());
     if !clean && !live.stopping.load(Ordering::SeqCst) {
@@ -1612,20 +1680,36 @@ pub fn send(
     images: &[Image],
 ) -> Result<(), String> {
     let live = sessions.get(id)?;
+    if text.trim().is_empty() && images.is_empty() {
+        return Err("there is nothing to send".into());
+    }
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
-        let line = machine.driver.message(message, text, images)?;
         let queued = machine.tracker.send(message)?;
-        let hold = !machine.driver.takes_while_busy()
-            && (machine.tracker.turn || !machine.held.is_empty());
+        let holding = !machine.driver.takes_while_busy();
+        let hold = holding
+            && (machine.tracker.turn || machine.handed.is_some() || !machine.held.is_empty());
         let went = if hold {
-            machine.held.push_back(line);
+            machine.held.push_back(Held {
+                message: message.to_string(),
+                text: text.to_string(),
+                images: images.to_vec(),
+            });
             None
         } else {
-            match live.enqueue(line) {
-                Ok(went) => Some(went),
+            let sent = machine
+                .driver
+                .message(message, text, images)
+                .and_then(|line| live.enqueue(line));
+            match sent {
+                Ok(went) => {
+                    if holding {
+                        machine.handed = Some(message.to_string());
+                    }
+                    Some(went)
+                }
                 Err(error) => {
-                    machine.tracker.unsend(message);
+                    machine.tracker.refused(message);
                     return Err(error);
                 }
             }
@@ -2294,6 +2378,261 @@ mod tests {
             .filter(|e| matches!(e, Event::ToolOutput { .. }))
             .count();
         assert_eq!(pieces, 2);
+    }
+
+    /// An agent that takes no message while a turn runs, spoken to in
+    /// lines of words: `start <ids>` begins a turn for the messages named,
+    /// `end` ends it, `ack` is a reply that means nothing, `drop <id>`
+    /// says a message will not be answered. The line it sends a message
+    /// with names the model it runs on when it is sent.
+    struct Fake {
+        model: String,
+    }
+
+    impl Driver for Fake {
+        fn opening(&mut self) -> Vec<String> {
+            vec![]
+        }
+
+        fn read(&mut self, line: &str) -> Reading {
+            let mut words = line.split(' ');
+            let events = match (words.next(), words.next()) {
+                (Some("start"), named) => vec![Event::TurnStarted {
+                    messages: named
+                        .into_iter()
+                        .flat_map(|named| named.split(','))
+                        .map(str::to_string)
+                        .collect(),
+                }],
+                (Some("end"), _) => vec![ended()],
+                (Some("drop"), Some(message)) => vec![Event::message(
+                    message,
+                    MessageState::Dropped,
+                    Some("refused".into()),
+                )],
+                _ => vec![],
+            };
+            Reading {
+                events,
+                ..Reading::default()
+            }
+        }
+
+        fn takes_while_busy(&self) -> bool {
+            false
+        }
+
+        fn message(&mut self, message: &str, text: &str, _: &[Image]) -> Result<String, String> {
+            if text == "bad" {
+                return Err("not a message this agent takes".into());
+            }
+            Ok(format!("send {message} {text} on {}", self.model))
+        }
+
+        fn answer(&mut self, _: &str, _: Choice, _: Option<&str>) -> Result<String, String> {
+            Err("nothing asked".into())
+        }
+
+        fn reply(&mut self, _: &str, _: Option<&[Vec<String>]>) -> Result<String, String> {
+            Err("nothing asked".into())
+        }
+
+        fn control(&mut self, control: &Control) -> Result<Sending, String> {
+            let Control::SetModel(model) = control else {
+                return Err("not here".into());
+            };
+            self.model = model.clone();
+            Ok(Sending::Local {
+                reply: serde_json::json!({ "model": model }),
+                events: vec![Event::Configured {
+                    model: Some(model.clone()),
+                    mode: None,
+                    effort: None,
+                    efforts: vec![],
+                }],
+            })
+        }
+    }
+
+    /// A session around a driver with no process: what it writes comes out
+    /// of the receiver, and what the agent says goes in through `take`.
+    struct Bench {
+        sessions: Arc<Sessions>,
+        live: Arc<Live>,
+        written: Receiver<String>,
+        recorder: Arc<crate::events::testing::Recorder>,
+    }
+
+    impl Bench {
+        fn new(driver: Box<dyn Driver>) -> Self {
+            let recorder = Arc::new(crate::events::testing::Recorder::default());
+            let (outbox, outgoing) = mpsc::channel();
+            let (lines, queued) = mpsc::channel::<Line>();
+            let (kill, _) = mpsc::channel();
+            let (seen, written) = mpsc::channel();
+            std::thread::spawn({
+                let sink: Arc<dyn Sink> = recorder.clone();
+                move || send_out("int-bench", &sink, outgoing)
+            });
+            std::thread::spawn(move || {
+                for (line, went) in queued {
+                    let _ = went.send(Ok(()));
+                    let _ = seen.send(line);
+                }
+            });
+            let live = Arc::new(Live::new(
+                "int-bench".into(),
+                Machine::new(driver, None),
+                outbox,
+                lines,
+                kill,
+            ));
+            let sessions = Arc::new(Sessions::default());
+            sessions
+                .inner
+                .lock()
+                .unwrap()
+                .insert("int-bench".into(), Arc::clone(&live));
+            Self {
+                sessions,
+                live,
+                written,
+                recorder,
+            }
+        }
+
+        fn send(&self, message: &str, text: &str) {
+            send(&self.sessions, "int-bench", message, text, &[]).unwrap();
+        }
+
+        /// The next line written, or None when none comes.
+        fn next(&self) -> Option<String> {
+            self.written.recv_timeout(Duration::from_millis(200)).ok()
+        }
+
+        fn events(&self) -> Vec<Value> {
+            // What has been put out reaches the recorder in order; a reply
+            // put out after it means everything before it is there.
+            let (replied, reply) = mpsc::channel();
+            self.live.put(Out::Reply(replied, Ok(Value::Null)));
+            reply.recv().unwrap().unwrap();
+            self.recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(_, payload)| payload.clone())
+                .collect()
+        }
+    }
+
+    #[test]
+    fn an_agent_that_takes_no_message_mid_turn_gets_one_at_a_time() {
+        let bench = Bench::new(Box::new(Fake {
+            model: "haiku".into(),
+        }));
+        bench.send(M1, "one");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(&*format!("send {M1} one on haiku"))
+        );
+        // The agent's answer to the request that started the turn, before
+        // the turn itself: the next message waits for the turn to be named.
+        bench.live.take("ack");
+        bench.send(M2, "two");
+        assert_eq!(bench.next(), None, "held until the first is named");
+        bench.live.take(&format!("start {M1}"));
+        bench.send(M3, "three");
+        assert_eq!(bench.next(), None, "held while the turn runs");
+        // A setting settled without the agent reaches the held message.
+        let reply = control(
+            &bench.sessions,
+            "int-bench",
+            &Control::SetModel("sonnet".into()),
+        );
+        assert_eq!(reply.unwrap()["model"], "sonnet");
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(&*format!("send {M2} two on sonnet")),
+            "built when it is handed over"
+        );
+        bench.live.take("ack");
+        assert_eq!(bench.next(), None, "one at a time");
+        bench.live.take(&format!("start {M2}"));
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(&*format!("send {M3} three on sonnet"))
+        );
+        bench.live.take(&format!("start {M3}"));
+        bench.live.take("end");
+        assert_eq!(bench.next(), None);
+
+        let events = bench.events();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["type"] == "configured" && event["model"] == "sonnet"),
+            "a setting settled without the agent is told"
+        );
+        assert_eq!(
+            bench
+                .live
+                .machine
+                .lock()
+                .unwrap()
+                .tracker
+                .settings
+                .model
+                .as_deref(),
+            Some("sonnet")
+        );
+        let states: Vec<Value> = events
+            .into_iter()
+            .filter(|event| event["type"] == "message")
+            .map(|event| serde_json::json!([event["message"], event["state"]]))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                serde_json::json!([M1, "sent"]),
+                serde_json::json!([M2, "queued"]),
+                serde_json::json!([M3, "queued"]),
+            ]
+        );
+        assert_eq!(
+            bench.live.machine.lock().unwrap().tracker.state(),
+            SessionState::Idle
+        );
+    }
+
+    #[test]
+    fn a_held_message_the_agent_cannot_take_is_dropped_and_the_next_goes() {
+        let bench = Bench::new(Box::new(Fake {
+            model: "haiku".into(),
+        }));
+        bench.send(M1, "one");
+        bench.next();
+        bench.send(M2, "bad");
+        bench.send(M3, "three");
+        // The agent turned the first down rather than take it.
+        bench.live.take(&format!("drop {M1}"));
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(&*format!("send {M3} three on haiku"))
+        );
+        let dropped: Vec<Value> = bench
+            .events()
+            .into_iter()
+            .filter(|event| event["type"] == "message" && event["state"] == "dropped")
+            .map(|event| event["message"].clone())
+            .collect();
+        assert_eq!(dropped, [M1, M2]);
+        // A message the agent refused on sending is not sent at all, and
+        // its id is free again.
+        assert!(send(&bench.sessions, "int-bench", M1, "again", &[]).is_err());
+        assert!(send(&bench.sessions, "int-bench", "not-a-uuid", "x", &[]).is_err());
     }
 
     #[test]
