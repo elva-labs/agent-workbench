@@ -25,7 +25,7 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,20 @@ const OUTPUT_KEEP: usize = 64 * 1024;
 /// The most of a changed file, a turn's diff, or a tool call's streamed
 /// input or output, passed on to the window.
 const CONTENT_KEEP: usize = 256 * 1024;
+
+/// How much of a session's news may wait for a slow window or connection
+/// before streamed pieces are left out of it.
+#[cfg(not(test))]
+const OUTBOX_PIECES: usize = 1024;
+#[cfg(test)]
+const OUTBOX_PIECES: usize = 16;
+
+/// How much may wait before the agent's lines are no longer read, which in
+/// time stops the agent itself as it waits to write.
+#[cfg(not(test))]
+const OUTBOX_FULL: usize = 4096;
+#[cfg(test)]
+const OUTBOX_FULL: usize = 64;
 
 /// A session's news. Every event names the session it belongs to by `id`
 /// beside the fields listed here, and its kind by `type`.
@@ -310,6 +324,11 @@ pub enum Event {
     /// What the session is doing changed. Sent on every change, so the last
     /// one is the session's state.
     State { state: SessionState },
+    /// Streamed pieces of text, thinking, or a tool call's input or
+    /// output were left out, `pieces` of them, because the window or the
+    /// connection to it fell behind. The whole that follows each holds
+    /// all of it.
+    Skipped { pieces: u64 },
     /// Something went wrong that the window should say.
     Error { kind: ErrorKind, message: String },
     /// The process is gone. Nothing follows it.
@@ -1033,9 +1052,88 @@ type Line = (String, Sender<Result<(), String>>);
 /// the sink: events, the replies they explain, and what runs once the
 /// session's last event is out.
 enum Out {
-    Events(Vec<Event>),
+    Event(Event),
     Reply(Sender<Result<Value, String>>, Result<Value, String>),
     Last(Box<dyn FnOnce() + Send>),
+}
+
+/// Whether an event is a streamed piece of something whose whole follows.
+fn piece(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Text { done: false, .. }
+            | Event::Thinking { done: false, .. }
+            | Event::ToolInput { delta: Some(_), .. }
+            | Event::ToolOutput { .. }
+    )
+}
+
+/// What a session has put out and the sink has not taken yet.
+///
+/// Putting never waits, so a command is never held up by a slow window.
+/// Past [`OUTBOX_PIECES`] waiting, streamed pieces are left out, and the
+/// next event to go in after them says how many; whole events and replies
+/// always go in. Past [`OUTBOX_FULL`], the reader of the agent's lines
+/// waits for room before it reads on.
+#[derive(Default)]
+struct Outbox {
+    queue: Mutex<Queue>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct Queue {
+    waiting: VecDeque<Out>,
+    /// Pieces left out since the last event that went in.
+    skipped: u64,
+    /// The session is over: nothing waits for room any more.
+    over: bool,
+}
+
+impl Outbox {
+    fn put(&self, out: Out) {
+        let mut queue = self.queue.lock().expect("outbox lock");
+        if let Out::Event(event) = &out {
+            if piece(event) && queue.waiting.len() >= OUTBOX_PIECES {
+                queue.skipped += 1;
+                return;
+            }
+            if queue.skipped > 0 {
+                let pieces = std::mem::take(&mut queue.skipped);
+                queue
+                    .waiting
+                    .push_back(Out::Event(Event::Skipped { pieces }));
+            }
+        }
+        queue.waiting.push_back(out);
+        self.changed.notify_all();
+    }
+
+    /// The next thing to go out, once there is one.
+    fn next(&self) -> Out {
+        let mut queue = self.queue.lock().expect("outbox lock");
+        loop {
+            if let Some(out) = queue.waiting.pop_front() {
+                self.changed.notify_all();
+                return out;
+            }
+            queue = self.changed.wait(queue).expect("outbox lock");
+        }
+    }
+
+    /// Waits while the outbox is full, unless the session is over.
+    fn room(&self) {
+        let mut queue = self.queue.lock().expect("outbox lock");
+        while queue.waiting.len() >= OUTBOX_FULL && !queue.over {
+            queue = self.changed.wait(queue).expect("outbox lock");
+        }
+    }
+
+    /// The session is over: whoever waits for room stops waiting.
+    fn close(&self) {
+        self.queue.lock().expect("outbox lock").over = true;
+        self.changed.notify_all();
+    }
 }
 
 /// A message held for an agent that takes none while a turn runs. Its line
@@ -1082,8 +1180,8 @@ struct Live {
     machine: Mutex<Machine>,
     /// What goes out, in the order it is put here, which is always under
     /// the machine's lock. A sink that is slow holds up only the thread
-    /// that empties it.
-    outbox: Mutex<Sender<Out>>,
+    /// that empties it, and the reader once too much waits.
+    outbox: Arc<Outbox>,
     /// None once stdin is closed.
     writer: Mutex<Option<Sender<Line>>>,
     kill: Mutex<Sender<()>>,
@@ -1096,14 +1194,14 @@ impl Live {
     fn new(
         id: String,
         machine: Machine,
-        outbox: Sender<Out>,
+        outbox: Arc<Outbox>,
         writer: Sender<Line>,
         kill: Sender<()>,
     ) -> Self {
         Self {
             id,
             machine: Mutex::new(machine),
-            outbox: Mutex::new(outbox),
+            outbox,
             writer: Mutex::new(Some(writer)),
             kill: Mutex::new(kill),
             stopping: AtomicBool::new(false),
@@ -1111,15 +1209,13 @@ impl Live {
     }
 
     fn emit(&self, events: &[Event]) {
-        if !events.is_empty() {
-            self.put(Out::Events(events.to_vec()));
+        for event in events {
+            self.put(Out::Event(event.clone()));
         }
     }
 
     fn put(&self, out: Out) {
-        // The thread that empties the outbox outlives every session's
-        // events, so a send can fail only once it is all over.
-        let _ = self.outbox.lock().expect("outbox lock").send(out);
+        self.outbox.put(out);
     }
 
     /// Queues a line for stdin, and hands back where to hear whether it
@@ -1404,13 +1500,13 @@ pub fn start(
     let (lines, queued) = mpsc::channel::<Line>();
     let (kill, killed) = mpsc::channel::<()>();
     let (ready, readied) = mpsc::channel::<()>();
-    let (outbox, outgoing) = mpsc::channel::<Out>();
+    let outbox = Arc::new(Outbox::default());
     let mut driver = protocol.driver(launch);
     let opening = driver.opening();
     let live = Arc::new(Live::new(
         id.clone(),
         Machine::new(driver, Some(ready)),
-        outbox,
+        Arc::clone(&outbox),
         lines,
         kill,
     ));
@@ -1422,7 +1518,7 @@ pub fn start(
 
     std::thread::spawn({
         let id = id.clone();
-        move || send_out(&id, &sink, outgoing)
+        move || send_out(&id, &sink, &outbox)
     });
     std::thread::spawn(move || write_lines(stdin, queued));
     let tail = Arc::new(Mutex::new(String::new()));
@@ -1477,13 +1573,11 @@ pub fn start(
 }
 
 /// Hands what a session puts out to the sink, in order, until its last.
-fn send_out(id: &str, sink: &Arc<dyn Sink>, outgoing: Receiver<Out>) {
-    for out in outgoing {
-        match out {
-            Out::Events(list) => {
-                for event in &list {
-                    events::emit(sink, INTEGRATED_EVENT, &Payload { id, event });
-                }
+fn send_out(id: &str, sink: &Arc<dyn Sink>, outbox: &Outbox) {
+    loop {
+        match outbox.next() {
+            Out::Event(event) => {
+                events::emit(sink, INTEGRATED_EVENT, &Payload { id, event: &event });
             }
             Out::Reply(waiting, reply) => {
                 let _ = waiting.send(reply);
@@ -1549,6 +1643,7 @@ fn read_lines(live: &Live, stdout: impl Read, _reading: Sender<()>) {
                 let text = String::from_utf8_lossy(&line);
                 let text = text.trim();
                 if !text.is_empty() {
+                    live.outbox.room();
                     live.take(text);
                 }
             }
@@ -1638,6 +1733,7 @@ fn wait(
     };
     end_group(&child);
     let _ = read_done.recv_timeout(DRAIN);
+    live.outbox.close();
     live.writer.lock().expect("writer lock").take();
     status
 }
@@ -2472,13 +2568,14 @@ mod tests {
     impl Bench {
         fn new(driver: Box<dyn Driver>) -> Self {
             let recorder = Arc::new(crate::events::testing::Recorder::default());
-            let (outbox, outgoing) = mpsc::channel();
+            let outbox = Arc::new(Outbox::default());
             let (lines, queued) = mpsc::channel::<Line>();
             let (kill, _) = mpsc::channel();
             let (seen, written) = mpsc::channel();
             std::thread::spawn({
                 let sink: Arc<dyn Sink> = recorder.clone();
-                move || send_out("int-bench", &sink, outgoing)
+                let outbox = Arc::clone(&outbox);
+                move || send_out("int-bench", &sink, &outbox)
             });
             std::thread::spawn(move || {
                 for (line, went) in queued {
@@ -2703,6 +2800,130 @@ mod tests {
             assert_eq!(json["sessionId"], serde_json::json!(said));
             stop(&sessions, &started.id).unwrap();
         }
+    }
+
+    /// A sink that takes nothing until it is opened.
+    #[derive(Default)]
+    struct Gate {
+        open: Mutex<bool>,
+        opened: Condvar,
+        taken: crate::events::testing::Recorder,
+    }
+
+    impl Sink for Gate {
+        fn emit(&self, event: &str, payload: Value) {
+            let mut open = self.open.lock().unwrap();
+            while !*open {
+                open = self.opened.wait(open).unwrap();
+            }
+            drop(open);
+            self.taken.emit(event, payload);
+        }
+    }
+
+    fn piece_of(n: usize) -> Event {
+        Event::Text {
+            block: "b".into(),
+            parent: None,
+            text: format!("{n} "),
+            done: false,
+        }
+    }
+
+    #[test]
+    fn a_stalled_window_loses_streamed_pieces_but_never_a_whole_or_a_reply() {
+        let gate = Arc::new(Gate::default());
+        let outbox = Arc::new(Outbox::default());
+        std::thread::spawn({
+            let sink: Arc<dyn Sink> = gate.clone();
+            let outbox = Arc::clone(&outbox);
+            move || send_out("int-1", &sink, &outbox)
+        });
+        let started = std::time::Instant::now();
+        for n in 0..OUTBOX_FULL * 2 {
+            outbox.put(Out::Event(piece_of(n)));
+        }
+        outbox.put(Out::Event(Event::Text {
+            block: "b".into(),
+            parent: None,
+            text: "whole".into(),
+            done: true,
+        }));
+        let (replied, reply) = mpsc::channel();
+        outbox.put(Out::Reply(replied, Ok(Value::Null)));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "putting never waits on the window"
+        );
+        // The pieces up to the limit, the count of those left out before
+        // the whole, the whole and the reply, and one taken out meanwhile.
+        let waiting = outbox.queue.lock().unwrap().waiting.len();
+        assert!(waiting <= OUTBOX_PIECES + 4, "{waiting} waiting");
+
+        *gate.open.lock().unwrap() = true;
+        gate.opened.notify_all();
+        reply.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        let taken: Vec<Value> = gate
+            .taken
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, payload)| payload.clone())
+            .collect();
+        let skipped: u64 = taken
+            .iter()
+            .filter(|event| event["type"] == "skipped")
+            .map(|event| event["pieces"].as_u64().unwrap())
+            .sum();
+        assert!(skipped > 0, "the window is told");
+        let pieces = taken
+            .iter()
+            .filter(|event| event["type"] == "text" && event["done"] == false)
+            .count();
+        assert_eq!(pieces as u64 + skipped, (OUTBOX_FULL * 2) as u64);
+        assert_eq!(
+            taken.last().unwrap()["text"],
+            "whole",
+            "the whole goes out last"
+        );
+    }
+
+    #[test]
+    fn a_full_outbox_holds_up_the_reader_until_there_is_room_or_the_end() {
+        let gate = Arc::new(Gate::default());
+        let outbox = Arc::new(Outbox::default());
+        std::thread::spawn({
+            let sink: Arc<dyn Sink> = gate.clone();
+            let outbox = Arc::clone(&outbox);
+            move || send_out("int-1", &sink, &outbox)
+        });
+        for _ in 0..=OUTBOX_FULL {
+            outbox.put(Out::Event(Event::Compacting));
+        }
+        let (roomy, room) = mpsc::channel();
+        std::thread::spawn({
+            let outbox = Arc::clone(&outbox);
+            move || {
+                outbox.room();
+                let _ = roomy.send(());
+            }
+        });
+        assert!(
+            room.recv_timeout(Duration::from_millis(200)).is_err(),
+            "it waits"
+        );
+        *gate.open.lock().unwrap() = true;
+        gate.opened.notify_all();
+        room.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        // Once the session is over nothing waits, however full.
+        let stalled = Outbox::default();
+        for _ in 0..=OUTBOX_FULL {
+            stalled.put(Out::Event(Event::Compacting));
+        }
+        stalled.close();
+        stalled.room();
     }
 
     #[test]
