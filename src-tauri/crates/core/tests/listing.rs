@@ -79,7 +79,13 @@ fn write_codex(home: &Path, projects: usize) {
 fn listing_every_open_project() {
     let projects = env_number("WORKBENCH_LISTING_PROJECTS", 40);
     let bytes = env_number("WORKBENCH_LISTING_BYTES", 4 * 1024);
-    let root = std::env::temp_dir().join("workbench-listing-bench");
+    let root = std::env::temp_dir().join(format!(
+        "workbench-listing-bench-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos())
+    ));
     std::fs::remove_dir_all(&root).ok();
     let claude: Vec<PathBuf> = (0..ACCOUNTS)
         .map(|a| root.join(format!("claude-{a}")))
@@ -97,6 +103,7 @@ fn listing_every_open_project() {
     let all: Vec<PathBuf> = (0..projects).map(project).collect();
     let mut total = 0;
     for pass in ["first", "second"] {
+        let opened = transcripts::opened();
         let started = Instant::now();
         for dir in &claude {
             for found in transcripts::list_many(dir, &all) {
@@ -109,6 +116,14 @@ fn listing_every_open_project() {
             }
         }
         let batched = started.elapsed();
+        if pass == "second" {
+            // Nothing changed between the passes, so nothing is opened again.
+            assert_eq!(
+                transcripts::opened(),
+                opened,
+                "the second pass missed the cache"
+            );
+        }
 
         let started = Instant::now();
         for path in &all {

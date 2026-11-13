@@ -64,18 +64,45 @@ pub fn directory_for(claude_dir: &Path, project: &Path) -> PathBuf {
 }
 
 /// What is read from inside a transcript, and so what is kept against its
-/// path.
+/// path. The title is read the first time it is wanted: a transcript that
+/// belongs to no project asked for never needs one.
 struct Details {
     cwd: Option<String>,
-    title: Option<String>,
+    title: OnceLock<Option<String>>,
 }
 
-/// A transcript as it was when it was read: a change to either its
-/// modification time or its size is a different transcript.
+impl Details {
+    fn title(&self, path: &Path, size: u64) -> Option<String> {
+        self.title.get_or_init(|| read_title(path, size)).clone()
+    }
+}
+
+/// A transcript as it was when it was read: a change to its modification
+/// time or size, and on unix to the file that is there (its inode) or to its
+/// metadata (ctime), is a different transcript.
 #[derive(Clone, PartialEq, Eq)]
 struct Stamp {
     modified: Option<std::time::SystemTime>,
     size: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+impl Stamp {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Stamp {
+            modified: meta.modified().ok(),
+            size: meta.len(),
+            #[cfg(unix)]
+            inode: meta.ino(),
+            #[cfg(unix)]
+            changed: (meta.ctime(), meta.ctime_nsec()),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -94,8 +121,18 @@ fn cache() -> &'static Mutex<Cache> {
     CACHE.get_or_init(Mutex::default)
 }
 
+static OPENED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many transcripts have been opened to read their details since the
+/// process began. A listing that is served from what was kept does not add
+/// to it.
+pub fn opened() -> u64 {
+    OPENED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// One transcript file found in a directory.
 struct Found {
+    path: PathBuf,
     id: String,
     modified: u64,
     size: u64,
@@ -153,10 +190,12 @@ pub fn list_many(claude_dir: &Path, projects: &[PathBuf]) -> Vec<Vec<Transcript>
         .collect();
     let scanned = scan_directories(&root, &needed);
 
-    wanted
+    // Which transcripts each project keeps. Titles are read afterwards, for
+    // those only.
+    let kept: Vec<Vec<&Found>> = wanted
         .iter()
         .map(|(own, under, root_text, inside_prefix)| {
-            let mut transcripts: Vec<Transcript> = Vec::new();
+            let mut keep: Vec<&Found> = Vec::new();
             for name in &names {
                 let exact = name == own;
                 if !exact && !name.starts_with(under.as_str()) {
@@ -169,30 +208,63 @@ pub fn list_many(claude_dir: &Path, projects: &[PathBuf]) -> Vec<Vec<Transcript>
                     let cwd = item.details.cwd.as_deref();
                     let inside =
                         cwd.is_some_and(|cwd| cwd == root_text || cwd.starts_with(inside_prefix));
-                    if !exact && !inside {
-                        continue;
+                    if exact || inside {
+                        keep.push(item);
                     }
-                    transcripts.push(Transcript {
-                        id: item.id.clone(),
-                        modified: item.modified,
-                        size: item.size,
-                        title: item.details.title.clone(),
-                        cwd: cwd
-                            .filter(|cwd| *cwd != root_text.as_str())
-                            .map(str::to_string),
-                    });
                 }
             }
 
             // A session resumed from another directory is written again there
             // under the same id, so one session can be in several folders: it
             // is listed once, as the copy that moved last.
-            transcripts.sort_by_key(|transcript| std::cmp::Reverse(transcript.modified));
+            keep.sort_by_key(|item| std::cmp::Reverse(item.modified));
             let mut seen = HashSet::new();
-            transcripts.retain(|transcript| seen.insert(transcript.id.clone()));
-            transcripts
+            keep.retain(|item| seen.insert(item.id.as_str()));
+            keep
+        })
+        .collect();
+
+    let mut unique: Vec<&Found> = kept.iter().flatten().copied().collect();
+    unique.sort_by_key(|item| Arc::as_ptr(&item.details));
+    unique.dedup_by_key(|item| Arc::as_ptr(&item.details));
+    read_titles(&unique);
+
+    kept.iter()
+        .zip(&wanted)
+        .map(|(keep, (_, _, root_text, _))| {
+            keep.iter()
+                .map(|item| Transcript {
+                    id: item.id.clone(),
+                    modified: item.modified,
+                    size: item.size,
+                    title: item.details.title(&item.path, item.size),
+                    cwd: item
+                        .details
+                        .cwd
+                        .as_deref()
+                        .filter(|cwd| *cwd != root_text.as_str())
+                        .map(str::to_string),
+                })
+                .collect()
         })
         .collect()
+}
+
+/// Reads the titles not yet read, spread over a few threads.
+fn read_titles(items: &[&Found]) {
+    let queue = Mutex::new(items.iter());
+    std::thread::scope(|scope| {
+        for _ in 0..SCAN_THREADS.min(items.len()) {
+            scope.spawn(|| loop {
+                let next = queue
+                    .lock()
+                    .ok()
+                    .and_then(|mut queue| queue.next().copied());
+                let Some(item) = next else { break };
+                item.details.title(&item.path, item.size);
+            });
+        }
+    });
 }
 
 /// How many directories are read at once. Reading a transcript is mostly
@@ -267,17 +339,19 @@ fn scan_directory(directory: &Path) -> Vec<Found> {
         else {
             continue;
         };
-        let Ok(meta) = entry.metadata() else { continue };
-        let stamp = Stamp {
-            modified: meta.modified().ok(),
-            size: meta.len(),
+        // Followed through a link, so a linked transcript is the file it
+        // points at.
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
         };
+        let stamp = Stamp::of(&meta);
         let name = entry.file_name();
         let details = match before.get(&name) {
             Some(cached) if cached.stamp == stamp => Arc::clone(&cached.details),
-            _ => Arc::new(read_details(&path, stamp.size)),
+            _ => Arc::new(read_details(&path)),
         };
         found.push(Found {
+            path,
             id,
             modified: stamp
                 .modified
@@ -295,13 +369,13 @@ fn scan_directory(directory: &Path) -> Vec<Found> {
     found
 }
 
-/// Where the session ran and what it is called, from one read of the head of
-/// the file and, for a long one, one of its tail.
-fn read_details(path: &Path, size: u64) -> Details {
-    let head = read_head(path);
-    let cwd = head.as_deref().and_then(cwd_in);
-    let title = read_title(path, head.as_deref(), size);
-    Details { cwd, title }
+/// Where the session ran, from one read of the head of the file.
+fn read_details(path: &Path) -> Details {
+    OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Details {
+        cwd: read_head(path).as_deref().and_then(cwd_in),
+        title: OnceLock::new(),
+    }
 }
 
 /// Where the session ran, from the first line that says.
@@ -318,12 +392,12 @@ fn cwd_in(head: &str) -> Option<String> {
 /// the session (`custom-title`, last one wins), then the name Claude Code
 /// gave it (`ai-title`, last one wins), then an older `summary`, then the
 /// first thing the user actually said.
-fn read_title(path: &Path, head: Option<&str>, size: u64) -> Option<String> {
-    let head = head?;
+fn read_title(path: &Path, size: u64) -> Option<String> {
+    let head = read_head(path)?;
     // A file no longer than the head is the head.
     let read;
     let tail = if size <= TITLE_SCAN_BYTES as u64 {
-        head
+        head.as_str()
     } else {
         read = read_tail(path)?;
         read.as_str()
@@ -884,8 +958,14 @@ mod tests {
         format!(r#"{{"type":"user","cwd":"/home/ada/dev/demo","message":{{"content":"{text}"}}}}"#)
     }
 
-    // The same size and the same modification time is the same transcript:
-    // what was read is served, so the file is not opened again.
+    /// The kept details of the only transcript in the project's directory.
+    fn kept(home: &Path, project: &Path) -> Arc<Details> {
+        let directory = directory_for(home, project);
+        let cache = cache().lock().unwrap();
+        Arc::clone(&cache[&directory].values().next().unwrap().details)
+    }
+
+    // A transcript nothing has touched is not opened again.
     #[test]
     fn an_unchanged_transcript_is_served_from_the_cache() {
         let home = home("cache-hit");
@@ -893,10 +973,83 @@ mod tests {
         let path = write_transcript(&home, project, "s", &user("alpha"));
         pin_mtime(&path, 1_700_000_600);
         assert_eq!(list(&home, project)[0].title.as_deref(), Some("alpha"));
+        let first = kept(&home, project);
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("alpha"));
+        assert!(Arc::ptr_eq(&first, &kept(&home, project)));
+    }
+
+    // Same size and same modification time, but another file put in its
+    // place: it is read again.
+    #[cfg(unix)]
+    #[test]
+    fn a_transcript_swapped_for_one_of_the_same_size_and_time_is_read_again() {
+        let home = home("cache-swap");
+        let project = Path::new("/home/ada/dev/demo");
+        let path = write_transcript(&home, project, "s", &user("alpha"));
+        pin_mtime(&path, 1_700_000_600);
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("alpha"));
+
+        let other = path.with_extension("tmp");
+        std::fs::write(&other, user("omega")).unwrap();
+        pin_mtime(&other, 1_700_000_600);
+        std::fs::rename(&other, &path).unwrap();
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("omega"));
+    }
+
+    // Rewritten in place with the size and time put back: the change time
+    // still moved.
+    #[cfg(unix)]
+    #[test]
+    fn a_transcript_rewritten_with_its_time_put_back_is_read_again() {
+        let home = home("cache-rewrite");
+        let project = Path::new("/home/ada/dev/demo");
+        let path = write_transcript(&home, project, "s", &user("alpha"));
+        pin_mtime(&path, 1_700_000_600);
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("alpha"));
 
         std::fs::write(&path, user("omega")).unwrap();
         pin_mtime(&path, 1_700_000_600);
+        assert_eq!(list(&home, project)[0].title.as_deref(), Some("omega"));
+    }
+
+    // A linked transcript is the file it points at: a change there shows.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_transcript_follows_its_target() {
+        let home = home("cache-link");
+        let project = Path::new("/home/ada/dev/demo");
+        let target = home.join("elsewhere.jsonl");
+        std::fs::write(&target, user("alpha")).unwrap();
+        let directory = directory_for(&home, project);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::os::unix::fs::symlink(&target, directory.join("s.jsonl")).unwrap();
         assert_eq!(list(&home, project)[0].title.as_deref(), Some("alpha"));
+
+        std::fs::write(&target, user("omega, a little longer")).unwrap();
+        let found = list(&home, project);
+        assert_eq!(found[0].title.as_deref(), Some("omega, a little longer"));
+        assert_eq!(found[0].size, user("omega, a little longer").len() as u64);
+    }
+
+    // The title is read for a transcript that is kept, and for no other.
+    #[test]
+    fn a_sibling_projects_transcript_is_not_read_for_its_title() {
+        let home = home("lazy-title");
+        let demo = Path::new("/home/ada/dev/demo");
+        let sibling = Path::new("/home/ada/dev/demo-v2");
+        write_transcript(&home, demo, "own", &user("own"));
+        write_transcript(
+            &home,
+            sibling,
+            "other",
+            r#"{"type":"user","cwd":"/home/ada/dev/demo-v2","message":{"content":"theirs"}}"#,
+        );
+        let found = list(&home, demo);
+        assert_eq!(found.len(), 1);
+        let directory = directory_for(&home, sibling);
+        let cache = cache().lock().unwrap();
+        let theirs = cache[&directory].values().next().unwrap();
+        assert!(theirs.details.title.get().is_none());
     }
 
     #[test]
@@ -1007,6 +1160,51 @@ mod tests {
         assert_eq!(together[0].len(), 1);
         assert!(together[1].is_empty());
         assert_eq!(together[2].len(), 2);
+    }
+
+    // Several listings at once, as the window asks for more than one agent
+    // or account together, each get the whole answer.
+    #[test]
+    fn concurrent_listings_each_get_the_whole_answer() {
+        let home = home("concurrent");
+        let projects: Vec<PathBuf> = (0..6)
+            .map(|n| PathBuf::from(format!("/home/ada/dev/p{n}")))
+            .collect();
+        for project in &projects {
+            for t in 0..5 {
+                let body = format!(
+                    r#"{{"type":"user","cwd":"{}","message":{{"content":"t{t}"}}}}"#,
+                    project.display()
+                );
+                write_transcript(&home, project, &format!("s{t}"), &body);
+            }
+        }
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..5 {
+                        let found = list_many(&home, &projects);
+                        assert_eq!(found.len(), 6);
+                        assert!(found.iter().all(|list| list.len() == 5));
+                        assert!(found.iter().flatten().all(|t| t.title.is_some()));
+                    }
+                });
+            }
+        });
+    }
+
+    // The same session id under two accounts is two files, each kept
+    // against its own directory.
+    #[test]
+    fn two_accounts_holding_the_same_id_are_cached_apart() {
+        let one = home("same-id-one");
+        let two = home("same-id-two");
+        let project = Path::new("/home/ada/dev/demo");
+        write_transcript(&one, project, "shared", &user("from one"));
+        write_transcript(&two, project, "shared", &user("from two"));
+        assert_eq!(list(&one, project)[0].title.as_deref(), Some("from one"));
+        assert_eq!(list(&two, project)[0].title.as_deref(), Some("from two"));
+        assert_eq!(list(&one, project)[0].title.as_deref(), Some("from one"));
     }
 
     #[test]
