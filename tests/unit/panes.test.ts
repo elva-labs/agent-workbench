@@ -43,6 +43,8 @@ const fake = {
   hookInstalled: false,
   picked: 0,
   controls: [] as string[],
+  /** The projects each history request asked for, in order. */
+  read: [] as string[][],
 };
 
 vi.mock("$lib/core", () => ({
@@ -77,10 +79,12 @@ vi.mock("$lib/core", () => ({
     kill: async () => {},
     transcripts: async (_project: string, agent: string) =>
       agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
-    transcriptsMany: async (projects: string[], agent: string) =>
-      projects.map(() =>
+    transcriptsMany: async (projects: string[], agent: string) => {
+      fake.read.push(projects);
+      return projects.map(() =>
         agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
-      ),
+      );
+    },
     hookStatus: async () => ({
       installed: fake.hookInstalled,
       settings: "",
@@ -160,6 +164,7 @@ beforeEach(() => {
   fake.transcripts = [];
   fake.codexTranscripts = [];
   fake.hookInstalled = false;
+  fake.read = [];
   resetHook();
   fake.fileList = [
     "Cargo.toml",
@@ -667,6 +672,22 @@ describe("SessionsPane", () => {
     const head = document.querySelector<HTMLElement>('[data-row="project:/old"]')!;
     await waitFor(() => expect(scrolled.mock.contexts).toContain(head.closest("section")));
     expect(head).toHaveClass("cursor");
+  });
+
+  // The clock that keeps histories fresh passes over inactive projects,
+  // so one that comes back is read again on the way out.
+  it("reads an inactive project's history again when it leaves Inactive", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
+    touch("/here");
+    touch("/old", Date.now() - 30 * 24 * 3600 * 1000);
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
+    fake.read = [];
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    await fireEvent.click(screen.getByTestId("inactive-project"));
+    await waitFor(() => expect(fake.read.flat()).toContain("/old"));
+    expect(fake.read.flat()).not.toContain("/here");
   });
 
   it("starts a session in an inactive project from its own button", async () => {

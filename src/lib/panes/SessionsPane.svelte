@@ -14,6 +14,7 @@
     isLive,
     label,
     lastChanged,
+    loadHistory,
     loadMissingHistories,
     modelLabel,
     moreLabel,
@@ -156,6 +157,19 @@
       active: shownActive.map((path) => byPath.get(path)!),
       inactive: shownInactive.map((path) => byPath.get(path)!),
     };
+  });
+
+  /** The projects under Inactive when the pane last looked. One that
+      leaves has its history read again: the clock that keeps histories
+      fresh passes over inactive projects. */
+  let wasInactive = new Set<string>();
+
+  $effect(() => {
+    const inactive = new Set(split.inactive.map((project) => project.path));
+    for (const path of wasInactive) {
+      if (!inactive.has(path) && workspace.open.some((project) => project.path === path)) void loadHistory(path);
+    }
+    wasInactive = inactive;
   });
 
   /** How many inactive projects stand under the fold before the rest go

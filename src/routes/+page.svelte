@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isActive } from "$lib/projects.svelte";
   import { onMount, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import Splitter from "$lib/components/Splitter.svelte";
@@ -236,7 +237,9 @@
     offs.push(
       followHistory(() => {
         const dir = orchestrator.dir;
-        const open = workspace.open.map((project) => project.path);
+        const open = workspace.open
+          .map((project) => project.path)
+          .filter((path) => isActive(path, workspace.active));
         return dir === null ? open : [...open, dir];
       }),
     );
