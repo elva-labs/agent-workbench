@@ -82,6 +82,11 @@ const STREAM_ARGS: &[&str] = &[
     "stdio",
 ];
 
+/// Makes the agent say when its session goes idle: after the turn, and
+/// after the turns that report the subagents it left running. That is the
+/// moment no task it has not finished can still be at work.
+const SESSION_STATE_VAR: &str = "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS";
+
 /// The characters a value on the command line may hold besides letters
 /// and digits, by what it is. Nothing a shell or the Windows command
 /// interpreter reads as more than a character is among them: a `.cmd`
@@ -166,6 +171,7 @@ impl Protocol for ClaudeStream {
         }
 
         prepare_process(&mut command, launch.project, launch.env);
+        command.env(SESSION_STATE_VAR, "1");
         // The tool server the agent starts reads which session it serves,
         // and whether that session directs the others, from these.
         command.env(SESSION_VAR, launch.session);
@@ -327,6 +333,32 @@ impl Asked {
     }
 }
 
+/// A task the agent said it started, until it says how it ended.
+#[derive(Debug, Clone)]
+struct Task {
+    /// The tool call that started it.
+    call: Option<String>,
+    kind: TaskKind,
+    /// Run in the background rather than waited on by the call that started
+    /// it.
+    background: bool,
+    /// Its end goes back to the call that waits on it rather than into a
+    /// turn of its own.
+    awaited: bool,
+    /// Started on behalf of a subagent rather than the main conversation.
+    nested: bool,
+    /// Left out of the agent's last list of what runs in the background.
+    unlisted: bool,
+}
+
+impl Task {
+    /// Whether the agent reports it in a turn of its own: a subagent in the
+    /// background that nothing waits on.
+    fn reports(&self) -> bool {
+        self.kind == TaskKind::Agent && self.background && !self.awaited
+    }
+}
+
 /// One session's reading of the stream.
 struct Stream {
     session: String,
@@ -354,9 +386,10 @@ struct Stream {
     /// Tool calls whose start has been told, by the subagent call they
     /// belong to.
     calls: HashMap<String, Option<String>>,
-    /// Tasks running, with the tool call that started each and whether it
-    /// runs in the background.
-    tasks: HashMap<String, (Option<String>, bool)>,
+    /// Tasks running, by id.
+    tasks: HashMap<String, Task>,
+    /// Tasks told as lost, whose late word is dropped.
+    lost: HashSet<String>,
     /// Whether a turn of the main conversation runs.
     turn: bool,
     /// Messages the agent took while no turn ran, for the turn about to
@@ -535,6 +568,7 @@ impl Stream {
             closed: HashMap::new(),
             calls: HashMap::new(),
             tasks: HashMap::new(),
+            lost: HashSet::new(),
             turn: false,
             starting: Vec::new(),
             ours: HashSet::new(),
@@ -998,19 +1032,36 @@ impl Stream {
                 };
                 let call = text(&line["tool_use_id"]);
                 let background = line["is_backgrounded"].as_bool().unwrap_or(true);
-                self.tasks
-                    .insert(task.to_string(), (call.clone(), background));
+                let kind = match line["task_type"].as_str() {
+                    Some("local_agent" | "remote_agent") => TaskKind::Agent,
+                    Some("local_bash") => TaskKind::Shell,
+                    _ => TaskKind::Other,
+                };
+                let nested = line["parent_task_id"].is_string()
+                    || call
+                        .as_ref()
+                        .and_then(|call| self.calls.get(call))
+                        .is_some_and(Option::is_some);
+                self.lost.remove(task);
+                self.tasks.insert(
+                    task.to_string(),
+                    Task {
+                        call: call.clone(),
+                        kind,
+                        background,
+                        awaited: line["awaited"] == true,
+                        nested,
+                        unlisted: false,
+                    },
+                );
                 out.events.push(Event::TaskStarted {
                     task: task.to_string(),
                     call,
-                    kind: match line["task_type"].as_str() {
-                        Some("local_agent" | "remote_agent") => TaskKind::Agent,
-                        Some("local_bash") => TaskKind::Shell,
-                        _ => TaskKind::Other,
-                    },
+                    kind,
                     description: text(&line["description"]),
                     prompt: text(&line["prompt"]),
                     background,
+                    ambient: line["ambient"] == true || line["skip_transcript"] == true,
                 });
             }
             Some("task_progress") => {
@@ -1020,13 +1071,15 @@ impl Stream {
                 out.events.push(Event::TaskProgress {
                     task: task.to_string(),
                     call: text(&line["tool_use_id"])
-                        .or_else(|| self.tasks.get(task).and_then(|(call, _)| call.clone())),
+                        .or_else(|| self.tasks.get(task).and_then(|known| known.call.clone())),
                     tool: text(&line["last_tool_name"]),
                     description: text(&line["description"]),
                 });
             }
-            // What runs in the background, whole: a task the agent no
-            // longer lists, with no word of how it ended, is lost.
+            // What runs in the background, whole. It comes in no promised
+            // order with the start and the end of each task, so a task it
+            // leaves out is only marked: it is lost if that still holds,
+            // with no word of how it ended, once the turn is over.
             Some("background_tasks_changed") => {
                 let Some(listed) = line["tasks"].as_array() else {
                     return;
@@ -1035,39 +1088,47 @@ impl Stream {
                     .iter()
                     .filter_map(|task| task["task_id"].as_str())
                     .collect();
-                let lost: Vec<String> = self
-                    .tasks
-                    .iter()
-                    .filter(|(task, (_, background))| {
-                        *background && !listed.contains(task.as_str())
-                    })
-                    .map(|(task, _)| task.clone())
-                    .collect();
-                for task in lost {
-                    let (call, _) = self.tasks.remove(&task).expect("listed above");
-                    out.events.push(Event::TaskFinished {
-                        task,
-                        call,
-                        status: TaskStatus::Lost,
-                        summary: None,
-                    });
+                for (id, task) in &mut self.tasks {
+                    task.unlisted = task.background && !listed.contains(id.as_str());
+                }
+            }
+            Some("task_updated") => {
+                let (Some(task), Some(background)) = (
+                    line["task_id"].as_str(),
+                    line["patch"]["is_backgrounded"].as_bool(),
+                ) else {
+                    return;
+                };
+                if let Some(task) = self.tasks.get_mut(task) {
+                    task.background = background;
                 }
             }
             Some("task_notification") => {
                 let Some(task) = line["task_id"].as_str() else {
                     return;
                 };
-                let known = self.tasks.remove(task).and_then(|(call, _)| call);
+                if self.lost.remove(task) {
+                    return;
+                }
+                let known = self.tasks.remove(task);
                 out.events.push(Event::TaskFinished {
                     task: task.to_string(),
-                    call: text(&line["tool_use_id"]).or(known),
+                    call: text(&line["tool_use_id"])
+                        .or_else(|| known.as_ref().and_then(|known| known.call.clone())),
                     status: match line["status"].as_str() {
                         Some("completed") | None => TaskStatus::Completed,
                         Some("stopped" | "killed") => TaskStatus::Stopped,
                         Some(_) => TaskStatus::Failed,
                     },
                     summary: text(&line["summary"]),
+                    reports: known.as_ref().is_some_and(Task::reports),
                 });
+            }
+            // The agent's own word that its work is over, its subagents'
+            // reports included: no task it has not finished, other than
+            // what it still lists in the background, is running.
+            Some("session_state_changed") if line["state"] == "idle" => {
+                self.lose(out, |task| !task.background || task.unlisted);
             }
             _ => {}
         }
@@ -1088,6 +1149,11 @@ impl Stream {
 
     fn result(&mut self, line: &Value, out: &mut Reading) {
         self.begin(out);
+        // A task of the main conversation that its call waited on is over
+        // with the turn, and so is one gone from the background.
+        self.lose(out, |task| {
+            (!task.background && !task.nested) || task.unlisted
+        });
         let failed = line["is_error"].as_bool().unwrap_or(false);
         let outcome = match line["subtype"].as_str() {
             Some("success") if !failed => Outcome::Done,
@@ -1120,13 +1186,35 @@ impl Stream {
         });
     }
 
+    /// Finishes as lost the tasks `which` picks: their end was never told.
+    fn lose(&mut self, out: &mut Reading, which: impl Fn(&Task) -> bool) {
+        let mut gone: Vec<String> = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| which(task))
+            .map(|(id, _)| id.clone())
+            .collect();
+        gone.sort();
+        for id in gone {
+            let task = self.tasks.remove(&id).expect("picked above");
+            self.lost.insert(id.clone());
+            out.events.push(Event::TaskFinished {
+                task: id,
+                call: task.call,
+                status: TaskStatus::Lost,
+                summary: None,
+                reports: false,
+            });
+        }
+    }
+
     /// Lets go of what was kept of the turn that ended: its streams and its
     /// calls. What belongs to a subagent still at work is kept.
     fn forget_turn(&mut self) {
         let working: HashSet<String> = self
             .tasks
             .values()
-            .filter_map(|(call, _)| call.clone())
+            .filter_map(|task| task.call.clone())
             .collect();
         let kept = |parent: &Option<String>| parent.as_ref().is_some_and(|p| working.contains(p));
         self.streaming.retain(|parent, _| kept(parent));
@@ -2419,6 +2507,183 @@ mod tests {
             matches!(&out[3], Event::TaskFinished { call: Some(c), summary: Some(s), status: TaskStatus::Stopped, .. } if c == "t1" && s == "found")
         );
         assert!(!stream.turn, "a subagent's lines start no turn");
+    }
+
+    fn finished(out: &[Event]) -> Vec<(String, TaskStatus)> {
+        out.iter()
+            .filter_map(|event| match event {
+                Event::TaskFinished { task, status, .. } => Some((task.clone(), *status)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn background_agent(task: &str, call: &str) -> Value {
+        json!({"type":"system","subtype":"task_started","task_id":task,"tool_use_id":call,"description":"look","task_type":"local_agent","is_backgrounded":true})
+    }
+
+    fn listed(tasks: &[&str]) -> Value {
+        let tasks: Vec<Value> = tasks
+            .iter()
+            .map(|task| json!({"task_id":task,"task_type":"local_agent","description":"look"}))
+            .collect();
+        json!({"type":"system","subtype":"background_tasks_changed","tasks":tasks})
+    }
+
+    fn notified(task: &str, status: &str) -> Value {
+        json!({"type":"system","subtype":"task_notification","task_id":task,"status":status,"summary":"done"})
+    }
+
+    #[test]
+    fn a_task_the_list_drops_before_its_notification_is_not_lost() {
+        // The list and the notification come in no promised order.
+        for list_first in [true, false] {
+            let mut stream = stream();
+            let mut lines = vec![
+                init(),
+                background_agent("a1", "t1"),
+                listed(&["a1"]),
+                result(),
+            ];
+            if list_first {
+                lines.extend([listed(&[]), notified("a1", "completed")]);
+            } else {
+                lines.extend([notified("a1", "completed"), listed(&[])]);
+            }
+            let out = events(&mut stream, &lines);
+            assert_eq!(
+                finished(&out),
+                [("a1".to_string(), TaskStatus::Completed)],
+                "list first: {list_first}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_task_unlisted_with_no_word_when_the_turn_ends_is_lost_once() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                background_agent("a1", "t1"),
+                listed(&["a1"]),
+                listed(&[]),
+            ],
+        );
+        assert!(finished(&out).is_empty(), "not lost while the turn runs");
+        let out = events(&mut stream, &[result()]);
+        assert_eq!(finished(&out), [("a1".to_string(), TaskStatus::Lost)]);
+        assert!(
+            matches!(out.last(), Some(Event::TurnEnded { .. })),
+            "lost before the turn ends: {out:?}"
+        );
+        let out = events(&mut stream, &[notified("a1", "completed")]);
+        assert!(finished(&out).is_empty(), "a late word of it is dropped");
+    }
+
+    fn foreground_agent(task: &str, call: &str) -> Value {
+        json!({"type":"system","subtype":"task_started","task_id":task,"tool_use_id":call,"description":"look","task_type":"local_agent","is_backgrounded":false})
+    }
+
+    fn idle() -> Value {
+        json!({"type":"system","subtype":"session_state_changed","state":"idle"})
+    }
+
+    #[test]
+    fn a_foreground_subagent_with_no_word_is_lost_when_its_turn_ends() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Agent","input":{}}]},"parent_tool_use_id":null}),
+                foreground_agent("a1", "t1"),
+                // One its own subagent started waits on that subagent, not
+                // on the main turn.
+                json!({"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","id":"t2","name":"Agent","input":{}}]},"parent_tool_use_id":"t1"}),
+                foreground_agent("a2", "t2"),
+                result(),
+            ],
+        );
+        assert_eq!(finished(&out), [("a1".to_string(), TaskStatus::Lost)]);
+        // Once the agent says its work is over, nothing it began still runs.
+        let out = events(&mut stream, &[idle()]);
+        assert_eq!(finished(&out), [("a2".to_string(), TaskStatus::Lost)]);
+    }
+
+    #[test]
+    fn idle_loses_what_is_gone_from_the_background_and_keeps_what_runs() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                background_agent("a1", "t1"),
+                json!({"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"t2","description":"serve","task_type":"local_bash","is_backgrounded":true}),
+                json!({"type":"system","subtype":"background_tasks_changed","tasks":[
+                    {"task_id":"a1","task_type":"local_agent","description":"look"},
+                    {"task_id":"b1","task_type":"local_bash","description":"serve"}]}),
+                result(),
+                json!({"type":"system","subtype":"background_tasks_changed","tasks":[
+                    {"task_id":"b1","task_type":"local_bash","description":"serve"}]}),
+                idle(),
+            ],
+        );
+        assert_eq!(finished(&out), [("a1".to_string(), TaskStatus::Lost)]);
+        assert!(stream.tasks.contains_key("b1"), "the server still runs");
+    }
+
+    #[test]
+    fn a_background_subagent_nothing_waits_on_reports_in_a_turn_of_its_own() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                background_agent("a1", "t1"),
+                json!({"type":"system","subtype":"task_started","task_id":"a2","tool_use_id":"t2","description":"look","task_type":"local_agent","is_backgrounded":true,"awaited":true}),
+                json!({"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"t3","description":"sleep","task_type":"local_bash","is_backgrounded":true}),
+                notified("a1", "stopped"),
+                notified("a2", "completed"),
+                notified("b1", "completed"),
+            ],
+        );
+        let reports: Vec<(String, bool)> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::TaskFinished { task, reports, .. } => Some((task.clone(), *reports)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            reports,
+            [
+                ("a1".to_string(), true),
+                ("a2".to_string(), false),
+                ("b1".to_string(), false)
+            ]
+        );
+    }
+
+    #[test]
+    fn housekeeping_tasks_are_marked_ambient() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"task_started","task_id":"a1","description":"tidy","task_type":"local_agent","ambient":true}),
+                json!({"type":"system","subtype":"task_started","task_id":"a2","description":"tidy","task_type":"local_agent","skip_transcript":true}),
+                background_agent("a3", "t3"),
+            ],
+        );
+        let ambient: Vec<bool> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::TaskStarted { ambient, .. } => Some(*ambient),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ambient, [true, true, false]);
     }
 
     fn control_key(stream: &mut Stream, control: Control) -> String {

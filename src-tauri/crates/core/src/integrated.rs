@@ -246,6 +246,9 @@ pub enum Event {
     Withdrawn { request: String },
     /// A subagent or a background task started. `call` is the tool call
     /// that started it, which its messages name as their parent.
+    /// `ambient` marks housekeeping the agent does on its own account:
+    /// it never keeps the session working, and a window may leave it out
+    /// of the conversation.
     TaskStarted {
         task: String,
         call: Option<String>,
@@ -253,6 +256,7 @@ pub enum Event {
         description: Option<String>,
         prompt: Option<String>,
         background: bool,
+        ambient: bool,
     },
     /// A task is still at work. `tool` is the last tool it used.
     TaskProgress {
@@ -261,12 +265,15 @@ pub enum Event {
         tool: Option<String>,
         description: Option<String>,
     },
-    /// A task ended, with how and the agent's summary of it.
+    /// A task ended, with how and the agent's summary of it. `reports`
+    /// says the agent reports it in a turn of its own, which it begins by
+    /// itself once no turn runs: the session stays working until then.
     TaskFinished {
         task: String,
         call: Option<String>,
         status: TaskStatus,
         summary: Option<String>,
+        reports: bool,
     },
     /// The agent began compacting the conversation.
     Compacting,
@@ -454,8 +461,8 @@ pub enum TaskStatus {
     Failed,
     /// Stopped by the user or the agent before it was done.
     Stopped,
-    /// Gone from what the agent says is running, without a word of how it
-    /// ended. No report of it follows.
+    /// Ended without a word of how, by the time the agent's turn or its
+    /// work as a whole was over. No report of it follows.
     Lost,
 }
 
@@ -695,12 +702,12 @@ pub struct Settings {
 /// [`SessionState::Asking`] while any request waits for an answer;
 /// [`SessionState::Working`] while a turn runs, a message is pending, the
 /// conversation is being compacted, or a subagent is still at work or has
-/// finished outside a turn, since its report starts the next one. That
-/// keeps a session that ended its turn to wait for its subagents working
-/// until the turn that takes their report ends; and
+/// finished outside a turn with a report to come, which the driver says.
+/// That keeps a session that ended its turn to wait for its subagents
+/// working until the turn that takes their report ends; and
 /// [`SessionState::Idle`] otherwise. A background shell command does not
 /// keep a session working: it may be a server that runs for as long as the
-/// session does.
+/// session does. Nor does a task the agent marks as housekeeping.
 ///
 /// Tool calls the agent leaves open are closed here: those of the main
 /// conversation when the turn ends, a subagent's when it finishes, and
@@ -720,8 +727,8 @@ struct Tracker {
     calls: BTreeMap<String, Option<String>>,
     /// How much of each open call's input and output has streamed.
     streamed: HashMap<String, usize>,
-    /// A subagent finished while no turn ran: the turn its report starts
-    /// is coming.
+    /// A task finished while no turn ran, and the driver said its report
+    /// starts a turn: that turn is coming.
     reporting: bool,
     compacting: bool,
     settings: Settings,
@@ -887,21 +894,23 @@ impl Tracker {
                 task,
                 call,
                 kind: TaskKind::Agent,
+                ambient: false,
                 ..
             } => {
                 self.subagents.insert(task.clone(), call.clone());
             }
-            Event::TaskFinished { task, status, .. } => {
-                if let Some(call) = self.subagents.remove(task) {
-                    // Its report starts a turn of its own, unless the agent
-                    // lost track of it.
-                    if !self.turn && *status != TaskStatus::Lost {
-                        self.reporting = true;
-                    }
-                    if let Some(call) = call {
-                        let call = Some(call);
-                        self.close(out, |parent| *parent == call);
-                    }
+            Event::TaskFinished {
+                task,
+                status,
+                reports,
+                ..
+            } => {
+                if *reports && !self.turn && *status != TaskStatus::Lost {
+                    self.reporting = true;
+                }
+                if let Some(Some(call)) = self.subagents.remove(task) {
+                    let call = Some(call);
+                    self.close(out, |parent| *parent == call);
                 }
             }
             Event::Compacting => self.compacting = true,
@@ -1952,6 +1961,7 @@ mod tests {
             description: None,
             prompt: None,
             background: true,
+            ambient: false,
         };
         let (_, out) = tracked(vec![
             turn(&[]),
@@ -1962,6 +1972,7 @@ mod tests {
                 call: Some("c".into()),
                 status: TaskStatus::Completed,
                 summary: None,
+                reports: true,
             },
             turn(&[]),
             ended(),
@@ -1970,6 +1981,37 @@ mod tests {
 
         // A shell left running in the background does not.
         let (tracker, _) = tracked(vec![turn(&[]), task(TaskKind::Shell), ended()]);
+        assert_eq!(tracker.state(), SessionState::Idle);
+    }
+
+    #[test]
+    fn housekeeping_and_tasks_with_no_report_leave_the_session_idle() {
+        let task = |ambient| Event::TaskStarted {
+            task: "t".into(),
+            call: Some("c".into()),
+            kind: TaskKind::Agent,
+            description: None,
+            prompt: None,
+            background: true,
+            ambient,
+        };
+        let (tracker, _) = tracked(vec![turn(&[]), task(true), ended()]);
+        assert_eq!(tracker.state(), SessionState::Idle, "housekeeping");
+
+        // An agent that reports no task in a turn of its own is idle once
+        // the task is done.
+        let (tracker, _) = tracked(vec![
+            turn(&[]),
+            task(false),
+            ended(),
+            Event::TaskFinished {
+                task: "t".into(),
+                call: Some("c".into()),
+                status: TaskStatus::Completed,
+                summary: None,
+                reports: false,
+            },
+        ]);
         assert_eq!(tracker.state(), SessionState::Idle);
     }
 
@@ -2079,6 +2121,7 @@ mod tests {
                 description: None,
                 prompt: None,
                 background: true,
+                ambient: false,
             },
             started("sub", Some("agent")),
             ended(),
@@ -2109,6 +2152,7 @@ mod tests {
                 call: Some("agent".into()),
                 status: TaskStatus::Lost,
                 summary: None,
+                reports: false,
             },
             &mut out,
         );
@@ -2130,12 +2174,14 @@ mod tests {
                 description: None,
                 prompt: None,
                 background: true,
+                ambient: false,
             },
             Event::TaskFinished {
                 task: "t".into(),
                 call: None,
                 status: TaskStatus::Failed,
                 summary: None,
+                reports: true,
             },
         ]);
         assert_eq!(tracker.state(), SessionState::Working);

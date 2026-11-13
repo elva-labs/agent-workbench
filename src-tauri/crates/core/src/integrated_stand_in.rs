@@ -338,6 +338,7 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
         "{env}"
     );
     assert!(has("KEEP_ME=yes"), "{env}");
+    assert!(has("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1"), "{env}");
     assert!(!env.lines().any(|l| l.starts_with("ANTHROPIC_API_KEY=")));
     h.stop();
 }
