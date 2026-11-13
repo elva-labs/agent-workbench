@@ -66,6 +66,8 @@ export async function installFakeCore(
     settings?: Record<string, unknown>;
     /** A stylesheet of the user's already on the machine. */
     styles?: string;
+    /** The agents the machine has, Claude Code alone unless said. */
+    agents?: string[];
     /** Past Claude Code sessions the core reports for the first project,
         each from the agent's own directory unless it names an account's. */
     transcripts?: {
@@ -78,7 +80,7 @@ export async function installFakeCore(
   } = {},
 ) {
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -358,7 +360,7 @@ export async function installFakeCore(
       ).__WORKBENCH_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
-          path: agent === "claude-code" ? "/usr/local/bin/claude" : null,
+          path: agents.includes(agent) ? `/usr/local/bin/${agent}` : null,
           caps: null,
           fromLoginShell: true,
         }),
@@ -1155,6 +1157,7 @@ export async function installFakeCore(
       styles: options.styles ?? null,
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
+      agents: options.agents ?? ["claude-code"],
     },
   );
 }

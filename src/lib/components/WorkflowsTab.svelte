@@ -22,6 +22,7 @@
     workflows,
   } from "$lib/workflows.svelte";
   import WorkflowDiagram from "$lib/components/WorkflowDiagram.svelte";
+  import StepSettings from "$lib/components/StepSettings.svelte";
 
   /** The workflow being edited, by name; the default, else the first, when
       that one is gone. */
@@ -149,7 +150,8 @@
       <p class="error" role="alert" data-testid="workflow-problem">{problem}</p>
     {/if}
 
-    <div class="edit">
+    <div class="edit-box">
+      <div class="edit">
       <div class="drawn">
         <WorkflowDiagram
           workflow={current}
@@ -165,6 +167,8 @@
             {#each told as line, index (index)}<li>{line}</li>{/each}
           </ol>
         </details>
+      </div>
+      <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
       </div>
     </div>
 
@@ -359,8 +363,23 @@
     color: var(--del);
   }
 
-  .edit {
+  /* The step's settings stand beside the diagram when there is room for
+     both, and under it when there is not. */
+  .edit-box {
     container-type: inline-size;
+  }
+
+  .edit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  @container (min-width: 620px) {
+    .edit {
+      grid-template-columns: minmax(0, 1fr) 248px;
+    }
   }
 
   .drawn {
