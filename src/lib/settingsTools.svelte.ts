@@ -650,23 +650,36 @@ async function change(
         ? request.arguments.reason.trim()
         : null;
     const caller = callerOf(request);
-    const choice = await new Promise<Choice>((settle) => {
-      settingsAsk.asking = {
-        request,
-        caller,
-        reason,
-        changes,
-        theme: shown ?? null,
-        css: css ?? null,
-      };
-      pending = settle;
-    });
-    if (choice === "decline") {
-      return refused("The user declined the change. Nothing changed.");
+    let asked = { next, changes, theme: shown, css };
+    // The change is planned again once it is allowed, against the settings
+    // as they are by then; if what it would do has moved meanwhile, the user
+    // is asked again about what it now does.
+    for (;;) {
+      const question = asked;
+      const choice = await new Promise<Choice>((settle) => {
+        settingsAsk.asking = {
+          request,
+          caller,
+          reason,
+          changes: question.changes,
+          theme: question.theme ?? null,
+          css: question.css ?? null,
+        };
+        pending = settle;
+      });
+      if (choice === "decline") {
+        return refused("The user declined the change. Nothing changed.");
+      }
+      const now = planned(request.arguments ?? {});
+      if (now.changes.length === 0) {
+        return said("Nothing to change: the settings are already so.");
+      }
+      asked = { next: now.next, changes: now.changes, theme: now.theme, css: now.css };
+      if (JSON.stringify(now.changes) === JSON.stringify(question.changes)) break;
     }
-    const undo = await take(next);
-    offerUndo({ caller, changes }, undo);
-    const made = changes.map((change) => `${change.label} is now ${change.to}`).join("; ");
+    const undo = await take(asked.next);
+    offerUndo({ caller, changes: asked.changes }, undo);
+    const made = asked.changes.map((change) => `${change.label} is now ${change.to}`).join("; ");
     return said(`The user allowed the change. ${made}. They can undo it for a short while.`);
   });
 }

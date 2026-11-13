@@ -59,6 +59,7 @@ import {
   adoptWorkflows,
   changed,
   defaultWorkflow,
+  setOverride,
   workflows,
   workflowsSettings,
 } from "$lib/workflows.svelte";
@@ -723,6 +724,43 @@ describe("workflows", () => {
       "New workflow",
       "New workflow 2",
     ]);
+  });
+
+  it("are asked about again when what they would reset has changed since they were asked", async () => {
+    adoptWorkflows({
+      list: [defaultWorkflow(), { ...defaultWorkflow(), name: "Other" }],
+      default: "Other",
+      overrides: {},
+    });
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    expect(settingsAsk.asking?.changes.map((change) => change.field)).toEqual(["workflow.Build and review"]);
+    // Meanwhile the user points a project at the workflow being deleted.
+    setOverride("/repo/app", "Build and review");
+    allowChange();
+    await settle();
+    expect(workflows.list).toHaveLength(2);
+    expect(settingsAsk.asking?.changes.map((change) => change.field)).toEqual([
+      "workflow.Build and review",
+      "workflowOverride./repo/app",
+    ]);
+    allowChange();
+    await done;
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual(["Other"]);
+    expect(workflows.overrides).toEqual({});
+    expect(answers[0].content).toMatch(/Workflow for app is now as for new sessions/);
+  });
+
+  it("say so when undoing them is refused, and the window keeps what is stored", async () => {
+    const done = handle(request("settings_change", { workflow: quick }));
+    await settle();
+    allowChange();
+    await done;
+    refuseSettings = "the settings file could not be written";
+    undoChange();
+    await settle();
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual(["Build and review", "Quick fix"]);
+    expect(workflows.refused).toBe("the settings file could not be written");
   });
 
   it("deleted come back where they stood, with the projects that chose them, on undo", async () => {

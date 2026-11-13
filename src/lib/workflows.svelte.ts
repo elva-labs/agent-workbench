@@ -2,12 +2,14 @@ import type {
   AgentId,
   ReviewStep,
   Settings,
+  UnreadWorkflow,
   WorkStep,
   Workflow,
   WorkflowModel,
   WorkflowStep,
 } from "$lib/core";
 import { AGENT_ORDER, modelLabel, mostCapable, sameModel } from "$lib/models";
+import { core } from "$lib/core";
 import { persist } from "$lib/persist";
 
 /**
@@ -58,6 +60,11 @@ export const workflows = $state({
   /** The projects with a word of their own: a workflow's name, or null
       for none, whatever the default. */
   overrides: {} as Record<string, string | null>,
+  /** The workflows in the settings file that are not used, each with the
+      rule it breaks, carried through every write until removed. */
+  unread: [] as UnreadWorkflow[],
+  /** Why the last change in the editor was not kept, while it matters. */
+  refused: null as string | null,
 });
 
 /** What the core holds the settings to. */
@@ -76,6 +83,8 @@ export function workflowsSettings(): Settings["workflows"] {
     list: clone($state.snapshot(workflows.list)),
     default: workflows.default,
     overrides: { ...workflows.overrides },
+    // Like the core, the set names its unread workflows only when it has any.
+    ...(workflows.unread.length === 0 ? {} : { unread: clone($state.snapshot(workflows.unread)) }),
   };
 }
 
@@ -88,8 +97,10 @@ export function adoptWorkflows(settings: Settings["workflows"] | undefined) {
     workflows.list = [fresh];
     workflows.default = fresh.name;
     workflows.overrides = {};
+    workflows.unread = [];
     return;
   }
+  workflows.unread = clone(settings.unread ?? []);
   const list = clone(settings.list);
   const known = (name: unknown): name is string =>
     typeof name === "string" && list.some((workflow) => workflow.name === name);
@@ -104,7 +115,10 @@ export function adoptWorkflows(settings: Settings["workflows"] | undefined) {
 
 const stepNames = (workflow: Workflow) => workflow.steps.map((step) => step.name);
 
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+/** Names are the same when they differ only in the case of A to Z, as the
+    core compares them. */
+const asciiLower = (name: string) => name.trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+const sameName = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 /** Why a name will not do among the others, or null when it will. */
 export function nameProblem(name: string, others: string[]): string | null {
@@ -198,6 +212,19 @@ export function listProblem(list: Workflow[]): string | null {
   return null;
 }
 
+/** Why a whole set of workflows will not do, or null: each workflow, a name
+    once, and the default and every project choice naming one there is. */
+export function setProblem(set: Settings["workflows"]): string | null {
+  const problem = listProblem(set.list);
+  if (problem !== null) return problem;
+  const there = (name: string | null) => name === null || set.list.some((workflow) => workflow.name === name);
+  if (!there(set.default)) return `There is no workflow called ${set.default}.`;
+  for (const choice of Object.values(set.overrides)) {
+    if (!there(choice)) return `There is no workflow called ${choice}.`;
+  }
+  return null;
+}
+
 export function workflowNamed(name: string | null | undefined): Workflow | undefined {
   return name === null || name === undefined
     ? undefined
@@ -255,8 +282,26 @@ function edit(name: string, change: (draft: Workflow) => string | null): string 
       if (choice === name) workflows.overrides[project] = draft.name;
     }
   }
-  save();
+  keep();
   return null;
+}
+
+/**
+ * Sends the editor's change. When the core refuses it, the window goes back
+ * to what is stored and says why; a later change that is kept clears that.
+ */
+function keep() {
+  workflows.refused = null;
+  void Promise.resolve(save()).then(async (refused) => {
+    if (refused === null || refused === undefined) return;
+    workflows.refused = refused;
+    try {
+      const stored = await core().settingsGet();
+      adoptWorkflows(stored.settings.workflows);
+    } catch {
+      // A core that cannot say what it holds leaves the window as it is.
+    }
+  });
 }
 
 /** A name that is not taken: the wanted one, then numbered. */
@@ -275,7 +320,7 @@ export function addWorkflow(): string | null {
   const fresh = defaultWorkflow();
   fresh.name = freeName("New workflow", workflows.list.map((workflow) => workflow.name));
   workflows.list.push(fresh);
-  save();
+  keep();
   return fresh.name;
 }
 
@@ -289,7 +334,7 @@ export function duplicateWorkflow(name: string): string | null {
     workflows.list.map((workflow) => workflow.name),
   );
   workflows.list.splice(workflows.list.indexOf(source) + 1, 0, copy);
-  save();
+  keep();
   return copy.name;
 }
 
@@ -303,7 +348,16 @@ export function deleteWorkflow(name: string) {
   for (const [project, choice] of Object.entries(workflows.overrides)) {
     if (choice === name) delete workflows.overrides[project];
   }
-  save();
+  keep();
+}
+
+/** Takes a workflow the file holds but cannot use out of the file, with
+    the default and the project choices that named it. */
+export function removeUnread(at: number) {
+  const index = workflows.unread.findIndex((entry) => entry.at === at);
+  if (index < 0) return;
+  workflows.unread.splice(index, 1);
+  keep();
 }
 
 export function renameWorkflow(name: string, to: string): string | null {
@@ -319,7 +373,8 @@ export function renameWorkflow(name: string, to: string): string | null {
 export function setDefault(name: string | null) {
   if (name !== null && workflowNamed(name) === undefined) return;
   workflows.default = name;
-  save();
+  for (const entry of workflows.unread) entry.default = false;
+  keep();
 }
 
 /** A project's own word, or undefined to have it follow the default. */
@@ -327,7 +382,10 @@ export function setOverride(project: string, choice: string | null | undefined) 
   if (typeof choice === "string" && workflowNamed(choice) === undefined) return;
   if (choice === undefined) delete workflows.overrides[project];
   else workflows.overrides[project] = choice;
-  save();
+  for (const entry of workflows.unread) {
+    entry.projects = entry.projects.filter((other) => other !== project);
+  }
+  keep();
 }
 
 export function setOrchestrator(name: string, model: WorkflowModel): string | null {
@@ -348,13 +406,14 @@ export function newStep(workflow: Workflow, kind: WorkflowStep["kind"], before: 
       parallel: 1,
     };
   }
+  const target = nearestWork(workflow.steps, before) ?? "";
   return {
     kind,
-    name: freeName("Review", taken),
+    name: freeName(target === "" ? "Review" : `Review of ${target}`.slice(0, LONGEST_NAME), taken),
     models: [{ agent: "claude-code", model: "opus" }],
     reviewerApproves: true,
     orchestratorAgrees: true,
-    backTo: nearestWork(workflow.steps, before) ?? "",
+    backTo: target,
     limit: 3,
   };
 }
@@ -380,16 +439,51 @@ export function withoutStep(workflow: Workflow, at: number): Workflow {
 
 export function removeStep(name: string, at: number): string | null {
   return edit(name, (draft) => {
-    if (draft.steps.length <= 1) return "A workflow needs at least one step.";
+    const problem = removeProblem(draft, at);
+    if (problem !== null) return problem;
     draft.steps.splice(at, 1);
     return null;
   });
+}
+
+/** Why a workflow as it would be after a step moved or went will not do,
+    in terms of what was done: the first step that would be a review, or
+    the rule the result breaks. Null when it will do. */
+function afterProblem(after: Workflow): string | null {
+  if (after.steps[0]?.kind === "review") {
+    return `"${after.steps[0].name}" would come first, and the first step does the work.`;
+  }
+  return workflowProblem(after);
+}
+
+/** A workflow as it would be with a step moved, reviews repointed. */
+export function withMovedStep(workflow: Workflow, from: number, to: number): Workflow {
+  const draft = clone($state.snapshot(workflow));
+  const [step] = draft.steps.splice(from, 1);
+  draft.steps.splice(to, 0, step);
+  repair(draft);
+  return draft;
+}
+
+/** Why a step cannot move to another place, or null when it can. */
+export function moveProblem(workflow: Workflow, from: number, to: number): string | null {
+  if (to < 0) return "It is the first step already.";
+  if (to >= workflow.steps.length) return "It is the last step already.";
+  return afterProblem(withMovedStep(workflow, from, to));
+}
+
+/** Why a step cannot be taken away, or null when it can. */
+export function removeProblem(workflow: Workflow, at: number): string | null {
+  if (workflow.steps.length <= 1) return "A workflow needs at least one step.";
+  return afterProblem(withoutStep(workflow, at));
 }
 
 /** Moves a step to another place in the order. */
 export function moveStep(name: string, from: number, to: number): string | null {
   return edit(name, (draft) => {
     if (to < 0 || to >= draft.steps.length || from === to) return null;
+    const problem = moveProblem(draft, from, to);
+    if (problem !== null) return problem;
     const [step] = draft.steps.splice(from, 1);
     draft.steps.splice(to, 0, step);
     return null;
@@ -604,19 +698,22 @@ export function changed(
   }
   const problem = listProblem(list);
   if (problem !== null) throw new Error(problem);
-  return { list, default: chosen, overrides };
+  return { list, default: chosen, overrides, ...(held.unread?.length ? { unread: clone(held.unread) } : {}) };
 }
 
 /** Replaces the whole set and sends it. Answers with why not when it will
     not do, or with the core's reason when the core refuses it, in which
     case the window goes back to what it held. */
 export async function setWorkflows(next: Settings["workflows"]): Promise<string | null> {
-  const problem = listProblem(next.list);
+  const problem = setProblem(next);
   if (problem !== null) return problem;
   const before = workflowsSettings();
   adoptWorkflows(next);
   const refused = (await save()) ?? null;
-  if (refused !== null) adoptWorkflows(before);
+  if (refused !== null) {
+    adoptWorkflows(before);
+    workflows.refused = refused;
+  }
   return refused;
 }
 
@@ -667,7 +764,7 @@ export async function takeWorkflowChange(change: WorkflowChange): Promise<() => 
           ? before.default
           : null;
     }
-    void setWorkflows({ list, default: chosen, overrides });
+    void setWorkflows({ list, default: chosen, overrides, ...(now.unread ? { unread: now.unread } : {}) });
   };
 }
 
@@ -680,4 +777,6 @@ export function reset() {
   workflows.list = [];
   workflows.default = null;
   workflows.overrides = {};
+  workflows.unread = [];
+  workflows.refused = null;
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Workflow } from "$lib/core";
+import type { Settings, Workflow } from "$lib/core";
 import {
   addStep,
   addWorkflow,
@@ -19,6 +19,11 @@ import {
   updateStep,
   workflowOf,
   listProblem,
+  moveProblem,
+  readWorkflow,
+  removeProblem,
+  removeUnread,
+  setProblem,
   workflowProblem,
   workflows,
   workflowsSettings,
@@ -26,12 +31,25 @@ import {
 import rules from "../fixtures/workflow-rules.json";
 
 const sent: unknown[] = [];
+/** What the core answers the next change with: null keeps it. */
+let refusal: string | null = null;
+/** What the core says it holds when asked. */
+let stored: Settings["workflows"] | null = null;
 
 vi.mock("$lib/persist", () => ({
   persist: (change: unknown) => {
     sent.push(change);
+    return Promise.resolve(refusal);
   },
 }));
+
+vi.mock("$lib/core", () => ({
+  core: () => ({
+    settingsGet: async () => ({ stored: true, settings: { workflows: stored } }),
+  }),
+}));
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const NAME = "Build and review";
 const A = "/repo/one";
@@ -41,6 +59,8 @@ const stepsOf = () => workflows.list[0].steps;
 beforeEach(() => {
   reset();
   sent.length = 0;
+  refusal = null;
+  stored = null;
   adoptWorkflows(undefined);
 });
 
@@ -165,16 +185,16 @@ describe("the orchestrator and the steps", () => {
     expect(addStep(NAME, 3, "review")).toBeNull();
     const added = stepsOf()[3];
     // A new review goes back to the nearest work step, never to a review.
-    expect(added).toMatchObject({ kind: "review", name: "Review 2", backTo: "Work 2" });
+    expect(added).toMatchObject({ kind: "review", name: "Review of Work 2", backTo: "Work 2" });
   });
 
   it("points a review at the nearest earlier work step when its own goes, never at a review", () => {
-    // Work, Review (back to Work), Work 2, Review 2 (back to Work 2).
+    // Work, Review (back to Work), Work 2, Review of Work 2 (back to Work 2).
     addStep(NAME, 2, "work");
     addStep(NAME, 3, "review");
-    expect(stepsOf()[3]).toMatchObject({ name: "Review 2", backTo: "Work 2" });
+    expect(stepsOf()[3]).toMatchObject({ name: "Review of Work 2", backTo: "Work 2" });
     expect(removeStep(NAME, 2)).toBeNull();
-    expect(stepsOf()[2]).toMatchObject({ name: "Review 2", backTo: "Work" });
+    expect(stepsOf()[2]).toMatchObject({ name: "Review of Work 2", backTo: "Work" });
     expect(updateStep(NAME, 2, { backTo: "Review" })).toMatch(/work step before it/);
     // Turning the target into a review sends its review further back.
     addStep(NAME, 1, "work");
@@ -202,7 +222,7 @@ describe("the orchestrator and the steps", () => {
     addStep(NAME, 1, "work");
     // The review that went back to the first step goes back to the one before it.
     expect(removeStep(NAME, 0)).toBeNull();
-    expect(stepsOf().map((step) => step.name)).toEqual(["Work 2", "Review"]);
+    expect(stepsOf().map((step) => step.name)).toEqual(["Work 2", "Review of Work"]);
     expect(stepsOf()[1]).toMatchObject({ backTo: "Work 2" });
     expect(removeStep(NAME, 0)).not.toBeNull();
   });
@@ -288,9 +308,22 @@ describe("the orchestrator and the steps", () => {
 describe("what makes a workflow valid", () => {
   const ok = (): Workflow => defaultWorkflow();
 
-  it("is what the core takes, case by case", () => {
+  it("is what the core takes, case by case, read the way an agent's is", () => {
+    const takes = (set: unknown) => {
+      try {
+        const held = set as Settings["workflows"];
+        const list = held.list.map((workflow) => readWorkflow(workflow));
+        return setProblem({ ...held, list }) === null;
+      } catch {
+        return false;
+      }
+    };
     for (const { case: what, valid, workflow } of rules.cases) {
       expect(listProblem([workflow as Workflow]) === null, what).toBe(valid);
+      expect(takes({ list: [workflow], default: null, overrides: {} }), what).toBe(valid);
+    }
+    for (const { case: what, valid, workflows: set } of rules.sets) {
+      expect(takes(set), what).toBe(valid);
     }
   });
 
@@ -311,5 +344,76 @@ describe("what makes a workflow valid", () => {
     const workflow = ok();
     workflow.steps.reverse();
     expect(workflowProblem(workflow)).toMatch(/before it/);
+  });
+});
+
+describe("a workflow the file holds but cannot use", () => {
+  const careful = {
+    name: "Careful",
+    reason: "the step Review of Careful goes back between 1 and 10 times, not 11",
+    entry: { name: "Careful", steps: [] },
+    at: 1,
+    default: true,
+    projects: [A, "/repo/two"],
+  };
+
+  it("is carried through every change the editor sends", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {}, unread: [careful] });
+    expect(workflows.unread).toEqual([careful]);
+    setOrchestrator(NAME, { agent: "claude-code", model: "opus" });
+    expect(sent.at(-1)).toMatchObject({ workflows: { unread: [careful] } });
+  });
+
+  it("stops being the default, or a project's choice, once the user chooses otherwise", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {}, unread: [careful] });
+    setOverride(A, NAME);
+    expect(workflows.unread[0].projects).toEqual(["/repo/two"]);
+    setDefault(NAME);
+    expect(workflows.unread[0].default).toBe(false);
+  });
+
+  it("is taken out of the file when removed", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {}, unread: [careful] });
+    removeUnread(1);
+    expect(workflows.unread).toEqual([]);
+    expect((sent.at(-1) as { workflows: Settings["workflows"] }).workflows.unread).toBeUndefined();
+  });
+});
+
+describe("a change the core refuses", () => {
+  it("is said, and the window goes back to what is stored", async () => {
+    stored = workflowsSettings();
+    refusal = "could not write the settings file";
+    expect(addWorkflow()).toBe("New workflow");
+    expect(workflows.list).toHaveLength(2);
+    await settle();
+    await settle();
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual([NAME]);
+    expect(workflows.refused).toBe("could not write the settings file");
+    refusal = null;
+    addWorkflow();
+    expect(workflows.refused).toBeNull();
+  });
+});
+
+describe("what would always be refused", () => {
+  it("is known before a step is moved or removed, in terms of what was done", () => {
+    const workflow = defaultWorkflow();
+    expect(moveProblem(workflow, 0, -1)).toMatch(/first step already/);
+    expect(moveProblem(workflow, 1, 2)).toMatch(/last step already/);
+    expect(moveProblem(workflow, 0, 1)).toBe('"Review" would come first, and the first step does the work.');
+    expect(moveProblem(workflow, 1, 0)).toBe('"Review" would come first, and the first step does the work.');
+    expect(removeProblem(workflow, 0)).toBe('"Review" would come first, and the first step does the work.');
+    expect(removeProblem(workflow, 1)).toBeNull();
+    expect(moveStep(NAME, 0, 1)).toMatch(/would come first/);
+  });
+});
+
+describe("a new review", () => {
+  it("is named for the work it checks, so it does not read as coming after another", () => {
+    expect(addStep(NAME, 1, "review")).toBeNull();
+    expect(stepsOf().map((step) => step.name)).toEqual(["Work", "Review of Work", "Review"]);
+    expect(addStep(NAME, 2, "review")).toBeNull();
+    expect(stepsOf()[2].name).toBe("Review of Work 2");
   });
 });
