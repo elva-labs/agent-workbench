@@ -1500,7 +1500,13 @@ test.describe("the palettes", () => {
     test("list the commands without a chord and the actions with theirs, and no sessions", async ({ page }) => {
       await page.keyboard.press(COMMANDS);
       const all = await names(page);
-      expect(all.slice(0, 3)).toEqual(["Next session that needs you", "Open project", "Open remote project"]);
+      expect(all.slice(0, 5)).toEqual([
+        "Next session that needs you",
+        "New session",
+        "New session in one",
+        "Open project",
+        "Open remote project",
+      ]);
       expect(all).toContain("Open settings");
       expect(all).toContain("Go to a session or project");
       await expect(kind(page, "session")).toHaveCount(0);
@@ -1758,7 +1764,7 @@ test.describe("the palettes", () => {
 
       // A session that changes moves above the rest.
       await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
-      await expect(page.locator(".session.on")).toContainText("session 2");
+      await expect(page.locator(`${SESSIONS} .label.unread`)).toHaveCount(1);
       await page.keyboard.press(GOTO);
       await expect(chosen(page).getByTestId("palette-label")).toHaveText("session 1");
       await page.keyboard.press("Enter");
@@ -1855,6 +1861,205 @@ test.describe("the palettes", () => {
       await page.keyboard.type("k");
       await expect.poll(() => writtenTo(page, "pty-2")).toBe("k");
     });
+  });
+});
+
+test.describe("a new session from the palette", () => {
+  const COMMANDS = `${MOD}+Shift+P`;
+  const GOTO = `${MOD}+P`;
+  const field = (page: Page) => page.getByTestId("palette-field");
+  const entries = (page: Page) => page.getByTestId("palette-row");
+  const chips = (page: Page) => page.getByTestId("palette-chip");
+  const chosen = (page: Page) => page.locator("[data-testid='palette-row'][aria-selected='true']");
+
+  test("starts in the project on screen from the keyboard alone, with the keyboard in the new agent", async ({
+    page,
+  }) => {
+    await open(page, { open: [ONE, TWO] });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session");
+    await expect(chosen(page)).toContainText("New session");
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByTestId("palette")).toBeVisible();
+    await expect(chips(page)).toHaveText(["New session"]);
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveValue("");
+    await expect(field(page)).toHaveAttribute("placeholder", "Which project");
+    // The project on screen leads, with the cursor on it.
+    await expect(page.getByTestId("palette-group").first()).toHaveText("In which project");
+    await expect(entries(page).first()).toContainText("one");
+    await expect(chosen(page)).toContainText("one");
+
+    // The chip stands inside the field's row, before the text.
+    const chip = (await chips(page).first().boundingBox())!;
+    const input = (await field(page).boundingBox())!;
+    const dialog = (await page.getByTestId("palette").boundingBox())!;
+    expect(chip.x + chip.width).toBeLessThanOrEqual(input.x + 1);
+    expect(chip.x).toBeGreaterThanOrEqual(dialog.x);
+    expect(input.x + input.width).toBeLessThanOrEqual(dialog.x + dialog.width);
+
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0].project).toBe(ONE);
+    await expect(page.locator(".session.on")).toContainText("session 1");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    await page.keyboard.type("x");
+    await expect.poll(() => writtenTo(page, "pty-1")).toBe("x");
+  });
+
+  test("starts in another project that is typed", async ({ page }) => {
+    await open(page, { open: [ONE, TWO] });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("tw");
+    await expect(entries(page)).toHaveCount(1);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0].project).toBe(TWO);
+    await expect(page.locator(".project.on")).toContainText("two");
+    await page.keyboard.type("y");
+    await expect.poll(() => writtenTo(page, "pty-1")).toBe("y");
+  });
+
+  test("starts in the project on screen from its own command", async ({ page }) => {
+    await open(page, { open: [ONE, TWO] });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await expect(entries(page)).toHaveCount(1);
+    await expect(entries(page).first()).toContainText("New session in one");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0].project).toBe(ONE);
+  });
+
+  test("starts from go to with the modifier and Enter on a project", async ({ page }) => {
+    await open(page, { open: [ONE, TWO] });
+    await page.keyboard.press(GOTO);
+    await page.keyboard.type("tw");
+    await expect(entries(page)).toHaveCount(1);
+    await page.keyboard.press(`${MOD}+Enter`);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0].project).toBe(TWO);
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect(page.locator(".project.on")).toContainText("two");
+  });
+
+  test("starts from go to with the modifier and Enter on a session, in its project", async ({ page }) => {
+    await open(page, { open: [ONE, TWO] });
+    await running(page);
+    await page.keyboard.press(`${MOD}+Shift+P`);
+    await page.keyboard.type("go to");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "goto");
+    await page.keyboard.type("session");
+    await expect(entries(page).first()).toHaveAttribute("data-kind", "session");
+    await page.keyboard.press(`${MOD}+Enter`);
+    await expect.poll(() => spawnCount(page)).toBe(2);
+    expect((await spawns(page))[1].project).toBe(ONE);
+    await expect(rows(page)).toHaveCount(2);
+  });
+
+  test("asks which agent where more than one is installed, and Backspace on an empty field steps back", async ({
+    page,
+  }) => {
+    await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex" });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("two");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toBeVisible();
+    await expect(chips(page)).toHaveText(["New session", "two"]);
+    await expect(field(page)).toHaveAttribute("placeholder", "How should it run");
+    await expect(entries(page)).toHaveCount(2);
+    await expect(entries(page).first()).toContainText("Claude Code");
+    await expect(chosen(page)).toContainText("Claude Code");
+
+    // Typing narrows, and Backspace erases the text before it steps back.
+    await page.keyboard.type("zz");
+    await expect(entries(page)).toHaveCount(0);
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Backspace");
+    await expect(chips(page)).toHaveCount(2);
+    await expect(entries(page)).toHaveCount(2);
+    await page.keyboard.press("Backspace");
+    await expect(chips(page)).toHaveText(["New session"]);
+    await expect(page.getByTestId("palette-group").first()).toHaveText("In which project");
+    await expect(field(page)).toBeFocused();
+    await page.keyboard.press("Backspace");
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "commands");
+    await expect(page.getByTestId("palette-prefix")).toBeVisible();
+
+    await page.keyboard.type("new session");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await expect(chosen(page)).toContainText("Codex");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0]).toMatchObject({ project: ONE, agent: "codex" });
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  });
+
+  test("puts the agent last started in the project under the cursor", async ({ page }) => {
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await expect(chosen(page)).toContainText("Codex");
+    await expect(chosen(page)).toContainText("last used");
+  });
+
+  test("Escape closes it from any step and the keyboard goes back", async ({ page }) => {
+    await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex" });
+    await page.getByTestId("new-session").click();
+    await page.getByTestId("agent-option").first().click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await expect(chips(page)).toHaveCount(2);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    expect(await spawnCount(page)).toBe(1);
+
+    // The commands chord puts it away too, and go to switches it.
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press(GOTO);
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "goto");
+    await expect(chips(page)).toHaveCount(0);
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press(COMMANDS);
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await page.keyboard.type("z");
+    await expect.poll(() => writtenTo(page, "pty-1")).toBe("z");
+  });
+
+  test("stays shut over a question and a dialog", async ({ page }) => {
+    await open(page, { open: [ONE] });
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("settings")).toBeFocused();
+    await page.keyboard.press(GOTO);
+    await page.keyboard.press(COMMANDS);
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect(page.getByTestId("settings")).toBeFocused();
   });
 });
 

@@ -2,14 +2,19 @@
   import { onMount, tick, untrack } from "svelte";
   import { coversBrowser } from "$lib/browser.svelte";
   import type { Action } from "$lib/keymap";
+  import { isMac } from "$lib/platform";
   import { returnFocus } from "$lib/layout.svelte";
   import {
+    chipOf,
     closePalette,
     palette,
     paletteItems,
     pickable,
     pickItem,
     setQuery,
+    startingId,
+    stepBack,
+    stepsLeft,
     type PaletteItem,
   } from "$lib/palette.svelte";
   import { isLive } from "$lib/sessions.svelte";
@@ -48,12 +53,17 @@
     return at >= 0 ? at : Math.max(0, items.findIndex(pickable));
   });
 
-  // A new query, and the opening one, choose the first item that does
-  // something, so the list changing under it does not move the cursor.
+  // A new query, a new step, and the opening one, choose the entry the
+  // step starts on, else the first that does something, so the list
+  // changing under it does not move the cursor.
   $effect(() => {
     palette.query;
     palette.mode;
-    chosen = untrack(() => items.find(pickable)?.id ?? null);
+    palette.steps;
+    chosen = untrack(() => {
+      const starting = startingId();
+      return items.find((item) => item.id === starting)?.id ?? items.find(pickable)?.id ?? null;
+    });
   });
 
   /** The cursor moves to the next item in a direction that does something. */
@@ -79,9 +89,9 @@
 
   /** Puts the palette away, then does what the item does, so where the
       item puts the keyboard is where it stays. */
-  async function run(item: PaletteItem | undefined) {
+  async function run(item: PaletteItem | undefined, alone = false) {
     if (item === undefined) return;
-    const outcome = pickItem(item);
+    const outcome = pickItem(item, alone);
     if (outcome.type === "stay") return;
     closePalette();
     await tick();
@@ -111,7 +121,12 @@
         step(-1);
         break;
       case "Enter":
-        void run(items[cursor]);
+        void run(items[cursor], isMac() ? e.metaKey : e.ctrlKey);
+        break;
+      case "Backspace":
+        // An empty field steps back through a new session's questions.
+        if (palette.mode !== "new" || palette.query !== "") return;
+        stepBack();
         break;
       default:
         return;
@@ -123,10 +138,22 @@
     if (e.key === "Escape" && !dialog.contains(e.target as Node)) closePalette();
   }
 
+  const asking = $derived(stepsLeft(palette.steps)[0] ?? null);
   const placeholder = $derived(
-    palette.mode === "goto" ? "Go to a session or project" : "Run a command",
+    palette.mode === "goto"
+      ? "Go to a session or project"
+      : palette.mode === "commands"
+        ? "Run a command"
+        : asking === "project"
+          ? "Which project"
+          : asking === "account"
+            ? "Under which account"
+            : "How should it run",
   );
-  const heading = $derived(palette.mode === "goto" ? "Sessions and projects" : "Commands");
+  const heading = $derived(
+    palette.mode === "goto" ? "Sessions and projects" : palette.mode === "commands" ? "Commands" : "New session",
+  );
+  const modifier = isMac() ? "⌘" : "Ctrl+";
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -151,6 +178,11 @@
     <div class="entry">
       {#if palette.mode === "commands"}
         <span class="prefix" data-testid="palette-prefix">&gt;</span>
+      {:else if palette.mode === "new"}
+        <span class="chip" data-testid="palette-chip">New session</span>
+        {#each palette.steps as step (step.kind)}
+          <span class="chip" data-testid="palette-chip" data-step={step.kind}>{chipOf(step)}</span>
+        {/each}
       {/if}
       <input
         bind:this={field}
@@ -199,7 +231,7 @@
               class:permission={item.session.needs === "permission"}
               data-testid="palette-dot"
             ></span>
-          {:else if item.kind === "project"}
+          {:else if item.kind === "project" || (item.kind === "choice" && item.step.kind === "project")}
             <svg class="folder" viewBox="0 0 16 16" aria-hidden="true">
               <path
                 d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"
@@ -210,7 +242,7 @@
           {#if item.kind === "session"}
             <span class="detail" data-testid="palette-detail">{item.project}</span>
             <span class="end" data-testid="palette-end">{item.when}</span>
-          {:else if item.kind === "project"}
+          {:else if item.kind === "project" || item.kind === "choice"}
             <span class="detail"></span>
             <span class="end" data-testid="palette-end">{item.end}</span>
           {:else if item.kind === "attention"}
@@ -229,7 +261,12 @@
     <div class="foot" data-testid="palette-hints">
       {#if palette.mode === "goto"}
         <span><kbd>↵</kbd> go to</span>
+        <span><kbd>{modifier}↵</kbd> new session in the project</span>
         <span><kbd>&gt;</kbd> commands</span>
+      {:else if palette.mode === "new"}
+        <span><kbd>↵</kbd> {stepsLeft(palette.steps).length === 1 ? "start" : "choose"}</span>
+        <span><kbd>⌫</kbd> back</span>
+        <span><kbd>esc</kbd> close</span>
       {:else}
         <span><kbd>↵</kbd> run</span>
         <span><kbd>esc</kbd> close</span>
@@ -276,6 +313,16 @@
   .prefix {
     flex: none;
     color: var(--accent);
+  }
+
+  .chip {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: var(--radius-tag);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11.5px;
+    white-space: nowrap;
   }
 
   input {

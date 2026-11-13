@@ -7,18 +7,27 @@ import {
   commandItems,
   goToItems,
   lastUsed,
+  beginNew,
+  nextStep,
   openCommands,
   openGoTo,
   openPalette,
   palette,
   paletteItems,
+  pickable,
   pickItem,
   resetPalette,
   setQuery,
   since,
+  startingId,
+  stepBack,
+  stepItems,
+  stepsLeft,
   type PaletteItem,
 } from "$lib/palette.svelte";
 import { matches } from "$lib/files.svelte";
+import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
@@ -51,6 +60,9 @@ beforeEach(() => {
   resetWorkspace();
   resetKeys();
   resetPalette();
+  resetAccounts();
+  agent.availability = "ready";
+  agent.installed = ["claude-code"];
   attention.focused = true;
   workspace.open.push(repo(A), repo(B), repo(C));
 });
@@ -238,8 +250,31 @@ describe("commands", () => {
   it("is the jump first, then the commands without a chord, then the actions", () => {
     const items = commandItems("");
     expect(items[0]).toMatchObject({ kind: "attention", label: ATTENTION_LABEL });
-    expect(items.slice(1, 3).map((item) => item.label)).toEqual(["Open project", "Open remote project"]);
-    expect(items.slice(3).every((item) => item.kind === "action")).toBe(true);
+    expect(items.slice(1, 4).map((item) => item.label)).toEqual([
+      "New session",
+      "Open project",
+      "Open remote project",
+    ]);
+    expect(items.slice(4).every((item) => item.kind === "action")).toBe(true);
+  });
+
+  it("offers a new session in the project on screen only while one is", () => {
+    expect(commandItems("new session").map((item) => item.label)).toEqual(["New session"]);
+    workspace.active = B;
+    expect(commandItems("new session").map((item) => item.label)).toEqual([
+      "New session",
+      "New session in two",
+    ]);
+    workspace.open = [];
+    workspace.active = null;
+    expect(commandItems("new session")).toEqual([]);
+  });
+
+  it("does not offer a new session while no agent is ready", () => {
+    agent.availability = "missing";
+    const item = commandItems("new session")[0];
+    expect(pickable(item)).toBe(false);
+    expect(pickItem(item)).toEqual({ type: "stay" });
   });
 
   it("has every action that has a chord, but not the palette itself or the jump's own", () => {
@@ -314,5 +349,167 @@ describe("time", () => {
     expect(since(now - 21 * 86_400_000, now)).toBe("3w");
     expect(since(now - 70 * 86_400_000, now)).toBe("2mo");
     expect(since(now + 5_000, now)).toBe("now");
+  });
+});
+
+/** Picks the entry the field would pick on Enter, for a test walking the steps. */
+function choose(label: string, alone = false) {
+  const item = paletteItems().find((candidate) => candidate.label === label);
+  if (item === undefined) throw new Error(`nothing called ${label}`);
+  return pickItem(item, alone);
+}
+
+describe("a new session", () => {
+  const spawned = () => sessions.all.map((session) => ({ ...session }));
+
+  it("starts from the command with the project to ask for first", () => {
+    openCommands();
+    expect(choose("New session")).toEqual({ type: "stay" });
+    expect(palette).toMatchObject({ open: true, mode: "new", query: "", steps: [] });
+    expect(nextStep(palette.steps)).toBe("project");
+  });
+
+  it("lists the project on screen first, then the rest by last use", () => {
+    const one = create(A);
+    const three = create(C);
+    one.changedAt = 1000;
+    three.changedAt = 9000;
+    workspace.active = A;
+    beginNew(null);
+    expect(stepItems("").map((item) => item.label)).toEqual(["one", "three", "two"]);
+    workspace.active = null;
+    expect(stepItems("").map((item) => item.label)).toEqual(["three", "one", "two"]);
+    expect(stepItems("tw").map((item) => item.label)).toEqual(["two"]);
+  });
+
+  it("starts in the project at once when there is nothing else to choose", () => {
+    openCommands();
+    choose("New session");
+    const outcome = choose("two");
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(spawned()).toHaveLength(1);
+    expect(sessions.all[0]).toMatchObject({ project: B, agent: "claude-code", account: null });
+    expect(workspace.active).toBe(B);
+  });
+
+  it("asks for the account when accounts are named, then starts under it", () => {
+    accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+    accounts.overrides = { [B]: "Work" };
+    openCommands();
+    choose("New session");
+    expect(choose("two")).toEqual({ type: "stay" });
+    expect(palette.steps).toEqual([{ kind: "project", path: B }]);
+    expect(nextStep(palette.steps)).toBe("account");
+    expect(stepItems("").map((item) => item.label)).toEqual(["Default", "Work"]);
+    // The cursor begins on the account the project runs under.
+    expect(startingId()).toBe("account:Work");
+    const outcome = choose("Default");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[0]).toMatchObject({ project: B, account: null });
+  });
+
+  it("asks for the agent only where more than one is installed", () => {
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+    agent.installed = ["claude-code", "codex"];
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual(["agent"]);
+    expect(stepsLeft([])).toEqual(["project", "agent"]);
+    accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+    expect(stepsLeft([])).toEqual(["project", "account", "agent"]);
+  });
+
+  it("takes each answer as a chip and starts on the last, with the project's agent offered first", () => {
+    agent.installed = ["claude-code", "codex"];
+    accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+    sessions.preferred[A] = "codex";
+    beginNew(A);
+    expect(palette.steps).toEqual([{ kind: "project", path: A }]);
+    choose("Work");
+    expect(palette.steps.map((step) => step.kind)).toEqual(["project", "account"]);
+    expect(stepItems("").map((item) => item.label)).toEqual(["Claude Code", "Codex"]);
+    expect(startingId()).toBe("agent:codex");
+    const outcome = choose("Claude Code");
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", account: "Work" });
+  });
+
+  it("marks the agent last used on its entry", () => {
+    agent.installed = ["claude-code", "codex"];
+    sessions.preferred[A] = "codex";
+    beginNew(A);
+    const marks = stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
+    expect(marks).toEqual(["", "last used"]);
+  });
+
+  it("clears the field at each step, and narrows only the question asked", () => {
+    agent.installed = ["claude-code", "codex"];
+    openCommands();
+    choose("New session");
+    setQuery("tw");
+    expect(palette.query).toBe("tw");
+    choose("two");
+    expect(palette.query).toBe("");
+    setQuery("codex");
+    expect(stepItems(palette.query).map((item) => item.label)).toEqual(["Codex"]);
+  });
+
+  it("steps back by one answer, and from the first question to the commands", () => {
+    agent.installed = ["claude-code", "codex"];
+    accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+    openCommands();
+    choose("New session");
+    choose("one");
+    choose("Work");
+    expect(palette.steps).toHaveLength(2);
+    stepBack();
+    expect(palette.steps).toEqual([{ kind: "project", path: A }]);
+    stepBack();
+    expect(palette.steps).toEqual([]);
+    expect(palette.mode).toBe("new");
+    stepBack();
+    expect(palette).toMatchObject({ mode: "commands", query: "", steps: [] });
+  });
+
+  it("starts in the project on screen from its own command", () => {
+    workspace.active = C;
+    openCommands();
+    const outcome = choose("New session in three");
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[0]).toMatchObject({ project: C });
+  });
+
+  it("starts with Cmd+Enter from a session or a project in go to", () => {
+    const own = create(B);
+    agent.installed = ["claude-code", "codex"];
+    openGoTo();
+    const session = paletteItems().find((item) => item.kind === "session")!;
+    expect(pickItem(session, true)).toEqual({ type: "stay" });
+    expect(palette).toMatchObject({ mode: "new", steps: [{ kind: "project", path: B }] });
+    expect(own.project).toBe(B);
+
+    openGoTo();
+    const project = paletteItems().find((item) => item.kind === "project" && item.path === C)!;
+    expect(pickItem(project, true)).toEqual({ type: "stay" });
+    expect(palette.steps).toEqual([{ kind: "project", path: C }]);
+  });
+
+  it("starts at once with Cmd+Enter when the project is all it needs", () => {
+    openGoTo();
+    const project = paletteItems().find((item) => item.kind === "project" && item.path === C)!;
+    const outcome = pickItem(project, true);
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all.map((session) => session.project)).toEqual([C]);
+  });
+
+  it("leaves the steps behind when a list is opened again", () => {
+    beginNew(A);
+    openGoTo();
+    expect(palette).toMatchObject({ mode: "goto", steps: [] });
+    beginNew(A);
+    openCommands();
+    expect(palette).toMatchObject({ mode: "commands", steps: [] });
   });
 });

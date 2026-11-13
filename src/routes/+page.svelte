@@ -538,7 +538,7 @@
         else openGoTo();
         break;
       case "palette":
-        if (palette.open && palette.mode === "commands") closePalette();
+        if (palette.open && palette.mode !== "goto") closePalette();
         else openCommands();
         break;
       default:

@@ -3,7 +3,19 @@ import { actionFor, type Action } from "$lib/keymap";
 import { matches } from "$lib/files.svelte";
 import { openRemote } from "$lib/remote.svelte";
 import { focusPane } from "$lib/layout.svelte";
-import { ago, label, liveCount, sessions, waitingOnYou, type Session } from "$lib/sessions.svelte";
+import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
+import { agentLabel, installed, isReady } from "$lib/agent.svelte";
+import type { AgentId } from "$lib/core";
+import {
+  ago,
+  create,
+  defaultAgent,
+  label,
+  liveCount,
+  sessions,
+  waitingOnYou,
+  type Session,
+} from "$lib/sessions.svelte";
 import { activate, goTo, pick, projectLabel, workspace } from "$lib/workspace.svelte";
 
 /**
@@ -17,11 +29,25 @@ import { activate, goTo, pick, projectLabel, workspace } from "$lib/workspace.sv
  * or when it was last used. An action is listed with its chord. Going to
  * the next session that needs you leads the commands, since it is what the
  * palette is opened for most.
+ *
+ * A new session is asked for in steps in the same field: the project, then
+ * the account when accounts are named, then how it runs, which is the agent
+ * when more than one is installed. Each answer becomes a chip, and a step
+ * with nothing to choose is not asked. The session starts on the last
+ * answer.
  */
 
-export type Mode = "goto" | "commands";
+export type Mode = "goto" | "commands" | "new";
 
-export type CommandId = "open" | "remote";
+export type CommandId = "new" | "newHere" | "open" | "remote";
+
+/** An answer to one of the questions a new session asks. */
+export type Step =
+  | { kind: "project"; path: string }
+  | { kind: "account"; account: string | null }
+  | { kind: "agent"; agent: AgentId };
+
+export type StepKind = Step["kind"];
 
 export type PaletteItem =
   | { kind: "attention"; id: "attention"; label: string; detail: string; waiting: number; chord: string; group: null }
@@ -36,6 +62,7 @@ export type PaletteItem =
     }
   | { kind: "project"; id: string; label: string; group: string; path: string; end: string }
   | { kind: "command"; id: string; label: string; group: null; command: CommandId; chord: string }
+  | { kind: "choice"; id: string; label: string; group: string; step: Step; end: string }
   | { kind: "action"; id: string; label: string; group: null; action: ActionKey; chord: string };
 
 /** What picking an item leads to. The palette stays up on a step; it goes
@@ -53,17 +80,25 @@ export const ATTENTION_LABEL = JUMP.label;
 export const SESSIONS = "Sessions";
 export const PROJECTS = "Projects";
 
-export const palette = $state({ open: false, mode: "goto" as Mode, query: "" });
+export const palette = $state({
+  open: false,
+  mode: "goto" as Mode,
+  query: "",
+  /** The answers given so far to a new session's questions. */
+  steps: [] as Step[],
+});
 
 export function openGoTo() {
   palette.mode = "goto";
   palette.query = "";
+  palette.steps = [];
   palette.open = true;
 }
 
 export function openCommands() {
   palette.mode = "commands";
   palette.query = "";
+  palette.steps = [];
   palette.open = true;
 }
 
@@ -79,6 +114,7 @@ export function resetPalette() {
   palette.open = false;
   palette.mode = "goto";
   palette.query = "";
+  palette.steps = [];
 }
 
 /** The field changed. A `>` first in go to leaves it for commands, with
@@ -178,9 +214,21 @@ export function commandItems(query: string): PaletteItem[] {
     waiting: waitingOnYou().filter((session) => session.key !== sessions.active).length,
     chord: describe(chordFor("session.attention")),
   };
+  const command = (id: CommandId, label: string): PaletteItem => ({
+    kind: "command",
+    id: `command:${id}`,
+    label,
+    group: null,
+    command: id,
+    chord: "",
+  });
   const commands: PaletteItem[] = [
-    { kind: "command", id: "command:open", label: "Open project", group: null, command: "open", chord: "" },
-    { kind: "command", id: "command:remote", label: "Open remote project", group: null, command: "remote", chord: "" },
+    ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
+    ...(workspace.active === null
+      ? []
+      : [command("newHere", `New session in ${projectLabel(workspace.active)}`)]),
+    command("open", "Open project"),
+    command("remote", "Open remote project"),
   ];
   const actions = ACTIONS.filter(({ key }) => key !== "palette" && key !== "session.attention").map(
     ({ key, label }): PaletteItem => ({
@@ -197,24 +245,208 @@ export function commandItems(query: string): PaletteItem[] {
   );
 }
 
+/** The question a new session asks next given the answers so far, or null
+    when it has all it needs. */
+export function nextStep(steps: Step[]): StepKind | null {
+  const has = (kind: StepKind) => steps.some((step) => step.kind === kind);
+  if (!has("project")) return "project";
+  if (hasAccounts() && !has("account")) return "account";
+  if (installed().length > 1 && !has("agent")) return "agent";
+  return null;
+}
+
+/** The questions still to ask, the next first. */
+export function stepsLeft(steps: Step[]): StepKind[] {
+  const left: StepKind[] = [];
+  const taken = [...steps];
+  for (let kind = nextStep(taken); kind !== null; kind = nextStep(taken)) {
+    left.push(kind);
+    taken.push(
+      kind === "project"
+        ? { kind, path: "" }
+        : kind === "account"
+          ? { kind, account: null }
+          : { kind, agent: "claude-code" },
+    );
+  }
+  return left;
+}
+
+/** The project the answers so far name. */
+export function projectOfSteps(steps: Step[]): string | null {
+  const step = steps.find((candidate) => candidate.kind === "project");
+  return step === undefined ? null : step.path;
+}
+
+/** An answer as its chip spells it. */
+export function chipOf(step: Step): string {
+  switch (step.kind) {
+    case "project":
+      return projectLabel(step.path);
+    case "account":
+      return accountLabel(step.account);
+    case "agent":
+      return agentLabel(step.agent);
+  }
+}
+
+/** What the last question offers, as titled lists drawn in order: the
+    agents to run, one model with no workflow. */
+function runSections(project: string): { title: string; items: PaletteItem[] }[] {
+  const title = "Agent";
+  return [
+    {
+      title,
+      items: installed().map(
+        (agent): PaletteItem => ({
+          kind: "choice",
+          id: `agent:${agent}`,
+          label: agentLabel(agent),
+          group: title,
+          step: { kind: "agent", agent },
+          end: sessions.preferred[project] === agent ? "last used" : "",
+        }),
+      ),
+    },
+  ];
+}
+
+/** The projects a new session can go in: the one on screen first, then
+    by when they were last used. */
+function projectChoices(): PaletteItem[] {
+  const group = "In which project";
+  const order = projectsByUse();
+  const active = workspace.active;
+  const paths =
+    active !== null && order.includes(active)
+      ? [active, ...order.filter((path) => path !== active)]
+      : order;
+  return paths.map(
+      (path): PaletteItem => ({
+        kind: "choice",
+        id: `project:${path}`,
+        label: projectLabel(path),
+        group,
+        step: { kind: "project", path },
+        end: standing(path),
+      }),
+    );
+}
+
+/** The accounts a new session can run under, the agents' own first. */
+function accountChoices(project: string): PaletteItem[] {
+  const group = "Under which account";
+  const own = accountOf(project);
+  return [null, ...names()].map(
+    (account): PaletteItem => ({
+      kind: "choice",
+      id: `account:${account ?? ""}`,
+      label: accountLabel(account),
+      group,
+      step: { kind: "account", account },
+      end: account === own ? "this project's" : "",
+    }),
+  );
+}
+
+/** What the question being asked offers, narrowed by what is typed. */
+export function stepItems(query: string, steps: Step[] = palette.steps): PaletteItem[] {
+  const asking = nextStep(steps);
+  const project = projectOfSteps(steps);
+  const all =
+    asking === "project"
+      ? projectChoices()
+      : asking === "account" && project !== null
+        ? accountChoices(project)
+        : asking === "agent" && project !== null
+          ? runSections(project).flatMap((section) => section.items)
+          : [];
+  return all.filter((item) => matches(item.label, query));
+}
+
 /** What the palette lists now, in the order it draws them. */
 export function paletteItems(): PaletteItem[] {
+  if (palette.mode === "new") return stepItems(palette.query);
   return palette.mode === "goto" ? goToItems(palette.query) : commandItems(palette.query);
 }
 
 /** Whether picking an item does anything: the jump with nothing waiting
-    does not. */
+    does not, and neither does a new session while no agent is ready. */
 export function pickable(item: PaletteItem): boolean {
-  return !(item.kind === "attention" && item.waiting === 0);
+  if (item.kind === "attention") return item.waiting > 0;
+  if (item.kind === "command") return isReady() || (item.command !== "new" && item.command !== "newHere");
+  return true;
 }
 
-/** Picks an item. */
-export function pickItem(item: PaletteItem): Outcome {
+/** The entry the cursor starts on when the list is not narrowed: the
+    account the project runs under, the agent it used last. Null leaves it
+    to the first entry that does something. */
+export function startingId(): string | null {
+  if (palette.mode !== "new" || palette.query.trim() !== "") return null;
+  const project = projectOfSteps(palette.steps);
+  if (project === null) return null;
+  const asking = nextStep(palette.steps);
+  if (asking === "account") return `account:${accountOf(project) ?? ""}`;
+  if (asking === "agent") return `agent:${defaultAgent(project)}`;
+  return null;
+}
+
+/** Starts a session on the answers given: the project's account and the
+    agent it used last stand in for a question that was not asked. */
+function startSession(steps: Step[]) {
+  const path = projectOfSteps(steps);
+  if (path === null) return;
+  const account = steps.find((step) => step.kind === "account");
+  const agent = steps.find((step) => step.kind === "agent");
+  if (workspace.active !== path) activate(path);
+  create(
+    path,
+    null,
+    agent === undefined ? defaultAgent(path) : agent.agent,
+    null,
+    null,
+    null,
+    account === undefined ? accountOf(path) : account.account,
+  );
+  focusPane("agent");
+}
+
+/** Takes an answer, and starts the session when it was the last one asked. */
+function answer(steps: Step[]): Outcome {
+  if (nextStep(steps) === null) return { type: "close", then: () => startSession(steps) };
+  palette.mode = "new";
+  palette.steps = steps;
+  palette.query = "";
+  return { type: "stay" };
+}
+
+/** Starts asking for a new session, in a project when it is known. */
+export function beginNew(path: string | null): Outcome {
+  if (!isReady()) return { type: "stay" };
+  return answer(path === null ? [] : [{ kind: "project", path }]);
+}
+
+/** Goes back a step: the last answer is taken back, and with none given
+    the commands list is where the question came from. */
+export function stepBack() {
+  palette.query = "";
+  if (palette.steps.length > 0) {
+    palette.steps = palette.steps.slice(0, -1);
+    return;
+  }
+  palette.mode = "commands";
+}
+
+/** Picks an item. With `alone` held, a session or project starts a new
+    session in its project instead of going to it. */
+export function pickItem(item: PaletteItem, alone = false): Outcome {
   if (!pickable(item)) return { type: "stay" };
   switch (item.kind) {
     case "session":
+      if (alone) return beginNew(item.session.project);
       return { type: "close", then: () => void (goTo(item.session.key) && focusPane("agent")) };
     case "project":
+      if (alone) return beginNew(item.path);
       return {
         type: "close",
         then: () => {
@@ -222,10 +454,21 @@ export function pickItem(item: PaletteItem): Outcome {
           if (sessions.active !== null) focusPane("agent");
         },
       };
+    case "choice":
+      return answer([...palette.steps, item.step]);
     case "attention":
       return { type: "perform", action: { type: "attention" } };
     case "command":
-      return { type: "close", then: () => void (item.command === "open" ? pick() : openRemote()) };
+      switch (item.command) {
+        case "new":
+          return beginNew(null);
+        case "newHere":
+          return beginNew(workspace.active);
+        case "open":
+          return { type: "close", then: () => void pick() };
+        case "remote":
+          return { type: "close", then: () => void openRemote() };
+      }
     case "action":
       return { type: "perform", action: actionFor(item.action) };
   }
