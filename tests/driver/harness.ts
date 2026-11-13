@@ -529,7 +529,8 @@ export async function launch(): Promise<App> {
   return WINDOWS ? attach(home, bin) : bridge(home, bin);
 }
 
-/** Points the app at projects, the way a restart would find them. */
+/** Points the app at projects, the way a restart would find them. Resolves
+    once the page reloaded on them is the one answering. */
 export async function openProjects(driver: WebDriver, paths: string[]) {
   // The call lands while the page may still be changing under the previous
   // test, and the driver has answered it with "no such element" once in a
@@ -548,6 +549,11 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
         // "Apple GPU", and the software one behind a headless X server
         // paints a third WebGL terminal late or never.
         localStorage.setItem("workbench.renderer", "dom");
+        // The page being left is marked, and the reload starts after the
+        // script has answered. Until the new page commits, the old one
+        // still answers the driver with everything it showed, the project
+        // and its rows included, and still takes the core's events.
+        (window as unknown as { __leaving?: boolean }).__leaving = true;
         location.reload();
       }, paths);
       break;
@@ -557,10 +563,17 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
     }
   }
   await driver.wait(async () => {
-    const ready = await driver.executeScript(
-      () => document.querySelector("section[data-pane='agent']") !== null,
-    );
-    return ready === true;
+    try {
+      const ready = await driver.executeScript(
+        () =>
+          !(window as unknown as { __leaving?: boolean }).__leaving &&
+          document.querySelector("section[data-pane='agent']") !== null,
+      );
+      return ready === true;
+    } catch {
+      // Asked between the two pages: there is no page to answer yet.
+      return false;
+    }
   }, 20_000);
 }
 
