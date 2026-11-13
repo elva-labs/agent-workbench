@@ -666,6 +666,11 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        onConductCancel: async (handler: (request: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__conductCancel =
+            handler;
+          return () => {};
+        },
         conductAnswer: async (
           id: string,
           cwd: string,

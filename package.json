@@ -16,7 +16,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:driver": "scripts/driver.sh",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "cargo test --workspace --manifest-path src-tauri/Cargo.toml",
     "verify": "npm run check && npm run test:unit && npm run test:rust && npm run test:e2e"
   },
   "license": "MIT",
