@@ -218,28 +218,33 @@ async fn hook_status(
     project: String,
     accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let daemon = Arc::clone(&daemon);
     // The daemon is put in place before the status is read, so a project
-    // with hooks from before there was a server reads as wanting one.
-    let here = matches!(route(&project), Route::Local(_));
-    if here {
-        ensure_daemon_here(&app, &core, &daemon);
-    }
-    let answer = routed(
-        Arc::clone(&core),
-        Arc::clone(&remotes),
-        route(&project),
-        "hook_status",
-        {
-            let accounts = accounts.clone();
-            move |rest| json!({ "project": rest, "accounts": accounts })
-        },
-        move |core, project| core.hook_status(Path::new(project), &accounts),
-    )
-    .await;
-    if here && answer.is_err() {
-        daemon.forget();
-    }
-    answer
+    // with hooks from before there was a server reads as wanting one. The
+    // check can wait on the daemon's lock, so it runs off the async runtime.
+    blocking(move || {
+        let route = route(&project);
+        let here = matches!(route, Route::Local(_));
+        if here {
+            ensure_daemon_here(&app, &core, &daemon);
+        }
+        let answer = match route {
+            Route::Local(path) => core
+                .hook_status(Path::new(&path), &accounts)
+                .and_then(value),
+            Route::Remote { host, rest } => remotes.connection(&host)?.call(
+                "hook_status",
+                json!({ "project": rest, "accounts": accounts }),
+            ),
+        };
+        if here && answer.is_err() {
+            daemon.forget();
+        }
+        answer
+    })
+    .await
 }
 
 /// Answers a batched command for projects on several machines: the ones on
