@@ -2,12 +2,14 @@
   /** The widths the diagram is laid out by. A step is as wide as the room
       allows, from the least to the most. */
   export const NODE = 140;
-  export const LEAST_NODE = 100;
-  export const ARROW = 32;
-  /** Room for "Reports to you" after the last arrow, on two lines. */
-  export const END = 60;
+  /** The least a step is drawn at holds its role on one line and two models'
+      chips side by side. */
+  export const LEAST_NODE = 110;
+  export const ARROW = 28;
+  /** Room for "Reports to you" after the last arrow, set on two lines. */
+  export const END = 48;
   /** The flow's padding inside the frame, and the canvas's around it, each side. */
-  export const FLOW_PAD = 12;
+  export const FLOW_PAD = 8;
   export const CANVAS_PAD = 8;
 
   /** The least width a diagram of so many steps is drawn in whole. */
@@ -331,7 +333,7 @@
         onscroll={measure}
         data-testid="workflow-flow"
       >
-        <div class="flow" style:padding="28px {FLOW_PAD}px 14px">
+        <div class="flow" style:padding="32px {FLOW_PAD}px 14px">
           <div class="flow-row" data-testid="workflow-steps">
             {#each workflow.steps as step, index (step.name)}
               <div class="cell" style:width="{node}px">
@@ -435,7 +437,7 @@
                 {/if}
               </div>
             {/each}
-            <div class="end" style:width="{END}px">Reports to you</div>
+            <div class="end" style:width="{END}px">Reports<br />to you</div>
           </div>
 
           {#if loops.length > 0}
@@ -614,32 +616,33 @@
   .mover {
     position: absolute;
     left: 50%;
-    bottom: calc(100% + 4px);
+    bottom: calc(100% + 5px);
     display: flex;
-    gap: 2px;
+    gap: 4px;
     transform: translateX(-50%);
   }
 
   .mover button {
     display: grid;
     place-items: center;
-    width: 22px;
-    height: 18px;
+    width: 28px;
+    height: 20px;
     padding: 0;
     border: 0;
     border-radius: var(--radius-tag);
-    background: none;
-    color: var(--ink-2);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--rule-strong);
+    color: var(--ink);
     cursor: pointer;
   }
 
   .mover button:hover:not([aria-disabled="true"]) {
-    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--accent);
     color: var(--accent);
   }
 
   .mover button[aria-disabled="true"] {
-    opacity: 0.35;
+    opacity: 0.4;
     cursor: default;
   }
 
@@ -649,11 +652,11 @@
   }
 
   .mover svg {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.7;
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
@@ -665,7 +668,7 @@
     justify-content: flex-start;
     box-sizing: border-box;
     min-width: 0;
-    padding: 8px 9px 9px;
+    padding: 8px 8px 9px;
     border: 0;
     border-radius: var(--radius);
     background: var(--surface-2);
@@ -687,9 +690,10 @@
   .role {
     display: block;
     margin-bottom: 7px;
-    font-size: 11.5px;
+    font-size: 11px;
     line-height: 1.3;
     color: var(--ink-3);
+    white-space: nowrap;
   }
 
   .models {
@@ -699,10 +703,10 @@
   }
 
   .models span {
-    padding: 0 7px;
+    padding: 0 5px;
     border-radius: var(--radius-tag);
     background: var(--surface);
-    font-size: 11.5px;
+    font-size: 11px;
     line-height: 18px;
     color: var(--ink-2);
   }
@@ -837,8 +841,8 @@
     flex: none;
     box-sizing: border-box;
     align-self: center;
-    padding-left: 8px;
-    font-size: 12px;
+    padding-left: 6px;
+    font-size: 11px;
     line-height: 1.3;
     color: var(--ink-3);
   }

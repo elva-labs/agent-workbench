@@ -564,6 +564,7 @@ test.describe("the layout", () => {
     }
     const pane = page.getByTestId("workflow-step-pane");
     expect(await pane.evaluate((node) => node.scrollHeight <= node.clientHeight)).toBe(true);
+    await expect(page.getByTestId("workflow-step-more")).toHaveCount(0);
   });
 
   test("decides beside or under from the window, never from how many steps there are", async ({ page }) => {
@@ -583,14 +584,18 @@ test.describe("the layout", () => {
     await expect.poll(beside).toBe(false);
   });
 
-  test("keeps the diagram in place while the step's settings scroll on their own", async ({ page }) => {
+  test("keeps the diagram in place while the step's settings scroll on their own, showing there is more", async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await open(page, fourSteps);
     await step(page, "Final review").click();
     const before = await box(page, "workflow-canvas");
     const pane = page.getByTestId("workflow-step-pane");
     expect(await pane.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
+    await expect(page.getByTestId("workflow-step-more")).toBeVisible();
     await pane.evaluate((node) => (node.scrollTop = node.scrollHeight));
+    await expect(page.getByTestId("workflow-step-more")).toHaveCount(0);
     await expect(page.getByTestId("step-remove")).toBeInViewport();
     expect(await box(page, "workflow-canvas")).toEqual(before);
     expect(await inDialog(page, page.getByTestId("workflow-delete"))).toBe(true);
@@ -615,6 +620,43 @@ test.describe("the layout", () => {
     const after = await box(page, "workflow-orchestrator-model");
     expect(after.x).toBe(head.x);
     expect(after.y).toBe(head.y);
+  });
+});
+
+test.describe("the steps drawn at their narrowest", () => {
+  test("keep each role on one line, two models side by side and the name whole", async ({ page }) => {
+    await open(page, {
+      workflows: {
+        ...fourSteps.workflows,
+        list: [
+          {
+            ...fourSteps.workflows.list[0],
+            steps: fourSteps.workflows.list[0].steps.map((one) =>
+              one.name === "Build" ? { ...one, models: [claude("sonnet"), { agent: "codex", model: "default" }] } : one,
+            ),
+          },
+        ],
+      },
+    }, ["claude-code", "codex"]);
+    await step(page, "Final review").click();
+    for (const name of ["Plan", "Build", "Check", "Final review"]) {
+      const node = step(page, name);
+      const role = await node.locator(".role").evaluate((element) => ({
+        height: element.getBoundingClientRect().height,
+        line: parseFloat(getComputedStyle(element).lineHeight),
+        cut: element.scrollWidth > element.clientWidth,
+      }));
+      expect(role.height, name).toBeLessThan(role.line * 1.5);
+      expect(role.cut, name).toBe(false);
+      expect(await node.locator("b").evaluate((element) => element.scrollWidth <= element.clientWidth), name).toBe(true);
+    }
+    const chips = await step(page, "Build").locator(".models span").all();
+    const [sonnet, codex] = await Promise.all(chips.map(async (chip) => (await chip.boundingBox())!));
+    expect(Math.abs(sonnet.y - codex.y)).toBeLessThan(1);
+    // The arrows that move it are a size to be used.
+    const arrow = await box(page, "step-move-earlier");
+    expect(arrow.width).toBeGreaterThanOrEqual(24);
+    expect(arrow.height).toBeGreaterThanOrEqual(20);
   });
 });
 
@@ -820,10 +862,10 @@ test.describe("the keyboard", () => {
     await page.keyboard.press("Enter");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    const added = step(page, "Review of Work");
+    const added = step(page, "Check");
     await expect(added).toBeFocused();
     await expect(added).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("step-name")).toHaveValue("Review of Work");
+    await expect(page.getByTestId("step-name")).toHaveValue("Check");
   });
 
   test("moves between the two kinds of a step with the arrows", async ({ page }) => {
@@ -968,10 +1010,36 @@ test.describe("a workflow the file cannot use", () => {
     await page.getByTestId("workflow-orchestrator-model").selectOption("claude-code:opus");
     await expect.poll(async () => (await file(page)).workflows.unread).toEqual([careful]);
 
+    // Cancel gives the keyboard back to Remove, and removing it to the chips.
+    await page.getByTestId("workflow-unread-remove").click();
+    await page.getByTestId("workflow-unread-confirm-cancel").click();
+    await expect(page.getByTestId("workflow-unread-remove")).toBeFocused();
     await page.getByTestId("workflow-unread-remove").click();
     await page.getByTestId("workflow-unread-confirm-confirm").click();
     await expect(notice).toHaveCount(0);
+    await expect(page.locator('[data-testid="workflow-chip"][aria-pressed="true"]')).toBeFocused();
     await expect.poll(async () => (await file(page)).workflows.unread).toBeUndefined();
+  });
+
+  test("keeps its name taken, so no workflow is renamed to it", async ({ page }) => {
+    await open(page, {
+      workflows: {
+        list: [
+          {
+            name: "Build and review",
+            orchestrator: claude("fable"),
+            steps: [{ kind: "work", name: "Work", models: [], parallel: 1 }],
+          },
+        ],
+        default: null,
+        overrides: {},
+        unread: [careful],
+      },
+    });
+    await page.getByTestId("workflow-name").fill("Careful");
+    await page.getByTestId("workflow-name").press("Enter");
+    await expect(page.getByTestId("workflow-problem")).toContainText("not used");
+    await expect(page.getByTestId("workflow-name")).toHaveValue("Build and review");
   });
 });
 

@@ -36,7 +36,7 @@
 
   /** The width of the step's settings beside the diagram, and the gap. */
   const STEP_WIDTH = 248;
-  const GAP = 16;
+  const GAP = 14;
   /** The steps an ordinary workflow has at most: the step's settings stand
       beside the diagram where the window has room for that many. */
   const ORDINARY = 4;
@@ -189,6 +189,44 @@
         : `New sessions start with ${workflows.default}.`,
   );
 
+  /** After a notice of an unread workflow is answered, the keyboard goes
+      to the next notice, else to the workflow picked. */
+  async function afterNotice(at: number, kept: boolean) {
+    dropping = null;
+    if (!kept) removeUnread(at);
+    await tick();
+    const own = document.querySelector<HTMLElement>(
+      `[data-testid="workflow-unread"][data-at="${at}"] [data-testid="workflow-unread-remove"]`,
+    );
+    const next =
+      own ??
+      document.querySelector<HTMLElement>('[data-testid="workflow-unread-remove"]') ??
+      document.querySelector<HTMLElement>('[data-testid="workflow-chip"][aria-pressed="true"], [data-testid="workflow-new"]');
+    next?.focus();
+  }
+
+  /** Whether a scrolling part has more below what shows, kept up to date as
+      it scrolls and as its content changes. */
+  let moreBelow = $state(false);
+  function watchBelow(node: HTMLElement) {
+    const measure = () => {
+      moreBelow = node.scrollTop + node.clientHeight < node.scrollHeight - 1;
+    };
+    const sizes = new ResizeObserver(measure);
+    sizes.observe(node);
+    const changes = new MutationObserver(measure);
+    changes.observe(node, { childList: true, subtree: true, attributes: true });
+    node.addEventListener("scroll", measure);
+    measure();
+    return {
+      destroy() {
+        sizes.disconnect();
+        changes.disconnect();
+        node.removeEventListener("scroll", measure);
+      },
+    };
+  }
+
   /** What an unread workflow was still named for. */
   function unreadDetail(entry: (typeof workflows.unread)[number]): string {
     const parts: string[] = [];
@@ -280,11 +318,8 @@
             question={`Remove "${entry.name ?? "the unnamed workflow"}" from the settings file?`}
             detail="It cannot be used as it is written."
             action="Remove"
-            onConfirm={() => {
-              dropping = null;
-              removeUnread(entry.at);
-            }}
-            onCancel={() => (dropping = null)}
+            onConfirm={() => afterNotice(entry.at, false)}
+            onCancel={() => afterNotice(entry.at, true)}
             testid="workflow-unread-confirm"
           />
         {:else}
@@ -338,14 +373,20 @@
       </div>
 
       {#if beside}
-        <div class="step" data-testid="workflow-step-pane">
-          <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
+        <div class="scroll-box step-box">
+          <div class="step" use:watchBelow data-testid="workflow-step-pane">
+            <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
+          </div>
+          {#if moreBelow}<div class="more-below" aria-hidden="true" data-testid="workflow-step-more"></div>{/if}
         </div>
         <div class="rest">{@render more()}</div>
       {:else}
-        <div class="below" data-testid="workflow-step-pane">
-          <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
-          {@render more()}
+        <div class="scroll-box">
+          <div class="below" use:watchBelow data-testid="workflow-step-pane">
+            <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
+            {@render more()}
+          </div>
+          {#if moreBelow}<div class="more-below" aria-hidden="true" data-testid="workflow-step-more"></div>{/if}
         </div>
       {/if}
     </div>
@@ -570,7 +611,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 12px 16px;
+    gap: 12px 14px;
   }
 
   .edit.beside {
@@ -586,8 +627,30 @@
     grid-area: drawn;
   }
 
-  .step {
+  /* A part that scrolls fades out at its foot while there is more below. */
+  .scroll-box {
+    position: relative;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .step-box {
     grid-area: step;
+  }
+
+  .more-below {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 36px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--surface));
+  }
+
+  .step {
+    flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: 0 2px 2px 0;
@@ -604,6 +667,7 @@
   }
 
   .below {
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 12px;

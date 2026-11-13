@@ -152,8 +152,9 @@ the tab names it, says the rule it breaks, and offers to remove it from the
 file, and until then every write keeps it in the file as it was written,
 with the default and the project choices that named it. Choosing another
 default, or another workflow for such a project, takes the place of the one
-in the file. A choice naming a workflow the file does not hold at all is
-dropped.
+in the file. Its name stays taken, so no other workflow can be given it and
+then be read as the one the file's choices mean. A choice naming a workflow
+the file does not hold at all is dropped.
 
 One workflow is marked as the one new sessions start with, and none is a
 valid choice. A project can choose another, or none, whatever the default
@@ -166,8 +167,10 @@ with Duplicate. The diagram draws the orchestrator as the frame, since it is
 the session the user talks to, with its model in a menu on its head. Inside
 sit the steps in order with an arrow between each, each showing its role
 and its models. A plus on every arrow opens a menu to add a work step or a
-review step there; the step added is picked and has the keyboard, and a new
-review is named for the work step it checks, such as Review of Work. The
+review step there; the step added is picked and has the keyboard. A new
+review is numbered after the reviews before it, Review 2 after Review, and
+one added before a review already there is a Check, so no number reads out
+of order. The
 picked step has two arrows above it that move it earlier or later, as Alt
 with the left or right arrow key does on the step. A review that goes back
 draws a line under the row from itself to the step it repeats, lines that
@@ -325,7 +328,10 @@ field takes. A workflow it writes is checked whole against the rules under
 [workflows](#workflows) and read strictly, so a field the shape does not have
 is refused. The user is shown the workflow as one line each from and to: the
 orchestrator's model and then each step with its models, when a review
-passes the work and its limits. Deleting one also shows each project that
+passes the work and its limits. The agent also reads the workflows the file
+holds but cannot use, each with the rule it breaks and as it is written, and
+writing a workflow under one's name mends it: it takes that one's place, with
+the default and the project choices that named it. Deleting one also shows each project that
 chose it and would follow the default again. The change is planned again
 when the user allows it, against the workflows as they are by then, so
 edits made in the settings meanwhile stay; if what it would do has changed
