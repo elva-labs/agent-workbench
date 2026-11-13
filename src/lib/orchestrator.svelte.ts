@@ -14,7 +14,7 @@
 
 import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Worktree } from "$lib/core";
-import { startedBy, startedFor } from "$lib/conductor.svelte";
+import { startedFor } from "$lib/conductor.svelte";
 import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
@@ -63,6 +63,61 @@ export function isAsking(session: Session): boolean {
   return isLive(session) && session.needs === "permission";
 }
 
+/** The rows by session id and by key together, the first row in the
+    window's order taking a name two of them answer to. */
+const named = $derived.by(() => {
+  const index = new Map<string, Session>();
+  for (const session of sessions.all) {
+    if (session.id !== null && !index.has(session.id))
+      index.set(session.id, session);
+    if (!index.has(session.key)) index.set(session.key, session);
+  }
+  return index;
+});
+
+/** Each session's starter row, the rows each starter has hanging under it
+    and the rows each caller started, worked out once for all of them
+    whenever a row comes, goes or is told who started it. */
+const tree = $derived.by(() => {
+  const parents = new Map<string, Session>();
+  const children = new Map<string, Session[]>();
+  const started = new Map<string, Session[]>();
+  const own = new Map<string, Session[]>();
+  for (const session of sessions.all) {
+    const id = startedFor(session.key);
+    if (id !== null) {
+      const list = started.get(id);
+      if (list === undefined) started.set(id, [session]);
+      else list.push(session);
+    }
+    const parent = id === null ? null : starterOf(session, id);
+    if (parent === null) {
+      const list = own.get(session.project);
+      if (list === undefined) own.set(session.project, [session]);
+      else list.push(session);
+      continue;
+    }
+    parents.set(session.key, parent);
+    const list = children.get(parent.key);
+    if (list === undefined) children.set(parent.key, [session]);
+    else list.push(session);
+  }
+  return { parents, children, started, own };
+});
+
+/** The row a starter's id names, other than the session's own. */
+function starterOf(session: Session, id: string): Session | null {
+  const found = named.get(id);
+  if (found === undefined) return null;
+  if (found !== session) return found;
+  return (
+    sessions.all.find(
+      (candidate) =>
+        candidate !== session && (candidate.id === id || candidate.key === id),
+    ) ?? null
+  );
+}
+
 /** What one orchestrator has running, for the line under its name and its
     dot: how many are live, how many are waiting on you, and whether any is
     at work right now. */
@@ -71,7 +126,7 @@ export function summary(session: Session): {
   asking: number;
   working: boolean;
 } {
-  const started = startedBy(session.id ?? session.key);
+  const started = tree.started.get(session.id ?? session.key) ?? [];
   return {
     running: started.filter(isLive).length,
     asking: started.filter(isAsking).length,
@@ -105,29 +160,20 @@ export function summaryLine(session: Session): string | null {
     it. A session whose starter is gone has no parent here and stands in
     its own project like any other. */
 export function parentOf(session: Session): Session | null {
-  const id = startedFor(session.key);
-  if (id === null) return null;
-  return (
-    sessions.all.find(
-      (candidate) =>
-        candidate !== session && (candidate.id === id || candidate.key === id),
-    ) ?? null
-  );
+  return tree.parents.get(session.key) ?? null;
 }
 
 /** The sessions that hang under a session's row, in the order they were
     started. */
 export function childrenOf(session: Session): Session[] {
-  return sessions.all.filter((child) => parentOf(child)?.key === session.key);
+  return tree.children.get(session.key) ?? [];
 }
 
 /** The sessions drawn under a project's name: its own, and any whose
     starter the window no longer has. A session started by one still here
     hangs under that one instead, whichever project it runs in. */
 export function ownFor(project: string): Session[] {
-  return sessions.all.filter(
-    (session) => session.project === project && parentOf(session) === null,
-  );
+  return tree.own.get(project) ?? [];
 }
 
 /** What an orchestrator is called where its own row is not in sight. */

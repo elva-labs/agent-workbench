@@ -301,6 +301,17 @@
     };
   }
 
+  /** What stands under each project drawn, worked out once per change for
+      the keyboard's rows and the template alike. */
+  let bodies = $derived.by(() => {
+    const out = new Map<string, ReturnType<typeof bodyOf>>();
+    if (pinned !== null) out.set(pinned, bodyOf(pinned));
+    for (const project of split.active) out.set(project.path, bodyOf(project.path));
+    return out;
+  });
+
+  const NO_BODY: ReturnType<typeof bodyOf> = { live: [], quiet: [], hidden: [] };
+
   function toggle(id: string) {
     opened[id] = !opened[id];
   }
@@ -360,7 +371,7 @@
       session and to its earlier ones. */
   function body(path: string): Row[] {
     const out: Row[] = [];
-    const { live, quiet, hidden } = bodyOf(path);
+    const { live, quiet, hidden } = bodies.get(path) ?? NO_BODY;
     out.push(...starting(path));
     const withKids = (session: Session) => {
       out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
@@ -927,7 +938,7 @@
      what moves: a row that goes leaves the ones below it to close the gap
      rather than jump into it. -->
 {#snippet projectBody(path: string)}
-  {@const { live, quiet, hidden } = bodyOf(path)}
+  {@const { live, quiet, hidden } = bodies.get(path) ?? NO_BODY}
   {@render newSession(path)}
   {#each live as session (session.key)}
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>

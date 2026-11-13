@@ -2,7 +2,7 @@ import type { InactiveAfter, Settings } from "$lib/core";
 import type { ProjectSort } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { persist } from "$lib/persist";
-import { forProject, isLive, sessions } from "$lib/sessions.svelte";
+import { isLive, sessions, type Session } from "$lib/sessions.svelte";
 
 /**
  * The projects as the sessions pane splits them: active and inactive.
@@ -91,6 +91,21 @@ export function loadUsed() {
   }
 }
 
+/** The rows by project, in the window's order. */
+const byProject = $derived.by(() => {
+  const index = new Map<string, Session[]>();
+  for (const session of sessions.all) {
+    const list = index.get(session.project);
+    if (list === undefined) index.set(session.project, [session]);
+    else list.push(session);
+  }
+  return index;
+});
+
+function rowsOf(path: string): Session[] {
+  return byProject.get(path) ?? [];
+}
+
 /** When the project was last used, in milliseconds, or null when nothing
     says. A row left from the last quit says it through its transcript,
     since the row itself was only drawn again at the start. */
@@ -99,7 +114,7 @@ export function lastUsed(path: string): number | null {
   const later = (at: number) => {
     if (latest === null || at > latest) latest = at;
   };
-  for (const session of forProject(path)) {
+  for (const session of rowsOf(path)) {
     if (session.status !== "dormant") later(session.changedAt);
   }
   const history = sessions.history[path] ?? [];
@@ -121,7 +136,7 @@ export function isActive(
     (choice) => choice.choice === projects.inactiveAfter,
   )?.ms;
   if (span === null || span === undefined) return true;
-  if (forProject(path).some((session) => isLive(session) || session.unread))
+  if (rowsOf(path).some((session) => isLive(session) || session.unread))
     return true;
   const at = lastUsed(path);
   return at !== null && now - at <= span;
@@ -132,9 +147,10 @@ export function isActive(
     never flickers. */
 export function sortProjects(paths: string[], sort: ProjectSort): string[] {
   const name = (path: string) => lastSegment(path).toLowerCase();
+  const used = new Map(paths.map((path) => [path, lastUsed(path) ?? -Infinity]));
   return [...paths].sort((a, b) => {
     if (sort === "used") {
-      const at = (lastUsed(b) ?? -Infinity) - (lastUsed(a) ?? -Infinity);
+      const at = used.get(b)! - used.get(a)!;
       if (at !== 0 && !Number.isNaN(at)) return at;
     }
     const byName = name(a).localeCompare(name(b));
@@ -151,9 +167,10 @@ export function splitProjects(
   now = Date.now(),
 ): { active: string[]; inactive: string[] } {
   const ordered = sortProjects(paths, sort);
+  const active = new Set(ordered.filter((path) => isActive(path, current, now)));
   return {
-    active: ordered.filter((path) => isActive(path, current, now)),
-    inactive: ordered.filter((path) => !isActive(path, current, now)),
+    active: ordered.filter((path) => active.has(path)),
+    inactive: ordered.filter((path) => !active.has(path)),
   };
 }
 

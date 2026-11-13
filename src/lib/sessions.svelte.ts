@@ -513,8 +513,16 @@ export function activeSession(): Session | null {
   );
 }
 
+/** The rows by key, the first row with a key where two share one. */
+const keyed = $derived.by(() => {
+  const index = new Map<string, Session>();
+  for (const session of sessions.all)
+    if (!index.has(session.key)) index.set(session.key, session);
+  return index;
+});
+
 export function byKey(key: string): Session | null {
-  return sessions.all.find((session) => session.key === key) ?? null;
+  return keyed.get(key) ?? null;
 }
 
 export function isLive(session: Session): boolean {
