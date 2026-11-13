@@ -12,6 +12,7 @@ import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
 import { AGENTS, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
+import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 
@@ -878,6 +879,9 @@ export function close(key: string) {
   const still = stills.get(key);
   if (still !== undefined) clearTimeout(still);
   stills.delete(key);
+
+  // The browser tabs opened for the session go with the row.
+  void closeOwner({ kind: "session", key });
 
   const at = sessions.all.indexOf(session);
   sessions.all.splice(at, 1);

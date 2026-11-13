@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  close,
   followOpenRequests,
   projectLabel,
   reset,
@@ -8,7 +9,11 @@ import {
 
 /** Folders waiting to be taken, and the window's word that more are. */
 const fake = vi.hoisted(() => {
-  const state = { waiting: [] as string[], told: null as (() => void) | null };
+  const state = {
+    waiting: [] as string[],
+    told: null as (() => void) | null,
+    tabsClosed: [] as unknown[],
+  };
   const core = {
     projectInfo: async (path: string) => ({
       path,
@@ -17,6 +22,10 @@ const fake = vi.hoisted(() => {
       isGit: true,
     }),
     setWindowTitle: async () => {},
+    browserCloseOwner: async (owner: unknown) => {
+      state.tabsClosed.push(owner);
+      return { tabs: [], owner: null, active: null };
+    },
     takeOpened: async () => state.waiting.splice(0),
     onOpenRequested: async (handler: () => void) => {
       state.told = handler;
@@ -38,6 +47,7 @@ const repo = (path: string) => ({
 beforeEach(() => {
   reset();
   fake.state.waiting = [];
+  fake.state.tabsClosed = [];
   fake.state.told = null;
 });
 
@@ -114,5 +124,14 @@ describe("folders asked for from outside the window", () => {
     await vi.waitFor(() => expect(fake.state.told).not.toBeNull());
     stop();
     expect(fake.state.told).toBeNull();
+  });
+});
+
+describe("closing a project", () => {
+  it("closes the browser tabs the project owned", () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    close("/one");
+    expect(fake.state.tabsClosed).toEqual([{ kind: "project", path: "/one" }]);
   });
 });

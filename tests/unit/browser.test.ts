@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrowserTab } from "$lib/core";
+import type { BrowserOwner, BrowserTab } from "$lib/core";
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Pending =
   | { kind: "place"; rect: Rect; resolve: () => void; reject: (e: Error) => void }
   | { kind: "hide"; resolve: () => void };
 
-const opened: { url: string | null; session: string | null }[] = [];
+const opened: { url: string | null; owner: BrowserOwner; agent: boolean }[] = [];
+const focused: (BrowserOwner | null)[] = [];
 const closed: number[] = [];
 const activated: number[] = [];
 const navigated: { id: number; address: string }[] = [];
@@ -15,11 +16,13 @@ let hideCount = 0;
 let pending: Pending[] = [];
 let tabsHandler: ((snapshot: unknown) => void) | null = null;
 
+let focusError = false;
+let focusResult: unknown = { tabs: [], owner: null, active: null };
 let openError: string | null = null;
-let openResult: unknown = { tabs: [], active: null };
+let openResult: unknown = { tabs: [], owner: null, active: null };
 let navigateError: string | null = null;
-let nextSnapshot: unknown = { tabs: [], active: null };
-let tabsSnapshot: unknown = { tabs: [], active: null };
+let nextSnapshot: unknown = { tabs: [], owner: null, active: null };
+let tabsSnapshot: unknown = { tabs: [], owner: null, active: null };
 
 /** Resolves the oldest `browser_place` or `browser_hide` call still
     waiting, then lets its continuation run before the test looks again. */
@@ -32,8 +35,13 @@ async function resolveNext() {
 
 vi.mock("$lib/core", () => ({
   core: () => ({
-    browserOpen: async (url: string | null, session: string | null) => {
-      opened.push({ url, session });
+    browserFocus: async (owner: BrowserOwner | null) => {
+      focused.push(owner);
+      if (focusError) throw new Error("no core");
+      return focusResult;
+    },
+    browserOpen: async (url: string | null, owner: BrowserOwner, agent = false) => {
+      opened.push({ url, owner, agent });
       if (openError !== null) throw new Error(openError);
       return openResult;
     },
@@ -74,6 +82,8 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 
+import { sessions } from "$lib/sessions.svelte";
+import { workspace } from "$lib/workspace.svelte";
 import {
   activate,
   activeTab,
@@ -85,11 +95,16 @@ import {
   initBrowser,
   navigate,
   open,
+  ownerOnScreen,
+  ownTabs,
   place,
   resetBrowser,
   show,
+  syncOwner,
   titleFor,
 } from "$lib/browser.svelte";
+
+const ME: BrowserOwner = { kind: "project", path: "/p" };
 
 function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): BrowserTab {
   return {
@@ -98,6 +113,8 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
     title: "",
     home: url,
     opener: { kind: "user" },
+    owner: ME,
+    front: false,
     loading: false,
     canGoBack: false,
     canGoForward: false,
@@ -106,8 +123,20 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
   };
 }
 
+/** Makes `id` the front tab of the owner on screen, among the tabs set. */
+function front(id: number | null) {
+  browser.tabs = browser.tabs.map((each) => ({ ...each, front: each.id === id }));
+  browser.active = id;
+}
+
 beforeEach(() => {
   resetBrowser();
+  workspace.active = "/p";
+  sessions.active = null;
+  sessions.all = [];
+  focused.length = 0;
+  focusResult = { tabs: [], owner: null, active: null };
+  focusError = false;
   opened.length = 0;
   closed.length = 0;
   activated.length = 0;
@@ -117,10 +146,10 @@ beforeEach(() => {
   pending = [];
   tabsHandler = null;
   openError = null;
-  openResult = { tabs: [], active: null };
+  openResult = { tabs: [], owner: null, active: null };
   navigateError = null;
-  nextSnapshot = { tabs: [], active: null };
-  tabsSnapshot = { tabs: [], active: null };
+  nextSnapshot = { tabs: [], owner: null, active: null };
+  tabsSnapshot = { tabs: [], owner: null, active: null };
 });
 
 const RECT_A = { x: 0, y: 0, width: 100, height: 100 };
@@ -130,7 +159,7 @@ const RECT_C = { x: 0, y: 0, width: 300, height: 100 };
 describe("the placement queue", () => {
   it("sends one placement at a time, keeping only the newest waiting", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -151,7 +180,7 @@ describe("the placement queue", () => {
 
   it("keeps going after a placement fails, and sends the same rectangle again", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -171,7 +200,7 @@ describe("the placement queue", () => {
     browser.tabs = [
       tab(1, "http://localhost:9/", { error: "localhost:9 is not answering" }),
     ];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -179,13 +208,14 @@ describe("the placement queue", () => {
 
     // The page loads on a retry, and the same rectangle is placed.
     browser.tabs = [tab(1, "http://localhost:9/")];
+    front(1);
     place(RECT_A);
     expect(placeLog).toEqual([RECT_A]);
   });
 
   it("skips a rectangle equal to the one already placed", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -201,7 +231,7 @@ describe("the placement queue", () => {
     const shown = tab(1, "https://example.com/");
     const blank = tab(2, "about:blank");
     browser.tabs = [shown, blank];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -211,7 +241,7 @@ describe("the placement queue", () => {
 
     // The active tab becomes a new tab: the view is hidden rather than
     // placed there.
-    browser.active = 2;
+    front(2);
     place(RECT_B);
     await resolveNext();
     expect(hideCount).toBe(1);
@@ -223,7 +253,7 @@ describe("the placement queue", () => {
     expect(hideCount).toBe(1);
 
     // Back on a real tab, showing again: a placement lands as usual.
-    browser.active = 1;
+    front(1);
     place(RECT_C);
     await resolveNext();
     expect(placeLog).toEqual([RECT_A, RECT_C]);
@@ -243,7 +273,7 @@ describe("the placement queue", () => {
 describe("cover", () => {
   it("hides the view while covered and puts it back at the last rectangle once uncovered", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -269,7 +299,7 @@ describe("cover", () => {
 
   it("nests: the view returns only once every cover has lifted", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
     place(RECT_A);
     await resolveNext();
@@ -290,7 +320,7 @@ describe("cover", () => {
 
   it("lifting the same cover twice does nothing the second time", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
     place(RECT_A);
     await resolveNext();
@@ -308,7 +338,7 @@ describe("cover", () => {
 
   it("with nothing ever placed, covering and uncovering sends no calls", () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     const uncover = cover();
@@ -321,7 +351,7 @@ describe("cover", () => {
 
   it("an element that covers the viewer covers the view from its mount until its destroy", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
     place(RECT_A);
     await resolveNext();
@@ -345,7 +375,7 @@ describe("cover", () => {
 describe("addressError", () => {
   it("is set by a rejected navigate and cleared by the next attempt", async () => {
     browser.tabs = [tab(1, "https://a.example/")];
-    browser.active = 1;
+    front(1);
 
     navigateError = "not an address";
     await navigate("bad address");
@@ -362,7 +392,7 @@ describe("addressError", () => {
 
   it("is cleared when the active tab changes", async () => {
     browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/")];
-    browser.active = 1;
+    front(1);
 
     navigateError = "not an address";
     await navigate("bad");
@@ -384,12 +414,12 @@ describe("addressError", () => {
 describe("navigate", () => {
   it("opens a tab at the address when there is none open yet", async () => {
     browser.tabs = [];
-    browser.active = null;
+    front(null);
     openResult = { tabs: [tab(1, "https://example.com/")], active: 1 };
 
     await navigate("example.com");
 
-    expect(opened).toEqual([{ url: "example.com", session: null }]);
+    expect(opened).toEqual([{ url: "example.com", owner: ME, agent: false }]);
     expect(navigated).toEqual([]);
     expect(browser.tabs.map((t) => t.id)).toEqual([1]);
     expect(browser.active).toBe(1);
@@ -405,7 +435,7 @@ describe("snapshot events", () => {
     expect(browser.tabs.map((t) => t.id)).toEqual([5]);
     expect(browser.active).toBe(5);
 
-    tabsHandler!({ tabs: [], active: null });
+    tabsHandler!({ tabs: [], owner: null, active: null });
     expect(browser.tabs).toEqual([]);
     expect(browser.active).toBeNull();
   });
@@ -416,7 +446,7 @@ describe("snapshot events", () => {
     expect(browser.active).toBe(9);
 
     // A second call neither subscribes again nor reloads.
-    tabsSnapshot = { tabs: [], active: null };
+    tabsSnapshot = { tabs: [], owner: null, active: null };
     await initBrowser();
     expect(browser.active).toBe(9);
   });
@@ -442,15 +472,15 @@ describe("titleFor", () => {
 });
 
 describe("activeTab", () => {
-  it("is the tab whose id matches active, or null", () => {
+  it("is the front tab of the owner on screen, or null", () => {
     browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/")];
-    browser.active = 2;
+    front(2);
     expect(activeTab()?.id).toBe(2);
 
-    browser.active = 99;
+    front(99);
     expect(activeTab()).toBeNull();
 
-    browser.active = null;
+    front(null);
     expect(activeTab()).toBeNull();
   });
 });
@@ -458,8 +488,8 @@ describe("activeTab", () => {
 describe("tab lifecycle", () => {
   it("open, close and activate apply the snapshot the core returns", async () => {
     openResult = { tabs: [tab(1, "https://a.example/")], active: 1 };
-    await open("a.example", "session-1");
-    expect(opened).toEqual([{ url: "a.example", session: "session-1" }]);
+    await open("a.example");
+    expect(opened).toEqual([{ url: "a.example", owner: ME, agent: false }]);
     expect(browser.active).toBe(1);
 
     nextSnapshot = {
@@ -474,5 +504,98 @@ describe("tab lifecycle", () => {
     await activate(1);
     expect(activated).toEqual([1]);
     expect(browser.active).toBe(1);
+  });
+});
+
+describe("whose tabs are on screen", () => {
+  const A: BrowserOwner = { kind: "session", key: "a" };
+  const B: BrowserOwner = { kind: "session", key: "b" };
+
+  function session(key: string) {
+    return { key, project: "/p" } as unknown as (typeof sessions.all)[number];
+  }
+
+  it("is the session on screen, else the project on screen, else nobody", () => {
+    sessions.all = [session("a")];
+    sessions.active = "a";
+    expect(ownerOnScreen()).toEqual(A);
+    sessions.active = null;
+    expect(ownerOnScreen()).toEqual(ME);
+    workspace.active = null;
+    expect(ownerOnScreen()).toBeNull();
+  });
+
+  it("lists only the tabs of the owner on screen, and takes its front tab", () => {
+    sessions.all = [session("a"), session("b")];
+    browser.tabs = [
+      tab(1, "https://a.example/", { owner: A, front: true }),
+      tab(2, "https://b.example/", { owner: B, front: true }),
+      tab(3, "https://a2.example/", { owner: A }),
+    ];
+    sessions.active = "a";
+    expect(ownTabs().map((t) => t.id)).toEqual([1, 3]);
+    expect(activeTab()?.id).toBe(1);
+    sessions.active = "b";
+    expect(ownTabs().map((t) => t.id)).toEqual([2]);
+    expect(activeTab()?.id).toBe(2);
+    sessions.active = null;
+    workspace.active = null;
+    expect(ownTabs()).toEqual([]);
+    expect(activeTab()).toBeNull();
+  });
+
+  it("tells the core when the owner changes, once per change, and takes its snapshot", async () => {
+    sessions.all = [session("a"), session("b")];
+    sessions.active = "a";
+    focusResult = {
+      tabs: [tab(1, "https://a.example/", { owner: A, front: true })],
+      owner: A,
+      active: 1,
+    };
+    await syncOwner();
+    await syncOwner();
+    expect(focused).toEqual([A]);
+    expect(browser.owner).toEqual(A);
+    expect(browser.active).toBe(1);
+
+    sessions.active = "b";
+    focusResult = { tabs: [], owner: B, active: null };
+    await syncOwner();
+    expect(focused).toEqual([A, B]);
+    expect(ownTabs()).toEqual([]);
+    expect(browser.active).toBeNull();
+  });
+
+  it("asks the core again after it failed to switch", async () => {
+    sessions.all = [session("a")];
+    sessions.active = "a";
+    focusError = true;
+    await syncOwner();
+    focusError = false;
+    focusResult = { tabs: [], owner: A, active: null };
+    await syncOwner();
+    expect(focused).toEqual([A, A]);
+    expect(browser.owner).toEqual(A);
+  });
+
+  it("opens a hand-opened tab for the session on screen, after the core knows it is on screen", async () => {
+    sessions.all = [session("a")];
+    sessions.active = "a";
+    openResult = { tabs: [], owner: A, active: null };
+    await open("a.example");
+    expect(focused).toEqual([A]);
+    expect(opened).toEqual([{ url: "a.example", owner: A, agent: false }]);
+  });
+
+  it("opens for the project on screen with no session selected", async () => {
+    await open();
+    expect(opened).toEqual([{ url: null, owner: ME, agent: false }]);
+  });
+
+  it("refuses to open with no project or session on screen", async () => {
+    workspace.active = null;
+    await open("a.example");
+    expect(opened).toEqual([]);
+    expect(browser.addressError).toBe("Open a project first.");
   });
 });

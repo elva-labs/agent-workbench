@@ -14,11 +14,12 @@ it.
 A Browser fold sits under the tree, beside the folds for what the agent has
 presented and what runs under the project's sessions, standing even with
 nothing open since opening a tab is what the fold is for. Its header counts
-the open tabs and carries the action that opens one; a row under it shows a
-tab's title or host, its address with the scheme left off, whether it is
-loading or failed, and a mark for one an agent opened. A click or Enter on a
-row brings that tab to the front, the row of the tab on show is marked, and
-a hover action closes it. See [layout](layout.md) for how the fold shares
+the tabs of the session on screen and carries the action that opens one; a
+row under it shows a tab's title or host, its address with the scheme left
+off and, ahead of the address, the word "agent" for a tab an agent opened,
+and a dot for whether it is loading or failed. A click or Enter on a row
+brings that tab to the front, the row of the tab on show is marked, and a
+hover action closes it. See [layout](layout.md) for how the fold shares
 the column with the others.
 
 The viewer shows the browser the way it shows a file: opening it puts away
@@ -26,13 +27,35 @@ whatever file, presented media or plugin page the viewer held, and opening
 one of those, or closing the viewer, puts the browser away in turn, leaving
 its tabs exactly as they were. Switching sessions keeps the browser, and
 the tab it was on, with the session it was open beside, the way a file is
-kept, so coming back to a session puts its tab in front again. The pane's "⋯" menu opens the browser on
-whatever tab is active, opening one first if none is.
+kept, so coming back to a session puts its tab in front again. The pane's
+"⋯" menu opens the browser on whatever tab is in front, opening one first if
+the session has none.
+
+## Whose tabs they are
+
+Every tab belongs to one owner, and the fold, its count and the tab strip
+show only the tabs of the owner on screen. A tab an agent opens belongs to
+that agent's session. A tab opened by hand, from the fold, the "⋯" menu or
+the strip, belongs to the session on screen; with no session on screen it
+belongs to the project on screen, and shows there for as long as no session
+is selected. A page that opens a popup gives the popup's tab the same owner
+as its own.
+
+Each owner has its own tab in front. Switching sessions switches the set of
+tabs shown and the one in front with it, and coming back to a session finds
+its tabs as it left them. A tab an agent opens for a session that is not on
+screen becomes that session's front tab without touching what is on
+screen, and the viewer shows it when the user switches to the session.
+
+Closing a session closes its tabs, and so does filing it away, which
+closes it first. Closing a project closes the tabs it owns. A session that
+has only stopped, and sits as a row, keeps them. A session resumed as a new
+row starts with no tabs, since the row it came from was closed.
 
 Above a tab sits a bar with back, forward, reload and home, each grey until
-there is somewhere to go, a strip of tabs with a mark for the ones an agent
-opened and a button to open another, and an address field. What you type
-there becomes an address or is refused with a short reason: a bare word
+there is somewhere to go, a strip of tabs, those of the session on screen,
+with a button to open another, and an address field. What you type there
+becomes an address or is refused with a short reason: a bare word
 with no scheme becomes `https`, unless it looks like a machine nearby, in
 which case it gets `http` instead: `localhost`, an address ending in
 `.local`, `.test` or `.internal`, a bare IP, or a single name followed by a
@@ -87,15 +110,16 @@ commands reachable from it.
 With the hooks on, ten more tools join the six every session already has:
 `browser_open` opens a tab at a `url` and shows the browser in the viewer,
 as the [show tool](hooks.md#the-agents-tools) does: now for the session on
-screen, and for another the tab opens behind whatever the user has in
-front, in whichever project, and comes to the front when they switch to
-the session; `browser_close` closes one. `browser_tabs` answers with the open tabs and
-which is active. `browser_navigate` sends a tab to a `url`, or steps it
-back, forward or reloads it. Opening and navigating answer once the page
-has stopped loading, with where the tab landed or why it did not load, so
-the call after reads the page that was asked for. `browser_snapshot` reads a tab back as a short
-tree of text: headings, links, buttons, fields, images, landmark regions
-and blocks of visible text, everything a click or a type can reach marked
+screen, and for another the tab opens for that session behind whatever the
+user has in front, in whichever project, and the viewer shows it when they
+switch to the session; `browser_close` closes one. `browser_tabs` answers
+with the session's open tabs and which is in front. `browser_navigate` sends
+a tab to a `url`, or steps it back, forward or reloads it. Opening and
+navigating answer once the page has stopped loading, with where the tab
+landed or why it did not load, so the call after reads the page that was
+asked for. `browser_snapshot` reads a tab back as a short tree of text:
+headings, links, buttons, fields, images, landmark regions and blocks of
+visible text, everything a click or a type can reach marked
 with a ref; asking again after the page has changed gives fresh refs.
 `browser_click` presses the element a `ref` names, and `browser_type` sets
 its text, submitting it too when told to. `browser_console`
@@ -118,16 +142,19 @@ page can neither see nor reach, and nothing they leave behind survives to
 the next call, so a ref lives as an attribute on its element rather than in
 memory.
 
-The tools that act on a tab take its id, left out for whichever is active,
-what the user and the agent are both looking at. While the user is looking
-at another session the active tab is theirs, so a call that names no tab
-falls to the last tab the agent's session opened instead. A tab an agent
-opens carries the session that opened it, and the fold and the tab strip
-mark it. The browser is
-always the one in the app on the user's own machine: a session running on a
-remote machine still opens its tabs there, in the window in front of the
-user, so `localhost` in an address then means that machine, not the remote
-one.
+The tools act within the calling session's own tabs. `browser_tabs` lists
+only those, the tools that act on a tab take its id, and a call that names
+no tab means the session's front tab, whichever session the user is looking
+at. A tab id that belongs to another session is refused with a plain
+message. A call from an agent the window does not know, one run in a
+terminal inside an open project, acts on the tabs of the project it runs in.
+A Codex session sends no session id and is matched by its folder, so such an
+agent run in that folder can act on the Codex session's tabs instead.
+A call from a folder that is no open project, or from a session the window
+has no row for, is refused by every tool. The browser is always the one in
+the app on the user's own machine: a session running on a remote machine
+still opens its tabs there, in the window in front of the user, so
+`localhost` in an address then means that machine, not the remote one.
 
 ## Platforms
 

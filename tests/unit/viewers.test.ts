@@ -10,6 +10,7 @@ import {
   showPluginView,
   showRange,
 } from "$lib/files.svelte";
+import { sessions } from "$lib/sessions.svelte";
 import { browser, resetBrowser } from "$lib/browser.svelte";
 import { enterReview, layout } from "$lib/layout.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -45,14 +46,24 @@ vi.mock("$lib/core", () => ({
     },
     async setSelection() {},
     async watchShown() {},
+    async browserFocus() {
+      return { tabs: browser.tabs, owner: browser.owner, active: browser.active };
+    },
     async browserPlace() {},
     async browserHide() {},
     async browserActivate(id: number) {
       activated.push(id);
-      return { tabs: browser.tabs, active: id };
+      front(id);
+      return { tabs: browser.tabs, owner: browser.owner, active: id };
     },
   }),
 }));
+
+/** Makes `id` the front tab among the tabs held, the way the core reports it. */
+function front(id: number) {
+  browser.tabs = browser.tabs.map((each) => ({ ...each, front: each.id === id }));
+  browser.active = id;
+}
 
 /** The tabs the fake core was asked to bring to the front. */
 const activated: number[] = [];
@@ -199,35 +210,84 @@ describe("switching sessions", () => {
       title: "",
       home: `http://localhost:${id}/`,
       opener: { kind: "user" as const },
+      owner: { kind: "session" as const, key: "a" },
+      front: false,
       loading: false,
       canGoBack: false,
       canGoForward: false,
       error: null,
     });
+    sessions.all = [{ key: "a", project: "/one" }] as never;
+    sessions.active = "a";
     browser.tabs = [tab(1), tab(2)];
-    browser.active = 1;
+    browser.owner = { kind: "session", key: "a" };
+    front(1);
     await sessionShown("a");
     showBrowser();
     expect(snapshot()).toEqual({ kind: "browser", project: "/one", tab: 1 });
 
+    sessions.active = null;
     await sessionShown("b");
-    // Another session's agent brought its own tab to the front meanwhile.
-    browser.active = 2;
+    // The session's agent brought another tab to the front meanwhile.
+    front(2);
     showBrowser();
 
+    sessions.active = "a";
     await sessionShown("a");
     expect(activated).toEqual([1]);
     expect(browser.active).toBe(1);
     expect(browser.showing).toBe(true);
 
     // Its tab closed in between: the browser comes back on whatever is active.
+    sessions.active = null;
     await sessionShown("b");
     browser.tabs = [tab(2)];
-    browser.active = 2;
+    front(2);
     activated.length = 0;
+    sessions.active = "a";
     await sessionShown("a");
     expect(activated).toEqual([]);
     expect(browser.showing).toBe(true);
+    sessions.all = [];
+    sessions.active = null;
+  });
+
+  it("records the tab the session it leaves was on, not the one it switches to", async () => {
+    const tab = (id: number, key: string, isFront: boolean) => ({
+      id,
+      url: `http://localhost:${id}/`,
+      title: "",
+      home: `http://localhost:${id}/`,
+      opener: { kind: "user" as const },
+      owner: { kind: "session" as const, key },
+      front: isFront,
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      error: null,
+    });
+    sessions.all = [
+      { key: "a", project: "/one" },
+      { key: "b", project: "/one" },
+    ] as never;
+    // Session a has two tabs with 1 in front, session b has one.
+    browser.tabs = [tab(1, "a", true), tab(2, "a", false), tab(3, "b", true)];
+    sessions.active = "a";
+    await sessionShown("a");
+    showBrowser();
+
+    // The sessions pane switches the session before the viewer is told.
+    sessions.active = "b";
+    await sessionShown("b");
+    // While away, a's page opens a popup that becomes its front tab.
+    browser.tabs = [tab(1, "a", false), tab(2, "a", true), tab(3, "b", true)];
+    activated.length = 0;
+
+    sessions.active = "a";
+    await sessionShown("a");
+    expect(activated).toEqual([1]);
+    sessions.all = [];
+    sessions.active = null;
   });
 
   it("opens the viewer again for a session that had one, after it was closed elsewhere", async () => {
