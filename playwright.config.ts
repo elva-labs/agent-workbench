@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { devPort } from "./dev-port.js";
 
 /**
  * End-to-end tests run against the real Vite dev server in a real browser.
@@ -8,6 +9,11 @@ import { defineConfig, devices } from "@playwright/test";
  * boundary, which has nothing behind it until phase 1; when the PTY lands, a
  * second tier on tauri-driver drives the packaged binary. See tests/e2e/README.
  */
+// WORKBENCH_DEV_PORT moves the dev server off the default port. When it is
+// set, a server already answering there is an error, never a server to reuse.
+const { port, custom: customPort } = devPort();
+const origin = `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -16,7 +22,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"]],
   use: {
-    baseURL: "http://localhost:1420",
+    baseURL: origin,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -28,8 +34,8 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run dev",
-    url: "http://localhost:1420",
-    reuseExistingServer: !process.env.CI,
+    url: origin,
+    reuseExistingServer: !process.env.CI && !customPort,
     timeout: 120_000,
   },
 });
