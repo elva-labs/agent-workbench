@@ -125,12 +125,11 @@ with a ref; asking again after the page has changed gives fresh refs.
 its text, submitting it too when told to. `browser_console`
 answers with what the page has logged since it was last asked, failed
 resources, errors and unhandled rejections among them, and empties it as it
-reads. `browser_screenshot` answers with the path to a PNG of the tab,
-bringing it to the front first; while the user is looking at another
-session it is refused instead, since a hidden tab cannot be captured and
-the user's own view is not the agent's to take over. `browser_eval` runs a script, a function
-body, in the tab's page, `return` and `await` both work, and answers with
-what it returned.
+reads. `browser_screenshot` answers with the path to a PNG of the tab as it is
+now, taken where the tab is without bringing it forward, so what the user
+has in front does not change; see below for how. `browser_eval` runs a
+script, a function body, in the tab's page, `return` and `await` both
+work, and answers with what it returned.
 
 A click and a keystroke arrive as their own events, not the ones a pointer
 or a keyboard would have produced, which a page that checks can tell apart
@@ -141,6 +140,21 @@ and the typing instead run in a script world of the app's own, which the
 page can neither see nor reach, and nothing they leave behind survives to
 the next call, so a ref lives as an attribute on its element rather than in
 memory.
+
+A hidden tab's view stops painting, and its last frame is all a snapshot
+of it would show. To capture one, its view is moved past the window's left
+edge at the size the viewer shows tabs at, unhidden for as long as the
+page takes to draw a frame and the snapshot to be taken, then hidden and
+put back. It is never inside the window's visible area, so nothing shows
+on screen, and it never takes the pointer or the keyboard. Opening,
+switching, placing and closing tabs wait while it is out, so none of them
+finds it out of place. The system normally stops painting a view whose
+window another app's window covers; each tab's view is told not to, so
+the tab on show and a tab revealed for its screenshot both paint under
+cover. A minimised window paints nothing, so a screenshot is refused
+while the window is minimised. The switch that keeps a covered view
+painting is private to WebKit; where a system lacks it, a tab that is not
+on show is refused instead.
 
 The tools act within the calling session's own tabs. `browser_tabs` lists
 only those, the tools that act on a tab take its id, and a call that names

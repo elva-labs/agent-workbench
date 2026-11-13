@@ -205,12 +205,6 @@ function tabLines(request: BrowserRequest): string {
     .join("\n");
 }
 
-/** Whether the calling session's tabs are not the ones on screen: the
-    browser on screen is then the user's, not the agent's to take over. */
-function offScreen(request: BrowserRequest): boolean {
-  return !sameOwner(ownerOf(request), ownerOnScreen());
-}
-
 /** The tab a call names, or, when it names none, the calling session's
     front tab. A tab another session owns is refused, as is one that is not
     open. */
@@ -353,17 +347,8 @@ async function screenshotTool(request: BrowserRequest): Promise<Answered> {
   const found = resolveTab(request);
   if ("refusal" in found) return refused(found.refusal);
   const tab = found.tab;
-  // A hidden view cannot be captured, and bringing the tab to the front
-  // over what the user is reading in another session is not on.
-  if (offScreen(request))
-    return refused(
-      `Tab ${tab.id} is not on screen: the user is looking at another session, and a hidden tab cannot be captured. Read it with browser_snapshot, or ask the user to switch to this session.`,
-    );
-  showBrowser();
-  if (!tab.front) await activateTab(tab.id);
-  // The view is placed as soon as the viewer shows the tab; a moment is
-  // left for it to land and paint.
-  await wait(250);
+  // The core captures the tab where it is, whatever the user is looking
+  // at, so nothing in front of them changes.
   try {
     return said(await core().browserScreenshot(tab.id));
   } catch (error) {

@@ -113,10 +113,15 @@ test.describe("the browser's tools", () => {
     await push(page, { id: "b-h2", tool: "browser_snapshot", session: "session-1" });
     await expect.poll(() => answerTo(page, "b-h2")).not.toBeNull();
     expect((await answerTo(page, "b-h2"))!.content).toContain("page http://localhost:3000/");
-    // And a screenshot from it is refused rather than shown over the user's tab.
+    // A screenshot from it captures its own tab where it is, and the user's
+    // tab stays in front.
     await push(page, { id: "b-h3", tool: "browser_screenshot", session: "session-1" });
     await expect.poll(() => answerTo(page, "b-h3")).not.toBeNull();
-    expect((await answerTo(page, "b-h3"))!.error).toContain("not on screen");
+    const shot = (await answerTo(page, "b-h3"))!;
+    expect(shot.error).toBeNull();
+    expect(shot.content).toContain("/2-fake.png");
+    await expect(page.locator(".session.on")).toContainText("session 2");
+    await expect(page.getByTestId("browser-tab")).toHaveCount(1);
     await expect(page.locator("[data-testid='browser-tab'].active")).toHaveAttribute("data-tab-id", "1");
 
     // The sessions pane is folded while reviewing: stepped to by chord.
