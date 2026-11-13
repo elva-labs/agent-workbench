@@ -105,9 +105,9 @@ test.describe("a remote project", () => {
     await expect(page.getByTestId("open-first-project")).toBeVisible();
     await page.keyboard.press("ControlOrMeta+1");
     await page.keyboard.press("Home");
-    await expect(page.getByTestId("go-to")).toHaveClass(/cursor/);
-    // The field, the new-session button, the sort, then the menu.
-    for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("project-sort")).toHaveClass(/cursor/);
+    // The sort, then the menu beside it on the title's row.
+    await page.keyboard.press("ArrowDown");
     await expect(page.getByTestId("sessions-menu")).toHaveClass(/cursor/);
     // Enter opens the menu, and the arrows walk its items.
     await page.keyboard.press("Enter");

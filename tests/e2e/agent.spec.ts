@@ -1242,7 +1242,7 @@ test.describe("several projects", () => {
       (await page.locator(SESSIONS).locator("[data-row^='project:']", { hasText: name }).boundingBox())!.y;
 
     // One is on screen, so it was brought forward as the window opened.
-    await expect(page.getByTestId("project-sort")).toHaveText("Last used");
+    await expect(page.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Last used");
     expect(await top("one")).toBeLessThan(await top("two"));
     // Picking two uses it, but nothing moves under the pointer or the
     // keyboard: the order settles once both have left the pane.
@@ -1260,19 +1260,21 @@ test.describe("several projects", () => {
     await expect(menu).toBeVisible();
     await page.getByTestId("project-sort-name").click();
     await expect(menu).toHaveCount(0);
-    await expect(page.getByTestId("project-sort")).toHaveText("Name");
+    await expect(page.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Name");
     await expect.poll(async () => (await top("one")) < (await top("two"))).toBe(true);
 
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
-    await expect(page.getByTestId("project-sort")).toHaveText("Name");
+    await expect(page.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Name");
     await expect(page.getByTestId("view-switch")).toHaveCount(0);
   });
 
-  // The head is a field that opens the palette with a new-session button
-  // beside it; each project's header stays in view while its rows scroll
-  // under it, a hairline between projects; the settings sit at the foot.
-  test("keeps a project's header in view while its rows scroll, under the head and over the foot", async ({
+  // The title's row carries the sort and the menu; under it, the head is a
+  // field that opens the palette with a new-session button beside it, and
+  // nothing more. Each project's header stays in view while its rows
+  // scroll under it, a hairline between projects. With no accounts there
+  // is no foot, and the rows run to the pane's edge.
+  test("keeps a project's header in view while its rows scroll, under a head of two rows", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 440 });
@@ -1282,6 +1284,13 @@ test.describe("several projects", () => {
     }
     const pane = (await page.locator(SESSIONS).boundingBox())!;
 
+    const title = (await page.locator(`${SESSIONS} > header`).boundingBox())!;
+    const sort = (await page.getByTestId("project-sort").boundingBox())!;
+    const more = (await page.getByTestId("sessions-menu").boundingBox())!;
+    for (const tool of [sort, more]) {
+      expect(tool.y).toBeGreaterThanOrEqual(title.y - 1);
+      expect(tool.y + tool.height).toBeLessThanOrEqual(title.y + title.height + 1);
+    }
     const field = (await page.getByTestId("go-to").boundingBox())!;
     const add = (await page.getByTestId("new-session").boundingBox())!;
     expect(Math.abs(field.y + field.height / 2 - (add.y + add.height / 2))).toBeLessThan(1);
@@ -1289,9 +1298,10 @@ test.describe("several projects", () => {
     expect(field.width).toBeGreaterThan(add.width * 3);
     await expect(page.getByTestId("go-to")).toContainText("Go to session or project");
 
-    const foot = (await page.locator(`${SESSIONS} .foot`).boundingBox())!;
-    expect(Math.abs(foot.y + foot.height - (pane.y + pane.height))).toBeLessThan(2);
-    await expect(page.getByTestId("pane-settings")).toBeVisible();
+    await expect(page.locator(`${SESSIONS} .foot`)).toHaveCount(0);
+    const list = (await page.locator(`${SESSIONS} .tree`).boundingBox())!;
+    expect(list.y).toBeLessThan(field.y + field.height + 16);
+    expect(Math.abs(list.y + list.height - (pane.y + pane.height))).toBeLessThan(2);
 
     const tree = page.locator(`${SESSIONS} .tree`);
     const top = (await tree.boundingBox())!.y;
@@ -1311,12 +1321,13 @@ test.describe("several projects", () => {
     await expect(second).toHaveCSS("border-top-width", "1px");
     await expect(second).toContainText("two");
 
-    // The field opens the palette, and the gear the settings.
+    // The field opens the palette, and the menu the settings.
     await page.getByTestId("go-to").click();
     await expect(page.getByTestId("palette")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("palette")).toHaveCount(0);
-    await page.getByTestId("pane-settings").click();
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-settings").click();
     await expect(page.getByTestId("settings")).toBeVisible();
   });
 
@@ -1328,10 +1339,13 @@ test.describe("several projects", () => {
     await page.getByTestId("new-session").click();
     await expect.poll(() => spawnCount(page)).toBe(2);
 
-    await page.locator(`[data-row="project:${ONE}"]`).getByTestId("close-project").click();
+    const head = page.locator(`[data-row="project:${ONE}"]`);
+    await head.hover();
+    await head.getByTestId("project-more").click();
+    await head.getByTestId("close-project").click();
 
     await expect.poll(() => killed(page)).toEqual(["pty-1"]);
-    await expect(page.locator("[data-testid='close-project']")).toHaveCount(1);
+    await expect(page.locator("[data-row^='project:']")).toHaveCount(1);
     await running(page);
   });
 

@@ -131,7 +131,11 @@ test.describe("the orchestrator", () => {
     expect(kid.y).toBeGreaterThanOrEqual(above.y + above.height - 1);
     expect(kid.y + kid.height).toBeLessThanOrEqual(opened.y + 1);
 
-    // The rail runs down from the orchestrator's dot to the started one's.
+    // The rail runs down from the orchestrator's dot to the started one's,
+    // once the started row has finished coming in.
+    await expect
+      .poll(() => started.evaluate((row) => row.closest(".row-slot")!.getAnimations().length))
+      .toBe(0);
     const dot = (await parent.locator(".dot").boundingBox())!;
     const rail = (await page.locator(".kid .rail-in").boundingBox())!;
     const own = (await started.locator(".dot").boundingBox())!;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT,
+  FRAME_PADDING,
   FOLDED,
   MIN,
   NEEDS_AGENT_WHILE_REVIEWING,
@@ -57,6 +58,22 @@ function reset() {
 }
 
 beforeEach(reset);
+
+describe("the sessions pane's width", () => {
+  // Wide enough for a session's name beside its time at the default
+  // window, as the mockup draws it; a width the user dragged to is theirs.
+  it("opens at 300 pixels, and keeps a width already chosen", () => {
+    expect(DEFAULT.sessions).toBe(300);
+    applyLayout(1440 - FRAME_PADDING);
+    expect(layout.sessions).toBe(300);
+
+    localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 232 }));
+    loadLayout();
+    applyLayout(1440 - FRAME_PADDING);
+    expect(layout.sessions).toBe(232);
+    localStorage.removeItem("workbench.layout");
+  });
+});
 
 describe("working layout", () => {
   it("leaves a comfortable window untouched", () => {

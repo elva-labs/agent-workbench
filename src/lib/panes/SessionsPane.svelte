@@ -197,11 +197,15 @@
   function openSort() {
     sortOpen = !sortOpen;
     menuOpen = false;
+    projectMenu = null;
+    nav?.focus();
     sortAt = Math.max(
       0,
       SORTS.findIndex((choice) => choice.sort === layout.projectSort),
     );
   }
+
+  let sortLabel = $derived(SORTS.find((choice) => choice.sort === layout.projectSort)?.label ?? "");
 
   function pickSort(sort: ProjectSort) {
     setProjectSort(sort);
@@ -228,9 +232,9 @@
       ?.scrollIntoView({ block: "nearest" });
   }
 
-  /** The menu at the end of the Projects line: the ways to open a project
-      and to start an orchestrator. Its keyboard cursor walks the items
-      while it is open. */
+  /** The menu beside the sort on the title's row: the ways to open a
+      project, to start an orchestrator, and the settings. Its keyboard
+      cursor walks the items while it is open. */
   let menuOpen = $state(false);
   let menuAt = $state(0);
 
@@ -238,6 +242,8 @@
     id: string;
     label: string;
     title?: string;
+    /** The chord that does the same, shown at the item's end. */
+    chord?: string;
     disabled: boolean;
     run: () => void;
   }
@@ -257,12 +263,65 @@
       disabled: orchestrator.dir === null || !isReady(),
       run: startOrchestrator,
     },
+    {
+      id: "menu-settings",
+      label: "Settings…",
+      chord: describe(chordFor("settings")),
+      disabled: false,
+      run: () => openSettings(),
+    },
   ]);
+
+  /** A project's own menu, from the ⋯ on its header or its row under
+      Inactive, or a right click on either: a new session in it, and
+      closing it. It opens upwards when the row is near the pane's foot,
+      and its keyboard cursor walks the items while it is open. */
+  let projectMenu = $state<{ path: string; up: boolean } | null>(null);
+  let projectMenuAt = $state(0);
+
+  let projectItems = $derived.by((): MenuItem[] => {
+    if (projectMenu === null) return [];
+    const path = projectMenu.path;
+    return [
+      { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
+      { id: "close-project", label: "Close project", disabled: false, run: () => closeProject(path) },
+    ];
+  });
+
+  function openProjectMenu(path: string, e: MouseEvent) {
+    e.preventDefault();
+    if (projectMenu?.path === path && e.type === "click") {
+      projectMenu = null;
+      return;
+    }
+    const row = (e.currentTarget as HTMLElement).closest<HTMLElement>("[data-row]");
+    const tree = nav?.querySelector<HTMLElement>(".tree");
+    const up =
+      row !== null && tree !== null && tree !== undefined
+        ? row.getBoundingClientRect().bottom > tree.getBoundingClientRect().bottom - 90
+        : false;
+    menuOpen = false;
+    sortOpen = false;
+    projectMenu = { path, up };
+    projectMenuAt = 0;
+    if (row?.dataset.row !== undefined) cursor = row.dataset.row;
+    nav?.focus();
+  }
+
+  /** An item of the project's menu runs and the menu closes behind it. */
+  function fromProjectMenu(item: MenuItem) {
+    if (item.disabled) return;
+    projectMenu = null;
+    item.run();
+  }
+
 
   function openMenu() {
     menuOpen = !menuOpen;
     sortOpen = false;
+    projectMenu = null;
     menuAt = 0;
+    nav?.focus();
   }
 
   /** An item runs and the menu closes behind it. */
@@ -272,10 +331,14 @@
     item.run();
   }
 
-  /** A new session from the head: in the project on screen, as its own
-      button would. */
+  /** A new session in the project on screen, as its own button would. */
   function newHere() {
     if (workspace.active !== null) offer(workspace.active);
+  }
+
+  /** The button beside the go-to field. */
+  function newFromHead() {
+    newHere();
   }
 
   /** A project's own new-session button: the project comes forward, and
@@ -285,8 +348,8 @@
     offer(path);
   }
 
-  /** The account the session on screen runs under, for the foot, once
-      there are accounts to tell apart. */
+  /** The account the session on screen runs under, for the foot, which
+      is there only once there are accounts to tell apart. */
   let footAccount = $derived(
     hasAccounts() && activeSession() !== null ? accountLabel(activeSession()?.account ?? null) : null,
   );
@@ -421,10 +484,10 @@
 
   let rows = $derived.by(() => {
     const out: Row[] = [
-      { id: "go", run: openPalette },
-      { id: "new", run: newHere },
       { id: "sort", run: openSort },
       { id: "menu", run: openMenu },
+      { id: "go", run: openPalette },
+      { id: "new", run: newFromHead },
     ];
     if (workspace.open.length === 0) out.push({ id: "open", run: () => void pick() });
     const dir = pinned;
@@ -573,7 +636,11 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if ((sortOpen && onSortKeydown(e)) || (menuOpen && onMenuKeys(e))) {
+    if (
+      (sortOpen && onSortKeydown(e)) ||
+      (menuOpen && onMenuKeys(e)) ||
+      (projectMenu !== null && onProjectMenuKeys(e))
+    ) {
       nav.focus();
       e.preventDefault();
       return;
@@ -661,6 +728,29 @@
         return true;
       case "Escape":
         menuOpen = false;
+        e.stopPropagation();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** While a project's menu is open the arrows walk its items, Enter runs
+      one and Escape closes it. False for a key the menu leaves alone. */
+  function onProjectMenuKeys(e: KeyboardEvent): boolean {
+    switch (e.key) {
+      case "ArrowDown":
+        projectMenuAt = Math.min(projectMenuAt + 1, projectItems.length - 1);
+        return true;
+      case "ArrowUp":
+        projectMenuAt = Math.max(projectMenuAt - 1, 0);
+        return true;
+      case "Enter":
+      case " ":
+        fromProjectMenu(projectItems[projectMenuAt]);
+        return true;
+      case "Escape":
+        projectMenu = null;
         e.stopPropagation();
         return true;
       default:
@@ -970,19 +1060,70 @@
   {#if cut > 0}<span class="prefix">{full.slice(0, cut)}</span>{/if}{full.slice(cut)}
 {/snippet}
 
+<!-- A project's own menu, under the button that opened it, or over it
+     near the pane's foot. -->
+{#snippet projectMenuFor(path: string)}
+  {#if projectMenu?.path === path}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="scrim" onclick={() => (projectMenu = null)}></div>
+    <div class="menu project-menu" class:up={projectMenu.up} role="menu" data-testid="project-menu">
+      {#each projectItems as item, index (item.id)}
+        <button
+          role="menuitem"
+          tabindex="-1"
+          class:at={projectMenuAt === index}
+          onclick={() => fromProjectMenu(item)}
+          disabled={item.disabled}
+          data-testid={item.id}
+        >
+          <span>{item.label}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
+<!-- The ⋯ that opens a project's menu, shown while the pointer is on its
+     row. -->
+{#snippet moreButton(path: string)}
+  <button
+    class="add-here more"
+    class:open={projectMenu?.path === path}
+    tabindex="-1"
+    onclick={(e) => openProjectMenu(path, e)}
+    aria-haspopup="menu"
+    aria-expanded={projectMenu?.path === path}
+    aria-label="More for {projectLabel(path)}"
+    title="New session, close"
+    data-testid="project-more"
+    ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
+      ><circle cx="3.5" cy="8" r=".9" /><circle cx="8" cy="8" r=".9" /><circle cx="12.5" cy="8" r=".9" /></svg
+    ></button
+  >
+{/snippet}
+
 <!-- A project's header: its name, with the part of the path that tells it
      from another of the same name dimmed, what else tells it apart, and a
-     button for a new session in it. It stays in view while its rows
+     button for a new session in it. Its ⋯, or a right click, opens its
+     menu, which is where closing it is. It stays in view while its rows
      scroll under it. -->
 {#snippet projectRow(project: { path: string; isGit: boolean })}
   <div
     class="project"
     class:on={workspace.active === project.path}
+    class:menu-open={projectMenu?.path === project.path}
     class:cursor={current === `project:${project.path}`}
     data-row="project:{project.path}"
     data-testid="project-head"
   >
-    <button class="row project-row" tabindex="-1" onclick={() => activate(project.path)} title={project.path}>
+    <button
+      class="row project-row"
+      tabindex="-1"
+      onclick={() => activate(project.path)}
+      oncontextmenu={(e) => openProjectMenu(project.path, e)}
+      title={project.path}
+    >
       <span class="name">{@render projectName(project.path)}</span>
       {#if accountOf(project.path) !== null}<span class="tag account" data-testid="project-account"
           >{accountOf(project.path)}</span
@@ -990,14 +1131,7 @@
       {#if hostOf(project.path) !== null}<span class="host" data-testid="project-host">{hostOf(project.path)}</span>{/if}
       {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
     </button>
-    <button
-      class="icon close"
-      tabindex="-1"
-      onclick={() => closeProject(project.path)}
-      aria-label="Close {projectLabel(project.path)}"
-      title="Close"
-      data-testid="close-project">×</button
-    >
+    {@render moreButton(project.path)}
     <button
       class="add-here"
       tabindex="-1"
@@ -1007,6 +1141,7 @@
       title="New session"
       data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
     >
+    {@render projectMenuFor(project.path)}
   </div>
 {/snippet}
 
@@ -1138,7 +1273,87 @@
   {/if}
 {/snippet}
 
-<Pane id="sessions" title="Projects &amp; sessions" meta="">
+<!-- On the pane's title row: the order the projects are listed in, and
+     the menu with the ways to open a project and the settings. Both are on
+     the cursor path, and the arrows walk a menu's items while it is open. -->
+{#snippet titleTools()}
+  <div class="tools" class:folded inert={folded}>
+    <button
+      class="sort"
+      class:cursor={current === "sort"}
+      class:open={sortOpen}
+      tabindex="-1"
+      onclick={openSort}
+      aria-haspopup="menu"
+      aria-expanded={sortOpen}
+      data-row="sort"
+      data-testid="project-sort"
+      aria-label="Sort projects: {sortLabel}"
+      title="Sort projects: {sortLabel}"
+      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h7M3 11.5h4" /></svg></button
+    >
+    {#if sortOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="scrim" onclick={() => (sortOpen = false)}></div>
+      <div class="menu sort-menu" role="menu" data-testid="project-sort-menu">
+        {#each SORTS as choice, index (choice.sort)}
+          <button
+            role="menuitemradio"
+            tabindex="-1"
+            aria-checked={layout.projectSort === choice.sort}
+            class:at={sortAt === index}
+            onclick={() => pickSort(choice.sort)}
+            data-testid="project-sort-{choice.sort}"
+          >
+            <span>{choice.label}</span>
+            {#if layout.projectSort === choice.sort}<svg class="tick" viewBox="0 0 16 16" aria-hidden="true"
+                ><path d="m3.5 8.5 3 3 6-7" /></svg
+              >{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+    <button
+      class="tool"
+      class:cursor={current === "menu"}
+      tabindex="-1"
+      onclick={openMenu}
+      aria-haspopup="menu"
+      aria-expanded={menuOpen}
+      aria-label="More"
+      title="Open a project, start an orchestrator, or the settings"
+      data-row="menu"
+      data-testid="sessions-menu"
+      ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
+        ><circle cx="3.5" cy="8" r=".9" /><circle cx="8" cy="8" r=".9" /><circle cx="12.5" cy="8" r=".9" /></svg
+      ></button
+    >
+    {#if menuOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="scrim" onclick={() => (menuOpen = false)}></div>
+      <div class="menu more-menu" role="menu" data-testid="sessions-menu-items">
+        {#each menuItems as item, index (item.id)}
+          <button
+            role="menuitem"
+            tabindex="-1"
+            class:at={menuAt === index}
+            onclick={() => fromMenu(item)}
+            disabled={item.disabled}
+            title={item.title}
+            data-testid={item.id}
+          >
+            <span>{item.label}</span>
+            {#if item.chord}<kbd class="chord">{item.chord}</kbd>{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+<Pane id="sessions" title="Projects &amp; sessions" meta="" head={titleTools}>
   {#if folded}
     <button
       class="unfold"
@@ -1184,7 +1399,7 @@
     data-testid="sessions-nav"
   >
   <!-- The way to any session or project, which is the palette, and a new
-     session in the project on screen, on the same cursor as the rows. -->
+     session, on the same cursor as the rows. -->
   <div class="head">
     <button class="go" class:cursor={current === "go"} tabindex="-1" onclick={openPalette} data-row="go" data-testid="go-to">
       <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" /><path d="m10.2 10.2 3 3" /></svg>
@@ -1195,86 +1410,13 @@
       class="add"
       class:cursor={current === "new"}
       tabindex="-1"
-      onclick={newHere}
+      onclick={newFromHead}
       disabled={workspace.active === null || !isReady()}
       aria-label="New session"
       title="New session"
       data-row="new"
       data-testid="new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
     >
-  </div>
-  <!-- The projects' heading, with the order they are listed in: a menu
-       on the cursor path, whose items the arrows walk while it is open. -->
-  <div class="sortbar">
-    <span class="sort-title">Projects</span>
-    <button
-      class="sort"
-      class:cursor={current === "sort"}
-      class:open={sortOpen}
-      tabindex="-1"
-      onclick={openSort}
-      aria-haspopup="menu"
-      aria-expanded={sortOpen}
-      data-row="sort"
-      data-testid="project-sort"
-      >{SORTS.find((choice) => choice.sort === layout.projectSort)?.label}<svg viewBox="0 0 16 16" aria-hidden="true"
-        ><path d="m4 6 4 4 4-4" /></svg
-      ></button
-    >
-    {#if sortOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="scrim" onclick={() => (sortOpen = false)}></div>
-      <div class="menu sort-menu" role="menu" data-testid="project-sort-menu">
-        {#each SORTS as choice, index (choice.sort)}
-          <button
-            role="menuitemradio"
-            tabindex="-1"
-            aria-checked={layout.projectSort === choice.sort}
-            class:at={sortAt === index}
-            onclick={() => pickSort(choice.sort)}
-            data-testid="project-sort-{choice.sort}"
-          >
-            <span>{choice.label}</span>
-            {#if layout.projectSort === choice.sort}<svg class="tick" viewBox="0 0 16 16" aria-hidden="true"
-                ><path d="m3.5 8.5 3 3 6-7" /></svg
-              >{/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
-    <button
-      class="tool"
-      class:cursor={current === "menu"}
-      tabindex="-1"
-      onclick={openMenu}
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-      aria-label="More"
-      title="Open a project, or start an orchestrator"
-      data-row="menu"
-      data-testid="sessions-menu">⋯</button
-    >
-    {#if menuOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="scrim" onclick={() => (menuOpen = false)}></div>
-      <div class="menu more-menu" role="menu" data-testid="sessions-menu-items">
-        {#each menuItems as item, index (item.id)}
-          <button
-            role="menuitem"
-            tabindex="-1"
-            class:at={menuAt === index}
-            onclick={() => fromMenu(item)}
-            disabled={item.disabled}
-            title={item.title}
-            data-testid={item.id}
-          >
-            <span>{item.label}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
   </div>
   <div class="tree">
     {#if workspace.open.length === 0}
@@ -1309,9 +1451,9 @@
       {/each}
 
       <!-- The projects nobody has used for a while, folded at the foot:
-           each with when it was last used, a way to start a session in it,
-           and its close button. Picking one brings it forward, and it is
-           in use again. -->
+           each with when it was last used, and its menu on hover in that
+           time's place. Picking one brings it forward, and it is in use
+           again. -->
       {#if split.inactive.length > 0}
         <div class="inactive" data-testid="inactive">
           <button
@@ -1343,6 +1485,7 @@
                   class="row idle-row"
                   tabindex="-1"
                   onclick={() => void wake(project.path)}
+                  oncontextmenu={(e) => openProjectMenu(project.path, e)}
                   title={project.path}
                   data-testid="inactive-project"
                 >
@@ -1351,25 +1494,8 @@
                   {#if hostOf(project.path) !== null}<span class="host">{hostOf(project.path)}</span>{/if}
                   <span class="when" data-testid="inactive-when">{used === null ? "" : since(used, now)}</span>
                 </button>
-                <span class="actions">
-                  <button
-                    class="icon"
-                    tabindex="-1"
-                    onclick={() => startIn(project.path)}
-                    disabled={!isReady()}
-                    aria-label="New session in {projectLabel(project.path)}"
-                    title="New session"
-                    data-testid="inactive-new-session">+</button
-                  >
-                  <button
-                    class="icon"
-                    tabindex="-1"
-                    onclick={() => closeProject(project.path)}
-                    aria-label="Close {projectLabel(project.path)}"
-                    title="Close"
-                    data-testid="close-project">×</button
-                  >
-                </span>
+                <span class="actions">{@render moreButton(project.path)}</span>
+                {@render projectMenuFor(project.path)}
               </div>
             {/each}
             {#if idle.length < split.inactive.length}
@@ -1388,26 +1514,26 @@
       {/if}
   </div>
   <!-- Whose login the session on screen runs under, once there are
-       accounts to tell apart, and the way to the settings. -->
-  <div class="foot">
-    {#if footAccount !== null}
+       accounts to tell apart, and the way to the settings beside it. -->
+  {#if footAccount !== null}
+    <div class="foot">
       <span class="avatar" aria-hidden="true">{footAccount.slice(0, 1).toUpperCase()}</span>
       <span class="who" data-testid="pane-account">{footAccount}</span>
-    {/if}
-    <button
-      class="gear"
-      tabindex="-1"
-      onclick={() => openSettings()}
-      aria-label="Settings"
-      title="Settings ({describe(chordFor('settings'))})"
-      data-testid="pane-settings"
-      ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
-        ><circle cx="8" cy="8" r="2.2" /><path
-          d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"
-        /></svg
-      ></button
-    >
-  </div>
+      <button
+        class="gear"
+        tabindex="-1"
+        onclick={() => openSettings()}
+        aria-label="Settings"
+        title="Settings ({describe(chordFor('settings'))})"
+        data-testid="pane-settings"
+        ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
+          ><circle cx="8" cy="8" r="2.2" /><path
+            d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"
+          /></svg
+        ></button
+      >
+    </div>
+  {/if}
   </div>
 </Pane>
 
@@ -1482,7 +1608,6 @@
   .nav.folded .add-here,
   .nav.folded .foot,
   .nav.folded .empty,
-  .nav.folded .sortbar,
   .nav.folded .inactive,
   .nav.folded .choice,
   .nav.folded .cursor::before,
@@ -1496,7 +1621,7 @@
     flex: none;
     display: flex;
     gap: 6px;
-    padding: 10px 10px 0;
+    padding: 10px 10px 8px;
   }
 
   .glyph {
@@ -1567,51 +1692,56 @@
     cursor: default;
   }
 
-  .go.cursor,
-  .add.cursor,
-  .tool.cursor {
+  /* The head's controls show the cursor as a ring, while the keyboard is
+     in the pane. */
+  .nav:focus-within .go.cursor,
+  .nav:focus-within .add.cursor,
+  :global([data-pane="sessions"]:has(.nav:focus-within)) .tools .cursor {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
 
-  .nav:focus-within .head .cursor::before,
-  .nav:focus-within .tool.cursor::before {
+  .nav:focus-within .head .cursor::before {
     content: none;
   }
 
-  /* The projects' heading: a quiet line with the order they are listed in
-     at its end, behind a menu. */
-  .sortbar {
+  /* The sort and the menu, at the end of the pane's title row. */
+  /* Taller than the title's line, they reach into the header's padding
+     rather than make the row taller than the header beside it. */
+  .tools {
     position: relative;
-    flex: none;
+    margin: -4px 0 -4px auto;
     display: flex;
     align-items: center;
-    margin: 10px var(--row-inset) 2px;
-    padding: 0 var(--row-pad-x);
+    gap: 2px;
     font-family: var(--chrome);
-    font-size: var(--label-size);
-    letter-spacing: var(--label-track-fine);
-    text-transform: var(--label-case);
+    font-size: var(--fold-size);
     color: var(--ink-3);
   }
 
-  .sort-title {
-    font-weight: var(--heading-weight);
+  .tools.folded {
+    visibility: hidden;
   }
 
-  .sort {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    padding: 2px 4px 2px 7px;
+  /* The title's row keeps room for its tools, and the title gives way
+     first. */
+  :global([data-pane="sessions"] > header > .head) {
+    flex: none;
+    align-self: center;
+  }
+
+  .sort,
+  .tool {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: grid;
+    place-items: center;
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
-    font: inherit;
-    letter-spacing: inherit;
-    text-transform: inherit;
-    color: inherit;
+    color: var(--ink-3);
     cursor: pointer;
   }
 
@@ -1633,15 +1763,6 @@
     color: var(--ink);
   }
 
-  .sort.cursor {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-
-  .nav:focus-within .sort.cursor::before {
-    content: none;
-  }
-
   .sort-menu {
     top: calc(100% + 2px);
     right: var(--row-pad-x);
@@ -1661,21 +1782,9 @@
     color: var(--accent);
   }
 
-  .tool {
-    flex: none;
-    margin-left: 2px;
-    border: 0;
-    border-radius: var(--radius);
-    background: none;
-    font-family: var(--chrome);
-    font-size: 14px;
-    line-height: 1;
-    color: var(--ink-3);
-    cursor: pointer;
-    padding: 2px 6px;
-  }
-
-  .tool:hover {
+  .tool:hover,
+  .tool[aria-expanded="true"] {
+    background: var(--surface-2);
     color: var(--ink);
   }
 
@@ -1815,6 +1924,45 @@
   .add-here:hover:not(:disabled) {
     background: var(--surface-2);
     color: var(--ink);
+  }
+
+  /* A project's ⋯: there while the pointer is on its row, or its menu is
+      open. */
+  .add-here.more {
+    opacity: 0;
+  }
+
+  .project:hover .add-here.more,
+  .idle:hover .add-here.more,
+  .add-here.more.open {
+    opacity: 1;
+  }
+
+  .add-here.more.open {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+
+  /* A header with its menu open stands over the headers below it. */
+  .proj > .project.menu-open {
+    z-index: 6;
+  }
+
+  .project-menu {
+    top: calc(100% + 2px);
+    right: var(--row-pad-x);
+    min-width: 150px;
+  }
+
+  .project-menu.up {
+    top: auto;
+    bottom: calc(100% + 2px);
+  }
+
+  .menu .chord {
+    flex: none;
+    margin-left: auto;
+    font-size: 11px;
   }
 
   .add-here:disabled {
@@ -2359,7 +2507,6 @@
     opacity: 0;
   }
 
-  .project:hover .icon,
   .session:hover .icon,
   .icon:focus-visible {
     opacity: 1;
@@ -2570,9 +2717,6 @@
     opacity: 1;
   }
 
-  .idle:hover .icon {
-    opacity: 1;
-  }
 
   .idle-row {
     padding-left: var(--row-indent);

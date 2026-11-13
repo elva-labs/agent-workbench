@@ -61,7 +61,7 @@ export const MIN_REVIEW = MIN.tree + SPLITTER + MIN.viewer;
 export const REVIEW_SHARE = 0.6;
 
 export const DEFAULT = {
-  sessions: 232,
+  sessions: 300,
   changes: 340,
   tree: 220,
   /** The least the viewer's pane opens at, whatever the window's width. */
