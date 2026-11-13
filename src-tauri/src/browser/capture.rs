@@ -228,11 +228,21 @@ mod native {
     /// has the switch: the tab on show then keeps painting while another
     /// app's window covers the workbench's, so its screenshot is current.
     /// A hidden view paints nothing either way.
+    ///
+    /// WebKit reads the switch only when it next works out whether the view
+    /// is visible, so a view on show is hidden and shown again in the same
+    /// turn of the main thread, which makes it do so with nothing drawn in
+    /// between. Without that, a tab built while the window is covered stays
+    /// unpainted until the window is uncovered.
     pub fn paint_while_covered(webview: &tauri::Webview<tauri::Wry>) -> Result<(), String> {
         webview
             .with_webview(|platform| unsafe {
                 let view: &WKWebView = &*(platform.inner() as *const WKWebView);
                 View(view).set_occlusion_detection(false);
+                if !view.isHidden() {
+                    view.setHidden(true);
+                    view.setHidden(false);
+                }
             })
             .map_err(|e| e.to_string())
     }
