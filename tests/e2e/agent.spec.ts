@@ -1239,7 +1239,15 @@ test.describe("several projects", () => {
     // One is on screen, so it was brought forward as the window opened.
     await expect(page.getByTestId("project-sort")).toHaveText("Last used");
     expect(await top("one")).toBeLessThan(await top("two"));
+    // Picking two uses it, but nothing moves under the pointer or the
+    // keyboard: the order settles once both have left the pane.
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
+    await expect(page.locator(`[data-row="project:${TWO}"]`)).toHaveClass(/on/);
+    expect(await top("one")).toBeLessThan(await top("two"));
+    const agent = (await page.locator(AGENT).boundingBox())!;
+    await page.mouse.move(agent.x + agent.width / 2, agent.y + agent.height / 2);
+    expect(await top("one")).toBeLessThan(await top("two"));
+    await page.locator(AGENT).click();
     await expect.poll(async () => (await top("two")) < (await top("one"))).toBe(true);
 
     await page.getByTestId("project-sort").click();

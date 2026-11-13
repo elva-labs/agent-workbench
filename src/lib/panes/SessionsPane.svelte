@@ -52,11 +52,12 @@
     type PaneId,
     type ProjectSort,
   } from "$lib/layout.svelte";
-  import { lastUsed, splitProjects } from "$lib/projects.svelte";
+  import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
   import { openPalette } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
+  import { tick } from "svelte";
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
 
@@ -116,6 +117,28 @@
     return () => clearInterval(timer);
   });
 
+  /** Whether the pointer is over the pane, and whether the keyboard is in
+      it. While either is, the order holds still: what is under the
+      pointer or the cursor stays there, and the order settles once both
+      have left. Rows still come and go. */
+  let pointerIn = $state(false);
+  let keyboardIn = $state(false);
+  let holding = $derived(pointerIn || keyboardIn);
+
+  /** The orders last drawn: the projects, the inactive ones, and each
+      project's rows by its path, and the sort they were drawn in. A new
+      sort is the user asking for a new order, and it is drawn at once. */
+  let shownSort: ProjectSort | null = null;
+  let shownActive: string[] = [];
+  let shownInactive: string[] = [];
+  const shownRows = new Map<string, string[]>();
+
+  /** The order to draw: the one wanted, or while the order holds, the one
+      drawn with the new ids put in. */
+  function held(shown: string[], wanted: string[]): string[] {
+    return holding ? steady(shown, wanted) : wanted;
+  }
+
   /** The projects under the orchestrator's own: opening the directory it
       runs in is opening the project already pinned above them, and it is
       drawn once. They are split into the ones in use and the ones folded
@@ -125,9 +148,13 @@
       workspace.open.filter((project) => project.path !== orchestrator.dir).map((project) => [project.path, project]),
     );
     const { active, inactive } = splitProjects([...byPath.keys()], workspace.active, layout.projectSort, now);
+    const resorted = shownSort !== layout.projectSort;
+    shownSort = layout.projectSort;
+    shownActive = resorted ? active : held(shownActive, active);
+    shownInactive = resorted ? inactive : held(shownInactive, inactive);
     return {
-      active: active.map((path) => byPath.get(path)!),
-      inactive: inactive.map((path) => byPath.get(path)!),
+      active: shownActive.map((path) => byPath.get(path)!),
+      inactive: shownInactive.map((path) => byPath.get(path)!),
     };
   });
 
@@ -170,8 +197,21 @@
   /** An inactive project's own new-session button: the project comes
       forward, which makes it active, and starts as its own row would. */
   function startIn(path: string) {
-    activate(path);
+    wake(path);
     offer(path);
+  }
+
+  /** An inactive project picked: it comes forward, which makes it active,
+      and the pane scrolls to where it lands among the active ones, with
+      the cursor on its header. */
+  async function wake(path: string) {
+    activate(path);
+    cursor = `project:${path}`;
+    await tick();
+    nav
+      ?.querySelector(`[data-row="${CSS.escape(`project:${path}`)}"]`)
+      ?.closest("section")
+      ?.scrollIntoView({ block: "nearest" });
   }
 
   /** The menu at the end of the Projects line: the ways to open a project
@@ -268,11 +308,17 @@
     collapsed[key] = !collapsed[key];
   }
 
-  /** A row with nothing running behind it: one left from the last quit,
-      or a past session of the project on screen, with when it changed. */
-  type Quiet =
+  /** A row under a project's name: a session, live or left from the last
+      quit, or a past session of the project on screen, with when it
+      changed. */
+  type Entry =
     | { kind: "session"; id: string; session: Session; at: number }
     | { kind: "past"; id: string; transcript: HistoryEntry; at: number };
+
+  /** Whether an entry has something running behind it, or ran this time. */
+  function running(entry: Entry): boolean {
+    return entry.kind === "session" && entry.session.status !== "dormant";
+  }
 
   /** How many quiet rows a project shows before the rest fold into one
       row that counts them. */
@@ -282,23 +328,33 @@
       running behind them, in the order they last changed, then the quiet
       rows, latest first, the tail of them folded once there are more than
       a few. Past sessions are listed under the project on screen alone. */
-  function bodyOf(path: string): { live: Session[]; quiet: Quiet[]; hidden: Quiet[] } {
-    const own = byChange(ownFor(path));
-    const quiet: Quiet[] = [
-      ...own
-        .filter((session) => session.status === "dormant")
-        .map((session): Quiet => ({ kind: "session", id: `session:${session.key}`, session, at: lastChanged(session) })),
+  function bodyOf(path: string): { entries: Entry[]; hidden: Entry[] } {
+    const own = byChange(ownFor(path)).map(
+      (session): Entry => ({ kind: "session", id: `session:${session.key}`, session, at: lastChanged(session) }),
+    );
+    const quiet: Entry[] = [
+      ...own.filter((entry) => !running(entry)),
       ...(workspace.active === path ? historyFor(path) : []).map(
-        (transcript): Quiet => ({ kind: "past", id: `past:${transcript.id}`, transcript, at: transcript.modified * 1000 }),
+        (transcript): Entry => ({ kind: "past", id: `past:${transcript.id}`, transcript, at: transcript.modified * 1000 }),
       ),
     ].sort((a, b) => b.at - a.at);
+    const wanted = [...own.filter(running), ...quiet];
+    const byId = new Map(wanted.map((entry) => [entry.id, entry]));
+    const order = held(shownRows.get(path) ?? [], [...byId.keys()]);
+    shownRows.set(path, order);
     const all = opened[`more:${path}`] || quiet.length <= QUIET_SHOWN + 1;
-    const shown = all ? quiet : quiet.slice(0, QUIET_SHOWN);
-    return {
-      live: own.filter((session) => session.status !== "dormant"),
-      quiet: shown,
-      hidden: quiet.slice(shown.length),
-    };
+    const entries: Entry[] = [];
+    const hidden: Entry[] = [];
+    let shown = 0;
+    for (const id of order) {
+      const entry = byId.get(id)!;
+      if (running(entry)) entries.push(entry);
+      else if (all || shown < QUIET_SHOWN) {
+        entries.push(entry);
+        shown += 1;
+      } else hidden.push(entry);
+    }
+    return { entries, hidden };
   }
 
   /** What stands under each project drawn, worked out once per change for
@@ -310,7 +366,7 @@
     return out;
   });
 
-  const NO_BODY: ReturnType<typeof bodyOf> = { live: [], quiet: [], hidden: [] };
+  const NO_BODY: ReturnType<typeof bodyOf> = { entries: [], hidden: [] };
 
   function toggle(id: string) {
     opened[id] = !opened[id];
@@ -357,7 +413,7 @@
       if (opened.inactive) {
         for (const project of idle) {
           const path = project.path;
-          out.push({ id: `idle:${path}`, run: () => activate(path) });
+          out.push({ id: `idle:${path}`, run: () => void wake(path) });
         }
         if (idle.length < split.inactive.length) out.push({ id: "idle-more", run: () => toggle("idle-more") });
       }
@@ -371,19 +427,19 @@
       session and to its earlier ones. */
   function body(path: string): Row[] {
     const out: Row[] = [];
-    const { live, quiet, hidden } = bodies.get(path) ?? NO_BODY;
+    const { entries, hidden } = bodies.get(path) ?? NO_BODY;
     out.push(...starting(path));
-    const withKids = (session: Session) => {
-      out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
-      if (collapsed[session.key]) return;
+    for (const entry of entries) {
+      if (entry.kind === "past") {
+        out.push({ id: entry.id, run: () => resume(path, entry.transcript) });
+        continue;
+      }
+      const session = entry.session;
+      out.push({ id: entry.id, run: () => choose(session.key) });
+      if (collapsed[session.key]) continue;
       for (const kid of childrenOf(session)) {
         out.push({ id: `session:${kid.key}`, run: () => choose(kid.key) });
       }
-    };
-    for (const session of live) withKids(session);
-    for (const row of quiet) {
-      if (row.kind === "session") withKids(row.session);
-      else out.push({ id: row.id, run: () => resume(path, row.transcript) });
     }
     const more = `more:${path}`;
     if (hidden.length > 0) out.push({ id: more, run: () => toggle(more) });
@@ -461,17 +517,21 @@
   /** Picking a session is wanting to type into it, and to see its project:
       one under another project brings that project forward first. */
   function choose(key: string) {
-    if (goTo(key)) focusPane("agent");
+    if (!goTo(key)) return;
+    if (workspace.active !== null) touch(workspace.active);
+    focusPane("agent");
   }
 
   /** A past session resumes where it ran: in its worktree when it had
       one, and under the account it ran under. */
   function resume(path: string, transcript: HistoryEntry) {
+    touch(path);
     create(path, transcript.id, transcript.agent, transcript.cwd ?? null, null, null, transcript.account);
     focusPane("agent");
   }
 
   function start(path: string, agent: AgentId, account: string | null = accountOf(path)) {
+    touch(path);
     create(path, null, agent, null, null, null, account);
     focusPane("agent");
   }
@@ -655,10 +715,12 @@
       }, after);
     };
     const enter = () => {
+      pointerIn = true;
       if (layout.mode !== "reviewing" || sessionsVisible() || layout.sessionsPeek) return;
       later(() => peekSessions(true), PEEK_AFTER);
     };
     const leave = () => {
+      pointerIn = false;
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
@@ -938,22 +1000,15 @@
      what moves: a row that goes leaves the ones below it to close the gap
      rather than jump into it. -->
 {#snippet projectBody(path: string)}
-  {@const { live, quiet, hidden } = bodies.get(path) ?? NO_BODY}
+  {@const { entries, hidden } = bodies.get(path) ?? NO_BODY}
   {@render newSession(path)}
-  {#each live as session (session.key)}
+  {#each entries as entry (entry.id)}
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
-      {@render sessionRow(session)}
-      {@render rail(session)}
-    </div>
-  {/each}
-
-  {#each quiet as row (row.id)}
-    <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
-      {#if row.kind === "session"}
-        {@render sessionRow(row.session)}
-        {@render rail(row.session)}
+      {#if entry.kind === "session"}
+        {@render sessionRow(entry.session)}
+        {@render rail(entry.session)}
       {:else}
-        {@render pastRow(path, row.transcript)}
+        {@render pastRow(path, entry.transcript)}
       {/if}
     </div>
   {/each}
@@ -967,7 +1022,7 @@
       data-testid="quiet-more"
     >
       <span class="chevron">▸</span>
-      <span class="fold-text">{moreLabel(hidden.length, hidden[hidden.length - 1].at, now)}</span>
+      <span class="fold-text">{moreLabel(hidden.length, Math.min(...hidden.map((entry) => entry.at)), now)}</span>
     </button>
   {/if}
 
@@ -1084,6 +1139,8 @@
     bind:this={nav}
     onkeydown={onKeydown}
     onpointerdown={onPointerdown}
+    onfocusin={() => (keyboardIn = true)}
+    onfocusout={(e) => (keyboardIn = nav.contains(e.relatedTarget as Node | null))}
     data-testid="sessions-nav"
   >
   <!-- The way to any session or project, which is the palette, and a new
@@ -1245,7 +1302,7 @@
                 <button
                   class="row idle-row"
                   tabindex="-1"
-                  onclick={() => activate(project.path)}
+                  onclick={() => void wake(project.path)}
                   title={project.path}
                   data-testid="inactive-project"
                 >

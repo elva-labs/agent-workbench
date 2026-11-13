@@ -5,16 +5,18 @@ import { persist } from "$lib/persist";
 import { isLive, sessions, type Session } from "$lib/sessions.svelte";
 
 /**
- * The projects as the sessions pane splits them: active and inactive.
+ * The projects as the sessions pane splits and orders them.
  *
- * A project is active while one of its sessions is live or unread, or
- * while it was used within a span the settings name. The rest fold under
- * Inactive at the foot of the pane. Nothing is filed by hand: a project
- * moves between the two as it is used and left alone.
+ * A project is active while a session drawn under it is live or unread,
+ * while it is the one on screen, or while it was in use within a span the
+ * settings name. The rest fold under Inactive at the foot of the pane.
+ * Nothing is filed by hand: a project moves between the two as it is used
+ * and left alone.
  *
- * Last used is the latest of three things: the project being brought
- * forward, a row of its own changing, and a transcript of its own being
- * written, which is how a session run outside the app counts too.
+ * The order is the user's alone: when a project was last brought forward,
+ * or had a session started or picked in it, and for a project the window
+ * has no such record of, when one of its own transcripts was last written.
+ * What the agents do keeps a project out of Inactive and never moves it.
  */
 
 const USED_KEY = "workbench.used";
@@ -62,9 +64,24 @@ export function setInactiveAfter(value: InactiveAfter) {
   persist({ inactiveAfter: value });
 }
 
-/** The project was brought forward: it counts as used now. */
+/** The user brought the project forward, or started or picked a session
+    in it: it counts as used now. */
 export function touch(path: string, now = Date.now()) {
   projects.used[path] = now;
+  saveUsed();
+}
+
+/** Keeps the record of the projects still open and drops the rest, so the
+    record holds no more than the window does. */
+export function keepUsed(open: string[]) {
+  const kept = new Set(open);
+  const gone = Object.keys(projects.used).filter((path) => !kept.has(path));
+  if (gone.length === 0) return;
+  for (const path of gone) delete projects.used[path];
+  saveUsed();
+}
+
+function saveUsed() {
   try {
     localStorage.setItem(USED_KEY, JSON.stringify(projects.used));
   } catch {
@@ -106,26 +123,77 @@ function rowsOf(path: string): Session[] {
   return byProject.get(path) ?? [];
 }
 
-/** When the project was last used, in milliseconds, or null when nothing
-    says. A row left from the last quit says it through its transcript,
-    since the row itself was only drawn again at the start. */
+/** Where the pane draws a row: under its own project, or hanging under
+    the session that started it. Told by the module that knows who started
+    what; until then every row is drawn in its own project. */
+interface Drawing {
+  ownFor: (project: string) => Session[];
+  childrenOf: (session: Session) => Session[];
+  parentOf: (session: Session) => Session | null;
+}
+
+let drawing: Drawing = {
+  ownFor: rowsOf,
+  childrenOf: () => [],
+  parentOf: () => null,
+};
+
+export function drawnWith(how: Drawing) {
+  drawing = how;
+}
+
+/** The rows drawn under a project: its own, and the sessions those
+    started, wherever they run. */
+function drawnUnder(path: string): Session[] {
+  const own = drawing.ownFor(path);
+  return [...own, ...own.flatMap(drawing.childrenOf)];
+}
+
+/** When the project's newest transcript was written, in milliseconds, or
+    null when it has none. A transcript of a session that hangs under its
+    starter in another project is that project's, and not counted here. */
+function written(path: string): number | null {
+  const elsewhere = new Set(
+    rowsOf(path)
+      .filter(
+        (session) => session.id !== null && drawing.parentOf(session) !== null,
+      )
+      .map((session) => session.id),
+  );
+  // Newest first, as the history is kept.
+  const newest = (sessions.history[path] ?? []).find(
+    (entry) => !elsewhere.has(entry.id),
+  );
+  return newest === undefined ? null : newest.modified * 1000;
+}
+
+/** When the user last used the project, in milliseconds, which is what
+    the projects are ordered by: the window's own record, else the newest
+    transcript of its own, else null. */
 export function lastUsed(path: string): number | null {
+  return projects.used[path] ?? written(path);
+}
+
+/** When anything last happened in the project, in milliseconds, or null
+    when nothing says: the user using it, a row drawn under it changing,
+    or a transcript of its own being written. A row left from the last quit
+    says it through its transcript, since the row itself was only drawn
+    again at the start. */
+export function lastActive(path: string): number | null {
   let latest = projects.used[path] ?? null;
-  const later = (at: number) => {
-    if (latest === null || at > latest) latest = at;
+  const later = (at: number | null) => {
+    if (at !== null && (latest === null || at > latest)) latest = at;
   };
-  for (const session of rowsOf(path)) {
+  for (const session of drawnUnder(path)) {
     if (session.status !== "dormant") later(session.changedAt);
   }
-  const history = sessions.history[path] ?? [];
-  // Newest first, as the history is kept.
-  if (history.length > 0) later(history[0].modified * 1000);
+  later(written(path));
   return latest;
 }
 
-/** Whether a project is active: one of its sessions is live or waiting
-    for the user, it is the one on screen, or it was used within the span.
-    With the span set to never, every project is. */
+/** Whether a project is active: a session drawn under it is live or
+    waiting for the user, it is the one on screen, or something happened
+    in it within the span. With the span set to never, every project is. */
 export function isActive(
   path: string,
   current: string | null,
@@ -136,9 +204,9 @@ export function isActive(
     (choice) => choice.choice === projects.inactiveAfter,
   )?.ms;
   if (span === null || span === undefined) return true;
-  if (rowsOf(path).some((session) => isLive(session) || session.unread))
+  if (drawnUnder(path).some((session) => isLive(session) || session.unread))
     return true;
-  const at = lastUsed(path);
+  const at = lastActive(path);
   return at !== null && now - at <= span;
 }
 
@@ -147,7 +215,9 @@ export function isActive(
     never flickers. */
 export function sortProjects(paths: string[], sort: ProjectSort): string[] {
   const name = (path: string) => lastSegment(path).toLowerCase();
-  const used = new Map(paths.map((path) => [path, lastUsed(path) ?? -Infinity]));
+  const used = new Map(
+    paths.map((path) => [path, lastUsed(path) ?? -Infinity]),
+  );
   return [...paths].sort((a, b) => {
     if (sort === "used") {
       const at = used.get(b)! - used.get(a)!;
@@ -159,7 +229,9 @@ export function sortProjects(paths: string[], sort: ProjectSort): string[] {
 }
 
 /** The projects split into the active and the inactive, each in the
-    order chosen. */
+    order chosen. A project that is not active by what is known, and whose
+    transcripts have not been read yet, is in neither until they are: they
+    may well make it active, and it would move as soon as it was drawn. */
 export function splitProjects(
   paths: string[],
   current: string | null,
@@ -167,11 +239,35 @@ export function splitProjects(
   now = Date.now(),
 ): { active: string[]; inactive: string[] } {
   const ordered = sortProjects(paths, sort);
-  const active = new Set(ordered.filter((path) => isActive(path, current, now)));
+  const active = new Set(
+    ordered.filter((path) => isActive(path, current, now)),
+  );
   return {
     active: ordered.filter((path) => active.has(path)),
-    inactive: ordered.filter((path) => !active.has(path)),
+    inactive: ordered.filter(
+      (path) => !active.has(path) && sessions.history[path] !== undefined,
+    ),
   };
+}
+
+/**
+ * An order that holds still: the ids already in `shown` keep their places
+ * among themselves, the ones gone from `next` drop out, and each new one
+ * goes in after the id it follows in `next`, or first when it follows
+ * none.
+ */
+export function steady(shown: string[], next: string[]): string[] {
+  const wanted = new Set(next);
+  const out = shown.filter((id) => wanted.has(id));
+  const placed = new Set(out);
+  next.forEach((id, at) => {
+    if (placed.has(id)) return;
+    let after = at - 1;
+    while (after >= 0 && !placed.has(next[after])) after -= 1;
+    out.splice(after < 0 ? 0 : out.indexOf(next[after]) + 1, 0, id);
+    placed.add(id);
+  });
+  return out;
 }
 
 /** Test seam. */

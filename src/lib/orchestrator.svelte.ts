@@ -17,6 +17,7 @@ import { core, type Worktree } from "$lib/core";
 import { startedFor } from "$lib/conductor.svelte";
 import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
 import { workspace } from "$lib/workspace.svelte";
+import { drawnWith } from "$lib/projects.svelte";
 
 /** The name the pane gives the orchestrator's own project. */
 export const LABEL = "orchestrator";
@@ -175,6 +176,8 @@ export function childrenOf(session: Session): Session[] {
 export function ownFor(project: string): Session[] {
   return tree.own.get(project) ?? [];
 }
+
+drawnWith({ ownFor, childrenOf, parentOf });
 
 /** What an orchestrator is called where its own row is not in sight. */
 export function conductorLabel(id: string): string {

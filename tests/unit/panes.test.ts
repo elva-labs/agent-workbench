@@ -579,8 +579,10 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const names = () =>
       [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
-    expect(names()).toEqual(["live", "here", "lately"]);
-    expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 2 projects");
+    // Ordered by the user's own use: a project only an agent has been at
+    // work in comes after the ones the user picked.
+    expect(names()).toEqual(["here", "lately", "live"]);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 2 projects"));
     expect(screen.queryByTestId("inactive-project")).toBeNull();
 
     await fireEvent.click(screen.getByTestId("inactive-fold"));
@@ -601,11 +603,78 @@ describe("SessionsPane", () => {
     expect(names()).toHaveLength(5);
   });
 
+  // What the user is pointing at, or walking with the keyboard, stays
+  // where it is: the order the user asked for settles once both leave.
+  it("holds the order still while the pointer or the keyboard is in the pane", async () => {
+    workspace.open.push(repo("/a", "a"), repo("/b", "b"));
+    workspace.active = "/a";
+    touch("/a", Date.now() - 1000);
+    touch("/b", Date.now() - 5000);
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    expect(names()).toEqual(["a", "b"]);
+    const pane = document.querySelector<HTMLElement>('[data-pane="sessions"]')!;
+
+    await fireEvent.pointerEnter(pane);
+    await fireEvent.click(screen.getByText("b"));
+    expect(workspace.active).toBe("/b");
+    expect(names()).toEqual(["a", "b"]);
+    await fireEvent.pointerLeave(pane);
+    expect(names()).toEqual(["b", "a"]);
+
+    // The keyboard in the pane holds it the same way.
+    screen.getByTestId("sessions-nav").focus();
+    touch("/a");
+    await tick();
+    expect(names()).toEqual(["b", "a"]);
+    screen.getByTestId("sessions-nav").blur();
+    await tick();
+    expect(names()).toEqual(["a", "b"]);
+  });
+
+  // An agent at work moves no project: only the user's own use does.
+  it("leaves the projects where they are while an agent works", async () => {
+    workspace.open.push(repo("/a", "a"), repo("/b", "b"));
+    workspace.active = "/a";
+    touch("/a", Date.now() - 1000);
+    touch("/b", Date.now() - 5000);
+    const busy = create("/b");
+    started(busy.key, "pty-1", "session-1");
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    expect(names()).toEqual(["a", "b"]);
+    busy.working = true;
+    busy.changedAt = Date.now() + 1000;
+    await tick();
+    expect(names()).toEqual(["a", "b"]);
+  });
+
+  // Picked under Inactive, a project comes forward among the active ones,
+  // and the pane goes to where it landed with the cursor on its header.
+  it("scrolls to an inactive project picked, where it lands", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
+    touch("/here");
+    touch("/old", Date.now() - 30 * 24 * 3600 * 1000);
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    const scrolled = vi.mocked(Element.prototype.scrollIntoView);
+    scrolled.mockClear();
+    await fireEvent.click(screen.getByTestId("inactive-project"));
+    const head = document.querySelector<HTMLElement>('[data-row="project:/old"]')!;
+    await waitFor(() => expect(scrolled.mock.contexts).toContain(head.closest("section")));
+    expect(head).toHaveClass("cursor");
+  });
+
   it("starts a session in an inactive project from its own button", async () => {
     workspace.open.push(repo("/here", "here"), repo("/old", "old"));
     workspace.active = "/here";
 
     render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
     await fireEvent.click(screen.getByTestId("inactive-fold"));
     await fireEvent.click(screen.getByTestId("inactive-new-session"));
     expect(workspace.active).toBe("/old");
@@ -645,6 +714,7 @@ describe("SessionsPane", () => {
     layout.focus = "sessions";
 
     render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
     const at = () => nav.querySelector(".cursor")?.getAttribute("data-row");

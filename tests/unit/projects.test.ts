@@ -19,6 +19,8 @@ import {
   adoptInactiveAfter,
   inactiveAfterSettings,
   isActive,
+  keepUsed,
+  lastActive,
   lastUsed,
   loadUsed,
   projects,
@@ -26,8 +28,11 @@ import {
   setInactiveAfter,
   sortProjects,
   splitProjects,
+  steady,
   touch,
 } from "$lib/projects.svelte";
+import { conductor, resetConductor } from "$lib/conductor.svelte";
+import "$lib/orchestrator.svelte";
 import {
   byChange,
   create,
@@ -41,7 +46,7 @@ import {
   since,
   started,
 } from "$lib/sessions.svelte";
-import { activate, goTo, reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { activate, close, goTo, reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 10, 13, 12);
@@ -62,6 +67,7 @@ beforeEach(() => {
   resetSessions();
   resetWorkspace();
   resetProjects();
+  resetConductor();
 });
 
 describe("last used", () => {
@@ -69,24 +75,54 @@ describe("last used", () => {
     expect(lastUsed("/repo")).toBeNull();
   });
 
-  it("is the latest of being brought forward, a row changing, and a transcript written", () => {
-    touch("/repo", NOW - 5 * DAY);
-    expect(lastUsed("/repo")).toBe(NOW - 5 * DAY);
-
+  // The order is the user's: an agent at work in a project says it is in
+  // use, and moves nothing.
+  it("is the user's own record, else the newest transcript, never a row changing", () => {
     sessions.history["/repo"] = [entry("b", NOW - 2 * DAY), entry("a", NOW - 9 * DAY)];
     expect(lastUsed("/repo")).toBe(NOW - 2 * DAY);
 
+    touch("/repo", NOW - 5 * DAY);
+    expect(lastUsed("/repo")).toBe(NOW - 5 * DAY);
+
     const live = create("/repo");
     live.changedAt = NOW - DAY;
-    expect(lastUsed("/repo")).toBe(NOW - DAY);
+    expect(lastUsed("/repo")).toBe(NOW - 5 * DAY);
+  });
+
+  it("is outlived by the project's activity: a row changing, or a transcript written", () => {
+    touch("/repo", NOW - 5 * DAY);
+    sessions.history["/repo"] = [entry("b", NOW - 2 * DAY)];
+    expect(lastActive("/repo")).toBe(NOW - 2 * DAY);
+    const live = create("/repo");
+    live.changedAt = NOW - DAY;
+    expect(lastActive("/repo")).toBe(NOW - DAY);
   });
 
   // A row left from the last quit is drawn again at the start, which is no
   // use of the project: its transcript says when it was worked in.
-  it("does not take a row left from the last quit as use", () => {
+  it("does not take a row left from the last quit as activity", () => {
     const left = reopened("/repo", "a", "claude-code", null, null, null);
     left.changedAt = NOW;
-    expect(lastUsed("/repo")).toBeNull();
+    expect(lastActive("/repo")).toBeNull();
+  });
+
+  // The record holds the projects the window has open and no others, so
+  // it does not grow with every project ever opened.
+  it("forgets a project once it is closed", () => {
+    workspace.open.push(
+      { path: "/a", name: "a", repository: "/a", isGit: true },
+      { path: "/b", name: "b", repository: "/b", isGit: true },
+    );
+    activate("/a");
+    activate("/b");
+    expect(Object.keys(projects.used).sort()).toEqual(["/a", "/b"]);
+    close("/a");
+    expect(Object.keys(projects.used)).toEqual(["/b"]);
+    expect(JSON.parse(localStorage.getItem("workbench.used")!)).not.toHaveProperty("/a");
+
+    touch("/gone", NOW);
+    keepUsed(["/b"]);
+    expect(Object.keys(projects.used)).toEqual(["/b"]);
   });
 
   it("is stamped when a project is brought forward, and kept between runs", () => {
@@ -150,6 +186,7 @@ describe("active and inactive", () => {
     touch("/old-b", NOW - 20 * DAY);
     touch("/old-a", NOW - 30 * DAY);
     const paths = ["/old-a", "/a", "/b", "/never", "/old-b"];
+    for (const path of paths) sessions.history[path] = [];
 
     expect(splitProjects(paths, null, "used", NOW)).toEqual({
       active: ["/b", "/a"],
@@ -184,6 +221,64 @@ describe("the span setting", () => {
     setInactiveAfter("month");
     expect(sent).toEqual([{ inactiveAfter: "month" }]);
     expect(projects.inactiveAfter).toBe("month");
+  });
+});
+
+// A session an orchestrator started hangs under it, in the orchestrator's
+// project: that is where it is drawn, and where it counts.
+describe("a session hanging under its starter", () => {
+  function hang(project: string) {
+    const starter = create("/here");
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(project);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    return { starter, kid };
+  }
+
+  it("keeps the project it is drawn under active, not the one it runs in", () => {
+    touch("/here", NOW - 60 * DAY);
+    touch("/there", NOW - 60 * DAY);
+    const { starter, kid } = hang("/there");
+    kid.changedAt = NOW;
+    sessions.history["/there"] = [entry("kid-1", NOW)];
+
+    expect(isActive("/there", null, NOW)).toBe(false);
+    expect(lastActive("/there")).toBe(NOW - 60 * DAY);
+    expect(isActive("/here", null, NOW)).toBe(true);
+
+    starter.status = "exited";
+    kid.needs = "permission";
+    kid.unread = true;
+    expect(isActive("/here", null, NOW)).toBe(true);
+    expect(isActive("/there", null, NOW)).toBe(false);
+  });
+});
+
+describe("the projects whose history is not read yet", () => {
+  // Their transcripts may make them active: drawn under Inactive first,
+  // they would move as soon as they were read.
+  it("are in neither half until it is, unless active by what is known", () => {
+    touch("/known", NOW - DAY);
+    expect(splitProjects(["/known", "/unread"], null, "used", NOW)).toEqual({
+      active: ["/known"],
+      inactive: [],
+    });
+    sessions.history["/unread"] = [entry("t", NOW - 40 * DAY)];
+    expect(splitProjects(["/known", "/unread"], null, "used", NOW)).toEqual({
+      active: ["/known"],
+      inactive: ["/unread"],
+    });
+  });
+});
+
+describe("an order that holds still", () => {
+  it("keeps what is drawn in place, drops what went and puts what came after what it follows", () => {
+    expect(steady(["a", "b", "c"], ["c", "a", "b"])).toEqual(["a", "b", "c"]);
+    expect(steady(["a", "b", "c"], ["c", "a"])).toEqual(["a", "c"]);
+    expect(steady(["a", "b"], ["new", "b", "a"])).toEqual(["new", "a", "b"]);
+    expect(steady(["a", "b"], ["b", "x", "a", "y"])).toEqual(["a", "y", "b", "x"]);
+    expect(steady([], ["a", "b"])).toEqual(["a", "b"]);
   });
 });
 
