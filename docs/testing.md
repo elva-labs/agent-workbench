@@ -128,9 +128,11 @@ Further steps act on the window the way the system or another app would.
 `window:float` raises it above other apps' windows without making the app
 active, `window:at:<x>,<y>` moves it, `window:cover` lays a plain window of
 the app's own over it and `window:uncover` takes that away,
-`window:minimise` and `window:restore` send it to the Dock and back, and
-`window:state` reports whether the app is active, whether the window is
-key, covered or minimised, and which view holds the keyboard.
+`window:minimise` and `window:restore` send it to the Dock and back,
+`window:hide` hides the app as Cmd+H does, and `window:state` reports
+whether the app is active, whether the window is key, visible, covered or
+minimised, whether its display is asleep, and which view holds the
+keyboard.
 `window:focus` makes the app active, for a run that needs the keyboard.
 `shot:<tab id>` takes a tab's screenshot the way the agent's tool does and
 reports its size in pixels, a digest of the file, how long it took and
@@ -138,11 +140,45 @@ when; two digests a moment apart tell a page that is painting from one
 that is frozen. `quit` quits the app once the report is written.
 
 The probe is meant to run while the person at the machine goes on working.
-The app never makes itself active while it runs, but a program started
-from a terminal is still let take over from the app in front, so the debug
-binary is started through the system with `open -g`, from a bundle of its
-own wrapped around it. Pointing `HOME` and `CFFIXED_USER_HOME` at a
-scratch folder keeps its settings, sessions and browser data apart from
-the installed app's, and building with `TAURI_CONFIG` setting the
-development address and the window's size and place lets it load the built
-frontend from a port of its own in a small window out of the way.
+The app never makes itself active while it runs, but macOS still lets a
+program started straight from a terminal become the active app. So the
+debug binary is put in a bundle of its own and started through the system
+with `open -g`, which leaves the app in front where it is. Pointing `HOME`
+and `CFFIXED_USER_HOME` at a scratch folder keeps its settings, sessions
+and browser data apart from the installed app's, and `TMPDIR` keeps its
+screenshots there too. A `TAURI_CONFIG` given at build time is merged over
+the app's configuration: here it points the debug build at the built
+frontend on a port of its own and gives it a small window out of the way.
+A list in it replaces the configured one, so the window is given whole.
+
+```
+npm run build
+TAURI_CONFIG='{"build":{"devUrl":"http://localhost:14431"},"app":{"windows":[{"title":"Workbench Probe","width":702,"height":560,"minWidth":702,"minHeight":560,"x":800,"y":400,"focus":false,"titleBarStyle":"Overlay","hiddenTitle":true}]}}' \
+  cargo build --manifest-path src-tauri/Cargo.toml
+
+mkdir -p "$SCRATCH/Probe.app/Contents/MacOS" "$SCRATCH/home" "$SCRATCH/tmp"
+cp src-tauri/target/debug/agent-workbench "$SCRATCH/Probe.app/Contents/MacOS/"
+cat > "$SCRATCH/Probe.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>agent-workbench</string>
+<key>CFBundleIdentifier</key><string>local.scratch.workbench-probe</string>
+<key>CFBundleName</key><string>Workbench Probe</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+
+npx vite preview --port 14431 --strictPort &
+open -g -n \
+  --env HOME="$SCRATCH/home" --env CFFIXED_USER_HOME="$SCRATCH/home" \
+  --env TMPDIR="$SCRATCH/tmp/" \
+  --env WORKBENCH_PROBE_STEPS="$SCRATCH/run.steps" \
+  --env WORKBENCH_PROBE_REPORT="$SCRATCH/report.json" \
+  "$SCRATCH/Probe.app"
+```
+
+A step file that ends with `quit` closes the app once the report is
+written; `lsappinfo front` before and after the run shows whether the app
+in front stayed there.

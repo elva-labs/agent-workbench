@@ -147,14 +147,32 @@ edge at the size the viewer shows tabs at, unhidden for as long as the
 page takes to draw a frame and the snapshot to be taken, then hidden and
 put back. It is never inside the window's visible area, so nothing shows
 on screen, and it never takes the pointer or the keyboard. Opening,
-switching, placing and closing tabs wait while it is out, so none of them
-finds it out of place. The system normally stops painting a view whose
-window another app's window covers; each tab's view is told not to, so
-the tab on show and a tab revealed for its screenshot both paint under
-cover. A minimised window paints nothing, so a screenshot is refused
-while the window is minimised. The switch that keeps a covered view
-painting is private to WebKit; where a system lacks it, a tab that is not
-on show is refused instead.
+switching, placing and closing tabs wait while it is out, for a few
+seconds at most: a snapshot that has not answered by then is given up on
+and the view put back. A tab on show is taken where it is, and nothing
+waits on it.
+
+The page can tell it was captured. While its view is out the page becomes
+visible and then hidden again, so a `visibilitychange` event fires each
+way, and its animation frames and timers run at full rate for that
+moment. A tab never shown before is laid out at the viewer's size for the
+capture and back again, so its resize handlers run twice. It never has
+focus. A site that marks messages read or counts a view when it becomes
+visible may do so.
+
+The system normally stops painting a view whose window another app's
+window covers; each tab's view is told not to, so the tab on show and a
+tab revealed for its screenshot both paint under cover. The tab on show
+therefore keeps its timers, polling and animation running while the
+window is covered, as it does while the window is in view. The switch
+that keeps a covered view painting is private to WebKit; where a system
+lacks it, a tab that is not on show is refused, even one the user could
+bring to the front.
+
+A screenshot is refused while the window is minimised or the app hidden,
+and while the display the window is on is asleep, since nothing paints
+then. A tab whose page did not load and a new tab are drawn by the viewer
+rather than by the tab's own view, and are refused too.
 
 The tools act within the calling session's own tabs. `browser_tabs` lists
 only those, the tools that act on a tab take its id, and a call that names
