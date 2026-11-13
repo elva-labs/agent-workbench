@@ -32,6 +32,7 @@ pub mod show;
 pub mod styles;
 pub mod transcripts;
 pub mod watch;
+pub mod workflow;
 
 pub use api::{Core, DetectReport, DirEntry, SessionIdentified, Spawned, SESSION_IDENTIFIED};
 pub use client::Connection;

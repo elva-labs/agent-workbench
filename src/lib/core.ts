@@ -42,6 +42,43 @@ export interface AccountDirs {
   codex: string | null;
 }
 
+/** An agent and the name of one of its models. */
+export interface WorkflowModel {
+  agent: AgentId;
+  model: string;
+}
+
+/** A step that does the task, with how many sessions may run at once. An
+    empty `models` allows any model. */
+export interface WorkStep {
+  kind: "work";
+  name: string;
+  models: WorkflowModel[];
+  parallel: number;
+}
+
+/** A step that checks the work. It passes when each condition that is on
+    holds; otherwise the work goes back to the earlier step `backTo`, at
+    most `limit` times, and then the user is asked. */
+export interface ReviewStep {
+  kind: "review";
+  name: string;
+  models: WorkflowModel[];
+  reviewerApproves: boolean;
+  orchestratorAgrees: boolean;
+  backTo: string;
+  limit: number;
+}
+
+export type WorkflowStep = WorkStep | ReviewStep;
+
+/** The model a session starts on, and the steps it hands out. */
+export interface Workflow {
+  name: string;
+  orchestrator: WorkflowModel;
+  steps: WorkflowStep[];
+}
+
 export interface SpawnOptions {
   agent: AgentId;
   project: string;
@@ -544,6 +581,14 @@ export interface Settings {
   accounts: {
     list: Record<string, AccountDirs>;
     everywhere: string | null;
+    overrides: Record<string, string | null>;
+  };
+  /** The workflows in the order they are shown, the name of the one new
+      sessions start with (null is none), and the projects that choose
+      another, each naming a workflow or null for none. */
+  workflows: {
+    list: Workflow[];
+    default: string | null;
     overrides: Record<string, string | null>;
   };
   /** How long a past session stays listed under its project before it

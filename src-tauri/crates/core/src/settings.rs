@@ -34,6 +34,7 @@ use serde_json::{Map, Value};
 
 use crate::events::{self, Sink};
 use crate::styles::{self, Styles, USER_STYLES_CHANGED};
+use crate::workflow::{self, Workflows};
 
 pub const SETTINGS_CHANGED: &str = "settings_changed";
 
@@ -173,6 +174,9 @@ pub struct Settings {
     pub hooks: Hooks,
     /// The agents' logins kept apart, and which project runs under which.
     pub accounts: Accounts,
+    /// The workflows sessions can follow, the one new sessions start with,
+    /// and which project chooses another.
+    pub workflows: Workflows,
     /// How long a past session stays listed under its project.
     pub past_sessions: String,
     /// The user's own themes, by name. A palette may name one.
@@ -200,6 +204,7 @@ impl Default for Settings {
                 overrides: BTreeMap::new(),
             },
             accounts: Accounts::default(),
+            workflows: Workflows::default(),
             past_sessions: "forever".into(),
             themes: BTreeMap::new(),
             user_styles: false,
@@ -495,6 +500,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "keys" => settings.keys = keys(value)?,
         "hooks" => settings.hooks = hooks(value)?,
         "accounts" => settings.accounts = accounts(value)?,
+        "workflows" => settings.workflows = workflow::read(value)?,
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
         other => return Err(format!("there is no setting called {other}")),
     }
@@ -537,7 +543,8 @@ pub fn parse(text: &str) -> Option<Settings> {
 }
 
 /// The settings with a change laid over them. The change names only the
-/// fields it changes; keys, hooks, accounts and themes are replaced whole.
+/// fields it changes; keys, hooks, accounts, workflows and themes are replaced
+/// whole.
 pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     let fields = change
         .as_object()
@@ -926,6 +933,77 @@ mod tests {
             parse(r#"{ "accounts": { "list": { "work": { "claude": "~/.claude-work" } } } }"#)
                 .unwrap();
         assert_eq!(parsed.accounts.list.len(), 1);
+    }
+
+    #[test]
+    fn a_fresh_machine_has_the_default_workflow_and_marks_it_for_new_sessions() {
+        let home = home("workflows-fresh");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load();
+        assert!(!loaded.stored);
+        let workflows = &loaded.settings.workflows;
+        assert_eq!(workflows.list.len(), 1);
+        assert_eq!(workflows.default.as_deref(), Some(workflow::DEFAULT_NAME));
+        assert!(workflows.overrides.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_workflows_loads_and_gets_the_default() {
+        let parsed = parse(r#"{ "palette": "rose", "accounts": { "list": {} } }"#).unwrap();
+        assert_eq!(parsed.palette, "rose");
+        assert_eq!(parsed.workflows, Workflows::default());
+        let home = home("workflows-old");
+        std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
+        std::fs::write(settings_path(&home), r#"{ "look": "terminal" }"#).unwrap();
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load();
+        assert!(loaded.stored);
+        assert_eq!(loaded.settings.workflows, Workflows::default());
+        // The next write puts them in the file.
+        store.set(&json!({ "palette": "mono" })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["default"], workflow::DEFAULT_NAME);
+        assert_eq!(value["workflows"]["list"][0]["steps"][1]["kind"], "review");
+    }
+
+    #[test]
+    fn workflows_are_replaced_whole_and_checked_before_anything_is_written() {
+        let home = home("workflows-change");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        let next = store
+            .set(&json!({ "workflows": {
+                "list": [{
+                    "name": "Quick",
+                    "orchestrator": { "agent": "claude-code", "model": "opus" },
+                    "steps": [{ "kind": "work", "name": "Do", "models": [], "parallel": 2 }]
+                }],
+                "default": null,
+                "overrides": { "/p": "Quick" }
+            } }))
+            .unwrap();
+        assert_eq!(next.workflows.list[0].name, "Quick");
+        assert_eq!(next.workflows.default, None);
+        assert_eq!(store.load().settings, next);
+
+        let error = store
+            .set(&json!({ "workflows": { "list": [], "default": "Gone" } }))
+            .unwrap_err();
+        assert!(error.contains("no workflow called Gone"), "{error}");
+        assert!(store.set(&json!({ "workflows": "none" })).is_err());
+        assert_eq!(store.load().settings, next, "nothing was written");
+        assert_eq!(changes(&recorder).len(), 1);
+    }
+
+    #[test]
+    fn a_workflows_value_that_does_not_read_leaves_the_default_when_read_from_a_file() {
+        let parsed =
+            parse(r#"{ "workflows": { "list": [{ "name": "x" }], "default": "x" } }"#).unwrap();
+        assert_eq!(parsed.workflows, Workflows::default());
+        let parsed = parse(r#"{ "workflows": { "list": [], "default": null } }"#).unwrap();
+        assert!(parsed.workflows.list.is_empty());
+        assert_eq!(parsed.workflows.default, None);
     }
 
     #[test]

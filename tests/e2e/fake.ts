@@ -299,6 +299,33 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
+        workflows: {
+          list: [
+            {
+              name: "Build and review",
+              orchestrator: { agent: "claude-code", model: "fable" },
+              steps: [
+                {
+                  kind: "work",
+                  name: "Work",
+                  models: [{ agent: "claude-code", model: "sonnet" }],
+                  parallel: 1,
+                },
+                {
+                  kind: "review",
+                  name: "Review",
+                  models: [{ agent: "claude-code", model: "opus" }],
+                  reviewerApproves: true,
+                  orchestratorAgrees: true,
+                  backTo: "Work",
+                  limit: 3,
+                },
+              ],
+            },
+          ],
+          default: "Build and review",
+          overrides: {},
+        },
         pastSessions: "forever",
         themes: {},
         userStyles: false,
@@ -1078,7 +1105,7 @@ export async function installFakeCore(
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
-            } else if (!["keys", "hooks", "accounts", "themes"].includes(field)) {
+            } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }
           }
