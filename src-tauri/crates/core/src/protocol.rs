@@ -428,6 +428,11 @@ pub fn dispatch(
             core.integrated_interrupt(&p.id)?;
             Ok(Value::Null)
         }
+        "integrated_compact" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_compact(&p.id)?;
+            Ok(Value::Null)
+        }
         "integrated_answer" => {
             let p: IntegratedAnswerParams = parse(params)?;
             core.integrated_answer(&p.id, &p.request, p.choice, p.message.as_deref())?;
@@ -917,6 +922,7 @@ mod tests {
                 json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111", "text": "hi" }),
             ),
             ("integrated_interrupt", json!({ "id": "int-none" })),
+            ("integrated_compact", json!({ "id": "int-none" })),
             (
                 "integrated_answer",
                 json!({ "id": "int-none", "request": "r", "choice": "allow" }),

@@ -325,12 +325,24 @@ pub enum Event {
     },
     /// The agent began compacting the conversation.
     Compacting,
-    /// The conversation was compacted, by hand or because it was full.
+    /// The conversation was compacted, asked for or because it was full,
+    /// where the agent says which.
     Compacted {
-        trigger: Option<String>,
+        reason: Option<CompactReason>,
         tokens_before: Option<u64>,
         tokens_after: Option<u64>,
     },
+    /// How much of the model's context window the conversation takes, in
+    /// tokens, and how big the window is, where the agent reports either.
+    /// Sent when either changes.
+    Context {
+        used: Option<u64>,
+        size: Option<u64>,
+    },
+    /// Something the agent says that is neither an error nor part of a
+    /// turn: that it fell back to another model, that its instructions are
+    /// long, that something it uses is going away.
+    Notice { level: NoticeLevel, message: String },
     /// A request to the agent's model failed and the agent will try again
     /// by itself: the turn goes on. `attempt` of `attempts`, where told.
     Retrying {
@@ -400,13 +412,34 @@ pub enum Outcome {
     Failed,
 }
 
+/// The tokens a turn took. `inputTokens` are all the model read, cached
+/// or not, and `cachedTokens` how many of them came from a cache;
+/// `outputTokens` are all it wrote, its reasoning among them, and
+/// `reasoningTokens` how many of them were reasoning.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     pub input_tokens: u64,
+    pub cached_tokens: u64,
     pub output_tokens: u64,
-    pub cache_read_tokens: u64,
-    pub cache_write_tokens: u64,
+    pub reasoning_tokens: u64,
+}
+
+/// Why the conversation was compacted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompactReason {
+    /// The user or the window asked for it.
+    Asked,
+    /// The context window was full.
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoticeLevel {
+    Info,
+    Warning,
 }
 
 /// What sort of tool a call is, whatever the agent calls it.
@@ -674,6 +707,8 @@ pub const UNTRUSTED: &str = "untrusted";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Control {
     Interrupt,
+    /// Compact the conversation, in whatever way the agent does it.
+    Compact,
     SetModel(String),
     SetMode(String),
     SetEffort(String),
@@ -692,6 +727,9 @@ pub enum Sending {
     /// A line for the agent, whose reply comes back by `key` in a
     /// [`Reading`].
     Request { line: String, key: String },
+    /// A line for the agent that it answers with events alone: done once
+    /// it is written.
+    Line { line: String },
     /// Settled without asking the agent, such as a setting the agent takes
     /// with the next message: the reply, and the events it makes.
     Local { reply: Value, events: Vec<Event> },
@@ -2001,7 +2039,7 @@ fn request(
     by: std::time::Instant,
 ) -> Result<Value, String> {
     let live = sessions.get(id)?;
-    let (went, key, reply) = {
+    let (went, waiting) = {
         let mut machine = live.machine.lock().expect("machine lock");
         let sending = machine.driver.control(control)?;
         let mut out = Vec::new();
@@ -2016,12 +2054,16 @@ fn request(
                 live.emit(&out);
                 return Ok(reply);
             }
+            Sending::Line { line } => {
+                live.emit(&out);
+                (live.enqueue(line)?, None)
+            }
             Sending::Request { line, key } => {
                 live.emit(&out);
                 let (replied, reply) = mpsc::channel();
                 machine.replies.insert(key.clone(), replied);
                 match live.enqueue(line) {
-                    Ok(went) => (went, key, reply),
+                    Ok(went) => (went, Some((key, reply))),
                     Err(error) => {
                         machine.replies.remove(&key);
                         machine.driver.forget(&key);
@@ -2032,6 +2074,9 @@ fn request(
         }
     };
     live.written(went)?;
+    let Some((key, reply)) = waiting else {
+        return Ok(Value::Null);
+    };
     let by = by.min(std::time::Instant::now() + CONTROL_TIMEOUT);
     match reply.recv_timeout(by.saturating_duration_since(std::time::Instant::now())) {
         Ok(result) => result,
@@ -2420,7 +2465,7 @@ mod tests {
         let (_, out) = tracked(vec![
             Event::Compacting,
             Event::Compacted {
-                trigger: Some("auto".into()),
+                reason: Some(CompactReason::Full),
                 tokens_before: None,
                 tokens_after: None,
             },
@@ -2660,6 +2705,11 @@ mod tests {
                         key: key.clone(),
                     })
                 }
+                Control::Compact => {
+                    return Ok(Sending::Line {
+                        line: "compact".into(),
+                    })
+                }
                 Control::Interrupt => return Err("not here".into()),
             };
             self.model = model.clone();
@@ -2855,6 +2905,14 @@ mod tests {
             took < CONFIGURE_TIMEOUT + Duration::from_millis(500),
             "{took:?}"
         );
+    }
+
+    #[test]
+    fn a_request_the_agent_answers_with_events_alone_is_done_once_written() {
+        let bench = Bench::new(fake());
+        let done = control(&bench.sessions, "int-bench", &Control::Compact).unwrap();
+        assert_eq!(done, Value::Null);
+        assert_eq!(bench.next().as_deref(), Some("compact"));
     }
 
     #[test]
@@ -3089,7 +3147,8 @@ mod tests {
         assert_eq!(value["type"], "turnEnded");
         assert_eq!(value["outcome"], "interrupted");
         assert_eq!(value["totalCostUsd"], 0.5);
-        assert_eq!(value["usage"]["cacheReadTokens"], 0);
+        assert_eq!(value["usage"]["cachedTokens"], 0);
+        assert_eq!(value["usage"]["reasoningTokens"], 0);
         let compacting = serde_json::to_value(Payload {
             id: "int-1",
             event: &Event::Compacting,

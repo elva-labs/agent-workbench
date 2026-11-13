@@ -23,9 +23,10 @@ use crate::adapter::{
 use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
-    ChangeKind, Choice, CommandInfo, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image,
-    Launch, MessageState, ModeInfo, ModelInfo, Offer, Outcome, PlanStep, Prepared, Protocol,
-    Question, QuestionOption, Reading, Sending, StepStatus, TaskKind, TaskStatus, ToolKind, Usage,
+    ChangeKind, Choice, CommandInfo, CompactReason, Control, Driver, ErrorKind, Event, FileChange,
+    Hunk, Image, Launch, MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep,
+    Prepared, Protocol, Question, QuestionOption, Reading, Sending, StepStatus, TaskKind,
+    TaskStatus, ToolKind, Usage,
 };
 
 pub struct ClaudeStream;
@@ -425,6 +426,11 @@ struct Stream {
     /// named.
     skipped_tail: Vec<u8>,
     skipped_calls: Vec<String>,
+    /// What the conversation takes of the context window, as the last
+    /// request of the main conversation said, and the window's size.
+    context: (Option<u64>, Option<u64>),
+    /// The same, as last told.
+    context_told: (Option<u64>, Option<u64>),
 }
 
 /// What names the tool call a result belongs to, in a line from the agent.
@@ -460,12 +466,27 @@ fn strings(value: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The tokens the model read: the agent counts those it read from its
+/// cache and those it wrote to it apart from the rest.
+fn read_tokens(value: &Value) -> u64 {
+    [
+        "input_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ]
+    .iter()
+    .filter_map(|key| value[key].as_u64())
+    .sum()
+}
+
 fn usage(value: &Value) -> Option<Usage> {
     value.is_object().then(|| Usage {
-        input_tokens: value["input_tokens"].as_u64().unwrap_or(0),
+        input_tokens: read_tokens(value),
+        cached_tokens: value["cache_read_input_tokens"].as_u64().unwrap_or(0),
         output_tokens: value["output_tokens"].as_u64().unwrap_or(0),
-        cache_read_tokens: value["cache_read_input_tokens"].as_u64().unwrap_or(0),
-        cache_write_tokens: value["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+        reasoning_tokens: value["output_tokens_details"]["thinking_tokens"]
+            .as_u64()
+            .unwrap_or(0),
     })
 }
 
@@ -608,6 +629,8 @@ impl Stream {
             minted: 0,
             skipped_tail: Vec::new(),
             skipped_calls: Vec::new(),
+            context: (None, None),
+            context_told: (None, None),
         }
     }
 
@@ -911,6 +934,11 @@ impl Stream {
         }
         let message = &line["message"];
         let id = message["id"].as_str().unwrap_or_default().to_string();
+        if parent.is_none() && message["usage"].is_object() {
+            let usage = &message["usage"];
+            self.context.0 =
+                Some(read_tokens(usage) + usage["output_tokens"].as_u64().unwrap_or(0));
+        }
         if let Some(error) = line["error"].as_str() {
             let said = text_of(&message["content"]);
             let (kind, message) = if error == "authentication_failed" {
@@ -1035,10 +1063,18 @@ impl Stream {
             Some("compact_boundary") => {
                 let meta = &line["compact_metadata"];
                 out.events.push(Event::Compacted {
-                    trigger: text(&meta["trigger"]),
+                    reason: match meta["trigger"].as_str() {
+                        Some("manual") => Some(CompactReason::Asked),
+                        Some("auto") => Some(CompactReason::Full),
+                        _ => None,
+                    },
                     tokens_before: meta["pre_tokens"].as_u64(),
                     tokens_after: meta["post_tokens"].as_u64(),
                 });
+                if let Some(after) = meta["post_tokens"].as_u64() {
+                    self.context.0 = Some(after);
+                    self.tell_context(out);
+                }
             }
             Some("api_retry") => {
                 let error = &line["error"];
@@ -1157,6 +1193,33 @@ impl Stream {
             // The agent's own word that its work is over, its subagents'
             // reports included: no task it has not finished, other than
             // what it still lists in the background, is running.
+            Some("notification") => {
+                let level = match line["priority"].as_str() {
+                    Some("high" | "immediate") => NoticeLevel::Warning,
+                    _ => NoticeLevel::Info,
+                };
+                self.notice(level, text(&line["text"]), out);
+            }
+            Some("informational") => {
+                let level = match line["level"].as_str() {
+                    Some("warning") => NoticeLevel::Warning,
+                    Some("notice" | "suggestion") => NoticeLevel::Info,
+                    // Shown only in the terminal's transcript view.
+                    _ => return,
+                };
+                self.notice(level, text(&line["content"]), out);
+            }
+            Some("model_fallback") => {
+                let said = text(&line["content"]).filter(|said| !said.is_empty());
+                let message = said.or_else(|| {
+                    Some(format!(
+                        "{} is unavailable, so this turn uses {}",
+                        line["original_model"].as_str()?,
+                        line["fallback_model"].as_str()?
+                    ))
+                });
+                self.notice(NoticeLevel::Warning, message, out);
+            }
             Some("session_state_changed") if line["state"] == "idle" => {
                 self.lose(out, |task| !task.background || task.unlisted);
             }
@@ -1201,6 +1264,19 @@ impl Stream {
         self.interrupting = false;
         self.turn = false;
         self.forget_turn();
+        if let Some(models) = line["modelUsage"].as_object() {
+            let window = |entry: &Value| entry["contextWindow"].as_u64();
+            let size = self
+                .model
+                .as_ref()
+                .and_then(|model| models.get(model))
+                .and_then(window)
+                .or_else(|| models.values().filter_map(window).max());
+            if size.is_some() {
+                self.context.1 = size;
+            }
+        }
+        self.tell_context(out);
         let error = (outcome == Outcome::Failed).then(|| {
             let said = line["result"].as_str().unwrap_or_default();
             let errors = strings(&line["errors"]);
@@ -1222,6 +1298,24 @@ impl Stream {
             duration_ms: line["duration_ms"].as_u64(),
             usage: usage(&line["usage"]),
         });
+    }
+
+    fn notice(&mut self, level: NoticeLevel, message: Option<String>, out: &mut Reading) {
+        if let Some(message) = message.filter(|message| !message.trim().is_empty()) {
+            out.events.push(Event::Notice { level, message });
+        }
+    }
+
+    /// Tells what the conversation takes of the context window, when that
+    /// changed.
+    fn tell_context(&mut self, out: &mut Reading) {
+        if self.context != self.context_told && self.context != (None, None) {
+            self.context_told = self.context;
+            out.events.push(Event::Context {
+                used: self.context.0,
+                size: self.context.1,
+            });
+        }
     }
 
     /// Finishes as lost the tasks `which` picks: their end was never told.
@@ -1566,6 +1660,19 @@ impl Driver for Stream {
 
     fn control(&mut self, control: &Control) -> Result<Sending, String> {
         let (line, key) = match control {
+            // The agent compacts when told so in a message of its own, which
+            // starts a turn that names no message of the window's.
+            Control::Compact => {
+                let line = json!({
+                    "type": "user",
+                    "message": { "role": "user", "content": "/compact" },
+                    "parent_tool_use_id": null,
+                    "uuid": uuid::Uuid::new_v4().to_string(),
+                });
+                return Ok(Sending::Line {
+                    line: line.to_string(),
+                });
+            }
             Control::Interrupt => {
                 // An interrupt with no turn running ends nothing, so the
                 // next failure is not taken for one.
@@ -1942,6 +2049,137 @@ mod tests {
     }
 
     #[test]
+    fn compacting_is_asked_for_in_a_message_that_names_no_turn_of_the_window_s() {
+        let mut stream = stream();
+        let Sending::Line { line } = stream.control(&Control::Compact).unwrap() else {
+            panic!("the agent answers with events alone");
+        };
+        let line: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(line["message"]["content"], "/compact");
+        let uuid = line["uuid"].as_str().unwrap();
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(uuid, "started"),
+                json!({"type":"system","subtype":"status","status":"compacting"}),
+            ],
+        );
+        assert_eq!(out[0], Event::TurnStarted { messages: vec![] });
+        assert_eq!(out[1], Event::Compacting);
+    }
+
+    #[test]
+    fn the_context_window_is_told_when_its_use_or_size_changes() {
+        let mut stream = stream();
+        let assistant = |input: u64| {
+            json!({"type":"assistant","message":{"id":"m1","content":[],"usage":{
+                "input_tokens":input,"cache_read_input_tokens":100,"cache_creation_input_tokens":10,"output_tokens":5}},
+                "parent_tool_use_id":null})
+        };
+        let ended = json!({"type":"result","subtype":"success","is_error":false,
+            "usage":{"input_tokens":3,"cache_read_input_tokens":100,"cache_creation_input_tokens":10,"output_tokens":7,"output_tokens_details":{"thinking_tokens":2}},
+            "modelUsage":{"haiku":{"contextWindow":200000},"other":{"contextWindow":1000000}}});
+        let out = events(&mut stream, &[assistant(1), ended.clone()]);
+        let told = |out: &[Event]| -> Vec<Event> {
+            out.iter()
+                .filter(|e| matches!(e, Event::Context { .. }))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            told(&out),
+            [Event::Context {
+                used: Some(116),
+                size: Some(200_000)
+            }],
+            "the window of the model the session runs on"
+        );
+        let Some(Event::TurnEnded {
+            usage: Some(usage), ..
+        }) = out.last()
+        else {
+            panic!("{out:?}");
+        };
+        assert_eq!(
+            usage,
+            &Usage {
+                input_tokens: 113,
+                cached_tokens: 100,
+                output_tokens: 7,
+                reasoning_tokens: 2
+            }
+        );
+        // The same again is no news; a subagent's use is not the
+        // conversation's.
+        let out = events(
+            &mut stream,
+            &[
+                assistant(1),
+                json!({"type":"assistant","message":{"id":"m2","content":[],"usage":{"input_tokens":9000}},"parent_tool_use_id":"t1"}),
+                ended,
+            ],
+        );
+        assert!(told(&out).is_empty(), "{out:?}");
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":116,"post_tokens":20}}),
+            ],
+        );
+        assert_eq!(
+            out,
+            [
+                Event::Compacted {
+                    reason: Some(CompactReason::Full),
+                    tokens_before: Some(116),
+                    tokens_after: Some(20)
+                },
+                Event::Context {
+                    used: Some(20),
+                    size: Some(200_000)
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn notices_are_told_apart_from_errors_and_turns() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"notification","key":"k","text":"Update available","priority":"low"}),
+                json!({"type":"system","subtype":"notification","key":"k","text":"Usage limit soon","priority":"high"}),
+                json!({"type":"system","subtype":"informational","content":"Only in the transcript","level":"info"}),
+                json!({"type":"system","subtype":"informational","content":"Instructions are long","level":"warning"}),
+                json!({"type":"system","subtype":"model_fallback","trigger":"overloaded","original_model":"opus","fallback_model":"sonnet","content":""}),
+            ],
+        );
+        assert_eq!(
+            out,
+            [
+                Event::Notice {
+                    level: NoticeLevel::Info,
+                    message: "Update available".into()
+                },
+                Event::Notice {
+                    level: NoticeLevel::Warning,
+                    message: "Usage limit soon".into()
+                },
+                Event::Notice {
+                    level: NoticeLevel::Warning,
+                    message: "Instructions are long".into()
+                },
+                Event::Notice {
+                    level: NoticeLevel::Warning,
+                    message: "opus is unavailable, so this turn uses sonnet".into()
+                },
+            ]
+        );
+        assert!(!stream.turn, "a notice starts no turn");
+    }
+
+    #[test]
     fn compacting_by_hand_is_a_turn_from_start_to_finish() {
         // As the real agent answers `/compact`: no init before compacting.
         let mut stream = stream();
@@ -1965,7 +2203,7 @@ mod tests {
         );
         assert_eq!(out[1], Event::Compacting);
         assert!(out.contains(&Event::Compacted {
-            trigger: Some("manual".into()),
+            reason: Some(CompactReason::Asked),
             tokens_before: Some(100),
             tokens_after: Some(10)
         }));

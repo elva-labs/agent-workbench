@@ -273,6 +273,23 @@ async fn integrated_interrupt(
 }
 
 #[tauri::command]
+async fn integrated_compact(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_compact",
+        |rest| json!({ "id": rest }),
+        |core, id| core.integrated_compact(id),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn integrated_answer(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
@@ -1460,6 +1477,7 @@ pub fn run() {
             integrated_trust,
             integrated_send,
             integrated_interrupt,
+            integrated_compact,
             integrated_answer,
             integrated_reply,
             integrated_configure,

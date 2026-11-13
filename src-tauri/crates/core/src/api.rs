@@ -540,6 +540,13 @@ impl Core {
             .map(|_| ())
     }
 
+    /// Compacts the conversation, in the agent's own way. Comes back once
+    /// asked; the compaction's events follow.
+    pub fn integrated_compact(&self, id: &str) -> Result<(), String> {
+        crate::integrated::control(&self.integrated, id, &crate::integrated::Control::Compact)
+            .map(|_| ())
+    }
+
     /// Answers a permission request the session asked.
     pub fn integrated_answer(
         &self,
