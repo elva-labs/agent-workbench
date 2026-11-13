@@ -127,57 +127,82 @@ unless the orchestrator has a reason to pick another. A step that does work
 says how many sessions may run at once, from one to eight. A step that
 reviews says when the work passes: the reviewer approves, the orchestrator
 agrees, or both, so at least one is on. Otherwise the work goes back to a
-named earlier step, at most so many times, from one to ten, and then the
-user is asked.
+named earlier work step, never to another review, at most so many times,
+from one to ten, and then the user is asked.
 
 A workflow has from one to twelve steps and the first does work. A name is
 a few words, forty characters at most, and is unique among the steps of a
 workflow and among the workflows, of which there are sixteen at most, the
-upper and lower case of a letter counting as the same.
+upper and lower case of a letter counting as the same. A model is named in
+one word of forty characters at most, and a step lists a model once and
+sixteen at most. The window holds a change to the same rules the settings
+file is kept by, so a change it shows is one that is kept.
 
 A fresh install has one workflow, Build and review. Its orchestrator is on
 Claude's most capable model alias, its Work step is on Sonnet, and its
 Review step is on Opus, passes when the reviewer approves and the
 orchestrator agrees, and goes back to Work up to three times before it asks.
-A settings file from before workflows existed gets the same one.
+A settings file from before workflows existed gets the same one. A workflow
+in the file that does not keep the rules is left out and the others are
+kept, and a choice naming a workflow that is not there is dropped.
 
 One workflow is marked as the one new sessions start with, and none is a
 valid choice. A project can choose another, or none, whatever the default
 is. Deleting a workflow that was the default leaves new sessions with none,
 and a project that chose it follows the default again.
 
-The tab lists the workflows across the top, with the default tagged, and
-New workflow after them. The picked one has its name above the diagram,
-with Duplicate and Delete. The diagram draws the orchestrator as the frame,
-since it is the session the user talks to, with its model in a menu on it.
-Inside sit the steps in order with an arrow between each, each showing its
-role and its models. A plus on every arrow adds a step there, as work or as
-a review. A review that goes back draws a line under the row from itself to
-the step it repeats, with the step's name and the limit written beneath.
+The tab widens the settings to give the diagram room. It lists the
+workflows across the top, with the default tagged, and New workflow after
+them. The picked one has its name above the diagram, with Duplicate. The
+diagram draws the orchestrator as the frame, since it is the session the
+user talks to, with its model in a menu on its head. Inside sit the steps in
+order with an arrow between each, each showing its role and its models. A
+plus on every arrow opens a menu to add a work step or a review step there.
+A review that goes back draws a line under the row from itself to the step
+it repeats, and under all the lines a label says where the work goes back
+to, until when (the reviewer approves, the orchestrator agrees, or both
+approve) and how many rounds at most. The steps share the width there is;
+where even the narrowest steps do not fit, the row scrolls sideways under
+the orchestrator's head, which stays in place, with the hidden edge faded,
+and the step picked is scrolled into view.
 
-Picking a step shows its settings beside the diagram, or under it when the
-dialog is narrow: its name, whether it does work or reviews it, the models it
-may use with the first chosen marked, and the settings of its kind. A model
-other than the first can be made the one used first. A step can be moved
-earlier or later and removed. Renaming a step carries the reviews that go
-back to it, and removing or moving one points a review that went back to it
-at the step before the review. A change the rules refuse is said under the
-settings and not made. Every control can be reached with the keyboard.
+Picking a step shows its settings beside the diagram when both fit, and
+under it when not, where they take two columns. They read from top to
+bottom: its name, whether it does work or reviews it, the models it may use
+with the first chosen marked, and the settings of its kind, a review's
+ending in one sentence such as go back to Work at most 3 times, then ask
+me. A model other than the first can be made the one used first. Any model
+stays ticked until a model is chosen. A step can be moved earlier or later.
+Removing it, at the foot, asks first and says which reviews would go back
+elsewhere, and is refused with the reason when the workflow could not do
+without it. Renaming a step carries the reviews that go back to it, and
+removing or moving one points a review that went back to it at the nearest
+work step before the review. A change the rules refuse is said beside the
+control it came from and not made, until another step is picked. Every
+control can be reached with the keyboard, and the two kinds are a radio
+group the arrow keys move through.
 
 Under the diagram, What the orchestrator is told unfolds into the
 instructions the workflow comes to: a short numbered list. The first tells
 the orchestrator to direct the work rather than do it, and to delegate by
 starting sessions with the workbench's `start` tool, not with its own
-subagents. Then each step has a sentence naming the step, the models it may
-use with the first as the one to use, how many sessions may run at once, or
-for a review when the work passes and where it goes back, how many times, and
-that the user is asked after that. The last sentence says to report to the
-user once every piece has come out of the last step.
+subagents, giving the agent and the model each step names and no model for
+Codex's own default. Then each step has a sentence naming the step, what a
+piece has come out of or passed before it, the models it may use with the
+first as the one to use, how many sessions may run at once, or for a review
+when the work passes, where it goes back, which steps the piece is taken
+through again before it is reviewed again, how many times, and that the
+user is asked after that. The last sentence says to report to the user once
+every piece has come out of or passed the last step.
 
-A switch under the diagram marks the workflow as the default for new
-sessions, and turning it off leaves them with none. Under it, Project
-choices lists each open project with a menu: as the default, no workflow, or
-one of the workflows. The choices are kept with the settings, by project path.
+At the foot, a switch marks the workflow for new sessions, with a line
+saying which workflow new sessions start with. Turning it off leaves them
+with none. Delete workflow stands apart at the other end, drawn as
+destructive, and asks first, saying what follows: new sessions starting with
+none, or projects following the default again. Under it, Project choices
+lists each open project with a menu: as for new sessions, no workflow, or
+one of the workflows. The choices are kept with the settings, by project
+path.
 
 ## Accounts
 
@@ -276,8 +301,14 @@ workflows with the other settings, as they are stored, with what each
 field takes. A workflow it writes is checked whole against the rules under
 [workflows](#workflows) and read strictly, so a field the shape does not have
 is refused. The user is shown the workflow as one line each from and to: the
-orchestrator's model and then each step with its models and its limits.
-Undoing puts the workflows back as they were.
+orchestrator's model and then each step with its models, when a review
+passes the work and its limits. Deleting one also shows each project that
+chose it and would follow the default again. The change is made to the
+workflows as they are when the user allows it, so edits made in the
+settings meanwhile stay, and if it cannot be kept the agent is told so and
+nothing changes. Undoing puts back what the change touched: the workflow
+written as it was, or away if it was new, one deleted where it stood with
+the projects that chose it, and the default.
 
 An agent can also save a theme of the user's own, for a look the palettes
 do not give, and switch to it in the same step. The theme is checked the

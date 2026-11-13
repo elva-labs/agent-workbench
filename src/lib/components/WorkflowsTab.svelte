@@ -1,10 +1,13 @@
 <script lang="ts">
   /**
    * The Workflows tab of the settings: the workflows listed across the top,
-   * one marked as the default for new sessions, the picked one drawn as a
-   * diagram, what the orchestrator is told under it, and the switch that
-   * makes it the default. A change applies at once, as the other settings do.
+   * one marked as the default for new sessions, the picked one's name, its
+   * diagram with the picked step's settings beside it when both fit and
+   * under it when not, what the orchestrator is told, and at the foot the
+   * switch that makes it the default and Delete, asked first. A change
+   * applies at once, as the other settings do.
    */
+  import { tick } from "svelte";
   import type { WorkflowStep } from "$lib/core";
   import { instructionLines } from "$lib/workflowInstructions";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -21,8 +24,13 @@
     workflowNamed,
     workflows,
   } from "$lib/workflows.svelte";
-  import WorkflowDiagram from "$lib/components/WorkflowDiagram.svelte";
+  import WorkflowDiagram, { leastWidth } from "$lib/components/WorkflowDiagram.svelte";
   import StepSettings from "$lib/components/StepSettings.svelte";
+  import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
+
+  /** The width of the step's settings beside the diagram, and the gap. */
+  const STEP_WIDTH = 272;
+  const GAP = 16;
 
   /** The workflow being edited, by name; the default, else the first, when
       that one is gone. */
@@ -35,6 +43,15 @@
 
   let problem = $state<string | null>(null);
   let overridesOpen = $state(false);
+  /** The workflow Delete is asking about, by name. */
+  let deleting = $state<string | null>(null);
+
+  /** The step's settings stand beside the diagram when the diagram has the
+      room it needs to be drawn whole next to them, and under it otherwise. */
+  let editWidth = $state(0);
+  const beside = $derived(
+    current !== undefined && editWidth >= leastWidth(current.steps.length) + GAP + STEP_WIDTH,
+  );
 
   const told = $derived(current === undefined ? [] : instructionLines(current));
   const isDefault = $derived(current !== undefined && workflows.default === current.name);
@@ -46,6 +63,7 @@
     picked = name;
     step = 0;
     problem = null;
+    deleting = null;
   }
 
   function create() {
@@ -64,14 +82,37 @@
     else choose(name);
   }
 
-  function remove() {
+  /** What deleting the picked workflow does besides. */
+  const deleteDetail = $derived.by(() => {
+    if (current === undefined) return null;
+    const name = current.name;
+    const lines: string[] = [];
+    if (workflows.default === name) lines.push("New sessions will start with no workflow.");
+    const choosers = Object.entries(workflows.overrides).filter(([, choice]) => choice === name).length;
+    if (choosers === 1) lines.push("The project that chose it follows the default again.");
+    if (choosers > 1) lines.push(`The ${choosers} projects that chose it follow the default again.`);
+    return lines.length === 0 ? null : lines.join(" ");
+  });
+
+  async function remove() {
     if (current === undefined) return;
     const index = workflows.list.findIndex((workflow) => workflow.name === current.name);
     deleteWorkflow(current.name);
     const next = workflows.list[Math.min(index, workflows.list.length - 1)];
+    deleting = null;
     picked = next?.name ?? null;
     step = 0;
     problem = null;
+    await tick();
+    document
+      .querySelector<HTMLElement>('[data-testid="workflow-chip"][aria-pressed="true"], [data-testid="workflow-new"]')
+      ?.focus();
+  }
+
+  async function cancelDelete() {
+    deleting = null;
+    await tick();
+    document.querySelector<HTMLElement>('[data-testid="workflow-delete"]')?.focus();
   }
 
   function rename(event: Event) {
@@ -80,8 +121,11 @@
     const wanted = field.value.trim();
     const old = current.name;
     problem = renameWorkflow(old, wanted);
-    if (problem === null) picked = wanted;
-    else field.value = old;
+    if (problem === null) {
+      picked = wanted;
+      if (deleting === old) deleting = wanted;
+    }
+    field.value = problem === null ? wanted : old;
   }
 
   function add(at: number, kind: WorkflowStep["kind"]) {
@@ -100,10 +144,13 @@
     setOverride(project, value === "@default" ? undefined : value === "@none" ? null : value);
   }
 
+  /** Where new sessions stand, said beside the switch. */
   const defaultLine = $derived(
-    workflows.default === null
-      ? "New sessions start with no workflow."
-      : `New sessions start with ${workflows.default}.`,
+    isDefault
+      ? "New sessions start with this workflow. A project can choose another under Project choices."
+      : workflows.default === null
+        ? "New sessions start with no workflow."
+        : `New sessions start with ${workflows.default}.`,
   );
 </script>
 
@@ -124,11 +171,13 @@
         data-testid="workflow-chip"
         data-workflow={workflow.name}
       >
-        {workflow.name}
+        <span>{workflow.name}</span>
         {#if workflows.default === workflow.name}<span class="tag" data-testid="workflow-default-tag">default</span>{/if}
       </button>
     {/each}
-    <button type="button" class="chip new" onclick={create} data-testid="workflow-new">+ New workflow</button>
+    <button type="button" class="chip new" onclick={create} data-testid="workflow-new">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>New workflow
+    </button>
   </div>
 
   {#if current === undefined}
@@ -136,22 +185,18 @@
       There are no workflows. New sessions start on one model with nothing to follow.
     </p>
   {:else}
-    {#key current.name}
-      <div class="head">
-        <label class="field">
-          <span class="field-what">Name</span>
-          <input type="text" value={current.name} onchange={rename} data-testid="workflow-name" />
-        </label>
-        <button type="button" class="tool" onclick={duplicate} data-testid="workflow-duplicate">Duplicate</button>
-        <button type="button" class="tool danger" onclick={remove} data-testid="workflow-delete">Delete</button>
-      </div>
-    {/key}
+    <div class="head">
+      <label class="field">
+        <span class="lab">Workflow name</span>
+        <input type="text" value={current.name} onchange={rename} data-testid="workflow-name" />
+      </label>
+      <button type="button" class="tool" onclick={duplicate} data-testid="workflow-duplicate">Duplicate</button>
+    </div>
     {#if problem !== null}
       <p class="error" role="alert" data-testid="workflow-problem">{problem}</p>
     {/if}
 
-    <div class="edit-box">
-      <div class="edit">
+    <div class="edit" class:beside bind:clientWidth={editWidth} data-testid="workflow-edit">
       <div class="drawn">
         <WorkflowDiagram
           workflow={current}
@@ -160,16 +205,21 @@
           onAdd={add}
           onOrchestrator={(model) => (problem = setOrchestrator(current.name, model))}
         />
+      </div>
 
-        <details class="told" data-testid="workflow-told">
-          <summary data-testid="workflow-told-toggle">What the orchestrator is told</summary>
-          <ol data-testid="workflow-told-list">
-            {#each told as line, index (index)}<li>{line}</li>{/each}
-          </ol>
-        </details>
+      <div class="step">
+        <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
       </div>
-      <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
-      </div>
+
+      <details class="told" data-testid="workflow-told">
+        <summary data-testid="workflow-told-toggle">
+          <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+          What the orchestrator is told
+        </summary>
+        <ol data-testid="workflow-told-list">
+          {#each told as line, index (index)}<li>{line}</li>{/each}
+        </ol>
+      </details>
     </div>
 
     <div class="foot">
@@ -177,15 +227,34 @@
         type="button"
         role="switch"
         aria-checked={isDefault}
-        aria-label="New sessions start with this workflow"
+        aria-labelledby="workflow-default-label"
         class="switch"
         class:on={isDefault}
         onclick={switchDefault}
         data-testid="workflow-default"><span class="knob"></span></button
       >
-      <span>New sessions start with this workflow</span>
+      <span id="workflow-default-label" class="switch-label">Use for new sessions</span>
       <small data-testid="workflow-default-line">{defaultLine}</small>
+      <button
+        type="button"
+        class="delete"
+        aria-expanded={deleting === current.name}
+        onclick={() => (deleting = current.name)}
+        data-testid="workflow-delete">Delete workflow</button
+      >
     </div>
+    {#if deleting === current.name}
+      <div class="confirm">
+        <ConfirmStrip
+          question={`Delete the workflow "${current.name}"?`}
+          detail={deleteDetail}
+          action="Delete"
+          onConfirm={remove}
+          onCancel={cancelDelete}
+          testid="workflow-delete-confirm"
+        />
+      </div>
+    {/if}
   {/if}
 
   {#if workspace.open.length > 0 && workflows.list.length > 0}
@@ -211,7 +280,7 @@
               onchange={(event) => choice(project.path, event)}
               data-testid="workflow-project-choice"
             >
-              <option value="@default">As the default</option>
+              <option value="@default">As for new sessions</option>
               <option value="@none">No workflow</option>
               {#each workflows.list as workflow (workflow.name)}
                 <option value={workflow.name}>{workflow.name}</option>
@@ -289,57 +358,80 @@
   }
 
   .chip.new {
+    gap: 5px;
     color: var(--ink-3);
     box-shadow: inset 0 0 0 1px var(--rule);
   }
 
+  .chip svg,
+  .chev {
+    width: 11px;
+    height: 11px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
   .chip:focus-visible,
   .tool:focus-visible,
+  .delete:focus-visible,
   .fold:focus-visible,
   .switch:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 
+  /* The default's tag is a badge of its own, so it never reads as part of
+     the name. */
   .tag {
+    padding: 0 5px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
     font-size: 10px;
+    line-height: 15px;
+    letter-spacing: 0;
     color: var(--accent);
   }
 
   .head {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 12px;
   }
 
   .field {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: 1;
-    min-width: 220px;
+    flex-direction: column;
+    flex: 0 1 300px;
+    min-width: 0;
   }
 
-  .field-what {
-    flex: none;
-    font-family: var(--chrome);
+  .lab {
+    display: block;
+    margin-bottom: 5px;
     font-size: 12px;
-    color: var(--ink-2);
+    color: var(--ink-3);
   }
 
   .field input {
-    flex: 0 1 260px;
-    min-width: 0;
     box-sizing: border-box;
-    padding: 5px 8px;
+    height: 28px;
+    padding: 0 8px;
     border: 1px solid var(--field-border);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--surface-2);
     font-family: var(--chrome);
     font-size: var(--field-size);
     color: var(--ink);
+  }
+
+  .field input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .tool {
@@ -350,53 +442,71 @@
     font-weight: var(--btn-weight);
     letter-spacing: var(--label-track-tight);
     text-transform: var(--label-case);
-    color: var(--ink-3);
+    color: var(--ink-2);
     cursor: pointer;
-    padding: 2px 6px;
+    height: 28px;
+    padding: 0 4px;
   }
 
   .tool:hover {
     color: var(--accent);
   }
 
-  .tool.danger:hover {
-    color: var(--del);
-  }
-
-  /* The step's settings stand beside the diagram when there is room for
-     both, and under it when there is not. */
-  .edit-box {
-    container-type: inline-size;
-  }
-
+  /* The diagram, then the step's settings, then what the orchestrator is
+     told; the settings move up beside the diagram when both fit. */
   .edit {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
+    grid-template-areas: "drawn" "step" "told";
+    gap: 14px 16px;
     align-items: start;
   }
 
-  @container (min-width: 620px) {
-    .edit {
-      grid-template-columns: minmax(0, 1fr) 248px;
-    }
+  .edit.beside {
+    grid-template-columns: minmax(0, 1fr) 272px;
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "drawn step" "told step";
   }
 
   .drawn {
+    grid-area: drawn;
+    min-width: 0;
+  }
+
+  .step {
+    grid-area: step;
     min-width: 0;
   }
 
   .told {
-    margin-top: 12px;
+    grid-area: told;
+    min-width: 0;
   }
 
   .told summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: max-content;
+    list-style: none;
     cursor: pointer;
     font-family: var(--chrome);
     font-size: var(--fold-size);
     letter-spacing: var(--label-track-fine);
     text-transform: var(--label-case);
     color: var(--ink-2);
+  }
+
+  .told summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .chev {
+    transition: transform 0.15s;
+  }
+
+  .told[open] .chev {
+    transform: rotate(90deg);
   }
 
   .told summary:hover {
@@ -434,9 +544,38 @@
     color: var(--ink-2);
   }
 
+  .switch-label {
+    color: var(--ink);
+  }
+
   .foot small {
+    flex: 1 1 220px;
     font-size: 12px;
     color: var(--ink-3);
+  }
+
+  /* Delete stands alone at the far end of the foot, away from Duplicate,
+     and is asked first. */
+  .delete {
+    margin-left: auto;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    color: var(--del);
+    cursor: pointer;
+  }
+
+  .delete:hover {
+    text-decoration: underline;
+  }
+
+  .confirm {
+    margin-top: 10px;
   }
 
   .switch {

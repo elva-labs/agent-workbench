@@ -360,6 +360,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="dialog"
+    class:wide={tab === "workflows"}
     role="dialog"
     aria-modal="true"
     aria-labelledby="settings-title"
@@ -1039,6 +1040,11 @@
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
     overflow: hidden;
     outline: none;
+  }
+
+  /* The workflows draw a diagram beside the step's settings. */
+  .dialog.wide {
+    width: min(1040px, 92vw);
   }
 
   header {
