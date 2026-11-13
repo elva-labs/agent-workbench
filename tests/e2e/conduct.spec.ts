@@ -11,6 +11,7 @@ import { PROJECT, installFakeCore } from "./fake";
  */
 
 const AGENT = "section[data-pane='agent']";
+const MOD = "ControlOrMeta";
 
 interface Answer {
   id: string;
@@ -89,6 +90,20 @@ test.describe("the conductor", () => {
     // One session of the user's own, which is the caller below.
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+  });
+
+  test("keeps both palettes shut while the question is up", async ({ page }) => {
+    await push(page, {
+      id: "c-1",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    await expect(page.getByTestId("conduct-ask")).toBeVisible();
+    await page.keyboard.press(`${MOD}+P`);
+    await page.keyboard.press(`${MOD}+Shift+P`);
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect(page.getByTestId("conduct-ask")).toBeVisible();
   });
 
   test("asks before starting a session, then starts it and answers with its id", async ({

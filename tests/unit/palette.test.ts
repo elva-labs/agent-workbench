@@ -185,7 +185,7 @@ describe("go to", () => {
     const end = (path: string) =>
       goToItems("").find((item) => item.kind === "project" && item.path === path);
     expect(end(A)).toMatchObject({ end: "1 live", group: "Projects" });
-    expect(end(B)).toMatchObject({ end: "last used 2d ago" });
+    expect(end(B)).toMatchObject({ end: "2d" });
     expect(end(C)).toMatchObject({ end: "" });
   });
 
@@ -234,6 +234,29 @@ describe("what picking does in go to", () => {
     if (outcome.type === "close") outcome.then();
     expect(sessions.active).toBe(first.key);
     expect(workspace.active).toBe(A);
+  });
+
+  it("gives the keyboard to the sessions pane for a project with no session", async () => {
+    const { layout } = await import("$lib/layout.svelte");
+    create(A);
+    workspace.active = A;
+    const item = goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === B)!;
+    const outcome = pickItem(item);
+    if (outcome.type === "close") outcome.then();
+    expect(workspace.active).toBe(B);
+    expect(sessions.active).toBeNull();
+    expect(layout.focus).toBe("sessions");
+  });
+
+  it("keeps the session on screen when its project is picked", () => {
+    const first = create(A);
+    create(A);
+    select(first.key);
+    workspace.active = A;
+    const item = goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === A)!;
+    const outcome = pickItem(item);
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.active).toBe(first.key);
   });
 
   it("brings a project forward", () => {
@@ -502,6 +525,26 @@ describe("a new session", () => {
     expect(outcome.type).toBe("close");
     if (outcome.type === "close") outcome.then();
     expect(sessions.all.map((session) => session.project)).toEqual([C]);
+  });
+
+  it("does not ask for the project when only one is open", () => {
+    workspace.open.splice(0, workspace.open.length, repo(B));
+    agent.installed = ["claude-code", "codex"];
+    openCommands();
+    expect(choose("New session")).toEqual({ type: "stay" });
+    expect(palette.steps).toEqual([{ kind: "project", path: B }]);
+    expect(stepsLeft(palette.steps)).toEqual(["agent"]);
+    stepBack();
+    expect(palette).toMatchObject({ mode: "commands", steps: [] });
+  });
+
+  it("starts nothing in a project that has closed meanwhile", () => {
+    beginNew(A);
+    const outcome = pickItem(stepItems("")[0]);
+    expect(outcome.type).toBe("close");
+    workspace.open.splice(0, workspace.open.length, repo(B), repo(C));
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all).toEqual([]);
   });
 
   it("leaves the steps behind when a list is opened again", () => {

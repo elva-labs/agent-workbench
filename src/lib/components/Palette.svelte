@@ -76,8 +76,22 @@
     }
   }
 
-  /** The id the list's option at a position carries. */
-  const optionId = (index: number) => `palette-opt-${index}`;
+  /** The id an item's option carries, which follows the item and not its
+      place in the list. */
+  const optionId = (item: PaletteItem) =>
+    `palette-opt-${item.id.replace(/[^A-Za-z0-9-]/g, (c) => `_${c.charCodeAt(0).toString(16)}`)}`;
+
+  /** The list as runs of rows under one heading, each with the place its
+      first row holds in the list. */
+  const sections = $derived.by(() => {
+    const runs: { group: string | null; start: number; rows: PaletteItem[] }[] = [];
+    items.forEach((item, index) => {
+      const last = runs[runs.length - 1];
+      if (last !== undefined && last.group === item.group) last.rows.push(item);
+      else runs.push({ group: item.group, start: index, rows: [item] });
+    });
+    return runs;
+  });
 
   // The cursor stays in view.
   $effect(() => {
@@ -124,8 +138,10 @@
         void run(items[cursor], isMac() ? e.metaKey : e.ctrlKey);
         break;
       case "Backspace":
-        // An empty field steps back through a new session's questions.
+        // An empty field steps back through a new session's questions, one
+        // step to a press, however long the key is held.
         if (palette.mode !== "new" || palette.query !== "") return;
+        if (e.repeat) break;
         stepBack();
         break;
       default:
@@ -153,6 +169,7 @@
   const heading = $derived(
     palette.mode === "goto" ? "Sessions and projects" : palette.mode === "commands" ? "Commands" : "New session",
   );
+  const nothingOpen = $derived(palette.mode === "goto" && palette.query.trim() === "");
   const modifier = isMac() ? "⌘" : "Ctrl+";
 </script>
 
@@ -178,10 +195,17 @@
     <div class="entry">
       {#if palette.mode === "commands"}
         <span class="prefix" data-testid="palette-prefix">&gt;</span>
-      {:else if palette.mode === "new"}
-        <span class="chip" data-testid="palette-chip">New session</span>
+      {:else if palette.mode === "goto"}
+        <svg class="search" viewBox="0 0 16 16" aria-hidden="true" data-testid="palette-search">
+          <circle cx="7" cy="7" r="4.5" />
+          <path d="M10.5 10.5 14 14" />
+        </svg>
+      {:else}
+        <span class="chip" id="palette-chip-new" data-testid="palette-chip">New session</span>
         {#each palette.steps as step (step.kind)}
-          <span class="chip" data-testid="palette-chip" data-step={step.kind}>{chipOf(step)}</span>
+          <span class="chip" id="palette-chip-{step.kind}" data-testid="palette-chip" data-step={step.kind}
+            >{chipOf(step)}</span
+          >
         {/each}
       {/if}
       <input
@@ -194,21 +218,31 @@
         role="combobox"
         aria-expanded="true"
         aria-controls="palette-list"
-        aria-activedescendant={items[cursor] === undefined ? undefined : optionId(cursor)}
+        aria-activedescendant={items[cursor] === undefined ? undefined : optionId(items[cursor])}
+        aria-describedby={palette.mode === "new"
+          ? ["new", ...palette.steps.map((step) => step.kind)].map((id) => `palette-chip-${id}`).join(" ")
+          : undefined}
         aria-label={heading}
         data-testid="palette-field"
       />
     </div>
     <div class="list" id="palette-list" role="listbox" aria-label={heading} bind:this={list}>
-      {#each items as item, index (item.id)}
-        {#if item.group !== null && (index === 0 || items[index - 1].group !== item.group)}
-          <div class="group" aria-hidden="true" data-testid="palette-group">{item.group}</div>
+      {#each sections as section (section.start)}
+       <div
+         class="section"
+         role={section.group === null ? "presentation" : "group"}
+         aria-labelledby={section.group === null ? undefined : `palette-group-${section.start}`}
+       >
+        {#if section.group !== null}
+          <div class="group" id="palette-group-{section.start}" data-testid="palette-group">{section.group}</div>
         {/if}
+        {#each section.rows as item, offset (item.id)}
+        {@const index = section.start + offset}
         <button
           class="row"
           class:cursor={index === cursor}
           class:off={!pickable(item)}
-          id={optionId(index)}
+          id={optionId(item)}
           role="option"
           aria-selected={index === cursor}
           aria-disabled={!pickable(item)}
@@ -253,10 +287,12 @@
             {#if item.chord !== ""}<kbd>{item.chord}</kbd>{/if}
           {/if}
         </button>
+        {/each}
+       </div>
       {/each}
     </div>
     {#if items.length === 0}
-      <p class="note">Nothing matches.</p>
+      <p class="note">{nothingOpen ? "Nothing is open." : "Nothing matches."}</p>
     {/if}
     <div class="foot" data-testid="palette-hints">
       {#if palette.mode === "goto"}
@@ -293,7 +329,7 @@
     display: flex;
     flex-direction: column;
     background: var(--surface);
-    border: 1px solid var(--accent);
+    border: 1px solid var(--rule);
     border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
     outline: none;
@@ -313,6 +349,21 @@
   .prefix {
     flex: none;
     color: var(--accent);
+  }
+
+  .search {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    fill: none;
+    stroke: var(--ink-3);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
   }
 
   .chip {
@@ -375,7 +426,7 @@
 
   .row.cursor {
     background: var(--accent-soft);
-    color: var(--accent);
+    color: var(--ink);
   }
 
   .row.off {

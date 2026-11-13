@@ -1808,6 +1808,30 @@ test.describe("the palettes", () => {
       await page.keyboard.press("Enter");
       await expect(page.getByTestId(PALETTE)).toHaveCount(0);
       await expect(page.locator(".project.on")).toContainText("two");
+      // Project two has no session, so the keyboard waits in the sessions
+      // pane and no terminal receives what is typed.
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+      await page.keyboard.type("y");
+      await page.waitForTimeout(200);
+      expect(await writtenTo(page, "pty-1")).toBe("");
+      expect(await writtenTo(page, "pty-2")).toBe("");
+    });
+
+    test("picking go to from the commands opens that palette", async ({ page }) => {
+      await page.keyboard.press(COMMANDS);
+      await page.keyboard.type("go to a session");
+      await expect(entries(page)).toHaveCount(1);
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId(PALETTE)).toHaveAttribute("data-mode", "goto");
+      await expect(field(page)).toBeFocused();
+    });
+
+    test("drops a session that is closed while the list is up", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      await expect(kind(page, "session")).toHaveCount(2);
+      await rows(page).first().locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
+      await expect(kind(page, "session")).toHaveCount(1);
+      await expect(chosen(page)).toHaveCount(1);
     });
 
     test("keeps the cursor on its entry while sessions change under it", async ({ page }) => {
@@ -1815,7 +1839,9 @@ test.describe("the palettes", () => {
       const target = kind(page, "session").filter({ hasText: "session 1" });
       await page.keyboard.press("ArrowDown");
       await expect(target).toHaveAttribute("aria-selected", "true");
+      await expect(kind(page, "session").first()).toContainText("session 2");
       await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
+      await expect(kind(page, "session").first()).toContainText("session 1");
       await expect(target).toHaveAttribute("aria-selected", "true");
       await page.keyboard.press("Enter");
       await expect(page.locator(".session.on")).toContainText("session 1");

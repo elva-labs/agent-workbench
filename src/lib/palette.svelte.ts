@@ -3,12 +3,15 @@ import { actionFor, type Action } from "$lib/keymap";
 import { matches } from "$lib/files.svelte";
 import { openRemote } from "$lib/remote.svelte";
 import { focusPane } from "$lib/layout.svelte";
-import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
+import {
+  accountLabel,
+  accountOf,
+  hasAccounts,
+  names,
+} from "$lib/accounts.svelte";
 import { agentLabel, installed, isReady } from "$lib/agent.svelte";
 import type { AgentId } from "$lib/core";
 import {
-  ago,
-  create,
   defaultAgent,
   label,
   liveCount,
@@ -16,7 +19,14 @@ import {
   waitingOnYou,
   type Session,
 } from "$lib/sessions.svelte";
-import { activate, goTo, pick, projectLabel, workspace } from "$lib/workspace.svelte";
+import {
+  activate,
+  goTo,
+  pick,
+  projectLabel,
+  startSession,
+  workspace,
+} from "$lib/workspace.svelte";
 
 /**
  * The palette: one field over the workbench in two lists. Go to narrows the
@@ -50,7 +60,15 @@ export type Step =
 export type StepKind = Step["kind"];
 
 export type PaletteItem =
-  | { kind: "attention"; id: "attention"; label: string; detail: string; waiting: number; chord: string; group: null }
+  | {
+      kind: "attention";
+      id: "attention";
+      label: string;
+      detail: string;
+      waiting: number;
+      chord: string;
+      group: null;
+    }
   | {
       kind: "session";
       id: string;
@@ -60,10 +78,38 @@ export type PaletteItem =
       project: string;
       when: string;
     }
-  | { kind: "project"; id: string; label: string; group: string; path: string; end: string }
-  | { kind: "command"; id: string; label: string; group: null; command: CommandId; chord: string }
-  | { kind: "choice"; id: string; label: string; group: string; step: Step; end: string }
-  | { kind: "action"; id: string; label: string; group: null; action: ActionKey; chord: string };
+  | {
+      kind: "project";
+      id: string;
+      label: string;
+      group: string;
+      path: string;
+      end: string;
+    }
+  | {
+      kind: "command";
+      id: string;
+      label: string;
+      group: null;
+      command: CommandId;
+      chord: string;
+    }
+  | {
+      kind: "choice";
+      id: string;
+      label: string;
+      group: string;
+      step: Step;
+      end: string;
+    }
+  | {
+      kind: "action";
+      id: string;
+      label: string;
+      group: null;
+      action: ActionKey;
+      chord: string;
+    };
 
 /** What picking an item leads to. The palette stays up on a step; it goes
     away before a command or a session is reached, so where the keyboard
@@ -132,14 +178,18 @@ export function setQuery(text: string) {
     its past sessions, in milliseconds, or null when it has had none. */
 export function lastUsed(path: string): number | null {
   const times = [
-    ...sessions.all.filter((session) => session.project === path).map((session) => session.changedAt),
-    ...(sessions.history[path] ?? []).map((transcript) => transcript.modified * 1000),
+    ...sessions.all
+      .filter((session) => session.project === path)
+      .map((session) => session.changedAt),
+    ...(sessions.history[path] ?? []).map(
+      (transcript) => transcript.modified * 1000,
+    ),
   ];
   return times.length === 0 ? null : Math.max(...times);
 }
 
-/** A time as a row's end spells it: a count of minutes, hours, days or
-    weeks since. */
+/** A time as a row's end spells it: "now", or a count of minutes, hours,
+    days, weeks or months since. */
 export function since(time: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - time) / 1000));
   if (seconds < 60) return "now";
@@ -154,18 +204,22 @@ export function since(time: number, now = Date.now()): string {
     were opened. */
 export function projectsByUse(): string[] {
   return workspace.open
-    .map((project, order) => ({ path: project.path, order, used: lastUsed(project.path) ?? 0 }))
+    .map((project, order) => ({
+      path: project.path,
+      order,
+      used: lastUsed(project.path) ?? 0,
+    }))
     .sort((a, b) => b.used - a.used || a.order - b.order)
     .map((project) => project.path);
 }
 
-/** How a project stands at a row's end: its live sessions, else when it
-    was last used. */
+/** How a project stands at a row's end: its live sessions, else how long
+    since it was last used. */
 function standing(path: string): string {
   const live = liveCount(path);
   if (live > 0) return `${live} live`;
   const used = lastUsed(path);
-  return used === null ? "" : `last used ${ago(used / 1000)}`;
+  return used === null ? "" : since(used);
 }
 
 /** The sessions and the projects a query leaves, in that order. */
@@ -173,29 +227,29 @@ export function goToItems(query: string): PaletteItem[] {
   const now = Date.now();
   const rows = [...sessions.all]
     .sort((a, b) => b.changedAt - a.changedAt)
-    .map(
-      (session): PaletteItem => ({
-        kind: "session",
-        id: `session:${session.key}`,
-        label: label(session),
-        group: SESSIONS,
-        session,
-        project: projectLabel(session.project),
-        when: since(session.changedAt, now),
-      }),
-    )
-    .filter((item) => item.kind === "session" && matches(`${item.label} ${item.project}`, query));
+    .map((session): PaletteItem => ({
+      kind: "session",
+      id: `session:${session.key}`,
+      label: label(session),
+      group: SESSIONS,
+      session,
+      project: projectLabel(session.project),
+      when: since(session.changedAt, now),
+    }))
+    .filter(
+      (item) =>
+        item.kind === "session" &&
+        matches(`${item.label} ${item.project}`, query),
+    );
   const projects = projectsByUse()
-    .map(
-      (path): PaletteItem => ({
-        kind: "project",
-        id: `project:${path}`,
-        label: projectLabel(path),
-        group: PROJECTS,
-        path,
-        end: standing(path),
-      }),
-    )
+    .map((path): PaletteItem => ({
+      kind: "project",
+      id: `project:${path}`,
+      label: projectLabel(path),
+      group: PROJECTS,
+      path,
+      end: standing(path),
+    }))
     .filter((item) => matches(item.label, query));
   return [...rows, ...projects];
 }
@@ -211,7 +265,8 @@ export function commandItems(query: string): PaletteItem[] {
     group: null,
     // The jump goes to sessions other than the one on screen, so those are
     // what it counts.
-    waiting: waitingOnYou().filter((session) => session.key !== sessions.active).length,
+    waiting: waitingOnYou().filter((session) => session.key !== sessions.active)
+      .length,
     chord: describe(chordFor("session.attention")),
   };
   const command = (id: CommandId, label: string): PaletteItem => ({
@@ -226,22 +281,30 @@ export function commandItems(query: string): PaletteItem[] {
     ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
     ...(workspace.active === null
       ? []
-      : [command("newHere", `New session in ${projectLabel(workspace.active)}`)]),
+      : [
+          command(
+            "newHere",
+            `New session in ${projectLabel(workspace.active)}`,
+          ),
+        ]),
     command("open", "Open project"),
     command("remote", "Open remote project"),
   ];
-  const actions = ACTIONS.filter(({ key }) => key !== "palette" && key !== "session.attention").map(
-    ({ key, label }): PaletteItem => ({
-      kind: "action",
-      id: `action:${key}`,
-      label,
-      group: null,
-      action: key,
-      chord: describe(chordFor(key)),
-    }),
-  );
+  const actions = ACTIONS.filter(
+    ({ key }) => key !== "palette" && key !== "session.attention",
+  ).map(({ key, label }): PaletteItem => ({
+    kind: "action",
+    id: `action:${key}`,
+    label,
+    group: null,
+    action: key,
+    chord: describe(chordFor(key)),
+  }));
   return [attention, ...commands, ...actions].filter((item) =>
-    matches(`${item.label} ${item.kind === "attention" ? item.detail : ""}`, query),
+    matches(
+      `${item.label} ${item.kind === "attention" ? item.detail : ""}`,
+      query,
+    ),
   );
 }
 
@@ -292,21 +355,21 @@ export function chipOf(step: Step): string {
 
 /** What the last question offers, as titled lists drawn in order: the
     agents to run, one model with no workflow. */
-function runSections(project: string): { title: string; items: PaletteItem[] }[] {
+function runSections(
+  project: string,
+): { title: string; items: PaletteItem[] }[] {
   const title = "Agent";
   return [
     {
       title,
-      items: installed().map(
-        (agent): PaletteItem => ({
-          kind: "choice",
-          id: `agent:${agent}`,
-          label: agentLabel(agent),
-          group: title,
-          step: { kind: "agent", agent },
-          end: sessions.preferred[project] === agent ? "last used" : "",
-        }),
-      ),
+      items: installed().map((agent): PaletteItem => ({
+        kind: "choice",
+        id: `agent:${agent}`,
+        label: agentLabel(agent),
+        group: title,
+        step: { kind: "agent", agent },
+        end: sessions.preferred[project] === agent ? "last used" : "",
+      })),
     },
   ];
 }
@@ -321,36 +384,36 @@ function projectChoices(): PaletteItem[] {
     active !== null && order.includes(active)
       ? [active, ...order.filter((path) => path !== active)]
       : order;
-  return paths.map(
-      (path): PaletteItem => ({
-        kind: "choice",
-        id: `project:${path}`,
-        label: projectLabel(path),
-        group,
-        step: { kind: "project", path },
-        end: standing(path),
-      }),
-    );
+  return paths.map((path): PaletteItem => ({
+    kind: "choice",
+    id: `project:${path}`,
+    label: projectLabel(path),
+    group,
+    step: { kind: "project", path },
+    end: standing(path),
+  }));
 }
 
 /** The accounts a new session can run under, the agents' own first. */
 function accountChoices(project: string): PaletteItem[] {
+  if (!isOpen(project)) return [];
   const group = "Under which account";
   const own = accountOf(project);
-  return [null, ...names()].map(
-    (account): PaletteItem => ({
-      kind: "choice",
-      id: `account:${account ?? ""}`,
-      label: accountLabel(account),
-      group,
-      step: { kind: "account", account },
-      end: account === own ? "this project's" : "",
-    }),
-  );
+  return [null, ...names()].map((account): PaletteItem => ({
+    kind: "choice",
+    id: `account:${account ?? ""}`,
+    label: accountLabel(account),
+    group,
+    step: { kind: "account", account },
+    end: account === own ? "this project's" : "",
+  }));
 }
 
 /** What the question being asked offers, narrowed by what is typed. */
-export function stepItems(query: string, steps: Step[] = palette.steps): PaletteItem[] {
+export function stepItems(
+  query: string,
+  steps: Step[] = palette.steps,
+): PaletteItem[] {
   const asking = nextStep(steps);
   const project = projectOfSteps(steps);
   const all =
@@ -367,14 +430,17 @@ export function stepItems(query: string, steps: Step[] = palette.steps): Palette
 /** What the palette lists now, in the order it draws them. */
 export function paletteItems(): PaletteItem[] {
   if (palette.mode === "new") return stepItems(palette.query);
-  return palette.mode === "goto" ? goToItems(palette.query) : commandItems(palette.query);
+  return palette.mode === "goto"
+    ? goToItems(palette.query)
+    : commandItems(palette.query);
 }
 
 /** Whether picking an item does anything: the jump with nothing waiting
     does not, and neither does a new session while no agent is ready. */
 export function pickable(item: PaletteItem): boolean {
   if (item.kind === "attention") return item.waiting > 0;
-  if (item.kind === "command") return isReady() || (item.command !== "new" && item.command !== "newHere");
+  if (item.kind === "command")
+    return isReady() || (item.command !== "new" && item.command !== "newHere");
   return true;
 }
 
@@ -391,49 +457,56 @@ export function startingId(): string | null {
   return null;
 }
 
+/** Whether a project is still open. */
+function isOpen(path: string): boolean {
+  return workspace.open.some((project) => project.path === path);
+}
+
 /** Starts a session on the answers given: the project's account and the
-    agent it used last stand in for a question that was not asked. */
-function startSession(steps: Step[]) {
+    agent it used last stand in for a question that was not asked. A project
+    that has closed meanwhile gets none. */
+function startOn(steps: Step[]) {
   const path = projectOfSteps(steps);
-  if (path === null) return;
+  if (path === null || !isOpen(path)) return;
   const account = steps.find((step) => step.kind === "account");
   const agent = steps.find((step) => step.kind === "agent");
   if (workspace.active !== path) activate(path);
-  create(
+  startSession(
     path,
-    null,
     agent === undefined ? defaultAgent(path) : agent.agent,
-    null,
-    null,
-    null,
     account === undefined ? accountOf(path) : account.account,
   );
-  focusPane("agent");
 }
 
 /** Takes an answer, and starts the session when it was the last one asked. */
 function answer(steps: Step[]): Outcome {
-  if (nextStep(steps) === null) return { type: "close", then: () => startSession(steps) };
+  if (nextStep(steps) === null)
+    return { type: "close", then: () => startOn(steps) };
   palette.mode = "new";
   palette.steps = steps;
   palette.query = "";
   return { type: "stay" };
 }
 
-/** Starts asking for a new session, in a project when it is known. */
+/** Starts asking for a new session, in a project when it is known. With
+    one project open the project is known, and is not asked. */
 export function beginNew(path: string | null): Outcome {
   if (!isReady()) return { type: "stay" };
-  return answer(path === null ? [] : [{ kind: "project", path }]);
+  const only = workspace.open.length === 1 ? workspace.open[0].path : null;
+  const project = path ?? only;
+  return answer(project === null ? [] : [{ kind: "project", path: project }]);
 }
 
 /** Goes back a step: the last answer is taken back, and with none given
     the commands list is where the question came from. */
 export function stepBack() {
   palette.query = "";
-  if (palette.steps.length > 0) {
+  const only = workspace.open.length === 1;
+  if (palette.steps.length > (only ? 1 : 0)) {
     palette.steps = palette.steps.slice(0, -1);
     return;
   }
+  palette.steps = [];
   palette.mode = "commands";
 }
 
@@ -444,14 +517,19 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
   switch (item.kind) {
     case "session":
       if (alone) return beginNew(item.session.project);
-      return { type: "close", then: () => void (goTo(item.session.key) && focusPane("agent")) };
+      return {
+        type: "close",
+        then: () => void (goTo(item.session.key) && focusPane("agent")),
+      };
     case "project":
       if (alone) return beginNew(item.path);
       return {
         type: "close",
         then: () => {
-          activate(item.path);
-          if (sessions.active !== null) focusPane("agent");
+          if (workspace.active !== item.path) activate(item.path);
+          // A project with no session has no terminal to give the keyboard
+          // to, so it goes to the project's row.
+          focusPane(sessions.active !== null ? "agent" : "sessions");
         },
       };
     case "choice":

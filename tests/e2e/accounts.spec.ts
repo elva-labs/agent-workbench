@@ -252,14 +252,12 @@ test.describe("a new session from the palette with accounts", () => {
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
   });
 
-  test("starts under another account when the cursor is moved, and steps back to the project", async ({
-    page,
-  }) => {
+  test("steps back to the commands, as the one project is not asked", async ({ page }) => {
     await page.keyboard.press("Backspace");
-    await expect(page.getByTestId("palette-chip")).toHaveText(["New session"]);
-    await page.keyboard.press("Enter");
-    await expect(page.getByTestId("palette-chip")).toHaveText(["New session", "demo"]);
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "commands");
+  });
 
+  test("starts under another account when the cursor is moved", async ({ page }) => {
     await page.keyboard.press("ArrowUp");
     await expect(chosen(page)).toContainText("Default");
     await page.keyboard.press("Enter");

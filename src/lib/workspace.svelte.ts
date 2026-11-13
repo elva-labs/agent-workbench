@@ -1,9 +1,13 @@
-import { core, type ProjectInfo } from "$lib/core";
+import { core, type AgentId, type ProjectInfo } from "$lib/core";
 import { lastSegment } from "$lib/paths";
+import { accountOf } from "$lib/accounts.svelte";
+import { focusPane } from "$lib/layout.svelte";
 import {
   activeSession,
   byKey,
   closeProject,
+  create,
+  defaultAgent,
   forProject,
   select,
   sessions,
@@ -147,6 +151,18 @@ export function goTo(key: string): boolean {
   if (session.project !== workspace.active) activate(session.project);
   select(key);
   return true;
+}
+
+/** Starts a session in a project and gives it the keyboard. The agent is
+    the one the project used last and the account the one it runs under,
+    unless named. */
+export function startSession(
+  path: string,
+  agent: AgentId = defaultAgent(path),
+  account: string | null = accountOf(path),
+) {
+  create(path, null, agent, null, null, null, account);
+  focusPane("agent");
 }
 
 /** Opens the native picker. Returns false when the user cancels. */
