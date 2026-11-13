@@ -23,6 +23,8 @@ use workbench_core::browser::{
     Snapshot, TabId, Tabs,
 };
 
+#[cfg(any(target_os = "macos", test))]
+pub mod capture;
 #[cfg(target_os = "linux")]
 mod layer;
 
@@ -57,9 +59,10 @@ struct Place {
 pub struct Browser {
     tabs: Mutex<Tabs>,
     place: Mutex<Place>,
-    /// Serialises opening a tab: two opens racing must not interleave
-    /// building webviews.
-    opening: tauri::async_runtime::Mutex<()>,
+    /// Held by everything that builds, shows, hides, moves or closes a
+    /// tab's view, and by a screenshot for as long as it has a view out of
+    /// its place, so none of them finds a view halfway through another.
+    views: tauri::async_runtime::Mutex<()>,
 }
 
 impl Default for Browser {
@@ -67,7 +70,7 @@ impl Default for Browser {
         Self {
             tabs: Mutex::new(Tabs::default()),
             place: Mutex::new(Place::default()),
-            opening: tauri::async_runtime::Mutex::new(()),
+            views: tauri::async_runtime::Mutex::new(()),
         }
     }
 }
@@ -79,11 +82,16 @@ impl Browser {
         self.tabs.lock().unwrap().active()
     }
 
-    /// Whether `id` is the tab actually shown right now: the active tab,
-    /// with the browser's place showing it at all. Only the active tab's
-    /// webview is ever visible, so this is enough to tell.
-    pub fn is_visible(&self, id: TabId) -> bool {
-        self.tabs.lock().unwrap().active() == Some(id) && self.place.lock().unwrap().showing
+    /// The size of the rectangle the viewer last placed a tab at, the size
+    /// a tab shows at.
+    pub fn place_size(&self) -> Option<(f64, f64)> {
+        self.place.lock().unwrap().rect.map(|(_, _, w, h)| (w, h))
+    }
+
+    /// Waits for every other change to a tab's view to finish, and holds
+    /// off the next until the guard is dropped.
+    pub async fn hold_views(&self) -> impl Sized + '_ {
+        self.views.lock().await
     }
 }
 
@@ -382,7 +390,7 @@ async fn open_tab(
     };
 
     // Two opens racing must not interleave building webviews.
-    let _guard = browser.opening.lock().await;
+    let _guard = browser.views.lock().await;
 
     let (previous, before, id) = {
         let mut tabs = browser.tabs.lock().unwrap();
@@ -434,6 +442,8 @@ async fn open_tab(
     if !visible {
         webview.hide().map_err(|e| e.to_string())?;
     }
+    #[cfg(target_os = "macos")]
+    capture::paint_while_covered(&webview)?;
     #[cfg(target_os = "linux")]
     layer::adopt(&webview, bounds)?;
 
@@ -533,7 +543,7 @@ pub async fn browser_focus(
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
     // A tab being built is not yet visible to hide or show.
-    let _guard = browser.opening.lock().await;
+    let _guard = browser.views.lock().await;
     let (previous, active) = {
         let mut tabs = browser.tabs.lock().unwrap();
         let previous = tabs.active();
@@ -564,7 +574,7 @@ pub async fn browser_close_owner(
     owner: Owner,
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
-    let _guard = browser.opening.lock().await;
+    let _guard = browser.views.lock().await;
     let closed = browser.tabs.lock().unwrap().close_owner(&owner);
     // Every view is closed even when one fails to, and the first failure is
     // what comes back.
@@ -597,6 +607,7 @@ pub async fn browser_close(
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
     let id = TabId::new(id);
+    let _guard = browser.views.lock().await;
 
     if let Some(webview) = window.get_webview(&id.label()) {
         webview.close().map_err(|e| e.to_string())?;
@@ -625,7 +636,7 @@ pub async fn browser_activate(
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
     let id = TabId::new(id);
-    let _guard = browser.opening.lock().await;
+    let _guard = browser.views.lock().await;
 
     let (previous, active) = {
         let mut tabs = browser.tabs.lock().unwrap();
@@ -775,6 +786,7 @@ pub async fn browser_place(
     height: f64,
 ) -> Result<(), String> {
     let browser = Arc::clone(&browser);
+    let _guard = browser.views.lock().await;
     {
         let mut place = browser.place.lock().unwrap();
         place.rect = Some((x, y, width, height));
@@ -791,6 +803,7 @@ pub async fn browser_place(
 #[tauri::command]
 pub async fn browser_hide(window: Window, browser: State<'_, Arc<Browser>>) -> Result<(), String> {
     let browser = Arc::clone(&browser);
+    let _guard = browser.views.lock().await;
     {
         let mut place = browser.place.lock().unwrap();
         place.showing = false;

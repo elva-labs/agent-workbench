@@ -105,9 +105,10 @@ pub const CONSOLE_CAPTURE_SCRIPT: &str = r#"(function () {
 
 /// The text a snapshot builds runs in this named content world, apart from
 /// the page's own, so a page can neither see nor tamper with the script
-/// that builds it or the one a click or a type later runs.
+/// that builds it or the one a click or a type later runs. A screenshot
+/// waits for the page to paint in it too.
 #[cfg(target_os = "macos")]
-const APP_WORLD: &str = "workbench-app";
+pub(crate) const APP_WORLD: &str = "workbench-app";
 
 /// The attribute [`SNAPSHOT_SCRIPT`] writes a ref onto its element as, for
 /// [`click_script`] and [`type_script`] to find it by. A content world's
@@ -472,69 +473,25 @@ pub async fn browser_type(
     ok_or_message(&json)
 }
 
-/// Takes a PNG snapshot of `id`'s tab, written under [`screenshot_dir`] as
-/// `<tab id>-<uuid>.png`. A hidden webview cannot be snapshotted reliably,
-/// so a tab that is not the one currently shown is refused outright rather
-/// than answering with a blank image.
+/// Takes a PNG snapshot of `id`'s tab, or the active one for `None`, and
+/// writes it under [`screenshot_dir`] as `<tab id>-<uuid>.png`. A tab that
+/// is not on show is captured where it is, without coming forward; see
+/// [`crate::browser::capture`].
 #[cfg(target_os = "macos")]
-#[tauri::command]
-pub async fn browser_screenshot(
-    window: Window,
-    browser: State<'_, Arc<Browser>>,
+pub async fn screenshot(
+    window: &Window,
+    browser: &Browser,
     id: Option<u32>,
-) -> Result<String, String> {
-    let (tab_id, webview) = resolve_tab(&window, browser.inner(), id)?;
-    if !browser.is_visible(tab_id) {
-        return Err("the tab is not showing".to_string());
-    }
-
-    let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
-    webview
-        .with_webview(move |platform| unsafe {
-            let view: &objc2_web_kit::WKWebView =
-                &*(platform.inner() as *const objc2_web_kit::WKWebView);
-            let block = block2::RcBlock::new(
-                move |image: *mut objc2_app_kit::NSImage, error: *mut objc2_foundation::NSError| {
-                    let outcome = (|| {
-                        if !error.is_null() {
-                            let error: &objc2_foundation::NSError = &*error;
-                            return Err(error.localizedDescription().to_string());
-                        }
-                        if image.is_null() {
-                            return Err("the webview returned no image".to_string());
-                        }
-                        let image: &objc2_app_kit::NSImage = &*image;
-                        let tiff = image
-                            .TIFFRepresentation()
-                            .ok_or("could not read the image's TIFF representation")?;
-                        let rep = objc2_app_kit::NSBitmapImageRep::imageRepWithData(&tiff)
-                            .ok_or("could not build a bitmap representation")?;
-                        let properties = objc2_foundation::NSDictionary::new();
-                        let png = rep
-                            .representationUsingType_properties(
-                                objc2_app_kit::NSBitmapImageFileType::PNG,
-                                &properties,
-                            )
-                            .ok_or("could not encode the image as PNG")?;
-                        Ok(png.to_vec())
-                    })();
-                    let _ = tx.send(outcome);
-                },
-            );
-            view.takeSnapshotWithConfiguration_completionHandler(None, &block);
-        })
-        .map_err(|e| e.to_string())?;
-
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        rx.recv_timeout(std::time::Duration::from_secs(10))
-    })
-    .await
-    .map_err(|e| format!("the task failed: {e}"))?;
-
-    let bytes = match outcome {
-        Ok(result) => result?,
-        Err(_) => return Err("timed out taking the screenshot".to_string()),
-    };
+) -> Result<std::path::PathBuf, String> {
+    let views = browser.hold_views().await;
+    let (tab_id, webview) = resolve_tab(window, browser, id)?;
+    let bytes = crate::browser::capture::take(
+        views,
+        crate::browser::capture::Tab(webview),
+        browser.place_size(),
+        crate::browser::capture::WAIT,
+    )
+    .await?;
 
     let dir = screenshot_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -542,6 +499,17 @@ pub async fn browser_screenshot(
 
     let path = dir.join(format!("{}-{}.png", tab_id.get(), uuid::Uuid::new_v4()));
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn browser_screenshot(
+    window: Window,
+    browser: State<'_, Arc<Browser>>,
+    id: Option<u32>,
+) -> Result<String, String> {
+    let path = screenshot(&window, browser.inner(), id).await?;
     Ok(path.to_string_lossy().to_string())
 }
 
