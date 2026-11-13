@@ -170,11 +170,21 @@ pub fn connect_failure_message(host: &str, port: u16, failure: ConnectFailure) -
 }
 
 /// Who opened a tab.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Opener {
     User,
-    Agent { session: String },
+    Agent,
+}
+
+/// Whose a tab is: the session it was opened for, or the project on screen
+/// when it was opened by hand with no session selected. Each owner has its
+/// own tabs and its own tab in front.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Owner {
+    Session { key: String },
+    Project { path: String },
 }
 
 /// A tab as the frontend draws it.
@@ -189,6 +199,9 @@ pub struct Tab {
     /// a new tab.
     pub home: Option<String>,
     pub opener: Opener,
+    pub owner: Owner,
+    /// Whether this is the tab in front among its owner's.
+    pub front: bool,
     pub loading: bool,
     pub can_go_back: bool,
     pub can_go_forward: bool,
@@ -201,7 +214,12 @@ pub struct Tab {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    /// Every tab of every owner, in opening order.
     pub tabs: Vec<Tab>,
+    /// The owner on screen, whose front tab is the active one.
+    pub owner: Option<Owner>,
+    /// The front tab of the owner on screen: the one whose native view is
+    /// shown.
     pub active: Option<TabId>,
 }
 
@@ -211,7 +229,10 @@ pub struct Snapshot {
 pub struct Tabs {
     next_id: u32,
     tabs: Vec<Tab>,
-    active: Option<TabId>,
+    /// The tab in front for each owner that has tabs.
+    fronts: std::collections::HashMap<Owner, TabId>,
+    /// The owner on screen.
+    shown: Option<Owner>,
     /// The address each tab was last sent to on purpose, by `open` or
     /// [`Tabs::navigate_to`], never by a page load. WebKit commits an
     /// `about:blank` of its own while it swaps processes for another origin
@@ -242,24 +263,17 @@ impl Tabs {
         Self {
             next_id: 1,
             tabs: Vec::new(),
-            active: None,
+            fronts: std::collections::HashMap::new(),
+            shown: None,
             targets: std::collections::HashMap::new(),
             uncommitted: std::collections::HashSet::new(),
             checking: std::collections::HashMap::new(),
         }
     }
 
-    /// Opens a new tab, which becomes active. Its url starts as `home`, or
-    /// `about:blank` for a tab opened empty.
-    pub fn open(&mut self, home: Option<String>, opener: Opener) -> TabId {
-        let id = self.open_behind(home, opener);
-        self.active = Some(id);
-        id
-    }
-
-    /// Opens a new tab behind the active one, which stays active: for a tab
-    /// an agent opens while the user is looking at another session.
-    pub fn open_behind(&mut self, home: Option<String>, opener: Opener) -> TabId {
+    /// Opens a new tab for `owner`, which becomes that owner's front tab.
+    /// Its url starts as `home`, or `about:blank` for a tab opened empty.
+    pub fn open(&mut self, home: Option<String>, opener: Opener, owner: Owner) -> TabId {
         let id = TabId(self.next_id);
         self.next_id += 1;
         let url = home.clone().unwrap_or_else(|| "about:blank".to_string());
@@ -267,53 +281,96 @@ impl Tabs {
         if home.is_some() {
             self.uncommitted.insert(id);
         }
+        self.fronts.insert(owner.clone(), id);
         self.tabs.push(Tab {
             id,
             url,
             title: String::new(),
             home,
             opener,
+            owner,
+            front: false,
             loading: false,
             can_go_back: false,
             can_go_forward: false,
             error: None,
         });
-        if self.active.is_none() {
-            self.active = Some(id);
-        }
         id
     }
 
-    /// Closes a tab. If it was active, the tab to its right becomes active,
-    /// else the one to its left, else none.
+    /// Closes a tab. If it was its owner's front tab, the owner's tab to its
+    /// right comes to the front, else the one to its left, else the owner
+    /// has none.
     pub fn close(&mut self, id: TabId) -> bool {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
             return false;
         };
-        self.tabs.remove(index);
+        let owner = self.tabs.remove(index).owner;
         self.targets.remove(&id);
         self.uncommitted.remove(&id);
         self.checking.remove(&id);
-        if self.active == Some(id) {
-            self.active = self
-                .tabs
-                .get(index)
-                .or_else(|| index.checked_sub(1).and_then(|i| self.tabs.get(i)))
+        if self.fronts.get(&owner) == Some(&id) {
+            let own = |tab: &&Tab| tab.owner == owner;
+            let next = self.tabs[index..]
+                .iter()
+                .find(own)
+                .or_else(|| self.tabs[..index].iter().rev().find(own))
                 .map(|tab| tab.id);
+            match next {
+                Some(next) => self.fronts.insert(owner, next),
+                None => self.fronts.remove(&owner),
+            };
         }
         true
     }
 
+    /// Closes every tab `owner` has, and returns their ids.
+    pub fn close_owner(&mut self, owner: &Owner) -> Vec<TabId> {
+        let ids: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|tab| &tab.owner == owner)
+            .map(|tab| tab.id)
+            .collect();
+        for id in &ids {
+            self.close(*id);
+        }
+        ids
+    }
+
+    /// Brings a tab to the front among its owner's, whether or not that
+    /// owner is on screen.
     pub fn activate(&mut self, id: TabId) -> bool {
-        if !self.tabs.iter().any(|tab| tab.id == id) {
+        let Some(owner) = self.owner_of(id) else {
             return false;
-        }
-        self.active = Some(id);
+        };
+        self.fronts.insert(owner, id);
         true
     }
 
+    /// Sets the owner on screen, whose front tab becomes the active one.
+    pub fn show(&mut self, owner: Option<Owner>) {
+        self.shown = owner;
+    }
+
+    /// The owner on screen.
+    pub fn shown(&self) -> Option<&Owner> {
+        self.shown.as_ref()
+    }
+
+    /// The front tab of the owner on screen.
     pub fn active(&self) -> Option<TabId> {
-        self.active
+        self.front_of(self.shown.as_ref()?)
+    }
+
+    /// The tab in front among `owner`'s.
+    pub fn front_of(&self, owner: &Owner) -> Option<TabId> {
+        self.fronts.get(owner).copied()
+    }
+
+    /// Whose tab `id` is.
+    pub fn owner_of(&self, id: TabId) -> Option<Owner> {
+        self.get(id).map(|tab| tab.owner.clone())
     }
 
     pub fn get(&self, id: TabId) -> Option<&Tab> {
@@ -458,13 +515,15 @@ impl Tabs {
                 let checking = self.checking.get(&tab.id) == Some(&tab.url);
                 Tab {
                     loading: tab.loading || checking,
+                    front: self.fronts.get(&tab.owner) == Some(&tab.id),
                     ..tab.clone()
                 }
             })
             .collect();
         Snapshot {
             tabs,
-            active: self.active,
+            owner: self.shown.clone(),
+            active: self.active(),
         }
     }
 }
@@ -472,6 +531,25 @@ impl Tabs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn me() -> Owner {
+        Owner::Session {
+            key: "me".to_string(),
+        }
+    }
+
+    fn other() -> Owner {
+        Owner::Session {
+            key: "other".to_string(),
+        }
+    }
+
+    /// Tabs with `me()` on screen.
+    fn shown() -> Tabs {
+        let mut tabs = Tabs::new();
+        tabs.show(Some(me()));
+        tabs
+    }
 
     #[test]
     fn blank_and_empty() {
@@ -588,14 +666,9 @@ mod tests {
 
     #[test]
     fn opening_hands_out_ids_from_one_and_never_reuses_them() {
-        let mut tabs = Tabs::new();
-        let a = tabs.open(Some("https://a.example/".to_string()), Opener::User);
-        let b = tabs.open(
-            None,
-            Opener::Agent {
-                session: "s-1".to_string(),
-            },
-        );
+        let mut tabs = shown();
+        let a = tabs.open(Some("https://a.example/".to_string()), Opener::User, me());
+        let b = tabs.open(None, Opener::Agent, me());
         assert_eq!(a.get(), 1);
         assert_eq!(b.get(), 2);
         assert_eq!(tabs.active(), Some(b));
@@ -607,33 +680,16 @@ mod tests {
         );
 
         assert!(tabs.close(a));
-        let c = tabs.open(None, Opener::User);
+        let c = tabs.open(None, Opener::User, me());
         assert_eq!(c.get(), 3, "closed ids are never handed out again");
     }
 
     #[test]
-    fn opening_behind_leaves_the_active_tab_active_unless_there_was_none() {
-        let mut tabs = Tabs::new();
-        let a = tabs.open_behind(Some("https://a.example/".to_string()), Opener::User);
-        assert_eq!(tabs.active(), Some(a), "the first tab is active either way");
-        let b = tabs.open_behind(
-            Some("https://b.example/".to_string()),
-            Opener::Agent {
-                session: "s-1".to_string(),
-            },
-        );
-        assert_eq!(tabs.active(), Some(a));
-        assert_eq!(tabs.get(b).unwrap().url, "https://b.example/");
-        assert!(tabs.activate(b));
-        assert_eq!(tabs.active(), Some(b));
-    }
-
-    #[test]
     fn closing_the_active_tab_activates_its_right_neighbour_then_its_left() {
-        let mut tabs = Tabs::new();
-        let a = tabs.open(None, Opener::User);
-        let b = tabs.open(None, Opener::User);
-        let c = tabs.open(None, Opener::User);
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let b = tabs.open(None, Opener::User, me());
+        let c = tabs.open(None, Opener::User, me());
         tabs.activate(b);
 
         assert!(tabs.close(b));
@@ -658,9 +714,9 @@ mod tests {
 
     #[test]
     fn closing_an_inactive_tab_leaves_the_active_one_alone() {
-        let mut tabs = Tabs::new();
-        let a = tabs.open(None, Opener::User);
-        let b = tabs.open(None, Opener::User);
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let b = tabs.open(None, Opener::User, me());
         tabs.activate(a);
         assert!(tabs.close(b));
         assert_eq!(tabs.active(), Some(a));
@@ -668,7 +724,7 @@ mod tests {
 
     #[test]
     fn setters_on_an_unknown_id_do_nothing() {
-        let mut tabs = Tabs::new();
+        let mut tabs = shown();
         let missing = TabId::new(99);
         assert!(!tabs.activate(missing));
         assert!(!tabs.navigation_started(missing, "https://x".to_string()));
@@ -680,8 +736,8 @@ mod tests {
 
     #[test]
     fn setters_update_the_tab_and_navigation_clears_the_error() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User, me());
 
         tabs.navigation_failed(id, "https://a.example/", "could not connect".to_string());
         assert_eq!(
@@ -711,8 +767,8 @@ mod tests {
 
     #[test]
     fn a_start_reported_after_the_failure_for_the_same_address_leaves_it_standing() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(None, Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(None, Opener::User, me());
         tabs.navigate_to(id, "https://nowhere.invalid/".to_string());
         tabs.navigation_failed(
             id,
@@ -745,8 +801,12 @@ mod tests {
                 .unwrap()
                 .loading
         };
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("https://nowhere.invalid/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(
+            Some("https://nowhere.invalid/".to_string()),
+            Opener::User,
+            me(),
+        );
         tabs.check_started(id, "https://nowhere.invalid/");
         // WebKitGTK reports the doomed load over before the check has found
         // the host missing.
@@ -778,8 +838,8 @@ mod tests {
 
     #[test]
     fn a_load_that_ends_before_it_got_under_way_keeps_the_address_it_was_sent_to() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User, me());
         tabs.navigation_started(id, "https://a.example/".to_string());
         tabs.navigation_finished(id, "https://a.example/".to_string());
 
@@ -808,8 +868,8 @@ mod tests {
 
     #[test]
     fn a_load_that_got_under_way_follows_where_it_finished() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("http://a.example/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(Some("http://a.example/".to_string()), Opener::User, me());
         tabs.navigation_started(id, "https://a.example/".to_string());
         tabs.navigation_finished(id, "https://a.example/landing".to_string());
         assert_eq!(tabs.get(id).unwrap().url, "https://a.example/landing");
@@ -821,8 +881,8 @@ mod tests {
 
     #[test]
     fn sending_a_tab_to_the_address_it_failed_on_clears_the_failure() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("http://localhost:9/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(Some("http://localhost:9/".to_string()), Opener::User, me());
         tabs.navigation_failed(id, "http://localhost:9/", "not answering".to_string());
 
         assert!(tabs.navigate_to(id, "http://localhost:9/".to_string()));
@@ -836,8 +896,8 @@ mod tests {
 
     #[test]
     fn an_about_blank_commit_that_does_not_match_the_deliberate_target_is_an_interstitial() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User, me());
         tabs.navigate_to(id, "http://localhost:9/".to_string());
 
         assert!(tabs.is_interstitial(id, "about:blank"));
@@ -855,8 +915,8 @@ mod tests {
 
     #[test]
     fn an_about_blank_commit_matching_the_deliberate_target_is_not_an_interstitial() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(None, Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(None, Opener::User, me());
         // A tab opened empty was deliberately sent to about:blank, and a
         // commit that confirms as much is not noise.
         assert!(!tabs.is_interstitial(id, "about:blank"));
@@ -870,8 +930,8 @@ mod tests {
 
     #[test]
     fn a_late_failure_is_dropped_once_the_tab_has_moved_on() {
-        let mut tabs = Tabs::new();
-        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User);
+        let mut tabs = shown();
+        let id = tabs.open(Some("https://a.example/".to_string()), Opener::User, me());
         tabs.navigation_started(id, "https://b.example/".to_string());
 
         assert!(!tabs.navigation_failed(
@@ -932,9 +992,9 @@ mod tests {
 
     #[test]
     fn snapshot_carries_the_tabs_in_opening_order_and_the_active_id() {
-        let mut tabs = Tabs::new();
-        let a = tabs.open(None, Opener::User);
-        let b = tabs.open(None, Opener::User);
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let b = tabs.open(None, Opener::User, me());
         tabs.activate(a);
         let snapshot = tabs.snapshot();
         assert_eq!(
@@ -942,5 +1002,117 @@ mod tests {
             vec![a, b]
         );
         assert_eq!(snapshot.active, Some(a));
+    }
+
+    #[test]
+    fn each_owner_keeps_its_own_front_tab() {
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let b = tabs.open(None, Opener::Agent, other());
+        let c = tabs.open(None, Opener::User, me());
+        assert_eq!(tabs.active(), Some(c));
+        assert_eq!(tabs.front_of(&other()), Some(b));
+
+        tabs.show(Some(other()));
+        assert_eq!(tabs.active(), Some(b));
+        assert!(tabs.activate(a));
+        assert_eq!(
+            tabs.active(),
+            Some(b),
+            "a tab of another owner is not the active one"
+        );
+        tabs.show(Some(me()));
+        assert_eq!(tabs.active(), Some(a));
+    }
+
+    #[test]
+    fn opening_for_an_owner_off_screen_leaves_the_active_tab_alone() {
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let b = tabs.open(None, Opener::Agent, other());
+        assert_eq!(tabs.active(), Some(a));
+        assert_eq!(tabs.front_of(&other()), Some(b));
+    }
+
+    #[test]
+    fn closing_a_front_tab_falls_to_a_neighbour_of_the_same_owner() {
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let x = tabs.open(None, Opener::Agent, other());
+        let b = tabs.open(None, Opener::User, me());
+        let y = tabs.open(None, Opener::Agent, other());
+        tabs.activate(a);
+
+        assert!(tabs.close(a));
+        assert_eq!(
+            tabs.active(),
+            Some(b),
+            "not the other owner's tab beside it"
+        );
+        assert!(tabs.close(b));
+        assert_eq!(tabs.active(), None);
+        assert_eq!(tabs.front_of(&other()), Some(y));
+        assert!(tabs.close(y));
+        assert_eq!(tabs.front_of(&other()), Some(x));
+    }
+
+    #[test]
+    fn closing_an_owner_closes_all_its_tabs_and_only_those() {
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let x = tabs.open(None, Opener::Agent, other());
+        let b = tabs.open(None, Opener::Agent, me());
+        let closed = tabs.close_owner(&me());
+        assert_eq!(closed, vec![a, b]);
+        assert_eq!(tabs.tabs().len(), 1);
+        assert_eq!(tabs.active(), None);
+        assert_eq!(tabs.front_of(&other()), Some(x));
+        assert!(tabs.close_owner(&me()).is_empty());
+    }
+
+    #[test]
+    fn a_project_owns_tabs_apart_from_its_sessions() {
+        let project = Owner::Project {
+            path: "/p".to_string(),
+        };
+        let mut tabs = Tabs::new();
+        let a = tabs.open(None, Opener::User, project.clone());
+        let b = tabs.open(None, Opener::User, me());
+        tabs.show(Some(project));
+        assert_eq!(tabs.active(), Some(a));
+        tabs.show(Some(me()));
+        assert_eq!(tabs.active(), Some(b));
+        tabs.show(None);
+        assert_eq!(tabs.active(), None);
+    }
+
+    #[test]
+    fn the_snapshot_names_the_owner_on_screen_and_marks_each_front_tab() {
+        let mut tabs = shown();
+        let a = tabs.open(None, Opener::User, me());
+        let b = tabs.open(None, Opener::User, me());
+        let x = tabs.open(None, Opener::Agent, other());
+        let snapshot = tabs.snapshot();
+        assert_eq!(snapshot.owner, Some(me()));
+        assert_eq!(snapshot.active, Some(b));
+        let fronts: Vec<_> = snapshot
+            .tabs
+            .iter()
+            .map(|tab| (tab.id, tab.front))
+            .collect();
+        assert_eq!(fronts, vec![(a, false), (b, true), (x, true)]);
+    }
+
+    #[test]
+    fn owners_serialise_with_a_kind() {
+        let json = serde_json::to_string(&me()).unwrap();
+        assert_eq!(json, r#"{"kind":"session","key":"me"}"#);
+        let back: Owner = serde_json::from_str(r#"{"kind":"project","path":"/p"}"#).unwrap();
+        assert_eq!(
+            back,
+            Owner::Project {
+                path: "/p".to_string()
+            }
+        );
     }
 }

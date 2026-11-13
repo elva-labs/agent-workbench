@@ -19,8 +19,8 @@ use tauri::{
     WebviewUrl, Window, Wry,
 };
 use workbench_core::browser::{
-    connect_failure_message, navigation_target, normalize_url, ConnectFailure, Opener, Snapshot,
-    TabId, Tabs,
+    connect_failure_message, navigation_target, normalize_url, ConnectFailure, Opener, Owner,
+    Snapshot, TabId, Tabs,
 };
 
 #[cfg(target_os = "linux")]
@@ -164,13 +164,17 @@ fn tab_webview(id: TabId, start: &Url, app: &AppHandle) -> WebviewBuilder<Wry> {
                     return;
                 };
                 let browser = Arc::clone(&app.state::<Arc<Browser>>());
+                // A popup belongs to whoever owns the page that opened it.
+                let Some(owner) = browser.tabs.lock().unwrap().owner_of(id) else {
+                    return;
+                };
                 let _ = open_tab(
                     window,
                     app.clone(),
                     browser,
                     Some(url.to_string()),
                     Opener::User,
-                    false,
+                    owner,
                 )
                 .await;
             });
@@ -355,11 +359,10 @@ where
         .map_err(|e| e.to_string())
 }
 
-/// Opens a tab on `window`, builds its webview at the browser's last
-/// placement if it is showing, and hides the tab that was active. Opened
-/// `behind`, the tab that was active stays active and on screen instead,
-/// and the new one waits out of sight until it is activated: for a tab an
-/// agent opens while the user is looking at another session. Shared by the
+/// Opens a tab for `owner` on `window`. It becomes the owner's front tab; if
+/// that owner is on screen its webview is built at the browser's last
+/// placement and the tab that was active is hidden, and otherwise the new
+/// one waits out of sight until its owner is shown. Shared by the
 /// `browser_open` command and by a tab's own `window.open`.
 async fn open_tab(
     window: Window,
@@ -367,7 +370,7 @@ async fn open_tab(
     browser: Arc<Browser>,
     url: Option<String>,
     opener: Opener,
-    behind: bool,
+    owner: Owner,
 ) -> Result<Snapshot, String> {
     let start = match url {
         Some(raw) => Some(normalize_url(&raw)?),
@@ -377,18 +380,14 @@ async fn open_tab(
     // Two opens racing must not interleave building webviews.
     let _guard = browser.opening.lock().await;
 
-    let (previous, id) = {
+    let (previous, before, id) = {
         let mut tabs = browser.tabs.lock().unwrap();
         let previous = tabs.active();
-        let id = if behind {
-            tabs.open_behind(start.clone(), opener)
-        } else {
-            tabs.open(start.clone(), opener)
-        };
-        (previous, id)
+        let before = tabs.front_of(&owner);
+        let id = tabs.open(start.clone(), opener, owner);
+        (previous, before, id)
     };
-    // Behind an active tab, the new one is not the active one and stays
-    // hidden; with no tab open yet it is active, behind or not.
+    // A tab for an owner off screen is not the active one and stays hidden.
     let in_front = browser.tabs.lock().unwrap().active() == Some(id);
 
     let (rect, showing) = {
@@ -414,11 +413,11 @@ async fn open_tab(
         Ok(webview) => webview,
         Err(error) => {
             // A tab with no webview is nothing to show: it goes, and the
-            // tab that was active is active again.
+            // tab that was in front for its owner is in front again.
             let mut tabs = browser.tabs.lock().unwrap();
             tabs.close(id);
-            if let Some(previous) = previous {
-                tabs.activate(previous);
+            if let Some(before) = before {
+                tabs.activate(before);
             }
             return Err(error.to_string());
         }
@@ -484,15 +483,67 @@ pub async fn browser_open(
     app: AppHandle,
     browser: State<'_, Arc<Browser>>,
     url: Option<String>,
-    session: Option<String>,
-    behind: Option<bool>,
+    owner: Owner,
+    agent: bool,
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
-    let opener = match session {
-        Some(session) => Opener::Agent { session },
-        None => Opener::User,
+    let opener = if agent { Opener::Agent } else { Opener::User };
+    open_tab(window, app, browser, url, opener, owner).await
+}
+
+/// Puts `owner`'s tabs on screen: the previous owner's active view is hidden
+/// and the new one's front tab is placed, if the browser is showing.
+#[tauri::command]
+pub async fn browser_focus(
+    window: Window,
+    app: AppHandle,
+    browser: State<'_, Arc<Browser>>,
+    owner: Option<Owner>,
+) -> Result<Snapshot, String> {
+    let browser = Arc::clone(&browser);
+    let (previous, active) = {
+        let mut tabs = browser.tabs.lock().unwrap();
+        let previous = tabs.active();
+        tabs.show(owner);
+        (previous, tabs.active())
     };
-    open_tab(window, app, browser, url, opener, behind.unwrap_or(false)).await
+    if previous != active {
+        if let Some(previous) = previous {
+            if let Some(webview) = window.get_webview(&previous.label()) {
+                webview.hide().map_err(|e| e.to_string())?;
+            }
+        }
+        if let Some(active) = active {
+            place_and_show(&window, &browser, active)?;
+        }
+    }
+    let snapshot = browser.tabs.lock().unwrap().snapshot();
+    emit_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
+/// Closes every tab `owner` has.
+#[tauri::command]
+pub async fn browser_close_owner(
+    window: Window,
+    app: AppHandle,
+    browser: State<'_, Arc<Browser>>,
+    owner: Owner,
+) -> Result<Snapshot, String> {
+    let browser = Arc::clone(&browser);
+    let closed = browser.tabs.lock().unwrap().close_owner(&owner);
+    for id in closed {
+        if let Some(webview) = window.get_webview(&id.label()) {
+            webview.close().map_err(|e| e.to_string())?;
+        }
+    }
+    let active = browser.tabs.lock().unwrap().active();
+    if let Some(active) = active {
+        place_and_show(&window, &browser, active)?;
+    }
+    let snapshot = browser.tabs.lock().unwrap().snapshot();
+    emit_snapshot(&app, &snapshot);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -533,20 +584,23 @@ pub async fn browser_activate(
     let browser = Arc::clone(&browser);
     let id = TabId::new(id);
 
-    let previous = {
+    let (previous, active) = {
         let mut tabs = browser.tabs.lock().unwrap();
         let previous = tabs.active();
         tabs.activate(id);
-        previous
+        (previous, tabs.active())
     };
-    if previous != Some(id) {
+    // A tab of an owner off screen only becomes that owner's front tab.
+    if previous != active {
         if let Some(previous) = previous {
             if let Some(webview) = window.get_webview(&previous.label()) {
                 webview.hide().map_err(|e| e.to_string())?;
             }
         }
     }
-    place_and_show(&window, &browser, id)?;
+    if active == Some(id) {
+        place_and_show(&window, &browser, id)?;
+    }
 
     let snapshot = browser.tabs.lock().unwrap().snapshot();
     emit_snapshot(&app, &snapshot);
