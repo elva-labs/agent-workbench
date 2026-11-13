@@ -294,6 +294,28 @@ describe("a project on another machine", () => {
     expect(activeSession()?.id).toBe("here");
   });
 
+  it("starts nothing in front while it waits with no sessions on record", async () => {
+    resetWorkspace();
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: [A, R], active: R }),
+    );
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ open: [entry(A, "here")], active: null }),
+    );
+    const arriving = await restore();
+    stop = reopen(arriving);
+    flushSync();
+    expect(workspace.active).toBe(A);
+    expect(sessions.active).toBeNull();
+    host.release(false);
+    await Promise.all(arriving.values());
+    flushSync();
+    expect(workspace.active).toBe(A);
+    expect(activeSession()?.id).toBe("here");
+  });
+
   it("keeps a session picked while it waited across a quit", async () => {
     await restoring("there", R);
     select(forProject(A)[0].key);

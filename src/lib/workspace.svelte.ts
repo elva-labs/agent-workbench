@@ -295,6 +295,17 @@ export function untouched(): boolean {
   );
 }
 
+/** Whether the project stored in front is still waiting for its machine,
+    with nothing chosen since. */
+export function frontPending(): boolean {
+  return (
+    restoring !== null &&
+    restoring.wanted !== null &&
+    restoring.pending.has(restoring.wanted) &&
+    untouched()
+  );
+}
+
 /** Takes what is in front now as put there by the restore, not chosen. */
 export function restoredInFront() {
   if (restoring === null) return;

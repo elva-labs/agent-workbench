@@ -8,6 +8,7 @@ import {
   type Session,
 } from "$lib/sessions.svelte";
 import {
+  frontPending,
   isOpen,
   restoredInFront,
   untouched,
@@ -118,12 +119,14 @@ export function reopen(
   };
   // The session on screen at the quit, when its project is the one in front
   // and nothing else is on screen; otherwise the project's most recent, as
-  // bringing a project forward does. While the one on screen at the quit
-  // waits for its machine, the project in front meanwhile gets none.
+  // bringing a project forward does. While the project or the session on
+  // screen at the quit waits for its machine, the project in front meanwhile
+  // gets none.
   const front = (project: string | null) => {
     if (project === null || activeSession() !== null) return;
     const own = forProject(project);
-    const waits = held.some((entry) => entry.id === active);
+    const waits =
+      frontPending() || held.some((entry) => entry.id === active);
     const wanted =
       own.find((session) => session.id === active) ??
       (waits ? undefined : own.at(-1));
@@ -141,7 +144,6 @@ export function reopen(
 
   let stopped = false;
   for (const [project, arrived] of arriving) {
-    if (!waiting.some((entry) => entry.project === project)) continue;
     const settle = () => {
       if (stopped) return;
       const theirs = held.filter((entry) => entry.project === project);
