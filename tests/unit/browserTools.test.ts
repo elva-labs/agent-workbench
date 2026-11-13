@@ -527,10 +527,29 @@ describe("browser_screenshot", () => {
     expect(last().error).toBe("Tab 1 belongs to another session.");
   });
 
+  it("refuses a tab whose page did not load, whose view would be blank", async () => {
+    browser.tabs = [
+      tab(1, "http://localhost:3000/", { error: "nothing answered at localhost:3000" }),
+    ];
+    await handle(call("browser_screenshot", {}));
+    expect(captured).toEqual([]);
+    expect(last().content).toBeNull();
+    expect(last().error).toBe(
+      "Tab 1 did not load http://localhost:3000/: nothing answered at localhost:3000.",
+    );
+  });
+
+  it("refuses a new tab with no page open in it", async () => {
+    browser.tabs = [tab(1, "about:blank")];
+    await handle(call("browser_screenshot", {}));
+    expect(captured).toEqual([]);
+    expect(last().error).toBe("Tab 1 is a new tab with no page open in it.");
+  });
+
   it("answers with the core's reason when the tab cannot be captured", async () => {
     browser.tabs = [tab(1, "https://a.example/")];
     screenshotError =
-      "the workbench's window is minimised, and a tab cannot be captured while it is; ask the user to bring the window back, or read the page with browser_snapshot";
+      "the workbench's window is minimised or hidden, and a tab cannot be captured while it is; ask the user to bring the window back, or read the page with browser_snapshot";
     await handle(call("browser_screenshot", {}));
     expect(captured).toEqual([1]);
     expect(last().content).toBeNull();

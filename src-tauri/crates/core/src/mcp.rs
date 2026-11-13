@@ -407,7 +407,7 @@ pub fn browser_console_tool() -> Value {
 pub fn browser_screenshot_tool() -> Value {
     json!({
         "name": "browser_screenshot",
-        "description": "A screenshot of the tab, as a PNG you can read as an image, showing the page as it is now. The tab is captured where it is, without coming forward, so whatever the user has in front stays as it is, whichever session they are looking at. It is refused while the workbench's window is minimised. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
+        "description": "A screenshot of the tab, as a PNG you can read as an image, showing the page as it is now. The tab is captured where it is, without coming forward, so whatever the user has in front stays as it is, whichever session they are looking at. It is refused while the workbench's window is minimised or hidden or its display is asleep, and for a tab whose page did not load or that has no page open. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
         "inputSchema": {
             "type": "object",
             "properties": {

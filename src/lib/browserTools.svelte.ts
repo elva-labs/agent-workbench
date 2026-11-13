@@ -347,6 +347,12 @@ async function screenshotTool(request: BrowserRequest): Promise<Answered> {
   const found = resolveTab(request);
   if ("refusal" in found) return refused(found.refusal);
   const tab = found.tab;
+  // A new tab and a page that failed are drawn by the viewer, not by the
+  // tab's own view, so its image would be blank.
+  if (tab.error !== null)
+    return refused(`Tab ${tab.id} did not load ${tab.url}: ${tab.error}.`);
+  if (tab.url === "about:blank" || tab.url === "")
+    return refused(`Tab ${tab.id} is a new tab with no page open in it.`);
   // The core captures the tab where it is, whatever the user is looking
   // at, so nothing in front of them changes.
   try {
