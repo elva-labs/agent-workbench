@@ -198,6 +198,87 @@ mod client {
         connection.close();
     }
 
+    /// An integrated session on the far side, against a stand-in for
+    /// `claude` that answers the opening, holds one turn and waits for its
+    /// stdin to close.
+    #[cfg(unix)]
+    #[test]
+    fn an_integrated_session_runs_through_the_daemon() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("workbench-serve-integrated-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let claude = dir.join("claude");
+        std::fs::write(
+            &claude,
+            r#"#!/bin/sh
+read -r line
+id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{}}}\n' "$id"
+read -r line
+printf '%s\n' '{"type":"system","subtype":"init","model":"m"}'
+printf '%s\n' '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"from afar"}]},"parent_tool_use_id":null}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
+while read -r line; do :; done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let events = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        // No login shell to ask, so the daemon's own PATH, with the
+        // stand-in first, is the one the agent is looked up on.
+        let connection = Connection::open(
+            Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
+                .arg("serve")
+                .env_remove("SHELL")
+                .env("PATH", format!("{}:/usr/bin:/bin", dir.display())),
+            Box::new({
+                let events = Arc::clone(&events);
+                move |event, payload| events.lock().unwrap().push((event.to_string(), payload))
+            }),
+        )
+        .unwrap();
+        let started = connection
+            .call(
+                "integrated_start",
+                json!({ "agent": "claude-code", "project": dir, "model": "haiku" }),
+            )
+            .unwrap();
+        let id = started["id"].as_str().unwrap().to_string();
+        assert!(started["sessionId"].is_string());
+
+        let seen = |kind: &str| {
+            for _ in 0..200 {
+                let found = events.lock().unwrap().iter().any(|(event, payload)| {
+                    event == "integrated_event" && payload["id"] == id && payload["type"] == kind
+                });
+                if found {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            panic!("no {kind}: {:?}", events.lock().unwrap());
+        };
+        seen("ready");
+        let message = connection
+            .call("integrated_send", json!({ "id": id, "text": "hello" }))
+            .unwrap();
+        assert!(message.is_string());
+        seen("turnEnded");
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, payload)| { payload["type"] == "text" && payload["text"] == "from afar" }));
+        connection
+            .call("integrated_stop", json!({ "id": id }))
+            .unwrap();
+        seen("ended");
+        connection.close();
+    }
+
     #[test]
     fn the_far_end_going_away_fails_the_waiting_and_says_so() {
         let events = Arc::new(Mutex::new(Vec::new()));

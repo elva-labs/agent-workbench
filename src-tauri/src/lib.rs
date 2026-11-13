@@ -150,6 +150,165 @@ async fn pty_spawn(
     .await
 }
 
+/// Starts an agent as an integrated session, on the machine the project is
+/// on. Its news arrives as `integrated_event`, with the host on its id for
+/// a session elsewhere.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn integrated_start(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    session: Option<String>,
+    model: Option<String>,
+    permission_mode: Option<String>,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => value(core.integrated_start(
+            &agent,
+            Path::new(&project),
+            cwd.as_deref().map(Path::new),
+            session,
+            model.as_deref(),
+            permission_mode.as_deref(),
+            config_dir.as_deref(),
+        )?),
+        Route::Remote { host, rest } => {
+            let started = remotes.connection(&host)?.call(
+                "integrated_start",
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "permissionMode": permission_mode, "configDir": config_dir }),
+            )?;
+            let id = started["id"].as_str().ok_or("no session id")?;
+            Ok(json!({ "id": with_host_id(&host, id), "sessionId": started["sessionId"] }))
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn integrated_send(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    text: String,
+    images: Option<Vec<workbench_core::integrated::Image>>,
+) -> Result<Value, String> {
+    let images = images.unwrap_or_default();
+    let sent = images.clone();
+    let typed = text.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_send",
+        move |rest| json!({ "id": rest, "text": typed, "images": sent }),
+        move |core, id| core.integrated_send(id, &text, &images),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_interrupt(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_interrupt",
+        |rest| json!({ "id": rest }),
+        |core, id| core.integrated_interrupt(id),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_answer(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    request: String,
+    choice: workbench_core::integrated::Choice,
+    message: Option<String>,
+) -> Result<Value, String> {
+    let (asked, said) = (request.clone(), message.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_answer",
+        move |rest| json!({ "id": rest, "request": asked, "choice": choice, "message": said }),
+        move |core, id| core.integrated_answer(id, &request, choice, message.as_deref()),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_set_model(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    model: String,
+) -> Result<Value, String> {
+    let named = model.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_set_model",
+        move |rest| json!({ "id": rest, "model": named }),
+        move |core, id| core.integrated_set_model(id, &model),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_set_permission_mode(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    mode: String,
+) -> Result<Value, String> {
+    let named = mode.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_set_permission_mode",
+        move |rest| json!({ "id": rest, "mode": named }),
+        move |core, id| core.integrated_set_permission_mode(id, &mode),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_stop(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_stop",
+        |rest| json!({ "id": rest }),
+        |core, id| core.integrated_stop(id),
+    )
+    .await
+}
+
 #[tauri::command]
 async fn pty_shell(
     core: State<'_, Arc<Core>>,
@@ -1166,6 +1325,13 @@ pub fn run() {
             pty_cwd,
             pty_processes,
             pty_stop_process,
+            integrated_start,
+            integrated_send,
+            integrated_interrupt,
+            integrated_answer,
+            integrated_set_model,
+            integrated_set_permission_mode,
+            integrated_stop,
             settings_get,
             settings_set,
             styles_get,

@@ -112,6 +112,53 @@ struct SpawnParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct IntegratedStartParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    permission_mode: Option<String>,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedSendParams {
+    id: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    images: Vec<crate::integrated::Image>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedAnswerParams {
+    id: String,
+    request: String,
+    choice: crate::integrated::Choice,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedModelParams {
+    id: String,
+    model: String,
+}
+
+#[derive(Deserialize)]
+struct IntegratedModeParams {
+    id: String,
+    mode: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ShellParams {
     project: PathBuf,
     cols: u16,
@@ -318,6 +365,45 @@ pub fn dispatch(
                 p.rows,
                 make_output,
             )?)
+        }
+        "integrated_start" => {
+            let p: IntegratedStartParams = parse(params)?;
+            value(core.integrated_start(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                p.session,
+                p.model.as_deref(),
+                p.permission_mode.as_deref(),
+                p.config_dir.as_deref(),
+            )?)
+        }
+        "integrated_send" => {
+            let p: IntegratedSendParams = parse(params)?;
+            value(core.integrated_send(&p.id, &p.text, &p.images)?)
+        }
+        "integrated_interrupt" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_interrupt(&p.id)?;
+            Ok(Value::Null)
+        }
+        "integrated_answer" => {
+            let p: IntegratedAnswerParams = parse(params)?;
+            core.integrated_answer(&p.id, &p.request, p.choice, p.message.as_deref())?;
+            Ok(Value::Null)
+        }
+        "integrated_set_model" => {
+            let p: IntegratedModelParams = parse(params)?;
+            value(core.integrated_set_model(&p.id, &p.model)?)
+        }
+        "integrated_set_permission_mode" => {
+            let p: IntegratedModeParams = parse(params)?;
+            value(core.integrated_set_permission_mode(&p.id, &p.mode)?)
+        }
+        "integrated_stop" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_stop(&p.id)?;
+            Ok(Value::Null)
         }
         "pty_shell" => {
             let p: ShellParams = parse(params)?;
@@ -707,6 +793,55 @@ mod tests {
             Some("The user declined the change.")
         );
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn integrated_sessions_are_methods_and_refuse_what_they_cannot_do() {
+        let core = core();
+        let missing = dispatch(
+            &core,
+            "integrated_start",
+            json!({ "agent": "claude-code" }),
+            no_output,
+        )
+        .expect_err("a start names its project");
+        assert!(missing.contains("bad parameters"), "{missing}");
+        let codex = dispatch(
+            &core,
+            "integrated_start",
+            json!({ "agent": "codex", "project": "/tmp" }),
+            no_output,
+        )
+        .expect_err("codex has no integrated mode here");
+        assert!(codex.contains("integrated"), "{codex}");
+        for (method, params) in [
+            ("integrated_send", json!({ "id": "int-none", "text": "hi" })),
+            ("integrated_interrupt", json!({ "id": "int-none" })),
+            (
+                "integrated_answer",
+                json!({ "id": "int-none", "request": "r", "choice": "allowOnce" }),
+            ),
+            (
+                "integrated_set_model",
+                json!({ "id": "int-none", "model": "haiku" }),
+            ),
+            (
+                "integrated_set_permission_mode",
+                json!({ "id": "int-none", "mode": "plan" }),
+            ),
+            ("integrated_stop", json!({ "id": "int-none" })),
+        ] {
+            let error = dispatch(&core, method, params, no_output).expect_err(method);
+            assert!(error.contains("no such session"), "{method}: {error}");
+        }
+        let unknown = dispatch(
+            &core,
+            "integrated_answer",
+            json!({ "id": "int-none", "request": "r", "choice": "allowForever" }),
+            no_output,
+        )
+        .expect_err("a choice is one of the four");
+        assert!(unknown.contains("bad parameters"), "{unknown}");
     }
 
     #[test]

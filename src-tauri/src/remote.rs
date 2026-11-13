@@ -76,6 +76,13 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         workbench_core::SESSION_IDENTIFIED => {
             put_back(&mut payload, "ptyId", |id| with_host_id(host, id))
         }
+        workbench_core::integrated::INTEGRATED_EVENT => {
+            put_back(&mut payload, "id", |id| with_host_id(host, id));
+            put_back(&mut payload, "path", |path| with_host(host, path));
+            if let Some(change) = payload.get_mut("change") {
+                put_back(change, "path", |path| with_host(host, path));
+            }
+        }
         workbench_core::watch::GIT_CHANGED => {
             if let Some(root) = payload.as_str() {
                 return Value::String(with_host(host, root));
@@ -443,6 +450,25 @@ mod tests {
             homeward("lab", "shown_changed", json!(["/tmp/a.md", "/tmp/b.png"])),
             json!(["ssh://lab/tmp/a.md", "ssh://lab/tmp/b.png"])
         );
+        let integrated = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-1", "type": "toolFinished", "change": {"path": "/srv/a.rs"}}),
+        );
+        assert_eq!(integrated["id"], "ssh://lab#int-1");
+        assert_eq!(integrated["change"]["path"], "ssh://lab/srv/a.rs");
+        let asked = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-1", "type": "permissionAsked", "path": "/srv/b.rs"}),
+        );
+        assert_eq!(asked["path"], "ssh://lab/srv/b.rs");
+        let text = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-1", "type": "text", "change": null}),
+        );
+        assert_eq!(text["change"], Value::Null);
         let other = homeward(
             "lab",
             "session_event",
