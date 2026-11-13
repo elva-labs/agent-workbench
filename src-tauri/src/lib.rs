@@ -1280,6 +1280,8 @@ pub fn run() {
             menu::app_menu,
             launch::take_opened,
             browser::browser_open,
+            browser::browser_focus,
+            browser::browser_close_owner,
             browser::browser_close,
             browser::browser_activate,
             browser::browser_navigate,

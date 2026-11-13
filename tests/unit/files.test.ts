@@ -47,6 +47,10 @@ import { enterReview, layout } from "$lib/layout.svelte";
 const ROOT = "/repo";
 
 /** What the core would report. Reassigned per test to stand in for git. */
+import type { BrowserOwner } from "$lib/core";
+
+const HERE: BrowserOwner = { kind: "project", path: ROOT };
+
 const fake = {
   status: [] as {
     path: string;
@@ -69,7 +73,7 @@ const fake = {
   grepTruncated: false,
   diffCalls: 0,
   fail: null as string | null,
-  browserOpenCalls: [] as { url: string | null; session: string | null }[],
+  browserOpenCalls: [] as { url: string | null; owner: unknown }[],
 };
 
 vi.mock("$lib/core", () => ({
@@ -102,8 +106,11 @@ vi.mock("$lib/core", () => ({
     async projectInfo(path: string) {
       return { path, name: path, repository: path, isGit: true };
     },
-    async browserOpen(url: string | null, session: string | null) {
-      fake.browserOpenCalls.push({ url, session });
+    async browserFocus() {
+      return { tabs: browser.tabs, owner: browser.owner, active: browser.active };
+    },
+    async browserOpen(url: string | null, owner: BrowserOwner) {
+      fake.browserOpenCalls.push({ url, owner });
       const id = fake.browserOpenCalls.length;
       const tab = {
         id,
@@ -111,12 +118,14 @@ vi.mock("$lib/core", () => ({
         title: "",
         home: url,
         opener: { kind: "user" as const },
+        owner,
+        front: true,
         loading: false,
         canGoBack: false,
         canGoForward: false,
         error: null,
       };
-      return { tabs: [tab], active: id };
+      return { tabs: [tab], owner, active: id };
     },
   }),
 }));
@@ -543,8 +552,8 @@ describe("newBrowserTab", () => {
     await newBrowserTab();
 
     expect(fake.browserOpenCalls).toEqual([
-      { url: null, session: null },
-      { url: null, session: null },
+      { url: null, owner: HERE },
+      { url: null, owner: HERE },
     ]);
     expect(browser.showing).toBe(true);
   });
@@ -558,7 +567,7 @@ describe("openBrowser", () => {
 
     await openBrowser();
 
-    expect(fake.browserOpenCalls).toEqual([{ url: null, session: null }]);
+    expect(fake.browserOpenCalls).toEqual([{ url: null, owner: HERE }]);
     expect(browser.tabs.length).toBe(1);
     expect(browser.showing).toBe(true);
   });
@@ -571,12 +580,15 @@ describe("openBrowser", () => {
         title: "",
         home: "https://example.com/",
         opener: { kind: "user" },
+        owner: HERE,
+        front: true,
         loading: false,
         canGoBack: false,
         canGoForward: false,
         error: null,
       },
     ];
+    browser.owner = HERE;
     browser.active = 1;
 
     await openBrowser();

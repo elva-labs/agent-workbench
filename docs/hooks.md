@@ -65,7 +65,7 @@ one viewer holds one thing, so only the agent's latest call is kept. This
 goes for `diff`, `present`, `terminal` and the browser's `browser_open` as
 well. A call from the session on screen opens at once, as does one from a
 session the window does not know, an agent run in a terminal outside the
-app.
+app, except that the browser's tab then belongs to the project it runs in.
 
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
@@ -141,10 +141,11 @@ brings the agent's last message, and the row takes its first line.
 
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 
-Ten more read and drive a tab of the embedded browser: opening, closing,
-listing and navigating one, reading it back as a snapshot of text with a
-ref on everything a click or a type can reach, clicking and typing by ref,
-reading its console, a screenshot, and running script in its page. See
+Ten more read and drive a tab of the embedded browser, within the session's
+own tabs: opening, closing, listing and navigating one, reading it back as a
+snapshot of text with a ref on everything a click or a type can reach,
+clicking and typing by ref, reading its console, a screenshot, and running
+script in its page. See
 [browser](browser.md).
 
 Four more read and change the workbench's own settings, the appearance,

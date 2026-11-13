@@ -16,7 +16,11 @@
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
-  import { conductor, handle as conductRequested } from "$lib/conductor.svelte";
+  import {
+    cancelled as conductCancelled,
+    conductor,
+    handle as conductRequested,
+  } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
   import { load as loadOrchestrator, orchestrator } from "$lib/orchestrator.svelte";
@@ -36,7 +40,7 @@
   import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
-  import { initBrowser } from "$lib/browser.svelte";
+  import { initBrowser, syncOwner } from "$lib/browser.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { loadZoom, zoomed } from "$lib/zoom.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
@@ -167,6 +171,9 @@
       .onConductRequest((request) => void conductRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
+      .onConductCancel((request) => conductCancelled(request.id))
+      .then((unlisten) => offs.push(unlisten));
+    core()
       .onBrowserRequest((request) => void browserRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
@@ -261,6 +268,16 @@
         if (key !== null) switched(key);
       });
     });
+  });
+
+  // The browser shows the tabs of the session on screen, or of the project
+  // on screen with no session selected: the core is told whenever that
+  // changes.
+  $effect(() => {
+    sessions.active;
+    workspace.active;
+    sessions.all.length;
+    void syncOwner();
   });
 
   // The platform's own window controls sit on the leftmost header's text,

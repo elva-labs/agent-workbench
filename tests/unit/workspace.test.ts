@@ -1,6 +1,7 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  close,
   followOpenRequests,
   openPath,
   projectLabel,
@@ -24,6 +25,7 @@ const fake = vi.hoisted(() => {
     delays: {} as Record<string, number>,
     describing: 0,
     mostAtOnce: 0,
+    tabsClosed: [] as unknown[],
   };
   const core = {
     projectInfo: async (path: string) => {
@@ -40,6 +42,10 @@ const fake = vi.hoisted(() => {
       };
     },
     setWindowTitle: async () => {},
+    browserCloseOwner: async (owner: unknown) => {
+      state.tabsClosed.push(owner);
+      return { tabs: [], owner: null, active: null };
+    },
     takeOpened: async () => state.waiting.splice(0),
     onOpenRequested: async (handler: () => void) => {
       state.told = handler;
@@ -67,6 +73,7 @@ beforeEach(() => {
   reset();
   resetSessions();
   fake.state.waiting = [];
+  fake.state.tabsClosed = [];
   fake.state.told = null;
   fake.state.delays = {};
   fake.state.describing = 0;
@@ -338,5 +345,14 @@ describe("folders asked for from outside the window", () => {
     await vi.waitFor(() => expect(fake.state.told).not.toBeNull());
     stop();
     expect(fake.state.told).toBeNull();
+  });
+});
+
+describe("closing a project", () => {
+  it("closes the browser tabs the project owned", () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    close("/one");
+    expect(fake.state.tabsClosed).toEqual([{ kind: "project", path: "/one" }]);
   });
 });

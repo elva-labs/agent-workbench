@@ -116,9 +116,16 @@ export interface NotifyRequest {
   session: string | null;
 }
 
+/** A conductor call the agent gave up on. */
+export interface ConductCancel {
+  /** The call, as the request named it. */
+  id: string;
+  cwd: string;
+}
+
 /** A call an agent made on one of the conductor's tools: what one session
     asks about the projects, the sessions, and the ones it starts. The
-    window answers every one, by id. */
+    window answers each one, by id, except a wait the agent gave up on. */
 export interface ConductRequest {
   /** What the answer is named after, unique to this call. */
   id: string;
@@ -483,6 +490,13 @@ export type FileDrag =
   | { type: "drop"; paths: string[]; x: number; y: number }
   | { type: "leave" };
 
+/** Whose a browser tab is: the session it was opened for, by the window's
+    key for it, or the project on screen when it was opened by hand with no
+    session selected. */
+export type BrowserOwner =
+  | { kind: "session"; key: string }
+  | { kind: "project"; path: string };
+
 /** A tab of the embedded browser, as the native layer keeps it. */
 export interface BrowserTab {
   id: number;
@@ -493,7 +507,10 @@ export interface BrowserTab {
   /** The url the tab was opened with; null for a tab opened empty, as a
       new tab. */
   home: string | null;
-  opener: { kind: "user" } | { kind: "agent"; session: string };
+  opener: { kind: "user" } | { kind: "agent" };
+  owner: BrowserOwner;
+  /** The tab in front among its owner's. */
+  front: boolean;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
@@ -501,9 +518,12 @@ export interface BrowserTab {
   error: string | null;
 }
 
-/** The embedded browser's tabs, and which one is active. */
+/** The embedded browser's tabs, every owner's, and which one is active. */
 export interface BrowserSnapshot {
   tabs: BrowserTab[];
+  /** The owner whose tabs are on screen. */
+  owner: BrowserOwner | null;
+  /** The front tab of that owner: the one whose native view is shown. */
   active: number | null;
 }
 
@@ -685,6 +705,11 @@ export interface Core {
   onConductRequest(
     handler: (request: ConductRequest) => void,
   ): Promise<() => void>;
+  /** The agent gave up on a conductor call: nobody is waiting for its
+      answer any more. */
+  onConductCancel(
+    handler: (request: ConductCancel) => void,
+  ): Promise<() => void>;
   /** The window's one answer to a conductor call: the text the agent
       reads, or the reason it could not be done. The directory the call
       came from says which machine waits for it. */
@@ -763,16 +788,20 @@ export interface Core {
   /** More folders are waiting for `takeOpened`. */
   onOpenRequested(handler: () => void): Promise<() => void>;
 
-  /** Opens a tab: a url, or none for a new tab the frontend draws its own
-      page for. `session` names the agent that asked, for a tab an agent
-      opens. */
-  /** Opens a tab, active, or `behind` the active one, which then stays
-      active and on screen while the new one waits out of sight. */
+  /** Opens a tab for `owner`: a url, or none for a new tab the frontend
+      draws its own page for. It becomes the owner's front tab, and shows
+      at once only when that owner is the one on screen. `agent` marks a
+      tab an agent opened. */
   browserOpen(
     url: string | null,
-    session: string | null,
-    behind?: boolean,
+    owner: BrowserOwner,
+    agent?: boolean,
   ): Promise<BrowserSnapshot>;
+  /** Puts an owner's tabs on screen, or nobody's: the owner's front tab is
+      the active one from then on. */
+  browserFocus(owner: BrowserOwner | null): Promise<BrowserSnapshot>;
+  /** Closes every tab an owner has. */
+  browserCloseOwner(owner: BrowserOwner): Promise<BrowserSnapshot>;
   browserClose(id: number): Promise<BrowserSnapshot>;
   browserActivate(id: number): Promise<BrowserSnapshot>;
   /** Rejects with a plain reason meant to be shown: "enter an address",
@@ -1066,6 +1095,11 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onConductCancel(handler) {
+    return listen<ConductCancel>("conduct_cancel", (event) =>
+      handler(event.payload),
+    );
+  },
   conductAnswer: (id, cwd, content, error) =>
     invoke<void>("conduct_answer", { id, cwd, content, error }),
   async onBrowserRequest(handler) {
@@ -1111,8 +1145,12 @@ const tauriCore: Core = {
     return listen("open_requested", () => handler());
   },
 
-  browserOpen: (url, session, behind = false) =>
-    invoke<BrowserSnapshot>("browser_open", { url, session, behind }),
+  browserOpen: (url, owner, agent = false) =>
+    invoke<BrowserSnapshot>("browser_open", { url, owner, agent }),
+  browserFocus: (owner) =>
+    invoke<BrowserSnapshot>("browser_focus", { owner }),
+  browserCloseOwner: (owner) =>
+    invoke<BrowserSnapshot>("browser_close_owner", { owner }),
   browserClose: (id) => invoke<BrowserSnapshot>("browser_close", { id }),
   browserActivate: (id) => invoke<BrowserSnapshot>("browser_activate", { id }),
   browserNavigate: (id, address) =>
@@ -1322,6 +1360,9 @@ const detachedCore: Core = {
   async onConductRequest() {
     return () => {};
   },
+  async onConductCancel() {
+    return () => {};
+  },
   async conductAnswer() {},
   async onBrowserRequest() {
     return () => {};
@@ -1376,6 +1417,12 @@ const detachedCore: Core = {
   async browserOpen() {
     throw new Error("no core");
   },
+  async browserFocus() {
+    return { tabs: [], owner: null, active: null };
+  },
+  async browserCloseOwner() {
+    return { tabs: [], owner: null, active: null };
+  },
   async browserClose() {
     throw new Error("no core");
   },
@@ -1400,7 +1447,7 @@ const detachedCore: Core = {
   async browserPlace() {},
   async browserHide() {},
   async browserTabs() {
-    return { tabs: [], active: null };
+    return { tabs: [], owner: null, active: null };
   },
   async onBrowserTabs() {
     return () => {};

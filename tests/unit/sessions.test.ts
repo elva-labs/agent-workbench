@@ -71,6 +71,7 @@ const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
 
 const killed: string[] = [];
+const tabsClosed: unknown[] = [];
 let historyReads = 0;
 /** The projects each batched reading was asked for. */
 const manyCalls: string[][] = [];
@@ -93,6 +94,10 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     kill: async (id: string) => {
       killed.push(id);
+    },
+    browserCloseOwner: async (owner: unknown) => {
+      tabsClosed.push(owner);
+      return { tabs: [], owner: null, active: null };
     },
     ptyCwd: async () => {
       cwdAsks += 1;
@@ -139,6 +144,7 @@ beforeEach(() => {
   resetAccounts();
   resetZoom();
   killed.length = 0;
+  tabsClosed.length = 0;
   historyReads = 0;
   manyCalls.length = 0;
   holds = {};
@@ -347,6 +353,24 @@ describe("closing", () => {
     close(session.key);
     expect(killed).toEqual(["pty-1"]);
     expect(sessions.all).toHaveLength(0);
+  });
+
+  it("closes the browser tabs the session owned", () => {
+    const session = live(A, "pty-1");
+    close(session.key);
+    expect(tabsClosed).toEqual([{ kind: "session", key: session.key }]);
+  });
+
+  it("closes the tabs of every session when its project is closed, and keeps those of a session that only stopped", () => {
+    const stopped = live(A, "pty-1");
+    ended({ id: "pty-1", code: 0, clean: true });
+    const other = live(A, "pty-2");
+    expect(tabsClosed).toEqual([]);
+    closeProject(A);
+    expect(tabsClosed).toEqual([
+      { kind: "session", key: stopped.key },
+      { kind: "session", key: other.key },
+    ]);
   });
 
   it("does not try to stop one that already ended", () => {
