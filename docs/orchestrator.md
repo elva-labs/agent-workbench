@@ -9,11 +9,12 @@ session a line, wait until one of them stops or asks for something, read
 what one has on screen, and stop them.
 
 It runs in a project of its own, `orchestrator` under the workbench's home.
-The first one starts from New orchestrator session, in the menu beside Open
-project; from then on the project sits above the ones you opened, with its
-sessions and the past ones to resume, and a session started there is an
-orchestrator. With more than one agent installed its new-session row opens
-into a row per agent, as any project's does. Nothing else about it differs,
+The first one starts from New orchestrator session, in the menu on the
+sessions pane's Projects line; from then on the project sits above the ones
+you opened, with its sessions and the past ones to resume, and a session
+started there is an orchestrator. Its header's button starts another, and
+with more than one agent installed it opens the choice of agent, as any
+project's does. Nothing else about it differs,
 except what it is told: an orchestrator is told to direct work rather than
 do it, to start a session per piece in the project it belongs to, on a
 worktree of its own when pieces touch the same files, to wait on them rather

@@ -140,8 +140,9 @@ inside. <kbd>↑</kbd> and <kbd>↓</kbd> move the cursor, <kbd>Home</kbd> and
 the cursor only shows while the keyboard is in the pane. A click puts the
 cursor on what was clicked; focusing the pane by key starts it over from the
 session you are in, else your project, or the selected file. Everything in
-the sessions pane is on that cursor, the Open project button, the menu
-beside it and the sort menu at the top included, and <kbd>Delete</kbd> does what the × on a
+the sessions pane above its foot is on that cursor, the field that opens
+the palette, the new-session button, the sort menu and the menu beside it
+included, the menus' items walked with the arrows while one is open, and <kbd>Delete</kbd> does what the × on a
 project or session row does, except on a session another session started,
 which only its own × stops.
 

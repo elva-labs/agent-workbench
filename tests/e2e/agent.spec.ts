@@ -1249,6 +1249,57 @@ test.describe("several projects", () => {
     await expect(page.getByTestId("view-switch")).toHaveCount(0);
   });
 
+  // The head is a field that opens the palette with a new-session button
+  // beside it; each project's header stays in view while its rows scroll
+  // under it, a hairline between projects; the settings sit at the foot.
+  test("keeps a project's header in view while its rows scroll, under the head and over the foot", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 440 });
+    for (let n = 1; n <= 8; n += 1) {
+      await page.getByTestId("new-session").click();
+      await expect(rows(page)).toHaveCount(n);
+    }
+    const pane = (await page.locator(SESSIONS).boundingBox())!;
+
+    const field = (await page.getByTestId("go-to").boundingBox())!;
+    const add = (await page.getByTestId("new-session").boundingBox())!;
+    expect(Math.abs(field.y + field.height / 2 - (add.y + add.height / 2))).toBeLessThan(1);
+    expect(add.x).toBeGreaterThan(field.x + field.width - 1);
+    expect(field.width).toBeGreaterThan(add.width * 3);
+    await expect(page.getByTestId("go-to")).toContainText("Go to session or project");
+
+    const foot = (await page.locator(`${SESSIONS} .foot`).boundingBox())!;
+    expect(Math.abs(foot.y + foot.height - (pane.y + pane.height))).toBeLessThan(2);
+    await expect(page.getByTestId("pane-settings")).toBeVisible();
+
+    const tree = page.locator(`${SESSIONS} .tree`);
+    const top = (await tree.boundingBox())!.y;
+    const head = page.locator(`[data-row="project:${ONE}"]`);
+    await tree.evaluate((list) => (list.scrollTop = 80));
+    await expect.poll(() => tree.evaluate((list) => list.scrollTop)).toBeGreaterThan(60);
+    const stuck = (await head.boundingBox())!;
+    expect(Math.abs(stuck.y - top)).toBeLessThan(1.5);
+    await expect(head).toBeVisible();
+    // A row has gone under it.
+    const under = await rows(page).evaluateAll((all) => all.map((row) => row.getBoundingClientRect().top));
+    expect(under.some((y) => y < stuck.y + stuck.height - 1)).toBe(true);
+
+    // The next project's header sits below a hairline.
+    await tree.evaluate((list) => (list.scrollTop = list.scrollHeight));
+    const second = page.locator(`${SESSIONS} [data-testid='project-section']`).nth(1);
+    await expect(second).toHaveCSS("border-top-width", "1px");
+    await expect(second).toContainText("two");
+
+    // The field opens the palette, and the gear the settings.
+    await page.getByTestId("go-to").click();
+    await expect(page.getByTestId("palette")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await page.getByTestId("pane-settings").click();
+    await expect(page.getByTestId("settings")).toBeVisible();
+  });
+
   test("closing a project stops its sessions and keeps the rest", async ({
     page,
   }) => {
@@ -1272,6 +1323,7 @@ test.describe("several projects", () => {
       window.__fake.picked = "/home/ada/dev/three";
     });
 
+    await page.getByTestId("sessions-menu").click();
     await page.getByTestId("open-project").click();
     await expect(page.locator(SESSIONS)).toContainText("three");
     await page.getByTestId("new-session").click();

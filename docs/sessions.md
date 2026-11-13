@@ -8,16 +8,33 @@ unmounted, and hidden in a way that keeps their box in layout, so a
 background session's pty is never resized and never reflows.
 
 Nothing new starts by itself. Opening a project shows what the project has:
-live sessions if any, past ones to resume, and a new-session row. Opening the
-app brings back the sessions that were open when it quit, as described under
+live sessions if any and past ones to resume. Opening the app brings back
+the sessions that were open when it quit, as described under
 [after a restart](#after-a-restart).
 The past ones are read again each time the window comes back into view and
 once a minute while it is looked at, so a session run in a terminal outside
-the app is there to resume without a restart. The menu beside Open project
-holds Open remote project, for a folder on another machine, and New
-orchestrator session; see [remote](remote.md) and
-[orchestrator](orchestrator.md). With more than one agent installed the row
-opens in place into a row per agent; see [agents](adapters.md).
+the app is there to resume without a restart.
+
+At the top of the pane sits a field, `Go to session or project` with the
+palette's chord, which opens the [palette](focus-model.md#the-command-palette),
+and beside it a button in the accent that starts a session in the project
+on screen. Under them is the Projects line with the sort menu and a menu of
+its own: Open project, Open remote project, for a folder on another
+machine, and New orchestrator session; see [remote](remote.md) and
+[orchestrator](orchestrator.md). With no project open, the pane says so and
+offers Open project there as well.
+
+Each project starts with a header: its name, the account it runs under as
+a tag when that is not the agents' own, and a button that starts a session
+in it, bringing it forward first. The header stays in view while the
+project's rows scroll under it, until the next project's pushes it out,
+and a hairline separates one project from the next. With more than one
+agent installed, a new session opens the choice in place under the
+project's name, a row per agent; see [agents](adapters.md).
+
+At the foot of the pane, the account the session on screen runs under,
+once there are accounts to tell apart, and a button that opens the
+settings.
 
 A row's own button appears over its end on hover, so a name is never
 squeezed to make room for it. On a live row it is ×, which stops the session
@@ -168,9 +185,9 @@ of its own is running, ends the working either way.
 ## Accounts
 
 With accounts named in the [settings](settings.md#accounts), a project
-runs under one of them, and its row carries the account's name as a tag
-when that is not the agents' own. The new-session row then opens into the
-choice whether or not there is more than one agent, and the choice asks
+runs under one of them, and its header carries the account's name as a tag
+when that is not the agents' own. A new session then opens the choice
+whether or not there is more than one agent, and the choice asks
 for the account first: under `new session as`, the accounts share a row
 across the column with the project's own marked, and the agents follow
 under `with`, even when there is only one. The session starts under the
@@ -191,7 +208,8 @@ that account.
 
 A project is its folder's name. Two open projects with the same name each
 take as much of the path above them as tells them apart, so two checkouts
-of `main-truck` read `work/main-truck` and `spike/main-truck`.
+of `main-truck` read `work/main-truck` and `spike/main-truck`, the part in
+front of the name dimmed.
 
 A row is `session N` until the agent says otherwise. Claude Code writes the
 session's name into the terminal title, with a status glyph in front and its

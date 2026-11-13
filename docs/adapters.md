@@ -29,7 +29,8 @@ a remote machine runs under directories on that machine.
 
 Each agent is looked for once, on the login shell's PATH. A machine with one
 of them shows no sign of the other, and a new session starts it. With
-both, the new-session row opens in place into a row per agent, and the
+both, a new session opens the choice in place under the project's name, a
+row per agent, and the
 list of earlier sessions to resume says whose each one is; the session
 rows themselves carry no agent tag. The cursor starts on
 the agent last started in the project, marked `last used`, else the first

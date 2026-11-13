@@ -114,6 +114,8 @@ import { reset as resetHook } from "$lib/hook.svelte";
 import { remote, resetRemote } from "$lib/remote.svelte";
 import { offered, pickResume, resetResume, resume } from "$lib/resume.svelte";
 import { projects, resetProjects, touch } from "$lib/projects.svelte";
+import { palette, resetPalette } from "$lib/palette.svelte";
+import { settings } from "$lib/settings.svelte";
 
 beforeEach(() => {
   resetRemote();
@@ -133,6 +135,8 @@ beforeEach(() => {
   layout.width = 1600;
   layout.projectSort = "used";
   resetProjects();
+  resetPalette();
+  settings.open = false;
 
   files.scope = "changed";
   files.view = "diff";
@@ -220,7 +224,7 @@ describe("SessionsPane", () => {
   it("asks for a project when none is open", () => {
     render(SessionsPane);
     expect(screen.getByTestId("no-project")).toBeInTheDocument();
-    expect(screen.getByTestId("open-project")).toBeInTheDocument();
+    expect(screen.getByTestId("open-first-project")).toBeInTheDocument();
   });
 
   it("lists open projects with their sessions", () => {
@@ -271,9 +275,9 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     expect(screen.queryByTestId("agent-tag")).toBeNull();
-    // The new-session row opens, in place, into one row per agent.
+    // A new session opens the choice under the project's name, a row per
+    // agent.
     await fireEvent.click(screen.getByTestId("new-session"));
-    expect(screen.queryByTestId("new-session")).toBeNull();
     const options = screen.getAllByTestId("agent-option");
     expect(options.map((option) => option.dataset.agent)).toEqual([
       "claude-code",
@@ -321,21 +325,24 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
+    // The head's new-session button is the second stop, after the field.
+    await fireEvent.keyDown(nav, { key: "Home" });
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("new-session")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
-    // Open, with the cursor on the project's default.
+    // Open under the project's name, with the cursor on its default.
     let options = screen.getAllByTestId("agent-option");
     expect(options[0]).toHaveClass("cursor");
     expect(sessions.all).toHaveLength(0);
+    const head = screen.getByTestId("project-head").getBoundingClientRect();
+    expect(screen.getByTestId("agent-choice").getBoundingClientRect().top).toBeGreaterThanOrEqual(head.top);
 
-    // Escape closes it and puts the cursor back on the row.
+    // Escape closes it and puts the cursor on the project it opened under.
     await fireEvent.keyDown(nav, { key: "Escape" });
     expect(screen.queryByTestId("agent-choice")).toBeNull();
-    expect(screen.getByTestId("new-session").closest(".new-row")).toHaveClass(
-      "cursor",
-    );
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
 
-    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     options = screen.getAllByTestId("agent-option");
     expect(options[1]).toHaveClass("cursor");
@@ -411,8 +418,8 @@ describe("SessionsPane", () => {
     expect(layout.focus).toBe("agent");
   });
 
-  // Down goes through the rows in the order the pane shows them: the new
-  // session row sits between the sessions and the fold.
+  // Down goes through the rows in the order the pane shows them: the
+  // sessions, then the row of earlier ones.
   it("walks the rows in the order they are shown", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
@@ -429,10 +436,7 @@ describe("SessionsPane", () => {
       expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
 
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
-      "cursor",
-    );
+    expect(screen.getByTestId("session-row").closest("[data-row]")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
@@ -456,7 +460,6 @@ describe("SessionsPane", () => {
       expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(resume.open).toBe(true);
@@ -468,9 +471,7 @@ describe("SessionsPane", () => {
     await waitFor(() => expect(document.activeElement).toBe(nav));
     expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowUp" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
-      "cursor",
-    );
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
   });
 
   // Coming in from another pane is different: the cursor starts over from
@@ -485,10 +486,8 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
-      "cursor",
-    );
+    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
 
     focusPane("agent");
     nav.blur();
@@ -500,9 +499,10 @@ describe("SessionsPane", () => {
     );
   });
 
-  // Nothing in the pane needs the mouse: the way in sits on the same
-  // cursor as the rows, and Delete does what the × on a row does.
-  it("reaches Open project and the menu from the keyboard, and closes with Delete", async () => {
+  // Nothing in the pane needs the mouse: the head and the Projects line
+  // sit on the same cursor as the rows, the menus are walked with the
+  // arrows, and Delete does what the × on a row does.
+  it("reaches the head, the sort and the menu from the keyboard, and closes with Delete", async () => {
     workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
     workspace.active = "/repo";
     layout.focus = "sessions";
@@ -510,22 +510,15 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
-    // The cursor starts on the project you are in, not on the way in.
-    expect(screen.getByTestId("open-project")).not.toHaveClass("cursor");
+    // The cursor starts on the project you are in, not on the head.
+    expect(screen.getByTestId("go-to")).not.toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Home" });
-    expect(screen.getByTestId("open-project")).toHaveClass("cursor");
-    await fireEvent.keyDown(nav, { key: "Enter" });
-    expect(fake.picked).toBe(1);
+    expect(screen.getByTestId("go-to")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("sessions-menu")).toHaveClass("cursor");
-    // Enter opens the menu, and what it holds is a click away.
-    await fireEvent.keyDown(nav, { key: "Enter" });
-    await fireEvent.click(screen.getByTestId("open-remote"));
-    expect(remote.open).toBe(true);
-    expect(screen.queryByTestId("sessions-menu-items")).toBeNull();
+    expect(screen.getByTestId("new-session")).toHaveClass("cursor");
 
-    // The sort menu is next: Enter opens it, the arrows walk it and Enter
-    // picks, which closes it.
+    // The sort menu: Enter opens it, the arrows walk it and Enter picks,
+    // which closes it.
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("project-sort")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
@@ -535,7 +528,25 @@ describe("SessionsPane", () => {
     expect(layout.projectSort).toBe("name");
     expect(screen.queryByTestId("project-sort-menu")).toBeNull();
 
+    // The menu beside it holds the ways to open a project.
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("sessions-menu")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(screen.getByTestId("open-project")).toHaveClass("at");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(fake.picked).toBe(1);
+    expect(screen.queryByTestId("sessions-menu-items")).toBeNull();
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(remote.open).toBe(true);
+    // A click does the same.
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.click(screen.getByTestId("open-project"));
+    expect(fake.picked).toBe(2);
+
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Delete" });
     expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
   });
@@ -698,7 +709,7 @@ describe("SessionsPane", () => {
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
     await fireEvent.keyDown(nav, { key: "Home" });
-    for (let i = 0; i < 6; i += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    for (let i = 0; i < 7; i += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("quiet-more")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(screen.queryByTestId("quiet-more")).toBeNull();
@@ -773,8 +784,9 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
-    // The last row is the new-session row.
-    await fireEvent.keyDown(nav, { key: "End" });
+    // The head's button, after the field.
+    await fireEvent.keyDown(nav, { key: "Home" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(sessions.all).toHaveLength(1);
     expect(layout.focus).toBe("agent");
@@ -910,12 +922,52 @@ describe("SessionsPane", () => {
     expect(screen.getByTestId("new-session")).toBeDisabled();
   });
 
-  it("only offers a new session in the project you are looking at", () => {
+  // One new-session button in the head, for the project on screen, and one
+  // in each project's header, which brings that project forward first.
+  it("offers a new session from the head and from each project's header", async () => {
     workspace.open.push(repo("/one", "one"), repo("/two", "two"));
     workspace.active = "/one";
+    touch("/two");
 
     render(SessionsPane);
     expect(screen.getAllByTestId("new-session")).toHaveLength(1);
+    const heads = screen.getAllByTestId("project-new-session");
+    expect(heads).toHaveLength(2);
+    await fireEvent.click(
+      document.querySelector<HTMLElement>('[data-row="project:/two"] [data-testid="project-new-session"]')!,
+    );
+    expect(workspace.active).toBe("/two");
+    expect(sessions.all.map((session) => session.project)).toEqual(["/two"]);
+  });
+
+  // Two projects of one name each show the part of the path that tells
+  // them apart, dimmed in front of the name.
+  it("dims the path that tells two projects of one name apart", () => {
+    workspace.open.push(repo("/work/app", "app"), repo("/spike/app", "app"));
+    workspace.active = "/work/app";
+    touch("/spike/app", Date.now() - 1000);
+    touch("/work/app");
+
+    render(SessionsPane);
+    const names = screen.getAllByTestId("project-head").map((head) => head.querySelector(".name")!);
+    expect(names.map((name) => name.textContent)).toEqual(["work/app", "spike/app"]);
+    expect(names.map((name) => name.querySelector(".prefix")?.textContent)).toEqual(["work/", "spike/"]);
+  });
+
+  // The field at the top opens the palette, and the foot holds the
+  // settings and, once there are accounts, whose login the session on
+  // screen runs under.
+  it("opens the palette from the field and the settings from the foot", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+
+    render(SessionsPane);
+    expect(screen.getByTestId("go-to")).toHaveTextContent("Go to session or project");
+    await fireEvent.click(screen.getByTestId("go-to"));
+    expect(palette.open).toBe(true);
+    await fireEvent.click(screen.getByTestId("pane-settings"));
+    expect(settings.open).toBe(true);
+    expect(screen.queryByTestId("pane-account")).toBeNull();
   });
 });
 

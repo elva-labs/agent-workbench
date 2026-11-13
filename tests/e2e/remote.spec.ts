@@ -102,17 +102,18 @@ test.describe("a remote project", () => {
   }) => {
     await installFakeCore(page, { open: [] });
     await page.goto("/");
-    await expect(page.getByTestId("open-project")).toBeVisible();
+    await expect(page.getByTestId("open-first-project")).toBeVisible();
     await page.keyboard.press("ControlOrMeta+1");
     await page.keyboard.press("Home");
-    await expect(page.getByTestId("open-project")).toHaveClass(/cursor/);
-    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("go-to")).toHaveClass(/cursor/);
+    // The field, the new-session button, the sort, then the menu.
+    for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowDown");
     await expect(page.getByTestId("sessions-menu")).toHaveClass(/cursor/);
-    // Enter opens the menu, and the items take the keyboard from there.
+    // Enter opens the menu, and the arrows walk its items.
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("sessions-menu-items")).toBeVisible();
-    await page.keyboard.press("Tab");
-    await expect(page.getByTestId("open-remote")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("open-remote")).toHaveClass(/at/);
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("sessions-menu-items")).toHaveCount(0);
     await expect(page.getByTestId("remote")).toBeVisible();
