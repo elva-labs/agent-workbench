@@ -650,6 +650,25 @@ mod tests {
 
     use serde_json::Value;
 
+    /// Waits until the sink has heard nothing for a while, so a burst that
+    /// is still being delivered or debounced from an earlier write is not
+    /// taken for the news of a later one.
+    fn settle(recorder: &crate::events::testing::Recorder) {
+        let quiet = Duration::from_millis(1000);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let mut seen = recorder.events.lock().unwrap().len();
+        let mut since = std::time::Instant::now();
+        while since.elapsed() < quiet && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+            let now = recorder.events.lock().unwrap().len();
+            if now != seen {
+                seen = now;
+                since = std::time::Instant::now();
+            }
+        }
+        recorder.events.lock().unwrap().clear();
+    }
+
     // A document presented from outside the tree, or a file the tree
     // watcher would ignore, is still news when it changes.
     #[test]
@@ -671,8 +690,7 @@ mod tests {
         watch_shown(&watchers, &[outside.clone(), ignored.clone()]);
         // The watcher takes a moment to be looking, and macOS may still
         // deliver the writes made before it was: those are let through.
-        std::thread::sleep(Duration::from_millis(1500));
-        recorder.events.lock().unwrap().clear();
+        settle(&recorder);
 
         std::fs::write(&outside, "two\n").unwrap();
         let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the shown file's change");
@@ -686,7 +704,7 @@ mod tests {
             "a file outside the tree is not the tree moving, but the sink saw {seen:?}"
         );
 
-        recorder.events.lock().unwrap().clear();
+        settle(&recorder);
         std::fs::write(&ignored, "y").unwrap();
         let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the ignored file's change");
         assert_eq!(
@@ -696,8 +714,7 @@ mod tests {
 
         // Shown no more: a change is nobody's news.
         watch_shown(&watchers, &[]);
-        recorder.events.lock().unwrap().clear();
-        std::thread::sleep(Duration::from_millis(300));
+        settle(&recorder);
         std::fs::write(&outside, "three\n").unwrap();
         std::thread::sleep(Duration::from_millis(1500));
         assert!(recorder.events.lock().unwrap().is_empty());
