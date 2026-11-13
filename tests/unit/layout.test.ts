@@ -135,6 +135,20 @@ describe("responsive collapse", () => {
     expect(sessionsVisible()).toBe(false);
   });
 
+  it("moves the focus to the agent when the window narrows past the pane that has it", () => {
+    applyLayout(1600);
+    focusPane("sessions");
+    expect(layout.focus).toBe("sessions");
+    const before = layout.focusRequest;
+    applyLayout(500);
+    expect(layout.focus).toBe("agent");
+    expect(layout.focusRequest).toBeGreaterThan(before);
+    applyLayout(1600);
+    focusPane("changes");
+    applyLayout(NEEDS_CHANGES - 1);
+    expect(layout.focus).toBe("agent");
+  });
+
   it("never persists a forced collapse", () => {
     applyLayout(500);
     saveLayout();

@@ -236,6 +236,22 @@ export function changesWidth() {
  * every mode change, and is the only place that decides what is visible.
  */
 export function applyLayout(width: number, height: number = layout.height) {
+  resolveLayout(width, height);
+  leaveHiddenPane();
+}
+
+/** A pane that is no longer shown cannot hold the keyboard: it goes to the
+    agent pane, which is there whenever the other panes are gone. */
+function leaveHiddenPane() {
+  const hidden =
+    (layout.focus === "sessions" && !sessionsShown()) ||
+    (layout.focus === "changes" && !changesVisible());
+  if (!hidden) return;
+  layout.focus = "agent";
+  layout.focusRequest += 1;
+}
+
+function resolveLayout(width: number, height: number) {
   layout.width = width;
   layout.height = height;
 
