@@ -190,7 +190,9 @@ async fn integrated_start(
                 json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "mode": mode, "effort": effort, "configDir": config_dir }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
-            Ok(json!({ "id": with_host_id(&host, id), "sessionId": started["sessionId"] }))
+            let id = with_host_id(&host, id);
+            remote::integrated_started(&host, &id);
+            Ok(json!({ "id": id, "sessionId": started["sessionId"] }))
         }
     })
     .await

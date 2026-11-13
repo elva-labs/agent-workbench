@@ -24,8 +24,8 @@ use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
     ChangeKind, Choice, CommandInfo, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image,
-    Launch, MessageState, ModeInfo, ModelInfo, Offer, Outcome, PlanStep, Protocol, Question,
-    QuestionOption, Reading, Sending, StepStatus, TaskKind, TaskStatus, ToolKind, Usage,
+    Launch, MessageState, ModeInfo, ModelInfo, Offer, Outcome, PlanStep, Prepared, Protocol,
+    Question, QuestionOption, Reading, Sending, StepStatus, TaskKind, TaskStatus, ToolKind, Usage,
 };
 
 pub struct ClaudeStream;
@@ -82,11 +82,32 @@ const STREAM_ARGS: &[&str] = &[
     "stdio",
 ];
 
-/// A model or a mode goes on the command line as a value, and is checked
-/// to be one: never empty, never something that reads as a flag.
+/// The characters a value on the command line may hold besides letters
+/// and digits, by what it is. Nothing a shell or the Windows command
+/// interpreter reads as more than a character is among them: a `.cmd`
+/// agent on Windows is run through that interpreter, arguments and all.
+fn allowed(what: &str) -> &'static str {
+    match what {
+        // Model names such as `claude-sonnet-5-5[1m]` and
+        // `us.anthropic.claude-haiku-5-5`, and ids with a provider prefix.
+        "model" => "-._:/@[]",
+        "session id" => "-",
+        _ => "",
+    }
+}
+
+/// A value for the command line or a control request, checked to be one:
+/// never empty, never something that reads as a flag, and made of letters,
+/// digits and the few characters its kind takes.
 fn checked<'a>(what: &str, value: &'a str) -> Result<&'a str, String> {
     let value = value.trim();
-    if value.is_empty() || value.starts_with('-') || value.chars().any(char::is_control) {
+    let extra = allowed(what);
+    if value.is_empty()
+        || value.starts_with('-')
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+    {
         return Err(format!("{value:?} is not a {what}"));
     }
     Ok(value)
@@ -97,7 +118,7 @@ impl Protocol for ClaudeStream {
         "claude"
     }
 
-    fn command(&self, launch: &Launch) -> Result<std::process::Command, String> {
+    fn command(&self, launch: &Launch) -> Result<Prepared, String> {
         let binary = find_on_path(launch.env, "claude").ok_or_else(|| {
             "claude was not found on your PATH. Install Claude Code, or check that \
              it is on the PATH your login shell sets up."
@@ -120,6 +141,7 @@ impl Protocol for ClaudeStream {
         } else {
             command.args(["--session-id", session]);
         }
+        let mut files = Vec::new();
         if let Some(server) = launch.tool_server {
             let config = json!({
                 "mcpServers": {
@@ -130,8 +152,17 @@ impl Protocol for ClaudeStream {
                     }
                 }
             });
+            // A file of the session's own rather than an argument, so that
+            // no JSON passes through a command interpreter.
+            let file = std::env::temp_dir().join(format!(
+                "agent-workbench-mcp-{session}-{}.json",
+                std::process::id()
+            ));
+            std::fs::write(&file, config.to_string())
+                .map_err(|e| format!("could not write {}: {e}", file.display()))?;
             // Last, since the flag takes as many values as follow it.
-            command.args(["--mcp-config", &config.to_string()]);
+            command.arg("--mcp-config").arg(&file);
+            files.push(file);
         }
 
         prepare_process(&mut command, launch.project, launch.env);
@@ -144,7 +175,7 @@ impl Protocol for ClaudeStream {
         if let Some(dir) = launch.config_dir {
             command.env(CLAUDE_CONFIG_VAR, dir);
         }
-        Ok(command)
+        Ok(Prepared { command, files })
     }
 
     fn driver(&self, launch: &Launch) -> Box<dyn Driver> {
@@ -323,8 +354,9 @@ struct Stream {
     /// Tool calls whose start has been told, by the subagent call they
     /// belong to.
     calls: HashMap<String, Option<String>>,
-    /// Tasks running, by the tool call that started each.
-    tasks: HashMap<String, Option<String>>,
+    /// Tasks running, with the tool call that started each and whether it
+    /// runs in the background.
+    tasks: HashMap<String, (Option<String>, bool)>,
     /// Whether a turn of the main conversation runs.
     turn: bool,
     /// Messages the agent took while no turn ran, for the turn about to
@@ -422,6 +454,7 @@ fn file_changes(result: &Value) -> Vec<FileChange> {
         to: None,
         hunks,
         content: created.then(|| text(&result["content"])).flatten(),
+        truncated: false,
     }]
 }
 
@@ -783,6 +816,7 @@ impl Stream {
                                 parent,
                                 delta: Some(json.to_string()),
                                 input: None,
+                                truncated: false,
                             });
                         }
                     }
@@ -860,6 +894,7 @@ impl Stream {
                         parent: parent.clone(),
                         delta: None,
                         input: Some(block["input"].clone()),
+                        truncated: false,
                     });
                     if name == TODO_TOOL {
                         out.events.push(Event::Plan {
@@ -901,6 +936,7 @@ impl Stream {
                 parent: parent.clone(),
                 output: text_of(&block["content"]),
                 error: block["is_error"].as_bool().unwrap_or(false),
+                truncated: false,
                 changes: if single {
                     file_changes(&line["tool_use_result"])
                 } else {
@@ -961,7 +997,9 @@ impl Stream {
                     return;
                 };
                 let call = text(&line["tool_use_id"]);
-                self.tasks.insert(task.to_string(), call.clone());
+                let background = line["is_backgrounded"].as_bool().unwrap_or(true);
+                self.tasks
+                    .insert(task.to_string(), (call.clone(), background));
                 out.events.push(Event::TaskStarted {
                     task: task.to_string(),
                     call,
@@ -972,7 +1010,7 @@ impl Stream {
                     },
                     description: text(&line["description"]),
                     prompt: text(&line["prompt"]),
-                    background: line["is_backgrounded"].as_bool().unwrap_or(true),
+                    background,
                 });
             }
             Some("task_progress") => {
@@ -982,16 +1020,44 @@ impl Stream {
                 out.events.push(Event::TaskProgress {
                     task: task.to_string(),
                     call: text(&line["tool_use_id"])
-                        .or_else(|| self.tasks.get(task).cloned().flatten()),
+                        .or_else(|| self.tasks.get(task).and_then(|(call, _)| call.clone())),
                     tool: text(&line["last_tool_name"]),
                     description: text(&line["description"]),
                 });
+            }
+            // What runs in the background, whole: a task the agent no
+            // longer lists, with no word of how it ended, is lost.
+            Some("background_tasks_changed") => {
+                let Some(listed) = line["tasks"].as_array() else {
+                    return;
+                };
+                let listed: HashSet<&str> = listed
+                    .iter()
+                    .filter_map(|task| task["task_id"].as_str())
+                    .collect();
+                let lost: Vec<String> = self
+                    .tasks
+                    .iter()
+                    .filter(|(task, (_, background))| {
+                        *background && !listed.contains(task.as_str())
+                    })
+                    .map(|(task, _)| task.clone())
+                    .collect();
+                for task in lost {
+                    let (call, _) = self.tasks.remove(&task).expect("listed above");
+                    out.events.push(Event::TaskFinished {
+                        task,
+                        call,
+                        status: TaskStatus::Lost,
+                        summary: None,
+                    });
+                }
             }
             Some("task_notification") => {
                 let Some(task) = line["task_id"].as_str() else {
                     return;
                 };
-                let known = self.tasks.remove(task).flatten();
+                let known = self.tasks.remove(task).and_then(|(call, _)| call);
                 out.events.push(Event::TaskFinished {
                     task: task.to_string(),
                     call: text(&line["tool_use_id"]).or(known),
@@ -1030,6 +1096,7 @@ impl Stream {
         };
         self.interrupting = false;
         self.turn = false;
+        self.forget_turn();
         let error = (outcome == Outcome::Failed).then(|| {
             let said = line["result"].as_str().unwrap_or_default();
             let errors = strings(&line["errors"]);
@@ -1051,6 +1118,23 @@ impl Stream {
             duration_ms: line["duration_ms"].as_u64(),
             usage: usage(&line["usage"]),
         });
+    }
+
+    /// Lets go of what was kept of the turn that ended: its streams and its
+    /// calls. What belongs to a subagent still at work is kept.
+    fn forget_turn(&mut self) {
+        let working: HashSet<String> = self
+            .tasks
+            .values()
+            .filter_map(|(call, _)| call.clone())
+            .collect();
+        let kept = |parent: &Option<String>| parent.as_ref().is_some_and(|p| working.contains(p));
+        self.streaming.retain(|parent, _| kept(parent));
+        self.calls.retain(|_, parent| kept(parent));
+        let messages: HashSet<String> = self.streaming.values().cloned().collect();
+        self.open
+            .retain(|(message, _), _| messages.contains(message));
+        self.closed.retain(|message, _| messages.contains(message));
     }
 
     /// A control request from the agent: a permission or a question to
@@ -1114,6 +1198,7 @@ impl Stream {
             parent,
             tool,
             input: asked.input.clone(),
+            truncated: false,
             description: text(&request["description"])
                 .or_else(|| text(&request["input"]["description"])),
             path: text(&request["blocked_path"]),

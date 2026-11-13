@@ -480,22 +480,23 @@ impl Core {
             tool_server: tool_server.as_deref(),
             orchestrator,
         };
-        let plugins = self.plugins.clone();
-        let started = crate::integrated::start(
+        let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
+        crate::integrated::start(
             Arc::clone(&self.sink),
             Arc::clone(&self.integrated),
             protocol,
             &launch,
+            Box::new(move |started| {
+                if let Some(plugins) = starting {
+                    plugins.session_started(&started.id, Some(&started.session_id), &opened);
+                }
+            }),
             Box::new(move |id| {
-                if let Some(plugins) = plugins {
+                if let Some(plugins) = ending {
                     plugins.session_ended(id);
                 }
             }),
-        )?;
-        if let Some(plugins) = &self.plugins {
-            plugins.session_started(&started.id, Some(&started.session_id), &opened);
-        }
-        Ok(started)
+        )
     }
 
     /// Records that the user trusts the folder an integrated session of the
@@ -568,6 +569,12 @@ impl Core {
         effort: Option<&str>,
     ) -> Result<crate::integrated::Settings, String> {
         crate::integrated::configure(&self.integrated, id, model, mode, effort)
+    }
+
+    /// Stops every integrated session, and waits a few seconds for them to
+    /// be gone: for the end of the app or the daemon.
+    pub fn integrated_stop_all(&self) {
+        crate::integrated::stop_all(&self.integrated);
     }
 
     /// Ends an integrated session. Comes back at once; the session's

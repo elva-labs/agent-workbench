@@ -4,10 +4,12 @@
 //! scenario a step a line: `say` writes a line to its stdout, `expect`
 //! reads its stdin until a line holds the given text, `reply` writes a line
 //! with `@ID@` replaced by the request id of the line last expected and
-//! `@UUID@` by its uuid,
-//! `sleep`, `exit` and `die` do what they say, and `drain` reads until stdin
-//! closes. It writes its arguments, its environment and every line it read
-//! beside the scenario, for the tests to look at.
+//! `@UUID@` by its uuid, `sleep`, `exit` and `die` do what they say,
+//! `drain` reads until stdin closes, `err` writes a line to stderr, `big`
+//! writes a line of that many bytes, and `spawn` leaves a command running
+//! in the background with its pid in a file beside the scenario. It writes
+//! its arguments, its environment and every line it read beside the
+//! scenario, for the tests to look at.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -42,6 +44,9 @@ while IFS= read -r step || [ -n "$step" ]; do
     "sleep "*) sleep "${step#sleep }" ;;
     "exit "*) exit "${step#exit }" ;;
     "die") kill -9 $$ ;;
+    "err "*) printf '%s\n' "${step#err }" >&2 ;;
+    "big "*) head -c "${step#big }" /dev/zero | tr '\0' x; printf '\n' ;;
+    "spawn") sleep 300 & echo $! > "$dir/child" ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
   esac
 done < "$FAKE_CLAUDE_SCENARIO"
@@ -76,6 +81,15 @@ fn start(name: &str, scenario: &str) -> Harness {
 }
 
 fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> Harness {
+    start_in(name, scenario, Arc::new(Sessions::default()), adjust)
+}
+
+fn start_in(
+    name: &str,
+    scenario: &str,
+    sessions: Arc<Sessions>,
+    adjust: impl FnOnce(&mut Launch),
+) -> Harness {
     use std::os::unix::fs::PermissionsExt;
     let dir = std::env::temp_dir().join(format!(
         "workbench-integrated-{name}-{}",
@@ -102,7 +116,6 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         ("KEEP_ME".to_string(), "yes".to_string()),
     ]);
     let recorder = Arc::new(Recorder::default());
-    let sessions = Arc::new(Sessions::default());
     let session = format!("session-{name}");
     let mut launch = Launch {
         project: &dir,
@@ -122,6 +135,7 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         Arc::clone(&sessions),
         &CLAUDE_STREAM,
         &launch,
+        Box::new(|_| {}),
         Box::new(|_| {}),
     )
     .unwrap();
@@ -306,7 +320,9 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     assert_eq!(after("--resume"), h.session);
     assert_eq!(after("--model"), "haiku");
     assert_eq!(after("--permission-mode"), "default");
-    let mcp: Value = serde_json::from_str(&after("--mcp-config")).unwrap();
+    // The tool server's configuration is a file of the session's own.
+    let file = PathBuf::from(after("--mcp-config"));
+    let mcp: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(
         mcp["mcpServers"]["agent-workbench"],
         json!({"type": "stdio", "command": server.to_string_lossy(), "args": ["mcp"]})
@@ -398,9 +414,9 @@ fn each_answer_to_a_permission_reaches_the_agent() {
                 "message": false,
             })
         );
-        assert_eq!(states(&h.events()).last().unwrap(), "asking");
+        h.until(|_| states(&h.events()).last().map(String::as_str) == Some("asking"));
         answer(&h.sessions, &h.id, request, choice, message).unwrap();
-        assert_eq!(states(&h.events()).last().unwrap(), "working");
+        h.until(|_| states(&h.events()).last().map(String::as_str) == Some("working"));
     }
     let events = h.until_type("turnEnded");
     assert_eq!(
@@ -735,6 +751,169 @@ fn a_session_that_will_not_end_is_killed_without_an_error() {
 }
 
 #[test]
+fn stopping_twice_or_before_ready_ends_the_session_once() {
+    let h = start("early-stop", "sleep 60");
+    stop(&h.sessions, &h.id).unwrap();
+    stop(&h.sessions, &h.id).unwrap();
+    let events = h.until_type("ended");
+    assert_eq!(kinds(&events), ["ended"], "no ready and no error");
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        kinds(&h.events())
+            .iter()
+            .filter(|kind| *kind == "ended")
+            .count(),
+        1
+    );
+    assert!(stop(&h.sessions, &h.id).is_err(), "gone");
+}
+
+#[test]
+fn an_agent_that_never_says_it_is_ready_is_ended_with_one_error() {
+    let h = start("never-ready", "sleep 60");
+    let events = h.until_type("ended");
+    assert_eq!(kinds(&events), ["error", "ended"]);
+    assert_eq!(events[0]["kind"], "protocol");
+    assert!(events[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("ready in time"));
+}
+
+#[test]
+fn an_agent_that_stops_reading_is_ended_and_nothing_is_written_late() {
+    let h = start("deaf", &format!("{READY}\nsleep 60"));
+    h.until_type("ready");
+    // More than any pipe holds, so the line waits on an agent that does
+    // not read.
+    let text = "x".repeat(4 * 1024 * 1024);
+    let message = uuid::Uuid::new_v4().to_string();
+    let error = send(&h.sessions, &h.id, &message, &text, &[]).unwrap_err();
+    assert!(error.contains("stopped reading"), "{error}");
+    let events = h.until_type("ended");
+    let errors: Vec<&Value> = events.iter().filter(|e| e["type"] == "error").collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["kind"], "process");
+    assert!(events.iter().any(|e| e["type"] == "message"
+        && e["message"] == message.as_str()
+        && e["state"] == "dropped"));
+}
+
+#[test]
+fn a_line_too_long_is_skipped_and_the_session_goes_on() {
+    let scenario = [
+        READY.to_string(),
+        r#"expect "type":"user""#.into(),
+        TAKE.into(),
+        format!("big {}", LINE_KEEP + 10),
+        INIT.into(),
+        DONE.into(),
+        "drain".into(),
+    ]
+    .join("\n");
+    let h = start("long-line", &scenario);
+    h.until_type("ready");
+    h.send("go");
+    let events = h.until_type("turnEnded");
+    let error = events.iter().find(|e| e["type"] == "error").unwrap();
+    assert_eq!(error["kind"], "protocol");
+    assert_eq!(events.last().unwrap()["outcome"], "done");
+    h.stop();
+}
+
+#[test]
+fn dying_with_a_permission_asked_withdraws_it_and_says_what_stderr_said() {
+    let scenario = [
+        READY,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        r#"say {"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        "err something broke inside",
+        "exit 3",
+    ]
+    .join("\n");
+    let h = start("dies-asking", &scenario);
+    h.until_type("ready");
+    h.send("go");
+    let events = h.until_type("ended");
+    let tail: Vec<String> = kinds(&events).into_iter().rev().take(4).rev().collect();
+    assert_eq!(tail, ["turnEnded", "withdrawn", "error", "ended"]);
+    let n = events.len();
+    assert!(events[n - 2]["message"]
+        .as_str()
+        .unwrap()
+        .contains("code 3: something broke inside"));
+    assert_eq!(events[n - 1]["code"], 3);
+}
+
+#[test]
+fn a_turn_the_agent_starts_by_itself_names_no_message() {
+    // As after a background shell finishes while the session is idle.
+    let scenario = [READY, INIT, DONE, "drain"].join("\n");
+    let h = start("own-turn", &scenario);
+    let events = h.until_type("turnEnded");
+    let started = events.iter().find(|e| e["type"] == "turnStarted").unwrap();
+    assert_eq!(started["messages"], json!([]));
+    assert_eq!(h.until_states(3), ["idle", "working", "idle"]);
+    h.stop();
+}
+
+#[test]
+fn what_the_agent_left_running_goes_with_it() {
+    let h = start("group", &format!("{READY}\nspawn\ndrain"));
+    h.until_type("ready");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let child = loop {
+        if let Ok(pid) = std::fs::read_to_string(h.dir.join("child")) {
+            if !pid.trim().is_empty() {
+                break pid.trim().to_string();
+            }
+        }
+        assert!(Instant::now() < deadline, "the stand-in never spawned");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let alive = |pid: &str| {
+        std::process::Command::new("kill")
+            .args(["-0", pid])
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    assert!(alive(&child));
+    assert_eq!(h.stop()["clean"], true);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(&child) {
+        assert!(Instant::now() < deadline, "{child} outlived the session");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn stop_all_ends_every_session() {
+    let sessions = Arc::new(Sessions::default());
+    let a = start_in(
+        "all-a",
+        &format!("{READY}\ndrain"),
+        Arc::clone(&sessions),
+        |_| {},
+    );
+    let b = start_in(
+        "all-b",
+        &format!("{READY}\nsleep 60"),
+        Arc::clone(&sessions),
+        |_| {},
+    );
+    a.until_type("ready");
+    b.until_type("ready");
+    let started = Instant::now();
+    stop_all(&sessions);
+    assert!(started.elapsed() < STOP_GRACE + Duration::from_secs(2));
+    assert!(sessions.ids().is_empty(), "both gone when it returns");
+    a.until_type("ended");
+    b.until_type("ended");
+}
+
+#[test]
 fn a_missing_agent_explains_itself() {
     let vars = HashMap::from([("PATH".to_string(), "/nowhere".to_string())]);
     let launch = Launch {
@@ -754,6 +933,7 @@ fn a_missing_agent_explains_itself() {
         Arc::new(Sessions::default()),
         &CLAUDE_STREAM,
         &launch,
+        Box::new(|_| {}),
         Box::new(|_| {}),
     )
     .unwrap_err();
@@ -790,6 +970,7 @@ fn real_claude_holds_a_short_turn() {
         Arc::clone(&sessions),
         &CLAUDE_STREAM,
         &launch,
+        Box::new(|_| {}),
         Box::new(|_| {}),
     )
     .unwrap();

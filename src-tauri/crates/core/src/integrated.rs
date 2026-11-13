@@ -19,10 +19,10 @@
 //! Events reach the window through the [`Sink`] as [`INTEGRATED_EVENT`],
 //! each carrying the id of the session it belongs to.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -38,12 +38,18 @@ pub const INTEGRATED_EVENT: &str = "integrated_event";
 
 /// How long the agent has to say what it is after it starts. It loads its
 /// MCP servers first, which can take a while over a slow network.
+#[cfg(not(test))]
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
+#[cfg(test)]
+const READY_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long a line may wait to be taken by the agent before the session is
 /// taken to be stuck. A pipe holds tens of kilobytes, so a line waits only
 /// when the agent has stopped reading.
+#[cfg(not(test))]
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long the agent has to answer a control request: an interrupt, a
 /// model or a permission mode.
@@ -62,6 +68,21 @@ const DRAIN: Duration = Duration::from_secs(2);
 
 /// The tail of stderr kept to explain a session that ended badly.
 const STDERR_KEEP: usize = 4096;
+
+/// The longest line read from the agent. The rest of a longer one is
+/// skipped, and said to be.
+#[cfg(not(test))]
+const LINE_KEEP: usize = 8 * 1024 * 1024;
+#[cfg(test)]
+const LINE_KEEP: usize = 1024 * 1024;
+
+/// The most of a tool call's output, and of each string in its input,
+/// passed on to the window.
+const OUTPUT_KEEP: usize = 64 * 1024;
+
+/// The most of a changed file, a turn's diff, or a tool call's streamed
+/// input or output, passed on to the window.
+const CONTENT_KEEP: usize = 256 * 1024;
 
 /// A session's news. Every event names the session it belongs to by `id`
 /// beside the fields listed here, and its kind by `type`.
@@ -154,27 +175,33 @@ pub enum Event {
     },
     /// A tool call's input, in the agent's own shape. While it streams
     /// `delta` is the next piece of its JSON text; once complete, `input`
-    /// is the whole of it.
+    /// is the whole of it. Pieces stop coming past a limit, and
+    /// `truncated` says a string in the whole input was cut short.
     ToolInput {
         call: String,
         parent: Option<String>,
         delta: Option<String>,
         input: Option<Value>,
+        truncated: bool,
     },
     /// The next piece of a running tool call's output, for an agent that
-    /// streams it.
+    /// streams it. Pieces stop coming past a limit; the output it finishes
+    /// with says what it was.
     ToolOutput {
         call: String,
         parent: Option<String>,
         delta: String,
     },
-    /// A tool call finished. `output` is its result as text; `changes` the
-    /// files it created, updated, deleted or moved.
+    /// A tool call finished. `output` is its result as text, `truncated`
+    /// when it was cut short; `changes` the files it created, updated,
+    /// deleted or moved. A call the turn ended without finishing finishes
+    /// as an error with no output.
     ToolFinished {
         call: String,
         parent: Option<String>,
         output: String,
         error: bool,
+        truncated: bool,
         changes: Vec<FileChange>,
     },
     /// The agent's plan for the work, whole each time it changes: `text`
@@ -187,18 +214,20 @@ pub enum Event {
         steps: Vec<PlanStep>,
     },
     /// Everything the turn has changed so far, as one unified diff, for an
-    /// agent that keeps one.
-    TurnDiff { diff: String },
+    /// agent that keeps one; `truncated` when it was cut short.
+    TurnDiff { diff: String, truncated: bool },
     /// The agent asks to use a tool. `request` is what the answer names;
     /// `call` the tool call it is for; `path` the file or directory that
     /// made it ask, when there is one; `choices` the answers it takes, each
-    /// with what it remembers.
+    /// with what it remembers. `truncated` says a string in `input` was
+    /// cut short; the answer carries the whole input back regardless.
     PermissionAsked {
         request: String,
         call: Option<String>,
         parent: Option<String>,
         tool: String,
         input: Value,
+        truncated: bool,
         description: Option<String>,
         path: Option<String>,
         choices: Vec<Offer>,
@@ -343,6 +372,7 @@ pub enum ToolKind {
 /// A file a tool call changed. `create` comes with the new file's
 /// `content`; `update` with `hunks` saying what changed; `delete` with
 /// neither; `move` with `to`, where it went, and hunks if it changed too.
+/// `truncated` says the content or the hunks were cut short.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
@@ -351,6 +381,7 @@ pub struct FileChange {
     pub to: Option<String>,
     pub hunks: Vec<Hunk>,
     pub content: Option<String>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -423,6 +454,9 @@ pub enum TaskStatus {
     Failed,
     /// Stopped by the user or the agent before it was done.
     Stopped,
+    /// Gone from what the agent says is running, without a word of how it
+    /// ended. No report of it follows.
+    Lost,
 }
 
 /// What a session is doing, for the sessions pane's row.
@@ -537,7 +571,7 @@ pub trait Protocol: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// The process to start, with its arguments, environment and directory.
-    fn command(&self, launch: &Launch) -> Result<std::process::Command, String>;
+    fn command(&self, launch: &Launch) -> Result<Prepared, String>;
 
     /// A fresh reader and writer of the agent's lines for one session.
     fn driver(&self, launch: &Launch) -> Box<dyn Driver>;
@@ -564,6 +598,13 @@ pub enum Control {
     SetModel(String),
     SetMode(String),
     SetEffort(String),
+}
+
+/// A process ready to start, and the files written for it, which go when
+/// the session ends.
+pub struct Prepared {
+    pub command: std::process::Command,
+    pub files: Vec<std::path::PathBuf>,
 }
 
 /// How a driver carries out a control request.
@@ -660,6 +701,10 @@ pub struct Settings {
 /// [`SessionState::Idle`] otherwise. A background shell command does not
 /// keep a session working: it may be a server that runs for as long as the
 /// session does.
+///
+/// Tool calls the agent leaves open are closed here: those of the main
+/// conversation when the turn ends, a subagent's when it finishes, and
+/// all of them when the session does.
 #[derive(Debug, Default)]
 struct Tracker {
     /// Sent and not yet taken, in the order sent.
@@ -668,7 +713,13 @@ struct Tracker {
     used: BTreeSet<String>,
     turn: bool,
     asking: BTreeSet<String>,
-    subagents: BTreeSet<String>,
+    /// Subagents at work, with the tool call that started each.
+    subagents: BTreeMap<String, Option<String>>,
+    /// Tool calls started and not finished, with the subagent call each
+    /// belongs to.
+    calls: BTreeMap<String, Option<String>>,
+    /// How much of each open call's input and output has streamed.
+    streamed: HashMap<String, usize>,
     /// A subagent finished while no turn ran: the turn its report starts
     /// is coming.
     reporting: bool,
@@ -795,9 +846,36 @@ impl Tracker {
                     // An end for a turn never seen to start.
                     self.observe(Event::TurnStarted { messages: vec![] }, out);
                 }
+                let working: BTreeSet<Option<String>> = self
+                    .subagents
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .map(Some)
+                    .collect();
+                self.close(out, |parent| !working.contains(parent));
                 self.turn = false;
                 self.reporting = false;
                 self.compacting = false;
+            }
+            Event::ToolStarted { call, parent, .. } => {
+                self.calls.insert(call.clone(), parent.clone());
+            }
+            Event::ToolInput {
+                call,
+                delta: Some(delta),
+                ..
+            }
+            | Event::ToolOutput { call, delta, .. } => {
+                let streamed = self.streamed.entry(call.clone()).or_default();
+                *streamed += delta.len();
+                if *streamed > CONTENT_KEEP {
+                    return;
+                }
+            }
+            Event::ToolFinished { call, .. } => {
+                self.calls.remove(call);
+                self.streamed.remove(call);
             }
             Event::PermissionAsked { request, .. } | Event::QuestionAsked { request, .. } => {
                 self.asking.insert(request.clone());
@@ -807,14 +885,23 @@ impl Tracker {
             }
             Event::TaskStarted {
                 task,
+                call,
                 kind: TaskKind::Agent,
                 ..
             } => {
-                self.subagents.insert(task.clone());
+                self.subagents.insert(task.clone(), call.clone());
             }
-            Event::TaskFinished { task, .. } => {
-                if self.subagents.remove(task) && !self.turn {
-                    self.reporting = true;
+            Event::TaskFinished { task, status, .. } => {
+                if let Some(call) = self.subagents.remove(task) {
+                    // Its report starts a turn of its own, unless the agent
+                    // lost track of it.
+                    if !self.turn && *status != TaskStatus::Lost {
+                        self.reporting = true;
+                    }
+                    if let Some(call) = call {
+                        let call = Some(call);
+                        self.close(out, |parent| *parent == call);
+                    }
                 }
             }
             Event::Compacting => self.compacting = true,
@@ -831,8 +918,41 @@ impl Tracker {
         }
     }
 
+    /// Finishes the open tool calls whose parent `which` picks, as failed.
+    fn close(&mut self, out: &mut Vec<Event>, which: impl Fn(&Option<String>) -> bool) {
+        let closing: Vec<(String, Option<String>)> = self
+            .calls
+            .iter()
+            .filter(|(_, parent)| which(parent))
+            .map(|(call, parent)| (call.clone(), parent.clone()))
+            .collect();
+        for (call, parent) in closing {
+            self.calls.remove(&call);
+            self.streamed.remove(&call);
+            out.push(Event::ToolFinished {
+                call,
+                parent,
+                output: String::new(),
+                error: true,
+                truncated: false,
+                changes: vec![],
+            });
+        }
+    }
+
+    /// The window asked for the running turn to stop while none runs: a
+    /// report the session waits for may never come, and stops being
+    /// waited for.
+    fn interrupted(&mut self, out: &mut Vec<Event>) {
+        if !self.turn {
+            self.reporting = false;
+            self.push_state(out);
+        }
+    }
+
     /// The process is gone: whatever was open closes.
     fn end(&mut self, out: &mut Vec<Event>) {
+        self.close(out, |_| true);
         if self.turn {
             self.turn = false;
             out.push(Event::TurnEnded {
@@ -862,6 +982,15 @@ impl Tracker {
 /// A line for the writer thread, and where to say whether it went.
 type Line = (String, Sender<Result<(), String>>);
 
+/// What goes out of a session, in order, through the thread that talks to
+/// the sink: events, the replies they explain, and what runs once the
+/// session's last event is out.
+enum Out {
+    Events(Vec<Event>),
+    Reply(Sender<Result<Value, String>>, Result<Value, String>),
+    Last(Box<dyn FnOnce() + Send>),
+}
+
 struct Machine {
     driver: Box<dyn Driver>,
     tracker: Tracker,
@@ -877,26 +1006,30 @@ struct Machine {
 
 struct Live {
     id: String,
-    sink: Arc<dyn Sink>,
     machine: Mutex<Machine>,
+    /// What goes out, in the order it is put here, which is always under
+    /// the machine's lock. A sink that is slow holds up only the thread
+    /// that empties it.
+    outbox: Mutex<Sender<Out>>,
     /// None once stdin is closed.
     writer: Mutex<Option<Sender<Line>>>,
     kill: Mutex<Sender<()>>,
+    /// Set when the session is ended on purpose: by a stop, or by the core
+    /// after saying why.
     stopping: AtomicBool,
 }
 
 impl Live {
     fn emit(&self, events: &[Event]) {
-        for event in events {
-            events::emit(
-                &self.sink,
-                INTEGRATED_EVENT,
-                &Payload {
-                    id: &self.id,
-                    event,
-                },
-            );
+        if !events.is_empty() {
+            self.put(Out::Events(events.to_vec()));
         }
+    }
+
+    fn put(&self, out: Out) {
+        // The thread that empties the outbox outlives every session's
+        // events, so a send can fail only once it is all over.
+        let _ = self.outbox.lock().expect("outbox lock").send(out);
     }
 
     /// Queues a line for stdin, and hands back where to hear whether it
@@ -933,7 +1066,7 @@ impl Live {
                     let _ = ready.send(());
                 }
             }
-            machine.tracker.observe(event, &mut out);
+            machine.tracker.observe(bounded(event), &mut out);
         }
         self.release(&mut machine);
         self.emit(&out);
@@ -941,7 +1074,7 @@ impl Live {
         // that already holds what the reply changed.
         for (key, reply) in reading.replies {
             if let Some(waiting) = machine.replies.remove(&key) {
-                let _ = waiting.send(reply);
+                self.put(Out::Reply(waiting, reply));
             }
         }
     }
@@ -964,18 +1097,108 @@ impl Live {
         }
     }
 
+    /// Ends the session for a reason the core gives, said once.
+    fn abandon(&self, kind: ErrorKind, message: String) {
+        if !self.stopping.swap(true, Ordering::SeqCst) {
+            self.fail(kind, message);
+        }
+        self.kill();
+    }
+
     fn kill(&self) {
         let _ = self.kill.lock().expect("kill lock").send(());
     }
+
+    /// Waits for a queued line to have gone. A line the agent does not take
+    /// in time means it has stopped reading, and the session ends, so that
+    /// nothing queued behind it is written late.
+    fn written(&self, went: Receiver<Result<(), String>>) -> Result<(), String> {
+        match went.recv_timeout(WRITE_TIMEOUT) {
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => {
+                let error = "the agent stopped reading its input".to_string();
+                self.abandon(ErrorKind::Process, error.clone());
+                Err(error)
+            }
+            Err(RecvTimeoutError::Disconnected) => Err("the agent is gone".into()),
+        }
+    }
 }
 
-/// Waits for a queued line to have gone.
-fn written(went: Receiver<Result<(), String>>) -> Result<(), String> {
-    match went.recv_timeout(WRITE_TIMEOUT) {
-        Ok(result) => result,
-        Err(RecvTimeoutError::Timeout) => Err("the agent is not reading its input".into()),
-        Err(RecvTimeoutError::Disconnected) => Err("the agent is gone".into()),
+/// Cuts a string down to at most `keep` bytes, on a character boundary.
+fn cut(text: &mut String, keep: usize) -> bool {
+    if text.len() <= keep {
+        return false;
     }
+    let at = (0..=keep)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+    text.truncate(at);
+    true
+}
+
+/// Cuts every string in a JSON value down to `keep` bytes.
+fn cut_strings(value: &mut Value, keep: usize) -> bool {
+    match value {
+        Value::String(text) => cut(text, keep),
+        Value::Array(items) => items
+            .iter_mut()
+            .fold(false, |cut, item| cut_strings(item, keep) | cut),
+        Value::Object(fields) => fields
+            .values_mut()
+            .fold(false, |cut, item| cut_strings(item, keep) | cut),
+        _ => false,
+    }
+}
+
+/// Cuts a file change down: its content, and its hunks past what the
+/// limit holds of their lines.
+fn cut_change(change: &mut FileChange) {
+    if let Some(content) = &mut change.content {
+        change.truncated |= cut(content, CONTENT_KEEP);
+    }
+    let mut room = CONTENT_KEEP;
+    let mut keep = 0;
+    for hunk in &change.hunks {
+        let size: usize = hunk.lines.iter().map(|line| line.len() + 1).sum();
+        if size > room {
+            break;
+        }
+        room -= size;
+        keep += 1;
+    }
+    if keep < change.hunks.len() {
+        change.hunks.truncate(keep);
+        change.truncated = true;
+    }
+}
+
+/// An event as it may go out: whole files and long outputs cut down to
+/// what the window and a connection to another machine should carry.
+fn bounded(mut event: Event) -> Event {
+    match &mut event {
+        Event::ToolInput {
+            input: Some(input),
+            truncated,
+            ..
+        }
+        | Event::PermissionAsked {
+            input, truncated, ..
+        } => *truncated |= cut_strings(input, OUTPUT_KEEP),
+        Event::ToolFinished {
+            output,
+            truncated,
+            changes,
+            ..
+        } => {
+            *truncated |= cut(output, OUTPUT_KEEP);
+            changes.iter_mut().for_each(cut_change);
+        }
+        Event::TurnDiff { diff, truncated } => *truncated |= cut(diff, CONTENT_KEEP),
+        _ => {}
+    }
+    event
 }
 
 #[derive(Default)]
@@ -997,6 +1220,15 @@ impl Sessions {
     pub fn holds(&self, id: &str) -> bool {
         self.inner.lock().expect("sessions lock").contains_key(id)
     }
+
+    fn ids(&self) -> Vec<String> {
+        self.inner
+            .lock()
+            .expect("sessions lock")
+            .keys()
+            .cloned()
+            .collect()
+    }
 }
 
 fn next_id() -> String {
@@ -1005,40 +1237,65 @@ fn next_id() -> String {
     format!("int-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Starts an agent as an integrated session. `on_end` hears the session's
-/// id once its process is gone and every event has gone out.
+/// Starts an agent as an integrated session. `on_start` hears the session
+/// before anything of it goes out; `on_end` hears its id once its process
+/// is gone and every event has gone out.
+///
+/// The agent runs in a process group of its own, so that ending it ends
+/// what it started too: its MCP servers and the commands it left running.
 pub fn start(
     sink: Arc<dyn Sink>,
     sessions: Arc<Sessions>,
     protocol: &dyn Protocol,
     launch: &Launch,
+    on_start: Box<dyn FnOnce(&Started) + Send>,
     on_end: Box<dyn FnOnce(&str) + Send>,
 ) -> Result<Started, String> {
-    let mut command = protocol.command(launch)?;
+    let Prepared { mut command, files } = protocol.command(launch)?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("could not start {}: {e}", protocol.name()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let remove = move || {
+        for file in &files {
+            let _ = std::fs::remove_file(file);
+        }
+    };
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            remove();
+            return Err(format!("could not start {}: {e}", protocol.name()));
+        }
+    };
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
-        let _ = child.kill();
+        kill_tree(&mut child);
         let _ = child.wait();
+        remove();
         return Err(format!("could not talk to {}", protocol.name()));
     };
 
     let id = next_id();
+    let started = Started {
+        id: id.clone(),
+        session_id: launch.session.to_string(),
+    };
+    on_start(&started);
     let (lines, queued) = mpsc::channel::<Line>();
     let (kill, killed) = mpsc::channel::<()>();
     let (ready, readied) = mpsc::channel::<()>();
+    let (outbox, outgoing) = mpsc::channel::<Out>();
     let mut driver = protocol.driver(launch);
     let opening = driver.opening();
     let live = Arc::new(Live {
         id: id.clone(),
-        sink,
         machine: Mutex::new(Machine {
             driver,
             tracker: Tracker::default(),
@@ -1047,6 +1304,7 @@ pub fn start(
             ready: Some(ready),
             ended: false,
         }),
+        outbox: Mutex::new(outbox),
         writer: Mutex::new(Some(lines)),
         kill: Mutex::new(kill),
         stopping: AtomicBool::new(false),
@@ -1057,6 +1315,10 @@ pub fn start(
         .expect("sessions lock")
         .insert(id.clone(), Arc::clone(&live));
 
+    std::thread::spawn({
+        let id = id.clone();
+        move || send_out(&id, &sink, outgoing)
+    });
     std::thread::spawn(move || write_lines(stdin, queued));
     let tail = Arc::new(Mutex::new(String::new()));
     std::thread::spawn({
@@ -1080,7 +1342,11 @@ pub fn start(
                 .remove(&live.id);
             let said = tail.lock().expect("stderr lock").trim().to_string();
             finish(&live, name, status, said);
-            on_end(&live.id);
+            let id = live.id.clone();
+            live.put(Out::Last(Box::new(move || {
+                remove();
+                on_end(&id);
+            })));
         }
     });
 
@@ -1094,19 +1360,35 @@ pub fn start(
         let name = protocol.name();
         move || {
             if let Err(RecvTimeoutError::Timeout) = readied.recv_timeout(READY_TIMEOUT) {
-                live.fail(
+                live.abandon(
                     ErrorKind::Protocol,
                     format!("{name} did not say it was ready in time"),
                 );
-                live.kill();
             }
         }
     });
 
-    Ok(Started {
-        id,
-        session_id: launch.session.to_string(),
-    })
+    Ok(started)
+}
+
+/// Hands what a session puts out to the sink, in order, until its last.
+fn send_out(id: &str, sink: &Arc<dyn Sink>, outgoing: Receiver<Out>) {
+    for out in outgoing {
+        match out {
+            Out::Events(list) => {
+                for event in &list {
+                    events::emit(sink, INTEGRATED_EVENT, &Payload { id, event });
+                }
+            }
+            Out::Reply(waiting, reply) => {
+                let _ = waiting.send(reply);
+            }
+            Out::Last(then) => {
+                then();
+                return;
+            }
+        }
+    }
 }
 
 fn write_lines(mut stdin: ChildStdin, lines: Receiver<Line>) {
@@ -1125,22 +1407,48 @@ fn write_lines(mut stdin: ChildStdin, lines: Receiver<Line>) {
     // Dropping stdin here is what closes it.
 }
 
-fn read_lines(live: &Live, stdout: ChildStdout, _reading: Sender<()>) {
+/// Reads the agent's stdout a line at a time, each line at most
+/// [`LINE_KEEP`] long: the rest of a longer one is skipped, and said to be.
+fn read_lines(live: &Live, stdout: impl Read, _reading: Sender<()>) {
     let mut reader = BufReader::new(stdout);
-    let mut buffer = Vec::new();
+    let mut line: Vec<u8> = Vec::new();
+    let mut skipping = false;
     loop {
-        buffer.clear();
-        match reader.read_until(b'\n', &mut buffer) {
-            Ok(0) => break,
-            Ok(_) => {
-                let line = String::from_utf8_lossy(&buffer);
-                let line = line.trim();
-                if !line.is_empty() {
-                    live.take(line);
-                }
-            }
+        let available = match reader.fill_buf() {
+            Ok([]) => break,
+            Ok(available) => available,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
+        };
+        let end = available.iter().position(|&byte| byte == b'\n');
+        let piece = &available[..end.unwrap_or(available.len())];
+        if !skipping {
+            if line.len() + piece.len() > LINE_KEEP {
+                skipping = true;
+                line.clear();
+                live.fail(
+                    ErrorKind::Protocol,
+                    format!(
+                        "the agent wrote a line longer than {} MiB, which was skipped",
+                        LINE_KEEP / (1024 * 1024)
+                    ),
+                );
+            } else {
+                line.extend_from_slice(piece);
+            }
+        }
+        let used = end.map_or(available.len(), |at| at + 1);
+        reader.consume(used);
+        if end.is_some() {
+            if !skipping {
+                let text = String::from_utf8_lossy(&line);
+                let text = text.trim();
+                if !text.is_empty() {
+                    live.take(text);
+                }
+            }
+            line.clear();
+            skipping = false;
         }
     }
 }
@@ -1165,8 +1473,44 @@ fn keep_tail(mut stderr: impl Read, tail: Arc<Mutex<String>>) {
     }
 }
 
-/// Waits for the child to end, killing it when asked, then for the last of
-/// its output.
+/// Kills the agent and everything in its process group.
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    if let Ok(group) = i32::try_from(child.id()) {
+        // The group is the child's own, made at its start.
+        unsafe {
+            libc::killpg(group, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = child.kill();
+}
+
+/// Ends what the agent left running in its process group once it is gone
+/// itself.
+fn end_group(child: &Child) {
+    #[cfg(unix)]
+    if let Ok(group) = i32::try_from(child.id()) {
+        unsafe {
+            libc::killpg(group, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = child;
+}
+
+/// Waits for the child to end, killing it and its group when asked, then
+/// for the last of its output.
 fn wait(
     live: &Live,
     mut child: Child,
@@ -1178,15 +1522,16 @@ fn wait(
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
                 if killed.recv_timeout(POLL).is_ok() {
-                    let _ = child.kill();
+                    kill_tree(&mut child);
                 }
             }
             Err(_) => {
-                let _ = child.kill();
+                kill_tree(&mut child);
                 break child.wait().ok();
             }
         }
     };
+    end_group(&child);
     let _ = read_done.recv_timeout(DRAIN);
     live.writer.lock().expect("writer lock").take();
     status
@@ -1198,9 +1543,10 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
     let mut out = Vec::new();
     machine.tracker.end(&mut out);
     for (_, waiting) in machine.replies.drain() {
-        let _ = waiting.send(Err("the agent ended".into()));
+        live.put(Out::Reply(waiting, Err("the agent ended".into())));
     }
     machine.ready.take();
+    machine.held.clear();
     let code = status.and_then(|status| status.code());
     let clean = status.is_some_and(|status| status.success());
     if !clean && !live.stopping.load(Ordering::SeqCst) {
@@ -1265,7 +1611,7 @@ pub fn send(
         went
     };
     match went {
-        Some(went) => written(went),
+        Some(went) => live.written(went),
         None => Ok(()),
     }
 }
@@ -1313,7 +1659,7 @@ fn settle(
         live.emit(&out);
         went
     };
-    written(went)
+    live.written(went)
 }
 
 /// Sends a control request and waits for the agent's reply.
@@ -1321,16 +1667,21 @@ pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value
     let live = sessions.get(id)?;
     let (went, key, reply) = {
         let mut machine = live.machine.lock().expect("machine lock");
-        match machine.driver.control(control)? {
+        let sending = machine.driver.control(control)?;
+        let mut out = Vec::new();
+        if *control == Control::Interrupt {
+            machine.tracker.interrupted(&mut out);
+        }
+        match sending {
             Sending::Local { reply, events } => {
-                let mut out = Vec::new();
                 for event in events {
-                    machine.tracker.observe(event, &mut out);
+                    machine.tracker.observe(bounded(event), &mut out);
                 }
                 live.emit(&out);
                 return Ok(reply);
             }
             Sending::Request { line, key } => {
+                live.emit(&out);
                 let (replied, reply) = mpsc::channel();
                 machine.replies.insert(key.clone(), replied);
                 match live.enqueue(line) {
@@ -1344,7 +1695,7 @@ pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value
             }
         }
     };
-    written(went)?;
+    live.written(went)?;
     match reply.recv_timeout(CONTROL_TIMEOUT) {
         Ok(result) => result,
         Err(RecvTimeoutError::Timeout) => {
@@ -1382,12 +1733,16 @@ pub fn configure(
 }
 
 /// Ends a session: its stdin closes, which the agent takes as the end of
-/// the conversation, and it is killed if it is still there a few seconds
-/// later. Comes back at once; [`Event::Ended`] says when it is gone.
+/// the conversation, and it is killed with its group if it is still there
+/// a few seconds later. Comes back at once; [`Event::Ended`] says when it
+/// is gone.
 pub fn stop(sessions: &Arc<Sessions>, id: &str) -> Result<(), String> {
     let live = sessions.get(id)?;
     live.stopping.store(true, Ordering::SeqCst);
-    live.writer.lock().expect("writer lock").take();
+    if live.writer.lock().expect("writer lock").take().is_none() {
+        // Stopped already, and on its way out.
+        return Ok(());
+    }
     let sessions = Arc::clone(sessions);
     let id = id.to_string();
     std::thread::spawn(move || {
@@ -1400,6 +1755,19 @@ pub fn stop(sessions: &Arc<Sessions>, id: &str) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+/// Stops every session, and waits, a little longer than one stop takes,
+/// for them to be gone: for the end of the app or of the daemon, so that
+/// no agent outlives either.
+pub fn stop_all(sessions: &Arc<Sessions>) {
+    for id in sessions.ids() {
+        let _ = stop(sessions, &id);
+    }
+    let deadline = std::time::Instant::now() + STOP_GRACE + Duration::from_secs(1);
+    while !sessions.ids().is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(POLL);
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -1464,6 +1832,7 @@ mod tests {
             parent: None,
             tool: "Bash".into(),
             input: Value::Null,
+            truncated: false,
             description: None,
             path: None,
             choices: vec![],
@@ -1680,6 +2049,167 @@ mod tests {
     }
 
     #[test]
+    fn compacting_keeps_the_session_working_until_it_is_done() {
+        let (_, out) = tracked(vec![
+            Event::Compacting,
+            Event::Compacted {
+                trigger: Some("auto".into()),
+                tokens_before: None,
+                tokens_after: None,
+            },
+        ]);
+        assert_eq!(states(&out), [SessionState::Working, SessionState::Idle]);
+    }
+
+    #[test]
+    fn calls_left_open_close_with_the_turn_or_their_subagent() {
+        let started = |call: &str, parent: Option<&str>| Event::ToolStarted {
+            call: call.into(),
+            parent: parent.map(str::to_string),
+            name: "Bash".into(),
+            kind: ToolKind::Command,
+        };
+        let (mut tracker, out) = tracked(vec![
+            turn(&[]),
+            started("main", None),
+            Event::TaskStarted {
+                task: "t".into(),
+                call: Some("agent".into()),
+                kind: TaskKind::Agent,
+                description: None,
+                prompt: None,
+                background: true,
+            },
+            started("sub", Some("agent")),
+            ended(),
+        ]);
+        let closed = |out: &[Event]| -> Vec<String> {
+            out.iter()
+                .filter_map(|event| match event {
+                    Event::ToolFinished {
+                        call, error: true, ..
+                    } => Some(call.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(closed(&out), ["main"], "the subagent's call runs on");
+        let at = out
+            .iter()
+            .position(|e| matches!(e, Event::TurnEnded { .. }))
+            .unwrap();
+        assert!(
+            matches!(out[at - 1], Event::ToolFinished { .. }),
+            "before the end"
+        );
+        let mut out = Vec::new();
+        tracker.observe(
+            Event::TaskFinished {
+                task: "t".into(),
+                call: Some("agent".into()),
+                status: TaskStatus::Lost,
+                summary: None,
+            },
+            &mut out,
+        );
+        assert_eq!(closed(&out), ["sub"]);
+        assert_eq!(
+            tracker.state(),
+            SessionState::Idle,
+            "no report follows a lost task"
+        );
+    }
+
+    #[test]
+    fn an_interrupt_while_idle_stops_waiting_for_a_report() {
+        let (mut tracker, _) = tracked(vec![
+            Event::TaskStarted {
+                task: "t".into(),
+                call: None,
+                kind: TaskKind::Agent,
+                description: None,
+                prompt: None,
+                background: true,
+            },
+            Event::TaskFinished {
+                task: "t".into(),
+                call: None,
+                status: TaskStatus::Failed,
+                summary: None,
+            },
+        ]);
+        assert_eq!(tracker.state(), SessionState::Working);
+        let mut out = Vec::new();
+        tracker.interrupted(&mut out);
+        assert_eq!(states(&out), [SessionState::Idle]);
+    }
+
+    #[test]
+    fn long_output_and_whole_files_are_cut_down_and_say_so() {
+        let event = bounded(Event::ToolFinished {
+            call: "c".into(),
+            parent: None,
+            output: "é".repeat(OUTPUT_KEEP),
+            error: false,
+            truncated: false,
+            changes: vec![FileChange {
+                path: "/a".into(),
+                kind: ChangeKind::Create,
+                to: None,
+                hunks: vec![],
+                content: Some("x".repeat(CONTENT_KEEP + 1)),
+                truncated: false,
+            }],
+        });
+        let Event::ToolFinished {
+            output,
+            truncated,
+            changes,
+            ..
+        } = event
+        else {
+            unreachable!()
+        };
+        assert!(truncated && output.len() <= OUTPUT_KEEP);
+        assert!(changes[0].truncated);
+        assert_eq!(changes[0].content.as_ref().unwrap().len(), CONTENT_KEEP);
+
+        let event = bounded(Event::ToolInput {
+            call: "c".into(),
+            parent: None,
+            delta: None,
+            input: Some(serde_json::json!({"content": "x".repeat(OUTPUT_KEEP + 1), "n": 1})),
+            truncated: false,
+        });
+        assert!(matches!(
+            event,
+            Event::ToolInput {
+                truncated: true,
+                ..
+            }
+        ));
+
+        // Streamed pieces past the limit are not passed on.
+        let mut tracker = Tracker::default();
+        let mut out = Vec::new();
+        for _ in 0..3 {
+            tracker.observe(
+                Event::ToolOutput {
+                    call: "c".into(),
+                    parent: None,
+                    delta: "x".repeat(CONTENT_KEEP / 2),
+                },
+                &mut out,
+            );
+        }
+        let pieces = out
+            .iter()
+            .filter(|e| matches!(e, Event::ToolOutput { .. }))
+            .count();
+        assert_eq!(pieces, 2);
+    }
+
+    #[test]
     fn an_event_goes_out_with_its_session_and_its_kind() {
         let event = Event::TurnEnded {
             outcome: Outcome::Interrupted,
@@ -1713,6 +2243,7 @@ mod tests {
             to: Some("/b".into()),
             hunks: vec![],
             content: None,
+            truncated: false,
         })
         .unwrap();
         assert_eq!(change["kind"], "move");

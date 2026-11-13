@@ -6,7 +6,7 @@
 //! path or id, results and events come back with the host put back on, and
 //! a connection opens the first time a host is named.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,6 +22,52 @@ pub const SCHEME: &str = "ssh://";
 
 /// A connection went away: `{ host, reason }`.
 pub const REMOTE_CLOSED: &str = "remote_closed";
+
+/// The integrated sessions running on each machine, by their ids with the
+/// host on, so that a connection that goes away ends them for the window.
+static INTEGRATED: Mutex<BTreeMap<String, BTreeSet<String>>> = Mutex::new(BTreeMap::new());
+
+/// An integrated session started on a machine, by its id with the host on.
+pub fn integrated_started(host: &str, id: &str) {
+    INTEGRATED
+        .lock()
+        .expect("integrated lock")
+        .entry(host.to_string())
+        .or_default()
+        .insert(id.to_string());
+}
+
+/// Keeps the record of a machine's integrated sessions as their events
+/// pass, by the payload with the host already on.
+fn integrated_heard(host: &str, payload: &Value) {
+    if payload["type"] == "ended" {
+        if let Some(id) = payload["id"].as_str() {
+            if let Some(ids) = INTEGRATED.lock().expect("integrated lock").get_mut(host) {
+                ids.remove(id);
+            }
+        }
+    }
+}
+
+/// The events that end a machine's integrated sessions for the window once
+/// the connection to it is gone, since none of their own will come.
+fn integrated_lost(host: &str, reason: &Value) -> Vec<Value> {
+    let ids = INTEGRATED
+        .lock()
+        .expect("integrated lock")
+        .remove(host)
+        .unwrap_or_default();
+    let why = reason.as_str().unwrap_or("the connection closed");
+    ids.into_iter()
+        .flat_map(|id| {
+            [
+                json!({ "id": id, "type": "error", "kind": "process",
+                        "message": format!("the connection to {host} closed: {why}") }),
+                json!({ "id": id, "type": "ended", "code": null, "clean": false }),
+            ]
+        })
+        .collect()
+}
 
 /// How long the first exchange may take: ssh connecting, the daemon
 /// starting, one answer. Past this the machine or the daemon is not there.
@@ -295,7 +341,14 @@ fn open_at(
         &mut command,
         Box::new(move |event, payload| {
             if event == CLOSED {
+                for lost in integrated_lost(&name, &payload) {
+                    let _ = app.emit(workbench_core::integrated::INTEGRATED_EVENT, lost);
+                }
                 let _ = app.emit(REMOTE_CLOSED, json!({ "host": name, "reason": payload }));
+            } else if event == workbench_core::integrated::INTEGRATED_EVENT {
+                let payload = homeward(&name, event, payload);
+                integrated_heard(&name, &payload);
+                let _ = app.emit(event, payload);
             } else if event == workbench_core::settings::SETTINGS_CHANGED
                 || event == workbench_core::styles::USER_STYLES_CHANGED
             {
@@ -477,6 +530,16 @@ mod tests {
             json!({"id": "int-1", "type": "text", "changes": null}),
         );
         assert_eq!(text["changes"], Value::Null);
+        integrated_started("gone", "ssh://gone#int-1");
+        integrated_started("gone", "ssh://gone#int-2");
+        integrated_heard("gone", &json!({"id": "ssh://gone#int-2", "type": "ended"}));
+        let lost = integrated_lost("gone", &json!("broken pipe"));
+        assert_eq!(lost.len(), 2, "only the one still running: {lost:?}");
+        assert_eq!(lost[0]["id"], "ssh://gone#int-1");
+        assert_eq!(lost[0]["type"], "error");
+        assert_eq!(lost[1]["type"], "ended");
+        assert_eq!(lost[1]["clean"], false);
+        assert!(integrated_lost("gone", &Value::Null).is_empty());
         let other = homeward(
             "lab",
             "session_event",
