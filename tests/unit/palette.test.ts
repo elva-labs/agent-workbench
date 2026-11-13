@@ -223,6 +223,35 @@ describe("go to", () => {
   });
 });
 
+describe("where go to starts", () => {
+  it("puts the cursor on the first session that is not the one on screen", () => {
+    const first = create(A);
+    const second = create(B);
+    first.changedAt = 1_000;
+    second.changedAt = 2_000;
+    select(second.key);
+    expect(goToItems("")[0]).toMatchObject({ id: `session:${second.key}` });
+    openGoTo();
+    expect(startingId()).toBe(`session:${first.key}`);
+  });
+
+  it("starts on the first entry when the only session is the one on screen, and when typing", () => {
+    create(A);
+    openGoTo();
+    expect(startingId()).toBeNull();
+    create(B);
+    setQuery("session");
+    expect(startingId()).toBeNull();
+  });
+
+  it("offers to open a project when nothing is open, and nothing when a query matches nothing", () => {
+    workspace.open.length = 0;
+    expect(goToItems("").map((item) => item.id)).toEqual(["command:open"]);
+    expect(pickable(goToItems("")[0])).toBe(true);
+    expect(goToItems("x")).toEqual([]);
+  });
+});
+
 describe("what picking does in go to", () => {
   it("brings a session forward and gives it the keyboard once the palette is away", () => {
     const first = create(A);
@@ -248,6 +277,23 @@ describe("what picking does in go to", () => {
     expect(workspace.active).toBe(B);
     expect(sessions.active).toBeNull();
     expect(layout.focus).toBe("sessions");
+  });
+
+  it("leaves the sessions pane alone in a window too narrow for it", async () => {
+    const { layout } = await import("$lib/layout.svelte");
+    layout.sessionsChosen = false;
+    layout.sessionsForced = true;
+    layout.mode = "working";
+    create(A);
+    workspace.active = A;
+    const item = goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === B)!;
+    const outcome = pickItem(item);
+    if (outcome.type === "close") outcome.then();
+    await tick();
+    expect(layout.sessionsChosen).toBe(false);
+    expect(layout.focus).toBe("agent");
+    layout.sessionsForced = false;
+    layout.sessionsChosen = true;
   });
 
   it("keeps the session on screen when its project is picked", () => {
@@ -464,7 +510,7 @@ describe("a new session", () => {
     sessions.preferred[A] = "codex";
     beginNew(A);
     const marks = stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
-    expect(marks).toEqual(["", "last used"]);
+    expect(marks).toEqual(["", "default"]);
   });
 
   it("clears the field at each step, and narrows only the question asked", () => {
@@ -477,6 +523,29 @@ describe("a new session", () => {
     expect(palette.query).toBe("");
     setQuery("codex");
     expect(stepItems(palette.query).map((item) => item.label)).toEqual(["Codex"]);
+  });
+
+  it("calls the account the project runs under the default, as it does the agent", () => {
+    accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+    beginNew(A);
+    const marks = stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
+    expect(marks).toEqual(["default", ""]);
+  });
+
+  it("puts what was typed in the commands back when stepping out of the first question", () => {
+    openCommands();
+    setQuery("new sess");
+    choose("New session");
+    expect(palette.query).toBe("");
+    stepBack();
+    expect(palette).toMatchObject({ mode: "commands", query: "new sess", steps: [] });
+    // Opened afresh, the commands start empty again.
+    choose("New session");
+    openCommands();
+    expect(palette.query).toBe("");
+    choose("New session");
+    stepBack();
+    expect(palette.query).toBe("");
   });
 
   it("steps back by one answer, and from the first question to the commands", () => {

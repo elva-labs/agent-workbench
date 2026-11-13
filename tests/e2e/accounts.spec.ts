@@ -240,10 +240,10 @@ test.describe("a new session from the palette with accounts", () => {
       "placeholder",
       "Under which account",
     );
-    await expect(page.getByTestId("palette-group").first()).toHaveText("Under which account");
+    await expect(page.getByTestId("palette-group")).toHaveCount(0);
     await expect(page.getByTestId("palette-row")).toHaveText([/Default/, /Work/]);
     await expect(chosen(page)).toContainText("Work");
-    await expect(chosen(page)).toContainText("this project's");
+    await expect(chosen(page)).toContainText("default");
 
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("palette")).toHaveCount(0);

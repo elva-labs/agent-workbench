@@ -697,7 +697,7 @@
 {#if resume.open}
   <Resume />
 {/if}
-{#if palette.open}
+{#if palette.open || palette.leaving}
   <Palette {perform} />
 {/if}
 {#if pluginSections.pending !== null}

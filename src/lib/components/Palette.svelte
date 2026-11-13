@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from "svelte";
-  import { coversBrowser } from "$lib/browser.svelte";
+  import { tick, untrack } from "svelte";
+    import { coversBrowser } from "$lib/browser.svelte";
   import type { Action } from "$lib/keymap";
   import { isMac } from "$lib/platform";
-  import { returnFocus } from "$lib/layout.svelte";
-  import {
+    import {
     chipOf,
     closePalette,
     palette,
@@ -37,11 +36,16 @@
   let list = $state<HTMLDivElement | null>(null);
   let chosen = $state<string | null>(null);
 
-  // The keyboard is taken on the way in and handed back on the way out,
-  // whichever way the palette closed.
-  onMount(() => {
+  // The keyboard is taken on the way in, and again when a list is opened
+  // while this one is still fading out. Closing hands it back.
+  $effect(() => {
+    palette.opened;
     field?.focus();
-    return returnFocus;
+  });
+
+  // A palette fading out has no keyboard: it went to the pane that had it.
+  $effect(() => {
+    if (!palette.open && dialog.contains(document.activeElement)) field?.blur();
   });
 
   let items = $derived(paletteItems());
@@ -82,13 +86,15 @@
     `palette-opt-${item.id.replace(/[^A-Za-z0-9-]/g, (c) => `_${c.charCodeAt(0).toString(16)}`)}`;
 
   /** The list as runs of rows under one heading, each with the place its
-      first row holds in the list. */
+      first row holds in the list. A new session's step is one list, which
+      its field already names, so it has no heading. */
   const sections = $derived.by(() => {
     const runs: { group: string | null; start: number; rows: PaletteItem[] }[] = [];
     items.forEach((item, index) => {
+      const group = palette.mode === "new" ? null : item.group;
       const last = runs[runs.length - 1];
-      if (last !== undefined && last.group === item.group) last.rows.push(item);
-      else runs.push({ group: item.group, start: index, rows: [item] });
+      if (last !== undefined && last.group === group) last.rows.push(item);
+      else runs.push({ group, start: index, rows: [item] });
     });
     return runs;
   });
@@ -170,6 +176,10 @@
     palette.mode === "goto" ? "Sessions and projects" : palette.mode === "commands" ? "Commands" : "New session",
   );
   const nothingOpen = $derived(palette.mode === "goto" && palette.query.trim() === "");
+  // What go to can do is what its list holds: sessions and projects to go to
+  // and start in, the one row that opens a project when nothing is open, or
+  // nothing.
+  const goable = $derived(items.some((item) => item.kind === "session" || item.kind === "project"));
   const modifier = isMac() ? "⌘" : "Ctrl+";
 </script>
 
@@ -177,7 +187,10 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="scrim" onclick={closePalette} use:coversBrowser data-testid="palette-scrim">
+<div
+  class="scrim"
+  class:leaving={!palette.open}
+  onclick={closePalette} use:coversBrowser data-testid="palette-scrim">
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
@@ -296,15 +309,20 @@
     {/if}
     <div class="foot" data-testid="palette-hints">
       {#if palette.mode === "goto"}
-        <span><kbd>↵</kbd> go to</span>
-        <span><kbd>{modifier}↵</kbd> new session in the project</span>
+        {#if goable}
+          <span><kbd>↵</kbd> go to</span>
+          <span><kbd>{modifier}↵</kbd> new session in the project</span>
+        {:else if items.length > 0}
+          <span><kbd>↵</kbd> open</span>
+        {/if}
         <span><kbd>&gt;</kbd> commands</span>
+        <span><kbd>esc</kbd> close</span>
       {:else if palette.mode === "new"}
         <span><kbd>↵</kbd> {stepsLeft(palette.steps).length === 1 ? "start" : "choose"}</span>
         <span><kbd>⌫</kbd> back</span>
         <span><kbd>esc</kbd> close</span>
       {:else}
-        <span><kbd>↵</kbd> run</span>
+        {#if items.length > 0}<span><kbd>↵</kbd> run</span>{/if}
         <span><kbd>esc</kbd> close</span>
       {/if}
     </div>
@@ -316,11 +334,29 @@
     position: fixed;
     inset: 0;
     z-index: 20;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    background: color-mix(in srgb, black 42%, transparent);
     display: flex;
     align-items: flex-start;
     justify-content: center;
     padding-top: 12vh;
+  }
+
+  .scrim.leaving {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .scrim {
+      animation: arrive 110ms ease-out;
+      transition: opacity 110ms ease-out;
+    }
+  }
+
+  @keyframes arrive {
+    from {
+      opacity: 0;
+    }
   }
 
   .dialog {
@@ -402,11 +438,9 @@
   .group {
     padding: 8px 8px 3px;
     font-family: var(--chrome);
-    font-size: var(--heading-size);
-    font-weight: var(--heading-weight);
-    letter-spacing: var(--label-track);
-    text-transform: var(--label-case);
-    color: var(--heading-color);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--ink-3);
   }
 
   .row {

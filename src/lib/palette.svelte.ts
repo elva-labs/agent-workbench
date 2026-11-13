@@ -7,6 +7,7 @@ import {
   focusPane,
   layout,
   peekSessions,
+  returnFocus,
   sessionsShown,
 } from "$lib/layout.svelte";
 import {
@@ -34,6 +35,7 @@ import {
   workspace,
 } from "$lib/workspace.svelte";
 import { unfoldSessions } from "$lib/viewers.svelte";
+import { reduced } from "$lib/motion";
 
 /**
  * The palette: one field over the workbench in two lists. Go to narrows the
@@ -139,12 +141,34 @@ export const palette = $state({
   query: "",
   /** The answers given so far to a new session's questions. */
   steps: [] as Step[],
+  /** What was typed in the commands when a new session was asked for from
+      there, which stepping back to them puts in the field again. */
+  came: "",
+  /** Counts every time a list is opened, so a palette still fading out from
+      the last close takes the keyboard again. */
+  opened: 0,
+  /** The palette is closed and fading out, which it stays drawn for. */
+  leaving: false,
 });
+
+/** How long the palette takes to fade out, in milliseconds. */
+export const FADE = 110;
+
+let leaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function stopLeaving() {
+  if (leaveTimer !== null) clearTimeout(leaveTimer);
+  leaveTimer = null;
+  palette.leaving = false;
+}
 
 export function openGoTo() {
   palette.mode = "goto";
   palette.query = "";
   palette.steps = [];
+  palette.came = "";
+  palette.opened += 1;
+  stopLeaving();
   palette.open = true;
 }
 
@@ -152,22 +176,35 @@ export function openCommands() {
   palette.mode = "commands";
   palette.query = "";
   palette.steps = [];
+  palette.came = "";
+  palette.opened += 1;
+  stopLeaving();
   palette.open = true;
 }
 
 /** The commands palette, for callers that only know there is one. */
 export const openPalette = openCommands;
 
+/** Puts the palette away and hands the keyboard back to the pane that had
+    it. The palette stays drawn for the length of its fade, so the keyboard
+    is not left to its removal. */
 export function closePalette() {
+  if (!palette.open) return;
   palette.open = false;
+  returnFocus();
+  if (reduced()) return;
+  palette.leaving = true;
+  leaveTimer = setTimeout(stopLeaving, FADE);
 }
 
 /** Test seam. */
 export function resetPalette() {
+  stopLeaving();
   palette.open = false;
   palette.mode = "goto";
   palette.query = "";
   palette.steps = [];
+  palette.came = "";
 }
 
 /** The field changed. A `>` first in go to leaves it for commands, with
@@ -258,6 +295,17 @@ export function goToItems(query: string): PaletteItem[] {
       end: standing(path),
     }))
     .filter((item) => matches(item.label, query));
+  if (rows.length + projects.length === 0 && query.trim() === "")
+    return [
+      {
+        kind: "command",
+        id: "command:open",
+        label: "Open project",
+        group: null,
+        command: "open",
+        chord: "",
+      },
+    ];
   return [...rows, ...projects];
 }
 
@@ -375,7 +423,7 @@ function runSections(
         label: agentLabel(agent),
         group: title,
         step: { kind: "agent", agent },
-        end: sessions.preferred[project] === agent ? "last used" : "",
+        end: sessions.preferred[project] === agent ? "default" : "",
       })),
     },
   ];
@@ -412,7 +460,7 @@ function accountChoices(project: string): PaletteItem[] {
     label: accountLabel(account),
     group,
     step: { kind: "account", account },
-    end: account === own ? "this project's" : "",
+    end: account === own ? "default" : "",
   }));
 }
 
@@ -453,11 +501,19 @@ export function pickable(item: PaletteItem): boolean {
   return true;
 }
 
-/** The entry the cursor starts on when the list is not narrowed: the
-    account the project runs under, the agent it used last. Null leaves it
+/** The entry the cursor starts on when the list is not narrowed: in go to,
+    the first session that is not the one on screen; in a new session, the
+    account the project runs under or the agent it used last. Null leaves it
     to the first entry that does something. */
 export function startingId(): string | null {
-  if (palette.mode !== "new" || palette.query.trim() !== "") return null;
+  if (palette.query.trim() !== "") return null;
+  if (palette.mode === "goto")
+    return (
+      goToItems("").find(
+        (item) => item.kind === "session" && item.session.key !== sessions.active,
+      )?.id ?? null
+    );
+  if (palette.mode !== "new") return null;
   const project = projectOfSteps(palette.steps);
   if (project === null) return null;
   const asking = nextStep(palette.steps);
@@ -502,6 +558,8 @@ export function beginNew(path: string | null): Outcome {
   if (!isReady()) return { type: "stay" };
   const only = workspace.open.length === 1 ? workspace.open[0].path : null;
   const project = path ?? only;
+  if (palette.mode !== "new")
+    palette.came = palette.mode === "commands" ? palette.query : "";
   return answer(project === null ? [] : [{ kind: "project", path: project }]);
 }
 
@@ -516,17 +574,20 @@ export function stepBack() {
   }
   palette.steps = [];
   palette.mode = "commands";
+  palette.query = palette.came;
 }
 
 /** Gives the keyboard to the sessions pane, which a project with no session
     has instead of a terminal. Called once the page has reacted to the
-    project coming forward, which puts a peeked pane back. The pane is opened first when it is folded:
-    while reviewing it peeks over the agent and the viewer stays. A window too
-    narrow for the pane leaves the keyboard with the agent. */
+    project coming forward, which puts a peeked pane back. A folded pane is
+    opened first, or while reviewing peeked over the agent so the viewer
+    stays. A window too narrow for the pane leaves it folded, as the user
+    set it, and the keyboard goes to the agent pane, which has no session to
+    give it to and takes it itself. */
 function keyboardToSessions() {
   if (!sessionsShown()) {
     if (layout.mode === "reviewing") peekSessions(true);
-    else unfoldSessions();
+    else if (!layout.sessionsForced) unfoldSessions();
   }
   focusPane(sessionsShown() ? "sessions" : "agent");
 }

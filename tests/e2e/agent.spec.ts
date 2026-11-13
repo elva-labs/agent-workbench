@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * Sessions, driven by a fake core.
@@ -412,6 +412,22 @@ test.describe("with no project", () => {
     await expect(page.getByTestId("no-project")).toBeVisible();
     await page.waitForTimeout(300);
     expect(await spawnCount(page)).toBe(0);
+  });
+});
+
+test.describe("go to with nothing open", () => {
+  test("offers to open a project, and says so in the footer", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press(`${MOD}+P`);
+    const rows = page.getByTestId("palette-row");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("Open project");
+    await expect(page.getByTestId("palette-hints")).toContainText("open");
+    await expect(page.getByTestId("palette-hints")).not.toContainText("go to");
+    await page.evaluate((path) => (window.__fake.picked = path), TWO);
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect(page.locator(".project.on")).toContainText("two");
   });
 });
 
@@ -1759,10 +1775,11 @@ test.describe("the palettes", () => {
       expect(projectHead.y + projectHead.height).toBeLessThanOrEqual(firstProject.y + 1);
     });
 
-    test("lists the latest change first, and Enter on an empty field goes there", async ({ page }) => {
+    test("lists the latest change first, with the cursor on the first session that is not on screen", async ({ page }) => {
       await page.keyboard.press(GOTO);
+      await expect(kind(page, "session").first().getByTestId("palette-label")).toHaveText("session 2");
       await expect(chosen(page)).toHaveAttribute("data-kind", "session");
-      await expect(chosen(page).getByTestId("palette-label")).toHaveText("session 2");
+      await expect(chosen(page).getByTestId("palette-label")).toHaveText("session 1");
       await page.keyboard.press("Escape");
 
       // A session that changes moves above the rest.
@@ -1861,6 +1878,33 @@ test.describe("the palettes", () => {
       expect(await writtenTo(page, "pty-2")).toBe("");
     });
 
+    const savedSessionsChosen = (page: Page) =>
+      page.evaluate(() => JSON.parse(localStorage.getItem("workbench.layout") ?? "{}").sessionsChosen);
+
+    test("brings a project forward in a window too narrow for the sessions pane, leaving the pane as the user set it and the keyboard on New session", async ({
+      page,
+    }) => {
+      await page.keyboard.press(`${MOD}+b`);
+      await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+      await expect.poll(() => savedSessionsChosen(page)).toBe(false);
+      await page.setViewportSize({ width: 800, height: 800 });
+      await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+      await page.keyboard.press(GOTO);
+      await page.keyboard.type("two");
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect(page.locator(".project.on")).toContainText("two");
+      await expect(page.getByTestId("start-agent")).toBeFocused();
+      await page.keyboard.type("y");
+      await page.waitForTimeout(200);
+      expect(await writtenTo(page, "pty-1")).toBe("");
+      expect(await writtenTo(page, "pty-2")).toBe("");
+      expect(await savedSessionsChosen(page)).toBe(false);
+      // Wide again, the pane is still the one the user hid.
+      await page.setViewportSize({ width: 1200, height: 800 });
+      await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+    });
+
     test("picking go to from the commands opens that palette", async ({ page }) => {
       await page.keyboard.press(COMMANDS);
       await page.keyboard.type("go to a session");
@@ -1870,23 +1914,76 @@ test.describe("the palettes", () => {
       await expect(field(page)).toBeFocused();
     });
 
+    const hints = (page: Page) => page.getByTestId("palette-hints");
+
+    test("shows in the footer only what the list can do", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      await expect(hints(page)).toContainText("go to");
+      await expect(hints(page)).toContainText("new session in the project");
+      await page.keyboard.type("zzzz");
+      await expect(entries(page)).toHaveCount(0);
+      await expect(hints(page)).toContainText("commands");
+      await expect(hints(page)).toContainText("close");
+      await expect(hints(page)).not.toContainText("go to");
+      await expect(hints(page)).not.toContainText("new session");
+      await page.keyboard.press(`${MOD}+a`);
+      await page.keyboard.type(">zzzz");
+      await expect(entries(page)).toHaveCount(0);
+      await expect(hints(page)).not.toContainText("run");
+      await expect(hints(page)).toContainText("close");
+    });
+
+    test("sets the group headings smaller and quieter than the rows", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      const head = page.getByTestId("palette-group").first();
+      const label = entries(page).first().getByTestId("palette-label");
+      const style = (locator: Locator) =>
+        locator.evaluate((el) => {
+          const css = getComputedStyle(el);
+          return { size: parseFloat(css.fontSize), weight: Number(css.fontWeight), color: css.color };
+        });
+      const heading = await style(head);
+      const row = await style(label);
+      const quiet = await style(entries(page).first().getByTestId("palette-end"));
+      expect(heading.size).toBeLessThan(row.size);
+      expect(heading.weight).toBeLessThanOrEqual(500);
+      expect(heading.color).toBe(quiet.color);
+    });
+
+    test("dims the window with black in both looks, and fades out unless motion is reduced", async ({ page }) => {
+      const dim = () =>
+        page
+          .getByTestId("palette-scrim")
+          .evaluate((el) => (getComputedStyle(el).backgroundColor.match(/[\d.]+/g) ?? []).map(Number));
+      await page.keyboard.press(GOTO);
+      expect(await dim()).toEqual([0, 0, 0, 0.42]);
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+      expect(await dim()).toEqual([0, 0, 0, 0.42]);
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      expect(await dim()).toEqual([0, 0, 0, 0.42]);
+
+      const closeAndLook = () =>
+        page.evaluate(async () => {
+          const input = document.querySelector("[data-testid='palette-field']")!;
+          input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+          await new Promise((done) => requestAnimationFrame(() => done(null)));
+          return document.querySelector("[data-testid='palette-scrim']") !== null;
+        });
+      expect(await closeAndLook()).toBe(true);
+      await expect(page.getByTestId("palette-scrim")).toHaveCount(0);
+
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.keyboard.press(GOTO);
+      await expect(field(page)).toBeFocused();
+      expect(await closeAndLook()).toBe(false);
+    });
+
     test("drops a session that is closed while the list is up", async ({ page }) => {
       await page.keyboard.press(GOTO);
       await expect(kind(page, "session")).toHaveCount(2);
-      await expect(chosen(page)).toContainText("session 2");
+      await expect(chosen(page)).toContainText("session 1");
       // Another way of stopping a session: through the scrim, from the
-      // pane behind the palette. Session 1 is not under the cursor.
-      await rows(page).first().locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
-      await expect(kind(page, "session")).toHaveCount(1);
-      await expect(kind(page, "session").first()).toContainText("session 2");
-      await expect(chosen(page)).toHaveCount(1);
-      await expect(chosen(page)).toContainText("session 2");
-    });
-
-    test("moves the cursor on when the session under it is closed", async ({ page }) => {
-      await page.keyboard.press(GOTO);
-      await expect(kind(page, "session")).toHaveCount(2);
-      await expect(chosen(page)).toContainText("session 2");
+      // pane behind the palette. Session 2 is not under the cursor.
       await rows(page).nth(1).locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
       await expect(kind(page, "session")).toHaveCount(1);
       await expect(kind(page, "session").first()).toContainText("session 1");
@@ -1894,10 +1991,20 @@ test.describe("the palettes", () => {
       await expect(chosen(page)).toContainText("session 1");
     });
 
+    test("moves the cursor on when the session under it is closed", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      await expect(kind(page, "session")).toHaveCount(2);
+      await expect(chosen(page)).toContainText("session 1");
+      await rows(page).first().locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
+      await expect(kind(page, "session")).toHaveCount(1);
+      await expect(kind(page, "session").first()).toContainText("session 2");
+      await expect(chosen(page)).toHaveCount(1);
+      await expect(chosen(page)).toContainText("session 2");
+    });
+
     test("keeps the cursor on its entry while sessions change under it", async ({ page }) => {
       await page.keyboard.press(GOTO);
       const target = kind(page, "session").filter({ hasText: "session 1" });
-      await page.keyboard.press("ArrowDown");
       await expect(target).toHaveAttribute("aria-selected", "true");
       await expect(kind(page, "session").first()).toContainText("session 2");
       await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
@@ -1973,7 +2080,7 @@ test.describe("a new session from the palette", () => {
     await expect(field(page)).toHaveValue("");
     await expect(field(page)).toHaveAttribute("placeholder", "Which project");
     // The project on screen leads, with the cursor on it.
-    await expect(page.getByTestId("palette-group").first()).toHaveText("In which project");
+    await expect(page.getByTestId("palette-group")).toHaveCount(0);
     await expect(entries(page).first()).toContainText("one");
     await expect(chosen(page)).toContainText("one");
 
@@ -2074,13 +2181,15 @@ test.describe("a new session from the palette", () => {
     await expect(entries(page)).toHaveCount(2);
     await page.keyboard.press("Backspace");
     await expect(chips(page)).toHaveText(["New session"]);
-    await expect(page.getByTestId("palette-group").first()).toHaveText("In which project");
+    await expect(page.getByTestId("palette-group")).toHaveCount(0);
+    await expect(entries(page)).toHaveCount(2);
     await expect(field(page)).toBeFocused();
     await page.keyboard.press("Backspace");
     await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "commands");
     await expect(page.getByTestId("palette-prefix")).toBeVisible();
+    await expect(field(page)).toHaveValue("new session");
+    await expect(chosen(page)).toContainText("New session");
 
-    await page.keyboard.type("new session");
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
     await page.keyboard.press("ArrowDown");
@@ -2104,7 +2213,7 @@ test.describe("a new session from the palette", () => {
     await page.keyboard.type("new session in");
     await page.keyboard.press("Enter");
     await expect(chosen(page)).toContainText("Codex");
-    await expect(chosen(page)).toContainText("last used");
+    await expect(chosen(page)).toContainText("default");
   });
 
   test("Escape closes it from any step and the keyboard goes back", async ({ page }) => {
