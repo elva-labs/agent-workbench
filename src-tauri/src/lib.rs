@@ -19,7 +19,7 @@ mod probe;
 pub mod remote;
 pub mod ssh;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -301,6 +301,59 @@ async fn sessions_list(
             Ok(core.sessions_list(Path::new(project), &for_local.0, for_local.1.as_deref()))
         },
     )
+    .await
+}
+
+/// The past sessions of several projects at once, in the order given. The
+/// projects on this machine are listed together, and those on each host go
+/// to it as one request. A host that cannot be reached has no history, as a
+/// project with none does.
+#[tauri::command]
+async fn sessions_list_many(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    projects: Vec<String>,
+    agent: String,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        let mut lists = vec![Value::Array(Vec::new()); projects.len()];
+        let mut here: Vec<(usize, PathBuf)> = Vec::new();
+        let mut elsewhere: HashMap<String, Vec<(usize, String)>> = HashMap::new();
+        for (at, project) in projects.iter().enumerate() {
+            match route(project) {
+                Route::Local(path) => here.push((at, PathBuf::from(path))),
+                Route::Remote { host, rest } => {
+                    elsewhere.entry(host).or_default().push((at, rest));
+                }
+            }
+        }
+
+        let paths: Vec<PathBuf> = here.iter().map(|(_, path)| path.clone()).collect();
+        let found = core.sessions_list_many(&paths, &agent, config_dir.as_deref());
+        for ((at, _), list) in here.iter().zip(found) {
+            lists[*at] = value(list)?;
+        }
+
+        for (host, group) in elsewhere {
+            let rests: Vec<&str> = group.iter().map(|(_, rest)| rest.as_str()).collect();
+            let answer = remotes.connection(&host).and_then(|connection| {
+                connection.call(
+                    "sessions_list_many",
+                    json!({ "projects": rests, "agent": agent, "configDir": config_dir }),
+                )
+            });
+            let Ok(Value::Array(answer)) = answer else {
+                continue;
+            };
+            for ((at, _), list) in group.iter().zip(answer) {
+                lists[*at] = list;
+            }
+        }
+        Ok(Value::Array(lists))
+    })
     .await
 }
 
@@ -1146,6 +1199,7 @@ pub fn run() {
             set_selection,
             project_info,
             sessions_list,
+            sessions_list_many,
             session_title,
             hook_status,
             hook_install,

@@ -15,6 +15,9 @@ import {
   setPastSessions,
   historyLabel,
   loadHistory,
+  loadHistories,
+  loadMissingHistories,
+  refreshHistory,
   isMine,
   isViewed,
   exact,
@@ -68,6 +71,8 @@ const B = "/home/ada/dev/two";
 
 const killed: string[] = [];
 let historyReads = 0;
+/** The projects each batched reading was asked for. */
+const manyCalls: string[][] = [];
 let historyAnswer: Transcript[] = [];
 /** What each account's directory holds, by directory. */
 let historyByDir: Record<string, Transcript[]> = {};
@@ -99,6 +104,13 @@ vi.mock("$lib/core", () => ({
       historyReads += 1;
       return historyAnswer;
     },
+    transcriptsMany: async (projects: string[], agent: string, dir?: string) => {
+      manyCalls.push(projects);
+      if (agent !== "claude-code") return projects.map(() => []);
+      if (dir !== undefined) return projects.map(() => historyByDir[dir] ?? []);
+      historyReads += 1;
+      return projects.map(() => historyAnswer);
+    },
   }),
 }));
 
@@ -109,6 +121,7 @@ beforeEach(() => {
   resetZoom();
   killed.length = 0;
   historyReads = 0;
+  manyCalls.length = 0;
   historyAnswer = [];
   historyByDir = {};
   cwdAnswer = null;
@@ -528,6 +541,74 @@ describe("history", () => {
     close(session.key);
     expect(historyFor(A).map((t) => t.id)).toEqual(["theirs"]);
     expect(outsideFor(A)).toEqual([]);
+  });
+
+  it("reads every project's history from a directory in one request", async () => {
+    await loadHistories([A, B]);
+    // One request per agent's directory, each for both projects.
+    expect(manyCalls.length).toBeGreaterThan(0);
+    expect(manyCalls.every((projects) => projects.join() === [A, B].join())).toBe(true);
+    expect(sessions.history[A]).toBeDefined();
+    expect(sessions.history[B]).toBeDefined();
+  });
+
+  it("reads again every project that has a history, in one request each", async () => {
+    await loadHistories([A, B]);
+    manyCalls.length = 0;
+    await refreshHistory();
+    expect(manyCalls.length).toBeGreaterThan(0);
+    expect(manyCalls.every((projects) => projects.length === 2)).toBe(true);
+  });
+
+  it("leaves a history that has not changed as the same list", async () => {
+    historyAnswer = [{ id: "own", title: "own", modified: 1000, size: 1 }];
+    await loadHistory(A);
+    const first = sessions.history[A];
+    await refreshHistory();
+    expect(sessions.history[A]).toBe(first);
+    historyAnswer = [{ id: "own", title: "renamed", modified: 1001, size: 2 }];
+    await refreshHistory();
+    expect(sessions.history[A]).not.toBe(first);
+    expect(sessions.history[A][0].title).toBe("renamed");
+  });
+
+  it("serves a refresh asked for while one is under way with that one", async () => {
+    await loadHistory(A);
+    manyCalls.length = 0;
+    const first = refreshHistory();
+    const second = refreshHistory();
+    expect(second).toBe(first);
+    await first;
+    const asked = manyCalls.length;
+    await refreshHistory();
+    expect(manyCalls.length).toBeGreaterThan(asked);
+  });
+
+  it("reads only the histories not read or being read", async () => {
+    await loadHistory(A);
+    manyCalls.length = 0;
+    const pending = loadMissingHistories([A, B]);
+    await loadMissingHistories([A, B]);
+    await pending;
+    expect(manyCalls.length).toBeGreaterThan(0);
+    expect(manyCalls.every((projects) => projects.join() === B)).toBe(true);
+    expect(sessions.history[B]).toBeDefined();
+  });
+
+  it("reads a project again when an account arrives while it is being read", async () => {
+    await loadHistory(A);
+    sessions.history = {};
+    manyCalls.length = 0;
+    const pending = loadMissingHistories([A]);
+    const asked = manyCalls.length;
+    adoptAccounts({
+      list: { Work: { claude: "~/.claude-work", codex: null } },
+      everywhere: null,
+      overrides: {},
+    });
+    await loadMissingHistories([A]);
+    await pending;
+    expect(manyCalls.length).toBeGreaterThan(asked);
   });
 
   // What ran outside the app shows up without a restart: the histories

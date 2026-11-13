@@ -27,6 +27,7 @@ vi.mock("$lib/core", () => ({
       isGit: true,
     }),
     transcripts: async () => [],
+    transcriptsMany: async (projects: string[]) => projects.map(() => []),
   }),
 }));
 

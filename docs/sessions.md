@@ -11,9 +11,11 @@ Nothing new starts by itself. Opening a project shows what the project has:
 live sessions if any, past ones to resume, and a new-session row. Opening the
 app brings back the sessions that were open when it quit, as described under
 [after a restart](#after-a-restart).
-The past ones are read again each time the window comes back into view and
-once a minute while it is looked at, so a session run in a terminal outside
-the app is there to resume without a restart. The menu beside Open project
+The past ones of every open project are read again, in one request per
+agent directory, each time the window comes back into view and once a minute
+while it is looked at, so a session run in a terminal outside the app is
+there to resume without a restart. A list that has not changed is left as it
+is. The menu beside Open project
 holds Open remote project, for a folder on another machine, and New
 orchestrator session; see [remote](remote.md) and
 [orchestrator](orchestrator.md). With more than one agent installed the row
@@ -77,6 +79,9 @@ you, the status bar says so. While a dialog or a question over the agent
 pane is up, the chord does nothing.
 
 ## After a restart
+
+The open projects are described all at once and appear together, in the order
+they had.
 
 The sessions that were open when the app quit come back as rows in their
 projects, in the order they had and under the names they had, with nothing

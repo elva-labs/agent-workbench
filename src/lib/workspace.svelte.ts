@@ -247,13 +247,14 @@ export async function restore() {
     ? stored.open.filter((path): path is string => typeof path === "string")
     : [];
 
-  for (const path of paths) {
-    try {
-      const info = await core().projectInfo(path);
-      if (!isOpen(info.path)) workspace.open.push(info);
-    } catch {
-      // The directory is gone. Drop it quietly rather than opening on an error.
-    }
+  // All asked at once, and put in the list at once in the order they were
+  // stored. A directory that is gone is dropped quietly rather than opening
+  // on an error.
+  const described = await Promise.all(
+    paths.map((path) => core().projectInfo(path).catch(() => null)),
+  );
+  for (const info of described) {
+    if (info !== null && !isOpen(info.path)) workspace.open.push(info);
   }
 
   const wanted = typeof stored.active === "string" ? stored.active : null;

@@ -310,6 +310,10 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         // changes pane still asks, and would break the page if it threw.
         transcripts: async (_project: string, agent: string) =>
           agent === "codex" ? fake.codexTranscripts : fake.transcripts,
+        transcriptsMany: async (projects: string[], agent: string) =>
+          projects.map(() =>
+            agent === "codex" ? fake.codexTranscripts : fake.transcripts,
+          ),
         hookStatus: async () => ({
           installed: false,
           settings: "",

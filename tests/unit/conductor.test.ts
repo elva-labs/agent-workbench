@@ -85,6 +85,9 @@ vi.mock("$lib/core", () => ({
     async transcripts() {
       return [];
     },
+    async transcriptsMany(projects: string[]) {
+      return projects.map(() => []);
+    },
     async setWindowTitle() {},
   }),
 }));

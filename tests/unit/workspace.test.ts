@@ -3,19 +3,34 @@ import {
   followOpenRequests,
   projectLabel,
   reset,
+  restore,
   workspace,
 } from "$lib/workspace.svelte";
 
 /** Folders waiting to be taken, and the window's word that more are. */
 const fake = vi.hoisted(() => {
-  const state = { waiting: [] as string[], told: null as (() => void) | null };
+  const state = {
+    waiting: [] as string[],
+    told: null as (() => void) | null,
+    /** How long each path takes to be described, and how many are being. */
+    delays: {} as Record<string, number>,
+    describing: 0,
+    mostAtOnce: 0,
+  };
   const core = {
-    projectInfo: async (path: string) => ({
-      path,
-      name: path.split("/").pop()!,
-      repository: path,
-      isGit: true,
-    }),
+    projectInfo: async (path: string) => {
+      if (path === "/gone") throw new Error("gone");
+      state.describing += 1;
+      state.mostAtOnce = Math.max(state.mostAtOnce, state.describing);
+      await new Promise((resolve) => setTimeout(resolve, state.delays[path] ?? 0));
+      state.describing -= 1;
+      return {
+        path,
+        name: path.split("/").pop()!,
+        repository: path,
+        isGit: true,
+      };
+    },
     setWindowTitle: async () => {},
     takeOpened: async () => state.waiting.splice(0),
     onOpenRequested: async (handler: () => void) => {
@@ -39,6 +54,46 @@ beforeEach(() => {
   reset();
   fake.state.waiting = [];
   fake.state.told = null;
+  fake.state.delays = {};
+  fake.state.describing = 0;
+  fake.state.mostAtOnce = 0;
+  localStorage.clear();
+});
+
+describe("restoring the open projects", () => {
+  it("describes them all at once and lists them in the stored order", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/slow", "/gone", "/p/quick", "/p/middle"],
+        active: "/p/middle",
+      }),
+    );
+    fake.state.delays = { "/p/slow": 30, "/p/middle": 10, "/p/quick": 0 };
+    await restore();
+    expect(workspace.open.map((project) => project.path)).toEqual([
+      "/p/slow",
+      "/p/quick",
+      "/p/middle",
+    ]);
+    expect(fake.state.mostAtOnce).toBe(3);
+    expect(workspace.active).toBe("/p/middle");
+  });
+
+  it("puts the whole list in at once", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["/p/one", "/p/two"], active: null }),
+    );
+    fake.state.delays = { "/p/one": 20 };
+    const sizes: number[] = [];
+    const promise = restore();
+    const watch = setInterval(() => sizes.push(workspace.open.length), 2);
+    await promise;
+    clearInterval(watch);
+    expect(sizes.every((size) => size === 0)).toBe(true);
+    expect(workspace.open).toHaveLength(2);
+  });
 });
 
 describe("what a project is called", () => {
