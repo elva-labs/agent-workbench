@@ -8,6 +8,7 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     kill: async () => {},
     transcripts: async () => [],
+    transcriptsMany: async (projects: string[]) => projects.map(() => []),
   }),
 }));
 

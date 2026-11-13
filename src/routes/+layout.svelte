@@ -55,11 +55,13 @@
       if (closed) stop();
       else stopSettings = stop;
     });
-    // The sessions that were open come back into the projects that are, and
-    // only then are the folders asked for from outside opened in front.
+    // The sessions that were open come back into the projects on this
+    // machine, and only then are the folders asked for from outside opened
+    // in front. A project on another machine brings its sessions back when
+    // it arrives; nothing here waits for it.
     let stopReopen = () => {};
-    const restored = restore().then(() => {
-      if (!closed) stopReopen = reopen();
+    const restored = restore().then((arriving) => {
+      if (!closed) stopReopen = reopen(arriving);
     });
     // The projects the window opened with are asked about once, together.
     const startHooks = () => startChecks(workspace.open.map((project) => project.path));

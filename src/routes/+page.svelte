@@ -23,7 +23,7 @@
   } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
-  import { load as loadOrchestrator } from "$lib/orchestrator.svelte";
+  import { load as loadOrchestrator, orchestrator } from "$lib/orchestrator.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
@@ -234,7 +234,13 @@
       .then((unlisten) => offs.push(unlisten));
     void loadOrchestrator();
     offs.push(followCwd());
-    offs.push(followHistory());
+    offs.push(
+      followHistory(() => {
+        const dir = orchestrator.dir;
+        const open = workspace.open.map((project) => project.path);
+        return dir === null ? open : [...open, dir];
+      }),
+    );
     offs.push(followFocus());
     offs.push(primeChime());
     onWaiting(announce);
