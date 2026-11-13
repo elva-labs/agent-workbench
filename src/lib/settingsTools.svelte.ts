@@ -23,7 +23,7 @@
  * refused with a word saying they are the user's, in the settings.
  */
 
-import { core, type SettingsRequest } from "$lib/core";
+import { core, type SettingsRequest, type UnreadWorkflow } from "$lib/core";
 import {
   COLOUR_TOKENS,
   SHAPE_TOKENS,
@@ -276,7 +276,28 @@ function describeWorkflows(): string[] {
     held.default === null
       ? "New sessions start with no workflow."
       : `New sessions start with the workflow ${held.default}.`,
+    ...setAside(held.unread ?? []),
     `Change one with settings_change's workflow argument, a whole workflow that replaces the one of its name or adds one: {"name", "orchestrator": {"agent", "model"}, "steps": [...]}. A step is {"kind": "work", "name", "models", "parallel"} or {"kind": "review", "name", "models", "reviewerApproves", "orchestratorAgrees", "backTo", "limit"}. models is a list of {"agent", "model"}, each model one word and listed once, and empty means any model; the first is used unless there is a reason to pick another. parallel is how many sessions run at once, 1 to ${MOST_PARALLEL}. A review passes when the reviewer approves, the orchestrator agrees, or both, so one is true; backTo names an earlier work step and limit, 1 to ${MOST_ROUNDS}, is how many times it goes back before the user is asked. Names are unique, a workflow has 1 to ${MOST_STEPS} steps and the first does work. The agents are ${AGENT_ORDER.join(" and ")}: claude-code takes the models ${modelsOf("claude-code").map((option) => option.model).join(", ")}, and codex takes ${CODEX_DEFAULT}, its own default. deleteWorkflow takes a workflow's name away and defaultWorkflow names the one new sessions start with, or null for none. Which workflow a project follows is the user's to choose.`,
+  ];
+}
+
+/** The workflows the settings file holds but cannot use, each with why and
+    as written, so an agent asked to mend one can write it again whole. */
+function setAside(unread: UnreadWorkflow[]): string[] {
+  if (unread.length === 0) return [];
+  return [
+    "The settings file also holds workflows that are not used, because they do not keep the rules. Writing a workflow under one's name with the workflow argument mends it, and it takes back the default and the project choices that named it:",
+    ...unread.map((entry) => {
+      const named = [
+        entry.default ? "the file names it for new sessions" : null,
+        entry.projects.length === 1
+          ? "a project's choice names it"
+          : entry.projects.length > 1
+            ? `${entry.projects.length} projects' choices name it`
+            : null,
+      ].filter((part) => part !== null);
+      return `- ${entry.name ?? "A workflow without a name"}: ${entry.reason}${named.length > 0 ? `; ${named.join(", ")}` : ""}. As written:\n\`\`\`json\n${JSON.stringify(entry.entry, null, 2)}\n\`\`\``;
+    }),
   ];
 }
 
@@ -428,12 +449,18 @@ function planWorkflows(
   if (change.write !== undefined) {
     const written = change.write;
     const was = before.list.find((held) => held.name === written.name);
+    const mended = was === undefined ? before.unread?.find((entry) => entry.name === written.name) : undefined;
     if (was === undefined || JSON.stringify(was) !== JSON.stringify(written)) {
       changes.push({
         field: `workflow.${written.name}`,
         label: `Workflow ${written.name}`,
-        from: was === undefined ? "none" : describeWorkflow(was),
-        to: `${describeWorkflow(written)}${was === undefined ? ", new" : ""}`,
+        from:
+          mended !== undefined
+            ? `in the file but not used: ${mended.reason}`
+            : was === undefined
+              ? "none"
+              : describeWorkflow(was),
+        to: `${describeWorkflow(written)}${was === undefined && mended === undefined ? ", new" : ""}`,
       });
     }
   }
@@ -447,13 +474,16 @@ function planWorkflows(
       to: "deleted",
     });
   }
-  for (const [project, choice] of Object.entries(before.overrides)) {
-    if (after.overrides[project] !== choice) {
+  const projects = new Set([...Object.keys(before.overrides), ...Object.keys(after.overrides)]);
+  const said = (choice: string | null | undefined) =>
+    choice === undefined ? "as for new sessions" : (choice ?? "none");
+  for (const project of projects) {
+    if (after.overrides[project] !== before.overrides[project]) {
       changes.push({
         field: `workflowOverride.${project}`,
         label: `Workflow for ${projectLabel(project)}`,
-        from: choice ?? "none",
-        to: "as for new sessions",
+        from: said(before.overrides[project]),
+        to: said(after.overrides[project]),
       });
     }
   }

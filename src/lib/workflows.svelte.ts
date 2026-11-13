@@ -259,6 +259,20 @@ function repair(workflow: Workflow) {
   });
 }
 
+/** The workflow the file holds but cannot use under a name, if any. Its
+    name is taken: a workflow of that name would be read as the one the
+    file's default and project choices mean. */
+function unreadNamed(name: string, unread: UnreadWorkflow[] = workflows.unread): UnreadWorkflow | undefined {
+  return unread.find((entry) => entry.name !== null && sameName(entry.name, name));
+}
+
+const unreadNames = () =>
+  workflows.unread.flatMap((entry) => (entry.name === null ? [] : [entry.name]));
+
+function unreadProblem(name: string): string {
+  return `"${name}" is the name of a workflow in the settings file that is not used. Mend that one there, or remove it, first.`;
+}
+
 /** Changes one workflow: the draft is mended, checked whole, and kept and
     sent only if it will do. Says why not otherwise. */
 function edit(name: string, change: (draft: Workflow) => string | null): string | null {
@@ -273,7 +287,9 @@ function edit(name: string, change: (draft: Workflow) => string | null): string 
     workflowProblem(draft) ??
     (others.some((other) => sameName(other.name, draft.name))
       ? `There is a workflow called ${draft.name} already.`
-      : null);
+      : !sameName(draft.name, name) && unreadNamed(draft.name) !== undefined
+        ? unreadProblem(draft.name)
+        : null);
   if (problem !== null) return problem;
   workflows.list[index] = draft;
   if (draft.name !== name) {
@@ -318,7 +334,7 @@ export function freeName(wanted: string, taken: string[]): string {
 export function addWorkflow(): string | null {
   if (workflows.list.length >= MOST_WORKFLOWS) return null;
   const fresh = defaultWorkflow();
-  fresh.name = freeName("New workflow", workflows.list.map((workflow) => workflow.name));
+  fresh.name = freeName("New workflow", [...workflows.list.map((workflow) => workflow.name), ...unreadNames()]);
   workflows.list.push(fresh);
   keep();
   return fresh.name;
@@ -331,7 +347,7 @@ export function duplicateWorkflow(name: string): string | null {
   const copy = clone($state.snapshot(source));
   copy.name = freeName(
     `${source.name} copy`.slice(0, LONGEST_NAME),
-    workflows.list.map((workflow) => workflow.name),
+    [...workflows.list.map((workflow) => workflow.name), ...unreadNames()],
   );
   workflows.list.splice(workflows.list.indexOf(source) + 1, 0, copy);
   keep();
@@ -395,6 +411,22 @@ export function setOrchestrator(name: string, model: WorkflowModel): string | nu
   });
 }
 
+/** The name a review added at a place in the order gets, short enough to
+    show whole on its step: Review, then numbered so the names read in
+    order, Review 2 after Review. Added before a review already there, it
+    is a Check, so no number reads out of order. */
+function reviewName(workflow: Workflow, before: number): string {
+  const taken = stepNames(workflow);
+  const numbered = (name: string) => {
+    const found = /^Review(?: (\d+))?$/.exec(name);
+    return found === null ? null : Number(found[1] ?? 1);
+  };
+  const later = workflow.steps.slice(before).some((step) => numbered(step.name) !== null);
+  if (later) return freeName("Check", taken);
+  const most = Math.max(0, ...taken.map(numbered).filter((n) => n !== null));
+  return freeName(most === 0 ? "Review" : `Review ${most + 1}`, taken);
+}
+
 /** A step of the kind given, with the models and bounds a new one has. */
 export function newStep(workflow: Workflow, kind: WorkflowStep["kind"], before: number): WorkflowStep {
   const taken = stepNames(workflow);
@@ -409,7 +441,7 @@ export function newStep(workflow: Workflow, kind: WorkflowStep["kind"], before: 
   const target = nearestWork(workflow.steps, before) ?? "";
   return {
     kind,
-    name: freeName(target === "" ? "Review" : `Review of ${target}`.slice(0, LONGEST_NAME), taken),
+    name: reviewName(workflow, before),
     models: [{ agent: "claude-code", model: "opus" }],
     reviewerApproves: true,
     orchestratorAgrees: true,
@@ -676,10 +708,23 @@ export function changed(
   const list = clone(held.list);
   let chosen = held.default;
   const overrides = { ...held.overrides };
+  let unread = clone(held.unread ?? []);
   if (change.write !== undefined) {
-    const at = list.findIndex((workflow) => workflow.name === change.write!.name);
+    const name = change.write.name;
+    const at = list.findIndex((workflow) => workflow.name === name);
+    const mended = at < 0 ? unreadNamed(name, unread) : undefined;
+    if (mended !== undefined && mended.name !== name) throw new Error(unreadProblem(mended.name!));
     if (at < 0) list.push(clone(change.write));
     else list[at] = clone(change.write);
+    // Written under the name of one the file cannot use, it mends that one:
+    // it takes its place, and the default and the choices that meant it.
+    if (mended !== undefined) {
+      unread = unread.filter((entry) => entry !== mended);
+      if (mended.default && chosen === null) chosen = name;
+      for (const project of mended.projects) {
+        if (overrides[project] === undefined) overrides[project] = name;
+      }
+    }
   }
   if (change.remove !== undefined) {
     const at = list.findIndex((workflow) => workflow.name === change.remove);
@@ -698,7 +743,7 @@ export function changed(
   }
   const problem = listProblem(list);
   if (problem !== null) throw new Error(problem);
-  return { list, default: chosen, overrides, ...(held.unread?.length ? { unread: clone(held.unread) } : {}) };
+  return { list, default: chosen, overrides, ...(unread.length > 0 ? { unread } : {}) };
 }
 
 /** Replaces the whole set and sends it. Answers with why not when it will
@@ -736,6 +781,7 @@ export async function takeWorkflowChange(change: WorkflowChange): Promise<() => 
     let chosen = now.default;
     const overrides = { ...now.overrides };
     const at = (name: string) => list.findIndex((workflow) => workflow.name === name);
+    let unread = clone(now.unread ?? []);
     if (change.write !== undefined) {
       const name = change.write.name;
       const was = before.list.find((workflow) => workflow.name === name);
@@ -746,6 +792,9 @@ export async function takeWorkflowChange(change: WorkflowChange): Promise<() => 
         for (const [project, choice] of Object.entries(overrides)) {
           if (choice === name) delete overrides[project];
         }
+        // One it mended goes back to the file as it was.
+        const mended = before.unread?.find((entry) => entry.name === name);
+        if (mended !== undefined && !unread.some((entry) => entry.at === mended.at)) unread.push(clone(mended));
       }
     }
     if (change.remove !== undefined) {
@@ -764,7 +813,7 @@ export async function takeWorkflowChange(change: WorkflowChange): Promise<() => 
           ? before.default
           : null;
     }
-    void setWorkflows({ list, default: chosen, overrides, ...(now.unread ? { unread: now.unread } : {}) });
+    void setWorkflows({ list, default: chosen, overrides, ...(unread.length > 0 ? { unread } : {}) });
   };
 }
 

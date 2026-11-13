@@ -726,6 +726,41 @@ describe("workflows", () => {
     ]);
   });
 
+  it("set aside in the file are read out with why, and writing one under its name mends it", async () => {
+    const careful = {
+      name: "Careful",
+      reason: "the step Review of Careful goes back between 1 and 10 times, not 11",
+      entry: { name: "Careful", note: "as written" },
+      at: 1,
+      default: true,
+      projects: ["/repo/app"],
+    };
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {}, unread: [careful] });
+    await handle(request("settings"));
+    const text = answers[0].content!;
+    expect(text).toContain("also holds workflows that are not used");
+    expect(text).toContain("- Careful: the step Review of Careful goes back between 1 and 10 times, not 11");
+    expect(text).toContain('"note": "as written"');
+
+    const mended = { ...defaultWorkflow(), name: "Careful" };
+    const { changes } = plan({ workflow: mended });
+    expect(changes[0]).toMatchObject({
+      field: "workflow.Careful",
+      from: "in the file but not used: the step Review of Careful goes back between 1 and 10 times, not 11",
+    });
+    expect(changes.map((change) => change.field)).toEqual([
+      "workflow.Careful",
+      "workflowOverride./repo/app",
+      "defaultWorkflow",
+    ]);
+    const after = made({ workflow: mended });
+    expect(after.unread).toBeUndefined();
+    expect(after.default).toBe("Careful");
+    expect(after.overrides).toEqual({ "/repo/app": "Careful" });
+    // A name that differs from it only in case is taken, not a mend.
+    expect(() => plan({ workflow: { ...mended, name: "careful" } })).toThrow(/not used/);
+  });
+
   it("are asked about again when what they would reset has changed since they were asked", async () => {
     adoptWorkflows({
       list: [defaultWorkflow(), { ...defaultWorkflow(), name: "Other" }],

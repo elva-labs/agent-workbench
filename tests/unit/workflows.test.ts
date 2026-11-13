@@ -185,16 +185,16 @@ describe("the orchestrator and the steps", () => {
     expect(addStep(NAME, 3, "review")).toBeNull();
     const added = stepsOf()[3];
     // A new review goes back to the nearest work step, never to a review.
-    expect(added).toMatchObject({ kind: "review", name: "Review of Work 2", backTo: "Work 2" });
+    expect(added).toMatchObject({ kind: "review", name: "Review 2", backTo: "Work 2" });
   });
 
   it("points a review at the nearest earlier work step when its own goes, never at a review", () => {
-    // Work, Review (back to Work), Work 2, Review of Work 2 (back to Work 2).
+    // Work, Review (back to Work), Work 2, Review 2 (back to Work 2).
     addStep(NAME, 2, "work");
     addStep(NAME, 3, "review");
-    expect(stepsOf()[3]).toMatchObject({ name: "Review of Work 2", backTo: "Work 2" });
+    expect(stepsOf()[3]).toMatchObject({ name: "Review 2", backTo: "Work 2" });
     expect(removeStep(NAME, 2)).toBeNull();
-    expect(stepsOf()[2]).toMatchObject({ name: "Review of Work 2", backTo: "Work" });
+    expect(stepsOf()[2]).toMatchObject({ name: "Review 2", backTo: "Work" });
     expect(updateStep(NAME, 2, { backTo: "Review" })).toMatch(/work step before it/);
     // Turning the target into a review sends its review further back.
     addStep(NAME, 1, "work");
@@ -222,7 +222,7 @@ describe("the orchestrator and the steps", () => {
     addStep(NAME, 1, "work");
     // The review that went back to the first step goes back to the one before it.
     expect(removeStep(NAME, 0)).toBeNull();
-    expect(stepsOf().map((step) => step.name)).toEqual(["Work 2", "Review of Work"]);
+    expect(stepsOf().map((step) => step.name)).toEqual(["Work 2", "Review"]);
     expect(stepsOf()[1]).toMatchObject({ backTo: "Work 2" });
     expect(removeStep(NAME, 0)).not.toBeNull();
   });
@@ -410,10 +410,42 @@ describe("what would always be refused", () => {
 });
 
 describe("a new review", () => {
-  it("is named for the work it checks, so it does not read as coming after another", () => {
-    expect(addStep(NAME, 1, "review")).toBeNull();
-    expect(stepsOf().map((step) => step.name)).toEqual(["Work", "Review of Work", "Review"]);
+  it("is numbered after the reviews before it, short enough to show whole", () => {
     expect(addStep(NAME, 2, "review")).toBeNull();
-    expect(stepsOf()[2].name).toBe("Review of Work 2");
+    expect(stepsOf().map((step) => step.name)).toEqual(["Work", "Review", "Review 2"]);
+    expect(addStep(NAME, 3, "review")).toBeNull();
+    expect(stepsOf()[3].name).toBe("Review 3");
+  });
+
+  it("is a Check when it goes before a review already there, so no number reads out of order", () => {
+    expect(addStep(NAME, 1, "review")).toBeNull();
+    expect(stepsOf().map((step) => step.name)).toEqual(["Work", "Check", "Review"]);
+    expect(addStep(NAME, 2, "review")).toBeNull();
+    expect(stepsOf()[2].name).toBe("Check 2");
+  });
+});
+
+describe("the name of a workflow the file cannot use", () => {
+  const careful = {
+    name: "Careful",
+    reason: "the step Review of Careful goes back between 1 and 10 times, not 11",
+    entry: { name: "Careful" },
+    at: 1,
+    default: true,
+    projects: [A],
+  };
+
+  it("is taken: no workflow is renamed to it, and new ones are numbered past it", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {}, unread: [careful] });
+    expect(renameWorkflow(NAME, "careful")).toMatch(/not used/);
+    expect(workflows.list[0].name).toBe(NAME);
+    adoptWorkflows({
+      list: [defaultWorkflow()],
+      default: null,
+      overrides: {},
+      unread: [{ ...careful, name: "New workflow" }],
+    });
+    expect(addWorkflow()).toBe("New workflow 2");
+    expect(duplicateWorkflow(NAME)).toBe("Build and review copy");
   });
 });

@@ -313,6 +313,46 @@ pub fn check(workflows: &Workflows) -> Result<(), String> {
     Ok(())
 }
 
+/// What a workflow lacks when a field is missing, in words.
+fn missing_words(field: &str) -> String {
+    match field {
+        "name" => "name".into(),
+        "orchestrator" => "orchestrator".into(),
+        "steps" => "steps".into(),
+        "kind" => "kind, work or review, for one of its steps".into(),
+        "parallel" => "number of sessions at once for one of its work steps".into(),
+        "reviewerApproves" | "orchestratorAgrees" => {
+            "word on when one of its reviews passes the work".into()
+        }
+        "backTo" => "step for one of its reviews to go back to".into(),
+        "limit" => "number of rounds for one of its reviews".into(),
+        "agent" => "agent for one of its models".into(),
+        "model" => "name for one of its models".into(),
+        other => format!("field {other}"),
+    }
+}
+
+/// Why an entry does not have a workflow's shape, in plain words.
+fn shape_problem(error: &str) -> String {
+    let quoted = |text: &str| text.split('`').nth(1).map(str::to_owned);
+    if let Some(field) = error.strip_prefix("missing field ").and_then(quoted) {
+        return format!("it has no {}", missing_words(&field));
+    }
+    if let Some(field) = error.strip_prefix("unknown field ").and_then(quoted) {
+        return format!("it has a field called {field}, which a workflow does not have");
+    }
+    if let Some(kind) = error.strip_prefix("unknown variant ").and_then(quoted) {
+        return format!(
+            "one of its steps is of the kind {kind}, where a step does work or reviews it"
+        );
+    }
+    if error.starts_with("invalid type") || error.starts_with("invalid value") {
+        return "a value in it is not the kind that place takes, such as text where a number goes"
+            .into();
+    }
+    "it is not written the way a workflow is".into()
+}
+
 /// The workflows a settings file holds, read leniently: each workflow that
 /// does not read or keep the rules, one past the most the settings hold and
 /// one whose name an earlier one has is set aside as unread with the reason,
@@ -328,7 +368,7 @@ pub fn read_lenient(value: &Value) -> Workflows {
     let entries = fields.get("list").and_then(Value::as_array);
     for (at, item) in entries.into_iter().flatten().enumerate() {
         let reason = match serde_json::from_value::<Workflow>(item.clone()) {
-            Err(error) => Some(format!("it is not written the way a workflow is: {error}")),
+            Err(error) => Some(shape_problem(&error.to_string())),
             Ok(workflow) => {
                 if let Err(error) = check_workflow(&workflow) {
                     Some(error)
@@ -634,13 +674,41 @@ mod tests {
             .reason
             .contains("between 1 and 10 times, not 11"));
         assert_eq!(read.unread[0].projects, ["/b"]);
-        assert!(read.unread[1]
-            .reason
-            .contains("not written the way a workflow is"));
+        assert_eq!(read.unread[1].reason, "it has no orchestrator");
         assert!(read.unread[2].reason.contains("already"));
         assert_eq!(read.unread[0].entry, too_many_rounds);
         assert_eq!(read_lenient(&json!("none")), Workflows::default());
         assert_eq!(read_lenient(&json!({})).list, []);
+    }
+
+    #[test]
+    fn a_workflow_set_aside_for_its_shape_says_what_is_wrong_in_words() {
+        let reason = |entry: Value| {
+            read_lenient(&json!({ "list": [entry] })).unread[0]
+                .reason
+                .clone()
+        };
+        let mut good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        assert_eq!(reason(json!({ "name": "x" })), "it has no orchestrator");
+        good["steps"][0].as_object_mut().unwrap().remove("parallel");
+        assert_eq!(
+            reason(good.clone()),
+            "it has no number of sessions at once for one of its work steps"
+        );
+        good["steps"][0]["parallel"] = json!("two");
+        assert!(reason(good.clone()).starts_with("a value in it is not the kind"));
+        good["steps"][0]["parallel"] = json!(1);
+        good["extra"] = json!(1);
+        assert_eq!(
+            reason(good.clone()),
+            "it has a field called extra, which a workflow does not have"
+        );
+        good.as_object_mut().unwrap().remove("extra");
+        good["steps"][0]["kind"] = json!("plan");
+        assert_eq!(
+            reason(good),
+            "one of its steps is of the kind plan, where a step does work or reviews it"
+        );
     }
 
     #[test]
