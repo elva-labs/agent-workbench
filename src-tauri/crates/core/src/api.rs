@@ -805,11 +805,12 @@ mod tests {
         });
         let id = core.shell(Path::new("/tmp"), 80, 24, |_| output).unwrap();
         core.pty_write(&id, b"exit 3\n").unwrap();
-        for _ in 0..100 {
-            if !recorder.events.lock().unwrap().is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        // The shell reads its own startup files before it reads the line, so
+        // the end comes when it comes; the bound is only for a shell that
+        // never ends.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while recorder.events.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let events = recorder.events.lock().unwrap();
         let (name, payload) = events.first().expect("the end was announced");

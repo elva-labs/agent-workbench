@@ -800,8 +800,12 @@ mod tests {
             no_output,
         )
         .unwrap();
+        // The shell reads its own startup files before it reads the line, so
+        // the output comes when it comes; the bound is only for a shell that
+        // never answers.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         let mut text = String::new();
-        for _ in 0..100 {
+        while std::time::Instant::now() < deadline {
             text = frames
                 .lock()
                 .unwrap()
@@ -818,7 +822,7 @@ mod tests {
             if text.contains("marker-42") {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         assert!(text.contains("marker-42"), "{text}");
     }
