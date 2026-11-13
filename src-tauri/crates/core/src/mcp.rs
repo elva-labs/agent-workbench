@@ -254,7 +254,7 @@ pub fn browser_tools() -> Vec<Value> {
 pub fn browser_open_tool() -> Value {
     json!({
         "name": "browser_open",
-        "description": "Opens a url in a new tab in the user's Agent Workbench browser and shows it in the viewer: at once when the user is looking at this session, else behind what they have in front, coming forward when they switch to this session. Use this when the user asks to see a page or a web app, or when you want to look at one yourself. Answers with the tab's id, its url and its title.",
+        "description": "Opens a url in a new tab of this session's, in the user's Agent Workbench browser, and makes it the session's front tab. It shows in the viewer at once when the user is looking at this session, else behind what they have in front, coming forward when they switch to this session. Use this when the user asks to see a page or a web app, or when you want to look at one yourself. Answers with the tab's id, its url and its title.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -268,7 +268,7 @@ pub fn browser_open_tool() -> Value {
 pub fn browser_tabs_tool() -> Value {
     json!({
         "name": "browser_tabs",
-        "description": "The tabs open in the user's Agent Workbench browser: each one's id, url and title, whether it is the active tab, whether it is loading, and its last load error. Call it to see what is open before acting on a tab by id.",
+        "description": "The tabs this session has open in the user's Agent Workbench browser, and only those: each one's id, url and title, whether it is the session's front tab, whether it is loading, and its last load error. Other sessions' tabs are not listed and cannot be acted on. Call it to see what is open before acting on a tab by id.",
         "inputSchema": { "type": "object", "properties": {} }
     })
 }
@@ -280,7 +280,7 @@ pub fn browser_navigate_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." },
                 "url": { "type": "string", "description": "The address to go to." },
                 "action": { "type": "string", "enum": ["back", "forward", "reload"], "description": "A step to take instead of going to an address." }
             }
@@ -295,7 +295,7 @@ pub fn browser_snapshot_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." }
             }
         }
     })
@@ -308,7 +308,7 @@ pub fn browser_click_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." },
                 "ref": { "type": "string", "description": "An element's ref, from browser_snapshot." }
             },
             "required": ["ref"]
@@ -323,7 +323,7 @@ pub fn browser_type_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." },
                 "ref": { "type": "string", "description": "An element's ref, from browser_snapshot." },
                 "text": { "type": "string", "description": "The text to type." },
                 "submit": { "type": "boolean", "description": "Press Enter and submit the element's form after typing." }
@@ -340,7 +340,7 @@ pub fn browser_console_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." }
             }
         }
     })
@@ -349,11 +349,11 @@ pub fn browser_console_tool() -> Value {
 pub fn browser_screenshot_tool() -> Value {
     json!({
         "name": "browser_screenshot",
-        "description": "A screenshot of the tab, as a PNG you can read as an image. The tab is brought to the front and the browser shown first, since a hidden view cannot be captured; while the user is looking at another session the call is refused rather than shown over their work. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
+        "description": "A screenshot of the tab, as a PNG you can read as an image. The tab is brought to the front of this session's tabs and the browser shown first, since a hidden view cannot be captured; while the user is looking at another session the call is refused rather than shown over their work. Use this only when looks are what matters; browser_snapshot is the cheap way to read a page otherwise.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." }
             }
         }
     })
@@ -366,7 +366,7 @@ pub fn browser_eval_tool() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, the active tab, or, while the user is looking at another session, the last tab you opened." },
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. Left out, this session's front tab. A tab another session opened is refused." },
                 "script": { "type": "string", "description": "The function body to run." }
             },
             "required": ["script"]
@@ -377,11 +377,11 @@ pub fn browser_eval_tool() -> Value {
 pub fn browser_close_tool() -> Value {
     json!({
         "name": "browser_close",
-        "description": "Closes a tab.",
+        "description": "Closes one of this session's tabs.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs." }
+                "tab": { "type": "integer", "description": "The tab's id, from browser_tabs. A tab another session opened is refused." }
             },
             "required": ["tab"]
         }

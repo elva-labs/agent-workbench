@@ -1035,6 +1035,28 @@ mod tests {
     }
 
     #[test]
+    fn a_popup_belongs_to_whoever_owns_the_page_that_opened_it() {
+        let mut tabs = shown();
+        let page = tabs.open(Some("https://a.example/".into()), Opener::Agent, other());
+        let owner = tabs.owner_of(page).unwrap();
+        let popup = tabs.open(Some("https://b.example/".into()), Opener::User, owner);
+        assert_eq!(tabs.owner_of(popup), Some(other()));
+        assert_eq!(tabs.front_of(&other()), Some(popup));
+        assert_eq!(
+            tabs.active(),
+            None,
+            "the owner on screen is not the popup's"
+        );
+
+        tabs.close_owner(&other());
+        assert_eq!(
+            tabs.owner_of(page),
+            None,
+            "an opener that closed has no owner"
+        );
+    }
+
+    #[test]
     fn closing_a_front_tab_falls_to_a_neighbour_of_the_same_owner() {
         let mut tabs = shown();
         let a = tabs.open(None, Opener::User, me());

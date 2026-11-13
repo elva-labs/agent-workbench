@@ -175,6 +175,7 @@ fn tab_webview(id: TabId, start: &Url, app: &AppHandle) -> WebviewBuilder<Wry> {
                     Some(url.to_string()),
                     Opener::User,
                     owner,
+                    Some(id),
                 )
                 .await;
             });
@@ -362,8 +363,10 @@ where
 /// Opens a tab for `owner` on `window`. It becomes the owner's front tab; if
 /// that owner is on screen its webview is built at the browser's last
 /// placement and the tab that was active is hidden, and otherwise the new
-/// one waits out of sight until its owner is shown. Shared by the
-/// `browser_open` command and by a tab's own `window.open`.
+/// one waits out of sight until its owner is shown. `from` is the tab whose
+/// page asked for this one, if any: when that tab has closed by the time the
+/// open gets its turn, nothing is opened. Shared by the `browser_open`
+/// command and by a tab's own `window.open`.
 async fn open_tab(
     window: Window,
     app: AppHandle,
@@ -371,6 +374,7 @@ async fn open_tab(
     url: Option<String>,
     opener: Opener,
     owner: Owner,
+    from: Option<TabId>,
 ) -> Result<Snapshot, String> {
     let start = match url {
         Some(raw) => Some(normalize_url(&raw)?),
@@ -382,6 +386,11 @@ async fn open_tab(
 
     let (previous, before, id) = {
         let mut tabs = browser.tabs.lock().unwrap();
+        if let Some(from) = from {
+            if tabs.get(from).is_none() {
+                return Err("the page that asked for this tab has closed".to_string());
+            }
+        }
         let previous = tabs.active();
         let before = tabs.front_of(&owner);
         let id = tabs.open(start.clone(), opener, owner);
@@ -428,6 +437,15 @@ async fn open_tab(
     #[cfg(target_os = "linux")]
     layer::adopt(&webview, bounds)?;
 
+    // Whose tabs are on screen can have changed while the view was built, so
+    // the view is shown or hidden to match what is in front now.
+    let now_front = browser.tabs.lock().unwrap().active() == Some(id);
+    if visible && !now_front {
+        webview.hide().map_err(|e| e.to_string())?;
+    } else if !visible && now_front {
+        place_and_show(&window, &browser, id)?;
+    }
+
     if in_front {
         if let Some(previous) = previous {
             if let Some(previous_webview) = window.get_webview(&previous.label()) {
@@ -446,6 +464,17 @@ async fn open_tab(
 /// Places and shows `id`'s webview at the browser's last rectangle, if the
 /// browser is currently showing one at all.
 fn place_and_show(window: &Window, browser: &Browser, id: TabId) -> Result<(), String> {
+    // A new tab and a page that failed to load are drawn by the window's own
+    // page, and their views stay out of sight.
+    let drawn_by_window = browser
+        .tabs
+        .lock()
+        .unwrap()
+        .get(id)
+        .is_none_or(|tab| tab.url == "about:blank" || tab.error.is_some());
+    if drawn_by_window {
+        return Ok(());
+    }
     let (rect, showing) = {
         let place = browser.place.lock().unwrap();
         (place.rect, place.showing)
@@ -488,7 +517,7 @@ pub async fn browser_open(
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
     let opener = if agent { Opener::Agent } else { Opener::User };
-    open_tab(window, app, browser, url, opener, owner).await
+    open_tab(window, app, browser, url, opener, owner, None).await
 }
 
 /// Puts `owner`'s tabs on screen: the previous owner's active view is hidden
@@ -501,6 +530,8 @@ pub async fn browser_focus(
     owner: Option<Owner>,
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
+    // A tab being built is not yet visible to hide or show.
+    let _guard = browser.opening.lock().await;
     let (previous, active) = {
         let mut tabs = browser.tabs.lock().unwrap();
         let previous = tabs.active();
@@ -531,11 +562,20 @@ pub async fn browser_close_owner(
     owner: Owner,
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
+    let _guard = browser.opening.lock().await;
     let closed = browser.tabs.lock().unwrap().close_owner(&owner);
+    // Every view is closed even when one fails to, and the first failure is
+    // what comes back.
+    let mut failure = None;
     for id in closed {
         if let Some(webview) = window.get_webview(&id.label()) {
-            webview.close().map_err(|e| e.to_string())?;
+            if let Err(error) = webview.close() {
+                failure.get_or_insert(error.to_string());
+            }
         }
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     let active = browser.tabs.lock().unwrap().active();
     if let Some(active) = active {
@@ -583,6 +623,7 @@ pub async fn browser_activate(
 ) -> Result<Snapshot, String> {
     let browser = Arc::clone(&browser);
     let id = TabId::new(id);
+    let _guard = browser.opening.lock().await;
 
     let (previous, active) = {
         let mut tabs = browser.tabs.lock().unwrap();
