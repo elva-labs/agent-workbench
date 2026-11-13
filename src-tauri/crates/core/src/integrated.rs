@@ -99,7 +99,9 @@ const CONTENT_KEEP: usize = 256 * 1024;
 )]
 pub enum Event {
     /// The agent is up. Sent once, before anything else the agent says.
-    /// `model`, `mode` and `effort` are what the session runs on as far as
+    /// `sessionId` is the agent's id for the conversation, the one resuming
+    /// takes, whatever the start said. `model`, `mode` and `effort` are
+    /// what the session runs on as far as
     /// is known yet, and `configured` follows when any changes. `models`,
     /// `modes` and `efforts` are what the agent offers to switch to, the
     /// efforts being those of the model it runs on; `commands` are the
@@ -549,12 +551,15 @@ pub struct Image {
 }
 
 /// What starting a session hands back: the id the window addresses it by,
-/// and the agent's own id for the conversation, which resuming takes.
+/// and the conversation's id where the workbench knows it at the start,
+/// the one it chose or the one it resumes. For an agent that makes its own
+/// id there is none yet; `ready` carries the agent's id either way, and
+/// that is the one resuming takes.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Started {
     pub id: String,
-    pub session_id: String,
+    pub session_id: Option<String>,
 }
 
 impl Event {
@@ -586,8 +591,9 @@ pub struct Launch<'a> {
     /// The captured login-shell environment.
     pub env: &'a HashMap<String, String>,
     /// The conversation's id: a fresh one the workbench chose, or the one
-    /// to resume.
-    pub session: &'a str,
+    /// to resume. None for a fresh conversation of an agent that makes its
+    /// own id.
+    pub session: Option<&'a str>,
     pub resume: bool,
     pub model: Option<&'a str>,
     pub mode: Option<&'a str>,
@@ -1392,7 +1398,7 @@ pub fn start(
     let id = next_id();
     let started = Started {
         id: id.clone(),
-        session_id: launch.session.to_string(),
+        session_id: launch.session.map(str::to_string),
     };
     on_start(&started);
     let (lines, queued) = mpsc::channel::<Line>();
@@ -2633,6 +2639,70 @@ mod tests {
         // its id is free again.
         assert!(send(&bench.sessions, "int-bench", M1, "again", &[]).is_err());
         assert!(send(&bench.sessions, "int-bench", "not-a-uuid", "x", &[]).is_err());
+    }
+
+    /// An agent that makes its own conversation ids, run as `cat`.
+    #[cfg(unix)]
+    struct Minting;
+
+    #[cfg(unix)]
+    impl Protocol for Minting {
+        fn name(&self) -> &'static str {
+            "minting"
+        }
+
+        fn command(&self, _: &Launch) -> Result<Prepared, String> {
+            Ok(Prepared {
+                command: std::process::Command::new("cat"),
+                files: vec![],
+            })
+        }
+
+        fn driver(&self, _: &Launch) -> Box<dyn Driver> {
+            Box::new(Fake { model: "m".into() })
+        }
+
+        fn trusted(&self, _: &Path, _: Option<&Path>, _: &Path) -> bool {
+            true
+        }
+
+        fn trust(&self, _: &Path, _: Option<&Path>, _: &Path) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_start_says_no_conversation_id_it_does_not_know() {
+        let vars = HashMap::new();
+        let launch = |session| Launch {
+            project: Path::new("/"),
+            env: &vars,
+            session,
+            resume: session.is_some(),
+            model: None,
+            mode: None,
+            effort: None,
+            config_dir: None,
+            tool_server: None,
+            orchestrator: false,
+        };
+        let sessions = Arc::new(Sessions::default());
+        for (session, said) in [(None, None), (Some("resumed"), Some("resumed".to_string()))] {
+            let started = start(
+                Arc::new(crate::events::testing::Recorder::default()),
+                Arc::clone(&sessions),
+                &Minting,
+                &launch(session),
+                Box::new(|_| {}),
+                Box::new(|_| {}),
+            )
+            .unwrap();
+            assert_eq!(started.session_id, said);
+            let json = serde_json::to_value(&started).unwrap();
+            assert_eq!(json["sessionId"], serde_json::json!(said));
+            stop(&sessions, &started.id).unwrap();
+        }
     }
 
     #[test]

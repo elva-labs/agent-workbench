@@ -443,7 +443,9 @@ impl Core {
         let orchestrator = self.is_orchestrator(project);
         let project = cwd.unwrap_or(project);
         let resume = session.is_some();
-        let session = session.unwrap_or_else(new_session_id);
+        // The workbench chooses a fresh session's id for an agent that takes
+        // one; one that makes its own says it in `ready`.
+        let session = session.or_else(|| adapter.mints_id().then(new_session_id));
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
@@ -471,7 +473,7 @@ impl Core {
         let launch = crate::integrated::Launch {
             project,
             env: &environment.vars,
-            session: &session,
+            session: session.as_deref(),
             resume,
             model: model.filter(|model| !model.trim().is_empty()),
             mode: mode.filter(|mode| !mode.trim().is_empty()),
@@ -488,7 +490,7 @@ impl Core {
             &launch,
             Box::new(move |started| {
                 if let Some(plugins) = starting {
-                    plugins.session_started(&started.id, Some(&started.session_id), &opened);
+                    plugins.session_started(&started.id, started.session_id.as_deref(), &opened);
                 }
             }),
             Box::new(move |id| {

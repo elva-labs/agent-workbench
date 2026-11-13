@@ -120,7 +120,7 @@ fn start_in(
     let mut launch = Launch {
         project: &dir,
         env: &vars,
-        session: &session,
+        session: Some(&session),
         resume: false,
         model: Some("haiku"),
         mode: Some("default"),
@@ -139,7 +139,7 @@ fn start_in(
         Box::new(|_| {}),
     )
     .unwrap();
-    assert_eq!(started.session_id, session);
+    assert_eq!(started.session_id.as_deref(), Some(session.as_str()));
     Harness {
         dir,
         sessions,
@@ -948,7 +948,7 @@ fn a_missing_agent_explains_itself() {
     let launch = Launch {
         project: std::path::Path::new("/tmp"),
         env: &vars,
-        session: "s",
+        session: Some("s"),
         resume: false,
         model: None,
         mode: None,
@@ -985,7 +985,7 @@ fn real_claude_holds_a_short_turn() {
     let launch = Launch {
         project: &dir,
         env: &environment.vars,
-        session: &session,
+        session: Some(&session),
         resume: false,
         model: Some("haiku"),
         mode: Some("default"),

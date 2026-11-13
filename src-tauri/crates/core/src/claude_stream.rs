@@ -140,7 +140,12 @@ impl Protocol for ClaudeStream {
         if let Some(effort) = launch.effort {
             command.args(["--effort", checked("effort", effort)?]);
         }
-        let session = checked("session id", launch.session)?;
+        let session = checked(
+            "session id",
+            launch
+                .session
+                .ok_or("Claude Code takes its session id from the workbench")?,
+        )?;
         if launch.resume {
             command.args(["--resume", session]);
         } else {
@@ -174,7 +179,7 @@ impl Protocol for ClaudeStream {
         command.env(SESSION_STATE_VAR, "1");
         // The tool server the agent starts reads which session it serves,
         // and whether that session directs the others, from these.
-        command.env(SESSION_VAR, launch.session);
+        command.env(SESSION_VAR, session);
         if launch.orchestrator {
             command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
         }
@@ -186,7 +191,7 @@ impl Protocol for ClaudeStream {
 
     fn driver(&self, launch: &Launch) -> Box<dyn Driver> {
         Box::new(Stream::new(
-            launch.session,
+            launch.session.unwrap_or_default(),
             launch.model,
             launch.mode,
             launch.effort,
