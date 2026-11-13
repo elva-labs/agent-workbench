@@ -9,11 +9,11 @@ test("the fake core runs a scripted integrated session behind the seam", async (
   await page.goto("/");
   const heard = await page.evaluate(async (project) => {
     const seam = window.__WORKBENCH_CORE__!;
-    const events: { type: string; id: string }[] = [];
+    const events: { type: string; id: string; messages?: string[] }[] = [];
     await seam.onIntegratedEvent((event) => events.push(event));
     const { id } = await seam.integratedStart({ agent: "claude-code", project });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const message = await seam.integratedSend(id, "hello");
+    const message = crypto.randomUUID();
+    await seam.integratedSend(id, message, "hello");
     const integrated = (
       window as unknown as {
         __integrated: { turn(id: string, text: string): void };
@@ -26,7 +26,8 @@ test("the fake core runs a scripted integrated session behind the seam", async (
   }, PROJECT);
   const types = heard.events.map((event) => event.type);
   expect(types[0]).toBe("ready");
-  expect(types).toContain("turnStarted");
+  const started = heard.events.find((event) => event.type === "turnStarted");
+  expect(started?.messages).toEqual([heard.message]);
   expect(types).toContain("turnEnded");
   expect(types.at(-1)).toBe("ended");
   expect(heard.events.every((event) => event.id === heard.id)).toBe(true);

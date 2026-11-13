@@ -386,11 +386,14 @@ export async function installFakeCore(
         },
         integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) =>
           integrated().start(options),
+        integratedTrust: async (options: Parameters<FakeIntegrated["trust"]>[0]) =>
+          integrated().trust(options),
         integratedSend: async (
           id: string,
+          message: string,
           text: string,
-          images?: Parameters<FakeIntegrated["send"]>[2],
-        ) => integrated().send(id, text, images),
+          images?: Parameters<FakeIntegrated["send"]>[3],
+        ) => integrated().send(id, message, text, images),
         integratedInterrupt: async (id: string) => integrated().interrupt(id),
         integratedAnswer: async (
           id: string,
@@ -398,10 +401,12 @@ export async function installFakeCore(
           choice: Parameters<FakeIntegrated["answer"]>[2],
           message?: string,
         ) => integrated().answer(id, request, choice, message),
-        integratedSetModel: async (id: string, model: string) =>
-          integrated().setModel(id, model),
-        integratedSetPermissionMode: async (id: string, mode: string) =>
-          integrated().setPermissionMode(id, mode),
+        integratedReply: async (id: string, request: string, answers: string[][] | null) =>
+          integrated().reply(id, request, answers),
+        integratedConfigure: async (
+          id: string,
+          settings: Parameters<FakeIntegrated["configure"]>[1],
+        ) => integrated().configure(id, settings),
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { IntegratedEvent } from "$lib/core";
+import { isUntrusted, type IntegratedEvent } from "$lib/core";
 import { fakeIntegrated } from "../fakeIntegrated";
+
+const M1 = "11111111-1111-4111-8111-111111111111";
+const M2 = "22222222-2222-4222-8222-222222222222";
+const M3 = "33333333-3333-4333-8333-333333333333";
 
 const invoke = vi.fn();
 const listen = vi.fn();
@@ -34,16 +38,20 @@ describe("the seam's integrated sessions", () => {
       agent: "claude-code",
       project: "/repo",
       model: "haiku",
-      permissionMode: "plan",
+      mode: "plan",
+      effort: "high",
       configDir: "~/.claude-work",
     });
-    await seam.integratedSend("int-1", "look", [{ mediaType: "image/png", data: "AAAA" }]);
-    await seam.integratedSend("int-1", "again");
+    await seam.integratedTrust({ agent: "claude-code", project: "/repo", cwd: "/repo/wt" });
+    await seam.integratedSend("int-1", M1, "look", [{ mediaType: "image/png", data: "AAAA" }]);
+    await seam.integratedSend("int-1", M2, "again");
     await seam.integratedInterrupt("int-1");
     await seam.integratedAnswer("int-1", "r-1", "deny", "not that");
     await seam.integratedAnswer("int-1", "r-2", "allowSession");
-    await seam.integratedSetModel("int-1", "sonnet");
-    await seam.integratedSetPermissionMode("int-1", "acceptEdits");
+    await seam.integratedReply("int-1", "q-1", [["Red"], ["my own words"]]);
+    await seam.integratedReply("int-1", "q-2", null);
+    await seam.integratedConfigure("int-1", { model: "sonnet" });
+    await seam.integratedConfigure("int-1", { mode: "acceptEdits", effort: "low" });
     await seam.integratedStop("int-1");
     expect(invoke.mock.calls).toEqual([
       [
@@ -52,15 +60,22 @@ describe("the seam's integrated sessions", () => {
           agent: "claude-code",
           project: "/repo",
           model: "haiku",
-          permissionMode: "plan",
+          mode: "plan",
+          effort: "high",
           configDir: "~/.claude-work",
         },
       ],
+      ["integrated_trust", { agent: "claude-code", project: "/repo", cwd: "/repo/wt" }],
       [
         "integrated_send",
-        { id: "int-1", text: "look", images: [{ mediaType: "image/png", data: "AAAA" }] },
+        {
+          id: "int-1",
+          message: M1,
+          text: "look",
+          images: [{ mediaType: "image/png", data: "AAAA" }],
+        },
       ],
-      ["integrated_send", { id: "int-1", text: "again", images: [] }],
+      ["integrated_send", { id: "int-1", message: M2, text: "again", images: [] }],
       ["integrated_interrupt", { id: "int-1" }],
       [
         "integrated_answer",
@@ -70,10 +85,24 @@ describe("the seam's integrated sessions", () => {
         "integrated_answer",
         { id: "int-1", request: "r-2", choice: "allowSession", message: null },
       ],
-      ["integrated_set_model", { id: "int-1", model: "sonnet" }],
-      ["integrated_set_permission_mode", { id: "int-1", mode: "acceptEdits" }],
+      [
+        "integrated_reply",
+        { id: "int-1", request: "q-1", answers: [["Red"], ["my own words"]] },
+      ],
+      ["integrated_reply", { id: "int-1", request: "q-2", answers: null }],
+      ["integrated_configure", { id: "int-1", model: "sonnet", mode: null, effort: null }],
+      [
+        "integrated_configure",
+        { id: "int-1", model: null, mode: "acceptEdits", effort: "low" },
+      ],
       ["integrated_stop", { id: "int-1" }],
     ]);
+  });
+
+  it("tell a folder that is not trusted from other failures", () => {
+    expect(isUntrusted("untrusted: /repo has not been trusted in claude yet")).toBe(true);
+    expect(isUntrusted(new Error("untrusted: /repo"))).toBe(true);
+    expect(isUntrusted("claude was not found on your PATH")).toBe(false);
   });
 
   it("hear every session's news on one event", async () => {
@@ -103,23 +132,43 @@ describe("the scripted integrated session", () => {
   const kinds = (events: IntegratedEvent[]) => events.map((event) => event.type);
   const states = (events: IntegratedEvent[]) =>
     events.flatMap((event) => (event.type === "state" ? [event.state] : []));
+  const turns = (events: IntegratedEvent[]) =>
+    events.flatMap((event) => (event.type === "turnStarted" ? [event.messages] : []));
 
-  it("says it is ready once the caller has the id, and is idle", async () => {
+  it("says it is ready before the caller has the id, and is idle", () => {
     const { heard, id } = started();
-    expect(heard).toEqual([]);
-    await Promise.resolve();
     expect(kinds(heard)).toEqual(["ready", "state"]);
-    expect(heard[0]).toMatchObject({ id, type: "ready", model: "haiku" });
+    expect(heard[0]).toMatchObject({ id, type: "ready", model: "haiku", mode: "default" });
     expect(states(heard)).toEqual(["idle"]);
   });
 
-  it("plays a turn for the message it was sent", async () => {
+  it("refuses a folder that is not trusted until it is", () => {
+    const fake = fakeIntegrated();
+    fake.untrusted.add("/repo");
+    let error: unknown;
+    try {
+      fake.start({ agent: "claude-code", project: "/repo" });
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect(isUntrusted(error)).toBe(true);
+    fake.trust({ agent: "claude-code", project: "/repo" });
+    expect(fake.start({ agent: "claude-code", project: "/repo" }).id).toBeTruthy();
+  });
+
+  it("checks a message as the core does", () => {
+    const { fake, id } = started();
+    expect(() => fake.send(id, "message-1", "hi")).toThrow();
+    expect(() => fake.send(id, M1, "  ")).toThrow();
+    fake.send(id, M1, "hi");
+    expect(() => fake.send(id, M1, "again")).toThrow();
+  });
+
+  it("plays a turn for the message it was sent", () => {
     const { fake, heard, id } = started();
-    await Promise.resolve();
-    const message = fake.send(id, "hello");
+    fake.send(id, M1, "hello");
     fake.turn(id, "hi there", { pieces: 2 });
-    const turn = heard.find((event) => event.type === "turnStarted");
-    expect(turn).toMatchObject({ message });
+    expect(turns(heard)).toEqual([[M1]]);
     const texts = heard.filter((event) => event.type === "text");
     expect(texts.map((event) => event.type === "text" && event.text)).toEqual([
       "hi t",
@@ -129,101 +178,156 @@ describe("the scripted integrated session", () => {
     expect(states(heard)).toEqual(["idle", "working", "idle"]);
   });
 
-  it("queues a message sent during a turn and gives it the next", async () => {
+  it("queues messages sent during a turn, and one turn may answer them all", () => {
     const { fake, heard, id } = started();
-    await Promise.resolve();
-    fake.send(id, "first");
-    fake.emit(id, { type: "turnStarted", message: null });
-    const second = fake.send(id, "second");
-    expect(heard.at(-1)).toMatchObject({ type: "messageQueued", message: second });
-    fake.emit(id, {
-      type: "turnEnded",
-      outcome: "done",
-      error: null,
-      costUsd: null,
-      durationMs: null,
-      usage: null,
-    });
-    fake.turn(id, "for the second");
-    const turns = heard.filter((event) => event.type === "turnStarted");
-    expect(turns.at(-1)).toMatchObject({ message: second });
+    fake.send(id, M1, "first");
+    fake.startTurn(id);
+    fake.send(id, M2, "second");
+    fake.send(id, M3, "third");
+    expect(heard.filter((event) => event.type === "message")).toMatchObject([
+      { message: M2, state: "queued" },
+      { message: M3, state: "queued" },
+    ]);
+    fake.endTurn(id);
+    expect(states(heard).at(-1)).toBe("working");
+    fake.turn(id, "both");
+    expect(turns(heard)).toEqual([[M1], [M2, M3]]);
+    expect(states(heard).at(-1)).toBe("idle");
   });
 
-  it("asks, and an answer settles what was asked", async () => {
+  it("takes a message into the running turn, and a turn of its own names none", () => {
     const { fake, heard, id } = started();
-    await Promise.resolve();
-    fake.send(id, "touch it");
-    fake.emit(id, { type: "turnStarted", message: null });
-    const request = fake.ask(id, "Bash", { command: "touch x" }, { rule: "Bash(touch x)" });
+    fake.turn(id, "on my own");
+    expect(turns(heard)).toEqual([[]]);
+    fake.startTurn(id, []);
+    fake.send(id, M1, "and this");
+    fake.startTurn(id, [M1]);
+    expect(heard.at(-1)).toMatchObject({ type: "message", message: M1, state: "taken" });
+    fake.endTurn(id);
+    expect(states(heard).at(-1)).toBe("idle");
+  });
+
+  it("offers only the choices a request remembers, and an answer settles it", () => {
+    const { fake, heard, id } = started();
+    fake.send(id, M1, "touch it");
+    fake.startTurn(id);
+    const bare = fake.ask(id, "Bash", { command: "rm -rf build" });
+    expect(() => fake.answer(id, bare, "allowSession")).toThrow();
+    fake.answer(id, bare, "allow");
+    const request = fake.ask(
+      id,
+      "Bash",
+      { command: "touch x" },
+      { session: "Bash(touch x) for the rest of this session", always: "Bash(touch x) here" },
+    );
     expect(states(heard).at(-1)).toBe("asking");
-    fake.answer(id, request, "allowProject");
+    fake.answer(id, request, "allowAlways", "ignored");
     expect(states(heard).at(-1)).toBe("working");
     expect(fake.calls.at(-1)).toEqual({
       method: "answer",
       id,
       request,
-      choice: "allowProject",
+      choice: "allowAlways",
       message: null,
     });
-    expect(() => fake.answer(id, request, "allowOnce")).toThrow();
+    expect(() => fake.answer(id, request, "allow")).toThrow();
   });
 
-  it("ends a turn on an interrupt and withdraws what it asked", async () => {
+  it("asks questions apart from permissions, answered with a reply", () => {
     const { fake, heard, id } = started();
-    await Promise.resolve();
-    fake.send(id, "go");
-    fake.emit(id, { type: "turnStarted", message: null });
-    const request = fake.ask(id, "Bash", { command: "sleep 9" });
+    fake.startTurn(id);
+    const request = fake.question(id, [
+      { header: "Colour", question: "Which?", options: [{ label: "Red", description: null }], multiple: false },
+    ]);
+    expect(states(heard).at(-1)).toBe("asking");
+    expect(() => fake.answer(id, request, "allow")).toThrow();
+    expect(() => fake.reply(id, request, [])).toThrow();
+    expect(() => fake.reply(id, request, [[" "]])).toThrow();
+    fake.reply(id, request, [["Teal, my own"]]);
+    expect(states(heard).at(-1)).toBe("working");
+  });
+
+  it("ends a turn after an interrupt, withdraws what it asked, and closes open calls", async () => {
+    const { fake, heard, id } = started();
+    fake.send(id, M1, "go");
+    fake.startTurn(id);
+    const call = fake.startTool(id, "Bash", { command: "sleep 9" }, { kind: "command" });
+    const request = fake.ask(id, "Bash", { command: "sleep 9" }, { call });
     fake.interrupt(id);
-    expect(heard.slice(-4)).toMatchObject([
-      { type: "permissionWithdrawn", request },
+    expect(kinds(heard).at(-1)).toBe("state");
+    await Promise.resolve();
+    expect(heard.slice(-5)).toMatchObject([
+      { type: "withdrawn", request },
       { type: "state", state: "working" },
+      { type: "toolFinished", call, error: true, output: "" },
       { type: "turnEnded", outcome: "interrupted" },
       { type: "state", state: "idle" },
     ]);
   });
 
-  it("changes model and mode, and ends when stopped", async () => {
+  it("keeps working while a subagent runs and until its report's turn ends", () => {
     const { fake, heard, id } = started();
-    await Promise.resolve();
-    expect(fake.setModel(id, "sonnet")).toBe("sonnet");
-    expect(fake.setPermissionMode(id, "plan")).toBe("plan");
-    expect(heard.filter((event) => event.type === "configured").at(-1)).toMatchObject({
+    fake.send(id, M1, "find it");
+    fake.startTurn(id);
+    const call = fake.tool(id, "Agent", { prompt: "find it" }, "launched", { kind: "agent" });
+    const task = fake.task(id, call);
+    const grep = fake.startTool(id, "Grep", { pattern: "x" }, { parent: call, kind: "search" });
+    fake.endTurn(id);
+    expect(heard.some((e) => e.type === "toolFinished" && e.call === grep)).toBe(false);
+    expect(states(heard).at(-1)).toBe("working");
+    fake.think(id, "hmm", { parent: call });
+    fake.finishTask(id, task, "completed", "found");
+    expect(heard.some((e) => e.type === "toolFinished" && e.call === grep && e.error)).toBe(true);
+    expect(states(heard).at(-1)).toBe("working");
+    fake.turn(id, "it found it");
+    expect(turns(heard).at(-1)).toEqual([]);
+    expect(states(heard).at(-1)).toBe("idle");
+  });
+
+  it("waits for no report from a task the agent lost, nor from one interrupted while idle", () => {
+    const { fake, heard, id } = started();
+    const lost = fake.task(id, null);
+    fake.finishTask(id, lost, "lost");
+    expect(states(heard).at(-1)).toBe("idle");
+    const done = fake.task(id, null);
+    fake.finishTask(id, done, "failed");
+    expect(states(heard).at(-1)).toBe("working");
+    fake.interrupt(id);
+    expect(states(heard).at(-1)).toBe("idle");
+  });
+
+  it("is working while it compacts", () => {
+    const { fake, heard, id } = started();
+    fake.compact(id);
+    expect(states(heard)).toEqual(["idle", "working", "idle"]);
+  });
+
+  it("changes the model, mode and effort, and ends when stopped", async () => {
+    const { fake, heard, id } = started();
+    expect(fake.configure(id, { model: "sonnet", effort: "high" })).toEqual({
       model: "sonnet",
-      permissionMode: "plan",
+      mode: "default",
+      effort: "high",
     });
+    expect(fake.configure(id, { mode: "plan" }).mode).toBe("plan");
+    expect(heard.filter((event) => event.type === "configured")).toMatchObject([
+      { model: "sonnet", effort: "high", efforts: ["low", "medium", "high"] },
+      { mode: "plan" },
+    ]);
     fake.stop(id);
     await Promise.resolve();
     expect(heard.at(-1)).toMatchObject({ type: "ended", clean: true });
-    expect(() => fake.send(id, "anyone?")).toThrow();
+    expect(() => fake.send(id, M2, "anyone?")).toThrow();
   });
 
-  it("fails a turn when the process dies in the middle of it", async () => {
+  it("fails the turn, withdraws, and drops what waits when the process dies", () => {
     const { fake, heard, id } = started();
-    await Promise.resolve();
-    fake.send(id, "go");
-    fake.emit(id, { type: "turnStarted", message: null });
+    fake.send(id, M1, "go");
+    fake.startTurn(id);
+    fake.send(id, M2, "waiting");
+    fake.ask(id, "Bash", { command: "ls" });
     fake.end(id, false);
-    expect(kinds(heard).slice(-3)).toEqual(["turnEnded", "error", "ended"]);
-  });
-
-  it("ties a subagent's messages to the call that started it", async () => {
-    const { fake, heard, id } = started();
-    await Promise.resolve();
-    fake.send(id, "find it");
-    fake.emit(id, { type: "turnStarted", message: null });
-    const call = fake.tool(id, "Agent", { prompt: "find it" }, "launched");
-    fake.tool(id, "Grep", { pattern: "x" }, "a.rs", { parent: call });
-    fake.turn(id, "found it", { parent: call });
-    const ofSubagent = heard.filter((event) => "parent" in event && event.parent === call);
-    expect(kinds(ofSubagent)).toEqual([
-      "toolStarted",
-      "toolInput",
-      "toolFinished",
-      "text",
-      "text",
-      "text",
-      "text",
-    ]);
+    expect(kinds(heard).slice(-5)).toEqual(["turnEnded", "withdrawn", "message", "error", "ended"]);
+    expect(heard.at(-3)).toMatchObject({ message: M2, state: "dropped" });
   });
 });

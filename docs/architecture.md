@@ -40,9 +40,9 @@ log. [Hooks](hooks.md) has the tools.
 An agent is a binary on the login shell's PATH, started in a pty with the
 environment that shell would give it. The differences between agents, how
 each is started and resumed, where its past sessions are, what it calls a
-session, sit behind one seam. [Agents](adapters.md) lists them. An agent with a
-structured protocol can instead run as a process the core speaks to in
-messages; see [integrated sessions](integrated.md).
+session, sit behind one seam. [Agents](adapters.md) lists them. An agent
+with a structured protocol can instead run as a process the core speaks to
+in messages; see [integrated sessions](integrated.md).
 
 ## What is persisted
 
