@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrowserTab } from "$lib/core";
+import type { BrowserOwner, BrowserTab } from "$lib/core";
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Pending =
   | { kind: "place"; rect: Rect; resolve: () => void; reject: (e: Error) => void }
   | { kind: "hide"; resolve: () => void };
 
-const opened: { url: string | null; session: string | null }[] = [];
+const opened: { url: string | null; owner: BrowserOwner; agent: boolean }[] = [];
+const focused: (BrowserOwner | null)[] = [];
 const closed: number[] = [];
 const activated: number[] = [];
 const navigated: { id: number; address: string }[] = [];
@@ -15,11 +16,12 @@ let hideCount = 0;
 let pending: Pending[] = [];
 let tabsHandler: ((snapshot: unknown) => void) | null = null;
 
+let focusResult: unknown = { tabs: [], owner: null, active: null };
 let openError: string | null = null;
-let openResult: unknown = { tabs: [], active: null };
+let openResult: unknown = { tabs: [], owner: null, active: null };
 let navigateError: string | null = null;
-let nextSnapshot: unknown = { tabs: [], active: null };
-let tabsSnapshot: unknown = { tabs: [], active: null };
+let nextSnapshot: unknown = { tabs: [], owner: null, active: null };
+let tabsSnapshot: unknown = { tabs: [], owner: null, active: null };
 
 /** Resolves the oldest `browser_place` or `browser_hide` call still
     waiting, then lets its continuation run before the test looks again. */
@@ -32,8 +34,12 @@ async function resolveNext() {
 
 vi.mock("$lib/core", () => ({
   core: () => ({
-    browserOpen: async (url: string | null, session: string | null) => {
-      opened.push({ url, session });
+    browserFocus: async (owner: BrowserOwner | null) => {
+      focused.push(owner);
+      return focusResult;
+    },
+    browserOpen: async (url: string | null, owner: BrowserOwner, agent = false) => {
+      opened.push({ url, owner, agent });
       if (openError !== null) throw new Error(openError);
       return openResult;
     },
@@ -74,6 +80,8 @@ vi.mock("$lib/core", () => ({
   }),
 }));
 
+import { sessions } from "$lib/sessions.svelte";
+import { workspace } from "$lib/workspace.svelte";
 import {
   activate,
   activeTab,
@@ -85,11 +93,16 @@ import {
   initBrowser,
   navigate,
   open,
+  ownerOnScreen,
+  ownTabs,
   place,
   resetBrowser,
   show,
+  syncOwner,
   titleFor,
 } from "$lib/browser.svelte";
+
+const ME: BrowserOwner = { kind: "project", path: "/p" };
 
 function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): BrowserTab {
   return {
@@ -98,6 +111,8 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
     title: "",
     home: url,
     opener: { kind: "user" },
+    owner: ME,
+    front: false,
     loading: false,
     canGoBack: false,
     canGoForward: false,
@@ -108,6 +123,11 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
 
 beforeEach(() => {
   resetBrowser();
+  workspace.active = "/p";
+  sessions.active = null;
+  sessions.all = [];
+  focused.length = 0;
+  focusResult = { tabs: [], owner: null, active: null };
   opened.length = 0;
   closed.length = 0;
   activated.length = 0;
@@ -117,10 +137,10 @@ beforeEach(() => {
   pending = [];
   tabsHandler = null;
   openError = null;
-  openResult = { tabs: [], active: null };
+  openResult = { tabs: [], owner: null, active: null };
   navigateError = null;
-  nextSnapshot = { tabs: [], active: null };
-  tabsSnapshot = { tabs: [], active: null };
+  nextSnapshot = { tabs: [], owner: null, active: null };
+  tabsSnapshot = { tabs: [], owner: null, active: null };
 });
 
 const RECT_A = { x: 0, y: 0, width: 100, height: 100 };
@@ -389,7 +409,7 @@ describe("navigate", () => {
 
     await navigate("example.com");
 
-    expect(opened).toEqual([{ url: "example.com", session: null }]);
+    expect(opened).toEqual([{ url: "example.com", owner: ME, agent: false }]);
     expect(navigated).toEqual([]);
     expect(browser.tabs.map((t) => t.id)).toEqual([1]);
     expect(browser.active).toBe(1);
@@ -405,7 +425,7 @@ describe("snapshot events", () => {
     expect(browser.tabs.map((t) => t.id)).toEqual([5]);
     expect(browser.active).toBe(5);
 
-    tabsHandler!({ tabs: [], active: null });
+    tabsHandler!({ tabs: [], owner: null, active: null });
     expect(browser.tabs).toEqual([]);
     expect(browser.active).toBeNull();
   });
@@ -416,7 +436,7 @@ describe("snapshot events", () => {
     expect(browser.active).toBe(9);
 
     // A second call neither subscribes again nor reloads.
-    tabsSnapshot = { tabs: [], active: null };
+    tabsSnapshot = { tabs: [], owner: null, active: null };
     await initBrowser();
     expect(browser.active).toBe(9);
   });
@@ -458,8 +478,8 @@ describe("activeTab", () => {
 describe("tab lifecycle", () => {
   it("open, close and activate apply the snapshot the core returns", async () => {
     openResult = { tabs: [tab(1, "https://a.example/")], active: 1 };
-    await open("a.example", "session-1");
-    expect(opened).toEqual([{ url: "a.example", session: "session-1" }]);
+    await open("a.example");
+    expect(opened).toEqual([{ url: "a.example", owner: ME, agent: false }]);
     expect(browser.active).toBe(1);
 
     nextSnapshot = {
@@ -474,5 +494,81 @@ describe("tab lifecycle", () => {
     await activate(1);
     expect(activated).toEqual([1]);
     expect(browser.active).toBe(1);
+  });
+});
+
+describe("whose tabs are on screen", () => {
+  const A: BrowserOwner = { kind: "session", key: "a" };
+  const B: BrowserOwner = { kind: "session", key: "b" };
+
+  function session(key: string) {
+    return { key, project: "/p" } as unknown as (typeof sessions.all)[number];
+  }
+
+  it("is the session on screen, else the project on screen, else nobody", () => {
+    sessions.all = [session("a")];
+    sessions.active = "a";
+    expect(ownerOnScreen()).toEqual(A);
+    sessions.active = null;
+    expect(ownerOnScreen()).toEqual(ME);
+    workspace.active = null;
+    expect(ownerOnScreen()).toBeNull();
+  });
+
+  it("lists only the tabs of the owner the core reports on screen", () => {
+    browser.tabs = [
+      tab(1, "https://a.example/", { owner: A, front: true }),
+      tab(2, "https://b.example/", { owner: B, front: true }),
+      tab(3, "https://a2.example/", { owner: A }),
+    ];
+    browser.owner = A;
+    expect(ownTabs().map((t) => t.id)).toEqual([1, 3]);
+    browser.owner = B;
+    expect(ownTabs().map((t) => t.id)).toEqual([2]);
+    browser.owner = null;
+    expect(ownTabs()).toEqual([]);
+  });
+
+  it("tells the core when the owner changes, once per change, and takes its snapshot", async () => {
+    sessions.all = [session("a"), session("b")];
+    sessions.active = "a";
+    focusResult = {
+      tabs: [tab(1, "https://a.example/", { owner: A, front: true })],
+      owner: A,
+      active: 1,
+    };
+    await syncOwner();
+    await syncOwner();
+    expect(focused).toEqual([A]);
+    expect(browser.owner).toEqual(A);
+    expect(browser.active).toBe(1);
+
+    sessions.active = "b";
+    focusResult = { tabs: [], owner: B, active: null };
+    await syncOwner();
+    expect(focused).toEqual([A, B]);
+    expect(ownTabs()).toEqual([]);
+    expect(browser.active).toBeNull();
+  });
+
+  it("opens a hand-opened tab for the session on screen, after the core knows it is on screen", async () => {
+    sessions.all = [session("a")];
+    sessions.active = "a";
+    openResult = { tabs: [], owner: A, active: null };
+    await open("a.example");
+    expect(focused).toEqual([A]);
+    expect(opened).toEqual([{ url: "a.example", owner: A, agent: false }]);
+  });
+
+  it("opens for the project on screen with no session selected", async () => {
+    await open();
+    expect(opened).toEqual([{ url: null, owner: ME, agent: false }]);
+  });
+
+  it("refuses to open with no project or session on screen", async () => {
+    workspace.active = null;
+    await open("a.example");
+    expect(opened).toEqual([]);
+    expect(browser.addressError).toBe("Open a project first.");
   });
 });

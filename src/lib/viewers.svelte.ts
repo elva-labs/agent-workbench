@@ -10,7 +10,12 @@
 
 import { tick } from "svelte";
 import type { MediaItem } from "$lib/media.svelte";
-import { activate as activateTab, browser } from "$lib/browser.svelte";
+import {
+  activate as activateTab,
+  browser,
+  ownTabs,
+  syncOwner,
+} from "$lib/browser.svelte";
 import {
   closeViewer,
   files,
@@ -97,12 +102,13 @@ async function restore(what: Viewed) {
   } else if (what.kind === "plugin") {
     showPluginView(what.page);
   } else if (what.kind === "browser") {
-    // On the tab it was left on, if that is still open: another session's
-    // agent may have brought its own to the front in between.
+    // On the tab it was left on, if that is still open: the session's own
+    // agent may have brought another to the front in between.
+    await syncOwner();
     if (
       what.tab !== null &&
       what.tab !== browser.active &&
-      browser.tabs.some((tab) => tab.id === what.tab)
+      ownTabs().some((tab) => tab.id === what.tab)
     ) {
       await activateTab(what.tab);
     }
@@ -143,11 +149,14 @@ export async function sessionShown(key: string | null) {
     viewed.set(shown, layout.mode === "reviewing" ? snapshot(own) : parked);
   }
   parked = null;
+  // The tabs on screen are the new session's from here on.
+  const switching = syncOwner();
   for (const stale of viewed.keys()) {
     if (byKey(stale) === null) viewed.delete(stale);
   }
   const was = shown;
   shown = key;
+  await switching;
   if (key === null || key === was) return;
   await restore(viewed.get(key) ?? null);
 }

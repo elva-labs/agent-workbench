@@ -11,6 +11,7 @@
     home,
     navigate,
     open,
+    ownTabs,
     place,
     reload,
     titleFor,
@@ -198,7 +199,7 @@
 {/if}
 
 <div class="tabs" role="tablist" aria-label="Browser tabs" data-testid="browser-tabs">
-  {#each browser.tabs as candidate (candidate.id)}
+  {#each ownTabs() as candidate (candidate.id)}
     <div class="tab" class:active={candidate.id === browser.active} data-testid="browser-tab" data-tab-id={candidate.id}>
       <button
         class="select"
@@ -208,9 +209,6 @@
         onclick={() => void activate(candidate.id)}
         data-testid="browser-tab-select"
       >
-        {#if candidate.opener.kind === "agent"}
-          <span class="agent-mark" title="Opened by an agent" data-testid="browser-tab-agent"></span>
-        {/if}
         <span class="title">{titleFor(candidate)}</span>
       </button>
       <button
@@ -229,7 +227,7 @@
     <div class="placeholder">
       <p class="line">New tab</p>
       <p class="hint">Type an address above to get started.</p>
-      {#if browser.tabs.length === 0}
+      {#if ownTabs().length === 0}
         <button class="start" onclick={newTab} data-testid="browser-open-tab">New tab</button>
       {/if}
     </div>
@@ -380,14 +378,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .agent-mark {
-    flex: none;
-    width: var(--dot);
-    height: var(--dot);
-    border-radius: 50%;
-    background: var(--accent);
   }
 
   .tab-close {

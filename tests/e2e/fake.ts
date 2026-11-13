@@ -105,33 +105,65 @@ export async function installFakeCore(
       let ptyCount = 0;
 
       // The embedded browser's tabs, kept the way the Rust model keeps
-      // them: ids from 1, never reused; opening activates; closing the
-      // active tab activates its right neighbour, else its left.
+      // them: ids from 1, never reused; every tab has an owner, each owner
+      // has its own tab in front; opening puts the new tab in front for its
+      // owner, and closing the front tab brings the owner's right
+      // neighbour forward, else its left.
+      type FakeOwner =
+        | { kind: "session"; key: string }
+        | { kind: "project"; path: string };
       type FakeBrowserTab = {
         id: number;
         url: string;
         title: string;
         home: string | null;
-        opener: { kind: "user" } | { kind: "agent"; session: string };
+        opener: { kind: "user" } | { kind: "agent" };
+        owner: FakeOwner;
+        front: boolean;
         loading: boolean;
         canGoBack: boolean;
         canGoForward: boolean;
         error: string | null;
       };
 
+      const ownerKey = (owner: FakeOwner) =>
+        owner.kind === "session" ? `s:${owner.key}` : `p:${owner.path}`;
+
       const browserState = {
         tabs: [] as FakeBrowserTab[],
-        active: null as number | null,
+        shown: null as FakeOwner | null,
+        fronts: new Map<string, number>(),
         nextId: 1,
         // Per-tab back/forward stack: the urls visited, and where in them
         // the tab now stands.
         histories: new Map<number, { stack: string[]; index: number }>(),
       };
 
+      const activeBrowserTab = (): number | null =>
+        browserState.shown === null
+          ? null
+          : (browserState.fronts.get(ownerKey(browserState.shown)) ?? null);
+
       const browserSnapshot = () => ({
-        tabs: browserState.tabs.map((tab) => ({ ...tab })),
-        active: browserState.active,
+        tabs: browserState.tabs.map((tab) => ({
+          ...tab,
+          front: browserState.fronts.get(ownerKey(tab.owner)) === tab.id,
+        })),
+        owner: browserState.shown,
+        active: activeBrowserTab(),
       });
+
+      // The tab in front among an owner's after one of its tabs went:
+      // the right neighbour among its own, else the left.
+      const refront = (owner: FakeOwner, index: number) => {
+        const own = (tab: FakeBrowserTab) =>
+          ownerKey(tab.owner) === ownerKey(owner);
+        const next =
+          browserState.tabs.slice(index).find(own) ??
+          browserState.tabs.slice(0, index).reverse().find(own);
+        if (next) browserState.fronts.set(ownerKey(owner), next.id);
+        else browserState.fronts.delete(ownerKey(owner));
+      };
 
       const emitBrowserTabs = () => {
         const w = window as unknown as {
@@ -143,7 +175,7 @@ export async function installFakeCore(
       // The tab a page-tool call names, or the active one for null.
       const resolveFakeTab = (id: number | null): FakeBrowserTab | undefined =>
         id === null
-          ? browserState.tabs.find((tab) => tab.id === browserState.active)
+          ? browserState.tabs.find((tab) => tab.id === activeBrowserTab())
           : browserState.tabs.find((tab) => tab.id === id);
 
       const hostOf = (url: string) => {
@@ -805,8 +837,8 @@ export async function installFakeCore(
         // and the history stack a real tab would have.
         browserOpen: async (
           url: string | null,
-          session: string | null,
-          behind = false,
+          owner: FakeOwner,
+          agent = false,
         ) => {
           const home = url === null ? null : normalizeBrowserAddress(url);
           const id = browserState.nextId++;
@@ -815,8 +847,9 @@ export async function installFakeCore(
             url: "about:blank",
             title: "",
             home,
-            opener:
-              session !== null ? { kind: "agent", session } : { kind: "user" },
+            opener: agent ? { kind: "agent" } : { kind: "user" },
+            owner,
+            front: false,
             loading: false,
             canGoBack: false,
             canGoForward: false,
@@ -825,26 +858,43 @@ export async function installFakeCore(
           browserState.tabs.push(tab);
           browserState.histories.set(id, { stack: [], index: -1 });
           if (home !== null) browserNavigated(tab, home);
-          if (!behind || browserState.active === null) browserState.active = id;
+          browserState.fronts.set(ownerKey(owner), id);
           emitBrowserTabs();
           return browserSnapshot();
         },
         browserClose: async (id: number) => {
           const index = browserState.tabs.findIndex((tab) => tab.id === id);
           if (index !== -1) {
-            browserState.tabs.splice(index, 1);
+            const [gone] = browserState.tabs.splice(index, 1);
             browserState.histories.delete(id);
-            if (browserState.active === id) {
-              const next = browserState.tabs[index] ?? browserState.tabs[index - 1];
-              browserState.active = next ? next.id : null;
+            if (browserState.fronts.get(ownerKey(gone.owner)) === id) {
+              refront(gone.owner, index);
             }
           }
           emitBrowserTabs();
           return browserSnapshot();
         },
+        browserFocus: async (owner: FakeOwner | null) => {
+          browserState.shown = owner;
+          emitBrowserTabs();
+          return browserSnapshot();
+        },
+        browserCloseOwner: async (owner: FakeOwner) => {
+          const key = ownerKey(owner);
+          for (const tab of browserState.tabs) {
+            if (ownerKey(tab.owner) === key) browserState.histories.delete(tab.id);
+          }
+          browserState.tabs = browserState.tabs.filter(
+            (tab) => ownerKey(tab.owner) !== key,
+          );
+          browserState.fronts.delete(key);
+          emitBrowserTabs();
+          return browserSnapshot();
+        },
         browserActivate: async (id: number) => {
-          if (browserState.tabs.some((tab) => tab.id === id)) {
-            browserState.active = id;
+          const tab = browserState.tabs.find((candidate) => candidate.id === id);
+          if (tab !== undefined) {
+            browserState.fronts.set(ownerKey(tab.owner), id);
           }
           emitBrowserTabs();
           return browserSnapshot();

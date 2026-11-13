@@ -1,6 +1,6 @@
 /**
- * The embedded browser, as the frontend keeps it: the open tabs, which one
- * is active, whether the viewer is showing it at all, and the last address
+ * The embedded browser, as the frontend keeps it: the open tabs of every
+ * owner, whose are on screen, which of those is in front, whether the viewer is showing it at all, and the last address
  * that was refused.
  *
  * The native view for the active tab is a child webview the Rust side lays
@@ -21,7 +21,14 @@
  * last rectangle once the last cover lifts.
  */
 
-import { core, type BrowserSnapshot, type BrowserTab } from "$lib/core";
+import {
+  core,
+  type BrowserOwner,
+  type BrowserSnapshot,
+  type BrowserTab,
+} from "$lib/core";
+import { activeSession } from "$lib/sessions.svelte";
+import { workspace } from "$lib/workspace.svelte";
 
 export interface Rect {
   x: number;
@@ -31,7 +38,12 @@ export interface Rect {
 }
 
 export const browser = $state({
+  /** Every owner's tabs, in opening order. Only the on-screen owner's are
+      drawn: see `ownTabs`. */
   tabs: [] as BrowserTab[],
+  /** The owner whose tabs are on screen, as the core last reported it. */
+  owner: null as BrowserOwner | null,
+  /** The front tab of that owner. */
   active: null as number | null,
   /** Whether the viewer is showing the browser at all, apart from whether
       the active tab's native view is actually visible: a new tab keeps that
@@ -45,6 +57,31 @@ export const browser = $state({
       is hidden while this is true, the way it is for a new tab. */
   covered: false,
 });
+
+export function sameOwner(
+  a: BrowserOwner | null,
+  b: BrowserOwner | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind === "session") return b.kind === "session" && a.key === b.key;
+  return b.kind === "project" && a.path === b.path;
+}
+
+/** Whose tabs the window is showing: the session on screen, else the
+    project on screen, else nobody's. */
+export function ownerOnScreen(): BrowserOwner | null {
+  const session = activeSession();
+  if (session !== null) return { kind: "session", key: session.key };
+  if (workspace.active !== null)
+    return { kind: "project", path: workspace.active };
+  return null;
+}
+
+/** The tabs of the owner on screen, in opening order: what the fold, its
+    count and the tab strip show. */
+export function ownTabs(): BrowserTab[] {
+  return browser.tabs.filter((tab) => sameOwner(tab.owner, browser.owner));
+}
 
 /** The tab in front, or null with none open. */
 export function activeTab(): BrowserTab | null {
@@ -63,21 +100,58 @@ export function titleFor(tab: BrowserTab): string {
   }
 }
 
-function applySnapshot(snapshot: BrowserSnapshot) {
+export function applySnapshot(snapshot: BrowserSnapshot) {
   const activeChanged = browser.active !== snapshot.active;
   browser.tabs = snapshot.tabs;
+  browser.owner = snapshot.owner;
   browser.active = snapshot.active;
   if (activeChanged) browser.addressError = null;
 }
 
-/** Opens a tab: a url, or none for a new tab. A url that cannot be reached
-    leaves the tabs as they were and says why. */
-export async function open(url?: string, session?: string) {
+let sentOwner: BrowserOwner | null | undefined;
+let focusing: Promise<void> = Promise.resolve();
+
+/** Tells the core whose tabs are on screen, when that is not what it was
+    last told. Calls run one after another, and the returned promise settles
+    once the core has switched, so a caller can rely on the tabs it then
+    reads being the new owner's. */
+export function syncOwner(): Promise<void> {
+  const owner = ownerOnScreen();
+  if (sentOwner !== undefined && sameOwner(owner, sentOwner)) return focusing;
+  sentOwner = owner;
+  focusing = focusing
+    .then(() => core().browserFocus(owner))
+    .then(applySnapshot)
+    .catch(() => {
+      // No core to ask: the tabs stay as they were.
+    });
+  return focusing;
+}
+
+/** Opens a tab for the owner on screen: a url, or none for a new tab. A
+    url that cannot be reached leaves the tabs as they were and says why. */
+export async function open(url?: string) {
   browser.addressError = null;
+  await syncOwner();
+  const owner = ownerOnScreen();
+  if (owner === null) {
+    browser.addressError = "Open a project first.";
+    return;
+  }
   try {
-    applySnapshot(await core().browserOpen(url ?? null, session ?? null));
+    applySnapshot(await core().browserOpen(url ?? null, owner));
   } catch (error) {
     browser.addressError = String(error);
+  }
+}
+
+/** Closes every tab an owner has: the session or project they belonged to
+    is gone. */
+export async function closeOwner(owner: BrowserOwner) {
+  try {
+    applySnapshot(await core().browserCloseOwner(owner));
+  } catch {
+    // No core to ask, or the tabs are gone already.
   }
 }
 
@@ -263,7 +337,10 @@ export async function initBrowser() {
 /** Test seam. */
 export function resetBrowser() {
   browser.tabs = [];
+  browser.owner = null;
   browser.active = null;
+  sentOwner = undefined;
+  focusing = Promise.resolve();
   browser.showing = false;
   browser.addressError = null;
   browser.covered = false;

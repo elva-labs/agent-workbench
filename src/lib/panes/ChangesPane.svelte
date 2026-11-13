@@ -38,6 +38,7 @@
     browser,
     close as closeBrowserTab,
     coversBrowser,
+    ownTabs as ownBrowserTabs,
     titleFor as browserTitleFor,
   } from "$lib/browser.svelte";
   import { core } from "$lib/core";
@@ -148,7 +149,7 @@
     }
     list.push({ id: BROWSER_FOLD_ID, kind: "browser-head" });
     if (layout.browserOpen) {
-      browser.tabs.forEach((tab, index) => list.push({ id: browserRowId(tab), kind: "browser-tab", index }));
+      ownBrowserTabs().forEach((tab, index) => list.push({ id: browserRowId(tab), kind: "browser-tab", index }));
     }
     for (const group of pluginList) {
       list.push({ id: pluginFoldId(group.key), kind: "plugin-head", group: group.key });
@@ -193,7 +194,7 @@
       else if (entry.kind === "processes-head") toggleProcesses();
       else if (entry.kind === "browser-head") toggleBrowser();
       else if (entry.kind === "browser-tab") {
-        const tab = browser.tabs[entry.index];
+        const tab = ownBrowserTabs()[entry.index];
         if (tab !== undefined) void selectBrowserTab(tab.id);
       } else if (entry.kind === "plugin-head") toggleSection(entry.group);
       else if (entry.kind === "plugin-group") {
@@ -1111,7 +1112,7 @@
                   data-testid="browser-fold"
                 >
                   <span class="chevron">{layout.browserOpen ? "▾" : "▸"}</span>
-                  Browser ({browser.tabs.length})
+                  Browser ({ownBrowserTabs().length})
                 </button>
                 <span class="head-actions">
                   <button
@@ -1124,11 +1125,11 @@
                 </span>
               </div>
               {#if layout.browserOpen}
-                {#if browser.tabs.length === 0}
+                {#if ownBrowserTabs().length === 0}
                   <p class="section-empty" data-testid="browser-fold-empty">No tabs open.</p>
                 {:else}
                   <ul class="rows">
-                    {#each browser.tabs as tab (tab.id)}
+                    {#each ownBrowserTabs() as tab (tab.id)}
                       <li
                         class="browser-tab"
                         class:cursor={cursorId === browserRowId(tab)}
@@ -1147,13 +1148,12 @@
                           title={tab.url}
                         >
                           <span class="row-line">
-                            <span class="dot" data-state={browserDot(tab)}></span>
-                            {#if tab.opener.kind === "agent"}
-                              <span class="agent-mark" title="Opened by an agent"></span>
-                            {/if}
+                            <span class="dot" data-state={browserDot(tab)} data-testid="browser-fold-dot"></span>
                             <span class="media-caption">{browserTitleFor(tab)}</span>
                           </span>
-                          <span class="media-meta">{withoutScheme(tab.url)}</span>
+                          <span class="media-meta">
+                            {#if tab.opener.kind === "agent"}<span class="by" data-testid="browser-fold-agent">agent</span>{" "}{/if}{withoutScheme(tab.url)}
+                          </span>
                         </button>
                         <button
                           class="stop"
@@ -1430,14 +1430,9 @@
     color: var(--del);
   }
 
-  /* The mark a tab opened by an agent carries, the same one the tab strip
-     draws beside its title. */
-  .agent-mark {
-    flex: none;
-    width: var(--dot);
-    height: var(--dot);
-    border-radius: 50%;
-    background: var(--accent);
+  /* The word a tab opened by an agent carries in its row's meta. */
+  .by {
+    font-style: italic;
   }
 
   /* A section a plugin sent: its header carries the plugin's own actions,

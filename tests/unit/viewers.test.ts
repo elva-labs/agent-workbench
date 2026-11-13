@@ -45,11 +45,14 @@ vi.mock("$lib/core", () => ({
     },
     async setSelection() {},
     async watchShown() {},
+    async browserFocus() {
+      return { tabs: browser.tabs, owner: browser.owner, active: browser.active };
+    },
     async browserPlace() {},
     async browserHide() {},
     async browserActivate(id: number) {
       activated.push(id);
-      return { tabs: browser.tabs, active: id };
+      return { tabs: browser.tabs, owner: browser.owner, active: id };
     },
   }),
 }));
@@ -199,19 +202,22 @@ describe("switching sessions", () => {
       title: "",
       home: `http://localhost:${id}/`,
       opener: { kind: "user" as const },
+      owner: { kind: "project" as const, path: "/one" },
+      front: true,
       loading: false,
       canGoBack: false,
       canGoForward: false,
       error: null,
     });
     browser.tabs = [tab(1), tab(2)];
+    browser.owner = { kind: "project", path: "/one" };
     browser.active = 1;
     await sessionShown("a");
     showBrowser();
     expect(snapshot()).toEqual({ kind: "browser", project: "/one", tab: 1 });
 
     await sessionShown("b");
-    // Another session's agent brought its own tab to the front meanwhile.
+    // The session's agent brought another tab to the front meanwhile.
     browser.active = 2;
     showBrowser();
 
