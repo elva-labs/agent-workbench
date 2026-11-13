@@ -414,7 +414,7 @@ impl Core {
     /// Starts an agent as an integrated session: a process spoken to in
     /// messages, whose news goes out as `integrated_event`. A fresh
     /// session's id is chosen here, as for a pty; `session` resumes one.
-    /// The rest is as for [`Core::spawn`], with the permission mode the
+    /// The rest is as for [`Core::spawn`], with the mode and the effort the
     /// session starts in, and the workbench's tool server attached to the
     /// session when the daemon is installed where the agents look for it.
     ///
@@ -430,7 +430,8 @@ impl Core {
         cwd: Option<&Path>,
         session: Option<String>,
         model: Option<&str>,
-        permission_mode: Option<&str>,
+        mode: Option<&str>,
+        effort: Option<&str>,
         config_dir: Option<&str>,
     ) -> Result<crate::integrated::Started, String> {
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
@@ -473,7 +474,8 @@ impl Core {
             session: &session,
             resume,
             model: model.filter(|model| !model.trim().is_empty()),
-            permission_mode: permission_mode.filter(|mode| !mode.trim().is_empty()),
+            mode: mode.filter(|mode| !mode.trim().is_empty()),
+            effort: effort.filter(|effort| !effort.trim().is_empty()),
             config_dir: expanded.as_deref(),
             tool_server: tool_server.as_deref(),
             orchestrator,
@@ -517,15 +519,16 @@ impl Core {
         protocol.trust(home, expanded.as_deref(), cwd.unwrap_or(project))
     }
 
-    /// Sends the user's message, with any images. Answers with the
-    /// message's id, which the turn that answers it names.
+    /// Sends the user's message, with any images, under the id the window
+    /// chose for it, which the turn that answers it names.
     pub fn integrated_send(
         &self,
         id: &str,
+        message: &str,
         text: &str,
         images: &[crate::integrated::Image],
-    ) -> Result<String, String> {
-        crate::integrated::send(&self.integrated, id, text, images)
+    ) -> Result<(), String> {
+        crate::integrated::send(&self.integrated, id, message, text, images)
     }
 
     /// Stops the turn that is running. Queued messages stay queued.
@@ -545,30 +548,26 @@ impl Core {
         crate::integrated::answer(&self.integrated, id, request, choice, message)
     }
 
-    /// Switches the session's model. Answers with the model the agent
-    /// resolved it to, when it says.
-    pub fn integrated_set_model(&self, id: &str, model: &str) -> Result<Option<String>, String> {
-        let reply = crate::integrated::control(
-            &self.integrated,
-            id,
-            &crate::integrated::Control::SetModel(model.to_string()),
-        )?;
-        Ok(reply["model"].as_str().map(str::to_string))
-    }
-
-    /// Switches the session's permission mode. Answers with the mode the
-    /// agent is now in, when it says.
-    pub fn integrated_set_permission_mode(
+    /// Answers a question the session asked; None declines.
+    pub fn integrated_reply(
         &self,
         id: &str,
-        mode: &str,
-    ) -> Result<Option<String>, String> {
-        let reply = crate::integrated::control(
-            &self.integrated,
-            id,
-            &crate::integrated::Control::SetPermissionMode(mode.to_string()),
-        )?;
-        Ok(reply["mode"].as_str().map(str::to_string))
+        request: &str,
+        answers: Option<&[Vec<String>]>,
+    ) -> Result<(), String> {
+        crate::integrated::reply(&self.integrated, id, request, answers)
+    }
+
+    /// Switches the session's model, mode or effort, each that is given.
+    /// Answers with what the session now runs on.
+    pub fn integrated_configure(
+        &self,
+        id: &str,
+        model: Option<&str>,
+        mode: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<crate::integrated::Settings, String> {
+        crate::integrated::configure(&self.integrated, id, model, mode, effort)
     }
 
     /// Ends an integrated session. Comes back at once; the session's

@@ -12,7 +12,7 @@
 //! Everything leaves as the agent-neutral events of the integrated
 //! sessions; nothing Claude-shaped goes past this file.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -23,8 +23,9 @@ use crate::adapter::{
 use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
-    Choice, CommandInfo, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch,
-    ModelInfo, Offer, Outcome, Protocol, Reading, TaskKind, Usage,
+    ChangeKind, Choice, CommandInfo, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image,
+    Launch, MessageState, ModeInfo, ModelInfo, Offer, Outcome, PlanStep, Protocol, Question,
+    QuestionOption, Reading, Sending, StepStatus, TaskKind, TaskStatus, ToolKind, Usage,
 };
 
 pub struct ClaudeStream;
@@ -39,11 +40,34 @@ const TOOL_SERVER: &str = "agent-workbench";
 /// The media types the agent takes an image in.
 const IMAGE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
 
+/// The permission modes a session can switch to, by the names the agent
+/// takes. Bypassing permissions is left out: the agent takes it only when
+/// started with a flag of its own.
+const MODES: &[(&str, &str)] = &[
+    ("default", "Default"),
+    ("acceptEdits", "Accept edits"),
+    ("plan", "Plan"),
+    ("auto", "Auto"),
+    ("dontAsk", "Don't ask"),
+];
+
+/// The tool that asks the user questions, answered with a reply rather
+/// than a permission.
+const ASK_TOOL: &str = "AskUserQuestion";
+
+/// The tool that ends plan mode by asking to go ahead with a plan.
+const PLAN_TOOL: &str = "ExitPlanMode";
+
+/// The tool that keeps the agent's list of steps.
+const TODO_TOOL: &str = "TodoWrite";
+
 /// The arguments that make `claude` a stream session. `-p` with stream-json
 /// both ways keeps it running for as long as stdin is open; `--verbose` is
 /// required for stream-json output; the partial messages are the text as it
-/// streams; subagent text comes only when forwarded; and the permission
-/// prompts come to this side over stdio rather than being denied.
+/// streams; subagent text comes only when forwarded; the user's messages
+/// come back with the ids they were sent with, beside the agent's own
+/// lines saying when it queued and took each; and the permission prompts
+/// come to this side over stdio rather than being denied.
 const STREAM_ARGS: &[&str] = &[
     "-p",
     "--input-format",
@@ -53,6 +77,7 @@ const STREAM_ARGS: &[&str] = &[
     "--verbose",
     "--include-partial-messages",
     "--forward-subagent-text",
+    "--replay-user-messages",
     "--permission-prompt-tool",
     "stdio",
 ];
@@ -80,11 +105,14 @@ impl Protocol for ClaudeStream {
         })?;
         let mut command = process(&binary, launch.env);
         command.args(STREAM_ARGS);
-        if let Some(mode) = launch.permission_mode {
+        if let Some(mode) = launch.mode {
             command.args(["--permission-mode", checked("permission mode", mode)?]);
         }
         if let Some(model) = launch.model {
             command.args(["--model", checked("model", model)?]);
+        }
+        if let Some(effort) = launch.effort {
+            command.args(["--effort", checked("effort", effort)?]);
         }
         let session = checked("session id", launch.session)?;
         if launch.resume {
@@ -123,7 +151,8 @@ impl Protocol for ClaudeStream {
         Box::new(Stream::new(
             launch.session,
             launch.model,
-            launch.permission_mode,
+            launch.mode,
+            launch.effort,
         ))
     }
 
@@ -154,12 +183,14 @@ enum Kind {
 }
 
 /// A control request this side sent, by what its reply means.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
     Initialize,
+    Settings,
     Interrupt,
     Model,
     Mode,
+    Effort(String),
 }
 
 /// A permission request the agent waits on, kept until it is answered or
@@ -270,9 +301,19 @@ struct Stream {
     session: String,
     model: Option<String>,
     mode: Option<String>,
+    effort: Option<String>,
+    /// The models the agent offers, with the name it resolves each to.
+    models: Vec<(ModelInfo, Option<String>)>,
+    /// What the agent said of itself at the start, held until the
+    /// settings it runs on are known too.
+    introduced: Option<Value>,
+    settings_known: bool,
+    ready: bool,
     next: u64,
     sent: HashMap<String, Sent>,
     asked: HashMap<String, Asked>,
+    /// Questions waiting for a reply, with the input that asked them.
+    questions: HashMap<String, Value>,
     /// The API message being streamed, by the subagent call it belongs to.
     streaming: HashMap<Option<String>, String>,
     /// Blocks being streamed, by message and index: their kind and id.
@@ -284,6 +325,15 @@ struct Stream {
     calls: HashMap<String, Option<String>>,
     /// Tasks running, by the tool call that started each.
     tasks: HashMap<String, Option<String>>,
+    /// Whether a turn of the main conversation runs.
+    turn: bool,
+    /// Messages the agent took while no turn ran, for the turn about to
+    /// start.
+    starting: Vec<String>,
+    /// The messages sent and not yet done with, and those of them the
+    /// agent has said it took.
+    ours: HashSet<String>,
+    taken: HashSet<String>,
     interrupting: bool,
     minted: u64,
 }
@@ -305,6 +355,15 @@ fn text_of(content: &Value) -> String {
     }
 }
 
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_string))
+        .collect()
+}
+
 fn usage(value: &Value) -> Option<Usage> {
     value.is_object().then(|| Usage {
         input_tokens: value["input_tokens"].as_u64().unwrap_or(0),
@@ -314,15 +373,31 @@ fn usage(value: &Value) -> Option<Usage> {
     })
 }
 
-/// The file a tool changed, from the structured result the agent gives
+/// What sort of tool the agent's tool of this name is.
+fn tool_kind(name: &str) -> ToolKind {
+    match name {
+        "Bash" | "BashOutput" | "KillShell" | "KillBash" | "PowerShell" => ToolKind::Command,
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => ToolKind::Edit,
+        "Read" | "NotebookRead" => ToolKind::Read,
+        "Grep" | "Glob" | "LS" => ToolKind::Search,
+        "WebFetch" | "WebSearch" => ToolKind::Web,
+        "Agent" | "Task" => ToolKind::Agent,
+        name if name.starts_with("mcp__") => ToolKind::Mcp,
+        _ => ToolKind::Other,
+    }
+}
+
+/// The files a tool changed, from the structured result the agent gives
 /// beside the plain one: a new file with its content, or an edit with its
 /// patch.
-fn file_change(result: &Value) -> Option<FileChange> {
-    let path = result["filePath"].as_str()?;
+fn file_changes(result: &Value) -> Vec<FileChange> {
+    let Some(path) = result["filePath"].as_str() else {
+        return vec![];
+    };
     let created = result["type"] == "create";
     let hunks = result["structuredPatch"].as_array();
     if !created && hunks.is_none() {
-        return None;
+        return vec![];
     }
     let hunks = hunks
         .into_iter()
@@ -333,20 +408,67 @@ fn file_change(result: &Value) -> Option<FileChange> {
                 old_lines: hunk["oldLines"].as_u64()?,
                 new_start: hunk["newStart"].as_u64()?,
                 new_lines: hunk["newLines"].as_u64()?,
-                lines: hunk["lines"]
-                    .as_array()?
-                    .iter()
-                    .filter_map(|line| line.as_str().map(str::to_string))
-                    .collect(),
+                lines: strings(&hunk["lines"]),
             })
         })
         .collect();
-    Some(FileChange {
+    vec![FileChange {
         path: path.to_string(),
-        kind: if created { "create" } else { "update" }.to_string(),
+        kind: if created {
+            ChangeKind::Create
+        } else {
+            ChangeKind::Update
+        },
+        to: None,
         hunks,
         content: created.then(|| text(&result["content"])).flatten(),
-    })
+    }]
+}
+
+/// The steps of the agent's list, from the list tool's input.
+fn steps(input: &Value) -> Vec<PlanStep> {
+    input["todos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|todo| {
+            Some(PlanStep {
+                text: todo["content"].as_str()?.to_string(),
+                status: match todo["status"].as_str() {
+                    Some("in_progress") => StepStatus::Active,
+                    Some("completed") => StepStatus::Done,
+                    _ => StepStatus::Pending,
+                },
+            })
+        })
+        .collect()
+}
+
+/// The questions the question tool asks, from its input.
+fn questions(input: &Value) -> Vec<Question> {
+    input["questions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|question| {
+            Some(Question {
+                header: text(&question["header"]),
+                question: question["question"].as_str()?.to_string(),
+                options: question["options"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|option| {
+                        Some(QuestionOption {
+                            label: option["label"].as_str()?.to_string(),
+                            description: text(&option["description"]),
+                        })
+                    })
+                    .collect(),
+                multiple: question["multiSelect"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect()
 }
 
 /// Whether the account the agent reported at the start has no way to sign
@@ -361,19 +483,29 @@ const NOT_LOGGED_IN: &str =
     "This account is not signed in to Claude Code. Run claude in a terminal and sign in with /login.";
 
 impl Stream {
-    fn new(session: &str, model: Option<&str>, mode: Option<&str>) -> Self {
+    fn new(session: &str, model: Option<&str>, mode: Option<&str>, effort: Option<&str>) -> Self {
         Self {
             session: session.to_string(),
             model: model.map(str::to_string),
             mode: mode.map(str::to_string),
+            effort: effort.map(str::to_string),
+            models: Vec::new(),
+            introduced: None,
+            settings_known: false,
+            ready: false,
             next: 0,
             sent: HashMap::new(),
             asked: HashMap::new(),
+            questions: HashMap::new(),
             streaming: HashMap::new(),
             open: HashMap::new(),
             closed: HashMap::new(),
             calls: HashMap::new(),
             tasks: HashMap::new(),
+            turn: false,
+            starting: Vec::new(),
+            ours: HashSet::new(),
+            taken: HashSet::new(),
             interrupting: false,
             minted: 0,
         }
@@ -387,22 +519,156 @@ impl Stream {
         (line.to_string(), id)
     }
 
-    /// Takes a model or a mode as the agent now reports it, and says so
-    /// when either changed.
-    fn configure(&mut self, model: Option<String>, mode: Option<String>, out: &mut Reading) {
+    /// The efforts the model now on takes.
+    fn efforts(&self) -> Vec<String> {
+        let Some(model) = &self.model else {
+            return vec![];
+        };
+        self.models
+            .iter()
+            .find(|(info, resolved)| &info.value == model || resolved.as_ref() == Some(model))
+            .map(|(info, _)| info.efforts.clone())
+            .unwrap_or_default()
+    }
+
+    /// Takes a model, a mode or an effort as the agent now reports it, and
+    /// says so when any changed.
+    fn configure(
+        &mut self,
+        model: Option<String>,
+        mode: Option<String>,
+        effort: Option<String>,
+        out: &mut Reading,
+    ) {
         let mut changed = false;
-        if model.is_some() && model != self.model {
-            self.model = model;
-            changed = true;
+        for (now, new) in [
+            (&mut self.model, model),
+            (&mut self.mode, mode),
+            (&mut self.effort, effort),
+        ] {
+            if new.is_some() && new != *now {
+                *now = new;
+                changed = true;
+            }
         }
-        if mode.is_some() && mode != self.mode {
-            self.mode = mode;
-            changed = true;
-        }
-        if changed {
+        if changed && self.ready {
             out.events.push(Event::Configured {
                 model: self.model.clone(),
-                permission_mode: self.mode.clone(),
+                mode: self.mode.clone(),
+                effort: self.effort.clone(),
+                efforts: self.efforts(),
+            });
+        }
+    }
+
+    /// Says the agent is ready, once it has said both what it is and what
+    /// it runs on.
+    fn introduce(&mut self, out: &mut Reading) {
+        if self.ready || !self.settings_known {
+            return;
+        }
+        let Some(body) = self.introduced.take() else {
+            return;
+        };
+        self.models = body["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|model| {
+                Some((
+                    ModelInfo {
+                        value: model["value"].as_str()?.to_string(),
+                        name: text(&model["displayName"]),
+                        description: text(&model["description"]),
+                        efforts: strings(&model["supportedEffortLevels"]),
+                    },
+                    text(&model["resolvedModel"]),
+                ))
+            })
+            .collect();
+        if let Some(mode) = text(&body["current_permission_mode"]) {
+            self.mode = Some(mode);
+        }
+        self.ready = true;
+        out.events.push(Event::Ready {
+            session_id: self.session.clone(),
+            model: self.model.clone(),
+            mode: self.mode.clone(),
+            effort: self.effort.clone(),
+            version: text(&body["claude_code_version"]),
+            models: self.models.iter().map(|(info, _)| info.clone()).collect(),
+            modes: MODES
+                .iter()
+                .map(|(value, name)| ModeInfo {
+                    value: value.to_string(),
+                    name: name.to_string(),
+                    description: None,
+                })
+                .collect(),
+            efforts: self.efforts(),
+            commands: body["commands"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|command| {
+                    Some(CommandInfo {
+                        name: command["name"].as_str()?.to_string(),
+                        description: text(&command["description"]),
+                        hint: text(&command["argumentHint"]).filter(|h| !h.is_empty()),
+                    })
+                })
+                .collect(),
+        });
+        if signed_out(&body["account"]) {
+            out.events.push(Event::Error {
+                kind: ErrorKind::NotLoggedIn,
+                message: NOT_LOGGED_IN.to_string(),
+            });
+        }
+    }
+
+    /// The agent began a turn of the main conversation, if one is not
+    /// running yet: the messages it took since the last one are what it
+    /// answers.
+    fn begin(&mut self, out: &mut Reading) {
+        if self.turn {
+            return;
+        }
+        self.turn = true;
+        self.interrupting = false;
+        out.events.push(Event::TurnStarted {
+            messages: std::mem::take(&mut self.starting),
+        });
+    }
+
+    /// The agent says it took a message of ours: into the turn running, or
+    /// for the turn about to start.
+    fn took(&mut self, message: &str, out: &mut Reading) {
+        if !self.ours.contains(message) || !self.taken.insert(message.to_string()) {
+            return;
+        }
+        if self.turn {
+            out.events.push(Event::Message {
+                message: message.to_string(),
+                state: MessageState::Taken,
+                error: None,
+            });
+        } else {
+            self.starting.push(message.to_string());
+        }
+    }
+
+    /// The agent is done with a message of ours.
+    fn done_with(&mut self, message: &str, out: &mut Reading, dropped: bool) {
+        if !self.ours.remove(message) {
+            return;
+        }
+        if !self.taken.remove(message) && dropped {
+            self.starting.retain(|m| m != message);
+            out.events.push(Event::Message {
+                message: message.to_string(),
+                state: MessageState::Dropped,
+                error: Some("the agent cancelled the message".into()),
             });
         }
     }
@@ -437,7 +703,20 @@ impl Stream {
         (format!("{message}#whole-{}", self.minted), false)
     }
 
+    fn tool_started(&mut self, call: &str, name: &str, parent: &Option<String>, out: &mut Reading) {
+        self.calls.insert(call.to_string(), parent.clone());
+        out.events.push(Event::ToolStarted {
+            call: call.to_string(),
+            parent: parent.clone(),
+            name: name.to_string(),
+            kind: tool_kind(name),
+        });
+    }
+
     fn stream_event(&mut self, event: &Value, parent: Option<String>, out: &mut Reading) {
+        if parent.is_none() {
+            self.begin(out);
+        }
         match event["type"].as_str() {
             Some("message_start") => {
                 if let Some(id) = event["message"]["id"].as_str() {
@@ -457,12 +736,8 @@ impl Stream {
                         let Some(call) = block["id"].as_str() else {
                             return;
                         };
-                        self.calls.insert(call.to_string(), parent.clone());
-                        out.events.push(Event::ToolStarted {
-                            call: call.to_string(),
-                            parent: parent.clone(),
-                            name: block["name"].as_str().unwrap_or_default().to_string(),
-                        });
+                        let name = block["name"].as_str().unwrap_or_default();
+                        self.tool_started(call, name, &parent, out);
                         (Kind::Tool, call.to_string())
                     }
                     _ => return,
@@ -533,6 +808,9 @@ impl Stream {
     }
 
     fn assistant(&mut self, line: &Value, parent: Option<String>, out: &mut Reading) {
+        if parent.is_none() {
+            self.begin(out);
+        }
         let message = &line["message"];
         let id = message["id"].as_str().unwrap_or_default().to_string();
         if let Some(error) = line["error"].as_str() {
@@ -573,13 +851,9 @@ impl Stream {
                     let Some(call) = block["id"].as_str() else {
                         continue;
                     };
+                    let name = block["name"].as_str().unwrap_or_default();
                     if !self.calls.contains_key(call) {
-                        self.calls.insert(call.to_string(), parent.clone());
-                        out.events.push(Event::ToolStarted {
-                            call: call.to_string(),
-                            parent: parent.clone(),
-                            name: block["name"].as_str().unwrap_or_default().to_string(),
-                        });
+                        self.tool_started(call, name, &parent, out);
                     }
                     out.events.push(Event::ToolInput {
                         call: call.to_string(),
@@ -587,6 +861,14 @@ impl Stream {
                         delta: None,
                         input: Some(block["input"].clone()),
                     });
+                    if name == TODO_TOOL {
+                        out.events.push(Event::Plan {
+                            call: Some(call.to_string()),
+                            parent: parent.clone(),
+                            text: None,
+                            steps: steps(&block["input"]),
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -594,6 +876,12 @@ impl Stream {
     }
 
     fn user(&mut self, line: &Value, parent: Option<String>, out: &mut Reading) {
+        // The user's own message, sent back with the id it went with.
+        if line["isReplay"] == true && parent.is_none() {
+            if let Some(uuid) = line["uuid"].as_str() {
+                self.took(uuid, out);
+            }
+        }
         let results: Vec<&Value> = line["message"]["content"]
             .as_array()
             .into_iter()
@@ -613,9 +901,11 @@ impl Stream {
                 parent: parent.clone(),
                 output: text_of(&block["content"]),
                 error: block["is_error"].as_bool().unwrap_or(false),
-                change: single
-                    .then(|| file_change(&line["tool_use_result"]))
-                    .flatten(),
+                changes: if single {
+                    file_changes(&line["tool_use_result"])
+                } else {
+                    vec![]
+                },
             });
         }
     }
@@ -624,14 +914,23 @@ impl Stream {
         match line["subtype"].as_str() {
             // Every turn opens with the agent describing itself.
             Some("init") => {
-                out.events.push(Event::TurnStarted { message: None });
-                self.configure(text(&line["model"]), text(&line["permissionMode"]), out);
+                self.begin(out);
+                self.configure(
+                    text(&line["model"]),
+                    text(&line["permissionMode"]),
+                    None,
+                    out,
+                );
             }
             Some("status") => {
                 if line["status"] == "compacting" {
+                    self.begin(out);
                     out.events.push(Event::Compacting);
                 }
-                self.configure(None, text(&line["permissionMode"]), out);
+                for message in strings(&line["user_message_uuids"]) {
+                    self.took(&message, out);
+                }
+                self.configure(None, text(&line["permissionMode"]), None, out);
             }
             Some("compact_boundary") => {
                 let meta = &line["compact_metadata"];
@@ -639,6 +938,22 @@ impl Stream {
                     trigger: text(&meta["trigger"]),
                     tokens_before: meta["pre_tokens"].as_u64(),
                     tokens_after: meta["post_tokens"].as_u64(),
+                });
+            }
+            Some("api_retry") => {
+                let error = &line["error"];
+                let message = text(&error["message"])
+                    .or_else(|| text(error))
+                    .or_else(|| {
+                        line["error_status"]
+                            .as_u64()
+                            .map(|status| format!("the API answered {status}"))
+                    })
+                    .unwrap_or_else(|| "the API request failed".into());
+                out.events.push(Event::Retrying {
+                    message,
+                    attempt: line["attempt"].as_u64(),
+                    attempts: line["max_retries"].as_u64(),
                 });
             }
             Some("task_started") => {
@@ -680,7 +995,11 @@ impl Stream {
                 out.events.push(Event::TaskFinished {
                     task: task.to_string(),
                     call: text(&line["tool_use_id"]).or(known),
-                    status: text(&line["status"]).unwrap_or_else(|| "completed".into()),
+                    status: match line["status"].as_str() {
+                        Some("completed") | None => TaskStatus::Completed,
+                        Some("stopped" | "killed") => TaskStatus::Stopped,
+                        Some(_) => TaskStatus::Failed,
+                    },
                     summary: text(&line["summary"]),
                 });
             }
@@ -688,7 +1007,21 @@ impl Stream {
         }
     }
 
+    /// Where the agent stands with a message: queued, started or done.
+    fn lifecycle(&mut self, line: &Value, out: &mut Reading) {
+        let Some(message) = line["command_uuid"].as_str() else {
+            return;
+        };
+        match line["state"].as_str() {
+            Some("started") => self.took(message, out),
+            Some("completed") => self.done_with(message, out, false),
+            Some("cancelled") => self.done_with(message, out, true),
+            _ => {}
+        }
+    }
+
     fn result(&mut self, line: &Value, out: &mut Reading) {
+        self.begin(out);
         let failed = line["is_error"].as_bool().unwrap_or(false);
         let outcome = match line["subtype"].as_str() {
             Some("success") if !failed => Outcome::Done,
@@ -696,14 +1029,10 @@ impl Stream {
             _ => Outcome::Failed,
         };
         self.interrupting = false;
+        self.turn = false;
         let error = (outcome == Outcome::Failed).then(|| {
             let said = line["result"].as_str().unwrap_or_default();
-            let errors: Vec<&str> = line["errors"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect();
+            let errors = strings(&line["errors"]);
             if !said.is_empty() {
                 said.to_string()
             } else if !errors.is_empty() {
@@ -718,14 +1047,14 @@ impl Stream {
         out.events.push(Event::TurnEnded {
             outcome,
             error,
-            cost_usd: line["total_cost_usd"].as_f64(),
+            total_cost_usd: line["total_cost_usd"].as_f64(),
             duration_ms: line["duration_ms"].as_u64(),
             usage: usage(&line["usage"]),
         });
     }
 
-    /// A control request from the agent: a permission to ask, or something
-    /// this side does not do, which is answered as such.
+    /// A control request from the agent: a permission or a question to
+    /// ask, or something this side does not do, which is answered as such.
     fn asked(&mut self, line: &Value, out: &mut Reading) {
         let Some(id) = line["request_id"].as_str() else {
             return;
@@ -749,20 +1078,40 @@ impl Stream {
             .as_str()
             .unwrap_or_default()
             .to_string();
+        let input = request["input"].clone();
+        let call = text(&request["tool_use_id"]);
+        let parent = call
+            .as_deref()
+            .and_then(|call| self.calls.get(call).cloned().flatten());
+        if tool == ASK_TOOL {
+            out.events.push(Event::QuestionAsked {
+                request: id.to_string(),
+                call,
+                parent,
+                questions: questions(&input),
+            });
+            self.questions.insert(id.to_string(), input);
+            return;
+        }
+        if tool == PLAN_TOOL {
+            out.events.push(Event::Plan {
+                call: call.clone(),
+                parent: parent.clone(),
+                text: text(&input["plan"]),
+                steps: vec![],
+            });
+        }
         let asked = Asked {
-            input: request["input"].clone(),
+            input,
             suggestions: request["permission_suggestions"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default(),
         };
-        let call = text(&request["tool_use_id"]);
         out.events.push(Event::PermissionAsked {
             request: id.to_string(),
-            parent: call
-                .as_deref()
-                .and_then(|call| self.calls.get(call).cloned().flatten()),
             call,
+            parent,
             tool,
             input: asked.input.clone(),
             description: text(&request["description"])
@@ -778,7 +1127,11 @@ impl Stream {
         let Some(id) = response["request_id"].as_str() else {
             return;
         };
-        let sent = self.sent.remove(id);
+        let Some(sent) = self.sent.remove(id) else {
+            // An answer of this side's own, sent back with the user's
+            // messages.
+            return;
+        };
         let reply = if response["subtype"] == "success" {
             Ok(response["response"].clone())
         } else {
@@ -789,61 +1142,42 @@ impl Stream {
         };
         let body = reply.as_ref().ok();
         match sent {
-            Some(Sent::Initialize) => {
-                let body = body.cloned().unwrap_or(Value::Null);
-                self.configure(
-                    None,
-                    text(&body["current_permission_mode"]),
-                    &mut Reading::default(),
-                );
-                out.events.push(Event::Ready {
-                    session_id: self.session.clone(),
-                    model: self.model.clone(),
-                    permission_mode: self.mode.clone(),
-                    version: text(&body["claude_code_version"]),
-                    models: body["models"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|model| {
-                            Some(ModelInfo {
-                                value: model["value"].as_str()?.to_string(),
-                                name: text(&model["displayName"]),
-                                description: text(&model["description"]),
-                            })
-                        })
-                        .collect(),
-                    commands: body["commands"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|command| {
-                            Some(CommandInfo {
-                                name: command["name"].as_str()?.to_string(),
-                                description: text(&command["description"]),
-                                hint: text(&command["argumentHint"]).filter(|h| !h.is_empty()),
-                            })
-                        })
-                        .collect(),
-                });
-                if signed_out(&body["account"]) {
-                    out.events.push(Event::Error {
-                        kind: ErrorKind::NotLoggedIn,
-                        message: NOT_LOGGED_IN.to_string(),
-                    });
-                }
+            Sent::Initialize => {
+                self.introduced = Some(body.cloned().unwrap_or(Value::Null));
+                self.introduce(out);
             }
-            Some(Sent::Model) => {
+            Sent::Settings => {
+                if let Some(applied) = body.map(|b| &b["applied"]) {
+                    if let Some(model) = text(&applied["model"]) {
+                        self.model = Some(model);
+                    }
+                    if let Some(effort) = text(&applied["effort"]) {
+                        self.effort = Some(effort);
+                    }
+                }
+                self.settings_known = true;
+                self.introduce(out);
+            }
+            Sent::Model => {
                 if let Some(model) = body.and_then(|b| text(&b["model"])) {
-                    self.configure(Some(model), None, out);
+                    self.configure(Some(model), None, None, out);
                 }
             }
-            Some(Sent::Mode) => {
+            Sent::Mode => {
                 if let Some(mode) = body.and_then(|b| text(&b["mode"])) {
-                    self.configure(None, Some(mode), out);
+                    self.configure(None, Some(mode), None, out);
                 }
             }
-            Some(Sent::Interrupt) | None => {}
+            Sent::Effort(effort) => {
+                if reply.is_ok() {
+                    self.configure(None, None, Some(effort), out);
+                }
+            }
+            Sent::Interrupt => {
+                if reply.is_err() {
+                    self.interrupting = false;
+                }
+            }
         }
         out.replies.push((id.to_string(), reply));
     }
@@ -851,10 +1185,12 @@ impl Stream {
 
 impl Driver for Stream {
     fn opening(&mut self) -> Vec<String> {
-        // Optional for the agent, and what it answers with is what the
-        // window needs before the first turn.
-        let (line, _) = self.request(Sent::Initialize, json!({ "subtype": "initialize" }));
-        vec![line]
+        // Both optional for the agent, and what it answers with is what the
+        // window needs before the first turn: what the agent is, and the
+        // model and effort it runs on.
+        let (initialize, _) = self.request(Sent::Initialize, json!({ "subtype": "initialize" }));
+        let (settings, _) = self.request(Sent::Settings, json!({ "subtype": "get_settings" }));
+        vec![initialize, settings]
     }
 
     fn read(&mut self, line: &str) -> Reading {
@@ -869,11 +1205,12 @@ impl Driver for Stream {
             Some("user") => self.user(&value, parent, &mut out),
             Some("system") => self.system(&value, &mut out),
             Some("result") => self.result(&value, &mut out),
+            Some("command_lifecycle") => self.lifecycle(&value, &mut out),
             Some("control_request") => self.asked(&value, &mut out),
             Some("control_cancel_request") => {
                 if let Some(id) = value["request_id"].as_str() {
-                    if self.asked.remove(id).is_some() {
-                        out.events.push(Event::PermissionWithdrawn {
+                    if self.asked.remove(id).is_some() || self.questions.remove(id).is_some() {
+                        out.events.push(Event::Withdrawn {
                             request: id.to_string(),
                         });
                     }
@@ -885,7 +1222,11 @@ impl Driver for Stream {
         out
     }
 
-    fn message(&mut self, text: &str, images: &[Image]) -> Result<String, String> {
+    fn takes_while_busy(&self) -> bool {
+        true
+    }
+
+    fn message(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String> {
         if text.trim().is_empty() && images.is_empty() {
             return Err("there is nothing to send".into());
         }
@@ -913,10 +1254,12 @@ impl Driver for Stream {
             }
             Value::Array(blocks)
         };
+        self.ours.insert(message.to_string());
         Ok(json!({
             "type": "user",
             "message": { "role": "user", "content": content },
             "parent_tool_use_id": null,
+            "uuid": message,
         })
         .to_string())
     }
@@ -962,10 +1305,56 @@ impl Driver for Stream {
         .to_string())
     }
 
-    fn control(&mut self, control: &Control) -> Result<(String, String), String> {
-        Ok(match control {
+    fn reply(&mut self, request: &str, answers: Option<&[Vec<String>]>) -> Result<String, String> {
+        let input = self
+            .questions
+            .get(request)
+            .ok_or("the agent is not waiting on that question")?;
+        let response = match answers {
+            None => json!({
+                "behavior": "deny",
+                "message": "The user declined to answer.",
+            }),
+            Some(answers) => {
+                let asked = questions(input);
+                if answers.len() != asked.len() {
+                    return Err(format!(
+                        "{} answers for {} questions",
+                        answers.len(),
+                        asked.len()
+                    ));
+                }
+                let mut by_question = serde_json::Map::new();
+                for (question, answer) in asked.iter().zip(answers) {
+                    let answer: Vec<&str> = answer
+                        .iter()
+                        .map(|a| a.trim())
+                        .filter(|a| !a.is_empty())
+                        .collect();
+                    if answer.is_empty() {
+                        return Err(format!("no answer to {:?}", question.question));
+                    }
+                    by_question.insert(question.question.clone(), json!(answer.join(", ")));
+                }
+                let mut updated = input.clone();
+                updated["answers"] = Value::Object(by_question);
+                json!({ "behavior": "allow", "updatedInput": updated })
+            }
+        };
+        self.questions.remove(request);
+        Ok(json!({
+            "type": "control_response",
+            "response": { "subtype": "success", "request_id": request, "response": response },
+        })
+        .to_string())
+    }
+
+    fn control(&mut self, control: &Control) -> Result<Sending, String> {
+        let (line, key) = match control {
             Control::Interrupt => {
-                self.interrupting = true;
+                // An interrupt with no turn running ends nothing, so the
+                // next failure is not taken for one.
+                self.interrupting = self.turn;
                 self.request(Sent::Interrupt, json!({ "subtype": "interrupt" }))
             }
             Control::SetModel(model) => {
@@ -975,14 +1364,28 @@ impl Driver for Stream {
                     json!({ "subtype": "set_model", "model": model }),
                 )
             }
-            Control::SetPermissionMode(mode) => {
+            Control::SetMode(mode) => {
                 let mode = checked("permission mode", mode)?.to_string();
                 self.request(
                     Sent::Mode,
                     json!({ "subtype": "set_permission_mode", "mode": mode }),
                 )
             }
-        })
+            Control::SetEffort(effort) => {
+                let effort = checked("effort", effort)?.to_string();
+                self.request(
+                    Sent::Effort(effort.clone()),
+                    json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } }),
+                )
+            }
+        };
+        Ok(Sending::Request { line, key })
+    }
+
+    fn forget(&mut self, key: &str) {
+        if self.sent.remove(key) == Some(Sent::Interrupt) {
+            self.interrupting = false;
+        }
     }
 }
 
@@ -990,8 +1393,12 @@ impl Driver for Stream {
 mod tests {
     use super::*;
 
+    const M1: &str = "11111111-1111-4111-8111-111111111111";
+    const M2: &str = "22222222-2222-4222-8222-222222222222";
+    const M3: &str = "33333333-3333-4333-8333-333333333333";
+
     fn stream() -> Stream {
-        Stream::new("s-1", Some("haiku"), None)
+        Stream::new("s-1", Some("haiku"), None, None)
     }
 
     fn events(stream: &mut Stream, lines: &[Value]) -> Vec<Event> {
@@ -999,6 +1406,31 @@ mod tests {
             .iter()
             .flat_map(|line| stream.read(&line.to_string()).events)
             .collect()
+    }
+
+    fn lifecycle(message: &str, state: &str) -> Value {
+        json!({"type":"command_lifecycle","command_uuid":message,"state":state})
+    }
+
+    fn init() -> Value {
+        json!({"type":"system","subtype":"init","model":"haiku","permissionMode":"default"})
+    }
+
+    fn result() -> Value {
+        json!({"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.01})
+    }
+
+    fn started(out: &[Event]) -> Vec<Vec<String>> {
+        out.iter()
+            .filter_map(|event| match event {
+                Event::TurnStarted { messages } => Some(messages.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn sent(stream: &mut Stream, message: &str) {
+        stream.message(message, "hi", &[]).unwrap();
     }
 
     #[test]
@@ -1018,6 +1450,151 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_names_the_messages_the_agent_said_it_took() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(M1, "queued"),
+                lifecycle(M1, "started"),
+                init(),
+                json!({"type":"user","message":{"role":"user","content":"hi"},"parent_tool_use_id":null,"uuid":M1,"isReplay":true}),
+                result(),
+                lifecycle(M1, "completed"),
+            ],
+        );
+        assert_eq!(started(&out), [vec![M1.to_string()]]);
+        assert!(
+            !out.iter().any(|e| matches!(e, Event::Message { .. })),
+            "{out:?}"
+        );
+        assert!(stream.ours.is_empty() && stream.taken.is_empty());
+    }
+
+    #[test]
+    fn messages_the_agent_took_together_start_one_turn() {
+        // As the real agent does with two messages sent while a turn ran.
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        events(&mut stream, &[lifecycle(M1, "started"), init()]);
+        sent(&mut stream, M2);
+        sent(&mut stream, M3);
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(M2, "queued"),
+                lifecycle(M3, "queued"),
+                result(),
+                lifecycle(M1, "completed"),
+                lifecycle(M2, "started"),
+                lifecycle(M3, "started"),
+                init(),
+                json!({"type":"system","subtype":"status","status":"requesting","user_message_uuids":[M2, M3]}),
+                result(),
+            ],
+        );
+        assert_eq!(started(&out), [vec![M2.to_string(), M3.to_string()]]);
+    }
+
+    #[test]
+    fn a_message_taken_while_a_turn_runs_is_taken_into_it() {
+        let mut stream = stream();
+        events(&mut stream, &[init()]);
+        sent(&mut stream, M1);
+        let out = events(&mut stream, &[lifecycle(M1, "started")]);
+        assert_eq!(
+            out,
+            [Event::Message {
+                message: M1.into(),
+                state: MessageState::Taken,
+                error: None
+            }]
+        );
+    }
+
+    #[test]
+    fn without_the_agent_s_own_lines_the_echo_names_the_message() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"user","message":{"role":"user","content":"hi"},"parent_tool_use_id":null,"uuid":M1,"isReplay":true}),
+                init(),
+            ],
+        );
+        assert_eq!(started(&out), [vec![M1.to_string()]]);
+        // An echo of something that is not one of this side's messages,
+        // such as the summary compaction writes, names nothing.
+        let out = events(
+            &mut stream,
+            &[
+                result(),
+                json!({"type":"user","message":{"role":"user","content":"summary"},"parent_tool_use_id":null,"uuid":"99999999-9999-4999-8999-999999999999","isReplay":true}),
+                init(),
+            ],
+        );
+        assert_eq!(started(&out), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_turn_the_agent_began_itself_names_nothing() {
+        let mut stream = stream();
+        let out = events(&mut stream, &[init(), result()]);
+        assert_eq!(started(&out), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_cancelled_message_is_dropped() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        let out = events(&mut stream, &[lifecycle(M1, "cancelled")]);
+        assert!(matches!(
+            &out[0],
+            Event::Message { message, state: MessageState::Dropped, .. } if message == M1
+        ));
+    }
+
+    #[test]
+    fn compacting_by_hand_is_a_turn_from_start_to_finish() {
+        // As the real agent answers `/compact`: no init before compacting.
+        let mut stream = stream();
+        stream.message(M1, "/compact", &[]).unwrap();
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(M1, "started"),
+                json!({"type":"system","subtype":"status","status":"compacting"}),
+                json!({"type":"system","subtype":"status","status":null,"compact_result":"success"}),
+                init(),
+                json!({"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":100,"post_tokens":10}}),
+                json!({"type":"result","subtype":"success","is_error":false,"num_turns":0,"result":""}),
+            ],
+        );
+        assert_eq!(
+            out[0],
+            Event::TurnStarted {
+                messages: vec![M1.into()]
+            }
+        );
+        assert_eq!(out[1], Event::Compacting);
+        assert!(out.contains(&Event::Compacted {
+            trigger: Some("manual".into()),
+            tokens_before: Some(100),
+            tokens_after: Some(10)
+        }));
+        assert!(matches!(
+            out.last(),
+            Some(Event::TurnEnded {
+                outcome: Outcome::Done,
+                ..
+            })
+        ));
+        assert_eq!(started(&out).len(), 1);
+    }
+
+    #[test]
     fn streamed_text_and_its_whole_block_share_an_id() {
         let mut stream = stream();
         let out = events(
@@ -1033,10 +1610,11 @@ mod tests {
         );
         let blocks: Vec<_> = out
             .iter()
-            .map(|event| match event {
+            .filter_map(|event| match event {
                 Event::Text {
                     block, text, done, ..
-                } => (block.clone(), text.clone(), *done),
+                } => Some((block.clone(), text.clone(), *done)),
+                Event::TurnStarted { .. } => None,
                 other => panic!("{other:?}"),
             })
             .collect();
@@ -1049,6 +1627,111 @@ mod tests {
             ]
         );
         assert!(stream.closed.is_empty() && stream.open.is_empty());
+    }
+
+    #[test]
+    fn streamed_thinking_is_told_like_text() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"x"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_stop","index":0}}),
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"thinking","thinking":"hmm","signature":"x"}]}}),
+                // A block that never streamed and carries no text is not told.
+                json!({"type":"assistant","message":{"id":"m2","content":[{"type":"thinking","thinking":"","signature":"y"}]}}),
+            ],
+        );
+        let thinking: Vec<_> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::Thinking {
+                    block, text, done, ..
+                } => Some((block.as_str(), text.as_str(), *done)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, [("m1#0", "hmm", false), ("m1#0", "hmm", true)]);
+    }
+
+    #[test]
+    fn text_a_tool_and_text_in_one_message_keep_their_own_ids() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_stop","index":0}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"Read"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_stop","index":1}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"text"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"second"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_stop","index":2}}),
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"first"}]}}),
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a"}}]}}),
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"second"}]}}),
+            ],
+        );
+        let whole: Vec<_> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::Text {
+                    block,
+                    text,
+                    done: true,
+                    ..
+                } => Some((block.as_str(), text.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(whole, [("m1#0", "first"), ("m1#2", "second")]);
+        assert!(out.contains(&Event::ToolStarted {
+            call: "t1".into(),
+            parent: None,
+            name: "Read".into(),
+            kind: ToolKind::Read
+        }));
+        assert!(stream.closed.is_empty() && stream.open.is_empty());
+    }
+
+    #[test]
+    fn parallel_tool_calls_stream_their_input_apart() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"a","name":"Grep"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"b","name":"Bash"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\""}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\""}}}),
+            ],
+        );
+        let deltas: Vec<_> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolInput {
+                    call,
+                    delta: Some(delta),
+                    ..
+                } => Some((call.as_str(), delta.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deltas, [("b", "{\"command\""), ("a", "{\"pattern\"")]);
+        let kinds: Vec<_> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::ToolStarted { kind, .. } => Some(*kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, [ToolKind::Search, ToolKind::Command]);
     }
 
     #[test]
@@ -1065,43 +1748,205 @@ mod tests {
                     "tool_use_result":{"filePath":"/p/a.txt","oldString":"one","newString":"two","structuredPatch":[{"oldStart":1,"oldLines":1,"newStart":1,"newLines":1,"lines":["-one","+two"]}]}}),
             ],
         );
+        assert_eq!(out[0], Event::TurnStarted { messages: vec![] });
         assert_eq!(
-            out[0],
+            out[1],
             Event::ToolStarted {
                 call: "t1".into(),
                 parent: None,
-                name: "Edit".into()
+                name: "Edit".into(),
+                kind: ToolKind::Edit
             }
         );
         assert!(
-            matches!(&out[1], Event::ToolInput { delta: Some(d), .. } if d == "{\"file_path\":")
+            matches!(&out[2], Event::ToolInput { delta: Some(d), .. } if d == "{\"file_path\":")
         );
         assert!(
-            matches!(&out[2], Event::ToolInput { input: Some(i), delta: None, .. } if i["file_path"] == "/p/a.txt")
+            matches!(&out[3], Event::ToolInput { input: Some(i), delta: None, .. } if i["file_path"] == "/p/a.txt")
         );
         let Event::ToolFinished {
             output,
-            change: Some(change),
+            changes,
             error: false,
             ..
-        } = &out[3]
+        } = &out[4]
         else {
-            panic!("{:?}", out[3]);
+            panic!("{:?}", out[4]);
         };
         assert_eq!(output, "ok");
-        assert_eq!(change.kind, "update");
-        assert_eq!(change.hunks[0].lines, ["-one", "+two"]);
-        assert_eq!(out.len(), 4, "{out:?}");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].kind, ChangeKind::Update);
+        assert_eq!(changes[0].hunks[0].lines, ["-one", "+two"]);
+        assert_eq!(out.len(), 5, "{out:?}");
     }
 
     #[test]
     fn a_new_file_comes_with_its_content() {
-        let change = file_change(&json!({"type":"create","filePath":"/p/n.txt","content":"one\n","structuredPatch":[],"originalFile":null})).unwrap();
-        assert_eq!(change.kind, "create");
-        assert_eq!(change.content.as_deref(), Some("one\n"));
+        let changes = file_changes(
+            &json!({"type":"create","filePath":"/p/n.txt","content":"one\n","structuredPatch":[],"originalFile":null}),
+        );
+        assert_eq!(changes[0].kind, ChangeKind::Create);
+        assert_eq!(changes[0].content.as_deref(), Some("one\n"));
         // A tool that only read a file changed nothing.
-        assert!(file_change(&json!({"type":"text","file":{"filePath":"/p/n.txt"}})).is_none());
-        assert!(file_change(&json!("Error: no")).is_none());
+        assert!(file_changes(&json!({"type":"text","file":{"filePath":"/p/n.txt"}})).is_empty());
+        assert!(file_changes(&json!("Error: no")).is_empty());
+    }
+
+    #[test]
+    fn tools_are_sorted_by_what_they_do() {
+        for (name, kind) in [
+            ("Bash", ToolKind::Command),
+            ("Write", ToolKind::Edit),
+            ("Read", ToolKind::Read),
+            ("Glob", ToolKind::Search),
+            ("WebFetch", ToolKind::Web),
+            ("Agent", ToolKind::Agent),
+            ("mcp__agent-workbench__show", ToolKind::Mcp),
+            ("Skill", ToolKind::Other),
+        ] {
+            assert_eq!(tool_kind(name), kind, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_list_of_steps_and_a_plan_to_go_ahead_with_are_plans() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[
+                    {"content":"read","status":"completed","activeForm":"Reading"},
+                    {"content":"write","status":"in_progress","activeForm":"Writing"},
+                    {"content":"test","status":"pending","activeForm":"Testing"}]}}]}}),
+                json!({"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","input":{"plan":"1. do it"},"tool_use_id":"t2",
+                    "permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}}),
+            ],
+        );
+        let plans: Vec<_> = out
+            .iter()
+            .filter(|e| matches!(e, Event::Plan { .. }))
+            .collect();
+        assert_eq!(
+            plans[0],
+            &Event::Plan {
+                call: Some("t1".into()),
+                parent: None,
+                text: None,
+                steps: vec![
+                    PlanStep {
+                        text: "read".into(),
+                        status: StepStatus::Done
+                    },
+                    PlanStep {
+                        text: "write".into(),
+                        status: StepStatus::Active
+                    },
+                    PlanStep {
+                        text: "test".into(),
+                        status: StepStatus::Pending
+                    },
+                ],
+            }
+        );
+        assert_eq!(
+            plans[1],
+            &Event::Plan {
+                call: Some("t2".into()),
+                parent: None,
+                text: Some("1. do it".into()),
+                steps: vec![],
+            }
+        );
+        // Going ahead with the plan is a permission: allowing it is the
+        // answer, with the input as it was.
+        assert!(
+            matches!(out.last(), Some(Event::PermissionAsked { tool, .. }) if tool == "ExitPlanMode")
+        );
+        let line: Value =
+            serde_json::from_str(&stream.answer("p1", Choice::Allow, None).unwrap()).unwrap();
+        assert_eq!(
+            line["response"]["response"]["updatedInput"]["plan"],
+            "1. do it"
+        );
+    }
+
+    #[test]
+    fn a_question_is_asked_and_answered_apart_from_permissions() {
+        let mut stream = stream();
+        let asked = json!({"type":"control_request","request_id":"q1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"t1","requires_user_interaction":true,
+            "input":{"questions":[
+                {"question":"Which colour?","header":"Colour","options":[{"label":"Red","description":"warm"},{"label":"Blue","description":"cool"}],"multiSelect":false},
+                {"question":"Which sizes?","header":"Size","options":[{"label":"S"},{"label":"M"}],"multiSelect":true}]}}});
+        let out = events(&mut stream, std::slice::from_ref(&asked));
+        let Event::QuestionAsked {
+            request,
+            call,
+            questions,
+            ..
+        } = &out[0]
+        else {
+            panic!("{out:?}");
+        };
+        assert_eq!((request.as_str(), call.as_deref()), ("q1", Some("t1")));
+        assert_eq!(questions.len(), 2);
+        assert_eq!(questions[0].header.as_deref(), Some("Colour"));
+        assert_eq!(questions[0].options[1].label, "Blue");
+        assert!(!questions[0].multiple && questions[1].multiple);
+        assert!(
+            stream.answer("q1", Choice::Allow, None).is_err(),
+            "not a permission"
+        );
+        assert!(
+            stream.reply("q1", Some(&[vec!["Red".into()]])).is_err(),
+            "one answer short"
+        );
+        assert!(stream
+            .reply("q1", Some(&[vec!["Red".into()], vec![" ".into()]]))
+            .is_err());
+
+        let line: Value = serde_json::from_str(
+            &stream
+                .reply(
+                    "q1",
+                    Some(&[vec!["Teal, my own".into()], vec!["S".into(), "M".into()]]),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        let response = &line["response"]["response"];
+        assert_eq!(response["behavior"], "allow");
+        assert_eq!(
+            response["updatedInput"]["answers"],
+            json!({"Which colour?": "Teal, my own", "Which sizes?": "S, M"})
+        );
+        assert_eq!(response["updatedInput"]["questions"][0]["header"], "Colour");
+        assert!(stream.reply("q1", None).is_err(), "answered once");
+
+        events(&mut stream, &[asked]);
+        let line: Value = serde_json::from_str(&stream.reply("q1", None).unwrap()).unwrap();
+        assert_eq!(line["response"]["response"]["behavior"], "deny");
+    }
+
+    #[test]
+    fn a_withdrawn_question_is_withdrawn() {
+        let mut stream = stream();
+        events(
+            &mut stream,
+            &[
+                json!({"type":"control_request","request_id":"q1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":[]}}}),
+            ],
+        );
+        let out = events(
+            &mut stream,
+            &[json!({"type":"control_cancel_request","request_id":"q1"})],
+        );
+        assert_eq!(
+            out,
+            [Event::Withdrawn {
+                request: "q1".into()
+            }]
+        );
+        assert!(stream.reply("q1", None).is_err());
     }
 
     fn offered(out: &[Event]) -> Vec<(Choice, Option<String>)> {
@@ -1269,10 +2114,18 @@ mod tests {
         assert_eq!(answer["response"]["request_id"], "h1");
     }
 
+    fn interrupt(stream: &mut Stream) -> String {
+        let Sending::Request { key, .. } = stream.control(&Control::Interrupt).unwrap() else {
+            panic!("an interrupt asks the agent");
+        };
+        key
+    }
+
     #[test]
     fn an_interrupted_turn_says_so_and_a_failed_one_says_why() {
         let mut stream = stream();
-        stream.control(&Control::Interrupt).unwrap();
+        events(&mut stream, &[init()]);
+        interrupt(&mut stream);
         let out = events(
             &mut stream,
             &[
@@ -1298,7 +2151,7 @@ mod tests {
             error,
             usage,
             ..
-        } = &out[0]
+        } = &out[1]
         else {
             panic!("{out:?}");
         };
@@ -1308,36 +2161,130 @@ mod tests {
     }
 
     #[test]
-    fn signed_out_is_told_at_the_start_and_on_the_first_message() {
+    fn an_interrupt_with_no_turn_running_marks_nothing() {
+        // The real agent answers it and says nothing more.
         let mut stream = stream();
-        let (line, id) = (stream.opening().remove(0), "wb-1");
-        assert!(line.contains("initialize"));
+        let key = interrupt(&mut stream);
         let reading = stream.read(
-            &json!({"type":"control_response","response":{"subtype":"success","request_id":id,"response":{
-                "account":{"tokenSource":"none","apiProvider":"firstParty"},
+            &json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":{"still_queued":[]}}}).to_string(),
+        );
+        assert!(reading.events.is_empty());
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                json!({"type":"result","subtype":"error_during_execution","is_error":true,"errors":["the API failed"]}),
+            ],
+        );
+        assert!(
+            matches!(&out[1], Event::TurnEnded { outcome: Outcome::Failed, error: Some(e), .. } if e == "the API failed"),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn an_interrupt_the_agent_refused_or_never_answered_marks_nothing() {
+        let mut stream = stream();
+        events(&mut stream, &[init()]);
+        let key = interrupt(&mut stream);
+        stream.read(
+            &json!({"type":"control_response","response":{"subtype":"error","request_id":key,"error":"no"}}).to_string(),
+        );
+        let failed = json!({"type":"result","subtype":"error_during_execution","is_error":true});
+        let out = events(&mut stream, std::slice::from_ref(&failed));
+        assert!(matches!(
+            out[0],
+            Event::TurnEnded {
+                outcome: Outcome::Failed,
+                ..
+            }
+        ));
+
+        events(&mut stream, &[init()]);
+        let key = interrupt(&mut stream);
+        stream.forget(&key);
+        let out = events(&mut stream, &[failed]);
+        assert!(matches!(
+            out[0],
+            Event::TurnEnded {
+                outcome: Outcome::Failed,
+                ..
+            }
+        ));
+    }
+
+    fn opened(stream: &mut Stream, account: Value, applied: Value) -> Vec<Event> {
+        let lines = stream.opening();
+        assert!(lines[0].contains("\"initialize\"") && lines[1].contains("\"get_settings\""));
+        let mut out = events(
+            stream,
+            &[
+                json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-1","response":{
+                "account":account,
                 "current_permission_mode":"default","claude_code_version":"9.9.9",
-                "models":[{"value":"haiku","displayName":"Haiku","description":"fast"}],
-                "commands":[{"name":"compact","description":"Compact","argumentHint":""}]}}})
-            .to_string(),
+                "models":[
+                    {"value":"haiku","resolvedModel":"claude-haiku","displayName":"Haiku","description":"fast"},
+                    {"value":"sonnet","resolvedModel":"claude-sonnet","displayName":"Sonnet","supportedEffortLevels":["low","high"]}],
+                "commands":[{"name":"compact","description":"Compact","argumentHint":""}]}}}),
+            ],
+        );
+        assert!(out.is_empty(), "ready waits for the settings: {out:?}");
+        out.extend(events(
+            stream,
+            &[json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-2","response":{"applied":applied}}})],
+        ));
+        out
+    }
+
+    #[test]
+    fn ready_says_what_the_agent_is_and_offers() {
+        let mut stream = stream();
+        let out = opened(
+            &mut stream,
+            json!({"apiProvider":"firstParty","subscriptionType":"pro"}),
+            json!({"model":"claude-sonnet","effort":"high"}),
         );
         let Event::Ready {
             model,
-            permission_mode,
+            mode,
+            effort,
             version,
             models,
+            modes,
+            efforts,
             commands,
             ..
-        } = &reading.events[0]
+        } = &out[0]
         else {
-            panic!("{:?}", reading.events);
+            panic!("{out:?}");
         };
-        assert_eq!(model.as_deref(), Some("haiku"));
-        assert_eq!(permission_mode.as_deref(), Some("default"));
+        assert_eq!(model.as_deref(), Some("claude-sonnet"));
+        assert_eq!(mode.as_deref(), Some("default"));
+        assert_eq!(effort.as_deref(), Some("high"));
         assert_eq!(version.as_deref(), Some("9.9.9"));
-        assert_eq!(models[0].name.as_deref(), Some("Haiku"));
+        assert_eq!(models[1].efforts, ["low", "high"]);
+        assert_eq!(
+            efforts,
+            &["low", "high"],
+            "the efforts of the model it runs on"
+        );
+        assert!(modes.iter().any(|mode| mode.value == "plan"));
+        assert!(!modes.iter().any(|mode| mode.value == "bypassPermissions"));
         assert_eq!(commands[0].hint, None);
+        assert_eq!(out.len(), 1, "signed in: {out:?}");
+    }
+
+    #[test]
+    fn signed_out_is_told_at_the_start_and_on_the_first_message() {
+        let mut stream = stream();
+        let out = opened(
+            &mut stream,
+            json!({"tokenSource":"none","apiProvider":"firstParty"}),
+            json!({}),
+        );
+        assert!(matches!(out[0], Event::Ready { .. }));
         assert!(matches!(
-            reading.events[1],
+            out[1],
             Event::Error {
                 kind: ErrorKind::NotLoggedIn,
                 ..
@@ -1351,7 +2298,7 @@ mod tests {
             ],
         );
         assert!(matches!(
-            out[0],
+            out[1],
             Event::Error {
                 kind: ErrorKind::NotLoggedIn,
                 ..
@@ -1373,7 +2320,7 @@ mod tests {
                 json!({"type":"system","subtype":"task_started","task_id":"a1","tool_use_id":"t1","description":"look","task_type":"local_agent","is_backgrounded":true,"prompt":"find it"}),
                 json!({"type":"assistant","parent_tool_use_id":"t1","message":{"id":"m9","content":[{"type":"text","text":"banana"}]}}),
                 json!({"type":"system","subtype":"task_progress","task_id":"a1","last_tool_name":"Grep"}),
-                json!({"type":"system","subtype":"task_notification","task_id":"a1","status":"completed","summary":"found"}),
+                json!({"type":"system","subtype":"task_notification","task_id":"a1","status":"stopped","summary":"found"}),
             ],
         );
         assert!(
@@ -1384,14 +2331,27 @@ mod tests {
             matches!(&out[2], Event::TaskProgress { call: Some(c), tool: Some(t), .. } if c == "t1" && t == "Grep")
         );
         assert!(
-            matches!(&out[3], Event::TaskFinished { call: Some(c), summary: Some(s), .. } if c == "t1" && s == "found")
+            matches!(&out[3], Event::TaskFinished { call: Some(c), summary: Some(s), status: TaskStatus::Stopped, .. } if c == "t1" && s == "found")
         );
+        assert!(!stream.turn, "a subagent's lines start no turn");
+    }
+
+    fn control_key(stream: &mut Stream, control: Control) -> String {
+        let Sending::Request { key, .. } = stream.control(&control).unwrap() else {
+            panic!("asks the agent");
+        };
+        key
     }
 
     #[test]
-    fn model_and_mode_changes_are_told_once_each() {
+    fn the_model_the_mode_and_the_effort_change_and_are_told_once_each() {
         let mut stream = stream();
-        let (_, key) = stream.control(&Control::SetModel("sonnet".into())).unwrap();
+        opened(
+            &mut stream,
+            json!({"apiProvider":"firstParty","subscriptionType":"pro"}),
+            json!({"model":"claude-haiku"}),
+        );
+        let key = control_key(&mut stream, Control::SetModel("sonnet".into()));
         let reading = stream.read(
             &json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":{"model":"claude-sonnet"}}}).to_string(),
         );
@@ -1400,17 +2360,38 @@ mod tests {
             reading.events,
             [Event::Configured {
                 model: Some("claude-sonnet".into()),
-                permission_mode: None
+                mode: Some("default".into()),
+                effort: None,
+                efforts: vec!["low".into(), "high".into()],
             }]
         );
         // The same model again from the next turn's description is no news.
         let out = events(
             &mut stream,
-            &[json!({"type":"system","subtype":"init","model":"claude-sonnet"})],
+            &[
+                json!({"type":"system","subtype":"init","model":"claude-sonnet","permissionMode":"default"}),
+            ],
         );
-        assert_eq!(out, [Event::TurnStarted { message: None }]);
+        assert_eq!(out, [Event::TurnStarted { messages: vec![] }]);
 
-        let (_, key) = stream.control(&Control::SetModel("nope".into())).unwrap();
+        let key = control_key(&mut stream, Control::SetEffort("low".into()));
+        let reading = stream.read(
+            &json!({"type":"control_response","response":{"subtype":"success","request_id":key}})
+                .to_string(),
+        );
+        assert!(
+            matches!(&reading.events[0], Event::Configured { effort: Some(e), .. } if e == "low")
+        );
+
+        let key = control_key(&mut stream, Control::SetMode("plan".into()));
+        let reading = stream.read(
+            &json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":{"mode":"plan"}}}).to_string(),
+        );
+        assert!(
+            matches!(&reading.events[0], Event::Configured { mode: Some(m), .. } if m == "plan")
+        );
+
+        let key = control_key(&mut stream, Control::SetModel("nope".into()));
         let reading = stream.read(
             &json!({"type":"control_response","response":{"subtype":"error","request_id":key,"error":"Model 'nope' not found"}}).to_string(),
         );
@@ -1420,11 +2401,52 @@ mod tests {
     }
 
     #[test]
+    fn a_mode_change_the_agent_reports_by_itself_is_told() {
+        let mut stream = stream();
+        opened(
+            &mut stream,
+            json!({"apiProvider":"firstParty","subscriptionType":"pro"}),
+            json!({}),
+        );
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"status","status":null,"permissionMode":"acceptEdits"}),
+            ],
+        );
+        assert!(
+            matches!(&out[..], [Event::Configured { mode: Some(m), .. }] if m == "acceptEdits")
+        );
+    }
+
+    #[test]
+    fn a_retry_is_told_and_the_turn_goes_on() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                json!({"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":500,"error_status":529,"error":{"message":"Overloaded"}}),
+            ],
+        );
+        assert_eq!(
+            out[1],
+            Event::Retrying {
+                message: "Overloaded".into(),
+                attempt: Some(2),
+                attempts: Some(10)
+            }
+        );
+        assert!(stream.turn);
+    }
+
+    #[test]
     fn images_go_as_content_blocks_beside_the_text() {
         let mut stream = stream();
         let line: Value = serde_json::from_str(
             &stream
                 .message(
+                    M1,
                     "look",
                     &[Image {
                         media_type: "image/png".into(),
@@ -1437,9 +2459,11 @@ mod tests {
         let content = &line["message"]["content"];
         assert_eq!(content[0]["text"], "look");
         assert_eq!(content[1]["source"]["media_type"], "image/png");
-        assert!(stream.message("  ", &[]).is_err());
+        assert_eq!(line["uuid"], M1);
+        assert!(stream.message(M2, "  ", &[]).is_err());
         assert!(stream
             .message(
+                M2,
                 "x",
                 &[Image {
                     media_type: "text/html".into(),
@@ -1447,28 +2471,7 @@ mod tests {
                 }]
             )
             .is_err());
-        let plain: Value = serde_json::from_str(&stream.message("hi", &[]).unwrap()).unwrap();
+        let plain: Value = serde_json::from_str(&stream.message(M3, "hi", &[]).unwrap()).unwrap();
         assert_eq!(plain["message"]["content"], "hi");
-    }
-
-    #[test]
-    fn compaction_is_told_from_start_to_finish() {
-        let mut stream = stream();
-        let out = events(
-            &mut stream,
-            &[
-                json!({"type":"system","subtype":"status","status":"compacting"}),
-                json!({"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":100,"post_tokens":10}}),
-            ],
-        );
-        assert_eq!(out[0], Event::Compacting);
-        assert_eq!(
-            out[1],
-            Event::Compacted {
-                trigger: Some("manual".into()),
-                tokens_before: Some(100),
-                tokens_after: Some(10)
-            }
-        );
     }
 }

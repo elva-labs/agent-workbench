@@ -213,9 +213,11 @@ mod client {
         std::fs::write(
             &claude,
             r#"#!/bin/sh
-read -r line
-id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
-printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{}}}\n' "$id"
+for request in initialize get_settings; do
+  read -r line
+  id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+  printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{}}}\n' "$id"
+done
 read -r line
 printf '%s\n' '{"type":"system","subtype":"init","model":"m"}'
 printf '%s\n' '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"from afar"}]},"parent_tool_use_id":null}'
@@ -275,10 +277,12 @@ while read -r line; do :; done
             panic!("no {kind}: {:?}", events.lock().unwrap());
         };
         seen("ready");
-        let message = connection
-            .call("integrated_send", json!({ "id": id, "text": "hello" }))
+        connection
+            .call(
+                "integrated_send",
+                json!({ "id": id, "message": "11111111-1111-4111-8111-111111111111", "text": "hello" }),
+            )
             .unwrap();
-        assert!(message.is_string());
         seen("turnEnded");
         assert!(events
             .lock()

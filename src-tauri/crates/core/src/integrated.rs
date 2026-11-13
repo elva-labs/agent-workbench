@@ -66,10 +66,10 @@ const STDERR_KEEP: usize = 4096;
 /// A session's news. Every event names the session it belongs to by `id`
 /// beside the fields listed here, and its kind by `type`.
 ///
-/// Text, thinking and tool calls carry `parent`: the id of the tool call
-/// that started the subagent they belong to, or null in the main
-/// conversation. A subagent's messages are tied to the call that started
-/// it that way.
+/// Text, thinking, tool calls, plans and requests carry `parent`: the id of
+/// the tool call that started the subagent they belong to, or null in the
+/// main conversation. A subagent's messages are tied to the call that
+/// started it that way.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(
     tag = "type",
@@ -78,36 +78,52 @@ const STDERR_KEEP: usize = 4096;
 )]
 pub enum Event {
     /// The agent is up. Sent once, before anything else the agent says.
-    /// `model` and `permissionMode` are what the session runs on as far as
-    /// is known yet, `configured` follows when either changes; `models` and
-    /// `commands` are what the agent offers to switch to and to type.
+    /// `model`, `mode` and `effort` are what the session runs on as far as
+    /// is known yet, and `configured` follows when any changes. `models`,
+    /// `modes` and `efforts` are what the agent offers to switch to, the
+    /// efforts being those of the model it runs on; `commands` are the
+    /// slash commands it takes in a message.
     Ready {
         session_id: String,
         model: Option<String>,
-        permission_mode: Option<String>,
+        mode: Option<String>,
+        effort: Option<String>,
         version: Option<String>,
         models: Vec<ModelInfo>,
+        modes: Vec<ModeInfo>,
+        efforts: Vec<String>,
         commands: Vec<CommandInfo>,
     },
-    /// The model or the permission mode the session runs on changed, or
-    /// became known for the first time. Both are given, as they now are.
+    /// The model, the mode or the effort changed, or became known. All
+    /// are given as they now are, with the efforts the model now on takes.
     Configured {
         model: Option<String>,
-        permission_mode: Option<String>,
+        mode: Option<String>,
+        effort: Option<String>,
+        efforts: Vec<String>,
     },
-    /// A message the window sent waits behind a turn already running. Its
-    /// own turn starts later, with `turnStarted` naming it.
-    MessageQueued { message: String },
-    /// The agent began a turn. `message` is the id of the message it
-    /// answers, as `send` returned it, or null for a turn the agent began by
+    /// Where a message the window sent stands, between `send` and the turn
+    /// that answers it: `queued` while it waits behind a turn already
+    /// running, `taken` when the running turn took it in, and `dropped`,
+    /// with `error`, when it will not be answered at all.
+    Message {
+        message: String,
+        state: MessageState,
+        error: Option<String>,
+    },
+    /// The agent began a turn. `messages` are the ids of the messages it
+    /// answers, as the window chose them; several sent while the last turn
+    /// ran may be answered by one. Empty for a turn the agent began by
     /// itself, after background work it had started finished.
-    TurnStarted { message: Option<String> },
-    /// The turn ended. `error` says why one that failed did; `costUsd`,
-    /// `durationMs` and `usage` are what the agent reports for it.
+    TurnStarted { messages: Vec<String> },
+    /// The turn ended. `error` says why one that failed did. `durationMs`
+    /// and `usage` are the turn's own; `totalCostUsd` is the running total
+    /// the agent reports for its whole process so far, turns it began by
+    /// itself and compaction included, not the turn's cost.
     TurnEnded {
         outcome: Outcome,
         error: Option<String>,
-        cost_usd: Option<f64>,
+        total_cost_usd: Option<f64>,
         duration_ms: Option<u64>,
         usage: Option<Usage>,
     },
@@ -127,29 +143,52 @@ pub enum Event {
         text: String,
         done: bool,
     },
-    /// The agent began a tool call.
+    /// The agent began a tool call. `name` is the agent's own name for the
+    /// tool; `kind` what sort of tool it is, for a window that draws each
+    /// sort its own way.
     ToolStarted {
         call: String,
         parent: Option<String>,
         name: String,
+        kind: ToolKind,
     },
-    /// A tool call's input. While it streams `delta` is the next piece of
-    /// its JSON text; once complete, `input` is the whole of it.
+    /// A tool call's input, in the agent's own shape. While it streams
+    /// `delta` is the next piece of its JSON text; once complete, `input`
+    /// is the whole of it.
     ToolInput {
         call: String,
         parent: Option<String>,
         delta: Option<String>,
         input: Option<Value>,
     },
-    /// A tool call finished. `output` is its result as text; `change` is
-    /// the file it changed, for a tool that changes one.
+    /// The next piece of a running tool call's output, for an agent that
+    /// streams it.
+    ToolOutput {
+        call: String,
+        parent: Option<String>,
+        delta: String,
+    },
+    /// A tool call finished. `output` is its result as text; `changes` the
+    /// files it created, updated, deleted or moved.
     ToolFinished {
         call: String,
         parent: Option<String>,
         output: String,
         error: bool,
-        change: Option<FileChange>,
+        changes: Vec<FileChange>,
     },
+    /// The agent's plan for the work, whole each time it changes: `text`
+    /// where it wrote one out, `steps` where it keeps a list. `call` is
+    /// the tool call that carried it, when one did.
+    Plan {
+        call: Option<String>,
+        parent: Option<String>,
+        text: Option<String>,
+        steps: Vec<PlanStep>,
+    },
+    /// Everything the turn has changed so far, as one unified diff, for an
+    /// agent that keeps one.
+    TurnDiff { diff: String },
     /// The agent asks to use a tool. `request` is what the answer names;
     /// `call` the tool call it is for; `path` the file or directory that
     /// made it ask, when there is one; `choices` the answers it takes, each
@@ -164,9 +203,18 @@ pub enum Event {
         path: Option<String>,
         choices: Vec<Offer>,
     },
-    /// The agent no longer waits for an answer to a permission request: the
-    /// turn was interrupted, or the session ended.
-    PermissionWithdrawn { request: String },
+    /// The agent asks the user something, answered with `reply`: each
+    /// question with options to pick from, and room for an answer of the
+    /// user's own.
+    QuestionAsked {
+        request: String,
+        call: Option<String>,
+        parent: Option<String>,
+        questions: Vec<Question>,
+    },
+    /// The agent no longer waits for an answer to a permission request or
+    /// a question: the turn was interrupted, or the session ended.
+    Withdrawn { request: String },
     /// A subagent or a background task started. `call` is the tool call
     /// that started it, which its messages name as their parent.
     TaskStarted {
@@ -188,7 +236,7 @@ pub enum Event {
     TaskFinished {
         task: String,
         call: Option<String>,
-        status: String,
+        status: TaskStatus,
         summary: Option<String>,
     },
     /// The agent began compacting the conversation.
@@ -198,6 +246,13 @@ pub enum Event {
         trigger: Option<String>,
         tokens_before: Option<u64>,
         tokens_after: Option<u64>,
+    },
+    /// A request to the agent's model failed and the agent will try again
+    /// by itself: the turn goes on. `attempt` of `attempts`, where told.
+    Retrying {
+        message: String,
+        attempt: Option<u64>,
+        attempts: Option<u64>,
     },
     /// What the session is doing changed. Sent on every change, so the last
     /// one is the session's state.
@@ -215,6 +270,18 @@ pub struct ModelInfo {
     pub value: String,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// The efforts it takes, none for a model that takes no effort.
+    pub efforts: Vec<String>,
+}
+
+/// A mode the session can run in: how much the agent may do without asking.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModeInfo {
+    /// What a mode change takes.
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -225,6 +292,14 @@ pub struct CommandInfo {
     pub description: Option<String>,
     /// What the command takes after its name, for a placeholder.
     pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MessageState {
+    Queued,
+    Taken,
+    Dropped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -244,15 +319,47 @@ pub struct Usage {
     pub cache_write_tokens: u64,
 }
 
-/// A file a tool call changed. `kind` is `create` for a new file, whose
-/// `content` is given, or `update`, whose `hunks` say what changed.
+/// What sort of tool a call is, whatever the agent calls it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolKind {
+    /// Runs a shell command.
+    Command,
+    /// Creates, changes or deletes files.
+    Edit,
+    /// Reads a file.
+    Read,
+    /// Looks for files or for text in them.
+    Search,
+    /// Reads from the web.
+    Web,
+    /// A tool of an MCP server.
+    Mcp,
+    /// Starts a subagent.
+    Agent,
+    Other,
+}
+
+/// A file a tool call changed. `create` comes with the new file's
+/// `content`; `update` with `hunks` saying what changed; `delete` with
+/// neither; `move` with `to`, where it went, and hunks if it changed too.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,
-    pub kind: String,
+    pub kind: ChangeKind,
+    pub to: Option<String>,
     pub hunks: Vec<Hunk>,
     pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeKind {
+    Create,
+    Update,
+    Delete,
+    Move,
 }
 
 /// A hunk of a unified diff: each line starts with `+`, `-` or a space.
@@ -266,6 +373,39 @@ pub struct Hunk {
     pub lines: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStep {
+    pub text: String,
+    pub status: StepStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StepStatus {
+    Pending,
+    Active,
+    Done,
+}
+
+/// One thing the agent asks the user. `header` is a short label for it;
+/// `multiple` whether more than one option may be picked.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    pub header: Option<String>,
+    pub question: String,
+    pub options: Vec<QuestionOption>,
+    pub multiple: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TaskKind {
@@ -276,6 +416,15 @@ pub enum TaskKind {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskStatus {
+    Completed,
+    Failed,
+    /// Stopped by the user or the agent before it was done.
+    Stopped,
+}
+
 /// What a session is doing, for the sessions pane's row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -283,7 +432,7 @@ pub enum SessionState {
     /// A turn runs, a message waits for one, the conversation is being
     /// compacted, or a subagent the agent started is still at work.
     Working,
-    /// The agent waits for an answer to a permission request.
+    /// The agent waits for an answer to a permission request or a question.
     Asking,
     /// Nothing runs: the agent waits for the user.
     Idle,
@@ -370,7 +519,8 @@ pub struct Launch<'a> {
     pub session: &'a str,
     pub resume: bool,
     pub model: Option<&'a str>,
-    pub permission_mode: Option<&'a str>,
+    pub mode: Option<&'a str>,
+    pub effort: Option<&'a str>,
     /// The account's configuration directory, expanded. The agent's own
     /// when None.
     pub config_dir: Option<&'a Path>,
@@ -407,19 +557,31 @@ pub trait Protocol: Send + Sync {
 /// trust command.
 pub const UNTRUSTED: &str = "untrusted";
 
-/// A control request the window sends while the session runs.
+/// A request the window makes of a running session, beside its messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Control {
     Interrupt,
     SetModel(String),
-    SetPermissionMode(String),
+    SetMode(String),
+    SetEffort(String),
+}
+
+/// How a driver carries out a control request.
+#[derive(Debug)]
+pub enum Sending {
+    /// A line for the agent, whose reply comes back by `key` in a
+    /// [`Reading`].
+    Request { line: String, key: String },
+    /// Settled without asking the agent, such as a setting the agent takes
+    /// with the next message: the reply, and the events it makes.
+    Local { reply: Value, events: Vec<Event> },
 }
 
 /// What one line from the agent meant.
 #[derive(Debug, Default)]
 pub struct Reading {
     pub events: Vec<Event>,
-    /// Answers to control requests, by the key [`Driver::control`] gave.
+    /// Answers to control requests, by the key [`Sending::Request`] gave.
     pub replies: Vec<(String, Result<Value, String>)>,
     /// Lines to write back at once.
     pub writes: Vec<String>,
@@ -428,6 +590,13 @@ pub struct Reading {
 /// One session's side of an agent's protocol. It holds whatever the agent's
 /// stream needs remembered between lines, and never fails on a line: one it
 /// cannot read means nothing.
+///
+/// The driver says what the agent says; the core keeps the session's
+/// state. A message is sent under the id the window chose for it, and the
+/// driver names it again in [`Event::TurnStarted`] or [`Event::Message`]
+/// when the agent says it took it, or dropped it. Whatever a driver leaves
+/// open when a turn ends, the core closes: a tool call with no finish
+/// finishes as failed.
 pub trait Driver: Send {
     /// Lines to write as soon as the process is up. The answer to them
     /// produces [`Event::Ready`].
@@ -436,8 +605,13 @@ pub trait Driver: Send {
     /// One line from the agent's stdout, without its newline.
     fn read(&mut self, line: &str) -> Reading;
 
-    /// The line that sends the user's message.
-    fn message(&mut self, text: &str, images: &[Image]) -> Result<String, String>;
+    /// Whether the agent takes a message while a turn runs. When it does
+    /// not, the core holds each message until no turn runs, and hands it
+    /// over then.
+    fn takes_while_busy(&self) -> bool;
+
+    /// The line that sends the user's message, under the window's id.
+    fn message(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String>;
 
     /// The line that answers a permission request.
     fn answer(
@@ -447,33 +621,51 @@ pub trait Driver: Send {
         message: Option<&str>,
     ) -> Result<String, String>;
 
-    /// The line for a control request, and the key its reply comes back by.
-    fn control(&mut self, control: &Control) -> Result<(String, String), String>;
+    /// The line that answers a question, each answer the labels picked or
+    /// the user's own words; None declines to answer.
+    fn reply(&mut self, request: &str, answers: Option<&[Vec<String>]>) -> Result<String, String>;
+
+    /// How a control request goes.
+    fn control(&mut self, control: &Control) -> Result<Sending, String>;
+
+    /// A control request whose reply the core no longer waits for.
+    fn forget(&mut self, _key: &str) {}
+}
+
+/// The model, mode and effort the session runs on, as its events last
+/// said.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    pub model: Option<String>,
+    pub mode: Option<String>,
+    pub effort: Option<String>,
 }
 
 /// The state of a session as its events say it, and the bookkeeping that
 /// says it.
 ///
-/// A message the window sends is pending until a turn starts for it.
-/// Turns start in the order the messages were sent, so a turn that starts
-/// while messages are pending answers the oldest of them; a turn that
-/// starts with none pending is one the agent began by itself. A message
-/// sent while a turn runs, or while others still wait, is queued, and says
-/// so with [`Event::MessageQueued`].
+/// A message the window sends is pending until the agent takes it, which
+/// the driver says by naming it in a turn's start or as taken into the
+/// running turn. A message sent while a turn runs, or while others still
+/// wait, is queued, and says so.
 ///
 /// The state is derived from the same events, never from timing:
-/// [`SessionState::Asking`] while any permission request waits for an
-/// answer; [`SessionState::Working`] while a turn runs, a message is
-/// pending, the conversation is being compacted, or a subagent is still at
-/// work or has finished outside a turn, since its report starts the next
-/// one. That keeps a session that ended its turn to wait for its subagents
-/// working until the turn that takes their report ends; and
+/// [`SessionState::Asking`] while any request waits for an answer;
+/// [`SessionState::Working`] while a turn runs, a message is pending, the
+/// conversation is being compacted, or a subagent is still at work or has
+/// finished outside a turn, since its report starts the next one. That
+/// keeps a session that ended its turn to wait for its subagents working
+/// until the turn that takes their report ends; and
 /// [`SessionState::Idle`] otherwise. A background shell command does not
 /// keep a session working: it may be a server that runs for as long as the
 /// session does.
 #[derive(Debug, Default)]
 struct Tracker {
-    pending: VecDeque<String>,
+    /// Sent and not yet taken, in the order sent.
+    pending: Vec<String>,
+    /// Every message id used, so none is used twice.
+    used: BTreeSet<String>,
     turn: bool,
     asking: BTreeSet<String>,
     subagents: BTreeSet<String>,
@@ -481,8 +673,8 @@ struct Tracker {
     /// is coming.
     reporting: bool,
     compacting: bool,
+    settings: Settings,
     state: Option<SessionState>,
-    next_message: u64,
 }
 
 impl Tracker {
@@ -510,31 +702,84 @@ impl Tracker {
         })
     }
 
-    /// A message the window is sending: its id, and whether it waits behind
-    /// something.
-    fn send(&mut self) -> (String, bool) {
-        self.next_message += 1;
-        let id = format!("message-{}", self.next_message);
+    /// Takes a message id the window chose, and says whether the message
+    /// waits behind something.
+    fn send(&mut self, message: &str) -> Result<bool, String> {
+        if uuid::Uuid::parse_str(message).is_err() {
+            return Err(format!("{message:?} is not a UUID"));
+        }
+        if !self.used.insert(message.to_string()) {
+            return Err(format!("message {message} was sent already"));
+        }
         let queued = self.turn || !self.pending.is_empty();
-        self.pending.push_back(id.clone());
-        (id, queued)
+        self.pending.push(message.to_string());
+        Ok(queued)
+    }
+
+    /// A message that could not be sent after all.
+    fn unsend(&mut self, message: &str) {
+        self.pending.retain(|m| m != message);
     }
 
     /// Takes an event from the driver, fills in what the tracker knows, and
     /// hands back what goes out.
     fn observe(&mut self, event: Event, out: &mut Vec<Event>) {
         match &event {
-            Event::TurnStarted { .. } => {
+            Event::Ready {
+                model,
+                mode,
+                effort,
+                ..
+            }
+            | Event::Configured {
+                model,
+                mode,
+                effort,
+                ..
+            } => {
+                self.settings = Settings {
+                    model: model.clone(),
+                    mode: mode.clone(),
+                    effort: effort.clone(),
+                };
+            }
+            Event::TurnStarted { messages } => {
+                let messages: Vec<String> = messages
+                    .iter()
+                    .filter(|message| self.pending.contains(message))
+                    .cloned()
+                    .collect();
                 if self.turn {
-                    // A second start with no end between is the same turn.
+                    // A second start with no end between is the same turn,
+                    // and what it names was taken into it.
+                    for message in messages {
+                        self.observe(
+                            Event::Message {
+                                message,
+                                state: MessageState::Taken,
+                                error: None,
+                            },
+                            out,
+                        );
+                    }
                     return;
                 }
                 self.turn = true;
                 self.reporting = false;
-                let message = self.pending.pop_front();
-                out.push(Event::TurnStarted { message });
+                self.pending.retain(|m| !messages.contains(m));
+                out.push(Event::TurnStarted { messages });
                 self.push_state(out);
                 return;
+            }
+            Event::Message {
+                message,
+                state: MessageState::Taken | MessageState::Dropped,
+                ..
+            } => {
+                if !self.pending.contains(message) {
+                    return;
+                }
+                self.unsend(message);
             }
             // Something of the main conversation arriving with no turn
             // running starts one: the agent began it without saying so.
@@ -543,22 +788,21 @@ impl Tracker {
             | Event::ToolStarted { parent: None, .. }
                 if !self.turn =>
             {
-                self.observe(Event::TurnStarted { message: None }, out);
+                self.observe(Event::TurnStarted { messages: vec![] }, out);
             }
             Event::TurnEnded { .. } => {
                 if !self.turn {
-                    // An end for a turn never seen to start: one the agent
-                    // ran on a pending message without a start line.
-                    self.pending.pop_front();
+                    // An end for a turn never seen to start.
+                    self.observe(Event::TurnStarted { messages: vec![] }, out);
                 }
                 self.turn = false;
                 self.reporting = false;
                 self.compacting = false;
             }
-            Event::PermissionAsked { request, .. } => {
+            Event::PermissionAsked { request, .. } | Event::QuestionAsked { request, .. } => {
                 self.asking.insert(request.clone());
             }
-            Event::PermissionWithdrawn { request } => {
+            Event::Withdrawn { request } => {
                 self.asking.remove(request);
             }
             Event::TaskStarted {
@@ -594,15 +838,21 @@ impl Tracker {
             out.push(Event::TurnEnded {
                 outcome: Outcome::Failed,
                 error: Some("the agent ended during the turn".into()),
-                cost_usd: None,
+                total_cost_usd: None,
                 duration_ms: None,
                 usage: None,
             });
         }
         for request in std::mem::take(&mut self.asking) {
-            out.push(Event::PermissionWithdrawn { request });
+            out.push(Event::Withdrawn { request });
         }
-        self.pending.clear();
+        for message in std::mem::take(&mut self.pending) {
+            out.push(Event::Message {
+                message,
+                state: MessageState::Dropped,
+                error: Some("the agent ended before it took the message".into()),
+            });
+        }
         self.subagents.clear();
         self.reporting = false;
         self.compacting = false;
@@ -615,6 +865,9 @@ type Line = (String, Sender<Result<(), String>>);
 struct Machine {
     driver: Box<dyn Driver>,
     tracker: Tracker,
+    /// Messages' lines held for an agent that takes none while a turn
+    /// runs, in the order sent.
+    held: VecDeque<String>,
     /// Control requests waiting for their reply, by key.
     replies: HashMap<String, Sender<Result<Value, String>>>,
     /// Told when the agent is ready, for the watchdog that bounds the wait.
@@ -682,12 +935,23 @@ impl Live {
             }
             machine.tracker.observe(event, &mut out);
         }
+        self.release(&mut machine);
         self.emit(&out);
         // After the events, so whoever waits on a reply wakes to a stream
         // that already holds what the reply changed.
         for (key, reply) in reading.replies {
             if let Some(waiting) = machine.replies.remove(&key) {
                 let _ = waiting.send(reply);
+            }
+        }
+    }
+
+    /// Hands the agent the next held message, once no turn runs.
+    fn release(&self, machine: &mut Machine) {
+        if !machine.tracker.turn {
+            if let Some(line) = machine.held.pop_front() {
+                // A failure shows as the session ending.
+                let _ = self.enqueue(line);
             }
         }
     }
@@ -778,6 +1042,7 @@ pub fn start(
         machine: Mutex::new(Machine {
             driver,
             tracker: Tracker::default(),
+            held: VecDeque::new(),
             replies: HashMap::new(),
             ready: Some(ready),
             ended: false,
@@ -958,31 +1223,55 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
     machine.ended = true;
 }
 
-/// Sends the user's message. Hands back its id, which the turn that
-/// answers it names.
-pub fn send(sessions: &Sessions, id: &str, text: &str, images: &[Image]) -> Result<String, String> {
+/// Sends the user's message under `message`, the id the window chose for
+/// it, a UUID it has not used before in the session. The events that name
+/// the message may arrive before this returns.
+pub fn send(
+    sessions: &Sessions,
+    id: &str,
+    message: &str,
+    text: &str,
+    images: &[Image],
+) -> Result<(), String> {
     let live = sessions.get(id)?;
-    let (message, went) = {
+    let went = {
         let mut machine = live.machine.lock().expect("machine lock");
-        let line = machine.driver.message(text, images)?;
-        let went = live.enqueue(line)?;
-        let (message, queued) = machine.tracker.send();
+        let line = machine.driver.message(message, text, images)?;
+        let queued = machine.tracker.send(message)?;
+        let hold = !machine.driver.takes_while_busy()
+            && (machine.tracker.turn || !machine.held.is_empty());
+        let went = if hold {
+            machine.held.push_back(line);
+            None
+        } else {
+            match live.enqueue(line) {
+                Ok(went) => Some(went),
+                Err(error) => {
+                    machine.tracker.unsend(message);
+                    return Err(error);
+                }
+            }
+        };
         let mut out = Vec::new();
         if queued {
-            out.push(Event::MessageQueued {
-                message: message.clone(),
+            out.push(Event::Message {
+                message: message.to_string(),
+                state: MessageState::Queued,
+                error: None,
             });
         }
         machine.tracker.push_state(&mut out);
         live.emit(&out);
-        (message, went)
+        went
     };
-    written(went)?;
-    Ok(message)
+    match went {
+        Some(went) => written(went),
+        None => Ok(()),
+    }
 }
 
-/// Answers a permission request. `message` goes with a denial, for the
-/// agent to read.
+/// Answers a permission request with one of the choices it offered.
+/// `message` goes with a denial, for the agent to read.
 pub fn answer(
     sessions: &Sessions,
     id: &str,
@@ -991,9 +1280,32 @@ pub fn answer(
     message: Option<&str>,
 ) -> Result<(), String> {
     let live = sessions.get(id)?;
+    settle(&live, request, |driver| {
+        driver.answer(request, choice, message)
+    })
+}
+
+/// Answers a question the agent asked: for each question, the labels the
+/// user picked or words of their own. None declines to answer.
+pub fn reply(
+    sessions: &Sessions,
+    id: &str,
+    request: &str,
+    answers: Option<&[Vec<String>]>,
+) -> Result<(), String> {
+    let live = sessions.get(id)?;
+    settle(&live, request, |driver| driver.reply(request, answers))
+}
+
+/// Writes the line that settles a request the agent is waiting on.
+fn settle(
+    live: &Live,
+    request: &str,
+    line: impl FnOnce(&mut dyn Driver) -> Result<String, String>,
+) -> Result<(), String> {
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
-        let line = machine.driver.answer(request, choice, message)?;
+        let line = line(machine.driver.as_mut())?;
         let went = live.enqueue(line)?;
         machine.tracker.asking.remove(request);
         let mut out = Vec::new();
@@ -1007,33 +1319,66 @@ pub fn answer(
 /// Sends a control request and waits for the agent's reply.
 pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value, String> {
     let live = sessions.get(id)?;
-    let (went, reply) = {
+    let (went, key, reply) = {
         let mut machine = live.machine.lock().expect("machine lock");
-        let (line, key) = machine.driver.control(control)?;
-        let (replied, reply) = mpsc::channel();
-        machine.replies.insert(key.clone(), replied);
-        match live.enqueue(line) {
-            Ok(went) => (went, (key, reply)),
-            Err(error) => {
-                machine.replies.remove(&key);
-                return Err(error);
+        match machine.driver.control(control)? {
+            Sending::Local { reply, events } => {
+                let mut out = Vec::new();
+                for event in events {
+                    machine.tracker.observe(event, &mut out);
+                }
+                live.emit(&out);
+                return Ok(reply);
+            }
+            Sending::Request { line, key } => {
+                let (replied, reply) = mpsc::channel();
+                machine.replies.insert(key.clone(), replied);
+                match live.enqueue(line) {
+                    Ok(went) => (went, key, reply),
+                    Err(error) => {
+                        machine.replies.remove(&key);
+                        machine.driver.forget(&key);
+                        return Err(error);
+                    }
+                }
             }
         }
     };
-    let (key, reply) = reply;
     written(went)?;
     match reply.recv_timeout(CONTROL_TIMEOUT) {
         Ok(result) => result,
         Err(RecvTimeoutError::Timeout) => {
-            live.machine
-                .lock()
-                .expect("machine lock")
-                .replies
-                .remove(&key);
+            let mut machine = live.machine.lock().expect("machine lock");
+            machine.replies.remove(&key);
+            machine.driver.forget(&key);
             Err("the agent did not answer in time".into())
         }
         Err(RecvTimeoutError::Disconnected) => Err("the agent ended".into()),
     }
+}
+
+/// Switches what the session runs on: each of the model, the mode and the
+/// effort that is given, in that order. Answers with the settings as the
+/// session's events now say them.
+pub fn configure(
+    sessions: &Sessions,
+    id: &str,
+    model: Option<&str>,
+    mode: Option<&str>,
+    effort: Option<&str>,
+) -> Result<Settings, String> {
+    if let Some(model) = model {
+        control(sessions, id, &Control::SetModel(model.to_string()))?;
+    }
+    if let Some(mode) = mode {
+        control(sessions, id, &Control::SetMode(mode.to_string()))?;
+    }
+    if let Some(effort) = effort {
+        control(sessions, id, &Control::SetEffort(effort.to_string()))?;
+    }
+    let live = sessions.get(id)?;
+    let machine = live.machine.lock().expect("machine lock");
+    Ok(machine.tracker.settings.clone())
 }
 
 /// Ends a session: its stdin closes, which the agent takes as the end of
@@ -1065,6 +1410,10 @@ mod stand_in;
 mod tests {
     use super::*;
 
+    const M1: &str = "11111111-1111-4111-8111-111111111111";
+    const M2: &str = "22222222-2222-4222-8222-222222222222";
+    const M3: &str = "33333333-3333-4333-8333-333333333333";
+
     fn tracked(events: Vec<Event>) -> (Tracker, Vec<Event>) {
         let mut tracker = Tracker::default();
         let mut out = Vec::new();
@@ -1083,65 +1432,140 @@ mod tests {
             .collect()
     }
 
+    fn started(out: &[Event]) -> Vec<Vec<String>> {
+        out.iter()
+            .filter_map(|event| match event {
+                Event::TurnStarted { messages } => Some(messages.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn turn(messages: &[&str]) -> Event {
+        Event::TurnStarted {
+            messages: messages.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
     fn ended() -> Event {
         Event::TurnEnded {
             outcome: Outcome::Done,
             error: None,
-            cost_usd: None,
+            total_cost_usd: None,
             duration_ms: None,
             usage: None,
         }
     }
 
-    #[test]
-    fn a_turn_answers_the_oldest_pending_message() {
-        let mut tracker = Tracker::default();
-        let (first, queued) = tracker.send();
-        assert!(!queued);
-        let mut out = Vec::new();
-        tracker.observe(Event::TurnStarted { message: None }, &mut out);
-        let (second, queued) = tracker.send();
-        assert!(queued, "a message sent during a turn waits");
-        tracker.observe(ended(), &mut out);
-        tracker.observe(Event::TurnStarted { message: None }, &mut out);
-        let started: Vec<_> = out
-            .iter()
-            .filter_map(|event| match event {
-                Event::TurnStarted { message } => Some(message.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(started, [Some(first), Some(second)]);
+    fn asked(request: &str) -> Event {
+        Event::PermissionAsked {
+            request: request.into(),
+            call: None,
+            parent: None,
+            tool: "Bash".into(),
+            input: Value::Null,
+            description: None,
+            path: None,
+            choices: vec![],
+        }
     }
 
     #[test]
-    fn a_turn_with_nothing_pending_is_the_agent_s_own() {
-        let (_, out) = tracked(vec![Event::TurnStarted { message: None }]);
-        assert_eq!(out[0], Event::TurnStarted { message: None });
+    fn a_turn_answers_the_messages_the_agent_names() {
+        let mut tracker = Tracker::default();
+        assert!(!tracker.send(M1).unwrap());
+        let mut out = Vec::new();
+        tracker.observe(turn(&[M1]), &mut out);
+        assert!(
+            tracker.send(M2).unwrap(),
+            "a message sent during a turn waits"
+        );
+        assert!(tracker.send(M3).unwrap());
+        tracker.observe(ended(), &mut out);
+        // The agent took both waiting messages into one turn.
+        tracker.observe(turn(&[M2, M3]), &mut out);
+        assert_eq!(
+            started(&out),
+            [vec![M1.to_string()], vec![M2.to_string(), M3.to_string()]]
+        );
+        assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn a_message_id_is_a_uuid_used_once() {
+        let mut tracker = Tracker::default();
+        assert!(tracker.send("message-1").is_err());
+        tracker.send(M1).unwrap();
+        assert!(tracker.send(M1).is_err(), "used already");
+    }
+
+    #[test]
+    fn a_turn_the_agent_began_takes_no_message_waiting_for_another() {
+        // A message is waiting when the agent starts a turn of its own: the
+        // turn names nothing, and the message stays waiting for its own.
+        let mut tracker = Tracker::default();
+        tracker.send(M1).unwrap();
+        let mut out = Vec::new();
+        tracker.observe(turn(&[]), &mut out);
+        tracker.observe(ended(), &mut out);
+        tracker.observe(turn(&[M1]), &mut out);
+        assert_eq!(started(&out), [vec![], vec![M1.to_string()]]);
+    }
+
+    #[test]
+    fn a_message_taken_into_the_running_turn_is_no_longer_waiting() {
+        let mut tracker = Tracker::default();
+        let mut out = Vec::new();
+        tracker.observe(turn(&[]), &mut out);
+        tracker.send(M1).unwrap();
+        tracker.observe(turn(&[M1]), &mut out);
+        assert_eq!(started(&out).len(), 1, "the same turn");
+        assert!(out.contains(&Event::Message {
+            message: M1.into(),
+            state: MessageState::Taken,
+            error: None
+        }));
+        tracker.observe(ended(), &mut out);
+        assert_eq!(tracker.state(), SessionState::Idle);
+    }
+
+    #[test]
+    fn an_end_with_no_start_starts_the_turn_first() {
+        let (_, out) = tracked(vec![ended()]);
+        assert_eq!(out[0], turn(&[]));
+        assert!(matches!(out[2], Event::TurnEnded { .. }), "{out:?}");
+    }
+
+    #[test]
+    fn names_the_agent_never_had_are_left_out() {
+        let (_, out) = tracked(vec![turn(&[M1])]);
+        assert_eq!(out[0], turn(&[]));
     }
 
     #[test]
     fn asking_outranks_working_and_idle_follows_both() {
         let (_, out) = tracked(vec![
-            Event::TurnStarted { message: None },
-            Event::PermissionAsked {
+            turn(&[]),
+            asked("r"),
+            Event::Withdrawn {
                 request: "r".into(),
+            },
+            Event::QuestionAsked {
+                request: "q".into(),
                 call: None,
                 parent: None,
-                tool: "Bash".into(),
-                input: Value::Null,
-                description: None,
-                path: None,
-                choices: vec![],
+                questions: vec![],
             },
-            Event::PermissionWithdrawn {
-                request: "r".into(),
+            Event::Withdrawn {
+                request: "q".into(),
             },
             ended(),
         ]);
         assert_eq!(
             states(&out),
             [
+                SessionState::Working,
+                SessionState::Asking,
                 SessionState::Working,
                 SessionState::Asking,
                 SessionState::Working,
@@ -1161,26 +1585,22 @@ mod tests {
             background: true,
         };
         let (_, out) = tracked(vec![
-            Event::TurnStarted { message: None },
+            turn(&[]),
             task(TaskKind::Agent),
             ended(),
             Event::TaskFinished {
                 task: "t".into(),
                 call: Some("c".into()),
-                status: "completed".into(),
+                status: TaskStatus::Completed,
                 summary: None,
             },
-            Event::TurnStarted { message: None },
+            turn(&[]),
             ended(),
         ]);
         assert_eq!(states(&out), [SessionState::Working, SessionState::Idle]);
 
         // A shell left running in the background does not.
-        let (tracker, _) = tracked(vec![
-            Event::TurnStarted { message: None },
-            task(TaskKind::Shell),
-            ended(),
-        ]);
+        let (tracker, _) = tracked(vec![turn(&[]), task(TaskKind::Shell), ended()]);
         assert_eq!(tracker.state(), SessionState::Idle);
     }
 
@@ -1192,7 +1612,7 @@ mod tests {
             text: "hi".into(),
             done: false,
         }]);
-        assert_eq!(out[0], Event::TurnStarted { message: None });
+        assert_eq!(out[0], turn(&[]));
         // A subagent's text does not: the main conversation may be idle.
         let (tracker, _) = tracked(vec![Event::Text {
             block: "b".into(),
@@ -1204,20 +1624,9 @@ mod tests {
     }
 
     #[test]
-    fn the_end_closes_the_turn_and_withdraws_what_was_asked() {
-        let (mut tracker, _) = tracked(vec![
-            Event::TurnStarted { message: None },
-            Event::PermissionAsked {
-                request: "r".into(),
-                call: None,
-                parent: None,
-                tool: "Bash".into(),
-                input: Value::Null,
-                description: None,
-                path: None,
-                choices: vec![],
-            },
-        ]);
+    fn the_end_closes_the_turn_withdraws_what_was_asked_and_drops_what_waits() {
+        let (mut tracker, _) = tracked(vec![turn(&[]), asked("r")]);
+        tracker.send(M1).unwrap();
         let mut out = Vec::new();
         tracker.end(&mut out);
         assert!(matches!(
@@ -1229,8 +1638,43 @@ mod tests {
         ));
         assert_eq!(
             out[1],
-            Event::PermissionWithdrawn {
+            Event::Withdrawn {
                 request: "r".into()
+            }
+        );
+        assert!(matches!(
+            &out[2],
+            Event::Message { message, state: MessageState::Dropped, .. } if message == M1
+        ));
+    }
+
+    #[test]
+    fn the_settings_are_what_the_events_last_said() {
+        let (tracker, _) = tracked(vec![
+            Event::Ready {
+                session_id: "s".into(),
+                model: Some("haiku".into()),
+                mode: Some("default".into()),
+                effort: None,
+                version: None,
+                models: vec![],
+                modes: vec![],
+                efforts: vec![],
+                commands: vec![],
+            },
+            Event::Configured {
+                model: Some("sonnet".into()),
+                mode: Some("default".into()),
+                effort: Some("high".into()),
+                efforts: vec!["high".into()],
+            },
+        ]);
+        assert_eq!(
+            tracker.settings,
+            Settings {
+                model: Some("sonnet".into()),
+                mode: Some("default".into()),
+                effort: Some("high".into())
             }
         );
     }
@@ -1240,7 +1684,7 @@ mod tests {
         let event = Event::TurnEnded {
             outcome: Outcome::Interrupted,
             error: None,
-            cost_usd: Some(0.5),
+            total_cost_usd: Some(0.5),
             duration_ms: Some(10),
             usage: Some(Usage::default()),
         };
@@ -1252,7 +1696,7 @@ mod tests {
         assert_eq!(value["id"], "int-1");
         assert_eq!(value["type"], "turnEnded");
         assert_eq!(value["outcome"], "interrupted");
-        assert_eq!(value["costUsd"], 0.5);
+        assert_eq!(value["totalCostUsd"], 0.5);
         assert_eq!(value["usage"]["cacheReadTokens"], 0);
         let compacting = serde_json::to_value(Payload {
             id: "int-1",
@@ -1263,5 +1707,15 @@ mod tests {
             compacting,
             serde_json::json!({"id": "int-1", "type": "compacting"})
         );
+        let change = serde_json::to_value(FileChange {
+            path: "/a".into(),
+            kind: ChangeKind::Move,
+            to: Some("/b".into()),
+            hunks: vec![],
+            content: None,
+        })
+        .unwrap();
+        assert_eq!(change["kind"], "move");
+        assert_eq!(change["to"], "/b");
     }
 }

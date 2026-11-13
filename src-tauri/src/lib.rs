@@ -163,7 +163,8 @@ async fn integrated_start(
     cwd: Option<String>,
     session: Option<String>,
     model: Option<String>,
-    permission_mode: Option<String>,
+    mode: Option<String>,
+    effort: Option<String>,
     config_dir: Option<String>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
@@ -179,13 +180,14 @@ async fn integrated_start(
             cwd.as_deref().map(Path::new),
             session,
             model.as_deref(),
-            permission_mode.as_deref(),
+            mode.as_deref(),
+            effort.as_deref(),
             config_dir.as_deref(),
         )?),
         Route::Remote { host, rest } => {
             let started = remotes.connection(&host)?.call(
                 "integrated_start",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "permissionMode": permission_mode, "configDir": config_dir }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "mode": mode, "effort": effort, "configDir": config_dir }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
             Ok(json!({ "id": with_host_id(&host, id), "sessionId": started["sessionId"] }))
@@ -234,19 +236,19 @@ async fn integrated_send(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     id: String,
+    message: String,
     text: String,
     images: Option<Vec<workbench_core::integrated::Image>>,
 ) -> Result<Value, String> {
     let images = images.unwrap_or_default();
-    let sent = images.clone();
-    let typed = text.clone();
+    let (named, sent, typed) = (message.clone(), images.clone(), text.clone());
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&id),
         "integrated_send",
-        move |rest| json!({ "id": rest, "text": typed, "images": sent }),
-        move |core, id| core.integrated_send(id, &text, &images),
+        move |rest| json!({ "id": rest, "message": named, "text": typed, "images": sent }),
+        move |core, id| core.integrated_send(id, &message, &text, &images),
     )
     .await
 }
@@ -290,39 +292,48 @@ async fn integrated_answer(
 }
 
 #[tauri::command]
-async fn integrated_set_model(
+async fn integrated_reply(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     id: String,
-    model: String,
+    request: String,
+    answers: Option<Vec<Vec<String>>>,
 ) -> Result<Value, String> {
-    let named = model.clone();
+    let (asked, said) = (request.clone(), answers.clone());
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&id),
-        "integrated_set_model",
-        move |rest| json!({ "id": rest, "model": named }),
-        move |core, id| core.integrated_set_model(id, &model),
+        "integrated_reply",
+        move |rest| json!({ "id": rest, "request": asked, "answers": said }),
+        move |core, id| core.integrated_reply(id, &request, answers.as_deref()),
     )
     .await
 }
 
 #[tauri::command]
-async fn integrated_set_permission_mode(
+async fn integrated_configure(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     id: String,
-    mode: String,
+    model: Option<String>,
+    mode: Option<String>,
+    effort: Option<String>,
 ) -> Result<Value, String> {
-    let named = mode.clone();
+    let named = json!({ "model": model, "mode": mode, "effort": effort });
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&id),
-        "integrated_set_permission_mode",
-        move |rest| json!({ "id": rest, "mode": named }),
-        move |core, id| core.integrated_set_permission_mode(id, &mode),
+        "integrated_configure",
+        move |rest| {
+            let mut params = named;
+            params["id"] = json!(rest);
+            params
+        },
+        move |core, id| {
+            core.integrated_configure(id, model.as_deref(), mode.as_deref(), effort.as_deref())
+        },
     )
     .await
 }
@@ -1365,8 +1376,8 @@ pub fn run() {
             integrated_send,
             integrated_interrupt,
             integrated_answer,
-            integrated_set_model,
-            integrated_set_permission_mode,
+            integrated_reply,
+            integrated_configure,
             integrated_stop,
             settings_get,
             settings_set,

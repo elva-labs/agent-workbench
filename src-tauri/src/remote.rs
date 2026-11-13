@@ -79,8 +79,11 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         workbench_core::integrated::INTEGRATED_EVENT => {
             put_back(&mut payload, "id", |id| with_host_id(host, id));
             put_back(&mut payload, "path", |path| with_host(host, path));
-            if let Some(change) = payload.get_mut("change") {
-                put_back(change, "path", |path| with_host(host, path));
+            if let Some(changes) = payload.get_mut("changes").and_then(Value::as_array_mut) {
+                for change in changes {
+                    put_back(change, "path", |path| with_host(host, path));
+                    put_back(change, "to", |path| with_host(host, path));
+                }
             }
         }
         workbench_core::watch::GIT_CHANGED => {
@@ -453,10 +456,15 @@ mod tests {
         let integrated = homeward(
             "lab",
             "integrated_event",
-            json!({"id": "int-1", "type": "toolFinished", "change": {"path": "/srv/a.rs"}}),
+            json!({"id": "int-1", "type": "toolFinished", "changes": [
+                {"path": "/srv/a.rs", "kind": "update", "to": null},
+                {"path": "/srv/b.rs", "kind": "move", "to": "/srv/c.rs"},
+            ]}),
         );
         assert_eq!(integrated["id"], "ssh://lab#int-1");
-        assert_eq!(integrated["change"]["path"], "ssh://lab/srv/a.rs");
+        assert_eq!(integrated["changes"][0]["path"], "ssh://lab/srv/a.rs");
+        assert_eq!(integrated["changes"][0]["to"], Value::Null);
+        assert_eq!(integrated["changes"][1]["to"], "ssh://lab/srv/c.rs");
         let asked = homeward(
             "lab",
             "integrated_event",
@@ -466,9 +474,9 @@ mod tests {
         let text = homeward(
             "lab",
             "integrated_event",
-            json!({"id": "int-1", "type": "text", "change": null}),
+            json!({"id": "int-1", "type": "text", "changes": null}),
         );
-        assert_eq!(text["change"], Value::Null);
+        assert_eq!(text["changes"], Value::Null);
         let other = homeward(
             "lab",
             "session_event",

@@ -3,7 +3,8 @@
 //! The stand-in is a shell script on a PATH of its own that plays a
 //! scenario a step a line: `say` writes a line to its stdout, `expect`
 //! reads its stdin until a line holds the given text, `reply` writes a line
-//! with `@ID@` replaced by the request id of the line last expected,
+//! with `@ID@` replaced by the request id of the line last expected and
+//! `@UUID@` by its uuid,
 //! `sleep`, `exit` and `die` do what they say, and `drain` reads until stdin
 //! closes. It writes its arguments, its environment and every line it read
 //! beside the scenario, for the tests to look at.
@@ -28,7 +29,7 @@ id=
 while IFS= read -r step || [ -n "$step" ]; do
   case "$step" in
     "say "*) printf '%s\n' "${step#say }" ;;
-    "reply "*) printf '%s\n' "${step#reply }" | sed "s/@ID@/$id/g" ;;
+    "reply "*) printf '%s\n' "${step#reply }" | sed "s/@ID@/$id/g; s/@UUID@/$uuid/g" ;;
     "expect "*)
       want=${step#expect }
       got=
@@ -36,7 +37,8 @@ while IFS= read -r step || [ -n "$step" ]; do
         printf '%s\n' "$got" >> "$dir/stdin"
         case "$got" in *"$want"*) break ;; esac
       done
-      id=$(printf '%s' "$got" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p') ;;
+      id=$(printf '%s' "$got" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+      uuid=$(printf '%s' "$got" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p') ;;
     "sleep "*) sleep "${step#sleep }" ;;
     "exit "*) exit "${step#exit }" ;;
     "die") kill -9 $$ ;;
@@ -46,9 +48,16 @@ done < "$FAKE_CLAUDE_SCENARIO"
 "#;
 
 /// The opening every scenario starts with: the initialize request
-/// answered with what the agent says about itself.
+/// answered with what the agent says about itself, and the settings it
+/// runs on.
 const READY: &str = r#"expect "subtype":"initialize"
-reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"account":{"apiProvider":"firstParty","subscriptionType":"pro"},"current_permission_mode":"default","claude_code_version":"9.9.9","models":[{"value":"haiku","displayName":"Haiku"}],"commands":[]}}}"#;
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"account":{"apiProvider":"firstParty","subscriptionType":"pro"},"current_permission_mode":"default","claude_code_version":"9.9.9","models":[{"value":"haiku","displayName":"Haiku"},{"value":"sonnet","resolvedModel":"claude-sonnet","supportedEffortLevels":["low","high"]}],"commands":[]}}}
+expect "subtype":"get_settings"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"applied":{"effort":"high"}}}}"#;
+
+/// The agent saying it took the message last read.
+const TAKE: &str =
+    r#"reply {"type":"command_lifecycle","command_uuid":"@UUID@","state":"started"}"#;
 
 const INIT: &str = r#"say {"type":"system","subtype":"init","model":"claude-haiku","permissionMode":"default","session_id":"s"}"#;
 
@@ -101,7 +110,8 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         session: &session,
         resume: false,
         model: Some("haiku"),
-        permission_mode: Some("default"),
+        mode: Some("default"),
+        effort: None,
         config_dir: None,
         tool_server: None,
         orchestrator: false,
@@ -171,8 +181,11 @@ impl Harness {
             .collect()
     }
 
+    /// Sends a message under a fresh id, and hands back the id.
     fn send(&self, text: &str) -> String {
-        send(&self.sessions, &self.id, text, &[]).unwrap()
+        let message = uuid::Uuid::new_v4().to_string();
+        send(&self.sessions, &self.id, &message, text, &[]).unwrap();
+        message
     }
 
     fn stop(&self) -> Value {
@@ -201,6 +214,7 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
     let scenario = [
         READY,
         r#"expect "type":"user""#,
+        TAKE,
         INIT,
         r#"say {"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}},"parent_tool_use_id":null}"#,
         r#"say {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"parent_tool_use_id":null}"#,
@@ -216,7 +230,8 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
     let ready = h.until_type("ready");
     assert_eq!(ready[0]["sessionId"], h.session);
     assert_eq!(ready[0]["version"], "9.9.9");
-    assert_eq!(ready[0]["permissionMode"], "default");
+    assert_eq!(ready[0]["mode"], "default");
+    assert_eq!(ready[0]["effort"], "high");
 
     let message = h.send("say hello");
     let events = h.until_type("turnEnded");
@@ -235,20 +250,21 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
         ]
     );
     assert_eq!(states(&events), ["idle", "working"]);
-    assert_eq!(events[3]["message"], message.as_str());
+    assert_eq!(events[3]["messages"], json!([message]));
     assert_eq!(events[4]["model"], "claude-haiku");
     assert_eq!(events[7]["text"], "hello");
     assert_eq!(events[7]["done"], true);
     assert_eq!(events[5]["block"], events[7]["block"]);
     let ended = &events[8];
     assert_eq!(ended["outcome"], "done");
-    assert_eq!(ended["costUsd"], 0.01);
+    assert_eq!(ended["totalCostUsd"], 0.01);
     assert_eq!(ended["usage"]["outputTokens"], 4);
     assert_eq!(h.until_states(3), ["idle", "working", "idle"]);
 
     let sent = h.stdin();
-    assert_eq!(sent[1]["type"], "user");
-    assert_eq!(sent[1]["message"]["content"], "say hello");
+    assert_eq!(sent[2]["type"], "user");
+    assert_eq!(sent[2]["message"]["content"], "say hello");
+    assert_eq!(sent[2]["uuid"], message.as_str());
 
     let end = h.stop();
     assert_eq!(end["clean"], true);
@@ -277,6 +293,7 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
         "--verbose",
         "--include-partial-messages",
         "--forward-subagent-text",
+        "--replay-user-messages",
         "--permission-prompt-tool",
     ] {
         assert!(args.contains(&flag.to_string()), "{flag} in {args:?}");
@@ -314,6 +331,7 @@ fn a_tool_call_finishes_with_its_file_change() {
     let scenario = [
         READY,
         r#"expect "type":"user""#,
+        TAKE,
         INIT,
         r#"say {"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Write","input":{"file_path":"/p/notes.txt","content":"one\n"}}]},"parent_tool_use_id":null}"#,
         r#"say {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"File created"}]},"parent_tool_use_id":null,"tool_use_result":{"type":"create","filePath":"/p/notes.txt","content":"one\n","structuredPatch":[],"originalFile":null}}"#,
@@ -327,14 +345,15 @@ fn a_tool_call_finishes_with_its_file_change() {
     let events = h.until_type("turnEnded");
     let started = events.iter().find(|e| e["type"] == "toolStarted").unwrap();
     assert_eq!(started["name"], "Write");
+    assert_eq!(started["kind"], "edit");
     let input = events.iter().find(|e| e["type"] == "toolInput").unwrap();
     assert_eq!(input["input"]["file_path"], "/p/notes.txt");
     let finished = events.iter().find(|e| e["type"] == "toolFinished").unwrap();
     assert_eq!(finished["call"], "t1");
     assert_eq!(finished["output"], "File created");
-    assert_eq!(finished["change"]["kind"], "create");
-    assert_eq!(finished["change"]["path"], "/p/notes.txt");
-    assert_eq!(finished["change"]["content"], "one\n");
+    assert_eq!(finished["changes"][0]["kind"], "create");
+    assert_eq!(finished["changes"][0]["path"], "/p/notes.txt");
+    assert_eq!(finished["changes"][0]["content"], "one\n");
     h.stop();
 }
 
@@ -348,6 +367,7 @@ fn each_answer_to_a_permission_reaches_the_agent() {
     let mut scenario = vec![
         READY.to_string(),
         r#"expect "type":"user""#.into(),
+        TAKE.into(),
         INIT.into(),
     ];
     for id in ["p1", "p2", "p3", "p4"] {
@@ -422,10 +442,47 @@ fn each_answer_to_a_permission_reaches_the_agent() {
 }
 
 #[test]
+fn a_question_is_answered_with_a_reply_of_its_own() {
+    let scenario = [
+        READY,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        r#"say {"type":"control_request","request_id":"q1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"t1","input":{"questions":[{"question":"Which colour?","header":"Colour","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":false}]}}}"#,
+        r#"expect "request_id":"q1""#,
+        DONE,
+        "drain",
+    ]
+    .join("\n");
+    let h = start("question", &scenario);
+    h.until_type("ready");
+    h.send("ask me");
+    let asked = h.until_type("questionAsked");
+    let asked = asked.last().unwrap();
+    assert_eq!(asked["questions"][0]["options"][1]["label"], "Blue");
+    assert_eq!(h.until_states(3).last().unwrap(), "asking");
+    assert!(answer(&h.sessions, &h.id, "q1", Choice::Allow, None).is_err());
+    reply(&h.sessions, &h.id, "q1", Some(&[vec!["Green".into()]])).unwrap();
+    h.until_type("turnEnded");
+    let replied = h
+        .stdin()
+        .into_iter()
+        .find(|line| line["response"]["request_id"] == "q1")
+        .unwrap();
+    assert_eq!(
+        replied["response"]["response"]["updatedInput"]["answers"]["Which colour?"],
+        "Green"
+    );
+    assert_eq!(h.until_states(5).last().unwrap(), "idle");
+    h.stop();
+}
+
+#[test]
 fn an_interrupt_withdraws_what_was_asked_and_ends_the_turn() {
     let scenario = [
         READY,
         r#"expect "type":"user""#,
+        TAKE,
         INIT,
         r#"say {"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"sleep 100"}}}"#,
         r#"expect "subtype":"interrupt""#,
@@ -442,10 +499,7 @@ fn an_interrupt_withdraws_what_was_asked_and_ends_the_turn() {
     h.until_type("permissionAsked");
     control(&h.sessions, &h.id, &Control::Interrupt).unwrap();
     let events = h.until_type("turnEnded");
-    let withdrawn = events
-        .iter()
-        .find(|e| e["type"] == "permissionWithdrawn")
-        .unwrap();
+    let withdrawn = events.iter().find(|e| e["type"] == "withdrawn").unwrap();
     assert_eq!(withdrawn["request"], "p1");
     assert_eq!(events.last().unwrap()["outcome"], "interrupted");
     assert_eq!(events.last().unwrap()["error"], Value::Null);
@@ -457,7 +511,7 @@ fn an_interrupt_withdraws_what_was_asked_and_ends_the_turn() {
 }
 
 #[test]
-fn the_model_and_the_permission_mode_change_on_request() {
+fn the_model_the_mode_and_the_effort_change_on_request() {
     let scenario = [
         READY,
         r#"expect "subtype":"set_model""#,
@@ -466,30 +520,38 @@ fn the_model_and_the_permission_mode_change_on_request() {
         r#"reply {"type":"control_response","response":{"subtype":"error","request_id":"@ID@","error":"Model 'no-such' not found"}}"#,
         r#"expect "subtype":"set_permission_mode""#,
         r#"reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"mode":"acceptEdits"}}}"#,
+        r#"expect "effortLevel":"low""#,
+        r#"reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@"}}"#,
         "drain",
     ]
     .join("\n");
     let h = start("model", &scenario);
     h.until_type("ready");
-    let api = |model: &str| control(&h.sessions, &h.id, &Control::SetModel(model.into()));
-    assert_eq!(api("sonnet").unwrap()["model"], "claude-sonnet");
-    assert_eq!(api("no-such").unwrap_err(), "Model 'no-such' not found");
-    let mode = control(
-        &h.sessions,
-        &h.id,
-        &Control::SetPermissionMode("acceptEdits".into()),
-    )
-    .unwrap();
-    assert_eq!(mode["mode"], "acceptEdits");
+    let settings = configure(&h.sessions, &h.id, Some("sonnet"), None, None).unwrap();
+    assert_eq!(settings.model.as_deref(), Some("claude-sonnet"));
+    assert_eq!(
+        configure(&h.sessions, &h.id, Some("no-such"), None, None).unwrap_err(),
+        "Model 'no-such' not found"
+    );
+    let settings = configure(&h.sessions, &h.id, None, Some("acceptEdits"), Some("low")).unwrap();
+    assert_eq!(
+        settings,
+        Settings {
+            model: Some("claude-sonnet".into()),
+            mode: Some("acceptEdits".into()),
+            effort: Some("low".into()),
+        }
+    );
     let configured: Vec<Value> = h
         .events()
         .into_iter()
         .filter(|e| e["type"] == "configured")
         .collect();
-    assert_eq!(configured.len(), 2, "{configured:?}");
+    assert_eq!(configured.len(), 3, "{configured:?}");
     assert_eq!(configured[0]["model"], "claude-sonnet");
-    assert_eq!(configured[1]["model"], "claude-sonnet");
-    assert_eq!(configured[1]["permissionMode"], "acceptEdits");
+    assert_eq!(configured[0]["efforts"], json!(["low", "high"]));
+    assert_eq!(configured[1]["mode"], "acceptEdits");
+    assert_eq!(configured[2]["effort"], "low");
     h.stop();
 }
 
@@ -498,6 +560,7 @@ fn a_subagent_s_messages_and_the_turn_the_agent_starts_after_it() {
     let scenario = [
         READY,
         r#"expect "type":"user""#,
+        TAKE,
         INIT,
         r#"say {"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"agent-call","name":"Agent","input":{"prompt":"find it"}}]},"parent_tool_use_id":null}"#,
         r#"say {"type":"system","subtype":"task_started","task_id":"a1","tool_use_id":"agent-call","description":"find it","task_type":"local_agent","is_backgrounded":true,"prompt":"find it"}"#,
@@ -524,10 +587,10 @@ fn a_subagent_s_messages_and_the_turn_the_agent_starts_after_it() {
         .filter(|e| e["type"] == "turnStarted")
         .collect();
     assert_eq!(turns.len(), 2);
-    assert_eq!(turns[0]["message"], message.as_str());
+    assert_eq!(turns[0]["messages"], json!([message]));
     assert_eq!(
-        turns[1]["message"],
-        Value::Null,
+        turns[1]["messages"],
+        json!([]),
         "the agent began the second"
     );
 
@@ -558,9 +621,11 @@ fn a_message_sent_during_a_turn_is_queued_and_gets_its_own_turn() {
     let scenario = [
         READY,
         r#"expect "first""#,
+        TAKE,
         INIT,
         r#"expect "second""#,
         DONE,
+        TAKE,
         INIT,
         DONE,
         "drain",
@@ -571,7 +636,7 @@ fn a_message_sent_during_a_turn_is_queued_and_gets_its_own_turn() {
     let first = h.send("first");
     h.until_type("turnStarted");
     let second = h.send("second");
-    let queued = h.until_type("messageQueued");
+    let queued = h.until(|e| e["type"] == "message" && e["state"] == "queued");
     assert_eq!(queued.last().unwrap()["message"], second.as_str());
     h.until(|_| {
         h.events()
@@ -584,9 +649,9 @@ fn a_message_sent_during_a_turn_is_queued_and_gets_its_own_turn() {
         .events()
         .into_iter()
         .filter(|e| e["type"] == "turnStarted")
-        .map(|e| e["message"].clone())
+        .map(|e| e["messages"].clone())
         .collect();
-    assert_eq!(started, [json!(first), json!(second)]);
+    assert_eq!(started, [json!([first]), json!([second])]);
     h.stop();
 }
 
@@ -629,6 +694,7 @@ fn a_process_that_dies_mid_turn_fails_the_turn_and_says_so() {
     let scenario = [
         READY,
         r#"expect "type":"user""#,
+        TAKE,
         INIT,
         r#"say {"type":"stream_event","event":{"type":"message_start","message":{"id":"m1"}},"parent_tool_use_id":null}"#,
         r#"say {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"parent_tool_use_id":null}"#,
@@ -647,7 +713,14 @@ fn a_process_that_dies_mid_turn_fails_the_turn_and_says_so() {
     assert_eq!(events[n - 2]["kind"], "process");
     assert_eq!(events[n - 1]["clean"], false);
     assert!(!h.sessions.holds(&h.id));
-    assert!(send(&h.sessions, &h.id, "anyone?", &[]).is_err());
+    assert!(send(
+        &h.sessions,
+        &h.id,
+        &uuid::Uuid::new_v4().to_string(),
+        "anyone?",
+        &[]
+    )
+    .is_err());
 }
 
 #[test]
@@ -670,7 +743,8 @@ fn a_missing_agent_explains_itself() {
         session: "s",
         resume: false,
         model: None,
-        permission_mode: None,
+        mode: None,
+        effort: None,
         config_dir: None,
         tool_server: None,
         orchestrator: false,
@@ -705,7 +779,8 @@ fn real_claude_holds_a_short_turn() {
         session: &session,
         resume: false,
         model: Some("haiku"),
-        permission_mode: Some("default"),
+        mode: Some("default"),
+        effort: None,
         config_dir: None,
         tool_server: None,
         orchestrator: false,
@@ -727,10 +802,15 @@ fn real_claude_holds_a_short_turn() {
     };
     let ready = h.until_type("ready");
     assert!(ready.last().unwrap()["version"].is_string());
-    h.send("Reply with exactly the word: pelican");
+    assert!(ready.last().unwrap()["models"]
+        .as_array()
+        .is_some_and(|m| !m.is_empty()));
+    let message = h.send("Reply with exactly the word: pelican");
     let events = h.until(|e| e["type"] == "turnEnded" || e["type"] == "ended");
     let end = events.last().unwrap();
     assert_eq!(end["outcome"], "done", "{events:#?}");
+    let started = events.iter().find(|e| e["type"] == "turnStarted").unwrap();
+    assert_eq!(started["messages"], json!([message]), "matched by its id");
     let said: String = events
         .iter()
         .filter(|e| e["type"] == "text" && e["done"] == true)

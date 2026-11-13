@@ -122,7 +122,9 @@ struct IntegratedStartParams {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
-    permission_mode: Option<String>,
+    mode: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
     #[serde(default)]
     config_dir: Option<String>,
 }
@@ -141,6 +143,7 @@ struct IntegratedTrustParams {
 #[derive(Deserialize)]
 struct IntegratedSendParams {
     id: String,
+    message: String,
     #[serde(default)]
     text: String,
     #[serde(default)]
@@ -157,15 +160,21 @@ struct IntegratedAnswerParams {
 }
 
 #[derive(Deserialize)]
-struct IntegratedModelParams {
+struct IntegratedReplyParams {
     id: String,
-    model: String,
+    request: String,
+    answers: Option<Vec<Vec<String>>>,
 }
 
 #[derive(Deserialize)]
-struct IntegratedModeParams {
+struct IntegratedConfigureParams {
     id: String,
-    mode: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -385,7 +394,8 @@ pub fn dispatch(
                 p.cwd.as_deref(),
                 p.session,
                 p.model.as_deref(),
-                p.permission_mode.as_deref(),
+                p.mode.as_deref(),
+                p.effort.as_deref(),
                 p.config_dir.as_deref(),
             )?)
         }
@@ -401,7 +411,8 @@ pub fn dispatch(
         }
         "integrated_send" => {
             let p: IntegratedSendParams = parse(params)?;
-            value(core.integrated_send(&p.id, &p.text, &p.images)?)
+            core.integrated_send(&p.id, &p.message, &p.text, &p.images)?;
+            Ok(Value::Null)
         }
         "integrated_interrupt" => {
             let p: IdParams = parse(params)?;
@@ -413,13 +424,19 @@ pub fn dispatch(
             core.integrated_answer(&p.id, &p.request, p.choice, p.message.as_deref())?;
             Ok(Value::Null)
         }
-        "integrated_set_model" => {
-            let p: IntegratedModelParams = parse(params)?;
-            value(core.integrated_set_model(&p.id, &p.model)?)
+        "integrated_reply" => {
+            let p: IntegratedReplyParams = parse(params)?;
+            core.integrated_reply(&p.id, &p.request, p.answers.as_deref())?;
+            Ok(Value::Null)
         }
-        "integrated_set_permission_mode" => {
-            let p: IntegratedModeParams = parse(params)?;
-            value(core.integrated_set_permission_mode(&p.id, &p.mode)?)
+        "integrated_configure" => {
+            let p: IntegratedConfigureParams = parse(params)?;
+            value(core.integrated_configure(
+                &p.id,
+                p.model.as_deref(),
+                p.mode.as_deref(),
+                p.effort.as_deref(),
+            )?)
         }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;
@@ -844,19 +861,22 @@ mod tests {
         .expect_err("codex has no integrated mode here");
         assert!(codex.contains("integrated"), "{codex}");
         for (method, params) in [
-            ("integrated_send", json!({ "id": "int-none", "text": "hi" })),
+            (
+                "integrated_send",
+                json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111", "text": "hi" }),
+            ),
             ("integrated_interrupt", json!({ "id": "int-none" })),
             (
                 "integrated_answer",
                 json!({ "id": "int-none", "request": "r", "choice": "allow" }),
             ),
             (
-                "integrated_set_model",
-                json!({ "id": "int-none", "model": "haiku" }),
+                "integrated_reply",
+                json!({ "id": "int-none", "request": "r", "answers": [["yes"]] }),
             ),
             (
-                "integrated_set_permission_mode",
-                json!({ "id": "int-none", "mode": "plan" }),
+                "integrated_configure",
+                json!({ "id": "int-none", "model": "haiku" }),
             ),
             ("integrated_stop", json!({ "id": "int-none" })),
         ] {
