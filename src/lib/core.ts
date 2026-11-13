@@ -125,7 +125,7 @@ export interface ConductCancel {
 
 /** A call an agent made on one of the conductor's tools: what one session
     asks about the projects, the sessions, and the ones it starts. The
-    window answers every one, by id. */
+    window answers each one, by id, except a wait the agent gave up on. */
 export interface ConductRequest {
   /** What the answer is named after, unique to this call. */
   id: string;

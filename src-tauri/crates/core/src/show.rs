@@ -782,6 +782,42 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_conduct_call_reaches_the_window_as_an_event() {
+        use crate::events::testing::Recorder;
+        let home = std::env::temp_dir().join("workbench-show-cancel-event");
+        let _ = std::fs::remove_dir_all(&home);
+        let recorder = Arc::new(Recorder::default());
+        watch(
+            recorder.clone(),
+            requests_path(&home),
+            |_| {},
+            |_| {},
+            |_| {},
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        append(
+            &home,
+            &Request::ConductCancel(ConductCancel {
+                id: "c-9".into(),
+                cwd: "/p".into(),
+            }),
+        )
+        .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let events = recorder.events.lock().unwrap().clone();
+            if let Some((_, payload)) = events.iter().find(|(name, _)| name == CONDUCT_CANCEL) {
+                assert_eq!(payload["id"], "c-9");
+                assert_eq!(payload["cwd"], "/p");
+                break;
+            }
+            assert!(std::time::Instant::now() < until, "no cancel event");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    #[test]
     fn writes_an_answer_where_the_tool_server_waits() {
         let home = std::env::temp_dir().join("workbench-show-answer");
         let _ = std::fs::remove_dir_all(&home);

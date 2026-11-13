@@ -171,6 +171,23 @@ fn cancel_call(request: &Value) {
     }
 }
 
+/// Marks every call in flight as given up on.
+fn cancel_all() {
+    cancel_where(|_| true);
+}
+
+/// Marks the calls in flight whose request id satisfies `which` as given
+/// up on.
+fn cancel_where(which: impl Fn(&str) -> bool) {
+    if let Ok(calls) = IN_FLIGHT.lock() {
+        for (id, cancelled) in calls.iter() {
+            if which(id) {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
 /// How often the answer is looked for while the call waits.
 const POLL: Duration = Duration::from_millis(50);
 
@@ -702,9 +719,10 @@ pub fn serve(home: &Path) {
         }));
         answering.retain(|thread| !thread.is_finished());
     }
-    // Stdin ending is the agent done asking, not necessarily done
-    // listening: an answer on its way out is still written before the
-    // process ends. Each one is bounded by its own wait.
+    // Stdin ending is the agent gone, so no call still waiting has anyone
+    // to answer. Each one stops, tells the window, and is joined before
+    // the process ends.
+    cancel_all();
     for thread in answering {
         let _ = thread.join();
     }
@@ -2234,27 +2252,77 @@ mod tests {
         assert_eq!(cancel.id, call.id);
     }
 
+    /// A wait in a thread of its own, with the id the agent called it by.
+    fn wait_in_thread(
+        home: &Path,
+        id: &str,
+        seconds: u64,
+        waits: Waits,
+    ) -> std::thread::JoinHandle<Value> {
+        let home = home.to_path_buf();
+        let line = format!(
+            r#"{{"jsonrpc":"2.0","id":"{id}","method":"tools/call","params":{{"name":"wait","arguments":{{"seconds":{seconds}}}}}}}"#
+        );
+        std::thread::spawn(move || handle_with(&home, Path::new("/p"), None, &line, waits).unwrap())
+    }
+
+    /// How many of this kind of line the request log holds.
+    fn logged(home: &Path, kind: &str) -> usize {
+        std::fs::read_to_string(show::requests_path(home))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains(kind))
+            .count()
+    }
+
     #[test]
     fn cancelling_one_call_leaves_another_waiting() {
         let home = home("conduct-wait-other");
-        let other = handle(
+        let waits = Waits {
+            answer: Duration::from_millis(50),
+            watching: Duration::from_millis(1500),
+            longest: Duration::from_secs(30),
+        };
+        let cancelled = wait_in_thread(&home, "cancel-me", 30, waits);
+        let other = wait_in_thread(&home, "keep-me", 1, waits);
+        while logged(&home, r#""kind":"conduct""#) < 2 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let none = handle(
             &home,
             Path::new("/p"),
             None,
-            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"not-in-flight"}}"#,
+            r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"cancel-me"}}"#,
         );
-        assert!(other.is_none());
-        let waits = Waits {
-            answer: Duration::from_millis(50),
-            watching: Duration::from_millis(100),
-            longest: Duration::from_millis(100),
-        };
-        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":"not-in-flight","method":"tools/call","params":{"name":"wait","arguments":{}}}"#, waits).unwrap();
+        assert!(none.is_none());
+        let answer = cancelled.join().unwrap();
+        assert_eq!(answer["result"]["isError"], true);
+        // The other call was still waiting and ran out its own time.
+        let answer = other.join().unwrap();
         let text = answer["result"]["content"][0]["text"].as_str().unwrap();
         assert!(
             text.starts_with("nothing happened within that time"),
             "{text}"
         );
+        assert_eq!(logged(&home, "conductCancel"), 1);
+    }
+
+    #[test]
+    fn calls_still_waiting_when_the_agent_goes_are_cancelled() {
+        let home = home("conduct-wait-eof");
+        let waits = Waits::default();
+        let first = wait_in_thread(&home, "eof-1", 30, waits);
+        let second = wait_in_thread(&home, "eof-2", 30, waits);
+        while logged(&home, r#""kind":"conduct""#) < 2 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let started = Instant::now();
+        // Other tests hold calls of their own in this process.
+        cancel_where(|id| id.starts_with("\"eof-"));
+        assert_eq!(first.join().unwrap()["result"]["isError"], true);
+        assert_eq!(second.join().unwrap()["result"]["isError"], true);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(logged(&home, "conductCancel"), 2);
     }
 
     #[test]

@@ -948,6 +948,48 @@ describe("waiting", () => {
     expect(last().content).toContain("stopped working");
   });
 
+  it("answers a wait already running when a told permission request turns into a quiet stop", async () => {
+    const row = own(A, "pty-1", "sid-1", "caller-1");
+    const other = own(A, "pty-2", "sid-2", "caller-1");
+    row.working = true;
+    other.working = true;
+    flushSync();
+    exact("sid-1", "permission");
+    flushSync();
+    await handle(call("wait", {}, { session: "caller-1" }));
+    expect(last().content).toContain("sid-1 is asking for permission");
+    const answering = handle(
+      call("wait", { seconds: 5 }, { session: "caller-1" }),
+    );
+    await settle();
+    expect(answers).toHaveLength(1);
+    exact("sid-1", "stop");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    await answering;
+    expect(last().content).toContain("sid-1 stopped working");
+  });
+
+  it("ends a held wait without telling when the calling session is no longer running", async () => {
+    const caller = live(A, "pty-0", "caller-1");
+    const row = own(A, "pty-1", "sid-1", "caller-1");
+    row.working = true;
+    const answering = handle(call("wait", {}, { session: "caller-1" }));
+    await settle();
+    caller.status = "exited";
+    flushSync();
+    await answering;
+    expect(answers).toHaveLength(0);
+    row.working = false;
+    flushSync();
+    caller.status = "running";
+    flushSync();
+    await handle(call("wait", {}, { session: "caller-1" }));
+    expect(last().content).toBe(
+      "Session sid-1 stopped working. It has left no line.",
+    );
+  });
+
   it("gives up after the seconds it was given", async () => {
     own(A, "pty-1", "sid-1");
     const answering = handle(call("wait", { session: "sid-1", seconds: 5 }));

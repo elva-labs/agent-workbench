@@ -33,23 +33,24 @@ project's hooks are on. See [hooks](hooks.md).
 names a project the app actually has. `sessions` lists the sessions the
 caller started, each with its id, its project and worktree, its agent, what
 it is doing and the last line it left. A session that has stopped, ended or
-asked for permission without the caller having been told says so beside what
-it is doing, and listing it counts as telling. `start` starts a session in a project with a first
-prompt, on a worktree of its own if it asks for one, and answers with the
-new session's id. `send` types a line into a running session, and Enter after it on its
-own, as a person does. `wait` sits
-until a session stops working, asks for permission or ends, or until the
-seconds it was given run out. A stop is told once: the wait that answers with
-it and a listing that shows it each count, so a session that stopped between two waits is answered
-by the next one at once, and one that went back to work in the meantime is
-waited out as usual. A wait over all of a caller's sessions answers first with a
-stop the caller has not been told of; a session that ended or asked, and
-was told so, is answered again only when none of the others is still running.
-A wait the agent gave up on, because the user interrupted it, ends without
-telling anything. `read` answers with the last lines on a
-session's screen, as you see them. `stop` stops a session and files it
-with the sessions to resume, behind the fold, rather than leaving a row
-of it under the project. A start can carry a name for the work, which the
+asked for permission without the caller having been told says so beside
+what it is doing, and listing it counts as telling. `start` starts a
+session in a project with a first prompt, on a worktree of its own if it
+asks for one, and answers with the new session's id. `send` types a line
+into a running session, and Enter after it on its own, as a person does.
+`wait` sits until a session stops working, asks for permission or ends, or
+until the seconds it was given run out. A stop is told once: the wait that
+answers with it and a listing that shows it each count, so a session that
+stopped between two waits is answered by the next one at once, and one that
+went back to work in the meantime is waited out as usual. A wait over all
+of a caller's sessions answers first with a stop the caller has not been
+told of; a session that ended or asked, and was told so, is answered again
+only when none of the others is still running. A wait the agent gave up on,
+because the user interrupted it or the agent itself is gone, ends without
+telling anything. `read` answers with the last lines on a session's screen,
+as you see them. `stop` stops a session and files it with the sessions to
+resume, behind the fold, rather than leaving a row of it under the project.
+A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
 A worktree it starts in is trusted where its project is, with either agent,

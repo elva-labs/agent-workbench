@@ -250,8 +250,9 @@ const said = (content: string): Answered => ({ content, error: null });
 const refused = (error: string): Answered => ({ content: null, error });
 
 /**
- * Answers one call. Every call is answered exactly once, whatever
- * happens: the agent on the other side is blocked until it is.
+ * Answers one call. The agent on the other side is blocked until it is
+ * answered, so every call is, whatever happens, except a wait the agent
+ * has given up on or whose calling session has ended.
  */
 export async function handle(request: ConductRequest): Promise<void> {
   // An app and a daemon sharing a home both read the same log, and both
@@ -722,6 +723,10 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
     names.set(session.key, session.id ?? label(session));
   }
 
+  // The calling session's row, if this window has one: a wait held for a
+  // session that is no longer running has no one to hear it.
+  const caller = request.session === null ? null : byId(request.session);
+  const callerAt = caller?.key ?? null;
   let reported: string | null = null;
   let abandoned = false;
   let ending: (() => void) | null = null;
@@ -735,6 +740,15 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
       if (abandoned) {
         settle(null);
         return;
+      }
+      if (callerAt !== null) {
+        const calling = byKey(callerAt);
+        if (calling === null || !isLive(calling)) {
+          abandoned = true;
+          given.add(request.id);
+          settle(null);
+          return;
+        }
       }
       // A session that ended or asks, and was told so already, is answered
       // again only when none of the others can still move; one the caller
@@ -764,7 +778,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
         }
         busy = true;
         if (session.working) worked.set(key, true);
-        else if (worked.get(key) === true) {
+        else if (worked.get(key) === true || untold(session)) {
           reported = key;
           settle(`Session ${name} stopped working. ${lastLine(session)}`);
           return;
