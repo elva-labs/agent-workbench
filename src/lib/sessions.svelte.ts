@@ -357,6 +357,9 @@ export const HISTORY_EVERY = 60_000;
 /** The projects whose history is kept fresh, set by `followHistory`. */
 let watched: () => string[] = () => [];
 
+/** The clock that reads the watched histories again, while one runs. */
+let historyClock: ReturnType<typeof setInterval> | null = null;
+
 /** The readings under way by machine. */
 const refreshing = new Map<string | null, Promise<void>>();
 
@@ -383,14 +386,22 @@ export function refreshHistory() {
     on a clock while the window is looked at, and each time it comes back
     into view. Returns a stop function. */
 export function followHistory(projects: () => string[]): () => void {
+  stopHistoryClock();
   watched = projects;
   const timer = setInterval(() => {
     if (attention.focused) void refreshHistory();
   }, HISTORY_EVERY);
+  historyClock = timer;
   return () => {
-    clearInterval(timer);
+    if (historyClock !== timer) return;
+    stopHistoryClock();
     watched = () => [];
   };
+}
+
+function stopHistoryClock() {
+  if (historyClock !== null) clearInterval(historyClock);
+  historyClock = null;
 }
 
 /** The agent a new session in the project starts with: the one last started
@@ -1443,6 +1454,7 @@ export function reset() {
   readFrom.clear();
   readings.clear();
   refreshing.clear();
+  stopHistoryClock();
   watched = () => [];
   loading.clear();
   sessions.mine = {};

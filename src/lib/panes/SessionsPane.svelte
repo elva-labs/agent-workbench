@@ -415,8 +415,9 @@
     if (row?.dataset.row !== undefined) cursor = row.dataset.row;
   }
 
-  // Read once per project as it opens. The index is history on disk, so it
-  // changes when Claude Code writes, not when this window does.
+  // Read for every open project not yet read, in one request per machine.
+  // The index is history on disk, so it changes when an agent writes, not
+  // when this window does.
   $effect(() => {
     const wanted = workspace.open.map((project) => project.path);
     const dir = orchestrator.dir;

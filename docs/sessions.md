@@ -251,8 +251,9 @@ title, is kept against the file's path, modification time, size and, where
 the system has them, its inode and change time, so a transcript that has not
 changed is not opened again and one that has, or that was replaced, is read
 afresh. A link is followed to the file it points at. A title is read only for
-a session listed under a project. The past sessions of several projects are listed from one read
-of an account's directory, and Codex's index is opened once for all of them.
+a session listed under a project. The past sessions of several projects are
+listed from one read of an account's directory, and Codex's index is opened
+once for all of them.
 
 ## Live updates
 

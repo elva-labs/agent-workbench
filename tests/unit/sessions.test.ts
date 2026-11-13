@@ -630,7 +630,7 @@ describe("history", () => {
 
   it("leaves a history that has not changed as the same list", async () => {
     historyAnswer = [{ id: "own", title: "own", modified: 1000, size: 1 }];
-    followHistory(() => [A]);
+    const stop = followHistory(() => [A]);
     await loadHistory(A);
     const first = sessions.history[A];
     await refreshHistory();
@@ -639,10 +639,11 @@ describe("history", () => {
     await refreshHistory();
     expect(sessions.history[A]).not.toBe(first);
     expect(sessions.history[A][0].title).toBe("renamed");
+    stop();
   });
 
   it("serves a refresh asked for while one is under way with that one", async () => {
-    followHistory(() => [A]);
+    const stop = followHistory(() => [A]);
     await loadHistory(A);
     manyCalls.length = 0;
     const first = refreshHistory();
@@ -653,6 +654,20 @@ describe("history", () => {
     expect(manyCalls.length).toBeGreaterThan(asked);
     // Both the first two were served by one reading.
     expect(asked).toBe(manyCalls.length - asked);
+    stop();
+  });
+
+  it("leaves no clock running once reset, or once followed again", () => {
+    vi.useFakeTimers();
+    try {
+      followHistory(() => [A]);
+      followHistory(() => [B]);
+      expect(vi.getTimerCount()).toBe(1);
+      reset();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reads only the histories not read or being read", async () => {
@@ -709,7 +724,7 @@ describe("history", () => {
 
   // A reading that began earlier and lands later must not undo a newer one.
   it("does not let an older answer overwrite a newer one", async () => {
-    followHistory(() => [LAB]);
+    const stop = followHistory(() => [LAB]);
     historyAnswer = [{ id: "s", title: "before", modified: 1000, size: 1 }];
     const release = hold("ada@lab");
     const slow = loadHistory(LAB);
@@ -721,6 +736,7 @@ describe("history", () => {
     release();
     await slow;
     expect(sessions.history[LAB][0].title).toBe("after");
+    stop();
   });
 
   it("does not let a read from before an account was removed land after one from after", async () => {
