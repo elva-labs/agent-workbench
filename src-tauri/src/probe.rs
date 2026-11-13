@@ -34,9 +34,10 @@
 //! top left corner to that point on screen; `cover` lays a plain window of
 //! the app's own over it, which never takes the pointer or the keyboard,
 //! and `uncover` takes that away; `minimise` and `restore` minimise it to
-//! the Dock and bring it back; `state` reports whether the app is active,
-//! whether the window is key, visible, covered or minimised, and which
-//! view holds the keyboard.
+//! the Dock and bring it back; `hide` hides the app, as Cmd+H does,
+//! without bringing it back; `state` reports whether the app is active,
+//! whether the window is key, visible, covered or minimised, whether its
+//! display is asleep, and which view holds the keyboard.
 //!
 //! `shot:<tab id>` takes the tab's screenshot the way the agent's
 //! `browser_screenshot` tool does, and reports the file, its size in
@@ -528,6 +529,13 @@ async fn window_step(window: &Window, action: &str) -> Result<Value, String> {
             })
             .await
         }
+        "hide" => {
+            on_main(window, |mtm, _| {
+                NSApplication::sharedApplication(mtm).hide(None);
+                json!("hidden")
+            })
+            .await
+        }
         "uncover" => {
             on_main(window, |_, _| {
                 COVER.with_borrow(|cover| {
@@ -577,6 +585,7 @@ async fn window_step(window: &Window, action: &str) -> Result<Value, String> {
                         objc2_app_kit::NSWindowOcclusionState::Visible
                     ),
                     "minimised": ns_window.isMiniaturized(),
+                    "displayAsleep": crate::browser::capture::display_asleep(ns_window),
                     "keyboard": holder,
                 })
             })

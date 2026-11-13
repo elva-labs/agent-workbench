@@ -6,25 +6,46 @@
 
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use workbench_core::browser::capture::Pending;
+use workbench_core::browser::capture::{Pending, Plan};
 
-/// How long a snapshot has to answer before the capture gives up on it.
-pub const WAIT: Duration = Duration::from_secs(10);
+/// How long each part of a capture may take before it is given up on.
+#[derive(Debug, Clone, Copy)]
+pub struct Waits {
+    /// For a tab taken where it is. Nothing is out of place meanwhile, so
+    /// nothing else waits on it.
+    pub in_place: Duration,
+    /// For a revealed tab, from the start of the capture to its image.
+    /// Opening, switching, placing and closing tabs wait on it.
+    pub revealed: Duration,
+    /// For the view to be put back once the snapshot is given up on.
+    pub put_back: Duration,
+}
+
+/// The waits a capture runs with. A capture takes tens of milliseconds and
+/// the page's own wait to paint gives up after one second, so a revealed
+/// tab that has not answered within three is stuck.
+pub const WAITS: Waits = Waits {
+    in_place: Duration::from_secs(10),
+    revealed: Duration::from_secs(3),
+    put_back: Duration::from_secs(1),
+};
 
 /// The native side of a capture: a tab's view, on the thread that may
 /// touch it.
 pub trait Native {
     /// Readies the view through [`workbench_core::browser::capture::begin`],
-    /// recording what changed on `pending`, and starts its snapshot. Once
-    /// the snapshot answers, the view is put back through `pending` and the
+    /// recording what changed on `pending`, sends how the view is taken, or
+    /// why it cannot be, to `began`, and starts its snapshot. Once the
+    /// snapshot answers, the view is put back through `pending` and the
     /// image, or why there is none, goes to `answer`. A view that cannot be
-    /// captured answers at once with the reason and is left as it is.
+    /// captured is left as it is.
     fn start(
         &self,
         pending: Arc<Pending>,
         size: Option<(f64, f64)>,
+        began: Sender<Result<Plan, String>>,
         answer: Sender<Result<Vec<u8>, String>>,
     ) -> Result<(), String>;
 
@@ -33,34 +54,53 @@ pub trait Native {
     fn end(&self, pending: Arc<Pending>, done: Sender<()>) -> Result<(), String>;
 }
 
-/// Takes `native`'s snapshot at `size` while `views` is held, and lets
-/// `views` go only once the view is back in its place: after the snapshot
-/// answers, or after `wait` runs out and the view has been put back
-/// without it.
+/// Takes `native`'s snapshot at `size` while `views` is held. A tab taken
+/// where it is lets `views` go as soon as that is known; a revealed one
+/// holds it until the view is back in its place, after the snapshot
+/// answers or after `waits.revealed` runs out and the view has been put
+/// back without it, waiting at most `waits.put_back` for that.
 pub async fn take<G>(
     views: G,
     native: impl Native,
     size: Option<(f64, f64)>,
-    wait: Duration,
+    waits: Waits,
 ) -> Result<Vec<u8>, String> {
+    let started = Instant::now();
     let pending = Arc::new(Pending::default());
+    let (began, planned) = mpsc::channel();
     let (answer, answered) = mpsc::channel();
-    native.start(Arc::clone(&pending), size, answer)?;
-    let outcome = blocking_recv(answered, wait).await;
+    native.start(Arc::clone(&pending), size, began, answer)?;
+    let left = |wait: Duration| wait.saturating_sub(started.elapsed());
 
-    let result = match outcome {
-        Ok(result) => result,
-        Err(RecvTimeoutError::Timeout) => Err("timed out taking the screenshot".to_string()),
-        Err(RecvTimeoutError::Disconnected) => Err("the tab's view went away".to_string()),
+    let result = match blocking_recv(planned, waits.revealed).await {
+        Ok(Err(refusal)) => {
+            drop(views);
+            return Err(refusal);
+        }
+        Ok(Ok(Plan::InPlace)) => {
+            drop(views);
+            return outcome(blocking_recv(answered, left(waits.in_place)).await);
+        }
+        Ok(Ok(Plan::Reveal(_))) => outcome(blocking_recv(answered, left(waits.revealed)).await),
+        Err(error) => outcome(Err(error)),
     };
     // A snapshot that answered has put the view back already; one that did
     // not is put back here, and waited for, before the views are let go.
     let (done, ended) = mpsc::channel();
     if native.end(pending, done).is_ok() {
-        let _ = blocking_recv(ended, wait).await;
+        let _ = blocking_recv(ended, waits.put_back).await;
     }
     drop(views);
     result
+}
+
+/// What a wait on the snapshot comes to.
+fn outcome(received: Result<Result<Vec<u8>, String>, RecvTimeoutError>) -> Result<Vec<u8>, String> {
+    match received {
+        Ok(result) => result,
+        Err(RecvTimeoutError::Timeout) => Err("timed out taking the screenshot".to_string()),
+        Err(RecvTimeoutError::Disconnected) => Err("the tab's view went away".to_string()),
+    }
 }
 
 /// Waits on `rx` for up to `wait` off the async runtime's own threads.
@@ -74,7 +114,7 @@ async fn blocking_recv<T: Send + 'static>(
 }
 
 #[cfg(target_os = "macos")]
-pub use native::{paint_while_covered, Tab};
+pub use native::{display_asleep, paint_while_covered, Tab};
 
 #[cfg(target_os = "macos")]
 mod native {
@@ -83,9 +123,54 @@ mod native {
 
     use objc2::rc::Retained;
     use objc2::{msg_send, sel, Message};
-    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
     use objc2_web_kit::{WKContentWorld, WKSnapshotConfiguration, WKWebView};
-    use workbench_core::browser::capture::{begin, CaptureView, Frame, Pending, ViewState};
+    use workbench_core::browser::capture::{
+        begin, CaptureView, Frame, Pending, Plan, ViewState, WindowState,
+    };
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGDisplayIsAsleep(display: u32) -> u32;
+        fn CGMainDisplayID() -> u32;
+    }
+
+    /// The state of the window `view` is in, and of the display it is on.
+    /// A view in no window counts as one in a window that is hidden.
+    fn window_state(view: &WKWebView) -> WindowState {
+        let Some(window) = view.window() else {
+            return WindowState {
+                visible: false,
+                ..WindowState::ON_SHOW
+            };
+        };
+        WindowState {
+            visible: window.isVisible(),
+            minimised: window.isMiniaturized(),
+            display_asleep: display_asleep(&window),
+        }
+    }
+
+    /// Whether the display `window` is on is asleep.
+    pub fn display_asleep(window: &NSWindow) -> bool {
+        unsafe { CGDisplayIsAsleep(display_of(window)) != 0 }
+    }
+
+    /// The display `window` is on, or the main display when the system
+    /// places it on none.
+    fn display_of(window: &NSWindow) -> u32 {
+        window
+            .screen()
+            .and_then(|screen| {
+                screen
+                    .deviceDescription()
+                    .objectForKey(&NSString::from_str("NSScreenNumber"))
+            })
+            .and_then(|number| number.downcast::<NSNumber>().ok())
+            .map(|number| number.unsignedIntValue())
+            .unwrap_or_else(|| unsafe { CGMainDisplayID() })
+    }
 
     /// A tab's `WKWebView`, as a capture works on it.
     struct View<'a>(&'a WKWebView);
@@ -97,11 +182,17 @@ mod native {
         fn has_occlusion_switch(&self) -> bool {
             let view = self.0;
             unsafe {
-                let get: bool =
-                    msg_send![view, respondsToSelector: sel!(_windowOcclusionDetectionEnabled)];
-                let set: bool =
-                    msg_send![view, respondsToSelector: sel!(_setWindowOcclusionDetectionEnabled:)];
-                get && set
+                msg_send![view, respondsToSelector: sel!(_setWindowOcclusionDetectionEnabled:)]
+            }
+        }
+
+        /// Turns the system's window occlusion detection on or off for the
+        /// view, where this WebKit has the switch.
+        fn set_occlusion_detection(&self, enabled: bool) {
+            if self.has_occlusion_switch() {
+                let view = self.0;
+                let _: () =
+                    unsafe { msg_send![view, _setWindowOcclusionDetectionEnabled: enabled] };
             }
         }
     }
@@ -109,11 +200,6 @@ mod native {
     impl CaptureView for View<'_> {
         fn state(&self) -> ViewState {
             let frame = self.0.frame();
-            let occlusion_detection = self.has_occlusion_switch().then(|| {
-                let view = self.0;
-                let enabled: bool = unsafe { msg_send![view, _windowOcclusionDetectionEnabled] };
-                enabled
-            });
             ViewState {
                 hidden: self.0.isHidden(),
                 frame: Frame {
@@ -122,7 +208,7 @@ mod native {
                     width: frame.size.width,
                     height: frame.size.height,
                 },
-                occlusion_detection,
+                occlusion_switch: self.has_occlusion_switch(),
             }
         }
 
@@ -135,14 +221,6 @@ mod native {
 
         fn set_hidden(&self, hidden: bool) {
             self.0.setHidden(hidden);
-        }
-
-        fn set_occlusion_detection(&self, enabled: bool) {
-            if self.has_occlusion_switch() {
-                let view = self.0;
-                let _: () =
-                    unsafe { msg_send![view, _setWindowOcclusionDetectionEnabled: enabled] };
-            }
         }
     }
 
@@ -167,16 +245,19 @@ mod native {
             &self,
             pending: Arc<Pending>,
             size: Option<(f64, f64)>,
+            began: Sender<Result<Plan, String>>,
             answer: Sender<Result<Vec<u8>, String>>,
         ) -> Result<(), String> {
             self.0
                 .with_webview(move |platform| unsafe {
                     let view: &WKWebView = &*(platform.inner() as *const WKWebView);
-                    let minimised = view.window().is_some_and(|window| window.isMiniaturized());
-                    match begin(&View(view), minimised, size) {
-                        Ok(revealed) => pending.hold(revealed),
+                    match begin(&View(view), window_state(view), size) {
+                        Ok(revealed) => {
+                            pending.hold(revealed);
+                            let _ = began.send(Ok(revealed.plan()));
+                        }
                         Err(refusal) => {
-                            let _ = answer.send(Err(refusal));
+                            let _ = began.send(Err(refusal));
                             return;
                         }
                     }
@@ -285,7 +366,7 @@ mod tests {
     use std::sync::Mutex;
     use std::thread;
 
-    use workbench_core::browser::capture::{begin, CaptureView, Frame, ViewState};
+    use workbench_core::browser::capture::{begin, CaptureView, Frame, ViewState, WindowState};
 
     const PLACE: Frame = Frame {
         x: 340.0,
@@ -297,7 +378,20 @@ mod tests {
     const HIDDEN: ViewState = ViewState {
         hidden: true,
         frame: PLACE,
-        occlusion_detection: Some(true),
+        occlusion_switch: true,
+    };
+
+    const SHOWN: ViewState = ViewState {
+        hidden: false,
+        frame: PLACE,
+        occlusion_switch: true,
+    };
+
+    /// Short waits, for the tests that do not measure the real ones.
+    const QUICK: Waits = Waits {
+        in_place: Duration::from_millis(50),
+        revealed: Duration::from_millis(50),
+        put_back: Duration::from_millis(50),
     };
 
     /// A view the fake native side works on, shared with the thread that
@@ -315,9 +409,6 @@ mod tests {
         fn set_hidden(&self, hidden: bool) {
             self.0.lock().unwrap().hidden = hidden;
         }
-        fn set_occlusion_detection(&self, enabled: bool) {
-            self.0.lock().unwrap().occlusion_detection = Some(enabled);
-        }
     }
 
     /// How the fake snapshot answers.
@@ -325,24 +416,33 @@ mod tests {
     enum Answer {
         Image,
         Error,
-        /// Only after this long, past the capture's wait.
+        /// Only after this long.
         Late(Duration),
+        /// Not at all, as for a page stuck in a loop.
+        Never,
     }
 
     struct Fake {
         view: Shared,
         answer: Answer,
-        minimised: bool,
+        window: WindowState,
+        /// Whether putting the view back never answers either.
+        stuck: bool,
         /// The view's state as the snapshot saw it.
         seen: Arc<Mutex<Option<ViewState>>>,
     }
 
     impl Fake {
         fn new(answer: Answer) -> Self {
+            Self::at(HIDDEN, answer)
+        }
+
+        fn at(state: ViewState, answer: Answer) -> Self {
             Self {
-                view: Shared(Arc::new(Mutex::new(HIDDEN))),
+                view: Shared(Arc::new(Mutex::new(state))),
                 answer,
-                minimised: false,
+                window: WindowState::ON_SHOW,
+                stuck: false,
                 seen: Arc::default(),
             }
         }
@@ -353,15 +453,19 @@ mod tests {
             &self,
             pending: Arc<Pending>,
             size: Option<(f64, f64)>,
+            began: Sender<Result<Plan, String>>,
             answer: Sender<Result<Vec<u8>, String>>,
         ) -> Result<(), String> {
             let view = self.view.clone();
-            let (kind, minimised, seen) = (self.answer, self.minimised, Arc::clone(&self.seen));
+            let (kind, window, seen) = (self.answer, self.window, Arc::clone(&self.seen));
             thread::spawn(move || {
-                match begin(&view, minimised, size) {
-                    Ok(revealed) => pending.hold(revealed),
+                match begin(&view, window, size) {
+                    Ok(revealed) => {
+                        pending.hold(revealed);
+                        let _ = began.send(Ok(revealed.plan()));
+                    }
                     Err(refusal) => {
-                        let _ = answer.send(Err(refusal));
+                        let _ = began.send(Err(refusal));
                         return;
                     }
                 }
@@ -373,6 +477,13 @@ mod tests {
                         thread::sleep(after);
                         Ok(vec![1])
                     }
+                    Answer::Never => {
+                        // Holds the sender so the capture sees no answer
+                        // rather than a dropped channel.
+                        thread::sleep(Duration::from_secs(30));
+                        drop(answer);
+                        return;
+                    }
                 };
                 pending.end(&view);
                 let _ = answer.send(result);
@@ -382,31 +493,63 @@ mod tests {
 
         fn end(&self, pending: Arc<Pending>, done: Sender<()>) -> Result<(), String> {
             let view = self.view.clone();
+            let stuck = self.stuck;
             thread::spawn(move || {
                 pending.end(&view);
+                if stuck {
+                    thread::sleep(Duration::from_secs(30));
+                }
                 let _ = done.send(());
             });
             Ok(())
         }
     }
 
-    fn run(fake: Fake, wait: Duration) -> (Result<Vec<u8>, String>, ViewState, bool) {
+    fn run(fake: Fake, waits: Waits) -> (Result<Vec<u8>, String>, ViewState, bool) {
         let views = tauri::async_runtime::Mutex::new(());
         let view = fake.view.clone();
         let result = tauri::async_runtime::block_on(async {
             let guard = views.lock().await;
-            take(guard, fake, Some((600.0, 700.0)), wait).await
+            take(guard, fake, Some((600.0, 700.0)), waits).await
         });
         let free = views.try_lock().is_ok();
         let state = view.state();
         (result, state, free)
     }
 
+    /// Starts a capture of `fake` holding `views` on a thread of its own.
+    fn capture_on_a_thread(
+        views: &Arc<tauri::async_runtime::Mutex<()>>,
+        fake: Fake,
+        waits: Waits,
+    ) -> thread::JoinHandle<Result<Vec<u8>, String>> {
+        let held = Arc::clone(views);
+        let (locked, is_locked) = mpsc::channel();
+        let capture = thread::spawn(move || {
+            tauri::async_runtime::block_on(async {
+                let guard = held.lock().await;
+                let _ = locked.send(());
+                take(guard, fake, None, waits).await
+            })
+        });
+        is_locked.recv().unwrap();
+        capture
+    }
+
+    /// How long until `views` can be taken, from now.
+    fn time_to_lock(views: &tauri::async_runtime::Mutex<()>) -> Duration {
+        let asked = Instant::now();
+        tauri::async_runtime::block_on(async {
+            let _guard = views.lock().await;
+        });
+        asked.elapsed()
+    }
+
     #[test]
     fn a_snapshot_is_taken_revealed_and_the_view_put_back() {
         let fake = Fake::new(Answer::Image);
         let seen = Arc::clone(&fake.seen);
-        let (result, after, free) = run(fake, WAIT);
+        let (result, after, free) = run(fake, WAITS);
         assert_eq!(result.unwrap(), vec![1, 2, 3]);
         let during = seen.lock().unwrap().unwrap();
         assert!(!during.hidden);
@@ -417,7 +560,7 @@ mod tests {
 
     #[test]
     fn a_failed_snapshot_still_puts_the_view_back() {
-        let (result, after, free) = run(Fake::new(Answer::Error), WAIT);
+        let (result, after, free) = run(Fake::new(Answer::Error), WAITS);
         assert_eq!(result.unwrap_err(), "the snapshot failed");
         assert_eq!(after, HIDDEN);
         assert!(free);
@@ -427,7 +570,7 @@ mod tests {
     fn a_snapshot_that_never_answers_is_given_up_on_with_the_view_put_back() {
         let fake = Fake::new(Answer::Late(Duration::from_millis(400)));
         let view = fake.view.clone();
-        let (result, after, free) = run(fake, Duration::from_millis(50));
+        let (result, after, free) = run(fake, QUICK);
         assert_eq!(result.unwrap_err(), "timed out taking the screenshot");
         assert_eq!(after, HIDDEN);
         assert!(free);
@@ -439,9 +582,9 @@ mod tests {
     #[test]
     fn a_refusal_leaves_the_view_alone() {
         let mut fake = Fake::new(Answer::Image);
-        fake.minimised = true;
-        let (result, after, free) = run(fake, WAIT);
-        assert!(result.unwrap_err().contains("minimised"));
+        fake.window.visible = false;
+        let (result, after, free) = run(fake, WAITS);
+        assert!(result.unwrap_err().contains("minimised or hidden"));
         assert_eq!(after, HIDDEN);
         assert!(free);
     }
@@ -451,13 +594,7 @@ mod tests {
         let views = Arc::new(tauri::async_runtime::Mutex::new(()));
         let fake = Fake::new(Answer::Late(Duration::from_millis(300)));
         let view = fake.view.clone();
-        let held = Arc::clone(&views);
-        let capture = thread::spawn(move || {
-            tauri::async_runtime::block_on(async {
-                let guard = held.lock().await;
-                take(guard, fake, None, WAIT).await
-            })
-        });
+        let capture = capture_on_a_thread(&views, fake, WAITS);
         thread::sleep(Duration::from_millis(100));
         // An open, a switch or a close waits here meanwhile.
         assert!(views.try_lock().is_err());
@@ -471,5 +608,54 @@ mod tests {
             "the next change finds the view back in place"
         );
         assert!(capture.join().unwrap().is_ok());
+    }
+
+    #[test]
+    fn a_tab_taken_where_it_is_lets_the_views_go_at_once() {
+        let views = Arc::new(tauri::async_runtime::Mutex::new(()));
+        let fake = Fake::at(SHOWN, Answer::Late(Duration::from_millis(500)));
+        let capture = capture_on_a_thread(&views, fake, WAITS);
+        // A switch made while the snapshot is still being taken goes ahead.
+        assert!(time_to_lock(&views) < Duration::from_millis(250));
+        assert!(!capture.is_finished(), "the snapshot is still under way");
+        assert_eq!(capture.join().unwrap().unwrap(), vec![1]);
+    }
+
+    #[test]
+    fn a_revealed_tab_whose_snapshot_never_answers_lets_the_views_go_within_the_cap() {
+        let views = Arc::new(tauri::async_runtime::Mutex::new(()));
+        let fake = Fake::new(Answer::Never);
+        let view = fake.view.clone();
+        let capture = capture_on_a_thread(&views, fake, WAITS);
+        let waited = time_to_lock(&views);
+        assert!(
+            waited <= WAITS.revealed + Duration::from_millis(500),
+            "the views were held for {waited:?}"
+        );
+        assert!(WAITS.revealed <= Duration::from_secs(3));
+        assert_eq!(view.state(), HIDDEN, "the view is back before they go");
+        assert_eq!(
+            capture.join().unwrap().unwrap_err(),
+            "timed out taking the screenshot"
+        );
+    }
+
+    #[test]
+    fn a_put_back_that_never_answers_lets_the_views_go_after_its_own_wait() {
+        let views = Arc::new(tauri::async_runtime::Mutex::new(()));
+        let mut fake = Fake::new(Answer::Never);
+        fake.stuck = true;
+        let waits = Waits {
+            put_back: Duration::from_millis(200),
+            ..QUICK
+        };
+        let capture = capture_on_a_thread(&views, fake, waits);
+        let waited = time_to_lock(&views);
+        assert!(
+            waited <= waits.revealed + waits.put_back + Duration::from_millis(300),
+            "the views were held for {waited:?}"
+        );
+        assert!(WAITS.put_back <= Duration::from_secs(1));
+        assert!(capture.join().unwrap().is_err());
     }
 }

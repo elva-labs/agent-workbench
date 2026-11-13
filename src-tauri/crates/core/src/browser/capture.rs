@@ -2,11 +2,10 @@
 //!
 //! A hidden web view stops painting, so its snapshot is the last frame it
 //! drew. To capture one, its view is moved past the window's left edge at
-//! the size it shows at, unhidden with the system's occlusion detection off
-//! for it, snapshotted, then hidden and put back. The view is never inside
-//! the window's visible area, so nothing shows, and it never takes the
-//! pointer or the keyboard. A view already on show is taken where it is,
-//! untouched.
+//! the size it shows at, unhidden, snapshotted, then hidden and put back.
+//! The view is never inside the window's visible area, so nothing shows,
+//! and it never takes the pointer or the keyboard. A view already on show
+//! is taken where it is, untouched.
 //!
 //! Nothing here touches a window: the native layer implements
 //! [`CaptureView`] over a tab's view and calls [`begin`] before the
@@ -29,9 +28,29 @@ pub struct Frame {
 pub struct ViewState {
     pub hidden: bool,
     pub frame: Frame,
-    /// Whether the system's window occlusion detection is on for the view,
-    /// or `None` where the system has no switch for it.
-    pub occlusion_detection: Option<bool>,
+    /// Whether the system has the switch that keeps a view painting while
+    /// another app's window covers its own. Every tab's view is built with
+    /// it set, so where it exists a revealed view paints.
+    pub occlusion_switch: bool,
+}
+
+/// What a capture needs to know of the window and the display it is on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowState {
+    /// Whether the window is ordered in: false while the app is hidden.
+    pub visible: bool,
+    pub minimised: bool,
+    /// Whether the display the window is on is asleep.
+    pub display_asleep: bool,
+}
+
+impl WindowState {
+    /// A window on show on a display that is awake.
+    pub const ON_SHOW: WindowState = WindowState {
+        visible: true,
+        minimised: false,
+        display_asleep: false,
+    };
 }
 
 /// A tab's native view, as a capture works on it.
@@ -39,14 +58,18 @@ pub trait CaptureView {
     fn state(&self) -> ViewState;
     fn set_frame(&self, frame: Frame);
     fn set_hidden(&self, hidden: bool);
-    fn set_occlusion_detection(&self, enabled: bool);
 }
 
-/// The answer while the window is minimised: nothing in it paints then.
-pub const MINIMISED: &str = "the workbench's window is minimised, and a tab cannot be captured while it is; ask the user to bring the window back, or read the page with browser_snapshot";
+/// The answer while the window is minimised or the app hidden: nothing in
+/// the window paints then.
+pub const WINDOW_AWAY: &str = "the workbench's window is minimised or hidden, and a tab cannot be captured while it is; ask the user to bring the window back, or read the page with browser_snapshot";
 
-/// The answer for a tab not on show where the system has no switch for
-/// occlusion detection.
+/// The answer while the display the window is on is asleep: nothing on it
+/// paints then.
+pub const DISPLAY_ASLEEP: &str = "the display the workbench's window is on is asleep, and a tab cannot be captured while it is; read the page with browser_snapshot, or try again once the display is awake";
+
+/// The answer for a tab not on show where the system has no switch to keep
+/// a covered view painting.
 pub const NOT_SHOWING: &str = "the tab is not showing, and this system cannot capture a tab that is not on show; read the page with browser_snapshot";
 
 /// The size a view is revealed at when neither the viewer nor the view
@@ -70,17 +93,23 @@ pub enum Plan {
     Reveal(Frame),
 }
 
-/// How a view in `state` is captured, in a window that is `minimised` or
-/// not, at the viewer's last size `size` if it has one; or why it cannot
-/// be.
-pub fn plan(state: &ViewState, minimised: bool, size: Option<(f64, f64)>) -> Result<Plan, String> {
-    if minimised {
-        return Err(MINIMISED.to_string());
+/// How a view in `state` is captured, in a window in `window`, at the
+/// viewer's last size `size` if it has one; or why it cannot be.
+pub fn plan(
+    state: &ViewState,
+    window: WindowState,
+    size: Option<(f64, f64)>,
+) -> Result<Plan, String> {
+    if window.minimised || !window.visible {
+        return Err(WINDOW_AWAY.to_string());
+    }
+    if window.display_asleep {
+        return Err(DISPLAY_ASLEEP.to_string());
     }
     if !state.hidden {
         return Ok(Plan::InPlace);
     }
-    if state.occlusion_detection.is_none() {
+    if !state.occlusion_switch {
         return Err(NOT_SHOWING.to_string());
     }
     let own = (state.frame.width, state.frame.height);
@@ -110,34 +139,28 @@ impl Revealed {
 }
 
 /// Readies `view` for its snapshot. A hidden view is moved past the
-/// window's edge, has occlusion detection turned off, and only then is
-/// unhidden, so the first frame it paints is already out of sight. A view
-/// on show, and one that cannot be captured, is left as it is.
+/// window's edge and only then unhidden, so the first frame it paints is
+/// already out of sight. A view on show, and one that cannot be captured,
+/// is left as it is.
 pub fn begin(
     view: &impl CaptureView,
-    minimised: bool,
+    window: WindowState,
     size: Option<(f64, f64)>,
 ) -> Result<Revealed, String> {
     let before = view.state();
-    let plan = plan(&before, minimised, size)?;
+    let plan = plan(&before, window, size)?;
     if let Plan::Reveal(frame) = plan {
         view.set_frame(frame);
-        if before.occlusion_detection == Some(true) {
-            view.set_occlusion_detection(false);
-        }
         view.set_hidden(false);
     }
     Ok(Revealed { before, plan })
 }
 
-/// Puts back what [`begin`] changed: hidden again first, then occlusion
-/// detection and the frame, so nothing moves while it is on show.
+/// Puts back what [`begin`] changed: hidden again first, then the frame,
+/// so nothing moves while it is on show.
 fn restore(view: &impl CaptureView, revealed: &Revealed) {
     if let Plan::Reveal(_) = revealed.plan {
         view.set_hidden(true);
-        if revealed.before.occlusion_detection == Some(true) {
-            view.set_occlusion_detection(true);
-        }
         view.set_frame(revealed.before.frame);
     }
 }
@@ -179,7 +202,6 @@ mod tests {
     enum Op {
         Frame(Frame),
         Hidden(bool),
-        Occlusion(bool),
     }
 
     /// A view that records what is done to it and keeps its state as a
@@ -214,14 +236,6 @@ mod tests {
             self.state.borrow_mut().hidden = hidden;
             self.ops.borrow_mut().push(Op::Hidden(hidden));
         }
-        fn set_occlusion_detection(&self, enabled: bool) {
-            assert!(
-                self.state.borrow().occlusion_detection.is_some(),
-                "the switch is missing on this system"
-            );
-            self.state.borrow_mut().occlusion_detection = Some(enabled);
-            self.ops.borrow_mut().push(Op::Occlusion(enabled));
-        }
     }
 
     const PLACE: Frame = Frame {
@@ -235,7 +249,7 @@ mod tests {
         ViewState {
             hidden: true,
             frame,
-            occlusion_detection: Some(true),
+            occlusion_switch: true,
         }
     }
 
@@ -243,7 +257,7 @@ mod tests {
         ViewState {
             hidden: false,
             frame: PLACE,
-            occlusion_detection: Some(true),
+            occlusion_switch: true,
         }
     }
 
@@ -251,7 +265,7 @@ mod tests {
     /// was in while the snapshot was taken.
     fn capture(view: &FakeView, size: Option<(f64, f64)>) -> ViewState {
         let pending = Pending::default();
-        pending.hold(begin(view, false, size).unwrap());
+        pending.hold(begin(view, WindowState::ON_SHOW, size).unwrap());
         let during = view.state();
         assert!(pending.end(view));
         during
@@ -264,7 +278,6 @@ mod tests {
         let during = capture(&view, Some((600.0, 700.0)));
 
         assert!(!during.hidden);
-        assert_eq!(during.occlusion_detection, Some(false));
         assert_eq!(during.frame.width, 600.0);
         assert_eq!(during.frame.height, 700.0);
         assert!(
@@ -289,10 +302,8 @@ mod tests {
             ops,
             vec![
                 Op::Frame(out),
-                Op::Occlusion(false),
                 Op::Hidden(false),
                 Op::Hidden(true),
-                Op::Occlusion(true),
                 Op::Frame(PLACE),
             ]
         );
@@ -308,16 +319,6 @@ mod tests {
     }
 
     #[test]
-    fn occlusion_detection_already_off_is_left_alone() {
-        let mut state = hidden_at(PLACE);
-        state.occlusion_detection = Some(false);
-        let view = FakeView::new(state);
-        capture(&view, None);
-        assert!(!view.ops().iter().any(|op| matches!(op, Op::Occlusion(_))));
-        assert_eq!(view.state(), state);
-    }
-
-    #[test]
     fn the_size_is_the_viewers_then_the_views_own_then_a_default() {
         let tiny = Frame {
             x: 0.0,
@@ -325,10 +326,11 @@ mod tests {
             width: 1.0,
             height: 1.0,
         };
-        let size = |state: ViewState, viewer| match plan(&state, false, viewer).unwrap() {
-            Plan::Reveal(frame) => (frame.width, frame.height),
-            Plan::InPlace => panic!("a hidden view is revealed"),
-        };
+        let size =
+            |state: ViewState, viewer| match plan(&state, WindowState::ON_SHOW, viewer).unwrap() {
+                Plan::Reveal(frame) => (frame.width, frame.height),
+                Plan::InPlace => panic!("a hidden view is revealed"),
+            };
         assert_eq!(size(hidden_at(tiny), Some((500.0, 400.0))), (500.0, 400.0));
         assert_eq!(size(hidden_at(PLACE), None), (600.0, 700.0));
         assert_eq!(size(hidden_at(tiny), None), DEFAULT_SIZE);
@@ -337,9 +339,40 @@ mod tests {
 
     #[test]
     fn a_minimised_window_is_refused_and_nothing_is_touched() {
+        let minimised = WindowState {
+            minimised: true,
+            ..WindowState::ON_SHOW
+        };
         for state in [hidden_at(PLACE), shown()] {
             let view = FakeView::new(state);
-            assert_eq!(begin(&view, true, None).unwrap_err(), MINIMISED);
+            assert_eq!(begin(&view, minimised, None).unwrap_err(), WINDOW_AWAY);
+            assert!(view.ops().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_window_hidden_with_its_app_is_refused_and_nothing_is_touched() {
+        let hidden = WindowState {
+            visible: false,
+            ..WindowState::ON_SHOW
+        };
+        for state in [hidden_at(PLACE), shown()] {
+            let view = FakeView::new(state);
+            assert_eq!(begin(&view, hidden, None).unwrap_err(), WINDOW_AWAY);
+            assert!(view.ops().is_empty());
+        }
+        assert!(WINDOW_AWAY.contains("minimised or hidden"));
+    }
+
+    #[test]
+    fn a_window_on_a_sleeping_display_is_refused_and_nothing_is_touched() {
+        let asleep = WindowState {
+            display_asleep: true,
+            ..WindowState::ON_SHOW
+        };
+        for state in [hidden_at(PLACE), shown()] {
+            let view = FakeView::new(state);
+            assert_eq!(begin(&view, asleep, None).unwrap_err(), DISPLAY_ASLEEP);
             assert!(view.ops().is_empty());
         }
     }
@@ -347,16 +380,19 @@ mod tests {
     #[test]
     fn without_the_occlusion_switch_a_hidden_tab_is_refused() {
         let mut state = hidden_at(PLACE);
-        state.occlusion_detection = None;
+        state.occlusion_switch = false;
         let view = FakeView::new(state);
-        assert_eq!(begin(&view, false, None).unwrap_err(), NOT_SHOWING);
+        assert_eq!(
+            begin(&view, WindowState::ON_SHOW, None).unwrap_err(),
+            NOT_SHOWING
+        );
         assert!(view.ops().is_empty());
     }
 
     #[test]
     fn without_the_occlusion_switch_a_tab_on_show_is_taken_as_it_is() {
         let mut state = shown();
-        state.occlusion_detection = None;
+        state.occlusion_switch = false;
         let view = FakeView::new(state);
         let during = capture(&view, None);
         assert_eq!(during, state);
@@ -368,7 +404,7 @@ mod tests {
         let before = hidden_at(PLACE);
         let view = FakeView::new(before);
         let pending = Pending::default();
-        pending.hold(begin(&view, false, None).unwrap());
+        pending.hold(begin(&view, WindowState::ON_SHOW, None).unwrap());
         // The wait runs out, then the snapshot answers late.
         assert!(pending.is_held());
         assert!(pending.end(&view));

@@ -489,7 +489,7 @@ pub async fn screenshot(
         views,
         crate::browser::capture::Tab(webview),
         browser.place_size(),
-        crate::browser::capture::WAIT,
+        crate::browser::capture::WAITS,
     )
     .await?;
 
