@@ -312,6 +312,65 @@ function projectOf(cwd: string): string | null {
 }
 
 /**
+ * Whether the latest stop of each session a caller started has been told to
+ * the caller, by the row's key. A session counts as stopped when it ends,
+ * asks for permission, or goes quiet after working; it stops counting when it
+ * works again. A wait that answers with a stop and a listing that shows one
+ * both tell it.
+ */
+const stops = new Map<
+  string,
+  { worked: boolean; rested: boolean; untold: boolean }
+>();
+
+/** Brings the record of a started session's stops up to date with the row. */
+function observe(session: Session) {
+  const key = session.key;
+  if (startedFor(key) === null) {
+    stops.delete(key);
+    return;
+  }
+  const mark = stops.get(key) ?? {
+    worked: false,
+    rested: false,
+    untold: false,
+  };
+  stops.set(key, mark);
+  const resting = !isLive(session) || session.needs === "permission";
+  if (!resting && session.working) {
+    mark.worked = true;
+    mark.rested = false;
+    mark.untold = false;
+  } else if (!mark.rested && (mark.worked || resting)) {
+    mark.rested = true;
+    mark.untold = true;
+  }
+}
+
+function observeAll() {
+  const keys = new Set(sessions.all.map((session) => session.key));
+  for (const key of stops.keys()) if (!keys.has(key)) stops.delete(key);
+  for (const session of sessions.all) observe(session);
+}
+
+/** Whether a session has stopped and the caller has not been told. */
+function untold(session: Session): boolean {
+  observe(session);
+  return stops.get(session.key)?.untold === true;
+}
+
+function tell(key: string) {
+  const mark = stops.get(key);
+  if (mark !== undefined) mark.untold = false;
+}
+
+// Stops are noted as the rows change, so one that lands while no wait is
+// running is still there for the next call.
+$effect.root(() => {
+  $effect(observeAll);
+});
+
+/**
  * The caller's own sessions, the ones it started: the user's own are on
  * their own subjects, and a session directing work has no business in
  * them, not even to know what they are. A session with no id yet is left
@@ -333,7 +392,10 @@ function sessionLines(request: ConductRequest): string {
   );
   if (listed.length === 0 && gone.length === 0)
     return "You have started no sessions.";
-  return [...listed.map(describe), ...gone.map(describeGone)].join("\n");
+  const lines = [...listed.map(describe), ...gone.map(describeGone)];
+  // Listing a stop is telling it.
+  for (const session of listed) tell(session.key);
+  return lines.join("\n");
 }
 
 function describe(session: Session): string {
@@ -341,6 +403,7 @@ function describe(session: Session): string {
   const tree = session.worktree ?? session.startIn;
   if (tree !== null && tree !== session.project) parts.push(`worktree ${tree}`);
   parts.push(session.agent, stateOf(session));
+  if (untold(session)) parts.push("stopped and not reported yet");
   if (session.note !== null) parts.push(`last line: ${session.note}`);
   return parts.join("  ");
 }
@@ -630,14 +693,16 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
 
   // What each one was doing when the wait began: what is worth answering
   // is a change from here, so a session at work is waited out rather than
-  // answered for at once.
+  // answered for at once. One that stopped without the caller being told
+  // counts as having been at work, so its stop is answered now.
   const worked = new Map<string, boolean>();
   const names = new Map<string, string>();
   for (const session of watched) {
-    worked.set(session.key, session.working);
+    worked.set(session.key, session.working || untold(session));
     names.set(session.key, session.id ?? label(session));
   }
 
+  let reported: string | null = null;
   const happened = await settles<string | null>(
     (settle) => {
       for (const key of worked.keys()) {
@@ -648,10 +713,12 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
           return;
         }
         if (!isLive(session)) {
+          reported = key;
           settle(`Session ${name} ${stateOf(session)}. ${lastLine(session)}`);
           return;
         }
         if (session.needs === "permission") {
+          reported = key;
           settle(
             `Session ${name} is asking for permission. ${lastLine(session)}`,
           );
@@ -659,6 +726,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
         }
         if (session.working) worked.set(key, true);
         else if (worked.get(key) === true) {
+          reported = key;
           settle(`Session ${name} stopped working. ${lastLine(session)}`);
           return;
         }
@@ -667,6 +735,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
     seconds * 1000,
     null,
   );
+  if (reported !== null) tell(reported);
   if (happened === null)
     return said(
       `Nothing happened within ${seconds} seconds: no session stopped and none asked anything.`,
@@ -947,4 +1016,5 @@ export function resetConductor() {
   queue.length = 0;
   allowed.clear();
   seen.clear();
+  stops.clear();
 }
