@@ -25,7 +25,7 @@ import {
   syncOwner,
 } from "$lib/browser.svelte";
 import { showBrowser } from "$lib/files.svelte";
-import { forProject } from "$lib/sessions.svelte";
+import { byKey, sessions } from "$lib/sessions.svelte";
 import { held, projectOf, sessionFor } from "$lib/show.svelte";
 
 /** The ids of the calls handled lately, so a call delivered twice is
@@ -107,7 +107,6 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
   // browser now; from another it is that session's front tab behind
   // whatever the user has in front, and the viewer shows it when they
   // switch to the session, as the show tool's place does.
-  const project = projectOf(request.cwd);
   const owner = ownerOf(request);
   if (owner === null) return refused(noOwner);
   // The core has to know whose tabs are on screen before a tab is opened
@@ -146,8 +145,10 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
   // it; a tab owned by a project is its front tab, and the viewer is left
   // as it is.
   if (sameOwner(owner, ownerOnScreen())) await reveal();
-  else if (owner.kind === "session" && project !== null)
-    held(request, project, reveal);
+  else if (owner.kind === "session") {
+    const row = byKey(owner.key);
+    if (row !== null) held(request, row.project, reveal);
+  }
   return arrived("Opened", await settled(tab.id), tab.id);
 }
 
@@ -162,12 +163,16 @@ function ownerFor(
 ): { owner: BrowserOwner } | { refusal: string } {
   const project = projectOf(request.cwd);
   if (project === null) return { refusal: noOwner };
-  if (
-    request.session !== null &&
-    !forProject(project).some((session) => session.id === request.session)
-  )
+  // A session id names a row anywhere in the window, so a session working
+  // in a project nested inside another open one is found too.
+  const named =
+    request.session === null
+      ? null
+      : (sessions.all.find((session) => session.id === request.session) ??
+        null);
+  if (request.session !== null && named === null)
     return { refusal: "That session is not open in the workbench." };
-  const session = sessionFor(request, project);
+  const session = named ?? sessionFor(request, project);
   if (session !== null)
     return { owner: { kind: "session", key: session.key } };
   return { owner: { kind: "project", path: project } };

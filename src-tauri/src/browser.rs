@@ -437,12 +437,14 @@ async fn open_tab(
     #[cfg(target_os = "linux")]
     layer::adopt(&webview, bounds)?;
 
-    // Whose tabs are on screen can have changed while the view was built, so
-    // the view is shown or hidden to match what is in front now.
+    // Whose tabs are on screen, and whether the browser is showing at all,
+    // can have changed while the view was built, so the view is shown or
+    // hidden to match what is in front now.
     let now_front = browser.tabs.lock().unwrap().active() == Some(id);
-    if visible && !now_front {
+    let now_showing = browser.place.lock().unwrap().showing;
+    if visible && !(now_front && now_showing) {
         webview.hide().map_err(|e| e.to_string())?;
-    } else if !visible && now_front {
+    } else if !visible && now_front && now_showing {
         place_and_show(&window, &browser, id)?;
     }
 

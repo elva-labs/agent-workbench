@@ -14,9 +14,12 @@ import {
   activate as activateTab,
   browser,
   activeTab,
+  frontOf,
   ownTabs,
+  ownerOnScreen,
   syncOwner,
 } from "$lib/browser.svelte";
+import type { BrowserOwner } from "$lib/core";
 import {
   closeViewer,
   files,
@@ -64,14 +67,19 @@ let parked: Viewed = null;
 /** What the viewer holds right now, as the session on screen will get it
     back: null for nothing, and for the viewer closed. It belongs to the
     project given, the session's own: by the time a switch is seen the
-    active project may already be the one switched to. */
-export function snapshot(project = workspace.active): Viewed {
+    active project may already be the one switched to. The browser's tab is
+    the front tab of `owner`, the tabs on screen's by default: after a
+    switch those are no longer the ones being recorded. */
+export function snapshot(
+  project = workspace.active,
+  owner: BrowserOwner | null = ownerOnScreen(),
+): Viewed {
   if (project === null || layout.mode !== "reviewing") return null;
   if (files.media !== null) return { kind: "media", project, item: files.media };
   if (files.pluginView !== null)
     return { kind: "plugin", project, page: files.pluginView };
   if (browser.showing)
-    return { kind: "browser", project, tab: activeTab()?.id ?? null };
+    return { kind: "browser", project, tab: frontOf(owner)?.id ?? null };
   if (files.selected === null) return null;
   return {
     kind: "file",
@@ -148,7 +156,11 @@ export function unfoldSessions() {
 export async function sessionShown(key: string | null) {
   if (shown !== null && shown !== key) {
     const own = byKey(shown)?.project ?? workspace.active;
-    viewed.set(shown, layout.mode === "reviewing" ? snapshot(own) : parked);
+    const leaving: BrowserOwner = { kind: "session", key: shown };
+    viewed.set(
+      shown,
+      layout.mode === "reviewing" ? snapshot(own, leaving) : parked,
+    );
   }
   parked = null;
   // The tabs on screen are the new session's from here on.

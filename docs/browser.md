@@ -148,6 +148,8 @@ no tab means the session's front tab, whichever session the user is looking
 at. A tab id that belongs to another session is refused with a plain
 message. A call from an agent the window does not know, one run in a
 terminal inside an open project, acts on the tabs of the project it runs in.
+A Codex session sends no session id and is matched by its folder, so such an
+agent run in that folder can act on the Codex session's tabs instead.
 A call from a folder that is no open project, or from a session the window
 has no row for, is refused by every tool. The browser is always the one in
 the app on the user's own machine: a session running on a remote machine

@@ -651,6 +651,18 @@ describe("a call that has no owner", () => {
     expect(browser.showing).toBe(false);
   });
 
+  it("from a session working in a project nested inside another open one acts on its own tabs", async () => {
+    const INNER = `${PROJECT}/packages/inner`;
+    workspace.open.push({ path: INNER, name: "inner", repository: INNER, isGit: true });
+    const inner = create(INNER);
+    started(inner.key, "pty-9", "s9");
+    const own: BrowserOwner = { kind: "session", key: inner.key };
+    browser.tabs = [tab(7, "https://inner.example/", { owner: own })];
+    await handle(call("browser_tabs", {}, { cwd: PROJECT, session: "s9" }));
+    expect(last().error).toBeNull();
+    expect(last().content).toContain("https://inner.example/");
+  });
+
   it("from a session id the window has no row for is refused, not credited to another session", async () => {
     const { ownerB } = twoSessions();
     browser.tabs = [tab(2, "https://b.example/", { owner: ownerB })];

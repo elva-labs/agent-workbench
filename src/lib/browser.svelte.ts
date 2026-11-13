@@ -97,6 +97,13 @@ export function activeTab(): BrowserTab | null {
   return ownTabs().find((tab) => tab.front) ?? null;
 }
 
+/** The front tab of a given owner, or null with none open. */
+export function frontOf(owner: BrowserOwner | null): BrowserTab | null {
+  return (
+    browser.tabs.find((tab) => tab.front && sameOwner(tab.owner, owner)) ?? null
+  );
+}
+
 /** A tab's label: its title, its host until it has one, or "New tab" while
     it holds no address yet. */
 export function titleFor(tab: BrowserTab): string {
