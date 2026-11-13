@@ -68,17 +68,21 @@ the same entry while sessions change state and move under it.
 **Go to** opens on <kbd>Cmd</kbd><kbd>P</kbd> and lists the sessions, then
 the projects. A session matches on its name or on the label of its project.
 Sessions are listed by when they last changed, the latest first, each with a
-dot for its state, its project and the time since. Every open project is
+dot for its state, its project and the time since. With nothing typed the
+cursor starts on the first session that is not the one on screen, so Enter
+goes to the previous one. Every open project is
 listed, with how many sessions are live in it or the time since it was last
 used, the most recently used first. <kbd>Enter</kbd> on a session shows it and
 puts the keyboard in its agent, as a click on its row does. On a project it
 brings the project forward, with the keyboard in the session on screen or, for
 a project with none, in the sessions pane. A sessions pane that is folded
 opens for that, or peeks over the agent while reviewing, so the viewer stays,
-and in a window too narrow for the pane the keyboard stays with the agent.
+and in a window too narrow for the pane it stays as the user set it and the
+keyboard goes to the agent pane's New session button.
 <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session in that project, as
 below. A <kbd>&gt;</kbd> typed as the first character switches to the
-commands, with the rest of what was typed.
+commands, with the rest of what was typed. With nothing open the list holds
+one row, Open project. The footer names only what the list on screen can do.
 
 **Commands** open on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> and list every
 action the keys can do, each with its chord, and the ones that have none: new
@@ -91,12 +95,13 @@ cannot be picked.
 **A new session** is asked for in the same field, a step at a time. First the
 project, unless only one is open: the one on screen above the others, then by
 when they were last used. Then the account, when accounts are named in the
-[settings](settings.md#accounts), with the project's own under the cursor;
+[settings](settings.md#accounts), with the project's own, marked default, under the cursor;
 then the agent, when more than one is installed, with the one last started in
-the project under the cursor. A step with nothing to choose is not asked.
+the project, also marked default, under the cursor. A step with nothing to choose is not asked.
 Each answer stays in the field as a chip, and <kbd>Backspace</kbd> on an empty
 field takes the last one back, one step to a press however long the key is
-held; from the first step it returns to the commands. The last answer brings
+held; from the first step it returns to the commands with what was typed there
+still in the field. The last answer brings
 the project forward and starts the session the way the new-session row of the
 sessions pane does, and the keyboard goes to the new agent.
 
