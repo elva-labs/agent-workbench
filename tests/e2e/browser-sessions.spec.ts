@@ -207,6 +207,8 @@ test("the tools act within the calling session's own tabs", async ({ page }) => 
 });
 
 test("a row carries one mark, the state dot, and says agent in its meta when an agent opened it", async ({ page }) => {
+  await page.getByTestId("new-session").click();
+  await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
   await ask(page, "m1", "browser_open", "session-1", { url: "http://localhost:3000" });
   await page.getByTestId("browser-fold").click();
   await page.getByTestId("browser-new-tab").click();

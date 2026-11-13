@@ -62,6 +62,8 @@ test.describe("the browser's tools", () => {
   });
 
   test("browser_open opens a tab, shows it, and answers with its id and url", async ({ page }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
     await push(page, {
       id: "b-1",
       tool: "browser_open",

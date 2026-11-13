@@ -142,10 +142,10 @@ brings the agent's last message, and the row takes its first line.
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 
 Ten more read and drive a tab of the embedded browser, within the session's
-own tabs: opening, closing,
-listing and navigating one, reading it back as a snapshot of text with a
-ref on everything a click or a type can reach, clicking and typing by ref,
-reading its console, a screenshot, and running script in its page. See
+own tabs: opening, closing, listing and navigating one, reading it back as a
+snapshot of text with a ref on everything a click or a type can reach,
+clicking and typing by ref, reading its console, a screenshot, and running
+script in its page. See
 [browser](browser.md).
 
 Four more read and change the workbench's own settings, the appearance,

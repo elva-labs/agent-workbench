@@ -16,6 +16,7 @@ let hideCount = 0;
 let pending: Pending[] = [];
 let tabsHandler: ((snapshot: unknown) => void) | null = null;
 
+let focusError = false;
 let focusResult: unknown = { tabs: [], owner: null, active: null };
 let openError: string | null = null;
 let openResult: unknown = { tabs: [], owner: null, active: null };
@@ -36,6 +37,7 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     browserFocus: async (owner: BrowserOwner | null) => {
       focused.push(owner);
+      if (focusError) throw new Error("no core");
       return focusResult;
     },
     browserOpen: async (url: string | null, owner: BrowserOwner, agent = false) => {
@@ -121,6 +123,12 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
   };
 }
 
+/** Makes `id` the front tab of the owner on screen, among the tabs set. */
+function front(id: number | null) {
+  browser.tabs = browser.tabs.map((each) => ({ ...each, front: each.id === id }));
+  browser.active = id;
+}
+
 beforeEach(() => {
   resetBrowser();
   workspace.active = "/p";
@@ -128,6 +136,7 @@ beforeEach(() => {
   sessions.all = [];
   focused.length = 0;
   focusResult = { tabs: [], owner: null, active: null };
+  focusError = false;
   opened.length = 0;
   closed.length = 0;
   activated.length = 0;
@@ -150,7 +159,7 @@ const RECT_C = { x: 0, y: 0, width: 300, height: 100 };
 describe("the placement queue", () => {
   it("sends one placement at a time, keeping only the newest waiting", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -171,7 +180,7 @@ describe("the placement queue", () => {
 
   it("keeps going after a placement fails, and sends the same rectangle again", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -191,7 +200,7 @@ describe("the placement queue", () => {
     browser.tabs = [
       tab(1, "http://localhost:9/", { error: "localhost:9 is not answering" }),
     ];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -199,13 +208,14 @@ describe("the placement queue", () => {
 
     // The page loads on a retry, and the same rectangle is placed.
     browser.tabs = [tab(1, "http://localhost:9/")];
+    front(1);
     place(RECT_A);
     expect(placeLog).toEqual([RECT_A]);
   });
 
   it("skips a rectangle equal to the one already placed", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -221,7 +231,7 @@ describe("the placement queue", () => {
     const shown = tab(1, "https://example.com/");
     const blank = tab(2, "about:blank");
     browser.tabs = [shown, blank];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -231,7 +241,7 @@ describe("the placement queue", () => {
 
     // The active tab becomes a new tab: the view is hidden rather than
     // placed there.
-    browser.active = 2;
+    front(2);
     place(RECT_B);
     await resolveNext();
     expect(hideCount).toBe(1);
@@ -243,7 +253,7 @@ describe("the placement queue", () => {
     expect(hideCount).toBe(1);
 
     // Back on a real tab, showing again: a placement lands as usual.
-    browser.active = 1;
+    front(1);
     place(RECT_C);
     await resolveNext();
     expect(placeLog).toEqual([RECT_A, RECT_C]);
@@ -263,7 +273,7 @@ describe("the placement queue", () => {
 describe("cover", () => {
   it("hides the view while covered and puts it back at the last rectangle once uncovered", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     place(RECT_A);
@@ -289,7 +299,7 @@ describe("cover", () => {
 
   it("nests: the view returns only once every cover has lifted", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
     place(RECT_A);
     await resolveNext();
@@ -310,7 +320,7 @@ describe("cover", () => {
 
   it("lifting the same cover twice does nothing the second time", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
     place(RECT_A);
     await resolveNext();
@@ -328,7 +338,7 @@ describe("cover", () => {
 
   it("with nothing ever placed, covering and uncovering sends no calls", () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
 
     const uncover = cover();
@@ -341,7 +351,7 @@ describe("cover", () => {
 
   it("an element that covers the viewer covers the view from its mount until its destroy", async () => {
     browser.tabs = [tab(1, "https://example.com/")];
-    browser.active = 1;
+    front(1);
     show();
     place(RECT_A);
     await resolveNext();
@@ -365,7 +375,7 @@ describe("cover", () => {
 describe("addressError", () => {
   it("is set by a rejected navigate and cleared by the next attempt", async () => {
     browser.tabs = [tab(1, "https://a.example/")];
-    browser.active = 1;
+    front(1);
 
     navigateError = "not an address";
     await navigate("bad address");
@@ -382,7 +392,7 @@ describe("addressError", () => {
 
   it("is cleared when the active tab changes", async () => {
     browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/")];
-    browser.active = 1;
+    front(1);
 
     navigateError = "not an address";
     await navigate("bad");
@@ -404,7 +414,7 @@ describe("addressError", () => {
 describe("navigate", () => {
   it("opens a tab at the address when there is none open yet", async () => {
     browser.tabs = [];
-    browser.active = null;
+    front(null);
     openResult = { tabs: [tab(1, "https://example.com/")], active: 1 };
 
     await navigate("example.com");
@@ -462,15 +472,15 @@ describe("titleFor", () => {
 });
 
 describe("activeTab", () => {
-  it("is the tab whose id matches active, or null", () => {
+  it("is the front tab of the owner on screen, or null", () => {
     browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/")];
-    browser.active = 2;
+    front(2);
     expect(activeTab()?.id).toBe(2);
 
-    browser.active = 99;
+    front(99);
     expect(activeTab()).toBeNull();
 
-    browser.active = null;
+    front(null);
     expect(activeTab()).toBeNull();
   });
 });
@@ -515,18 +525,23 @@ describe("whose tabs are on screen", () => {
     expect(ownerOnScreen()).toBeNull();
   });
 
-  it("lists only the tabs of the owner the core reports on screen", () => {
+  it("lists only the tabs of the owner on screen, and takes its front tab", () => {
+    sessions.all = [session("a"), session("b")];
     browser.tabs = [
       tab(1, "https://a.example/", { owner: A, front: true }),
       tab(2, "https://b.example/", { owner: B, front: true }),
       tab(3, "https://a2.example/", { owner: A }),
     ];
-    browser.owner = A;
+    sessions.active = "a";
     expect(ownTabs().map((t) => t.id)).toEqual([1, 3]);
-    browser.owner = B;
+    expect(activeTab()?.id).toBe(1);
+    sessions.active = "b";
     expect(ownTabs().map((t) => t.id)).toEqual([2]);
-    browser.owner = null;
+    expect(activeTab()?.id).toBe(2);
+    sessions.active = null;
+    workspace.active = null;
     expect(ownTabs()).toEqual([]);
+    expect(activeTab()).toBeNull();
   });
 
   it("tells the core when the owner changes, once per change, and takes its snapshot", async () => {
@@ -549,6 +564,18 @@ describe("whose tabs are on screen", () => {
     expect(focused).toEqual([A, B]);
     expect(ownTabs()).toEqual([]);
     expect(browser.active).toBeNull();
+  });
+
+  it("asks the core again after it failed to switch", async () => {
+    sessions.all = [session("a")];
+    sessions.active = "a";
+    focusError = true;
+    await syncOwner();
+    focusError = false;
+    focusResult = { tabs: [], owner: A, active: null };
+    await syncOwner();
+    expect(focused).toEqual([A, A]);
+    expect(browser.owner).toEqual(A);
   });
 
   it("opens a hand-opened tab for the session on screen, after the core knows it is on screen", async () => {

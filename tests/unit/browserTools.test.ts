@@ -10,6 +10,7 @@ const answers: {
 const opened: { url: string | null; owner: BrowserOwner; agent: boolean }[] = [];
 const activated: number[] = [];
 const closed: number[] = [];
+const closedOwners: BrowserOwner[] = [];
 const navigated: { id: number; address: string }[] = [];
 const stepped: { kind: string; id: number }[] = [];
 const clicked: { id: number | null; ref: string }[] = [];
@@ -18,6 +19,8 @@ const evaluated: { id: number | null; script: string }[] = [];
 
 let openResult: unknown = { tabs: [], owner: null, active: null };
 let openError: string | null = null;
+/** When set, an open waits for it before answering. */
+let openGate: Promise<void> | null = null;
 let navigateError: string | null = null;
 let clickError: string | null = null;
 let typeError: string | null = null;
@@ -36,8 +39,13 @@ vi.mock("$lib/core", () => ({
     }),
     browserOpen: async (url: string | null, owner: BrowserOwner, agent = false) => {
       opened.push({ url, owner, agent });
+      if (openGate !== null) await openGate;
       if (openError !== null) throw new Error(openError);
       return openResult;
+    },
+    browserCloseOwner: async (owner: BrowserOwner) => {
+      closedOwners.push(owner);
+      return nextSnapshot;
     },
     browserClose: async (id: number) => {
       closed.push(id);
@@ -101,6 +109,7 @@ import {
   create,
   reset as resetSessions,
   select,
+  sessions,
   started,
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -142,6 +151,15 @@ function call(
   };
 }
 
+/** Drops every session but the one with the key given, as closing the
+    others would. */
+function resetSessionsKeeping(key: string) {
+  sessions.all = sessions.all.filter((session) => session.key !== key);
+}
+
+/** Lets a call run on to the point where it waits on the core. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 const last = () => answers[answers.length - 1];
 
 beforeEach(() => {
@@ -162,6 +180,8 @@ beforeEach(() => {
   opened.length = 0;
   activated.length = 0;
   closed.length = 0;
+  closedOwners.length = 0;
+  openGate = null;
   navigated.length = 0;
   stepped.length = 0;
   clicked.length = 0;
@@ -598,6 +618,116 @@ describe("browser_close", () => {
     await handle(call("browser_close", { tab: 1 }));
     expect(closed).toEqual([1]);
     expect(last().content).toBe("Closed tab 1.");
+  });
+});
+
+describe("a call that has no owner", () => {
+  const tools: [BrowserRequest["tool"], Record<string, unknown>][] = [
+    ["browser_open", { url: "https://x.example/" }],
+    ["browser_tabs", {}],
+    ["browser_navigate", { url: "https://x.example/" }],
+    ["browser_snapshot", {}],
+    ["browser_click", { ref: "e1" }],
+    ["browser_type", { ref: "e1", text: "x" }],
+    ["browser_console", {}],
+    ["browser_screenshot", {}],
+    ["browser_eval", { script: "return 1" }],
+    ["browser_close", { tab: 1 }],
+  ];
+
+  it("from a folder no open project holds is refused by every tool, though a tab is on screen", async () => {
+    browser.tabs = [tab(1, "https://a.example/")];
+    for (const [name, args] of tools) {
+      await handle(call(name, args, { cwd: "/home/ada/elsewhere" }));
+      expect(last().error, name).toBe("No project the workbench has open runs here.");
+      expect(last().content, name).toBeNull();
+    }
+    expect(opened).toEqual([]);
+    expect(closed).toEqual([]);
+    expect(navigated).toEqual([]);
+    expect(clicked).toEqual([]);
+    expect(typed).toEqual([]);
+    expect(evaluated).toEqual([]);
+    expect(browser.showing).toBe(false);
+  });
+
+  it("from a session id the window has no row for is refused, not credited to another session", async () => {
+    const { ownerB } = twoSessions();
+    browser.tabs = [tab(2, "https://b.example/", { owner: ownerB })];
+    for (const [name, args] of tools) {
+      await handle(call(name, args, { session: "ghost" }));
+      expect(last().error, name).toBe("That session is not open in the workbench.");
+    }
+    expect(opened).toEqual([]);
+    expect(closed).toEqual([]);
+    expect(evaluated).toEqual([]);
+  });
+});
+
+describe("the user switching while a tab opens", () => {
+  it("does not show the browser in the session they moved to", async () => {
+    const { a, b, ownerA } = twoSessions();
+    select(a.key);
+    browser.owner = ownerA;
+    let release: () => void = () => {};
+    openGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: ownerA,
+      active: 1,
+    };
+    const pending = handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    await settle();
+    select(b.key);
+    release();
+    await pending;
+    expect(browser.showing).toBe(false);
+
+    select(a.key);
+    switched(a.key);
+    await Promise.resolve();
+    expect(browser.showing).toBe(true);
+  });
+
+  it("shows the browser when they moved to the calling session meanwhile", async () => {
+    const { a, ownerA } = twoSessions();
+    let release: () => void = () => {};
+    openGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: ownerA,
+      active: 1,
+    };
+    const pending = handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    await settle();
+    select(a.key);
+    release();
+    await pending;
+    expect(browser.showing).toBe(true);
+  });
+
+  it("closes the tab when its session closed while it opened", async () => {
+    const { a, ownerA } = twoSessions();
+    let release: () => void = () => {};
+    openGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    openResult = {
+      tabs: [tab(1, "https://example.com/", { owner: ownerA })],
+      owner: ownerA,
+      active: 1,
+    };
+    const pending = handle(call("browser_open", { url: "https://example.com" }, { session: "s1" }));
+    await settle();
+    resetSessionsKeeping(a.key);
+    release();
+    await pending;
+    expect(closedOwners).toEqual([ownerA]);
+    expect(last().error).toBe("The session or project this call is from has closed.");
   });
 });
 

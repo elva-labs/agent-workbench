@@ -18,11 +18,14 @@ import {
   activate as activateTab,
   applySnapshot,
   browser,
+  closeOwner,
   ownerOnScreen,
+  ownerOpen,
   sameOwner,
   syncOwner,
 } from "$lib/browser.svelte";
 import { showBrowser } from "$lib/files.svelte";
+import { forProject } from "$lib/sessions.svelte";
 import { held, projectOf, sessionFor } from "$lib/show.svelte";
 
 /** The ids of the calls handled lately, so a call delivered twice is
@@ -66,6 +69,10 @@ export async function handle(request: BrowserRequest): Promise<void> {
 }
 
 function run(request: BrowserRequest): Answered | Promise<Answered> {
+  // Every tool acts within one owner's tabs, so a call that has none gets
+  // nothing, whatever the tool.
+  const whose = ownerFor(request);
+  if ("refusal" in whose) return refused(whose.refusal);
   switch (request.tool) {
     case "browser_open":
       return openBrowserTool(request);
@@ -102,11 +109,11 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
   // switch to the session, as the show tool's place does.
   const project = projectOf(request.cwd);
   const owner = ownerOf(request);
-  if (owner === null) return refused("No project or session is open to own a tab.");
+  if (owner === null) return refused(noOwner);
   // The core has to know whose tabs are on screen before a tab is opened
   // for them, or it would not know whether to show it.
   await syncOwner();
-  const onScreen = sameOwner(owner, ownerOnScreen());
+  if (!ownerOpen(owner)) return refused(gone);
   // Goes through the core directly, not through browser.svelte's own open():
   // that keeps its rejection on a store field meant for the address bar's
   // one attempt at a time, which two calls landing together would race on.
@@ -117,32 +124,58 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
     return refused(String(error));
   }
   applySnapshot(snapshot);
+  // The session or project closed while the tab was opening: nothing is
+  // left to own it.
+  if (!ownerOpen(owner)) {
+    await closeOwner(owner);
+    return refused(gone);
+  }
   // Tabs come in opening order: the new one is last.
   const tab = snapshot.tabs[snapshot.tabs.length - 1] ?? null;
   if (tab === null) return refused("The tab could not be opened.");
   const reveal = async () => {
     const now = browser.tabs.find((candidate) => candidate.id === tab.id);
-    if (now === undefined) return;
+    if (now === undefined || !sameOwner(now.owner, ownerOnScreen())) return;
     if (!now.front) await activateTab(tab.id);
     showBrowser();
   };
   // Held only once the tab is open: a failed open displaces nothing the
-  // session's agent asked to show before it. A tab owned by a project, for
-  // a call from no session the window knows, waits for its project to be
-  // the one on screen with no session selected.
-  if (onScreen) await reveal();
-  else if (project !== null) held(request, project, reveal);
+  // session's agent asked to show before it. Who is on screen is read again
+  // here, since the user may have switched while the tab opened. A session
+  // that is not on screen has the viewer shown when the user switches to
+  // it; a tab owned by a project is its front tab, and the viewer is left
+  // as it is.
+  if (sameOwner(owner, ownerOnScreen())) await reveal();
+  else if (owner.kind === "session" && project !== null)
+    held(request, project, reveal);
   return arrived("Opened", await settled(tab.id), tab.id);
 }
 
+const noOwner = "No project the workbench has open runs here.";
+const gone = "The session or project this call is from has closed.";
+
 /** Whose tabs a call acts on: the session it is from, else the project it
-    runs in, else whoever is on screen. */
-function ownerOf(request: BrowserRequest): BrowserOwner | null {
+    runs in. A call from outside every open project, or from a session the
+    window has no row for, has no owner and is refused. */
+function ownerFor(
+  request: BrowserRequest,
+): { owner: BrowserOwner } | { refusal: string } {
   const project = projectOf(request.cwd);
-  if (project === null) return ownerOnScreen();
+  if (project === null) return { refusal: noOwner };
+  if (
+    request.session !== null &&
+    !forProject(project).some((session) => session.id === request.session)
+  )
+    return { refusal: "That session is not open in the workbench." };
   const session = sessionFor(request, project);
-  if (session !== null) return { kind: "session", key: session.key };
-  return { kind: "project", path: project };
+  if (session !== null)
+    return { owner: { kind: "session", key: session.key } };
+  return { owner: { kind: "project", path: project } };
+}
+
+function ownerOf(request: BrowserRequest): BrowserOwner | null {
+  const whose = ownerFor(request);
+  return "owner" in whose ? whose.owner : null;
 }
 
 /** The tabs the call's owner has, in opening order. */

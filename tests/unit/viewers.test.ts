@@ -52,10 +52,17 @@ vi.mock("$lib/core", () => ({
     async browserHide() {},
     async browserActivate(id: number) {
       activated.push(id);
+      front(id);
       return { tabs: browser.tabs, owner: browser.owner, active: id };
     },
   }),
 }));
+
+/** Makes `id` the front tab among the tabs held, the way the core reports it. */
+function front(id: number) {
+  browser.tabs = browser.tabs.map((each) => ({ ...each, front: each.id === id }));
+  browser.active = id;
+}
 
 /** The tabs the fake core was asked to bring to the front. */
 const activated: number[] = [];
@@ -203,7 +210,7 @@ describe("switching sessions", () => {
       home: `http://localhost:${id}/`,
       opener: { kind: "user" as const },
       owner: { kind: "project" as const, path: "/one" },
-      front: true,
+      front: false,
       loading: false,
       canGoBack: false,
       canGoForward: false,
@@ -211,14 +218,14 @@ describe("switching sessions", () => {
     });
     browser.tabs = [tab(1), tab(2)];
     browser.owner = { kind: "project", path: "/one" };
-    browser.active = 1;
+    front(1);
     await sessionShown("a");
     showBrowser();
     expect(snapshot()).toEqual({ kind: "browser", project: "/one", tab: 1 });
 
     await sessionShown("b");
     // The session's agent brought another tab to the front meanwhile.
-    browser.active = 2;
+    front(2);
     showBrowser();
 
     await sessionShown("a");
@@ -229,7 +236,7 @@ describe("switching sessions", () => {
     // Its tab closed in between: the browser comes back on whatever is active.
     await sessionShown("b");
     browser.tabs = [tab(2)];
-    browser.active = 2;
+    front(2);
     activated.length = 0;
     await sessionShown("a");
     expect(activated).toEqual([]);

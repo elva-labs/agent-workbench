@@ -48,8 +48,9 @@ screen becomes that session's front tab without touching what is on
 screen, and the viewer shows it when the user switches to the session.
 
 Closing a session closes its tabs, and so does filing it away, which
-closes it first. Closing a project closes the tabs it owns. A session that has only stopped, and sits
-as a row, keeps them.
+closes it first. Closing a project closes the tabs it owns. A session that
+has only stopped, and sits as a row, keeps them. A session resumed as a new
+row starts with no tabs, since the row it came from was closed.
 
 Above a tab sits a bar with back, forward, reload and home, each grey until
 there is somewhere to go, a strip of tabs, those of the session on screen,
@@ -111,13 +112,14 @@ With the hooks on, ten more tools join the six every session already has:
 as the [show tool](hooks.md#the-agents-tools) does: now for the session on
 screen, and for another the tab opens for that session behind whatever the
 user has in front, in whichever project, and the viewer shows it when they
-switch to the session; `browser_close` closes one. `browser_tabs` answers with
-the session's open tabs and which is in front. `browser_navigate` sends a tab to a `url`, or steps it
-back, forward or reloads it. Opening and navigating answer once the page
-has stopped loading, with where the tab landed or why it did not load, so
-the call after reads the page that was asked for. `browser_snapshot` reads a tab back as a short
-tree of text: headings, links, buttons, fields, images, landmark regions
-and blocks of visible text, everything a click or a type can reach marked
+switch to the session; `browser_close` closes one. `browser_tabs` answers
+with the session's open tabs and which is in front. `browser_navigate` sends
+a tab to a `url`, or steps it back, forward or reloads it. Opening and
+navigating answer once the page has stopped loading, with where the tab
+landed or why it did not load, so the call after reads the page that was
+asked for. `browser_snapshot` reads a tab back as a short tree of text:
+headings, links, buttons, fields, images, landmark regions and blocks of
+visible text, everything a click or a type can reach marked
 with a ref; asking again after the page has changed gives fresh refs.
 `browser_click` presses the element a `ref` names, and `browser_type` sets
 its text, submitting it too when told to. `browser_console`
@@ -145,12 +147,12 @@ only those, the tools that act on a tab take its id, and a call that names
 no tab means the session's front tab, whichever session the user is looking
 at. A tab id that belongs to another session is refused with a plain
 message. A call from an agent the window does not know, one run in a
-terminal outside the app, acts on the tabs of the project it runs in. The
-browser is
-always the one in the app on the user's own machine: a session running on a
-remote machine still opens its tabs there, in the window in front of the
-user, so `localhost` in an address then means that machine, not the remote
-one.
+terminal inside an open project, acts on the tabs of the project it runs in.
+A call from a folder that is no open project, or from a session the window
+has no row for, is refused by every tool. The browser is always the one in
+the app on the user's own machine: a session running on a remote machine
+still opens its tabs there, in the window in front of the user, so
+`localhost` in an address then means that machine, not the remote one.
 
 ## Platforms
 

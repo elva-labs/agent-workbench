@@ -13,6 +13,7 @@ import type { MediaItem } from "$lib/media.svelte";
 import {
   activate as activateTab,
   browser,
+  activeTab,
   ownTabs,
   syncOwner,
 } from "$lib/browser.svelte";
@@ -69,7 +70,8 @@ export function snapshot(project = workspace.active): Viewed {
   if (files.media !== null) return { kind: "media", project, item: files.media };
   if (files.pluginView !== null)
     return { kind: "plugin", project, page: files.pluginView };
-  if (browser.showing) return { kind: "browser", project, tab: browser.active };
+  if (browser.showing)
+    return { kind: "browser", project, tab: activeTab()?.id ?? null };
   if (files.selected === null) return null;
   return {
     kind: "file",
@@ -107,7 +109,7 @@ async function restore(what: Viewed) {
     await syncOwner();
     if (
       what.tab !== null &&
-      what.tab !== browser.active &&
+      what.tab !== activeTab()?.id &&
       ownTabs().some((tab) => tab.id === what.tab)
     ) {
       await activateTab(what.tab);

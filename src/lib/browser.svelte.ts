@@ -1,7 +1,7 @@
 /**
  * The embedded browser, as the frontend keeps it: the open tabs of every
- * owner, whose are on screen, which of those is in front, whether the viewer is showing it at all, and the last address
- * that was refused.
+ * owner, which of them is in front for each, whether the viewer is showing
+ * the browser at all, and the last address that was refused.
  *
  * The native view for the active tab is a child webview the Rust side lays
  * over a rectangle on the window; this store only says where that rectangle
@@ -27,7 +27,7 @@ import {
   type BrowserSnapshot,
   type BrowserTab,
 } from "$lib/core";
-import { activeSession } from "$lib/sessions.svelte";
+import { activeSession, byKey } from "$lib/sessions.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
 export interface Rect {
@@ -38,12 +38,12 @@ export interface Rect {
 }
 
 export const browser = $state({
-  /** Every owner's tabs, in opening order. Only the on-screen owner's are
+  /** Every owner's tabs, in opening order. Only the owner on screen's are
       drawn: see `ownTabs`. */
   tabs: [] as BrowserTab[],
   /** The owner whose tabs are on screen, as the core last reported it. */
   owner: null as BrowserOwner | null,
-  /** The front tab of that owner. */
+  /** The front tab of that owner, as the core last reported it. */
   active: null as number | null,
   /** Whether the viewer is showing the browser at all, apart from whether
       the active tab's native view is actually visible: a new tab keeps that
@@ -77,15 +77,24 @@ export function ownerOnScreen(): BrowserOwner | null {
   return null;
 }
 
-/** The tabs of the owner on screen, in opening order: what the fold, its
-    count and the tab strip show. */
-export function ownTabs(): BrowserTab[] {
-  return browser.tabs.filter((tab) => sameOwner(tab.owner, browser.owner));
+/** Whether the session or project an owner names is still open in the
+    window. */
+export function ownerOpen(owner: BrowserOwner): boolean {
+  if (owner.kind === "session") return byKey(owner.key) !== null;
+  return workspace.open.some((project) => project.path === owner.path);
 }
 
-/** The tab in front, or null with none open. */
+/** The tabs of the owner on screen, in opening order: what the fold, its
+    count and the tab strip show. They follow the window's own idea of who
+    is on screen, so a switch shows at once, before the core has answered. */
+export function ownTabs(): BrowserTab[] {
+  const owner = ownerOnScreen();
+  return browser.tabs.filter((tab) => sameOwner(tab.owner, owner));
+}
+
+/** The front tab of the owner on screen, or null with none open. */
 export function activeTab(): BrowserTab | null {
-  return browser.tabs.find((tab) => tab.id === browser.active) ?? null;
+  return ownTabs().find((tab) => tab.front) ?? null;
 }
 
 /** A tab's label: its title, its host until it has one, or "New tab" while
@@ -123,7 +132,8 @@ export function syncOwner(): Promise<void> {
     .then(() => core().browserFocus(owner))
     .then(applySnapshot)
     .catch(() => {
-      // No core to ask: the tabs stay as they were.
+      // The core did not switch, so the next call asks again.
+      if (sameOwner(sentOwner ?? null, owner)) sentOwner = undefined;
     });
   return focusing;
 }
@@ -142,7 +152,10 @@ export async function open(url?: string) {
     applySnapshot(await core().browserOpen(url ?? null, owner));
   } catch (error) {
     browser.addressError = String(error);
+    return;
   }
+  // The owner closed while the tab was opening: nothing is left to own it.
+  if (!ownerOpen(owner)) await closeOwner(owner);
 }
 
 /** Closes every tab an owner has: the session or project they belonged to

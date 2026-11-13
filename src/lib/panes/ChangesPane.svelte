@@ -1138,7 +1138,7 @@
                       >
                         <button
                           class="media-row"
-                          class:on={browser.showing && tab.id === browser.active}
+                          class:on={browser.showing && tab.front}
                           tabindex="-1"
                           onpointerdown={(e) => e.preventDefault()}
                           onclick={() => {

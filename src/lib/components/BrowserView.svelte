@@ -200,11 +200,11 @@
 
 <div class="tabs" role="tablist" aria-label="Browser tabs" data-testid="browser-tabs">
   {#each ownTabs() as candidate (candidate.id)}
-    <div class="tab" class:active={candidate.id === browser.active} data-testid="browser-tab" data-tab-id={candidate.id}>
+    <div class="tab" class:active={candidate.front} data-testid="browser-tab" data-tab-id={candidate.id}>
       <button
         class="select"
         role="tab"
-        aria-selected={candidate.id === browser.active}
+        aria-selected={candidate.front}
         title={titleFor(candidate)}
         onclick={() => void activate(candidate.id)}
         data-testid="browser-tab-select"
