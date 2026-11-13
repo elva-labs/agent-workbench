@@ -152,6 +152,7 @@ frontend on a port of its own and gives it a small window out of the way.
 A list in it replaces the configured one, so the window is given whole.
 
 ```
+SCRATCH=$(mktemp -d)
 npm run build
 TAURI_CONFIG='{"build":{"devUrl":"http://localhost:14431"},"app":{"windows":[{"title":"Workbench Probe","width":702,"height":560,"minWidth":702,"minHeight":560,"x":800,"y":400,"focus":false,"titleBarStyle":"Overlay","hiddenTitle":true}]}}' \
   cargo build --manifest-path src-tauri/Cargo.toml
@@ -177,6 +178,8 @@ open -g -n \
   --env WORKBENCH_PROBE_STEPS="$SCRATCH/run.steps" \
   --env WORKBENCH_PROBE_REPORT="$SCRATCH/report.json" \
   "$SCRATCH/Probe.app"
+# once the report is written
+kill %1
 ```
 
 A step file that ends with `quit` closes the app once the report is
