@@ -1,11 +1,15 @@
 <script lang="ts">
   /**
    * The Workflows tab of the settings: the workflows listed across the top,
-   * one marked as the default for new sessions, the picked one's name, its
-   * diagram with the picked step's settings beside it when both fit and
-   * under it when not, what the orchestrator is told, and at the foot the
-   * switch that makes it the default and Delete, asked first. A change
-   * applies at once, as the other settings do.
+   * one marked as the default for new sessions, and any the settings file
+   * holds but cannot use, each with the rule it breaks. Under them the
+   * picked one's name, its diagram, which stays in place, and the picked
+   * step's settings, which scroll on their own: beside the diagram where the
+   * window has room for both, and under it where it has not. What the
+   * orchestrator is told and the project choices follow; the switch that
+   * makes it the default and Delete, asked first, stay at the foot. A change
+   * applies at once, as the other settings do; one the settings refuse is
+   * said, and the window shows what is kept.
    */
   import { tick } from "svelte";
   import type { WorkflowStep } from "$lib/core";
@@ -16,7 +20,9 @@
     addWorkflow,
     deleteWorkflow,
     duplicateWorkflow,
+    moveStep,
     overrideOf,
+    removeUnread,
     renameWorkflow,
     setDefault,
     setOrchestrator,
@@ -29,8 +35,11 @@
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
 
   /** The width of the step's settings beside the diagram, and the gap. */
-  const STEP_WIDTH = 272;
+  const STEP_WIDTH = 248;
   const GAP = 16;
+  /** The steps an ordinary workflow has at most: the step's settings stand
+      beside the diagram where the window has room for that many. */
+  const ORDINARY = 4;
 
   /** The workflow being edited, by name; the default, else the first, when
       that one is gone. */
@@ -45,13 +54,12 @@
   let overridesOpen = $state(false);
   /** The workflow Delete is asking about, by name. */
   let deleting = $state<string | null>(null);
+  /** The unread entry Remove is asking about, by where it stands. */
+  let dropping = $state<number | null>(null);
 
-  /** The step's settings stand beside the diagram when the diagram has the
-      room it needs to be drawn whole next to them, and under it otherwise. */
+  /** Beside or under is the window's to decide, never the step count's. */
   let editWidth = $state(0);
-  const beside = $derived(
-    current !== undefined && editWidth >= leastWidth(current.steps.length) + GAP + STEP_WIDTH,
-  );
+  const beside = $derived(editWidth >= leastWidth(ORDINARY) + GAP + STEP_WIDTH);
 
   const told = $derived(current === undefined ? [] : instructionLines(current));
   const isDefault = $derived(current !== undefined && workflows.default === current.name);
@@ -128,10 +136,36 @@
     field.value = problem === null ? wanted : old;
   }
 
+  /** Puts the keyboard on a step of the diagram, by name. */
+  async function focusStep(name: string) {
+    await tick();
+    document.querySelector<HTMLElement>(`[data-testid="workflow-step"][data-step="${CSS.escape(name)}"]`)?.focus();
+  }
+
+  /** A step added is picked and has the keyboard. */
   function add(at: number, kind: WorkflowStep["kind"]) {
     if (current === undefined) return;
     problem = addStep(current.name, at, kind);
-    if (problem === null) step = at;
+    if (problem !== null) return;
+    step = at;
+    const added = current.steps[at];
+    if (added !== undefined) void focusStep(added.name);
+  }
+
+  /** A step moved stays picked, and the keyboard stays where it was. */
+  async function move(from: number, to: number, focus: string | null) {
+    if (current === undefined) return;
+    const name = current.steps[from]?.name;
+    problem = moveStep(current.name, from, to);
+    if (problem !== null || name === undefined) return;
+    step = to;
+    await tick();
+    const node = document.querySelector<HTMLElement>(
+      focus === null
+        ? `[data-testid="workflow-step"][data-step="${CSS.escape(name)}"]`
+        : `[data-testid="${focus}"]`,
+    );
+    node?.focus();
   }
 
   function switchDefault() {
@@ -147,37 +181,143 @@
   /** Where new sessions stand, said beside the switch. */
   const defaultLine = $derived(
     isDefault
-      ? "New sessions start with this workflow. A project can choose another under Project choices."
+      ? workspace.open.length > 0
+        ? "New sessions start with this workflow. A project can choose another under Project choices."
+        : "New sessions start with this workflow."
       : workflows.default === null
         ? "New sessions start with no workflow."
         : `New sessions start with ${workflows.default}.`,
   );
+
+  /** What an unread workflow was still named for. */
+  function unreadDetail(entry: (typeof workflows.unread)[number]): string {
+    const parts: string[] = [];
+    if (entry.default) parts.push("The file names it for new sessions, which start with no workflow until it is mended.");
+    if (entry.projects.length === 1) parts.push("One project chose it.");
+    if (entry.projects.length > 1) parts.push(`${entry.projects.length} projects chose it.`);
+    return parts.join(" ");
+  }
 </script>
 
-<section data-testid="settings-workflows">
-  <h3>Workflows</h3>
-  <p class="note">
-    A workflow says which model a session starts on, and which models it may hand work and review to.
-  </p>
+{#snippet more()}
+  <details class="told" data-testid="workflow-told">
+    <summary data-testid="workflow-told-toggle">
+      <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+      What the orchestrator is told
+    </summary>
+    <ol data-testid="workflow-told-list">
+      {#each told as line, index (index)}<li>{line}</li>{/each}
+    </ol>
+  </details>
 
-  <div class="picker" role="group" aria-label="Workflows" data-testid="workflow-picker">
-    {#each workflows.list as workflow (workflow.name)}
-      <button
-        type="button"
-        class="chip"
-        class:on={current?.name === workflow.name}
-        aria-pressed={current?.name === workflow.name}
-        onclick={() => choose(workflow.name)}
-        data-testid="workflow-chip"
-        data-workflow={workflow.name}
-      >
-        <span>{workflow.name}</span>
-        {#if workflows.default === workflow.name}<span class="tag" data-testid="workflow-default-tag">default</span>{/if}
-      </button>
-    {/each}
-    <button type="button" class="chip new" onclick={create} data-testid="workflow-new">
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>New workflow
+  {#if workspace.open.length > 0 && workflows.list.length > 0}
+    <button
+      type="button"
+      class="fold"
+      onclick={() => (overridesOpen = !overridesOpen)}
+      aria-expanded={overridesOpen}
+      data-testid="workflow-overrides"
+    >
+      <svg class="chev" class:open={overridesOpen} viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+      Project choices{overridden > 0 ? ` (${overridden})` : ""}
     </button>
+    {#if overridesOpen}
+      <div class="projects">
+        {#each workspace.open as project (project.path)}
+          {@const own = overrideOf(project.path)}
+          <div class="project" data-testid="workflow-project-row" data-project={project.path}>
+            <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
+            <select
+              aria-label="The workflow for {projectLabel(project.path)}"
+              value={own === undefined ? "@default" : own === null ? "@none" : own}
+              onchange={(event) => choice(project.path, event)}
+              data-testid="workflow-project-choice"
+            >
+              <option value="@default">As for new sessions</option>
+              <option value="@none">No workflow</option>
+              {#each workflows.list as workflow (workflow.name)}
+                <option value={workflow.name}>{workflow.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+{/snippet}
+
+<section class="tab" data-testid="settings-workflows">
+  <div class="top">
+    <h3>Workflows</h3>
+    <p class="note">
+      A workflow says which model a session starts on, and which models it may hand work and review to.
+    </p>
+
+    <div class="picker" role="group" aria-label="Workflows" data-testid="workflow-picker">
+      {#each workflows.list as workflow (workflow.name)}
+        <button
+          type="button"
+          class="chip"
+          class:on={current?.name === workflow.name}
+          aria-pressed={current?.name === workflow.name}
+          onclick={() => choose(workflow.name)}
+          data-testid="workflow-chip"
+          data-workflow={workflow.name}
+        >
+          <span>{workflow.name}</span>
+          {#if workflows.default === workflow.name}<span class="tag" data-testid="workflow-default-tag">default</span>{/if}
+        </button>
+      {/each}
+      <button type="button" class="chip new" onclick={create} data-testid="workflow-new">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>New workflow
+      </button>
+    </div>
+
+    {#each workflows.unread as entry (entry.at)}
+      <div class="unread" role="status" data-testid="workflow-unread" data-at={entry.at}>
+        {#if dropping === entry.at}
+          <ConfirmStrip
+            question={`Remove "${entry.name ?? "the unnamed workflow"}" from the settings file?`}
+            detail="It cannot be used as it is written."
+            action="Remove"
+            onConfirm={() => {
+              dropping = null;
+              removeUnread(entry.at);
+            }}
+            onCancel={() => (dropping = null)}
+            testid="workflow-unread-confirm"
+          />
+        {:else}
+          <p>
+            <b>"{entry.name ?? "A workflow without a name"}" in the settings file is not used.</b>
+            It breaks a rule: {entry.reason}. {unreadDetail(entry)} The file keeps it as written until you
+            mend it there or remove it.
+          </p>
+          <button type="button" class="drop" onclick={() => (dropping = entry.at)} data-testid="workflow-unread-remove"
+            >Remove from the file</button
+          >
+        {/if}
+      </div>
+    {/each}
+
+    {#if workflows.refused !== null}
+      <p class="error" role="alert" data-testid="workflow-refused">
+        The change was not kept: {workflows.refused}. The settings show what is stored.
+      </p>
+    {/if}
+
+    {#if current !== undefined}
+      <div class="head">
+        <label class="field">
+          <span class="lab">Workflow name</span>
+          <input type="text" value={current.name} onchange={rename} data-testid="workflow-name" />
+        </label>
+        <button type="button" class="tool" onclick={duplicate} data-testid="workflow-duplicate">Duplicate</button>
+      </div>
+    {/if}
+    {#if problem !== null}
+      <p class="error" role="alert" data-testid="workflow-problem">{problem}</p>
+    {/if}
   </div>
 
   {#if current === undefined}
@@ -185,17 +325,6 @@
       There are no workflows. New sessions start on one model with nothing to follow.
     </p>
   {:else}
-    <div class="head">
-      <label class="field">
-        <span class="lab">Workflow name</span>
-        <input type="text" value={current.name} onchange={rename} data-testid="workflow-name" />
-      </label>
-      <button type="button" class="tool" onclick={duplicate} data-testid="workflow-duplicate">Duplicate</button>
-    </div>
-    {#if problem !== null}
-      <p class="error" role="alert" data-testid="workflow-problem">{problem}</p>
-    {/if}
-
     <div class="edit" class:beside bind:clientWidth={editWidth} data-testid="workflow-edit">
       <div class="drawn">
         <WorkflowDiagram
@@ -203,23 +332,22 @@
           {selected}
           onSelect={(index) => (step = index)}
           onAdd={add}
+          onMove={move}
           onOrchestrator={(model) => (problem = setOrchestrator(current.name, model))}
         />
       </div>
 
-      <div class="step">
-        <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
-      </div>
-
-      <details class="told" data-testid="workflow-told">
-        <summary data-testid="workflow-told-toggle">
-          <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
-          What the orchestrator is told
-        </summary>
-        <ol data-testid="workflow-told-list">
-          {#each told as line, index (index)}<li>{line}</li>{/each}
-        </ol>
-      </details>
+      {#if beside}
+        <div class="step" data-testid="workflow-step-pane">
+          <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
+        </div>
+        <div class="rest">{@render more()}</div>
+      {:else}
+        <div class="below" data-testid="workflow-step-pane">
+          <StepSettings workflow={current} index={selected} onMoved={(index) => (step = index)} />
+          {@render more()}
+        </div>
+      {/if}
     </div>
 
     <div class="foot">
@@ -256,44 +384,24 @@
       </div>
     {/if}
   {/if}
-
-  {#if workspace.open.length > 0 && workflows.list.length > 0}
-    <button
-      type="button"
-      class="fold"
-      onclick={() => (overridesOpen = !overridesOpen)}
-      aria-expanded={overridesOpen}
-      data-testid="workflow-overrides"
-    >
-      <span class="chevron">{overridesOpen ? "▾" : "▸"}</span>
-      Project choices{overridden > 0 ? ` (${overridden})` : ""}
-    </button>
-    {#if overridesOpen}
-      <div class="projects">
-        {#each workspace.open as project (project.path)}
-          {@const own = overrideOf(project.path)}
-          <div class="project" data-testid="workflow-project-row" data-project={project.path}>
-            <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
-            <select
-              aria-label="The workflow for {projectLabel(project.path)}"
-              value={own === undefined ? "@default" : own === null ? "@none" : own}
-              onchange={(event) => choice(project.path, event)}
-              data-testid="workflow-project-choice"
-            >
-              <option value="@default">As for new sessions</option>
-              <option value="@none">No workflow</option>
-              {#each workflows.list as workflow (workflow.name)}
-                <option value={workflow.name}>{workflow.name}</option>
-              {/each}
-            </select>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  {/if}
 </section>
 
 <style>
+  /* The tab fills the dialog: its head and foot stay, the diagram stays,
+     and only what is under or beside the diagram scrolls. */
+  .tab {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .top,
+  .foot,
+  .confirm {
+    flex: none;
+  }
+
   h3 {
     margin: 0 0 6px;
     font-family: var(--chrome);
@@ -452,34 +560,57 @@
     color: var(--accent);
   }
 
-  /* The diagram, then the step's settings, then what the orchestrator is
-     told; the settings move up beside the diagram when both fit. */
+  /* The diagram stays at the top of the editor. Beside it, where the window
+     has room for an ordinary workflow and the step's settings together, the
+     settings scroll on their own; otherwise they scroll under it, with what
+     the orchestrator is told and the project choices after them. */
   .edit {
+    flex: 1;
+    min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "drawn" "step" "told";
-    gap: 14px 16px;
-    align-items: start;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 12px 16px;
   }
 
   .edit.beside {
-    grid-template-columns: minmax(0, 1fr) 272px;
-    grid-template-rows: auto 1fr;
-    grid-template-areas: "drawn step" "told step";
+    grid-template-columns: minmax(0, 1fr) 248px;
+    grid-template-areas: "drawn step" "rest step";
   }
 
   .drawn {
-    grid-area: drawn;
     min-width: 0;
+  }
+
+  .beside .drawn {
+    grid-area: drawn;
   }
 
   .step {
     grid-area: step;
-    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 2px 2px 0;
+  }
+
+  .rest,
+  .below {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .rest {
+    grid-area: rest;
+  }
+
+  .below {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 4px;
   }
 
   .told {
-    grid-area: told;
     min-width: 0;
   }
 
@@ -537,7 +668,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px 12px;
-    margin-top: 16px;
+    margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid var(--rule);
     font-size: 12.5px;
@@ -578,6 +709,53 @@
     margin-top: 10px;
   }
 
+  .unread {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px 12px;
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--del) 45%, transparent);
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .unread p {
+    flex: 1 1 320px;
+    margin: 0;
+  }
+
+  .unread b {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .unread :global([role="alertdialog"]) {
+    flex: 1;
+  }
+
+  .drop {
+    flex: none;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    font-family: var(--chrome);
+    font-size: var(--btn-size);
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    color: var(--del);
+    cursor: pointer;
+  }
+
+  .drop:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   .switch {
     position: relative;
     flex: none;
@@ -612,8 +790,8 @@
   .fold {
     display: flex;
     align-items: center;
-    gap: 5px;
-    margin: 14px 0 0;
+    gap: 6px;
+    margin: 12px 0 0;
     border: 0;
     background: none;
     font-family: var(--chrome);
@@ -624,6 +802,10 @@
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px 0;
+  }
+
+  .chev.open {
+    transform: rotate(90deg);
   }
 
   .fold:hover {

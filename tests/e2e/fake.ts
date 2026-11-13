@@ -1096,6 +1096,9 @@ export async function installFakeCore(
             : { stored: true, settings: found };
         },
         settingsSet: async (change: Record<string, unknown>) => {
+          // A test can have the core refuse the next changes, as a full disk would.
+          const refusal = (window as unknown as { __refuseSettings?: string }).__refuseSettings;
+          if (refusal !== undefined) throw new Error(refusal);
           const before = readSettings() ?? settingsDefaults;
           const themes = (change.themes ?? before.themes ?? {}) as Record<string, unknown>;
           for (const [field, value] of Object.entries(change)) {

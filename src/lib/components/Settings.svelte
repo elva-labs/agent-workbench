@@ -360,7 +360,6 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="dialog"
-    class:wide={tab === "workflows"}
     role="dialog"
     aria-modal="true"
     aria-labelledby="settings-title"
@@ -389,7 +388,7 @@
         {/each}
       </nav>
 
-      <div class="panel">
+      <div class="panel" class:fill={tab === "workflows"}>
         {#if tab === "appearance"}
           <h3>Appearance</h3>
           <div class="seg" role="radiogroup" aria-label="Appearance">
@@ -1024,14 +1023,15 @@
     z-index: 20;
     background: color-mix(in srgb, var(--bg) 70%, transparent);
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
-    padding-top: 8vh;
   }
 
+  /* One size for every tab, so nothing moves when the tab changes; it is
+     what the workflows' diagram and a step's settings need side by side. */
   .dialog {
-    width: min(860px, 92vw);
-    height: min(640px, 88vh);
+    width: min(1100px, 92vw);
+    height: min(820px, 92vh);
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -1040,11 +1040,6 @@
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
     overflow: hidden;
     outline: none;
-  }
-
-  /* The workflows draw a diagram beside the step's settings. */
-  .dialog.wide {
-    width: min(1040px, 92vw);
   }
 
   header {
@@ -1115,6 +1110,18 @@
     min-width: 0;
     overflow-y: auto;
     padding: 6px var(--pane-pad) 16px;
+  }
+
+  /* The other tabs keep the width they read at. */
+  .panel:not(.fill) > * {
+    max-width: 664px;
+  }
+
+  /* The workflows fill the panel and scroll their own parts. */
+  .panel.fill {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .panel > h3:first-child {

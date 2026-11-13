@@ -2,13 +2,13 @@
   /** The widths the diagram is laid out by. A step is as wide as the room
       allows, from the least to the most. */
   export const NODE = 140;
-  export const LEAST_NODE = 112;
-  export const ARROW = 40;
-  /** Room for "Reports to you" after the last arrow. */
-  export const END = 96;
+  export const LEAST_NODE = 100;
+  export const ARROW = 32;
+  /** Room for "Reports to you" after the last arrow, on two lines. */
+  export const END = 60;
   /** The flow's padding inside the frame, and the canvas's around it, each side. */
-  export const FLOW_PAD = 16;
-  export const CANVAS_PAD = 12;
+  export const FLOW_PAD = 12;
+  export const CANVAS_PAD = 8;
 
   /** The least width a diagram of so many steps is drawn in whole. */
   export function leastWidth(count: number): number {
@@ -21,9 +21,12 @@
    * A workflow drawn as a diagram. The orchestrator is the session the user
    * talks to, so it is the frame, with its model on it; the steps sit inside
    * it in order with an arrow between each and a plus on each arrow that
-   * opens a menu to add a step there. A review that goes back draws a line
-   * under the row from itself to the step it repeats, and under all the
-   * lines each says where it goes back to, until what, and how often.
+   * opens a menu to add a step there. The picked step has arrows above it
+   * that move it earlier or later, as Alt with the arrow keys does. A review
+   * that goes back draws a line under the row from itself to the step it
+   * repeats, lines arriving at one step side by side, and under all the
+   * lines each review's label says where it goes back to, until what, and
+   * how often.
    *
    * The steps share the width there is, down to the least a step needs; past
    * that the row scrolls sideways under the orchestrator's head, which stays
@@ -31,6 +34,7 @@
    */
   import type { ReviewStep, Workflow, WorkflowModel, WorkflowStep } from "$lib/core";
   import { installed } from "$lib/agent.svelte";
+  import { moveProblem } from "$lib/workflows.svelte";
   import {
     AGENT_LABELS,
     modelFromKey,
@@ -45,10 +49,32 @@
     selected: number;
     onSelect: (index: number) => void;
     onAdd: (at: number, kind: WorkflowStep["kind"]) => void;
+    /** Moves a step; the keyboard then goes to the control named, or to
+        the step itself when none is. */
+    onMove: (from: number, to: number, focus: string | null) => void;
     onOrchestrator: (model: WorkflowModel) => void;
   }
 
-  let { workflow, selected, onSelect, onAdd, onOrchestrator }: Props = $props();
+  let { workflow, selected, onSelect, onAdd, onMove, onOrchestrator }: Props = $props();
+
+  /** Why the picked step cannot move earlier or later, or null. */
+  const earlierProblem = $derived(moveProblem(workflow, selected, selected - 1));
+  const laterProblem = $derived(moveProblem(workflow, selected, selected + 1));
+
+  /** Alt with an arrow moves the picked step, as its arrows do. */
+  function nodeKeys(event: KeyboardEvent, index: number) {
+    if (!event.altKey || index !== selected) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const by = event.key === "ArrowLeft" ? -1 : 1;
+    if ((by < 0 ? earlierProblem : laterProblem) !== null) return;
+    onMove(index, index + by, null);
+  }
+
+  function moveBy(by: number) {
+    if ((by < 0 ? earlierProblem : laterProblem) !== null) return;
+    onMove(selected, selected + by, by < 0 ? "step-move-earlier" : "step-move-later");
+  }
 
   /** Room a loop's line takes beneath the row, and each deeper one adds. */
   const DEPTH = 14;
@@ -77,8 +103,15 @@
     from: number;
     to: number;
     level: number;
+    /** Where the line arrives: at the middle of the step it goes back to,
+        and further left for each line arriving there above it, so lines
+        arriving at one step never cross. */
+    arrive: number;
     text: string;
   }
+
+  /** How far apart lines arriving at one step stand. */
+  const BESIDE = 10;
 
   /** Until when a review sends the work back, in its own terms. */
   function until(step: ReviewStep): string {
@@ -98,8 +131,18 @@
         level += 1;
       }
       const rounds = step.limit === 1 ? "1 round" : `${step.limit} rounds`;
-      out.push({ from: index, to, level, text: `Back to ${step.backTo} ${until(step)}, ${rounds} at most` });
+      out.push({
+        from: index,
+        to,
+        level,
+        arrive: 0,
+        text: `${step.name}: back to ${step.backTo} ${until(step)}, ${rounds} at most`,
+      });
     });
+    for (const loop of out) {
+      const above = out.filter((other) => other.to === loop.to && other.level < loop.level).length;
+      loop.arrive = above * BESIDE;
+    }
     return out;
   });
 
@@ -110,7 +153,7 @@
   /** Where a label sits: centred under its line, kept inside the row. */
   function labelLeft(loop: Loop, at: number): number {
     const width = labelWidths[at] ?? 0;
-    const mid = (centre(loop.to) + centre(loop.from)) / 2;
+    const mid = (centre(loop.to) - loop.arrive + centre(loop.from)) / 2;
     return Math.max(0, Math.min(mid - width / 2, rowWidth - width));
   }
 
@@ -288,30 +331,61 @@
         onscroll={measure}
         data-testid="workflow-flow"
       >
-        <div class="flow" style:padding="18px {FLOW_PAD}px 14px">
+        <div class="flow" style:padding="28px {FLOW_PAD}px 14px">
           <div class="flow-row" data-testid="workflow-steps">
             {#each workflow.steps as step, index (step.name)}
-              <button
-                type="button"
-                class="node"
-                class:sel={selected === index}
-                style:width="{node}px"
-                aria-pressed={selected === index}
-                onclick={() => onSelect(index)}
-                data-testid="workflow-step"
-                data-step={step.name}
-                data-kind={step.kind}
-              >
-                <b>{step.name}</b>
-                <span class="role">{ROLE[step.kind]}</span>
-                <span class="models">
-                  {#if step.models.length === 0}
-                    <span>Any model</span>
-                  {:else}
-                    {#each shown(step) as label, at (at)}<span>{label}</span>{/each}
-                  {/if}
-                </span>
-              </button>
+              <div class="cell" style:width="{node}px">
+                {#if selected === index}
+                  <div class="mover" role="group" aria-label="Move {step.name}">
+                    <button
+                      type="button"
+                      aria-label="Move {step.name} earlier"
+                      aria-disabled={earlierProblem !== null}
+                      aria-describedby={earlierProblem === null ? undefined : "move-earlier-why"}
+                      title={earlierProblem ?? "Move earlier (Alt+Left)"}
+                      onclick={() => moveBy(-1)}
+                      data-testid="step-move-earlier"
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4" /></svg>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Move {step.name} later"
+                      aria-disabled={laterProblem !== null}
+                      aria-describedby={laterProblem === null ? undefined : "move-later-why"}
+                      title={laterProblem ?? "Move later (Alt+Right)"}
+                      onclick={() => moveBy(1)}
+                      data-testid="step-move-later"
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+                    </button>
+                    {#if earlierProblem !== null}<span class="sr" id="move-earlier-why">{earlierProblem}</span>{/if}
+                    {#if laterProblem !== null}<span class="sr" id="move-later-why">{laterProblem}</span>{/if}
+                  </div>
+                {/if}
+                <button
+                  type="button"
+                  class="node"
+                  class:sel={selected === index}
+                  aria-pressed={selected === index}
+                  aria-keyshortcuts={selected === index ? "Alt+ArrowLeft Alt+ArrowRight" : undefined}
+                  onclick={() => onSelect(index)}
+                  onkeydown={(event) => nodeKeys(event, index)}
+                  data-testid="workflow-step"
+                  data-step={step.name}
+                  data-kind={step.kind}
+                >
+                  <b>{step.name}</b>
+                  <span class="role">{ROLE[step.kind]}</span>
+                  <span class="models">
+                    {#if step.models.length === 0}
+                      <span>Any model</span>
+                    {:else}
+                      {#each shown(step) as label, at (at)}<span>{label}</span>{/each}
+                    {/if}
+                  </span>
+                </button>
+              </div>
               <div class="arrow" style:width="{ARROW}px">
                 <button
                   type="button"
@@ -369,8 +443,8 @@
               {#each loops as loop, at (loop.from)}
                 <div
                   class="loop"
-                  style:left="{centre(loop.to)}px"
-                  style:width="{centre(loop.from) - centre(loop.to)}px"
+                  style:left="{centre(loop.to) - loop.arrive}px"
+                  style:width="{centre(loop.from) - centre(loop.to) + loop.arrive}px"
                   style:height="{FIRST + loop.level * DEPTH}px"
                   data-testid="workflow-loop"
                   data-from={workflow.steps[loop.from].name}
@@ -401,7 +475,7 @@
   .canvas {
     border-radius: var(--radius);
     background: var(--surface-2);
-    padding: 12px;
+    padding: 8px;
   }
 
   .orch {
@@ -530,11 +604,68 @@
     align-items: stretch;
   }
 
-  .node {
+  .cell {
+    position: relative;
     flex: none;
+    display: flex;
+  }
+
+  /* The picked step's arrows sit above it, out of its text's way. */
+  .mover {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 4px);
+    display: flex;
+    gap: 2px;
+    transform: translateX(-50%);
+  }
+
+  .mover button {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-tag);
+    background: none;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .mover button:hover:not([aria-disabled="true"]) {
+    background: var(--surface-2);
+    color: var(--accent);
+  }
+
+  .mover button[aria-disabled="true"] {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .mover button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .mover svg {
+    width: 12px;
+    height: 12px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .node {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
     box-sizing: border-box;
     min-width: 0;
-    padding: 8px 11px 9px;
+    padding: 8px 9px 9px;
     border: 0;
     border-radius: var(--radius);
     background: var(--surface-2);
@@ -557,8 +688,8 @@
     display: block;
     margin-bottom: 7px;
     font-size: 11.5px;
+    line-height: 1.3;
     color: var(--ink-3);
-    white-space: nowrap;
   }
 
   .models {

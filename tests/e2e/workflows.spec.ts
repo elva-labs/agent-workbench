@@ -59,7 +59,7 @@ test.describe("the workflows tab", () => {
     expect(Math.abs(line.x + line.width - (review.x + review.width / 2))).toBeLessThan(2);
     expect(line.y).toBeGreaterThanOrEqual(Math.max(work.y + work.height, review.y + review.height) - 2);
     const label = page.getByTestId("workflow-loop-label");
-    await expect(label).toHaveText("Back to Work until both approve, 3 rounds at most");
+    await expect(label).toHaveText("Review: back to Work until both approve, 3 rounds at most");
     const text = (await label.boundingBox())!;
     expect(text.y).toBeGreaterThan(line.y);
   });
@@ -218,7 +218,7 @@ test.describe("the workflows tab", () => {
     expect(Math.abs(line.x - (plan.x + plan.width / 2))).toBeLessThan(2);
     expect(Math.abs(line.x + line.width - (check.x + check.width / 2))).toBeLessThan(2);
     await expect(page.getByTestId("workflow-loop-label")).toHaveText(
-      "Back to Plan until the reviewer approves, 2 rounds at most",
+      "Check: back to Plan until the reviewer approves, 2 rounds at most",
     );
   });
 
@@ -262,7 +262,7 @@ test.describe("the settings of a step", () => {
     await page.getByTestId("step-name").fill("Build");
     await page.getByTestId("step-name").press("Enter");
     await expect(step(page, "Build")).toBeVisible();
-    await expect(page.getByTestId("workflow-loop-label")).toContainText("Back to Build");
+    await expect(page.getByTestId("workflow-loop-label")).toContainText("back to Build");
     await expect.poll(async () => (await stored(page)).steps[1].backTo).toBe("Build");
 
     await page.getByTestId("step-name").fill("review");
@@ -326,9 +326,13 @@ test.describe("the settings of a step", () => {
 
     await page.getByTestId("step-approves").uncheck();
     await expect.poll(async () => (await stored(page)).steps[2].reviewerApproves).toBe(false);
-    await page.getByTestId("step-agrees").click();
-    await expect(page.getByTestId("step-problem")).toBeVisible();
-    await expect(page.getByTestId("step-agrees")).toBeChecked();
+    // The one condition left on is held, and says why, rather than refused.
+    const agrees = page.getByTestId("step-agrees");
+    await expect(agrees).toHaveAttribute("aria-disabled", "true");
+    await expect(agrees).toHaveAccessibleDescription(/One of these stays on/);
+    await agrees.click({ force: true });
+    await expect(agrees).toBeChecked();
+    await expect(page.getByTestId("step-problem")).toHaveCount(0);
 
     await page.getByTestId("step-back-to").selectOption("Work 2");
     await expect.poll(async () => (await stored(page)).steps[2].backTo).toBe("Work 2");
@@ -336,7 +340,7 @@ test.describe("the settings of a step", () => {
     await page.getByTestId("step-limit").fill("5");
     await page.getByTestId("step-limit").press("Enter");
     await expect(page.getByTestId("workflow-loop-label")).toHaveText(
-      "Back to Work 2 until the orchestrator agrees, 5 rounds at most",
+      "Review: back to Work 2 until the orchestrator agrees, 5 rounds at most",
     );
     // A review goes back only to a work step before it.
     const options = await page.getByTestId("step-back-to").locator("option").allTextContents();
@@ -346,13 +350,14 @@ test.describe("the settings of a step", () => {
   test("reorder and remove steps, and a first step cannot be a review", async ({ page }) => {
     await open(page);
     await expect(page.getByTestId("step-kind-review")).toHaveAttribute("aria-disabled", "true");
-    await expect(page.getByTestId("step-earlier")).toHaveAttribute("aria-disabled", "true");
-    await expect(page.getByTestId("step-remove")).toHaveAttribute("aria-disabled", "false");
+    await expect(page.getByTestId("step-move-earlier")).toHaveAttribute("aria-disabled", "true");
+    // Without Work, Review would come first: removing it is held, with the reason.
+    await expect(page.getByTestId("step-remove")).toHaveAttribute("aria-disabled", "true");
 
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();
     await expect(page.getByTestId("step-name")).toHaveValue("Work 2");
-    await page.getByTestId("step-earlier").click();
+    await page.getByTestId("step-move-earlier").click();
     await expect(page.getByTestId("step-name")).toHaveValue("Work 2");
     const first = (await step(page, "Work 2").boundingBox())!;
     const second = (await step(page, "Work").boundingBox())!;
@@ -369,6 +374,7 @@ test.describe("the settings of a step", () => {
     await page.getByTestId("step-remove-confirm-confirm").click();
     await expect(step(page, "Review")).toHaveCount(0);
     await expect(page.getByTestId("step-remove")).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByTestId("step-remove")).toHaveAccessibleDescription("A workflow needs at least one step.");
     await expect(page.getByTestId("workflow-loop")).toHaveCount(0);
   });
 
@@ -508,52 +514,86 @@ const fourSteps = {
 
 const box = async (page: Page, testid: string) => (await page.getByTestId(testid).boundingBox())!;
 
+/** Whether an element is wholly inside the dialog, so seen without scrolling. */
+const inDialog = async (page: Page, locator: ReturnType<Page["locator"]>) => {
+  const dialog = await box(page, "settings");
+  const it = (await locator.boundingBox())!;
+  return (
+    it.y >= dialog.y &&
+    it.y + it.height <= dialog.y + dialog.height &&
+    it.x >= dialog.x &&
+    it.x + it.width <= dialog.x + dialog.width
+  );
+};
+
 test.describe("the layout", () => {
-  test("gives the tab a wider dialog, with the diagram and the step's settings side by side", async ({
-    page,
-  }) => {
+  test("keeps one dialog size for every tab, so nothing moves when the tab changes", async ({ page }) => {
     await open(page);
-    const dialog = await box(page, "settings");
-    expect(Math.round(dialog.width)).toBe(1040);
-    const canvas = await box(page, "workflow-canvas");
-    const beside = await box(page, "step-settings");
-    expect(beside.x).toBeGreaterThanOrEqual(canvas.x + canvas.width);
-    // The orchestrator's model menu and the end of the row are in sight.
-    const menu = await box(page, "workflow-orchestrator-model");
-    expect(menu.x + menu.width).toBeLessThanOrEqual(canvas.x + canvas.width);
-    await expect(page.getByText("Reports to you")).toBeInViewport();
-    await page.getByTestId("settings-tab-sessions").click();
-    expect(Math.round((await box(page, "settings")).width)).toBe(860);
+    const workflows = await box(page, "settings");
+    expect(Math.round(workflows.width)).toBe(1100);
+    expect(Math.round(workflows.height)).toBe(820);
+    const tabs = (await page.getByTestId("settings-tab-appearance").boundingBox())!;
+    await page.getByTestId("settings-tab-appearance").click();
+    expect(await box(page, "settings")).toEqual(workflows);
+    expect((await page.getByTestId("settings-tab-appearance").boundingBox())!).toEqual(tabs);
   });
 
-  test("draws four steps whole at 1440 by 900, the settings going under the diagram to make room", async ({
+  test("shows a four-step workflow whole at 1440 by 900: the diagram, a review's settings to Remove, and the foot", async ({
     page,
   }) => {
     await open(page, fourSteps);
+    await step(page, "Final review").click();
     const canvas = await box(page, "workflow-canvas");
     for (const name of ["Plan", "Build", "Check", "Final review"]) {
       const node = (await step(page, name).boundingBox())!;
-      expect(node.x).toBeGreaterThanOrEqual(canvas.x);
       expect(node.x + node.width).toBeLessThanOrEqual(canvas.x + canvas.width);
     }
     const flow = page.getByTestId("workflow-flow");
     expect(await flow.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-    await expect(page.getByTestId("workflow-more-after")).toHaveCount(0);
-    const menu = await box(page, "workflow-orchestrator-model");
-    expect(menu.x + menu.width).toBeLessThanOrEqual(canvas.x + canvas.width);
-    const under = await box(page, "step-settings");
-    expect(under.y).toBeGreaterThanOrEqual(canvas.y + canvas.height);
+    // The step's settings stand beside the diagram.
+    expect((await box(page, "step-settings")).x).toBeGreaterThanOrEqual(canvas.x + canvas.width);
+    for (const testid of [
+      "workflow-orchestrator-model",
+      "step-back-to",
+      "step-limit",
+      "step-remove",
+      "workflow-default",
+      "workflow-delete",
+    ]) {
+      expect(await inDialog(page, page.getByTestId(testid)), testid).toBe(true);
+    }
+    const pane = page.getByTestId("workflow-step-pane");
+    expect(await pane.evaluate((node) => node.scrollHeight <= node.clientHeight)).toBe(true);
   });
 
-  test("decides beside or under by whether the diagram fits next to the settings", async ({ page }) => {
+  test("decides beside or under from the window, never from how many steps there are", async ({ page }) => {
     await open(page);
-    const canvas = await box(page, "workflow-canvas");
-    expect((await box(page, "step-settings")).x).toBeGreaterThanOrEqual(canvas.x + canvas.width);
+    const beside = async () => {
+      const canvas = await box(page, "workflow-canvas");
+      return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
+    };
+    expect(await beside()).toBe(true);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();
-    await expect(step(page, "Work 2")).toBeVisible();
-    const wider = await box(page, "workflow-canvas");
-    expect((await box(page, "step-settings")).y).toBeGreaterThanOrEqual(wider.y + wider.height);
+    await page.locator('[data-testid="workflow-add"][data-at="2"]').click();
+    await page.getByTestId("workflow-add-work").click();
+    await expect(step(page, "Work 3")).toBeVisible();
+    expect(await beside()).toBe(true);
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect.poll(beside).toBe(false);
+  });
+
+  test("keeps the diagram in place while the step's settings scroll on their own", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await open(page, fourSteps);
+    await step(page, "Final review").click();
+    const before = await box(page, "workflow-canvas");
+    const pane = page.getByTestId("workflow-step-pane");
+    expect(await pane.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
+    await pane.evaluate((node) => (node.scrollTop = node.scrollHeight));
+    await expect(page.getByTestId("step-remove")).toBeInViewport();
+    expect(await box(page, "workflow-canvas")).toEqual(before);
+    expect(await inDialog(page, page.getByTestId("workflow-delete"))).toBe(true);
   });
 
   test("scrolls only the row of steps where they do not fit, keeping the orchestrator's head and showing there is more", async ({
@@ -572,22 +612,19 @@ test.describe("the layout", () => {
     const last = (await step(page, "Final review").boundingBox())!;
     expect(last.x + last.width).toBeLessThanOrEqual(canvas.x + canvas.width);
     await expect(page.getByTestId("workflow-more-before")).toBeVisible();
-    // The head did not move with the row.
     const after = await box(page, "workflow-orchestrator-model");
     expect(after.x).toBe(head.x);
     expect(after.y).toBe(head.y);
   });
 });
 
-test.describe("the lines of two reviews", () => {
-  test("keep each label clear of every line and of each other, and say what the work waits for", async ({
-    page,
-  }) => {
+test.describe("the lines of reviews", () => {
+  test("name their review and keep each label clear of every line and of each other", async ({ page }) => {
     await open(page, fourSteps);
     const labels = page.getByTestId("workflow-loop-label");
     await expect(labels).toHaveText([
-      "Back to Plan until the orchestrator agrees, 2 rounds at most",
-      "Back to Build until both approve, 3 rounds at most",
+      "Check: back to Plan until the orchestrator agrees, 2 rounds at most",
+      "Final review: back to Build until both approve, 3 rounds at most",
     ]);
     const lines = await Promise.all(
       (await page.getByTestId("workflow-loop").all()).map(async (line) => (await line.boundingBox())!),
@@ -596,9 +633,55 @@ test.describe("the lines of two reviews", () => {
     const lowest = Math.max(...lines.map((line) => line.y + line.height));
     for (const text of texts) expect(text.y).toBeGreaterThanOrEqual(lowest);
     expect(texts[1].y).toBeGreaterThanOrEqual(texts[0].y + texts[0].height);
-    // The deeper line runs under the first one, not through it.
     const [first, second] = lines;
     expect(second.y + second.height).toBeGreaterThan(first.y + first.height);
+  });
+
+  test("arriving at one step, stand side by side and never cross", async ({ page }) => {
+    await open(page, {
+      workflows: {
+        list: [
+          {
+            name: "Looks",
+            orchestrator: claude("fable"),
+            steps: [
+              { kind: "work", name: "Work", models: [], parallel: 1 },
+              {
+                kind: "review",
+                name: "First look",
+                models: [],
+                reviewerApproves: true,
+                orchestratorAgrees: true,
+                backTo: "Work",
+                limit: 3,
+              },
+              {
+                kind: "review",
+                name: "Second look",
+                models: [],
+                reviewerApproves: true,
+                orchestratorAgrees: false,
+                backTo: "Work",
+                limit: 2,
+              },
+            ],
+          },
+        ],
+        default: "Looks",
+        overrides: {},
+      },
+    });
+    await expect(page.getByTestId("workflow-loop-label")).toHaveText([
+      "First look: back to Work until both approve, 3 rounds at most",
+      "Second look: back to Work until the reviewer approves, 2 rounds at most",
+    ]);
+    const inner = (await page.locator('[data-testid="workflow-loop"][data-from="First look"]').boundingBox())!;
+    const outer = (await page.locator('[data-testid="workflow-loop"][data-from="Second look"]').boundingBox())!;
+    // They arrive apart, the outer line to the left of the inner one, and
+    // the outer one runs wholly around the inner one.
+    expect(inner.x - outer.x).toBeGreaterThanOrEqual(6);
+    expect(outer.x + outer.width).toBeGreaterThan(inner.x + inner.width);
+    expect(outer.y + outer.height).toBeGreaterThan(inner.y + inner.height);
   });
 });
 
@@ -645,29 +728,30 @@ test.describe("taking things away", () => {
     expect(await red("step-remove")).toBe(del);
   });
 
-  test("asks before removing a step, says which reviews go back elsewhere, and refuses one it cannot remove", async ({
+  test("asks before removing a step, says which reviews go back elsewhere, and holds one it cannot remove", async ({
     page,
   }) => {
     await open(page);
-    await page.getByTestId("step-remove").click();
+    const remove = page.getByTestId("step-remove");
+    await expect(remove).toHaveAttribute("aria-disabled", "true");
+    await expect(remove).toHaveAccessibleDescription('"Review" would come first, and the first step does the work.');
+    await expect(remove).toHaveAttribute("title", /would come first/);
+    await remove.click({ force: true });
     await expect(page.getByTestId("step-remove-confirm")).toHaveCount(0);
-    await expect(page.locator('[data-testid="step-problem"][data-where="remove"]')).toContainText(
-      '"Review" would come first',
-    );
 
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();
     await step(page, "Review").click();
     await page.getByTestId("step-back-to").selectOption("Work 2");
     await step(page, "Work 2").click();
-    await page.getByTestId("step-remove").click();
+    await remove.click();
     const confirm = page.getByTestId("step-remove-confirm");
     await expect(confirm).toContainText('Remove the step "Work 2"?');
     await expect(confirm).toContainText('"Review" goes back to "Work" instead.');
     await page.getByTestId("step-remove-confirm-cancel").click();
     await expect(step(page, "Work 2")).toBeVisible();
-    await expect(page.getByTestId("step-remove")).toBeFocused();
-    await page.getByTestId("step-remove").click();
+    await expect(remove).toBeFocused();
+    await remove.click();
     await page.getByTestId("step-remove-confirm-confirm").click();
     await expect(step(page, "Work 2")).toHaveCount(0);
     await expect(page.getByTestId("step-name")).toBeFocused();
@@ -689,20 +773,57 @@ test.describe("the keyboard", () => {
     await expect(page.getByTestId("workflow-duplicate")).toBeFocused();
   });
 
-  test("keeps focus on Move earlier and Move later at the ends of the row", async ({ page }) => {
+  test("moves the picked step with the arrows above it or Alt and an arrow, keeping the keyboard", async ({
+    page,
+  }) => {
     await open(page);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();
-    await page.getByTestId("step-earlier").focus();
+    await expect(step(page, "Work 2")).toBeFocused();
+    const earlier = page.getByTestId("step-move-earlier");
+    const above = (await earlier.boundingBox())!;
+    const node = (await step(page, "Work 2").boundingBox())!;
+    expect(above.y + above.height).toBeLessThanOrEqual(node.y);
+    await earlier.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("step-name")).toHaveValue("Work 2");
-    await expect(page.getByTestId("step-earlier")).toBeFocused();
-    await expect(page.getByTestId("step-earlier")).toHaveAttribute("aria-disabled", "true");
+    await expect.poll(async () => (await stored(page)).steps.map((s: { name: string }) => s.name)).toEqual([
+      "Work 2",
+      "Work",
+      "Review",
+    ]);
+    await expect(earlier).toBeFocused();
+    await expect(earlier).toHaveAttribute("aria-disabled", "true");
+    await expect(earlier).toHaveAccessibleDescription("It is the first step already.");
     await page.keyboard.press("Enter");
     await expect(step(page, "Work 2")).toHaveAttribute("aria-pressed", "true");
-    await page.getByTestId("step-later").focus();
+
+    await step(page, "Work 2").focus();
+    await page.keyboard.press("Alt+ArrowRight");
+    await expect.poll(async () => (await stored(page)).steps.map((s: { name: string }) => s.name)).toEqual([
+      "Work",
+      "Work 2",
+      "Review",
+    ]);
+    await expect(step(page, "Work 2")).toBeFocused();
+    // Past Review it cannot go: that would leave Review with no work before it.
+    await expect(page.getByTestId("step-move-later")).toHaveAttribute("aria-disabled", "false");
+    await step(page, "Work").click();
+    await expect(page.getByTestId("step-move-later")).toHaveAttribute("aria-disabled", "false");
+    await step(page, "Review").click();
+    await expect(page.getByTestId("step-move-earlier")).toHaveAttribute("aria-disabled", "false");
+  });
+
+  test("picks a step added from the plus menu by keyboard and gives it the keyboard", async ({ page }) => {
+    await open(page);
+    const plus = page.locator('[data-testid="workflow-add"][data-at="1"]');
+    await plus.focus();
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("step-later")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    const added = step(page, "Review of Work");
+    await expect(added).toBeFocused();
+    await expect(added).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("step-name")).toHaveValue("Review of Work");
   });
 
   test("moves between the two kinds of a step with the arrows", async ({ page }) => {
@@ -755,21 +876,20 @@ test.describe("the keyboard", () => {
 });
 
 test.describe("what the step's settings say", () => {
-  test("say a refusal beside the control it came from, in view, and drop it when another step is picked", async ({
+  test("say a refusal beside the control it came from, and drop it when another step is picked", async ({
     page,
   }) => {
     await open(page);
     await step(page, "Review").click();
-    await page.getByTestId("step-approves").uncheck();
-    await page.getByTestId("step-agrees").click();
-    const refusal = page.getByTestId("step-problem");
+    await page.getByTestId("step-name").fill("work");
+    await page.getByTestId("step-name").press("Enter");
+    const refusal = page.locator('[data-testid="step-problem"][data-where="name"]');
     await expect(refusal).toBeInViewport();
-    await expect(page.getByTestId("step-passes").getByTestId("step-problem")).toBeVisible();
-    await expect(page.getByTestId("step-agrees")).toBeChecked();
+    await expect(refusal).toContainText("taken");
     await step(page, "Work").click();
-    await expect(refusal).toHaveCount(0);
+    await expect(page.getByTestId("step-problem")).toHaveCount(0);
     await step(page, "Review").click();
-    await expect(refusal).toHaveCount(0);
+    await expect(page.getByTestId("step-problem")).toHaveCount(0);
   });
 
   test("keep Any model ticked when it is clicked with no model chosen", async ({ page }) => {
@@ -791,6 +911,18 @@ test.describe("what the step's settings say", () => {
     await expect(page.getByTestId("step-settings")).toContainText("times, then ask me");
   });
 
+  test("say where new sessions stand beside the switch, pointing at project choices only where there are some", async ({
+    page,
+  }) => {
+    await installFakeCore(page, { open: [] });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-workflows").click();
+    await expect(page.getByTestId("workflow-default-line")).toHaveText("New sessions start with this workflow.");
+    await expect(page.getByTestId("workflow-overrides")).toHaveCount(0);
+  });
+
   test("say where new sessions stand beside the switch, without contradicting it", async ({ page }) => {
     await open(page);
     const line = page.getByTestId("workflow-default-line");
@@ -800,5 +932,59 @@ test.describe("what the step's settings say", () => {
     await page.getByTestId("workflow-new").click();
     await expect(page.getByTestId("workflow-default")).toHaveAttribute("aria-checked", "false");
     await expect(line).toHaveText("New sessions start with Build and review.");
+  });
+});
+
+test.describe("a workflow the file cannot use", () => {
+  const careful = {
+    name: "Careful",
+    reason: "the step Review of Careful goes back between 1 and 10 times, not 11",
+    entry: { name: "Careful" },
+    at: 1,
+    default: true,
+    projects: [PROJECT],
+  };
+
+  test("is named with the rule it breaks, kept in the file, and removed only when asked", async ({ page }) => {
+    await open(page, {
+      workflows: {
+        list: [
+          {
+            name: "Build and review",
+            orchestrator: claude("fable"),
+            steps: [{ kind: "work", name: "Work", models: [], parallel: 1 }],
+          },
+        ],
+        default: null,
+        overrides: {},
+        unread: [careful],
+      },
+    });
+    const notice = page.getByTestId("workflow-unread");
+    await expect(notice).toContainText('"Careful" in the settings file is not used.');
+    await expect(notice).toContainText("goes back between 1 and 10 times, not 11");
+    await expect(notice).toContainText("One project chose it.");
+    // Another change carries it through.
+    await page.getByTestId("workflow-orchestrator-model").selectOption("claude-code:opus");
+    await expect.poll(async () => (await file(page)).workflows.unread).toEqual([careful]);
+
+    await page.getByTestId("workflow-unread-remove").click();
+    await page.getByTestId("workflow-unread-confirm-confirm").click();
+    await expect(notice).toHaveCount(0);
+    await expect.poll(async () => (await file(page)).workflows.unread).toBeUndefined();
+  });
+});
+
+test.describe("a change the settings refuse", () => {
+  test("is said, and the window shows what is stored", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      (window as unknown as { __refuseSettings?: string }).__refuseSettings = "could not write the settings file";
+    });
+    await page.getByTestId("workflow-orchestrator-model").selectOption("claude-code:opus");
+    await expect(page.getByTestId("workflow-refused")).toContainText(
+      "The change was not kept: could not write the settings file.",
+    );
+    await expect(page.getByTestId("workflow-orchestrator-model")).toHaveValue("claude-code:fable");
   });
 });

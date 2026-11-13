@@ -5,9 +5,10 @@
    * settings of its kind. A work step says how many sessions may run at
    * once; a review says when the work passes and, as one sentence, where it
    * goes back to otherwise and how often before you are asked. Each change
-   * applies at once; one the rules refuse is said beside the control it
-   * came from, for as long as that step is picked, and not made. Moving the
-   * step sits below, and removing it, asked first, at the foot.
+   * applies at once; a control the rules would always refuse is dimmed and
+   * says why, and a refusal that cannot be known before is said beside the
+   * control it came from, for as long as that step is picked. Removing the
+   * step, asked first, is at the foot.
    */
   import { tick } from "svelte";
   import type { Workflow, WorkflowModel } from "$lib/core";
@@ -16,8 +17,7 @@
   import {
     MOST_PARALLEL,
     MOST_ROUNDS,
-    moveStep,
-    workflowProblem,
+    removeProblem,
     removeStep,
     setStepKind,
     updateStep,
@@ -40,7 +40,7 @@
   const targets = $derived(workflow.steps.slice(0, index).filter((other) => other.kind === "work"));
 
   /** Which control a refusal came from. */
-  type Where = "name" | "kind" | "models" | "parallel" | "passes" | "back" | "order" | "remove";
+  type Where = "name" | "kind" | "models" | "parallel" | "passes" | "back" | "remove";
 
   /** The step a refusal or a question belongs to; either is shown only
       while that step is picked. */
@@ -149,28 +149,24 @@
   }
 
   const first = $derived(index === 0);
-  const last = $derived(index === workflow.steps.length - 1);
-
-  function move(by: number) {
-    if ((by < 0 && first) || (by > 0 && last)) return;
-    const problemText = moveStep(workflow.name, index, index + by);
-    if (problemText === null) onMoved(index + by);
-    else said("order", problemText);
-  }
 
   /** Why the step cannot be taken away, or null when it can. */
-  const removeRefusal = $derived.by(() => {
-    if (workflow.steps.length <= 1) return "A workflow needs at least one step.";
-    const after = withoutStep(workflow, index);
-    if (after.steps[0].kind === "review") {
-      return `Without it, "${after.steps[0].name}" would come first, and the first step does the work.`;
-    }
-    return workflowProblem(after);
-  });
+  const removeRefusal = $derived(removeProblem(workflow, index));
 
-  function askRemove() {
-    if (removeRefusal !== null) said("remove", removeRefusal);
-    else removing = here;
+  /** A review passes the work on something, so the one condition left on
+      cannot be turned off. */
+  const onlyPass = $derived(
+    step?.kind === "review" && step.reviewerApproves !== step.orchestratorAgrees
+      ? step.reviewerApproves
+        ? "approves"
+        : "agrees"
+      : null,
+  );
+  const ONLY_PASS = "One of these stays on: the work passes on at least one.";
+
+  /** A control that would be refused does nothing; it says why instead. */
+  function held(event: Event, condition: "approves" | "agrees") {
+    if (onlyPass === condition) event.preventDefault();
   }
 
   /** A refusal is brought into view where it is said. */
@@ -196,12 +192,17 @@
     removing = null;
     const problemText = removeStep(workflow.name, index);
     if (problemText !== null) {
-      said("order", problemText);
+      said("remove", problemText);
       return;
     }
     onMoved(Math.max(0, index - 1));
     await tick();
     root?.querySelector<HTMLElement>('[data-testid="step-name"]')?.focus();
+  }
+
+  /** The question keeps in view in the column it opens in. */
+  function shown(node: HTMLElement) {
+    node.scrollIntoView({ block: "nearest" });
   }
 
   async function cancelRemove() {
@@ -320,11 +321,14 @@
         {:else}
           <fieldset class="fld" data-testid="step-passes">
             <legend class="lab">The work passes when</legend>
-            <div class="check">
+            <div class="check" title={onlyPass === "approves" ? ONLY_PASS : undefined}>
               <label>
                 <input
                   type="checkbox"
                   checked={step.reviewerApproves}
+                  aria-disabled={onlyPass === "approves"}
+                  aria-describedby={onlyPass === "approves" ? "step-pass-why" : undefined}
+                  onclick={(event) => held(event, "approves")}
                   onchange={(event) => {
                     change("passes", { reviewerApproves: !step.reviewerApproves });
                     if (step.kind === "review") settle(event, step.reviewerApproves);
@@ -334,11 +338,14 @@
                 <span>The reviewer approves</span>
               </label>
             </div>
-            <div class="check">
+            <div class="check" title={onlyPass === "agrees" ? ONLY_PASS : undefined}>
               <label>
                 <input
                   type="checkbox"
                   checked={step.orchestratorAgrees}
+                  aria-disabled={onlyPass === "agrees"}
+                  aria-describedby={onlyPass === "agrees" ? "step-pass-why" : undefined}
+                  onclick={(event) => held(event, "agrees")}
                   onchange={(event) => {
                     change("passes", { orchestratorAgrees: !step.orchestratorAgrees });
                     if (step.kind === "review") settle(event, step.orchestratorAgrees);
@@ -348,6 +355,7 @@
                 <span>The orchestrator agrees</span>
               </label>
             </div>
+            {#if onlyPass !== null}<span class="sr" id="step-pass-why">{ONLY_PASS}</span>{/if}
             {@render refused("passes")}
           </fieldset>
 
@@ -385,26 +393,9 @@
           </fieldset>
         {/if}
 
-        <div class="order">
-          <button
-            type="button"
-            class="tool"
-            aria-disabled={first}
-            onclick={() => move(-1)}
-            data-testid="step-earlier">Move earlier</button
-          >
-          <button
-            type="button"
-            class="tool"
-            aria-disabled={last}
-            onclick={() => move(1)}
-            data-testid="step-later">Move later</button
-          >
-        </div>
-        {@render refused("order")}
-
         <div class="foot">
           {#if askingRemove}
+            <div use:shown>
             <ConfirmStrip
               question={`Remove the step "${step.name}"?`}
               detail={removeDetail}
@@ -413,14 +404,20 @@
               onCancel={cancelRemove}
               testid="step-remove-confirm"
             />
+            </div>
           {:else}
             <button
               type="button"
               class="remove"
-              aria-disabled={workflow.steps.length <= 1}
-              onclick={askRemove}
+              aria-disabled={removeRefusal !== null}
+              aria-describedby={removeRefusal === null ? undefined : "step-remove-why"}
+              title={removeRefusal ?? undefined}
+              onclick={() => {
+                if (removeRefusal === null) removing = here;
+              }}
               data-testid="step-remove">Remove this step</button
             >
+            {#if removeRefusal !== null}<span class="sr" id="step-remove-why">{removeRefusal}</span>{/if}
             {@render refused("remove")}
           {/if}
         </div>
@@ -432,7 +429,7 @@
 <style>
   .insp {
     container-type: inline-size;
-    padding: 14px;
+    padding: 12px 14px;
     border-radius: var(--radius);
     box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
     min-width: 0;
@@ -443,13 +440,13 @@
   .cols {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
   }
 
   .col {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
     min-width: 0;
   }
 
@@ -534,6 +531,7 @@
     font-size: 12px;
     letter-spacing: var(--label-track-tight);
     text-transform: var(--label-case);
+    white-space: nowrap;
     color: var(--ink-3);
     cursor: pointer;
   }
@@ -565,7 +563,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 2px 0;
+    padding: 1px 0;
     font-size: 12.5px;
     color: var(--ink);
   }
@@ -582,6 +580,20 @@
   .check input {
     accent-color: var(--accent);
     margin: 0;
+  }
+
+  .check input[aria-disabled="true"] {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .check small {
@@ -638,36 +650,6 @@
     color: var(--del);
   }
 
-  .order {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    margin-top: -2px;
-  }
-
-  .tool {
-    padding: 2px 0;
-    border: 0;
-    background: none;
-    font-family: var(--chrome);
-    font-size: var(--btn-size);
-    font-weight: var(--btn-weight);
-    letter-spacing: var(--label-track-tight);
-    text-transform: var(--label-case);
-    color: var(--ink-2);
-    cursor: pointer;
-  }
-
-  .tool:hover:not([aria-disabled="true"]) {
-    color: var(--accent);
-  }
-
-  .tool[aria-disabled="true"] {
-    opacity: 0.45;
-    cursor: default;
-  }
-
-  .tool:focus-visible,
   .remove:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
