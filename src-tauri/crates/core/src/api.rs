@@ -657,6 +657,26 @@ impl Core {
         }
     }
 
+    /// The past sessions of several projects at once, in the order given,
+    /// from one read of the account's directory.
+    pub fn sessions_list_many(
+        &self,
+        projects: &[PathBuf],
+        agent: &str,
+        config_dir: Option<&str>,
+    ) -> Vec<Vec<transcripts::Transcript>> {
+        let Some(home) = &self.home else {
+            return vec![Vec::new(); projects.len()];
+        };
+        match agent {
+            "claude-code" => {
+                transcripts::list_many(&account::claude_dir(home, config_dir), projects)
+            }
+            "codex" => codex::list_many(&account::codex_home(home, config_dir), projects),
+            _ => vec![Vec::new(); projects.len()],
+        }
+    }
+
     /// What an agent calls a session now, for agents that keep that in an
     /// index of their own rather than in the terminal title.
     pub fn session_title(&self, agent: &str, id: &str, config_dir: Option<&str>) -> Option<String> {
@@ -980,11 +1000,12 @@ mod tests {
         });
         let id = core.shell(Path::new("/tmp"), 80, 24, |_| output).unwrap();
         core.pty_write(&id, b"exit 3\n").unwrap();
-        for _ in 0..100 {
-            if !recorder.events.lock().unwrap().is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        // The shell reads its own startup files before it reads the line, so
+        // the end comes when it comes; the bound is only for a shell that
+        // never ends.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while recorder.events.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         let events = recorder.events.lock().unwrap();
         let (name, payload) = events.first().expect("the end was announced");

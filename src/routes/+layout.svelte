@@ -29,7 +29,7 @@
   import { followSettings } from "$lib/preferences.svelte";
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
-  import { loadStarted } from "$lib/conductor.svelte";
+  import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { reopen } from "$lib/reopen.svelte";
   import { followOpenRequests, restore } from "$lib/workspace.svelte";
@@ -48,22 +48,26 @@
     loadLayout();
     loadRemembered();
     loadStarted();
+    const stopStops = watchStops();
     let closed = false;
     let stopSettings = () => {};
     void followSettings().then((stop) => {
       if (closed) stop();
       else stopSettings = stop;
     });
-    // The sessions that were open come back into the projects that are, and
-    // only then are the folders asked for from outside opened in front.
+    // The sessions that were open come back into the projects on this
+    // machine, and only then are the folders asked for from outside opened
+    // in front. A project on another machine brings its sessions back when
+    // it arrives; nothing here waits for it.
     let stopReopen = () => {};
-    const restored = restore().then(() => {
-      if (!closed) stopReopen = reopen();
+    const restored = restore().then((arriving) => {
+      if (!closed) stopReopen = reopen(arriving);
     });
     const stopOpening = followOpenRequests(restored);
     return () => {
       closed = true;
       stopSettings();
+      stopStops();
       stopOpening();
       stopReopen();
     };

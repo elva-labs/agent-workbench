@@ -155,6 +155,7 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         workbench_core::show::TERMINAL_REQUEST
         | workbench_core::show::NOTIFY_REQUEST
         | workbench_core::show::CONDUCT_REQUEST
+        | workbench_core::show::CONDUCT_CANCEL
         | workbench_core::show::BROWSER_REQUEST
         | workbench_core::show::SETTINGS_REQUEST => {
             put_back(&mut payload, "cwd", |path| with_host(host, path));
@@ -564,6 +565,17 @@ mod tests {
         assert_eq!(call["cwd"], "ssh://lab/srv/api");
         assert_eq!(call["tool"], "start");
         assert_eq!(call["session"], "s-1");
+    }
+
+    #[test]
+    fn a_cancelled_conduct_call_comes_home_with_the_host_on_where_it_was_made() {
+        let call = homeward(
+            "lab",
+            workbench_core::show::CONDUCT_CANCEL,
+            json!({ "id": "c-1", "cwd": "/srv/api" }),
+        );
+        assert_eq!(call["cwd"], "ssh://lab/srv/api");
+        assert_eq!(call["id"], "c-1");
     }
 
     #[test]

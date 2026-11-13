@@ -31,6 +31,8 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     transcripts: async (_project: string, agent: string) =>
       agent === "claude-code" ? fake.transcripts : [],
+    transcriptsMany: async (projects: string[], agent: string) =>
+      projects.map(() => (agent === "claude-code" ? fake.transcripts : [])),
     spawn: async () => ({ ptyId: "pty-1", sessionId: null }),
     kill: async () => {},
   }),

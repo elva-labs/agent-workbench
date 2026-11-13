@@ -60,28 +60,41 @@ const LIST: &str = "SELECT id, name, title, first_user_message, updated_at, toke
 
 /// Newest first. A project Codex has never been used in has none.
 pub fn list(codex_home: &Path, project: &Path) -> Vec<Transcript> {
+    list_many(codex_home, &[project.to_path_buf()])
+        .pop()
+        .unwrap_or_default()
+}
+
+/// The threads of every project given, in the order given, from one opening
+/// of the index.
+pub fn list_many(codex_home: &Path, projects: &[PathBuf]) -> Vec<Vec<Transcript>> {
     let Some(connection) = open(codex_home) else {
-        return Vec::new();
+        return vec![Vec::new(); projects.len()];
     };
     let Ok(mut statement) = connection.prepare(LIST) else {
-        return Vec::new();
+        return vec![Vec::new(); projects.len()];
     };
-    let root = project.to_string_lossy().to_string();
-    let under = format!("{root}/%");
-    let rows = statement.query_map([root.clone(), under], |row| {
-        let cwd: String = row.get(6)?;
-        Ok(Transcript {
-            id: row.get(0)?,
-            title: name_of(row.get(1)?, row.get(2)?, row.get(3)?),
-            modified: row.get::<_, i64>(4).map(|s| s.max(0) as u64)?,
-            size: row.get::<_, i64>(5).map(|s| s.max(0) as u64)?,
-            cwd: (cwd != root).then_some(cwd),
+    projects
+        .iter()
+        .map(|project| {
+            let root = project.to_string_lossy().to_string();
+            let under = format!("{root}/%");
+            let rows = statement.query_map([root.clone(), under], |row| {
+                let cwd: String = row.get(6)?;
+                Ok(Transcript {
+                    id: row.get(0)?,
+                    title: name_of(row.get(1)?, row.get(2)?, row.get(3)?),
+                    modified: row.get::<_, i64>(4).map(|s| s.max(0) as u64)?,
+                    size: row.get::<_, i64>(5).map(|s| s.max(0) as u64)?,
+                    cwd: (cwd != root).then_some(cwd),
+                })
+            });
+            match rows {
+                Ok(rows) => rows.filter_map(Result::ok).collect(),
+                Err(_) => Vec::new(),
+            }
         })
-    });
-    match rows {
-        Ok(rows) => rows.filter_map(Result::ok).collect(),
-        Err(_) => Vec::new(),
-    }
+        .collect()
 }
 
 /// What a thread is called: the name the user gave it, else the title Codex
@@ -405,6 +418,34 @@ mod tests {
         assert_eq!(found[0].title, None, "a fresh thread has no name yet");
         assert_eq!(found[3].modified, 20);
         assert_eq!(found[3].size, 42);
+    }
+
+    #[test]
+    fn many_projects_are_listed_from_one_opening_in_the_order_asked() {
+        let dir = codex_home("many");
+        seed(
+            &dir,
+            5,
+            &[
+                ("a", P, "", "mine", "x", 1, 20, 0, "cli"),
+                ("b", "/elsewhere", "", "theirs", "x", 2, 30, 0, "cli"),
+                ("c", "/elsewhere/tree", "", "nested", "x", 3, 40, 0, "cli"),
+            ],
+        );
+        let projects = vec![
+            PathBuf::from("/elsewhere"),
+            PathBuf::from("/nowhere"),
+            PathBuf::from(P),
+        ];
+        let found = list_many(&dir, &projects);
+        let ids = |list: &Vec<Transcript>| list.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&found[0]), ["c", "b"]);
+        assert!(found[1].is_empty());
+        assert_eq!(ids(&found[2]), ["a"]);
+
+        let nothing = list_many(&codex_home("many-empty"), &projects);
+        assert_eq!(nothing.len(), 3);
+        assert!(nothing.iter().all(Vec::is_empty));
     }
 
     #[test]
