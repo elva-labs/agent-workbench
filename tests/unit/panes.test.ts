@@ -112,6 +112,7 @@ import {
 import { reset as resetHook } from "$lib/hook.svelte";
 import { remote, resetRemote } from "$lib/remote.svelte";
 import { offered, pickResume, resetResume, resume } from "$lib/resume.svelte";
+import { projects, resetProjects, touch } from "$lib/projects.svelte";
 
 beforeEach(() => {
   resetRemote();
@@ -129,7 +130,8 @@ beforeEach(() => {
   layout.mode = "working";
   layout.focus = "agent";
   layout.width = 1600;
-  layout.sessionsView = "project";
+  layout.projectSort = "used";
+  resetProjects();
 
   files.scope = "changed";
   files.view = "diff";
@@ -357,11 +359,12 @@ describe("SessionsPane", () => {
     done.unread = true;
 
     render(SessionsPane);
-    const rows = screen.getAllByTestId("session-row");
-    expect(rows[0].querySelector(".dot")).toHaveClass("working");
-    expect(rows[0]).toHaveTextContent("working");
-    expect(rows[1].querySelector(".dot")).toHaveClass("unread");
-    expect(rows[1]).toHaveTextContent("waiting for you");
+    const row = (key: string) =>
+      document.querySelector<HTMLElement>(`[data-row="session:${key}"] [data-testid="session-row"]`)!;
+    expect(row(busy.key).querySelector(".dot")).toHaveClass("working");
+    expect(row(busy.key)).toHaveTextContent("working");
+    expect(row(done.key).querySelector(".dot")).toHaveClass("unread");
+    expect(row(done.key)).toHaveTextContent("waiting for you");
   });
 
   // A session under another project is that project's work: picking it
@@ -376,7 +379,9 @@ describe("SessionsPane", () => {
     sessions.active = mine.key;
 
     render(SessionsPane);
-    await fireEvent.click(screen.getAllByTestId("session-row")[1]);
+    await fireEvent.click(
+      document.querySelector<HTMLElement>(`[data-row="session:${theirs.key}"] [data-testid="session-row"]`)!,
+    );
     expect(workspace.active).toBe("/two");
     expect(sessions.active).toBe(theirs.key);
     expect(layout.focus).toBe("agent");
@@ -516,127 +521,124 @@ describe("SessionsPane", () => {
     expect(remote.open).toBe(true);
     expect(screen.queryByTestId("sessions-menu-items")).toBeNull();
 
-    // The view switch is next, and Right and Left flip it in place.
+    // The sort menu is next: Enter opens it, the arrows walk it and Enter
+    // picks, which closes it.
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("view-switch")).toHaveClass("cursor");
-    await fireEvent.keyDown(nav, { key: "ArrowRight" });
-    expect(layout.sessionsView).toBe("status");
-    await fireEvent.keyDown(nav, { key: "ArrowLeft" });
-    expect(layout.sessionsView).toBe("project");
+    expect(screen.getByTestId("project-sort")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(screen.getByTestId("project-sort-menu")).toBeInTheDocument();
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(layout.projectSort).toBe("name");
+    expect(screen.queryByTestId("project-sort-menu")).toBeNull();
 
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "Delete" });
     expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
   });
 
-  // By status, every session is one list across the projects: the ones
-  // that need you first, then the working, then the rest, each with its
-  // project under the name, and the projects themselves under the groups.
-  it("lists sessions by status across projects, each saying where it belongs", async () => {
-    workspace.open.push(repo("/work/app", "app"), repo("/spike/app", "app"));
-    workspace.active = "/work/app";
-    const idle = create("/work/app");
-    started(idle.key, "pty-1", "session-1");
-    const busy = create("/spike/app");
-    started(busy.key, "pty-2", "session-2");
-    busy.working = true;
-    busy.changedAt = idle.changedAt + 1;
-    const asking = create("/spike/app");
-    started(asking.key, "pty-3", "session-3");
-    asking.needs = "permission";
-    asking.unread = true;
-    asking.note = "Allow npm test?";
-    asking.changedAt = idle.changedAt + 2;
-    fake.transcripts = [{ id: "old-1", title: "yesterday", modified: 1000, size: 10 }];
-    localStorage.setItem("workbench.mine", JSON.stringify({ "/work/app": ["old-1"] }));
-    loadRemembered();
-    layout.sessionsView = "status";
+  // Projects split by themselves: the one on screen, one with a live
+  // session and one used within the span are in use; the rest fold under
+  // Inactive at the foot, closed, each with when it was last used.
+  it("folds the projects nobody has used lately under Inactive", async () => {
+    const now = Date.now();
+    workspace.open.push(
+      repo("/here", "here"),
+      repo("/live", "live"),
+      repo("/lately", "lately"),
+      repo("/old", "old"),
+      repo("/older", "older"),
+    );
+    workspace.active = "/here";
+    const live = create("/live");
+    started(live.key, "pty-1", "session-1");
+    sessions.active = live.key;
+    touch("/here", now - 3600 * 1000);
+    touch("/lately", now - 2 * 24 * 3600 * 1000);
+    touch("/old", now - 9 * 24 * 3600 * 1000);
+    touch("/older", now - 21 * 24 * 3600 * 1000);
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("past-session")).toBeInTheDocument());
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    expect(names()).toEqual(["live", "here", "lately"]);
+    expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 2 projects");
+    expect(screen.queryByTestId("inactive-project")).toBeNull();
 
-    const groups = screen.getAllByTestId("status-group");
-    expect(groups.map((group) => group.dataset.group)).toEqual(["needs", "working", "active"]);
-    expect(groups[0]).toHaveTextContent("Needs you 1");
-    expect(groups[0]).toHaveClass("hot");
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    const idle = screen.getAllByTestId("inactive-project");
+    expect(idle.map((row) => row.querySelector(".name")!.textContent)).toEqual(["old", "older"]);
+    expect(screen.getAllByTestId("inactive-when").map((when) => when.textContent)).toEqual(["1w", "3w"]);
 
-    const rows = screen.getAllByTestId("session-row");
-    expect(rows.map((row) => row.querySelector(".label")!.textContent)).toEqual([
-      "session 2",
-      "session 1",
-      "session 1",
-    ]);
-    const crumbs = screen.getAllByTestId("session-crumb");
-    expect(crumbs[0]).toHaveTextContent(/^spike\/app\s*·\s*Allow npm test\?$/);
-    expect(crumbs[1]).toHaveTextContent("spike/app");
-    expect(crumbs[2]).toHaveTextContent("work/app");
-    expect(rows[0].querySelector(".dot")).toHaveClass("permission");
-    expect(screen.getAllByTestId("session-when")[0]).toHaveTextContent("just now");
+    // Picking one brings it forward, and it is in use again.
+    await fireEvent.click(idle[0]);
+    expect(workspace.active).toBe("/old");
+    expect(names()).toContain("old");
+    expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project");
 
-    // The projects follow, and only the one you are looking at opens.
-    expect(screen.getByTestId("projects-group")).toHaveTextContent("Projects 2");
-    expect(screen.getByTestId("new-session")).toBeInTheDocument();
-    expect(screen.getByTestId("past-session")).toHaveTextContent("yesterday");
-    const names = screen.getAllByText(/app$/, { selector: ".name" });
-    expect(names.map((name) => name.textContent)).toEqual(["work/app", "spike/app"]);
-
-    // Picking a row under the other project brings that project forward.
-    await fireEvent.click(rows[0]);
-    expect(workspace.active).toBe("/spike/app");
-    expect(sessions.active).toBe(asking.key);
+    // With the span at never, nothing folds.
+    projects.inactiveAfter = "never";
+    await tick();
+    expect(screen.queryByTestId("inactive-fold")).toBeNull();
+    expect(names()).toHaveLength(5);
   });
 
-  it("walks the status view in the order drawn, groups first and the projects after", async () => {
-    workspace.open.push(repo("/one", "one"), repo("/two", "two"));
-    workspace.active = "/one";
-    const mine = create("/one");
-    started(mine.key, "pty-1", "session-1");
-    const theirs = create("/two");
-    started(theirs.key, "pty-2", "session-2");
-    theirs.unread = true;
-    theirs.changedAt = mine.changedAt + 1;
-    layout.sessionsView = "status";
+  it("starts a session in an inactive project from its own button", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
+
+    render(SessionsPane);
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    await fireEvent.click(screen.getByTestId("inactive-new-session"));
+    expect(workspace.active).toBe("/old");
+    expect(sessions.all.map((session) => session.project)).toEqual(["/old"]);
+    // The project left behind was never used, and takes the other's place
+    // under the fold, which stays open.
+    expect(screen.getByTestId("inactive-project")).toHaveTextContent("here");
+  });
+
+  it("orders the projects by last used or by name, from the sort menu", async () => {
+    const now = Date.now();
+    workspace.open.push(repo("/b", "beta"), repo("/a", "alpha"), repo("/c", "gamma"));
+    workspace.active = "/c";
+    touch("/b", now - 1000);
+    touch("/a", now - 5000);
+    touch("/c", now - 9000);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+
+    render(SessionsPane);
+    expect(screen.getByTestId("project-sort")).toHaveTextContent("Last used");
+    expect(names()).toEqual(["beta", "alpha", "gamma"]);
+
+    await fireEvent.click(screen.getByTestId("project-sort"));
+    expect(screen.getByTestId("project-sort-used")).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(screen.getByTestId("project-sort-name"));
+    expect(screen.queryByTestId("project-sort-menu")).toBeNull();
+    expect(screen.getByTestId("project-sort")).toHaveTextContent("Name");
+    expect(names()).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  // The fold and what it lets out are on the cursor path like any row,
+  // and Delete on an inactive project closes it.
+  it("walks the Inactive fold with the keyboard", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
     layout.focus = "sessions";
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
-
     const at = () => nav.querySelector(".cursor")?.getAttribute("data-row");
-    await fireEvent.keyDown(nav, { key: "Home" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("view");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe(`session:${theirs.key}`);
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe(`session:${mine.key}`);
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("project:/one");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("new:/one");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("project:/two");
+
     await fireEvent.keyDown(nav, { key: "End" });
-    expect(at()).toBe("project:/two");
-  });
-
-  it("switches the view with a click, and the tree comes back as it was", async () => {
-    workspace.open.push(repo("/repo", "repo"));
-    workspace.active = "/repo";
-    const only = create("/repo");
-    started(only.key, "pty-1", "session-1");
-
-    render(SessionsPane);
-    expect(screen.queryByTestId("status-group")).toBeNull();
-    await fireEvent.click(screen.getByTestId("view-status"));
-    expect(screen.getByTestId("view-status")).toHaveAttribute("aria-checked", "true");
-    expect(screen.getAllByTestId("status-group")).toHaveLength(1);
-    expect(screen.getByTestId("session-crumb")).toHaveTextContent("repo");
-    await fireEvent.click(screen.getByTestId("view-project"));
-    expect(screen.queryByTestId("status-group")).toBeNull();
-    expect(screen.queryByTestId("session-crumb")).toBeNull();
-    expect(screen.getByTestId("session-row")).toHaveTextContent("session 1");
+    expect(at()).toBe("inactive");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(at()).toBe("idle:/old");
+    await fireEvent.keyDown(nav, { key: "Delete" });
+    expect(workspace.open.map((project) => project.path)).toEqual(["/here"]);
+    expect(screen.queryByTestId("inactive-fold")).toBeNull();
   });
 
   // A live row's × sits over its end and stops the session, which leaves
@@ -724,7 +726,9 @@ describe("SessionsPane", () => {
     started(second.key, "pty-2", "session-2");
 
     render(SessionsPane);
-    await fireEvent.click(screen.getAllByTestId("session-row")[0]);
+    await fireEvent.click(
+      document.querySelector<HTMLElement>(`[data-row="session:${first.key}"] [data-testid="session-row"]`)!,
+    );
 
     expect(sessions.active).toBe(first.key);
     expect(second.status).toBe("running");

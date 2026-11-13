@@ -5,7 +5,7 @@
   import type { AgentId } from "$lib/core";
   import {
     ago,
-    byStatus,
+    byChange,
     close as closeSession,
     create,
     defaultAgent,
@@ -16,6 +16,7 @@
     loadHistory,
     outsideFor,
     sessions,
+    since,
     statusLabel,
     disown,
     type HistoryEntry,
@@ -25,7 +26,6 @@
   import {
     LABEL,
     conducting,
-    conductorLabel,
     conductors,
     foldLabel,
     groupsFor,
@@ -44,9 +44,11 @@
     peekSessions,
     sessionsShown,
     sessionsVisible,
-    setSessionsView,
+    setProjectSort,
     type PaneId,
+    type ProjectSort,
   } from "$lib/layout.svelte";
+  import { lastUsed, splitProjects } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import { flip } from "svelte/animate";
@@ -95,37 +97,75 @@
     picked = offered[(at + step + offered.length) % offered.length] ?? null;
   }
 
-  /** The projects under the orchestrator's own: opening the directory it
-      runs in is opening the project already pinned above them, and it is
-      drawn once. */
-  let projects = $derived(workspace.open.filter((project) => project.path !== orchestrator.dir));
-
   /** The folds standing open, by the row id of the fold. A fold is where
       the eye is right now, so nothing about it is remembered. */
   let opened = $state<Record<string, boolean>>({});
 
-  /** The status view's groups: an orchestrator is at work while a session
-      it started is, as its dot says. */
-  let groups = $derived(byStatus(conducting));
-
-  /** The other way of listing, from the switch's row. */
-  function flipView() {
-    setSessionsView(layout.sessionsView === "status" ? "project" : "status");
-  }
-
-  /** The project a session belongs to, as the tree names it. */
-  function whereLabel(session: Session): string {
-    return session.project === orchestrator.dir ? LABEL : projectLabel(session.project);
-  }
-
-  /** The minute the status view's times are read against. */
+  /** The minute the times on the rows are read against, and the split
+      into active and inactive with them. */
   let now = $state(Date.now());
 
   $effect(() => {
-    if (layout.sessionsView !== "status") return;
     const timer = setInterval(() => (now = Date.now()), 30_000);
     return () => clearInterval(timer);
   });
+
+  /** The projects under the orchestrator's own: opening the directory it
+      runs in is opening the project already pinned above them, and it is
+      drawn once. They are split into the ones in use and the ones folded
+      under Inactive, each in the order the sort menu says. */
+  let split = $derived.by(() => {
+    const byPath = new Map(
+      workspace.open.filter((project) => project.path !== orchestrator.dir).map((project) => [project.path, project]),
+    );
+    const { active, inactive } = splitProjects([...byPath.keys()], workspace.active, layout.projectSort, now);
+    return {
+      active: active.map((path) => byPath.get(path)!),
+      inactive: inactive.map((path) => byPath.get(path)!),
+    };
+  });
+
+  /** How many inactive projects stand under the fold before the rest go
+      behind a row of their own. */
+  const INACTIVE_SHOWN = 7;
+
+  /** The inactive projects drawn once the fold is open: all of them, or
+      the first few and a row for the rest. */
+  let idle = $derived(
+    opened["idle-more"] || split.inactive.length <= INACTIVE_SHOWN + 1
+      ? split.inactive
+      : split.inactive.slice(0, INACTIVE_SHOWN),
+  );
+
+  /** The orders the sort menu offers. */
+  const SORTS: { sort: ProjectSort; label: string }[] = [
+    { sort: "used", label: "Last used" },
+    { sort: "name", label: "Name" },
+  ];
+
+  /** The sort menu, and the item its keyboard cursor is on while open. */
+  let sortOpen = $state(false);
+  let sortAt = $state(0);
+
+  function openSort() {
+    sortOpen = !sortOpen;
+    sortAt = Math.max(
+      0,
+      SORTS.findIndex((choice) => choice.sort === layout.projectSort),
+    );
+  }
+
+  function pickSort(sort: ProjectSort) {
+    setProjectSort(sort);
+    sortOpen = false;
+  }
+
+  /** An inactive project's own new-session button: the project comes
+      forward, which makes it active, and starts as its own row would. */
+  function startIn(path: string) {
+    activate(path);
+    offer(path);
+  }
 
   /** The head's menu, holding the ways in that are not the everyday one. */
   let menuOpen = $state(false);
@@ -200,38 +240,20 @@
     const out: Row[] = [
       { id: "open", run: pick },
       { id: "menu", run: () => (menuOpen = !menuOpen) },
-      { id: "view", run: flipView },
+      { id: "sort", run: openSort },
     ];
-    if (layout.sessionsView === "status") {
-      for (const group of groups) {
-        for (const session of group.sessions) {
-          out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
-        }
-      }
-      const dir = pinned;
-      if (dir !== null) {
-        out.push({ id: `project:${dir}`, run: () => activate(dir) });
-        if (workspace.active === dir) out.push(...rest(dir));
-      }
-      for (const project of projects) {
-        const path = project.path;
-        out.push({ id: `project:${path}`, run: () => activate(path) });
-        if (workspace.active === path) out.push(...rest(path));
-      }
-      return out;
-    }
     const dir = pinned;
     if (dir !== null) {
       out.push({ id: `project:${dir}`, run: () => activate(dir) });
-      for (const session of conductors()) {
+      for (const session of byChange(conductors())) {
         out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
       }
       if (workspace.active === dir) out.push(...rest(dir));
     }
-    for (const project of projects) {
+    for (const project of split.active) {
       const path = project.path;
       out.push({ id: `project:${path}`, run: () => activate(path) });
-      for (const session of ownFor(path)) {
+      for (const session of byChange(ownFor(path))) {
         out.push({ id: `session:${session.key}`, run: () => choose(session.key) });
       }
       for (const group of groupsFor(path)) {
@@ -243,6 +265,16 @@
         }
       }
       if (workspace.active === path) out.push(...rest(path));
+    }
+    if (split.inactive.length > 0) {
+      out.push({ id: "inactive", run: () => toggle("inactive") });
+      if (opened.inactive) {
+        for (const project of idle) {
+          const path = project.path;
+          out.push({ id: `idle:${path}`, run: () => activate(path) });
+        }
+        if (idle.length < split.inactive.length) out.push({ id: "idle-more", run: () => toggle("idle-more") });
+      }
     }
     return out;
   });
@@ -296,7 +328,9 @@
   /** What the button on the row under the cursor would do: × on a project
       or a live session, archive on a past one. */
   function remove(id: string) {
-    if (id.startsWith("project:")) {
+    if (id.startsWith("idle:")) {
+      closeProject(id.slice("idle:".length));
+    } else if (id.startsWith("project:")) {
       // The orchestrator's own project has no close button, and nothing
       // here closes it either.
       const path = id.slice("project:".length);
@@ -358,6 +392,11 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (sortOpen && onSortKeydown(e)) {
+      nav.focus();
+      e.preventDefault();
+      return;
+    }
     const at = rows.findIndex((row) => row.id === current);
     switch (e.key) {
       case "ArrowDown":
@@ -374,8 +413,7 @@
         break;
       case "ArrowLeft":
       case "ArrowRight":
-        if (current === "view") flipView();
-        else if (choosing !== null && hasAccounts()) pickNext(e.key === "ArrowLeft" ? -1 : 1);
+        if (choosing !== null && hasAccounts()) pickNext(e.key === "ArrowLeft" ? -1 : 1);
         else return;
         break;
       case "Escape":
@@ -406,6 +444,29 @@
     // under the cursor and not a button a click left focused.
     nav.focus();
     e.preventDefault();
+  }
+
+  /** While the sort menu is open the arrows walk its items, Enter picks
+      one and Escape closes it. False for a key the menu leaves alone. */
+  function onSortKeydown(e: KeyboardEvent): boolean {
+    switch (e.key) {
+      case "ArrowDown":
+        sortAt = Math.min(sortAt + 1, SORTS.length - 1);
+        return true;
+      case "ArrowUp":
+        sortAt = Math.max(sortAt - 1, 0);
+        return true;
+      case "Enter":
+      case " ":
+        pickSort(SORTS[sortAt].sort);
+        return true;
+      case "Escape":
+        sortOpen = false;
+        e.stopPropagation();
+        return true;
+      default:
+        return false;
+    }
   }
 
   /** A click puts the cursor on what was clicked, so the keyboard carries on
@@ -572,55 +633,12 @@
     </div>
 {/snippet}
 
-<!-- A session's row in the status view, where no project stands above it:
-     the name, and under it the project it belongs to, who started it when
-     an orchestrator did, and the line the agent left, with when the row
-     last changed at the end. -->
-{#snippet statusRow(session: Session)}
-  {@const summary = summaryLine(session)}
-  {@const line = summary ?? session.note}
-  {@const by = startedFor(session.key)}
-  <div
-    class="session"
-    class:on={sessions.active === session.key}
-    class:cursor={current === `session:${session.key}`}
-    data-row="session:{session.key}"
-  >
-    <button class="row flush" tabindex="-1" onclick={() => choose(session.key)} data-testid="session-row">
-      <span
-        class="dot"
-        class:live={isLive(session)}
-        class:dormant={session.status === "dormant"}
-        class:working={conducting(session)}
-        class:unread={session.unread}
-        class:permission={session.needs === "permission"}
-        title={statusLabel(session)}
-      ></span>
-      <span class="text">
-        <span class="label" class:unread={session.unread}>{label(session)}</span>
-        <span class="crumb" data-testid="session-crumb">
-          <span class="where">{whereLabel(session)}</span>
-          {#if by !== null}<span class="sep">·</span>{conductorLabel(by)}{/if}
-          {#if line !== null}<span class="sep">·</span><span title={line}>{line}</span>{/if}
-        </span>
-      </span>
-      {#if session.account !== null}<span class="tag account">{session.account}</span>{/if}
-      {#if hostOf(session.project) !== null}<span class="host">{hostOf(session.project)}</span>{/if}
-      {#if several}<span class="tag" data-testid="agent-tag">{agentTag(session.agent)}</span>{/if}
-      <span class="state" data-testid="session-when">{ago(session.changedAt / 1000, now)}</span>
-      <span class="state told">{statusLabel(session)}</span>
-    </button>
-    <span class="actions">
-      <button
-        class="icon"
-        tabindex="-1"
-        onclick={() => closeSession(session.key)}
-        aria-label="Close {label(session)}"
-        title="Stop"
-        data-testid="close-session">×</button
-      >
-    </span>
-  </div>
+<!-- A project's name, with the part of the path that tells it from
+     another of the same name dimmed in front of it. -->
+{#snippet projectName(path: string)}
+  {@const full = projectLabel(path)}
+  {@const cut = full.lastIndexOf("/") + 1}
+  {#if cut > 0}<span class="prefix">{full.slice(0, cut)}</span>{/if}{full.slice(cut)}
 {/snippet}
 
 <!-- A project's own row: its name, and what tells it apart. -->
@@ -866,69 +884,48 @@
       {/if}
     </div>
   </div>
-  <!-- Under their projects, or in groups by what they are doing: the
-       choice sits on the cursor path, and Left and Right flip it. -->
-  <div
-    class="views"
-    class:cursor={current === "view"}
-    role="radiogroup"
-    aria-label="How sessions are listed"
-    data-row="view"
-    data-testid="view-switch"
-  >
+  <!-- The projects' heading, with the order they are listed in: a menu
+       on the cursor path, whose items the arrows walk while it is open. -->
+  <div class="sortbar">
+    <span class="sort-title">Projects</span>
     <button
-      role="radio"
+      class="sort"
+      class:cursor={current === "sort"}
+      class:open={sortOpen}
       tabindex="-1"
-      aria-checked={layout.sessionsView === "status"}
-      class:on={layout.sessionsView === "status"}
-      onclick={() => setSessionsView("status")}
-      data-testid="view-status">by status</button
+      onclick={openSort}
+      aria-haspopup="menu"
+      aria-expanded={sortOpen}
+      data-row="sort"
+      data-testid="project-sort"
+      >{SORTS.find((choice) => choice.sort === layout.projectSort)?.label}<svg viewBox="0 0 16 16" aria-hidden="true"
+        ><path d="m4 6 4 4 4-4" /></svg
+      ></button
     >
-    <button
-      role="radio"
-      tabindex="-1"
-      aria-checked={layout.sessionsView === "project"}
-      class:on={layout.sessionsView === "project"}
-      onclick={() => setSessionsView("project")}
-      data-testid="view-project">by project</button
-    >
+    {#if sortOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="scrim" onclick={() => (sortOpen = false)}></div>
+      <div class="menu sort-menu" role="menu" data-testid="project-sort-menu">
+        {#each SORTS as choice, index (choice.sort)}
+          <button
+            role="menuitemradio"
+            tabindex="-1"
+            aria-checked={layout.projectSort === choice.sort}
+            class:at={sortAt === index}
+            onclick={() => pickSort(choice.sort)}
+            data-testid="project-sort-{choice.sort}"
+          >
+            <span>{choice.label}</span>
+            {#if layout.projectSort === choice.sort}<svg class="tick" viewBox="0 0 16 16" aria-hidden="true"
+                ><path d="m3.5 8.5 3 3 6-7" /></svg
+              >{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
   <div class="tree">
-    {#if layout.sessionsView === "status"}
-      <!-- Every session across the projects, grouped by what it is doing
-           and the latest change first, with its project on the row. -->
-      {#each groups as group (group.id)}
-        <div class="group" class:hot={group.id === "needs"} data-testid="status-group" data-group={group.id}>
-          <span class="group-title">{group.title}</span>
-          <span class="count">{group.sessions.length}</span>
-        </div>
-        {#each group.sessions as session (session.key)}
-          <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
-            {@render statusRow(session)}
-          </div>
-        {/each}
-      {/each}
-
-      <!-- What is a project's rather than a session's: the projects
-           themselves, and under the one you are looking at what the tree
-           shows for it. -->
-      <div class="group ruled" data-testid="projects-group">
-        <span class="group-title">Projects</span>
-        <span class="count">{projects.length + (pinned === null ? 0 : 1)}</span>
-      </div>
-      {#if pinned !== null}
-        {@render pinnedRow(pinned)}
-        {#if workspace.active === pinned}
-          {@render projectRest(pinned)}
-        {/if}
-      {/if}
-      {#each projects as project (project.path)}
-        {@render projectRow(project)}
-        {#if workspace.active === project.path}
-          {@render projectRest(project.path)}
-        {/if}
-      {/each}
-    {:else}
       <!-- The orchestrator's own project, above the ones you opened: a session
            that directs others runs here, and starts here like any other. -->
       {#if pinned !== null}
@@ -938,7 +935,7 @@
         <!-- Each row is drawn in a slot of its own, which is what fades and
              what moves: a row that goes leaves the ones below it to close the
              gap rather than jump into it. -->
-        {#each conductors() as session (session.key)}
+        {#each byChange(conductors()) as session (session.key)}
           <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
             {@render sessionRow(session)}
           </div>
@@ -949,8 +946,8 @@
         {/if}
       {/if}
 
-      {#each projects as project (project.path)}
-        {@const own = ownFor(project.path)}
+      {#each split.active as project (project.path)}
+        {@const own = byChange(ownFor(project.path))}
         {@render projectRow(project)}
 
         {#each own as session (session.key)}
@@ -1038,7 +1035,84 @@
           {@render projectRest(project.path)}
         {/if}
       {/each}
-    {/if}
+
+      <!-- The projects nobody has used for a while, folded at the foot:
+           each with when it was last used, a way to start a session in it,
+           and its close button. Picking one brings it forward, and it is
+           in use again. -->
+      {#if split.inactive.length > 0}
+        <div class="inactive" data-testid="inactive">
+          <button
+            class="inactive-head"
+            class:cursor={current === "inactive"}
+            tabindex="-1"
+            onclick={() => toggle("inactive")}
+            aria-expanded={opened.inactive === true}
+            data-row="inactive"
+            data-testid="inactive-fold"
+          >
+            <span class="chevron" class:open={opened.inactive}>▸</span>
+            <span class="inactive-title">Inactive</span>
+            <span class="inactive-count"
+              >{split.inactive.length} {split.inactive.length === 1 ? "project" : "projects"}</span
+            >
+          </button>
+          {#if opened.inactive}
+            {#each idle as project (project.path)}
+              {@const used = lastUsed(project.path)}
+              <div
+                class="idle"
+                class:cursor={current === `idle:${project.path}`}
+                data-row="idle:{project.path}"
+                in:rowFade|local
+                out:rowFade|local
+              >
+                <button
+                  class="row idle-row"
+                  tabindex="-1"
+                  onclick={() => activate(project.path)}
+                  title={project.path}
+                  data-testid="inactive-project"
+                >
+                  <span class="name">{@render projectName(project.path)}</span>
+                  {#if accountOf(project.path) !== null}<span class="tag account">{accountOf(project.path)}</span>{/if}
+                  {#if hostOf(project.path) !== null}<span class="host">{hostOf(project.path)}</span>{/if}
+                  <span class="when" data-testid="inactive-when">{used === null ? "" : since(used, now)}</span>
+                </button>
+                <span class="actions">
+                  <button
+                    class="icon"
+                    tabindex="-1"
+                    onclick={() => startIn(project.path)}
+                    disabled={!isReady()}
+                    aria-label="New session in {projectLabel(project.path)}"
+                    title="New session"
+                    data-testid="inactive-new-session">+</button
+                  >
+                  <button
+                    class="icon"
+                    tabindex="-1"
+                    onclick={() => closeProject(project.path)}
+                    aria-label="Close {projectLabel(project.path)}"
+                    title="Close"
+                    data-testid="close-project">×</button
+                  >
+                </span>
+              </div>
+            {/each}
+            {#if idle.length < split.inactive.length}
+              <button
+                class="fold idle-more"
+                class:cursor={current === "idle-more"}
+                tabindex="-1"
+                onclick={() => toggle("idle-more")}
+                data-row="idle-more"
+                data-testid="inactive-more">{split.inactive.length - idle.length} more</button
+              >
+            {/if}
+          {/if}
+        </div>
+      {/if}
   </div>
   </div>
 </Pane>
@@ -1108,8 +1182,8 @@
   .nav.folded .flag,
   .nav.folded .new,
   .nav.folded .fold,
-  .nav.folded .views,
-  .nav.folded .count,
+  .nav.folded .sortbar,
+  .nav.folded .inactive,
   .nav.folded .choice,
   .nav.folded .cursor::before,
   .error-row.folded,
@@ -1147,109 +1221,95 @@
   }
 
   .head > button.cursor,
-  .tool.cursor,
-  .views.cursor {
+  .tool.cursor {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
 
-  .nav:focus-within .head .cursor::before,
-  .nav:focus-within .views.cursor::before {
+  .nav:focus-within .head .cursor::before {
     content: none;
   }
 
-  /* Which way the sessions are listed: one segment each, sharing the
-     width, in the shape the account choice has. */
-  .views {
+  /* The projects' heading: a quiet line with the order they are listed in
+     at its end, behind a menu. */
+  .sortbar {
+    position: relative;
     flex: none;
     display: flex;
-    margin: 8px var(--pane-pad) 2px;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius-tag);
-    overflow: hidden;
-  }
-
-  .views button {
-    flex: 1;
-    min-width: 0;
-    padding: 3px 6px;
-    border: 0;
-    border-right: 1px solid var(--rule);
-    background: none;
+    align-items: center;
+    margin: 10px var(--row-inset) 2px;
+    padding: 0 var(--row-pad-x);
     font-family: var(--chrome);
-    font-size: 10.5px;
+    font-size: var(--label-size);
     letter-spacing: var(--label-track-fine);
     text-transform: var(--label-case);
     color: var(--ink-3);
-    cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
-  .views button:hover {
-    color: var(--ink-2);
-  }
-
-  .views button:last-child {
-    border-right: 0;
-  }
-
-  .views button.on {
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
-
-  /* A group's heading in the status view: what the sessions under it are
-     doing, and how many. The one that needs you wears the accent. */
-  .group {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 8px var(--pane-pad) 2px;
-    font-family: var(--chrome);
-    font-size: var(--heading-size);
+  .sort-title {
     font-weight: var(--heading-weight);
-    letter-spacing: var(--label-track);
-    text-transform: var(--label-case);
-    color: var(--ink-3);
   }
 
-  .group.hot {
+  .sort {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 4px 2px 7px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .sort svg,
+  .sort-menu .tick {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+
+  .sort:hover,
+  .sort.open {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+
+  .sort.cursor {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .nav:focus-within .sort.cursor::before {
+    content: none;
+  }
+
+  .sort-menu {
+    top: calc(100% + 2px);
+    right: var(--row-pad-x);
+    min-width: 150px;
+  }
+
+  .sort-menu button {
+    align-items: center;
+  }
+
+  .sort-menu button.at {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+
+  .sort-menu .tick {
     color: var(--accent);
-  }
-
-  .count {
-    font-weight: normal;
-  }
-
-  /* The projects sit under the groups, behind a rule. */
-  .group.ruled {
-    margin-top: 8px;
-    padding-top: 10px;
-    border-top: 1px solid var(--rule);
-  }
-
-  /* A status row stands under no project, so it keeps the pane's edge. */
-  .row.flush {
-    padding-left: var(--row-pad-x);
-  }
-
-  /* Where a session belongs, under its name: the project in the hand the
-     tree names it in, and the rest quieter after a dot. */
-  .crumb {
-    font-size: 10.5px;
-    line-height: 1.35;
-    color: var(--ink-3);
-  }
-
-  .crumb .where {
-    color: var(--ink-2);
-  }
-
-  .crumb .sep {
-    margin: 0 4px;
-    opacity: 0.6;
   }
 
   /* The way in is the accent; everything else the head offers is behind the
@@ -1504,8 +1564,7 @@
   }
 
   .label,
-  .note,
-  .crumb {
+  .note {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1882,6 +1941,95 @@
 
 
 
+
+  /* The projects nobody has used for a while: one fold at the foot, behind
+     a hairline, each project a single line with when it was last used. */
+  .inactive {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .inactive-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    width: calc(100% - 2 * var(--row-inset));
+    margin: 0 var(--row-inset);
+    padding: var(--row-pad-y) var(--row-pad-x);
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
+    text-align: left;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+
+  .inactive-head:hover {
+    background: var(--surface-2);
+  }
+
+  .inactive-title {
+    font-weight: var(--project-weight);
+  }
+
+  .inactive-count {
+    color: var(--ink-3);
+  }
+
+  .idle {
+    --row-bg: var(--pane-bg);
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin: 0 var(--row-inset);
+    border-radius: var(--radius);
+  }
+
+  .idle:hover {
+    --row-bg: var(--surface-2);
+    background: var(--row-bg);
+  }
+
+  .idle:hover .actions,
+  .idle .actions:focus-within {
+    opacity: 1;
+  }
+
+  .idle:hover .icon {
+    opacity: 1;
+  }
+
+  .idle-row {
+    padding-left: var(--row-indent);
+  }
+
+  .idle-row .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prefix {
+    color: var(--ink-3);
+    font-weight: normal;
+  }
+
+  .when {
+    flex: none;
+    margin-left: auto;
+    padding-left: 10px;
+    font-size: var(--label-size);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+  }
+
+  .idle-more {
+    padding-left: var(--row-indent);
+  }
 
   .empty p,
   .error {

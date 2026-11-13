@@ -32,49 +32,51 @@ on an id that may since have been reused. On shutdown the pty master closes
 with the process and the agent sees SIGHUP. Picking a session that belongs
 to another project brings that project forward.
 
-## By status
+## Active and inactive
 
-The pane lists sessions one of two ways, chosen with the switch under the
-Open project button and kept across restarts. By project is the tree
-described above. By status is every session across the open projects in
-one list, in three groups: **Needs you**, a session asking for a
-permission or one that stopped, ended or rang while nobody was looking;
-**Working**, a session whose dot breathes, which for an orchestrator
-includes a session it started being at work; and **Active**, the rest,
-which is a live session that is idle and read, with the dormant rows
-last. A group with nothing in it is not drawn, and the first takes the
-accent while it has rows.
+The projects split by themselves into two. A project is active while one
+of its sessions is running or waiting for you, while it is the one on
+screen, and for a span after it was last used; the span is a
+[setting](settings.md#sessions), a week to begin with, and Never keeps
+every project active. The active projects are the list. The rest fold
+under one row at the foot of the pane, Inactive with how many there are,
+closed until it is opened and closed again on the next start. Open, it
+lists each with when it was last used, the latest first: `now`, `4m`, `1h`,
+a weekday within the week, then `3w`, `2mo`. Past seven of them the rest
+stand behind a row that says how many more. Picking one brings it forward,
+which is using it, and it is active again; its own buttons, over its end on
+hover, start a session in it or close it. Nothing is filed by hand.
 
-Within a group the rows are in the order they last changed, the latest
-first, and the time of that change stands at the row's end: a session
-that asked a minute ago is above one that has waited an hour. A change is
-the row starting work, going quiet, asking, being looked at, or ending; a
-row already waiting that stops again has not changed.
+Last used is the latest of three things: the project being brought
+forward, one of its sessions changing what its row says, and one of its
+transcripts being written, which counts a session run in a terminal outside
+the app as well. A row left from the last quit counts through its
+transcript, not through being drawn again at the start. When the project
+was last brought forward is kept in the window's own storage.
 
-No project stands over a row here, so each row says where it belongs on a
-line under its name: the project as the tree labels it, the orchestrator
-that started the session when one did, and the line the agent left, after
-a middle dot. The account and host tags follow the name as they do on the
-project's row. Picking a row brings its project forward, as it does in the
-tree.
+A quiet line above the projects says Projects and, at its end, the order
+they are listed in, a menu of two: Last used, the latest first, which is
+where every setup starts, or Name. The choice is kept in the window's own
+storage, and Inactive is listed in the same order. The sessions inside a
+project are in the order they last changed, the latest first.
 
-The projects themselves sit under the groups, each with its tags and its
-close button, and under the one you are looking at the rows the tree shows
-for it: its past sessions, the new-session row and the fold of sessions
-to resume.
-
-On the keyboard the switch sits on the cursor path after the menu button,
-and Left and Right flip it. Up and Down walk the rows in the order drawn,
-groups first and the projects after.
+On the keyboard the menu sits on the cursor path after the menu button:
+Enter opens it, Up and Down walk its items while it is open, and Enter
+picks. The Inactive row and what it lets out are on the path like any other
+row, Delete on an inactive project closes it, and Up and Down walk the rows
+in the order drawn.
 
 <kbd>Cmd</kbd><kbd>.</kbd> goes to the next session that needs you and
-puts the keyboard in it. The sessions that need you are taken
-in order: those asking for a permission first, and within each kind the one
-that has waited longest first. The chord goes to the one after the session
-on screen, or to the first when the session on screen is not among them,
-and round to the first again after the last. When no other session needs
-you, the status bar says so. While a dialog or a question over the agent
-pane is up, the chord does nothing.
+puts the keyboard in it. A session needs you when it is asking for a
+permission, or when it stopped, ended or rang while nobody was looking.
+They are taken in order: those asking for a permission first, and within
+each kind the one that has waited longest first. The chord goes to the one
+after the session on screen, or to the first when the session on screen is
+not among them, and round to the first again after the last. A project
+with a session waiting is active by then, so the chord never has to look
+under the fold. When no other session needs you, the status bar says so.
+While a dialog or a question over the agent pane is up, the chord does
+nothing.
 
 ## After a restart
 

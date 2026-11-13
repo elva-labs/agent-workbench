@@ -45,6 +45,9 @@ pub const INTERFACE_FONTS: &[&str] = &["system", "plex", "inter"];
 /// How long a past session stays listed under its project before it goes
 /// behind the fold with the rest of the history.
 pub const PAST_SESSIONS: &[&str] = &["forever", "month", "week", "day"];
+/// How long a project goes unused before the sessions pane folds it under
+/// Inactive. Never keeps every project in the list.
+pub const INACTIVE_AFTER: &[&str] = &["day", "week", "month", "never"];
 
 /// How many chords the table may hold, and how long a key or an action's
 /// name may be: far past what the app has, and short of what a file can
@@ -175,6 +178,8 @@ pub struct Settings {
     pub accounts: Accounts,
     /// How long a past session stays listed under its project.
     pub past_sessions: String,
+    /// How long a project goes unused before the sessions pane folds it.
+    pub inactive_after: String,
     /// The user's own themes, by name. A palette may name one.
     pub themes: BTreeMap<String, Theme>,
     /// Whether the user's own stylesheet is laid over the app's.
@@ -201,6 +206,7 @@ impl Default for Settings {
             },
             accounts: Accounts::default(),
             past_sessions: "forever".into(),
+            inactive_after: "week".into(),
             themes: BTreeMap::new(),
             user_styles: false,
             notifications: true,
@@ -496,6 +502,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "hooks" => settings.hooks = hooks(value)?,
         "accounts" => settings.accounts = accounts(value)?,
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
+        "inactiveAfter" => settings.inactive_after = one_of(field, value, INACTIVE_AFTER)?,
         other => return Err(format!("there is no setting called {other}")),
     }
     Ok(())
@@ -926,6 +933,20 @@ mod tests {
             parse(r#"{ "accounts": { "list": { "work": { "claude": "~/.claude-work" } } } }"#)
                 .unwrap();
         assert_eq!(parsed.accounts.list.len(), 1);
+    }
+
+    #[test]
+    fn how_long_a_project_stays_active_is_one_of_a_few_spans() {
+        let settings = Settings::default();
+        assert_eq!(settings.inactive_after, "week");
+        let next = apply(&settings, &json!({ "inactiveAfter": "never" })).unwrap();
+        assert_eq!(next.inactive_after, "never");
+        let error = apply(&settings, &json!({ "inactiveAfter": "fortnight" })).unwrap_err();
+        assert!(error.contains("day, week, month, never"), "{error}");
+        assert_eq!(
+            parse(r#"{ "inactiveAfter": 7 }"#).unwrap().inactive_after,
+            "week"
+        );
     }
 
     #[test]

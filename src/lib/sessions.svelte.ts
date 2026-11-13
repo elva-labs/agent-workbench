@@ -99,7 +99,8 @@ export interface Session {
       whose report starts its next one: working, with a still screen. */
   delegated: boolean;
   /** When the row last changed what it says: started working, went quiet,
-      asked, was looked at, ended. The status view sorts by it. */
+      asked, was looked at, ended. The palette and the chord to the next
+      session that needs you order by it. */
   changedAt: number;
   exitCode: number | null;
   error: string | null;
@@ -440,12 +441,47 @@ export function ago(epochSeconds: number, now = Date.now()): string {
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** When something happened, as short as a row's end can say it: now, 4m,
+    1h, then the weekday within the week, then 3w, 2mo and 1y. */
+export function since(ms: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.floor((now - ms) / 1000));
+  if (seconds < 60) return "now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
+  const days = Math.floor(seconds / 86_400);
+  if (days < 7) return WEEKDAYS[new Date(ms).getDay()];
+  if (days < 30) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
 let counter = 0;
 /** Next ordinal per project. Never reused, so labels never shift. */
 let ordinals: Record<string, number> = {};
 
 export function forProject(project: string): Session[] {
   return sessions.all.filter((session) => session.project === project);
+}
+
+/** When a row last changed what it says, in milliseconds. A row left from
+    the last quit changed when its transcript was last written: the row
+    itself was only drawn again at the start. */
+export function lastChanged(session: Session): number {
+  if (session.status === "dormant" && session.id !== null) {
+    const transcript = (sessions.history[session.project] ?? []).find(
+      (entry) => entry.id === session.id,
+    );
+    if (transcript !== undefined) return transcript.modified * 1000;
+  }
+  return session.changedAt;
+}
+
+/** Rows in the order they last changed, the latest first. Rows that
+    changed in the same moment keep the order they were made in. */
+export function byChange(rows: Session[]): Session[] {
+  return [...rows].sort((a, b) => lastChanged(b) - lastChanged(a));
 }
 
 export function activeSession(): Session | null {
@@ -1254,8 +1290,8 @@ export function unreadCount(): number {
 }
 
 /**
- * The status view's groups, in the order the pane draws them. A session
- * needs you when it is asking, or stopped, ended or rang while nobody was
+ * What a session is doing, as a group, in the order the palette lists
+ * them. A session needs you when it is asking, or stopped, ended or rang while nobody was
  * looking; it is working while its dot breathes, which for an orchestrator
  * may be a started session's work, so the caller says what at work is;
  * the rest are active, which is live and idle, or dormant.

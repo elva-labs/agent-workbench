@@ -9,6 +9,7 @@ import {
   sessions,
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
+import { touch } from "$lib/projects.svelte";
 
 /**
  * The projects this window has open.
@@ -123,6 +124,7 @@ export async function openPath(path: string): Promise<boolean> {
 
 export function activate(path: string) {
   workspace.active = path;
+  touch(path);
   // Follow the project with its own most recent session rather than leaving
   // the pane pointed at another project's terminal.
   const own = forProject(path);

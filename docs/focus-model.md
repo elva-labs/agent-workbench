@@ -59,13 +59,15 @@ steps sessions.
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> puts a field over the workbench
 listing every session and every action the keys can do. What is typed
 narrows the list to the entries holding every word of it, in any order, as
-[the tree's filter](layout.md#the-field-above-the-tree) does. A session is
-listed in the order the list by status has it, with what its row there
-says, as [sessions](sessions.md#by-status) describes. Picking one does what
-a click on its row does. An action is listed with its chord, and picking
-one does what the chord does. The first entry goes to the next session that
-needs you, as <kbd>Cmd</kbd><kbd>.</kbd> does (see
-[sessions](sessions.md#by-status)). It shows how many are waiting, and with
+[the tree's filter](layout.md#the-field-above-the-tree) does. Sessions are
+listed in three groups, the ones that need you, the ones at work and the
+rest, each in the order its sessions last changed, the latest first, and
+each session says where it belongs: its project, the orchestrator that
+started it, and the line it left. Picking one does what a click on its row
+does. An action is listed with its chord, and picking one does what the
+chord does. The first entry goes to the next session that needs you, as
+<kbd>Cmd</kbd><kbd>.</kbd> does (see
+[sessions](sessions.md#active-and-inactive)). It shows how many are waiting, and with
 none it cannot be picked.
 
 <kbd>Up</kbd> and <kbd>Down</kbd> move the cursor and <kbd>Enter</kbd>
@@ -138,8 +140,8 @@ inside. <kbd>↑</kbd> and <kbd>↓</kbd> move the cursor, <kbd>Home</kbd> and
 the cursor only shows while the keyboard is in the pane. A click puts the
 cursor on what was clicked; focusing the pane by key starts it over from the
 session you are in, else your project, or the selected file. Everything in
-the sessions pane is on that cursor, the Open project button and the menu
-beside it at the top included, and <kbd>Delete</kbd> does what the × on a
+the sessions pane is on that cursor, the Open project button, the menu
+beside it and the sort menu at the top included, and <kbd>Delete</kbd> does what the × on a
 project or session row does, except on a session another session started,
 which only its own × stops.
 

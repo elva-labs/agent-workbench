@@ -25,7 +25,7 @@ import {
   returnFocus,
   rightmost,
   saveLayout,
-  setSessionsView,
+  setProjectSort,
   sessionsShown,
   sessionsVisible,
   terminalVisible,
@@ -53,7 +53,7 @@ function reset() {
   layout.focus = "agent";
   layout.width = 1200;
   layout.height = 800;
-  layout.sessionsView = "project";
+  layout.projectSort = "used";
 }
 
 beforeEach(reset);
@@ -395,18 +395,21 @@ describe("persistence", () => {
     expect(layout.changesChosen).toBe(false);
   });
 
-  it("remembers how the sessions are listed, and reads only a view it knows", () => {
-    setSessionsView("status");
-    expect(JSON.parse(localStorage.getItem("workbench.layout")!).sessionsView).toBe("status");
+  it("remembers how the projects are sorted, and reads only a sort it knows", () => {
+    setProjectSort("name");
+    const saved = JSON.parse(localStorage.getItem("workbench.layout")!);
+    expect(saved.projectSort).toBe("name");
+    expect(saved).not.toHaveProperty("sessionsView");
 
     reset();
     loadLayout();
-    expect(layout.sessionsView).toBe("status");
+    expect(layout.projectSort).toBe("name");
 
-    localStorage.setItem("workbench.layout", JSON.stringify({ sessionsView: "sideways" }));
+    localStorage.setItem("workbench.layout", JSON.stringify({ projectSort: "sideways", sessionsView: "status" }));
     reset();
     loadLayout();
-    expect(layout.sessionsView).toBe("project");
+    expect(layout.projectSort).toBe("used");
+    expect(layout).not.toHaveProperty("sessionsView");
   });
 
   it("does not persist focus", () => {

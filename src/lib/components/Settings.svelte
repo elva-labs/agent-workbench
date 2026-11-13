@@ -58,6 +58,7 @@
   } from "$lib/accounts.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import { PAST_SESSIONS, sessions, setPastSessions } from "$lib/sessions.svelte";
+  import { INACTIVE_AFTER, projects, setInactiveAfter } from "$lib/projects.svelte";
   import {
     INTERFACE_FONTS,
     LOOKS,
@@ -645,6 +646,24 @@
                   class:on={sessions.pastSessions === span.choice}
                   onclick={() => setPastSessions(span.choice)}
                   data-testid="past-sessions-{span.choice}">{span.label}</button
+                >
+              {/each}
+            </div>
+            <h3>Inactive projects</h3>
+            <p class="note">
+              A project stays in the sessions pane's list while one of its sessions is running or
+              waiting for you, and for this long after it was last used. After that it folds under
+              Inactive at the foot of the pane, until it is used again. Never keeps every project in
+              the list.
+            </p>
+            <div class="seg" role="radiogroup" aria-label="How long a project stays in the list unused">
+              {#each INACTIVE_AFTER as span (span.choice)}
+                <button
+                  role="radio"
+                  aria-checked={projects.inactiveAfter === span.choice}
+                  class:on={projects.inactiveAfter === span.choice}
+                  onclick={() => setInactiveAfter(span.choice)}
+                  data-testid="inactive-after-{span.choice}">{span.label}</button
                 >
               {/each}
             </div>

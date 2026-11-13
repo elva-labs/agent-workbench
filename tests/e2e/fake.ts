@@ -91,6 +91,14 @@ export async function installFakeCore(
       } else {
         localStorage.removeItem("workbench.workspace");
       }
+      // The projects on record were in use a moment ago, so none of them
+      // starts folded under Inactive unless a test says when it was used.
+      if (localStorage.getItem("workbench.used") === null) {
+        localStorage.setItem(
+          "workbench.used",
+          JSON.stringify(Object.fromEntries(open.map((path) => [path, Date.now()]))),
+        );
+      }
       // A workspace on record with no hooks choice reads as a setup from
       // before the choice, which is told about hooks once: taken as read
       // here, unless a test or the app has said, so the word does not sit
@@ -300,6 +308,7 @@ export async function installFakeCore(
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
         pastSessions: "forever",
+        inactiveAfter: "week",
         themes: {},
         userStyles: false,
         notifications: true,
@@ -312,6 +321,7 @@ export async function installFakeCore(
         terminalFont: ["system", "plex", "jetbrains"],
         interfaceFont: ["system", "plex", "inter"],
         pastSessions: ["forever", "month", "week", "day"],
+        inactiveAfter: ["day", "week", "month", "never"],
       };
       const readSettings = (): Record<string, unknown> | null => {
         const raw = localStorage.getItem(settingsFile);

@@ -1428,6 +1428,7 @@ mod tests {
             "hooks",
             "accounts",
             "pastSessions",
+            "inactiveAfter",
             "notifications",
             "chime",
         ] {

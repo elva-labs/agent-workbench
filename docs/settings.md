@@ -108,6 +108,13 @@ running behind it, goes the same way. Resuming one brings it back to the
 list. Nothing is deleted: the transcripts are the agent's own and stay where
 they are.
 
+How long a project stays in the sessions pane's list unused: 1 day, 7 days,
+30 days or Never, 7 days to begin with. After that it folds under Inactive
+at the foot of the pane until it is used again, as
+[sessions](sessions.md#active-and-inactive) describes; a project with a
+session running or waiting for you stays whatever the span. Never keeps
+every project in the list.
+
 ## Accounts
 
 An account is a login kept apart from the others. Claude Code keeps its
@@ -186,8 +193,9 @@ give a reason in the user's terms. It is checked whole before the user
 sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
 agent is told why without the user being troubled. The agent hooks, the
-plugins, the accounts, how long past sessions stay listed, the
-notifications and the chime are refused outright, as the user's to change.
+plugins, the accounts, how long past sessions stay listed, how long a
+project stays active, the notifications and the chime are refused
+outright, as the user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
@@ -220,8 +228,8 @@ on, whichever machine the agent runs on.
 ## Where they are kept
 
 The appearance, the look, the palette, the fonts, the chords, the answer
-on hooks, the accounts, how long past sessions stay listed, the
-notifications and your own themes are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
+on hooks, the accounts, how long past sessions stay listed, how long a
+project stays active, the notifications and your own themes are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
