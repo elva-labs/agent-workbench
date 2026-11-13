@@ -423,7 +423,7 @@ function runSections(
         label: agentLabel(agent),
         group: title,
         step: { kind: "agent", agent },
-        end: sessions.preferred[project] === agent ? "default" : "",
+        end: sessions.preferred[project] === agent ? "last used" : "",
       })),
     },
   ];
@@ -460,7 +460,7 @@ function accountChoices(project: string): PaletteItem[] {
     label: accountLabel(account),
     group,
     step: { kind: "account", account },
-    end: account === own ? "default" : "",
+    end: account === own ? "this project's" : "",
   }));
 }
 

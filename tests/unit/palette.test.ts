@@ -510,7 +510,7 @@ describe("a new session", () => {
     sessions.preferred[A] = "codex";
     beginNew(A);
     const marks = stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
-    expect(marks).toEqual(["", "default"]);
+    expect(marks).toEqual(["", "last used"]);
   });
 
   it("clears the field at each step, and narrows only the question asked", () => {
@@ -525,11 +525,11 @@ describe("a new session", () => {
     expect(stepItems(palette.query).map((item) => item.label)).toEqual(["Codex"]);
   });
 
-  it("calls the account the project runs under the default, as it does the agent", () => {
+  it("marks the account the project runs under as the project's", () => {
     accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
     beginNew(A);
     const marks = stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
-    expect(marks).toEqual(["default", ""]);
+    expect(marks).toEqual(["this project's", ""]);
   });
 
   it("puts what was typed in the commands back when stepping out of the first question", () => {

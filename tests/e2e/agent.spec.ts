@@ -2213,7 +2213,7 @@ test.describe("a new session from the palette", () => {
     await page.keyboard.type("new session in");
     await page.keyboard.press("Enter");
     await expect(chosen(page)).toContainText("Codex");
-    await expect(chosen(page)).toContainText("default");
+    await expect(chosen(page)).toContainText("last used");
   });
 
   test("Escape closes it from any step and the keyboard goes back", async ({ page }) => {
