@@ -107,6 +107,30 @@ pub struct Workflows {
     pub default: Option<String>,
     #[serde(default)]
     pub overrides: BTreeMap<String, Option<String>>,
+    /// The workflows in the file that are not used, carried as written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unread: Vec<Unread>,
+}
+
+/// A workflow in the settings file that does not read or keep the rules.
+/// It is not used, and it is written back where it stood, with the default
+/// and the project choices that named it, until the user removes it or
+/// mends the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Unread {
+    /// Its name, where it has one.
+    pub name: Option<String>,
+    /// The rule it breaks.
+    pub reason: String,
+    /// The entry as the file holds it.
+    pub entry: Value,
+    /// Where it stands in the file's list.
+    pub at: usize,
+    /// Whether the file names it as the workflow new sessions start with.
+    pub default: bool,
+    /// The projects whose choice names it.
+    pub projects: Vec<String>,
 }
 
 pub const DEFAULT_NAME: &str = "Build and review";
@@ -145,6 +169,7 @@ impl Default for Workflows {
             }],
             default: Some(DEFAULT_NAME.into()),
             overrides: BTreeMap::new(),
+            unread: Vec::new(),
         }
     }
 }
@@ -289,55 +314,137 @@ pub fn check(workflows: &Workflows) -> Result<(), String> {
 }
 
 /// The workflows a settings file holds, read leniently: each workflow that
-/// does not read or keep the rules is left out, along with any past the
-/// most the settings hold or one whose name an earlier one has, and a
-/// choice naming a workflow that is not kept is dropped. A value that is
-/// not an object at all leaves the default.
+/// does not read or keep the rules, one past the most the settings hold and
+/// one whose name an earlier one has is set aside as unread with the reason,
+/// and so are the default and the project choices that name it. A choice
+/// naming a workflow that is not there at all is dropped. A value that is
+/// not an object leaves the default.
 pub fn read_lenient(value: &Value) -> Workflows {
     let Some(fields) = value.as_object() else {
         return Workflows::default();
     };
     let mut list: Vec<Workflow> = Vec::new();
-    for item in fields
-        .get("list")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let Ok(workflow) = serde_json::from_value::<Workflow>(item.clone()) else {
-            continue;
+    let mut unread: Vec<Unread> = Vec::new();
+    let entries = fields.get("list").and_then(Value::as_array);
+    for (at, item) in entries.into_iter().flatten().enumerate() {
+        let reason = match serde_json::from_value::<Workflow>(item.clone()) {
+            Err(error) => Some(format!("it is not written the way a workflow is: {error}")),
+            Ok(workflow) => {
+                if let Err(error) = check_workflow(&workflow) {
+                    Some(error)
+                } else if list
+                    .iter()
+                    .any(|kept| kept.name.eq_ignore_ascii_case(&workflow.name))
+                {
+                    Some(format!(
+                        "another workflow is called {} already",
+                        workflow.name
+                    ))
+                } else if list.len() >= MOST_WORKFLOWS {
+                    Some(format!(
+                        "the settings hold {MOST_WORKFLOWS} workflows at most"
+                    ))
+                } else {
+                    list.push(workflow);
+                    None
+                }
+            }
         };
-        if list.len() < MOST_WORKFLOWS
-            && check_workflow(&workflow).is_ok()
-            && !list
-                .iter()
-                .any(|kept| kept.name.eq_ignore_ascii_case(&workflow.name))
-        {
-            list.push(workflow);
+        if let Some(reason) = reason {
+            unread.push(Unread {
+                name: item.get("name").and_then(Value::as_str).map(str::to_owned),
+                reason,
+                entry: item.clone(),
+                at,
+                default: false,
+                projects: Vec::new(),
+            });
         }
     }
     let kept = |name: &str| list.iter().any(|workflow| workflow.name == name);
-    let default = fields
-        .get("default")
-        .and_then(Value::as_str)
-        .filter(|name| kept(name))
-        .map(str::to_owned);
-    let overrides = fields
+    let set_aside = |unread: &[Unread], name: &str| {
+        unread
+            .iter()
+            .position(|entry| entry.name.as_deref() == Some(name))
+    };
+    let mut default = None;
+    if let Some(name) = fields.get("default").and_then(Value::as_str) {
+        if kept(name) {
+            default = Some(name.to_owned());
+        } else if let Some(index) = set_aside(&unread, name) {
+            unread[index].default = true;
+        }
+    }
+    let mut overrides = BTreeMap::new();
+    let mut chosen: Vec<(usize, String)> = Vec::new();
+    for (project, choice) in fields
         .get("overrides")
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .filter_map(|(project, choice)| match choice {
-            Value::Null => Some((project.clone(), None)),
-            Value::String(name) if kept(name) => Some((project.clone(), Some(name.clone()))),
-            _ => None,
-        })
-        .collect();
+    {
+        match choice {
+            Value::Null => {
+                overrides.insert(project.clone(), None);
+            }
+            Value::String(name) if kept(name) => {
+                overrides.insert(project.clone(), Some(name.clone()));
+            }
+            Value::String(name) => {
+                if let Some(index) = set_aside(&unread, name) {
+                    chosen.push((index, project.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    for (index, project) in chosen {
+        unread[index].projects.push(project);
+    }
     Workflows {
         list,
         default,
         overrides,
+        unread,
     }
+}
+
+/// The workflows as the settings file holds them: each unread one back where
+/// it stood, and the default and the project choices that named one, unless
+/// the user has chosen otherwise since.
+pub fn for_file(workflows: &Workflows) -> Value {
+    let mut list: Vec<Value> = workflows
+        .list
+        .iter()
+        .map(|workflow| serde_json::to_value(workflow).unwrap_or(Value::Null))
+        .collect();
+    let mut unread: Vec<&Unread> = workflows.unread.iter().collect();
+    unread.sort_by_key(|entry| entry.at);
+    for entry in &unread {
+        list.insert(entry.at.min(list.len()), entry.entry.clone());
+    }
+    let default = workflows.default.clone().or_else(|| {
+        unread
+            .iter()
+            .find(|entry| entry.default)
+            .and_then(|entry| entry.name.clone())
+    });
+    let mut overrides = serde_json::Map::new();
+    for (project, choice) in &workflows.overrides {
+        overrides.insert(
+            project.clone(),
+            serde_json::to_value(choice).unwrap_or(Value::Null),
+        );
+    }
+    for entry in &unread {
+        let Some(name) = &entry.name else { continue };
+        for project in &entry.projects {
+            overrides
+                .entry(project.clone())
+                .or_insert_with(|| Value::String(name.clone()));
+        }
+    }
+    serde_json::json!({ "list": list, "default": default, "overrides": overrides })
 }
 
 /// The workflows a value holds, or the reason it will not do.
@@ -481,17 +588,18 @@ mod tests {
     }
 
     #[test]
-    fn a_file_keeps_each_workflow_that_reads_and_drops_the_rest() {
+    fn a_file_uses_each_workflow_that_reads_and_sets_the_rest_aside_with_the_reason() {
         let good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
         let mut renamed = good.clone();
         renamed["name"] = json!("Quick");
         let mut too_many_rounds = good.clone();
         too_many_rounds["name"] = json!("Careful");
         too_many_rounds["steps"][1]["limit"] = json!(11);
+        let half = json!({ "name": "half" });
         let read = read_lenient(&json!({
-            "list": [good, too_many_rounds, renamed, { "name": "half" }, good],
+            "list": [good, too_many_rounds, renamed, half, good],
             "default": "Careful",
-            "overrides": { "/a": "Quick", "/b": "Careful", "/c": null, "/d": 3 }
+            "overrides": { "/a": "Quick", "/b": "Careful", "/c": null, "/d": 3, "/e": "Gone" }
         }));
         assert_eq!(
             read.list
@@ -509,8 +617,57 @@ mod tests {
             ])
         );
         assert!(check(&read).is_ok());
+        let unread: Vec<_> = read
+            .unread
+            .iter()
+            .map(|entry| (entry.name.as_deref(), entry.at, entry.default))
+            .collect();
+        assert_eq!(
+            unread,
+            [
+                (Some("Careful"), 1, true),
+                (Some("half"), 3, false),
+                (Some(DEFAULT_NAME), 4, false)
+            ]
+        );
+        assert!(read.unread[0]
+            .reason
+            .contains("between 1 and 10 times, not 11"));
+        assert_eq!(read.unread[0].projects, ["/b"]);
+        assert!(read.unread[1]
+            .reason
+            .contains("not written the way a workflow is"));
+        assert!(read.unread[2].reason.contains("already"));
+        assert_eq!(read.unread[0].entry, too_many_rounds);
         assert_eq!(read_lenient(&json!("none")), Workflows::default());
         assert_eq!(read_lenient(&json!({})).list, []);
+    }
+
+    #[test]
+    fn the_file_gets_back_each_workflow_set_aside_where_it_stood() {
+        let good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        let mut bad = good.clone();
+        bad["name"] = json!("Careful");
+        bad["steps"][1]["limit"] = json!(11);
+        let file = json!({
+            "list": [bad, good],
+            "default": "Careful",
+            "overrides": { "/b": "Careful", "/c": null }
+        });
+        let read = read_lenient(&file);
+        assert_eq!(for_file(&read), file);
+        // A choice the user makes since wins over the one set aside.
+        let mut chosen = read.clone();
+        chosen.default = Some(DEFAULT_NAME.into());
+        chosen.unread[0].default = false;
+        chosen.unread[0].projects.clear();
+        let written = for_file(&chosen);
+        assert_eq!(written["default"], DEFAULT_NAME);
+        assert_eq!(written["overrides"], json!({ "/c": null }));
+        assert_eq!(written["list"][0], bad);
+        // Removed, it is gone from the file.
+        chosen.unread.clear();
+        assert_eq!(for_file(&chosen)["list"], json!([good]));
     }
 
     #[test]
@@ -540,6 +697,15 @@ mod tests {
         let rules: Value = serde_json::from_str(RULES).unwrap();
         for case in rules["cases"].as_array().unwrap() {
             let read = read(&json!({ "list": [case["workflow"]] }));
+            assert_eq!(
+                read.is_ok(),
+                case["valid"].as_bool().unwrap(),
+                "{}: {read:?}",
+                case["case"]
+            );
+        }
+        for case in rules["sets"].as_array().unwrap() {
+            let read = read(&case["workflows"]);
             assert_eq!(
                 read.is_ok(),
                 case["valid"].as_bool().unwrap(),

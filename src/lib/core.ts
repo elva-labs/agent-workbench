@@ -72,6 +72,23 @@ export interface ReviewStep {
 
 export type WorkflowStep = WorkStep | ReviewStep;
 
+/** A workflow in the settings file that does not read or keep the rules.
+    It is not used, and the file keeps it where it stood, with the default
+    and the project choices that named it, until the user removes it. */
+export interface UnreadWorkflow {
+  name: string | null;
+  /** The rule it breaks. */
+  reason: string;
+  /** The entry as the file holds it. */
+  entry: unknown;
+  /** Where it stands in the file's list. */
+  at: number;
+  /** Whether the file names it as the workflow new sessions start with. */
+  default: boolean;
+  /** The projects whose choice names it. */
+  projects: string[];
+}
+
 /** The model a session starts on, and the steps it hands out. */
 export interface Workflow {
   name: string;
@@ -590,6 +607,8 @@ export interface Settings {
     list: Workflow[];
     default: string | null;
     overrides: Record<string, string | null>;
+    /** The workflows in the file that are not used, carried as written. */
+    unread?: UnreadWorkflow[];
   };
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */

@@ -1,5 +1,5 @@
 {
-  "about": "Workflows and whether the rules the settings keep take them. The core and the window are both held to it.",
+  "about": "Workflows, and sets of them with the default and the project choices, and whether the rules the settings keep take them. The core and the window are both held to it.",
   "cases": [
     {
       "case": "the default",
@@ -1355,6 +1355,1655 @@
             "limit": 3
           }
         ]
+      }
+    }
+  ],
+  "sets": [
+    {
+      "case": "two workflows",
+      "valid": true,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "B",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": "A",
+        "overrides": {
+          "/p": "B",
+          "/q": null
+        }
+      }
+    },
+    {
+      "case": "two workflows whose names differ only in case",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "Quick",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "quick",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "names that differ in a letter past Z",
+      "valid": true,
+      "workflows": {
+        "list": [
+          {
+            "name": "\u00c4rende",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "\u00e4rende",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "sixteen workflows",
+      "valid": true,
+      "workflows": {
+        "list": [
+          {
+            "name": "W0",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W1",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W2",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W3",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W4",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W5",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W6",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W7",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W8",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W9",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W10",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W11",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W12",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W13",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W14",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W15",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "seventeen workflows",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "W0",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W1",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W2",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W3",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W4",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W5",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W6",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W7",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W8",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W9",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W10",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W11",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W12",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W13",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W14",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W15",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          },
+          {
+            "name": "W16",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "a default naming a workflow that is not there",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": "Gone",
+        "overrides": {}
+      }
+    },
+    {
+      "case": "a project choice naming a workflow that is not there",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {
+          "/p": "Gone"
+        }
+      }
+    },
+    {
+      "case": "a workflow with a field the shape does not have",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ],
+            "extra": 1
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "a step with a field the shape does not have",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1,
+                "extra": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "a model with a field the shape does not have",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable",
+              "extra": 1
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ],
+                "parallel": 1
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
+      }
+    },
+    {
+      "case": "a work step without its sessions at once",
+      "valid": false,
+      "workflows": {
+        "list": [
+          {
+            "name": "A",
+            "orchestrator": {
+              "agent": "claude-code",
+              "model": "fable"
+            },
+            "steps": [
+              {
+                "kind": "work",
+                "name": "Work",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "sonnet"
+                  }
+                ]
+              },
+              {
+                "kind": "review",
+                "name": "Review",
+                "models": [
+                  {
+                    "agent": "claude-code",
+                    "model": "opus"
+                  }
+                ],
+                "reviewerApproves": true,
+                "orchestratorAgrees": true,
+                "backTo": "Work",
+                "limit": 3
+              }
+            ]
+          }
+        ],
+        "default": null,
+        "overrides": {}
       }
     }
   ]

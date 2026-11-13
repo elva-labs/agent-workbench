@@ -559,8 +559,14 @@ pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     Ok(next)
 }
 
+/// The settings as the file holds them, with the workflows that are not
+/// used written back where they stood.
 fn render(settings: &Settings) -> String {
-    let text = serde_json::to_string_pretty(settings).unwrap_or_default();
+    let mut value = serde_json::to_value(settings).unwrap_or(Value::Null);
+    if let Some(fields) = value.as_object_mut() {
+        fields.insert("workflows".into(), workflow::for_file(&settings.workflows));
+    }
+    let text = serde_json::to_string_pretty(&value).unwrap_or_default();
     format!("{text}\n")
 }
 
@@ -999,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn a_workflow_in_the_file_that_does_not_read_is_left_out_and_the_rest_survive_a_write() {
+    fn a_workflow_in_the_file_that_does_not_read_is_set_aside_and_survives_every_write() {
         let home = home("workflows-partly");
         std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
         let mut good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
@@ -1008,8 +1014,8 @@ mod tests {
         bad["name"] = json!("Hand edited");
         bad["steps"][1]["limit"] = json!(11);
         let file = json!({ "workflows": {
-            "list": [good, bad],
-            "default": "Renamed in the file",
+            "list": [bad, good],
+            "default": "Hand edited",
             "overrides": { "/p": "Mine", "/q": "Hand edited" }
         } });
         std::fs::write(settings_path(&home), file.to_string()).unwrap();
@@ -1018,14 +1024,36 @@ mod tests {
         assert_eq!(loaded.list.len(), 1);
         assert_eq!(loaded.list[0].name, "Mine");
         assert_eq!(loaded.default, None);
+        assert_eq!(loaded.unread.len(), 1);
+        assert_eq!(loaded.unread[0].name.as_deref(), Some("Hand edited"));
 
-        // An unrelated change keeps the workflow that read.
+        // An unrelated change writes the file with the entry as it was.
         store.set(&json!({ "palette": "mono" })).unwrap();
         let text = std::fs::read_to_string(settings_path(&home)).unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(value["workflows"]["list"][0]["name"], "Mine");
-        assert_eq!(value["workflows"]["overrides"], json!({ "/p": "Mine" }));
+        assert_eq!(value["workflows"], file["workflows"]);
+
+        // So does a change to the workflows that carries it.
+        let mut carried = serde_json::to_value(&loaded).unwrap();
+        carried["list"][0]["orchestrator"]["model"] = json!("opus");
+        store.set(&json!({ "workflows": carried })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["list"][0], bad);
+        assert_eq!(
+            value["workflows"]["list"][1]["orchestrator"]["model"],
+            "opus"
+        );
+        assert_eq!(value["workflows"]["default"], "Hand edited");
+
+        // Removing it removes it, with the choices that named it.
+        carried["unread"] = json!([]);
+        store.set(&json!({ "workflows": carried })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["list"].as_array().unwrap().len(), 1);
         assert_eq!(value["workflows"]["default"], Value::Null);
+        assert_eq!(value["workflows"]["overrides"], json!({ "/p": "Mine" }));
 
         let parsed = parse(r#"{ "workflows": "none" }"#).unwrap();
         assert_eq!(parsed.workflows, Workflows::default());
