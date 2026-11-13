@@ -447,10 +447,6 @@ impl Core {
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
-        if let Some(dir) = &expanded {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-        }
         let trusted = self
             .home
             .as_deref()
@@ -462,6 +458,10 @@ impl Core {
                 project.display(),
                 protocol.name()
             ));
+        }
+        if let Some(dir) = &expanded {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
         let tool_server = self
             .home

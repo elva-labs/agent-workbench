@@ -252,6 +252,16 @@ while read -r line; do :; done
             .call("integrated_start", start.clone())
             .unwrap_err();
         assert!(refused.starts_with("untrusted:"), "{refused}");
+        // Nothing is made for an account before the folder is trusted.
+        let account = home.join(".claude-elsewhere");
+        let refused = connection
+            .call(
+                "integrated_start",
+                json!({ "agent": "claude-code", "project": dir, "configDir": account }),
+            )
+            .unwrap_err();
+        assert!(refused.starts_with("untrusted:"), "{refused}");
+        assert!(!account.exists(), "made before the trust check");
         connection
             .call(
                 "integrated_trust",

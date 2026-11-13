@@ -291,29 +291,38 @@ pub fn trust_like(
 }
 
 fn trust_claude(claude: &Path, from: &str, to: &str) -> Result<(), String> {
-    let mut state = read_for_writing(claude)?;
-    let trusted = state
-        .get("projects")
-        .and_then(|projects| projects.get(from))
-        .and_then(|project| project.get("hasTrustDialogAccepted"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if trusted {
-        let entry = state
-            .entry("projects")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or("Claude's projects state is not an object")?
-            .entry(to.to_string())
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or("Claude's project state is not an object")?;
-        if entry.get("hasTrustDialogAccepted") != Some(&Value::Bool(true)) {
-            entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
-            write_settings(claude, &state)?;
+    update_settings(claude, |state| {
+        let trusted = state
+            .get("projects")
+            .and_then(|projects| projects.get(from))
+            .and_then(|project| project.get("hasTrustDialogAccepted"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if trusted {
+            accept_trust(state, to)
+        } else {
+            Ok(false)
         }
+    })
+}
+
+/// Sets the record Claude Code's trust question writes for a folder, and
+/// says whether it was not set already.
+fn accept_trust(state: &mut Map<String, Value>, key: &str) -> Result<bool, String> {
+    let entry = state
+        .entry("projects")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's projects state is not an object")?
+        .entry(key.to_string())
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude's project state is not an object")?;
+    if entry.get("hasTrustDialogAccepted") == Some(&Value::Bool(true)) {
+        return Ok(false);
     }
-    Ok(())
+    entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
+    Ok(true)
 }
 
 /// The keys Claude Code may file a folder's trust under: the path as given
@@ -366,21 +375,7 @@ pub fn claude_trust(state: &Path, folder: &Path) -> Result<(), String> {
     let key = claude_keys(folder)
         .pop()
         .expect("a folder has at least one key");
-    let mut read = read_for_writing(state)?;
-    let entry = read
-        .entry("projects")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("Claude's projects state is not an object")?
-        .entry(key)
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or("Claude's project state is not an object")?;
-    if entry.get("hasTrustDialogAccepted") != Some(&Value::Bool(true)) {
-        entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
-        write_settings(state, &read)?;
-    }
-    Ok(())
+    update_settings(state, |read| accept_trust(read, &key))
 }
 
 fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
@@ -486,25 +481,27 @@ fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), 
         .to_string();
 
     for claude in account::claude_jsons(home, accounts) {
-        let mut state = read_for_writing(&claude)?;
-        let servers = state
-            .entry("projects")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or("Claude's projects state is not an object")?
-            .entry(key.clone())
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or("Claude's project state is not an object")?
-            .entry("mcpServers")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or("Claude's mcpServers state is not an object")?;
-        let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
-        if servers.get(SERVER_NAME) != Some(&entry) {
+        update_settings(&claude, |state| {
+            let servers = state
+                .entry("projects")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or("Claude's projects state is not an object")?
+                .entry(key.clone())
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or("Claude's project state is not an object")?
+                .entry("mcpServers")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or("Claude's mcpServers state is not an object")?;
+            let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
+            if servers.get(SERVER_NAME) == Some(&entry) {
+                return Ok(false);
+            }
             servers.insert(SERVER_NAME.into(), entry);
-            write_settings(&claude, &state)?;
-        }
+            Ok(true)
+        })?;
     }
 
     let codex = codex_config_path(project);
@@ -553,21 +550,16 @@ fn uninstall_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<()
         if !claude.exists() {
             continue;
         }
-        let mut state = read_for_writing(&claude)?;
-        let mut changed = false;
-        if let Some(servers) = state
-            .get_mut("projects")
-            .and_then(Value::as_object_mut)
-            .and_then(|projects| projects.get_mut(&key))
-            .and_then(Value::as_object_mut)
-            .and_then(|project| project.get_mut("mcpServers"))
-            .and_then(Value::as_object_mut)
-        {
-            changed = servers.remove(SERVER_NAME).is_some();
-        }
-        if changed {
-            write_settings(&claude, &state)?;
-        }
+        update_settings(&claude, |state| {
+            Ok(state
+                .get_mut("projects")
+                .and_then(Value::as_object_mut)
+                .and_then(|projects| projects.get_mut(&key))
+                .and_then(Value::as_object_mut)
+                .and_then(|project| project.get_mut("mcpServers"))
+                .and_then(Value::as_object_mut)
+                .is_some_and(|servers| servers.remove(SERVER_NAME).is_some()))
+        })?;
     }
 
     let codex = codex_config_path(project);
@@ -674,13 +666,58 @@ pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookS
     Ok(status(home, project, accounts))
 }
 
-fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
+/// Changes a JSON file the agents keep, and that their running processes
+/// read and rewrite too: the file is read, changed by `change`, which says
+/// whether it changed anything, and written back at once. The read comes
+/// right before the write so as little as possible of another writer's
+/// work can be lost between them.
+fn update_settings(
+    path: &Path,
+    change: impl FnOnce(&mut Map<String, Value>) -> Result<bool, String>,
+) -> Result<(), String> {
+    let mut settings = read_for_writing(path)?;
+    if change(&mut settings)? {
+        write_settings(path, &settings)?;
     }
+    Ok(())
+}
+
+/// Writes a JSON file whole, so that a reader never sees it half written:
+/// to a file of its own beside it, then moved over it. A link is followed
+/// and the file it names is replaced, and the file keeps its permissions.
+fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
+    let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     let text = serde_json::to_string_pretty(&Value::Object(settings.clone()))
         .map_err(|e| format!("could not write settings: {e}"))?;
-    std::fs::write(path, format!("{text}\n")).map_err(|e| format!("could not write settings: {e}"))
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let temporary = parent.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let written = (|| {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        if let Ok(old) = std::fs::metadata(&path) {
+            file.set_permissions(old.permissions())?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, &path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!("could not write {}: {e}", path.display()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -727,6 +764,67 @@ mod tests {
             std::fs::read_to_string(settings_path(&project)).unwrap(),
             "[1, 2"
         );
+    }
+
+    #[test]
+    fn a_reader_of_the_agent_s_state_never_sees_it_half_written() {
+        let (home, project) = fixture("claude-trust-race");
+        let state = home.join(".claude.json");
+        // Big enough that a write of it is more than one write call.
+        let padding = "x".repeat(256 * 1024);
+        std::fs::write(&state, json!({ "padding": padding }).to_string()).unwrap();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = std::thread::spawn({
+            let (state, done) = (state.clone(), std::sync::Arc::clone(&done));
+            move || {
+                let mut torn = 0;
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    let text = std::fs::read_to_string(&state).unwrap_or_default();
+                    if serde_json::from_str::<Value>(&text).is_err() {
+                        torn += 1;
+                    }
+                }
+                torn
+            }
+        });
+        for n in 0..300 {
+            claude_trust(&state, &project.join(format!("folder-{n}"))).unwrap();
+        }
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(reader.join().unwrap(), 0, "a reader saw a torn file");
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        assert_eq!(written["projects"].as_object().unwrap().len(), 300);
+        assert_eq!(written["padding"].as_str().unwrap().len(), padding.len());
+        let left: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(left.is_empty(), "nothing left beside it: {left:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_agent_s_state_keeps_its_link_and_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let (home, project) = fixture("claude-trust-link");
+        let real = home.join("dotfiles").join("claude.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "{}").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let state = home.join(".claude.json");
+        std::os::unix::fs::symlink(&real, &state).unwrap();
+        claude_trust(&state, &project).unwrap();
+        assert!(std::fs::symlink_metadata(&state)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(std::fs::read_to_string(&real)
+            .unwrap()
+            .contains("hasTrustDialogAccepted"));
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
