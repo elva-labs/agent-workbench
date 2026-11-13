@@ -11,6 +11,12 @@ told once, in a word over the agent pane, what turning them on gives; its
 link opens the settings at the section, and the word goes for good when it
 is dismissed or when hooks are turned on.
 
+The projects the window opens with are checked together rather than one by
+one: the machine here is asked once whether its daemon is in place, each
+account's agent state is read once for all of them, and each other machine
+gets a single request for its projects, so local projects never wait on a
+remote one. A project opened later is checked on its own.
+
 ## What is installed
 
 For Claude Code, entries in the project's `.claude/settings.local.json`:
