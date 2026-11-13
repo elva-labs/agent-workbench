@@ -23,29 +23,42 @@ pub const SCHEME: &str = "ssh://";
 /// A connection went away: `{ host, reason }`.
 pub const REMOTE_CLOSED: &str = "remote_closed";
 
-/// The integrated sessions running on each machine, by their ids with the
-/// host on, so that a connection that goes away ends them for the window.
-static INTEGRATED: Mutex<BTreeMap<String, BTreeSet<String>>> = Mutex::new(BTreeMap::new());
+/// The integrated sessions on each machine, by their ids with the host on:
+/// those running, so that a connection that goes away ends them for the
+/// window, and those that ended, so that a start answered after its
+/// session already ended does not count it as running again.
+#[derive(Default)]
+struct Machine {
+    running: BTreeSet<String>,
+    ended: BTreeSet<String>,
+}
+
+static INTEGRATED: Mutex<BTreeMap<String, Machine>> = Mutex::new(BTreeMap::new());
 
 /// An integrated session started on a machine, by its id with the host on.
+/// Its events can come before this, its end among them.
 pub fn integrated_started(host: &str, id: &str) {
-    INTEGRATED
-        .lock()
-        .expect("integrated lock")
-        .entry(host.to_string())
-        .or_default()
-        .insert(id.to_string());
+    let mut machines = INTEGRATED.lock().expect("integrated lock");
+    let machine = machines.entry(host.to_string()).or_default();
+    if !machine.ended.contains(id) {
+        machine.running.insert(id.to_string());
+    }
 }
 
 /// Keeps the record of a machine's integrated sessions as their events
-/// pass, by the payload with the host already on.
+/// pass, by the payload with the host already on: a session is running
+/// from its first event until its end.
 fn integrated_heard(host: &str, payload: &Value) {
+    let Some(id) = payload["id"].as_str() else {
+        return;
+    };
+    let mut machines = INTEGRATED.lock().expect("integrated lock");
+    let machine = machines.entry(host.to_string()).or_default();
     if payload["type"] == "ended" {
-        if let Some(id) = payload["id"].as_str() {
-            if let Some(ids) = INTEGRATED.lock().expect("integrated lock").get_mut(host) {
-                ids.remove(id);
-            }
-        }
+        machine.running.remove(id);
+        machine.ended.insert(id.to_string());
+    } else if !machine.ended.contains(id) {
+        machine.running.insert(id.to_string());
     }
 }
 
@@ -56,7 +69,8 @@ fn integrated_lost(host: &str, reason: &Value) -> Vec<Value> {
         .lock()
         .expect("integrated lock")
         .remove(host)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .running;
     let why = reason.as_str().unwrap_or("the connection closed");
     ids.into_iter()
         .flat_map(|id| {
@@ -541,6 +555,14 @@ mod tests {
         assert_eq!(lost[1]["type"], "ended");
         assert_eq!(lost[1]["clean"], false);
         assert!(integrated_lost("gone", &Value::Null).is_empty());
+        // A session whose process died at once ended before its start
+        // answered: the connection going later ends it no second time.
+        integrated_heard("fast", &json!({"id": "ssh://fast#int-1", "type": "ended"}));
+        integrated_started("fast", "ssh://fast#int-1");
+        assert!(integrated_lost("fast", &Value::Null).is_empty());
+        // One that has said something but not yet been answered for ends.
+        integrated_heard("slow", &json!({"id": "ssh://slow#int-1", "type": "ready"}));
+        assert_eq!(integrated_lost("slow", &Value::Null).len(), 2);
         let other = homeward(
             "lab",
             "session_event",
