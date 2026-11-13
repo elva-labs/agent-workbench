@@ -3,6 +3,10 @@ import { sveltekit } from "@sveltejs/kit/vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+// The dev server's port. WORKBENCH_DEV_PORT overrides it for browser test runs
+// from a second checkout; the HMR port is the one after it.
+const port = Number(process.env.WORKBENCH_DEV_PORT) || 1420;
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [sveltekit()],
@@ -21,14 +25,14 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port,
     strictPort: true,
     host: host || false,
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: port + 1,
         }
       : undefined,
     watch: {
