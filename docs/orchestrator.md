@@ -10,7 +10,7 @@ what one has on screen, and stop them.
 
 It runs in a project of its own, `orchestrator` under the workbench's home.
 The first one starts from New orchestrator session, in the menu on the
-sessions pane's Projects line; from then on the project sits above the ones
+sessions pane's title row; from then on the project sits above the ones
 you opened, with its sessions and the past ones to resume, and a session
 started there is an orchestrator. Its header's button starts another, and
 with more than one agent installed it opens the choice of agent, as any
@@ -116,18 +116,20 @@ may have more than eight running at a time.
 The sessions a session started hang directly under it, one line each,
 joined to its dot by a thin rail: the state dot, the name, the model it was
 started on and when it last changed. One that runs in another project than
-its starter names that project in front of its own name. The line speaks
+its starter names that project after its own name, and the project is cut
+before the name when the row is short of room. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
 a permission, which only you can grant. Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the
 session it started. A session whose starter the window no longer has
 stands in its own project like any other.
 
-A starter can be folded, from the button over its row's end or with Left
-on the keyboard, and Right lets them out again: folded, its row shows a
-small dot for each session it started and how many, `3 started`, where the
-model stands otherwise. Left on a started session moves the cursor up to
-its starter. Nothing about the fold is remembered.
+A starter can be folded, from the chevron at the end of its second line or
+with Left on the keyboard, and Right lets them out again: folded, its second
+line says once, in words, what the sessions it started are doing, `2
+running, 1 asking, 1 done`, with a small dot for each where the model
+stands otherwise. Left on a started session moves the cursor up to its
+starter. Nothing about the fold is remembered.
 
 The orchestrator's own row says what it has out, "3 running, 1 asking", and
 its changes pane, headed Orchestrator, shows the sessions it started instead
@@ -142,7 +144,8 @@ whose trees are clean; the rest say why they stay.
 ![An orchestrator on screen with the sessions it started, and the board in the changes pane with a row for each, what it is doing, and the project it may start in.](orchestrator-board.png)
 
 The sessions it started keep out of the keyboard's way too: Delete on one
-of them does nothing, and only its own × stops it.
+of them does nothing. Its own × stops it, and Stop all on the board stops
+every one.
 
 ## Where the work happens
 

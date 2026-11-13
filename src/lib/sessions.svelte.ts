@@ -134,8 +134,8 @@ export const sessions = $state({
    * of them: history rather than anything the window owns.
    */
   history: {} as Record<string, HistoryEntry[]>,
-  /** The agent last started in each project: what the new-session row
-      offers first. */
+  /** The agent last started in each project: what the choice for a new
+      session offers first. */
   preferred: {} as Record<string, AgentId>,
   /**
    * Session ids this app has run, by project path. Claude Code keeps every

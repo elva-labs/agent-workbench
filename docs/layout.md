@@ -44,6 +44,8 @@ window. A unit test keeps the window configuration and the layout's numbers
 in step.
 
 Within a shape, the changes pane gives width up before the sessions pane.
+The sessions pane opens 300 pixels wide, room for a session's name beside
+its time, and keeps whatever width it is dragged to.
 
 ## Folded, not gone
 

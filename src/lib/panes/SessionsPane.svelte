@@ -62,25 +62,23 @@
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
 
-
-  /** With more than one agent to run, every row says which it is, and the
-      new-session row offers the choice. With one, nothing changes. */
+  /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
 
-  /** Whether the new-session row has anything to choose: an agent, or an
-      account to run under. */
+  /** Whether a new session has anything to choose: an agent, or an
+      account to run under. With neither it starts at once. */
   let choosable = $derived(several || hasAccounts());
 
-  /** The project whose new-session row is open on the choice of agent. */
+  /** The project whose choice for a new session is open under its name. */
   let choosing = $state<string | null>(null);
 
   /** The account the open choice would start under: the project's own to
       begin with, and whatever the control was switched to. */
   let picked = $state<string | null>(null);
 
-  /** New session: with nothing to choose it starts; otherwise the row
-      opens into the choice, the cursor on the agent the project used last
-      and the account the project runs under. */
+  /** New session: with nothing to choose it starts; otherwise the choice
+      opens under the project's name, the cursor on the agent the project
+      used last and the account the project runs under. */
   function offer(path: string) {
     if (!choosable) {
       start(path, defaultAgent(path));
@@ -213,7 +211,7 @@
   }
 
   /** An inactive project's own new-session button: the project comes
-      forward, which makes it active, and starts as its own row would. */
+      forward, which makes it active, and starts as its header's + would. */
   function startIn(path: string) {
     wake(path);
     offer(path);
@@ -355,7 +353,7 @@
   );
 
   /** A session in the orchestrator's own project, from the menu: the project
-      comes forward, and starting there is what the new-session row does. */
+      comes forward, and a session starts there as its header's + would. */
   function startOrchestrator() {
     const dir = orchestrator.dir;
     if (dir === null) return;
