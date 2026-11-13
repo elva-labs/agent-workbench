@@ -654,7 +654,7 @@ mod tests {
     /// is still being delivered or debounced from an earlier write is not
     /// taken for the news of a later one.
     fn settle(recorder: &crate::events::testing::Recorder) {
-        let quiet = Duration::from_millis(1000);
+        let quiet = Duration::from_millis(1500);
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let mut seen = recorder.events.lock().unwrap().len();
         let mut since = std::time::Instant::now();
