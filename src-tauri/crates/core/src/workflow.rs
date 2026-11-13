@@ -14,12 +14,13 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// The agents a model can belong to.
 pub const AGENTS: &[&str] = &["claude-code", "codex"];
 
-/// The name Codex's own default model goes by. Nothing lists Codex's models
-/// yet, so it is the one a Codex step can name.
+/// The name Codex's own default model goes by. Codex's models are not
+/// listed, so it is the one a Codex step can name.
 pub const CODEX_DEFAULT: &str = "default";
 
 /// How many workflows the settings may hold, how many steps one may have,
@@ -59,8 +60,8 @@ pub enum Step {
         parallel: u32,
     },
     /// Checks the work. It passes when each condition that is on holds; if
-    /// not, the work goes back to the step `back_to` names, at most `limit`
-    /// times, and then the user is asked.
+    /// not, the work goes back to the earlier work step `back_to` names, at
+    /// most `limit` times, and then the user is asked.
     Review {
         name: String,
         #[serde(default)]
@@ -231,12 +232,11 @@ fn check_workflow(workflow: &Workflow) -> Result<(), String> {
                         "{owner} passes the work when the reviewer approves, the orchestrator agrees, or both; one has to be on"
                     ));
                 }
-                if !workflow.steps[..index]
-                    .iter()
-                    .any(|earlier| earlier.name() == back_to)
-                {
+                if !workflow.steps[..index].iter().any(|earlier| {
+                    matches!(earlier, Step::Work { .. }) && earlier.name() == back_to
+                }) {
                     return Err(format!(
-                        "{owner} goes back to {back_to:?}, which is not a step before it"
+                        "{owner} goes back to {back_to:?}, which is not a work step before it"
                     ));
                 }
                 if !(1..=MOST_ROUNDS).contains(limit) {
@@ -288,8 +288,60 @@ pub fn check(workflows: &Workflows) -> Result<(), String> {
     Ok(())
 }
 
+/// The workflows a settings file holds, read leniently: each workflow that
+/// does not read or keep the rules is left out, along with any past the
+/// most the settings hold or one whose name an earlier one has, and a
+/// choice naming a workflow that is not kept is dropped. A value that is
+/// not an object at all leaves the default.
+pub fn read_lenient(value: &Value) -> Workflows {
+    let Some(fields) = value.as_object() else {
+        return Workflows::default();
+    };
+    let mut list: Vec<Workflow> = Vec::new();
+    for item in fields
+        .get("list")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Ok(workflow) = serde_json::from_value::<Workflow>(item.clone()) else {
+            continue;
+        };
+        if list.len() < MOST_WORKFLOWS
+            && check_workflow(&workflow).is_ok()
+            && !list
+                .iter()
+                .any(|kept| kept.name.eq_ignore_ascii_case(&workflow.name))
+        {
+            list.push(workflow);
+        }
+    }
+    let kept = |name: &str| list.iter().any(|workflow| workflow.name == name);
+    let default = fields
+        .get("default")
+        .and_then(Value::as_str)
+        .filter(|name| kept(name))
+        .map(str::to_owned);
+    let overrides = fields
+        .get("overrides")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(project, choice)| match choice {
+            Value::Null => Some((project.clone(), None)),
+            Value::String(name) if kept(name) => Some((project.clone(), Some(name.clone()))),
+            _ => None,
+        })
+        .collect();
+    Workflows {
+        list,
+        default,
+        overrides,
+    }
+}
+
 /// The workflows a value holds, or the reason it will not do.
-pub fn read(value: &serde_json::Value) -> Result<Workflows, String> {
+pub fn read(value: &Value) -> Result<Workflows, String> {
     if !value.is_object() {
         return Err(
             "workflows is a list of workflows, the default one's name and the projects that say otherwise".into(),
@@ -395,14 +447,70 @@ mod tests {
         assert!(error.contains("one has to be on"), "{error}");
         assert!(with(|v| v["list"][0]["steps"][1]["reviewerApproves"] = json!(false)).is_ok());
         let error = with(|v| v["list"][0]["steps"][1]["backTo"] = json!("Nowhere")).unwrap_err();
-        assert!(error.contains("not a step before it"), "{error}");
+        assert!(error.contains("not a work step before it"), "{error}");
         // A review cannot go back to itself or to a step after it.
         assert!(with(|v| v["list"][0]["steps"][1]["backTo"] = json!("Review")).is_err());
         let error = with(|v| {
             v["list"][0]["steps"].as_array_mut().unwrap().swap(0, 1);
         })
         .unwrap_err();
-        assert!(error.contains("not a step before it"), "{error}");
+        assert!(error.contains("not a work step before it"), "{error}");
+    }
+
+    #[test]
+    fn a_review_goes_back_to_work_and_never_to_another_review() {
+        let review = |name: &str, back_to: &str| {
+            json!({ "kind": "review", "name": name, "models": [], "reviewerApproves": true,
+                    "orchestratorAgrees": true, "backTo": back_to, "limit": 2 })
+        };
+        let error = with(|v| {
+            v["list"][0]["steps"]
+                .as_array_mut()
+                .unwrap()
+                .push(review("Second look", "Review"));
+        })
+        .unwrap_err();
+        assert!(error.contains("not a work step before it"), "{error}");
+        assert!(with(|v| {
+            v["list"][0]["steps"]
+                .as_array_mut()
+                .unwrap()
+                .push(review("Second look", "Work"));
+        })
+        .is_ok());
+    }
+
+    #[test]
+    fn a_file_keeps_each_workflow_that_reads_and_drops_the_rest() {
+        let good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        let mut renamed = good.clone();
+        renamed["name"] = json!("Quick");
+        let mut too_many_rounds = good.clone();
+        too_many_rounds["name"] = json!("Careful");
+        too_many_rounds["steps"][1]["limit"] = json!(11);
+        let read = read_lenient(&json!({
+            "list": [good, too_many_rounds, renamed, { "name": "half" }, good],
+            "default": "Careful",
+            "overrides": { "/a": "Quick", "/b": "Careful", "/c": null, "/d": 3 }
+        }));
+        assert_eq!(
+            read.list
+                .iter()
+                .map(|w| w.name.as_str())
+                .collect::<Vec<_>>(),
+            [DEFAULT_NAME, "Quick"]
+        );
+        assert_eq!(read.default, None);
+        assert_eq!(
+            read.overrides,
+            BTreeMap::from([
+                ("/a".to_owned(), Some("Quick".to_owned())),
+                ("/c".to_owned(), None)
+            ])
+        );
+        assert!(check(&read).is_ok());
+        assert_eq!(read_lenient(&json!("none")), Workflows::default());
+        assert_eq!(read_lenient(&json!({})).list, []);
     }
 
     #[test]
@@ -422,6 +530,23 @@ mod tests {
         })
         .is_err());
         assert!(with(|v| v["list"][0]["steps"][0]["models"] = json!([])).is_ok());
+    }
+
+    /// The cases the window's rules are held to as well.
+    const RULES: &str = include_str!("../../../../tests/fixtures/workflow-rules.json");
+
+    #[test]
+    fn the_rules_take_the_same_workflows_the_window_takes() {
+        let rules: Value = serde_json::from_str(RULES).unwrap();
+        for case in rules["cases"].as_array().unwrap() {
+            let read = read(&json!({ "list": [case["workflow"]] }));
+            assert_eq!(
+                read.is_ok(),
+                case["valid"].as_bool().unwrap(),
+                "{}: {read:?}",
+                case["case"]
+            );
+        }
     }
 
     #[test]

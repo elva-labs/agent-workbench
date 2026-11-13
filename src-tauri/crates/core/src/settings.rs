@@ -527,7 +527,7 @@ fn settle_palette(settings: &mut Settings) {
 }
 
 /// The settings a file's text holds, each field that does not read left at
-/// its default, and each theme that does not read left out. None when the
+/// its default, and each theme or workflow that does not read left out. None when the
 /// text is not a JSON object at all.
 pub fn parse(text: &str) -> Option<Settings> {
     let fields: Map<String, Value> = serde_json::from_str(text).ok()?;
@@ -535,6 +535,8 @@ pub fn parse(text: &str) -> Option<Settings> {
     for (field, value) in in_order(&fields) {
         if field == "themes" {
             settings.themes = themes(value, true).unwrap_or_default();
+        } else if field == "workflows" {
+            settings.workflows = workflow::read_lenient(value);
         } else {
             let _ = set_field(&mut settings, field, value);
         }
@@ -997,9 +999,35 @@ mod tests {
     }
 
     #[test]
-    fn a_workflows_value_that_does_not_read_leaves_the_default_when_read_from_a_file() {
-        let parsed =
-            parse(r#"{ "workflows": { "list": [{ "name": "x" }], "default": "x" } }"#).unwrap();
+    fn a_workflow_in_the_file_that_does_not_read_is_left_out_and_the_rest_survive_a_write() {
+        let home = home("workflows-partly");
+        std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
+        let mut good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        good["name"] = json!("Mine");
+        let mut bad = good.clone();
+        bad["name"] = json!("Hand edited");
+        bad["steps"][1]["limit"] = json!(11);
+        let file = json!({ "workflows": {
+            "list": [good, bad],
+            "default": "Renamed in the file",
+            "overrides": { "/p": "Mine", "/q": "Hand edited" }
+        } });
+        std::fs::write(settings_path(&home), file.to_string()).unwrap();
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings.workflows;
+        assert_eq!(loaded.list.len(), 1);
+        assert_eq!(loaded.list[0].name, "Mine");
+        assert_eq!(loaded.default, None);
+
+        // An unrelated change keeps the workflow that read.
+        store.set(&json!({ "palette": "mono" })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["list"][0]["name"], "Mine");
+        assert_eq!(value["workflows"]["overrides"], json!({ "/p": "Mine" }));
+        assert_eq!(value["workflows"]["default"], Value::Null);
+
+        let parsed = parse(r#"{ "workflows": "none" }"#).unwrap();
         assert_eq!(parsed.workflows, Workflows::default());
         let parsed = parse(r#"{ "workflows": { "list": [], "default": null } }"#).unwrap();
         assert!(parsed.workflows.list.is_empty());

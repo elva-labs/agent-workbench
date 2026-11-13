@@ -18,10 +18,12 @@ import {
   setStepKind,
   updateStep,
   workflowOf,
+  listProblem,
   workflowProblem,
   workflows,
   workflowsSettings,
 } from "$lib/workflows.svelte";
+import rules from "../fixtures/workflow-rules.json";
 
 const sent: unknown[] = [];
 
@@ -162,7 +164,23 @@ describe("the orchestrator and the steps", () => {
     expect(stepsOf().map((step) => step.name)).toEqual(["Work", "Work 2", "Review"]);
     expect(addStep(NAME, 3, "review")).toBeNull();
     const added = stepsOf()[3];
-    expect(added).toMatchObject({ kind: "review", name: "Review 2", backTo: "Review" });
+    // A new review goes back to the nearest work step, never to a review.
+    expect(added).toMatchObject({ kind: "review", name: "Review 2", backTo: "Work 2" });
+  });
+
+  it("points a review at the nearest earlier work step when its own goes, never at a review", () => {
+    // Work, Review (back to Work), Work 2, Review 2 (back to Work 2).
+    addStep(NAME, 2, "work");
+    addStep(NAME, 3, "review");
+    expect(stepsOf()[3]).toMatchObject({ name: "Review 2", backTo: "Work 2" });
+    expect(removeStep(NAME, 2)).toBeNull();
+    expect(stepsOf()[2]).toMatchObject({ name: "Review 2", backTo: "Work" });
+    expect(updateStep(NAME, 2, { backTo: "Review" })).toMatch(/work step before it/);
+    // Turning the target into a review sends its review further back.
+    addStep(NAME, 1, "work");
+    expect(updateStep(NAME, 3, { backTo: "Work 2" })).toBeNull();
+    expect(setStepKind(NAME, 1, "review")).toBeNull();
+    expect(stepsOf()[3]).toMatchObject({ backTo: "Work" });
   });
 
   it("will not begin with a review", () => {
@@ -269,6 +287,12 @@ describe("the orchestrator and the steps", () => {
 
 describe("what makes a workflow valid", () => {
   const ok = (): Workflow => defaultWorkflow();
+
+  it("is what the core takes, case by case", () => {
+    for (const { case: what, valid, workflow } of rules.cases) {
+      expect(listProblem([workflow as Workflow]) === null, what).toBe(valid);
+    }
+  });
 
   it("needs at least one step", () => {
     const workflow = ok();

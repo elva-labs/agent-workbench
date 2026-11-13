@@ -7,7 +7,7 @@ import type {
   WorkflowModel,
   WorkflowStep,
 } from "$lib/core";
-import { AGENT_ORDER, modelLabel, mostCapable } from "$lib/models";
+import { AGENT_ORDER, modelLabel, mostCapable, sameModel } from "$lib/models";
 import { persist } from "$lib/persist";
 
 /**
@@ -63,6 +63,7 @@ export const workflows = $state({
 /** What the core holds the settings to. */
 export const MOST_WORKFLOWS = 16;
 export const MOST_STEPS = 12;
+export const MOST_MODELS = 16;
 export const LONGEST_NAME = 40;
 export const MOST_PARALLEL = 8;
 export const MOST_ROUNDS = 10;
@@ -109,7 +110,7 @@ const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 export function nameProblem(name: string, others: string[]): string | null {
   const trimmed = name.trim();
   if (trimmed === "") return "A name is needed.";
-  if (trimmed.length > LONGEST_NAME) return `A name is ${LONGEST_NAME} characters at most.`;
+  if ([...trimmed].length > LONGEST_NAME) return `A name is ${LONGEST_NAME} characters at most.`;
   if (others.some((other) => sameName(other, trimmed))) return `${trimmed} is taken already.`;
   return null;
 }
@@ -118,7 +119,27 @@ function modelProblem(model: WorkflowModel): string | null {
   if (model.agent !== "claude-code" && model.agent !== "codex") {
     return `${model.agent} is not an agent.`;
   }
-  return model.model.trim() === "" ? "A model needs a name." : null;
+  const name = model.model.trim();
+  // eslint-disable-next-line no-control-regex
+  if (name === "" || [...name].length > LONGEST_NAME || /[\s\u0000-\u001f\u007f-\u009f]/u.test(name)) {
+    return `A model is named in one word, ${LONGEST_NAME} characters at most, not "${model.model}".`;
+  }
+  return null;
+}
+
+/** The step a review may send the work back to: a work step before it. */
+export function canGoBackTo(workflow: Workflow, review: number, name: string): boolean {
+  return workflow.steps
+    .slice(0, review)
+    .some((earlier) => earlier.kind === "work" && earlier.name === name);
+}
+
+/** The work step nearest before a place in the order, by name. */
+function nearestWork(steps: WorkflowStep[], before: number): string | undefined {
+  return steps
+    .slice(0, before)
+    .reverse()
+    .find((step) => step.kind === "work")?.name;
 }
 
 /** Why a workflow will not do, or null when it will: the rules the core
@@ -136,9 +157,13 @@ export function workflowProblem(workflow: Workflow): string | null {
       workflow.steps.slice(0, index).map((earlier) => earlier.name),
     );
     if (named !== null) return named;
-    for (const model of step.models) {
+    if (step.models.length > MOST_MODELS) return `${step.name} lists ${MOST_MODELS} models at most.`;
+    for (const [at, model] of step.models.entries()) {
       const problem = modelProblem(model);
       if (problem !== null) return problem;
+      if (step.models.slice(0, at).some((earlier) => sameModel(earlier, model))) {
+        return `${step.name} lists ${modelLabel(model.agent, model.model)} twice.`;
+      }
     }
     if (step.kind === "work") {
       if (!Number.isInteger(step.parallel) || step.parallel < 1 || step.parallel > MOST_PARALLEL) {
@@ -146,10 +171,10 @@ export function workflowProblem(workflow: Workflow): string | null {
       }
     } else {
       if (!step.reviewerApproves && !step.orchestratorAgrees) {
-        return `${step.name} passes the work on something: the reviewer approving, the orchestrator agreeing, or both.`;
+        return `${step.name} passes the work when the reviewer approves, the orchestrator agrees, or both, so one of them stays on.`;
       }
-      if (!stepNames(workflow).slice(0, index).includes(step.backTo)) {
-        return `${step.name} goes back to a step before it.`;
+      if (!canGoBackTo(workflow, index, step.backTo)) {
+        return `${step.name} goes back to a work step before it.`;
       }
       if (!Number.isInteger(step.limit) || step.limit < 1 || step.limit > MOST_ROUNDS) {
         return `${step.name} goes back between 1 and ${MOST_ROUNDS} times.`;
@@ -196,14 +221,14 @@ export function overrideOf(project: string): string | null | undefined {
   return workflowNamed(own) === undefined ? undefined : own;
 }
 
-/** Points each review at a step before it again after steps moved or went:
-    the step just before the review, which is where the work came from. */
+/** Points each review at a work step before it again after steps moved,
+    went or changed kind: the nearest one, which is where the work came
+    from. */
 function repair(workflow: Workflow) {
-  const names = stepNames(workflow);
   workflow.steps.forEach((step, index) => {
-    if (step.kind === "review" && !names.slice(0, index).includes(step.backTo) && index > 0) {
-      step.backTo = names[index - 1];
-    }
+    if (step.kind !== "review" || canGoBackTo(workflow, index, step.backTo)) return;
+    const nearest = nearestWork(workflow.steps, index);
+    if (nearest !== undefined) step.backTo = nearest;
   });
 }
 
@@ -329,7 +354,7 @@ export function newStep(workflow: Workflow, kind: WorkflowStep["kind"], before: 
     models: [{ agent: "claude-code", model: "opus" }],
     reviewerApproves: true,
     orchestratorAgrees: true,
-    backTo: taken[Math.max(0, before - 1)] ?? "",
+    backTo: nearestWork(workflow.steps, before) ?? "",
     limit: 3,
   };
 }
@@ -344,15 +369,19 @@ export function addStep(name: string, at: number, kind: WorkflowStep["kind"]): s
   });
 }
 
+/** A workflow as it would be with a step taken away: each review that went
+    back to it goes back to the nearest work step before it instead. */
+export function withoutStep(workflow: Workflow, at: number): Workflow {
+  const draft = clone($state.snapshot(workflow));
+  draft.steps.splice(at, 1);
+  repair(draft);
+  return draft;
+}
+
 export function removeStep(name: string, at: number): string | null {
   return edit(name, (draft) => {
     if (draft.steps.length <= 1) return "A workflow needs at least one step.";
-    const [removed] = draft.steps.splice(at, 1);
-    // A review that went back to the removed step goes back to the one
-    // before it, which repair does once the list is whole again.
-    for (const step of draft.steps) {
-      if (step.kind === "review" && step.backTo === removed.name) step.backTo = "";
-    }
+    draft.steps.splice(at, 1);
     return null;
   });
 }
@@ -396,8 +425,8 @@ export function updateStep(name: string, at: number, patch: StepPatch): string |
       if (patch.reviewerApproves !== undefined) step.reviewerApproves = patch.reviewerApproves;
       if (patch.orchestratorAgrees !== undefined) step.orchestratorAgrees = patch.orchestratorAgrees;
       if (patch.backTo !== undefined) {
-        if (!draft.steps.slice(0, at).some((earlier) => earlier.name === patch.backTo)) {
-          return `${step.name} goes back to a step before it.`;
+        if (!canGoBackTo(draft, at, patch.backTo)) {
+          return `${step.name} goes back to a work step before it.`;
         }
         step.backTo = patch.backTo;
       }
@@ -423,7 +452,7 @@ export function setStepKind(name: string, at: number, kind: WorkflowStep["kind"]
             ...base,
             reviewerApproves: true,
             orchestratorAgrees: true,
-            backTo: draft.steps[at - 1].name,
+            backTo: nearestWork(draft.steps, at) ?? "",
             limit: 3,
           };
     return null;
@@ -513,28 +542,137 @@ function modelsText(models: WorkflowModel[]): string {
     : models.map((model) => modelLabel(model.agent, model.model)).join(" / ");
 }
 
-/** A workflow in a line, for showing what a change makes of it. */
+/** When a review passes the work, in a few words. */
+export function passesText(step: ReviewStep): string {
+  if (step.reviewerApproves && step.orchestratorAgrees) {
+    return "the reviewer approves and the orchestrator agrees";
+  }
+  return step.reviewerApproves ? "the reviewer approves" : "the orchestrator agrees";
+}
+
+/** A workflow in a line, for showing what a change makes of it: the
+    orchestrator, then each step with its models and what bounds it. */
 export function describeWorkflow(workflow: Workflow): string {
   const steps = workflow.steps.map((step) =>
     step.kind === "work"
       ? `${step.name} (${modelsText(step.models)}, ${step.parallel} at once)`
-      : `${step.name} (${modelsText(step.models)}, back to ${step.backTo} ${step.limit} times at most)`,
+      : `${step.name} (${modelsText(step.models)}, passes when ${passesText(step)}, else back to ${step.backTo} ${step.limit} times at most)`,
   );
   return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}`;
 }
 
-/** Replaces the whole set, as an agent's allowed change does. Says why not
-    when it will not do. */
-export function setWorkflows(next: Settings["workflows"]): string | null {
-  const problem = listProblem(next.list);
-  if (problem !== null) return problem;
-  adoptWorkflows(next);
-  save();
-  return null;
+/** What an agent's change does to the workflows: one written whole,
+    replacing the one of its name or added; one taken away; and the one new
+    sessions start with, null for none. */
+export interface WorkflowChange {
+  write?: Workflow;
+  remove?: string;
+  default?: string | null;
 }
 
-function save() {
-  persist({ workflows: workflowsSettings() });
+const namesOf = (list: Workflow[]) => list.map((workflow) => workflow.name).join(", ") || "none";
+
+/** What a change makes of a set of workflows, checked whole. A project
+    that chose a workflow taken away follows the default again. Throws the
+    reason when it will not do. */
+export function changed(
+  held: Settings["workflows"],
+  change: WorkflowChange,
+): Settings["workflows"] {
+  const list = clone(held.list);
+  let chosen = held.default;
+  const overrides = { ...held.overrides };
+  if (change.write !== undefined) {
+    const at = list.findIndex((workflow) => workflow.name === change.write!.name);
+    if (at < 0) list.push(clone(change.write));
+    else list[at] = clone(change.write);
+  }
+  if (change.remove !== undefined) {
+    const at = list.findIndex((workflow) => workflow.name === change.remove);
+    if (at < 0) {
+      throw new Error(`There is no workflow called ${change.remove}; the workflows are ${namesOf(list)}.`);
+    }
+    list.splice(at, 1);
+    if (chosen === change.remove) chosen = null;
+    for (const [project, choice] of Object.entries(overrides)) {
+      if (choice === change.remove) delete overrides[project];
+    }
+  }
+  if (change.default !== undefined) chosen = change.default;
+  if (chosen !== null && !list.some((workflow) => workflow.name === chosen)) {
+    throw new Error(`There is no workflow called ${chosen}; the workflows are ${namesOf(list)}.`);
+  }
+  const problem = listProblem(list);
+  if (problem !== null) throw new Error(problem);
+  return { list, default: chosen, overrides };
+}
+
+/** Replaces the whole set and sends it. Answers with why not when it will
+    not do, or with the core's reason when the core refuses it, in which
+    case the window goes back to what it held. */
+export async function setWorkflows(next: Settings["workflows"]): Promise<string | null> {
+  const problem = listProblem(next.list);
+  if (problem !== null) return problem;
+  const before = workflowsSettings();
+  adoptWorkflows(next);
+  const refused = (await save()) ?? null;
+  if (refused !== null) adoptWorkflows(before);
+  return refused;
+}
+
+/**
+ * Makes an agent's change to the workflows as they are when the user allows
+ * it, so edits made in the editor meanwhile stay. Throws the reason when it
+ * will not do or the core refuses it. Answers with what undoes it: the
+ * workflow written goes back to what it was, or away if it was new; one
+ * taken away comes back where it stood, with the projects that chose it;
+ * and the default goes back if it is still the one the change named.
+ */
+export async function takeWorkflowChange(change: WorkflowChange): Promise<() => void> {
+  const before = workflowsSettings();
+  const after = changed(before, change);
+  const refused = await setWorkflows(after);
+  if (refused !== null) throw new Error(refused);
+  return () => {
+    const now = workflowsSettings();
+    const list = clone(now.list);
+    let chosen = now.default;
+    const overrides = { ...now.overrides };
+    const at = (name: string) => list.findIndex((workflow) => workflow.name === name);
+    if (change.write !== undefined) {
+      const name = change.write.name;
+      const was = before.list.find((workflow) => workflow.name === name);
+      if (was !== undefined && at(name) >= 0) list[at(name)] = clone(was);
+      if (was === undefined && at(name) >= 0) {
+        list.splice(at(name), 1);
+        if (chosen === name) chosen = null;
+        for (const [project, choice] of Object.entries(overrides)) {
+          if (choice === name) delete overrides[project];
+        }
+      }
+    }
+    if (change.remove !== undefined) {
+      const name = change.remove;
+      const index = before.list.findIndex((workflow) => workflow.name === name);
+      if (index >= 0 && !list.some((workflow) => sameName(workflow.name, name))) {
+        list.splice(Math.min(index, list.length), 0, clone(before.list[index]));
+        for (const [project, choice] of Object.entries(before.overrides)) {
+          if (choice === name && overrides[project] === undefined) overrides[project] = name;
+        }
+      }
+    }
+    if (after.default !== before.default && chosen === after.default) {
+      chosen =
+        before.default !== null && list.some((workflow) => workflow.name === before.default)
+          ? before.default
+          : null;
+    }
+    void setWorkflows({ list, default: chosen, overrides });
+  };
+}
+
+function save(): Promise<string | null> {
+  return persist({ workflows: workflowsSettings() });
 }
 
 /** Test seam. */

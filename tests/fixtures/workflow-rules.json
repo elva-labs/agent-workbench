@@ -1,0 +1,1361 @@
+{
+  "about": "Workflows and whether the rules the settings keep take them. The core and the window are both held to it.",
+  "cases": [
+    {
+      "case": "the default",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "codex by its default and any model",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              },
+              {
+                "agent": "codex",
+                "model": "default"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a model of forty characters",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a model of forty-one characters",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a model with a space",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "codex",
+                "model": "gpt 5"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a model with a control character",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "son\u0007net"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "an orchestrator with a tab in its model",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fa\tble"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "an empty model",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "  "
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "an agent that is not one",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "gpt",
+                "model": "x"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "the same model twice",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              },
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "sixteen models",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "m0"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m1"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m2"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m3"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m4"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m5"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m6"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m7"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m8"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m9"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m10"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m11"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m12"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m13"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m14"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m15"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "seventeen models",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "m0"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m1"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m2"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m3"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m4"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m5"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m6"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m7"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m8"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m9"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m10"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m11"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m12"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m13"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m14"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m15"
+              },
+              {
+                "agent": "claude-code",
+                "model": "m16"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "no steps",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": []
+      }
+    },
+    {
+      "case": "twelve steps",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "W0",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W1",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W2",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W3",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W4",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W5",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W6",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W7",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W8",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W9",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W10",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W11",
+            "models": [],
+            "parallel": 1
+          }
+        ]
+      }
+    },
+    {
+      "case": "thirteen steps",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "W0",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W1",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W2",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W3",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W4",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W5",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W6",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W7",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W8",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W9",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W10",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W11",
+            "models": [],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "W12",
+            "models": [],
+            "parallel": 1
+          }
+        ]
+      }
+    },
+    {
+      "case": "a name of forty characters",
+      "valid": true,
+      "workflow": {
+        "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a name of forty-one characters",
+      "valid": false,
+      "workflow": {
+        "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a blank name",
+      "valid": false,
+      "workflow": {
+        "name": "   ",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "two steps of one name in other case",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "eight sessions at once",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 8
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "nine sessions at once",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 9
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "no sessions at once",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 0
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "ten rounds",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 10
+          }
+        ]
+      }
+    },
+    {
+      "case": "eleven rounds",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 11
+          }
+        ]
+      }
+    },
+    {
+      "case": "a review that passes on nothing",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": false,
+            "orchestratorAgrees": false,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a review the orchestrator alone passes",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": false,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a review first",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          },
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          }
+        ]
+      }
+    },
+    {
+      "case": "a review back to a step that is not there",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Nowhere",
+            "limit": 3
+          }
+        ]
+      }
+    },
+    {
+      "case": "a review back to another review",
+      "valid": false,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          },
+          {
+            "kind": "review",
+            "name": "Second look",
+            "models": [],
+            "reviewerApproves": true,
+            "orchestratorAgrees": false,
+            "backTo": "Review",
+            "limit": 1
+          }
+        ]
+      }
+    },
+    {
+      "case": "a review back past another work step",
+      "valid": true,
+      "workflow": {
+        "name": "Build and review",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "sonnet"
+              }
+            ],
+            "parallel": 1
+          },
+          {
+            "kind": "work",
+            "name": "Build",
+            "models": [],
+            "parallel": 2
+          },
+          {
+            "kind": "review",
+            "name": "Review",
+            "models": [
+              {
+                "agent": "claude-code",
+                "model": "opus"
+              }
+            ],
+            "reviewerApproves": true,
+            "orchestratorAgrees": true,
+            "backTo": "Work",
+            "limit": 3
+          }
+        ]
+      }
+    }
+  ]
+}
