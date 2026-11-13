@@ -51,8 +51,8 @@ state at a glance, and projects on other machines over ssh.
   the desktop is set to, five palettes, and the terminal's font and the
   interface's chosen apart. See [settings](docs/settings.md).
 - **Keyboard first.** The agent owns the keyboard. The app claims a few
-  modifier chords, all of them yours to change, and one of them opens a
-  command palette of every session and action. See
+  modifier chords, all of them yours to change. One goes to any session or
+  project, another runs any command or starts a session. See
   [focus](docs/focus-model.md).
 
 ## Platforms
@@ -109,7 +109,7 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Sessions](docs/sessions.md): what a session is, what its row says,
   the list by status and the chord to the next session that needs you, past
   sessions, and how the changes pane keeps up.
-- [Focus](docs/focus-model.md): who owns the keyboard, and the command palette.
+- [Focus](docs/focus-model.md): who owns the keyboard, and the two palettes.
 - [Settings](docs/settings.md): the seven tabs, the appearance and the look,
   fonts and colours, live updates, past sessions, accounts, plugins, keys.
 - [Hooks](docs/hooks.md): what the app installs in a project when asked, and
