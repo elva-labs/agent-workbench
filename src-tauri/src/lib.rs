@@ -200,23 +200,31 @@ async fn project_info(
     .await
 }
 
+/// Puts this app's daemon build in place on this machine, as far as it is
+/// not known to be already.
+fn ensure_daemon_here(app: &tauri::AppHandle, core: &Core, daemon: &ssh::LocalDaemon) {
+    if let Some(home) = core.home() {
+        let resources = app.path().resource_dir().ok();
+        let _ = daemon.ensure(|| ssh::ensure_local_daemon(home, resources.as_deref()));
+    }
+}
+
 #[tauri::command]
 async fn hook_status(
     app: tauri::AppHandle,
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
+    daemon: State<'_, Arc<ssh::LocalDaemon>>,
     project: String,
     accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
     // The daemon is put in place before the status is read, so a project
     // with hooks from before there was a server reads as wanting one.
-    if let Route::Local(_) = route(&project) {
-        if let Some(home) = core.home() {
-            let resources = app.path().resource_dir().ok();
-            let _ = ssh::ensure_local_daemon(home, resources.as_deref());
-        }
+    let here = matches!(route(&project), Route::Local(_));
+    if here {
+        ensure_daemon_here(&app, &core, &daemon);
     }
-    routed(
+    let answer = routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&project),
@@ -227,6 +235,80 @@ async fn hook_status(
         },
         move |core, project| core.hook_status(Path::new(project), &accounts),
     )
+    .await;
+    if here && answer.is_err() {
+        daemon.forget();
+    }
+    answer
+}
+
+/// The hook status of several projects at once, in the order given. The
+/// projects on this machine are read together, from one read of each
+/// account's state, and those on each host go to it as one request, the
+/// hosts in parallel. A host that cannot be reached answers null for its
+/// projects.
+#[tauri::command]
+async fn hook_status_many(
+    app: tauri::AppHandle,
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    daemon: State<'_, Arc<ssh::LocalDaemon>>,
+    projects: Vec<String>,
+    accounts: Vec<Dirs>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let daemon = Arc::clone(&daemon);
+    blocking(move || {
+        let mut answers = vec![Value::Null; projects.len()];
+        let Routed { here, elsewhere } = split_by_host(&projects);
+
+        std::thread::scope(|scope| {
+            let hosts: Vec<_> = elsewhere
+                .iter()
+                .map(|(host, group)| {
+                    let remotes = &remotes;
+                    let accounts = &accounts;
+                    scope.spawn(move || {
+                        let rests: Vec<&str> =
+                            group.iter().map(|(_, rest)| rest.as_str()).collect();
+                        remotes.connection(host).and_then(|connection| {
+                            connection.call(
+                                "hook_status_many",
+                                json!({ "projects": rests, "accounts": accounts }),
+                            )
+                        })
+                    })
+                })
+                .collect();
+
+            if !here.is_empty() {
+                ensure_daemon_here(&app, &core, &daemon);
+                let paths: Vec<PathBuf> = here.iter().map(|(_, path)| path.clone()).collect();
+                match core.hook_status_many(&paths, &accounts) {
+                    Ok(found) => {
+                        let found = found
+                            .into_iter()
+                            .map(value)
+                            .collect::<Result<Vec<_>, _>>()?;
+                        put_back(&mut answers, &here, found);
+                    }
+                    Err(error) => {
+                        daemon.forget();
+                        return Err(error);
+                    }
+                }
+            }
+
+            for (handle, (_, group)) in hosts.into_iter().zip(&elsewhere) {
+                if let Ok(Ok(Value::Array(answer))) = handle.join() {
+                    put_back(&mut answers, group, answer);
+                }
+            }
+            Ok(())
+        })?;
+        Ok(Value::Array(answers))
+    })
     .await
 }
 
@@ -235,6 +317,7 @@ async fn hook_install(
     app: tauri::AppHandle,
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
+    daemon: State<'_, Arc<ssh::LocalDaemon>>,
     project: String,
     accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
@@ -244,7 +327,7 @@ async fn hook_install(
     if let Route::Local(_) = route(&project) {
         if let Some(home) = core.home() {
             let resources = app.path().resource_dir().ok();
-            ssh::ensure_local_daemon(home, resources.as_deref())?;
+            daemon.ensure_again(|| ssh::ensure_local_daemon(home, resources.as_deref()))?;
         }
     }
     routed(
@@ -302,6 +385,44 @@ async fn sessions_list(
         },
     )
     .await
+}
+
+/// The projects of a request split by where they are: each with its place in
+/// the request, the ones on this machine by path and the ones on another by
+/// the path there, grouped by host in the order the hosts first appear.
+struct Routed {
+    here: Vec<(usize, PathBuf)>,
+    elsewhere: Vec<(String, Vec<(usize, String)>)>,
+}
+
+fn split_by_host(projects: &[String]) -> Routed {
+    let mut routed = Routed {
+        here: Vec::new(),
+        elsewhere: Vec::new(),
+    };
+    for (at, project) in projects.iter().enumerate() {
+        match route(project) {
+            Route::Local(path) => routed.here.push((at, PathBuf::from(path))),
+            Route::Remote { host, rest } => {
+                match routed
+                    .elsewhere
+                    .iter_mut()
+                    .find(|(known, _)| *known == host)
+                {
+                    Some((_, group)) => group.push((at, rest)),
+                    None => routed.elsewhere.push((host, vec![(at, rest)])),
+                }
+            }
+        }
+    }
+    routed
+}
+
+/// Puts each answer at the place in the request of the project it is for.
+fn put_back<T>(lists: &mut [Value], group: &[(usize, T)], answers: Vec<Value>) {
+    for ((at, _), list) in group.iter().zip(answers) {
+        lists[*at] = list;
+    }
 }
 
 /// A session's title has no path to route by, so the core here is asked
@@ -1123,6 +1244,7 @@ pub fn run() {
             }
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
+            app.manage(Arc::new(ssh::LocalDaemon::default()));
             app.manage(Arc::new(browser::Browser::default()));
             app.manage(Arc::new(browser_keys::Keys::default()));
             menu::install(app)?;
@@ -1148,6 +1270,7 @@ pub fn run() {
             sessions_list,
             session_title,
             hook_status,
+            hook_status_many,
             hook_install,
             hook_uninstall,
             git_status,
@@ -1220,4 +1343,49 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(launch::on_event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_splits_by_host_keeping_each_projects_place() {
+        let projects: Vec<String> = [
+            "/here/one",
+            "ssh://ada@box/srv/a",
+            "/here/two",
+            "ssh://bob@lab/srv/b",
+            "ssh://ada@box/srv/c",
+        ]
+        .map(String::from)
+        .to_vec();
+        let routed = split_by_host(&projects);
+        assert_eq!(
+            routed.here,
+            vec![
+                (0, PathBuf::from("/here/one")),
+                (2, PathBuf::from("/here/two"))
+            ]
+        );
+        assert_eq!(
+            routed.elsewhere,
+            vec![
+                (
+                    "ada@box".to_string(),
+                    vec![(1, "/srv/a".to_string()), (4, "/srv/c".to_string())]
+                ),
+                ("bob@lab".to_string(), vec![(3, "/srv/b".to_string())]),
+            ]
+        );
+        let mut lists = vec![Value::Null; 5];
+        put_back(
+            &mut lists,
+            &routed.elsewhere[0].1,
+            vec![json!("a"), json!("c")],
+        );
+        assert_eq!(lists[1], json!("a"));
+        assert_eq!(lists[4], json!("c"));
+        assert_eq!(lists[0], Value::Null);
+    }
 }
