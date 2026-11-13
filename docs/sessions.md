@@ -82,9 +82,16 @@ pane is up, the chord does nothing.
 ## After a restart
 
 The open projects are described all at once. Those on this machine appear
-together, in the order they had. A project on another machine appears when
-its machine answers, at its place among the others, so a machine that is
-slow or gone does not hold up the rest.
+together, in the order they had, with their sessions. A project on another
+machine appears when its machine answers, at its place among the others,
+and its sessions come back with it, so a machine that is slow or gone does
+not hold up the rest, nor a folder opened from outside the app. Until it
+answers it keeps its place, and its sessions theirs, in what is remembered
+for the next start; a project that cannot be reached is left out from then
+on. When the project that was in front is one of those still waiting, the
+first project on this machine is put in front meanwhile, and the one that
+was in front takes its place when it appears, with the session that was on
+screen, unless another project or session has been chosen by then.
 
 The sessions that were open when the app quit come back as rows in their
 projects, in the order they had and under the names they had, with nothing

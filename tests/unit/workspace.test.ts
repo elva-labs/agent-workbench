@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   followOpenRequests,
+  openPath,
   projectLabel,
   reset,
   restore,
   workspace,
 } from "$lib/workspace.svelte";
+import {
+  reopened,
+  reset as resetSessions,
+  select,
+  sessions,
+} from "$lib/sessions.svelte";
 
 /** Folders waiting to be taken, and the window's word that more are. */
 const fake = vi.hoisted(() => {
@@ -19,7 +26,7 @@ const fake = vi.hoisted(() => {
   };
   const core = {
     projectInfo: async (path: string) => {
-      if (path === "/gone") throw new Error("gone");
+      if (path.endsWith("/gone")) throw new Error("gone");
       state.describing += 1;
       state.mostAtOnce = Math.max(state.mostAtOnce, state.describing);
       await new Promise((resolve) => setTimeout(resolve, state.delays[path] ?? 0));
@@ -50,8 +57,14 @@ const repo = (path: string) => ({
   isGit: true,
 });
 
+/** What is stored for the next start. */
+function stored(): { open: string[]; active: string | null } {
+  return JSON.parse(localStorage.getItem("workbench.workspace") ?? "null");
+}
+
 beforeEach(() => {
   reset();
+  resetSessions();
   fake.state.waiting = [];
   fake.state.told = null;
   fake.state.delays = {};
@@ -90,12 +103,8 @@ describe("restoring the open projects", () => {
     );
     fake.state.delays = { "/p/one": 20, "ssh://ada@lab/srv/x": 120 };
     const sizes: number[] = [];
-    const promise = restore();
-    const watch = setInterval(
-      () => sizes.push(workspace.open.length),
-      2,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    const watch = setInterval(() => sizes.push(workspace.open.length), 2);
+    const arriving = await restore();
     // Both local projects are there, in order, and the active one is chosen,
     // while the host has not answered.
     expect(workspace.open.map((project) => project.path)).toEqual([
@@ -103,7 +112,8 @@ describe("restoring the open projects", () => {
       "/p/two",
     ]);
     expect(workspace.active).toBe("/p/two");
-    await promise;
+    expect([...arriving.keys()]).toEqual(["ssh://ada@lab/srv/x"]);
+    await Promise.all(arriving.values());
     clearInterval(watch);
     // Never one local project without the other.
     expect(sizes.every((size) => size === 0 || size >= 2)).toBe(true);
@@ -116,7 +126,63 @@ describe("restoring the open projects", () => {
     expect(workspace.active).toBe("/p/two");
   });
 
-  it("activates the stored project when it is on a host, as it arrives", async () => {
+  it("keeps a project on its way in what is stored, and after it arrives", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+        active: "/p/two",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    // A quit now loses nothing.
+    expect(stored()).toEqual({
+      open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+      active: "/p/two",
+    });
+    await Promise.all(arriving.values());
+    expect(stored()).toEqual({
+      open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
+      active: "/p/two",
+    });
+  });
+
+  it("drops a project on another machine from what is stored when it cannot be described", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["/p/one", "ssh://ada@lab/gone"], active: "/p/one" }),
+    );
+    const arriving = await restore();
+    await Promise.all(arriving.values());
+    expect(stored()).toEqual({ open: ["/p/one"], active: "/p/one" });
+  });
+
+  it("puts a late project before one opened while it was on its way", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["/p/zero", "ssh://ada@lab/srv/x", "/p/two"], active: "/p/zero" }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    await openPath("/p/asked");
+    expect(stored().open).toEqual([
+      "/p/zero",
+      "ssh://ada@lab/srv/x",
+      "/p/two",
+      "/p/asked",
+    ]);
+    await Promise.all(arriving.values());
+    expect(workspace.open.map((project) => project.path)).toEqual([
+      "/p/zero",
+      "ssh://ada@lab/srv/x",
+      "/p/two",
+      "/p/asked",
+    ]);
+    expect(workspace.active).toBe("/p/asked");
+  });
+
+  it("puts the first project in front while the stored one waits for its host", async () => {
     localStorage.setItem(
       "workbench.workspace",
       JSON.stringify({
@@ -124,13 +190,47 @@ describe("restoring the open projects", () => {
         active: "ssh://ada@lab/srv/x",
       }),
     );
-    fake.state.delays = { "ssh://ada@lab/srv/x": 40 };
-    const promise = restore();
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
     expect(workspace.open).toHaveLength(1);
-    expect(workspace.active).toBeNull();
-    await promise;
+    expect(workspace.active).toBe("/p/one");
+    // The stored one is still the one in front for the next start.
+    expect(stored().active).toBe("ssh://ada@lab/srv/x");
+    await Promise.all(arriving.values());
     expect(workspace.active).toBe("ssh://ada@lab/srv/x");
+  });
+
+  it("leaves the project chosen while the stored one waited in front", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "/p/two", "ssh://ada@lab/srv/x"],
+        active: "ssh://ada@lab/srv/x",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    await openPath("/p/two");
+    expect(stored().active).toBe("/p/two");
+    await Promise.all(arriving.values());
+    expect(workspace.active).toBe("/p/two");
+  });
+
+  it("leaves the session chosen while the stored project waited in front", async () => {
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({
+        open: ["/p/one", "ssh://ada@lab/srv/x"],
+        active: "ssh://ada@lab/srv/x",
+      }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    const row = reopened("/p/one", "s1", "claude-code", null, null, null);
+    select(row.key);
+    await Promise.all(arriving.values());
+    expect(workspace.active).toBe("/p/one");
+    expect(sessions.active).toBe(row.key);
   });
 
   it("activates the first project when the stored one cannot be described", async () => {

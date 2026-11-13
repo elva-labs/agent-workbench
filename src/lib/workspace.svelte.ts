@@ -164,7 +164,9 @@ export async function pick(): Promise<boolean> {
 /**
  * Opens the folders the app is asked to open from outside the window: named
  * when it started, or later from a terminal or a second launch. None opens
- * before the stored workspace is back, so the one asked for is left in front.
+ * before the stored projects on this machine are back, so the one asked for
+ * is left in front; a project on another machine arriving later does not
+ * take its place.
  */
 export function followOpenRequests(restored: Promise<void>): () => void {
   let off: (() => void) | null = null;
@@ -206,17 +208,67 @@ export function close(path: string) {
 }
 
 function save() {
+  const open = workspace.open.map((project) => project.path);
+  let active = workspace.active;
+  // A project still being described keeps its stored place, and stays the
+  // one in front while nothing else has been chosen, so a quit before its
+  // machine answers loses neither.
+  if (restoring !== null) {
+    for (const path of restoring.paths) {
+      if (restoring.pending.has(path))
+        open.splice(placeAmong(open, path, restoring.paths), 0, path);
+    }
+    const wanted = restoring.wanted;
+    if (wanted !== null && restoring.pending.has(wanted) && untouched())
+      active = wanted;
+  }
   try {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({
-        open: workspace.open.map((project) => project.path),
-        active: workspace.active,
-      }),
-    );
+    localStorage.setItem(KEY, JSON.stringify({ open, active }));
   } catch {
     // Non-fatal: the workspace simply does not survive a restart.
   }
+}
+
+/**
+ * A restore under way: the stored order, the stored projects not yet
+ * described, the one stored in front, and what the window last put in front
+ * by itself.
+ */
+let restoring: {
+  paths: string[];
+  pending: Set<string>;
+  wanted: string | null;
+  placed: { project: string | null; session: string | null };
+} | null = null;
+
+/** Counts restores, so the answers of one that was reset are ignored. */
+let restores = 0;
+
+/** Where a stored project goes among the open ones: before the first that
+    was stored after it or was not stored at all, else at the end. */
+function placeAmong(open: string[], path: string, paths: string[]): number {
+  const at = paths.indexOf(path);
+  const index = open.findIndex((other) => {
+    const its = paths.indexOf(other);
+    return its === -1 || its > at;
+  });
+  return index === -1 ? open.length : index;
+}
+
+/** Whether the project and session in front are still the ones a restore
+    put there, with nothing chosen since. False once no restore is waiting. */
+export function untouched(): boolean {
+  return (
+    restoring !== null &&
+    restoring.placed.project === workspace.active &&
+    restoring.placed.session === sessions.active
+  );
+}
+
+/** Takes what is in front now as put there by the restore, not chosen. */
+export function restoredInFront() {
+  if (restoring === null) return;
+  restoring.placed = { project: workspace.active, session: sessions.active };
 }
 
 /**
@@ -224,35 +276,56 @@ function save() {
  *
  * Paths are re-described rather than restored from storage: a directory may
  * have been moved, or may have become a repository since, so the core is asked
- * afresh. The sessions that were open come back separately, once the projects
- * they belong to are.
+ * afresh. Every project is asked for at once. Those on this machine are put in
+ * the list together, in the order they were stored, and the returned promise
+ * settles then. One on another machine is put in when it answers, at its
+ * stored place among those open, so a host that is slow or gone holds nothing
+ * else up; the map returned names each such project with a promise that
+ * settles once it is in the list or has been given up. A directory that is
+ * gone is dropped quietly rather than opening on an error.
+ *
+ * The project stored in front is put in front. While it is on a machine that
+ * has not answered, the first project open is put in front instead, and the
+ * stored one replaces it on arrival unless a project or session has been
+ * chosen since.
  */
-export async function restore() {
+export async function restore(): Promise<Map<string, Promise<void>>> {
+  const arriving = new Map<string, Promise<void>>();
   let raw: string | null = null;
   try {
     raw = localStorage.getItem(KEY);
   } catch {
-    return;
+    return arriving;
   }
-  if (raw === null) return;
+  if (raw === null) return arriving;
 
   let stored: { open?: unknown; active?: unknown };
   try {
     stored = JSON.parse(raw);
   } catch {
-    return;
+    return arriving;
   }
 
   const paths = Array.isArray(stored.open)
     ? stored.open.filter((path): path is string => typeof path === "string")
     : [];
-
-  // Every project is asked for at once. Those on this machine are put in the
-  // list together, in the order they were stored; one on another machine is
-  // put in when it answers, at its stored place among those already there,
-  // so a host that is slow or gone holds nothing else up. A directory that
-  // is gone is dropped quietly rather than opening on an error.
   const wanted = typeof stored.active === "string" ? stored.active : null;
+  const remote = (path: string) => path.startsWith("ssh://");
+
+  const state = {
+    paths,
+    pending: new Set(paths),
+    wanted,
+    placed: { project: workspace.active, session: sessions.active },
+  };
+  restoring = state;
+  const mine = (restores += 1);
+  let localIn = false;
+  const finish = () => {
+    if (localIn && state.pending.size === 0 && restoring === state)
+      restoring = null;
+  };
+
   const asked = paths.map((path) => ({
     path,
     info: core()
@@ -260,48 +333,52 @@ export async function restore() {
       .catch(() => null),
   }));
 
-  const insert = (at: number, info: ProjectInfo) => {
+  const insert = (info: ProjectInfo) => {
     if (isOpen(info.path)) return;
-    const before = workspace.open.filter(
-      (project) => paths.indexOf(project.path) < at,
-    ).length;
-    workspace.open.splice(before, 0, info);
+    const open = workspace.open.map((project) => project.path);
+    workspace.open.splice(placeAmong(open, info.path, paths), 0, info);
   };
-  let chosen = false;
-  const choose = (final: boolean) => {
-    if (chosen || workspace.active !== null) return;
-    const target = workspace.open.find((project) => project.path === wanted);
-    if (target !== undefined) {
-      chosen = true;
-      activate(target.path);
-    } else if (final && workspace.open[0] !== undefined) {
-      chosen = true;
-      activate(workspace.open[0].path);
+  const front = () => {
+    if (!untouched()) return;
+    let target: string | null = null;
+    if (wanted !== null && isOpen(wanted)) {
+      if (workspace.active !== wanted) target = wanted;
+    } else if (localIn && workspace.active === null) {
+      target = workspace.open[0]?.path ?? null;
     }
+    if (target === null) return;
+    activate(target);
+    restoredInFront();
+    save();
   };
 
-  const here = asked.filter((entry) => !entry.path.startsWith("ssh://"));
-  const there = asked.filter((entry) => entry.path.startsWith("ssh://"));
-  const remaining = there.map(async (entry) => {
-    const info = await entry.info;
-    if (info !== null) insert(paths.indexOf(entry.path), info);
-    choose(false);
-  });
+  for (const entry of asked.filter((entry) => remote(entry.path))) {
+    const arrived = entry.info.then((info) => {
+      if (restores !== mine) return;
+      if (info !== null) insert(info);
+      state.pending.delete(entry.path);
+      front();
+      save();
+      finish();
+    });
+    arriving.set(entry.path, arrived);
+  }
 
+  const here = asked.filter((entry) => !remote(entry.path));
   const local = await Promise.all(here.map((entry) => entry.info));
-  here.forEach((entry, at) => {
-    const info = local[at];
-    if (info !== null) insert(paths.indexOf(entry.path), info);
-  });
-  // A stored active project still on its way is waited for; any other
-  // choice is made now.
-  choose(!there.some((entry) => entry.path === wanted));
-  await Promise.all(remaining);
-  choose(true);
+  if (restores !== mine) return arriving;
+  for (const info of local) if (info !== null) insert(info);
+  for (const entry of here) state.pending.delete(entry.path);
+  localIn = true;
+  front();
+  finish();
+  return arriving;
 }
 
 /** Test seam. */
 export function reset() {
+  restoring = null;
+  restores += 1;
   workspace.open = [];
   workspace.active = null;
   workspace.error = null;

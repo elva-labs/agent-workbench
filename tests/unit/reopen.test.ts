@@ -15,17 +15,28 @@ import {
   statusLabel,
   wake,
 } from "$lib/sessions.svelte";
-import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import {
+  reset as resetWorkspace,
+  restore,
+  workspace,
+} from "$lib/workspace.svelte";
+
+/** The answer a host gives for a project on it, held until released. */
+const host = vi.hoisted(() => ({
+  release: (_ok: boolean) => {},
+}));
 
 vi.mock("$lib/core", () => ({
   core: () => ({
     kill: async () => {},
-    projectInfo: async (path: string) => ({
-      path,
-      name: path,
-      repository: path,
-      isGit: true,
-    }),
+    setWindowTitle: async () => {},
+    projectInfo: async (path: string) => {
+      if (path.startsWith("ssh://")) {
+        const ok = await new Promise<boolean>((resolve) => (host.release = resolve));
+        if (!ok) throw new Error("no answer");
+      }
+      return { path, name: path, repository: path, isGit: true };
+    },
     transcripts: async () => [],
     transcriptsMany: async (projects: string[]) => projects.map(() => []),
   }),
@@ -204,5 +215,69 @@ describe("waking", () => {
     const session = live(A, "one");
     wake(session.key);
     expect(session.status).toBe("running");
+  });
+});
+
+describe("a project on another machine", () => {
+  const R = "ssh://ada@lab/srv/x";
+  const entry = (project: string, id: string) => ({
+    project,
+    id,
+    agent: "claude-code",
+    startIn: null,
+    model: null,
+  });
+
+  /** Restores a workspace of A and R with R in front, and its sessions. */
+  async function restoring(active: string, front: string) {
+    resetWorkspace();
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: [A, R], active: front }),
+    );
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ open: [entry(A, "here"), entry(R, "there")], active }),
+    );
+    const arriving = await restore();
+    stop = reopen(arriving);
+    flushSync();
+    return () => Promise.all(arriving.values());
+  }
+
+  it("does not hold up the sessions here, and keeps its own on record", async () => {
+    const arrived = await restoring("here", A);
+    expect(sessions.all.map((session) => session.id)).toEqual(["here"]);
+    expect(activeSession()?.id).toBe("here");
+    expect(record().open.map((item) => item.id)).toEqual(["here", "there"]);
+    host.release(true);
+    await arrived();
+    flushSync();
+    expect(forProject(R).map((session) => session.id)).toEqual(["there"]);
+    expect(record().open.map((item) => item.id)).toEqual(["here", "there"]);
+    expect(activeSession()?.id).toBe("here");
+  });
+
+  it("puts the session that was on screen back when its project arrives", async () => {
+    const arrived = await restoring("there", R);
+    // The project here is in front meanwhile; the one on screen stays on
+    // record as the one to come back to.
+    expect(workspace.active).toBe(A);
+    expect(record().active).toBe("there");
+    host.release(true);
+    await arrived();
+    flushSync();
+    expect(workspace.active).toBe(R);
+    expect(activeSession()?.id).toBe("there");
+    expect(record().active).toBe("there");
+  });
+
+  it("takes its sessions off the record when it cannot be described", async () => {
+    const arrived = await restoring("here", A);
+    host.release(false);
+    await arrived();
+    flushSync();
+    expect(sessions.all.map((session) => session.id)).toEqual(["here"]);
+    expect(record().open.map((item) => item.id)).toEqual(["here"]);
   });
 });
