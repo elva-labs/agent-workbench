@@ -304,6 +304,88 @@ async fn sessions_list(
     .await
 }
 
+/// The projects of a request split by where they are: each with its place in
+/// the request, the ones on this machine by path and the ones on another by
+/// the path there, grouped by host in the order the hosts first appear.
+struct Routed {
+    here: Vec<(usize, PathBuf)>,
+    elsewhere: Vec<(String, Vec<(usize, String)>)>,
+}
+
+fn split_by_host(projects: &[String]) -> Routed {
+    let mut routed = Routed {
+        here: Vec::new(),
+        elsewhere: Vec::new(),
+    };
+    for (at, project) in projects.iter().enumerate() {
+        match route(project) {
+            Route::Local(path) => routed.here.push((at, PathBuf::from(path))),
+            Route::Remote { host, rest } => {
+                match routed
+                    .elsewhere
+                    .iter_mut()
+                    .find(|(known, _)| *known == host)
+                {
+                    Some((_, group)) => group.push((at, rest)),
+                    None => routed.elsewhere.push((host, vec![(at, rest)])),
+                }
+            }
+        }
+    }
+    routed
+}
+
+/// Puts each answer at the place in the request of the project it is for.
+fn put_back<T>(lists: &mut [Value], group: &[(usize, T)], answers: Vec<Value>) {
+    for ((at, _), list) in group.iter().zip(answers) {
+        lists[*at] = list;
+    }
+}
+
+/// The past sessions of several projects at once, in the order given. The
+/// projects on this machine are listed together, and those on each host go
+/// to it as one request. A host that cannot be reached has no history, as a
+/// project with none does.
+#[tauri::command]
+async fn sessions_list_many(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    projects: Vec<String>,
+    agent: String,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || {
+        let mut lists = vec![Value::Array(Vec::new()); projects.len()];
+        let Routed { here, elsewhere } = split_by_host(&projects);
+
+        let paths: Vec<PathBuf> = here.iter().map(|(_, path)| path.clone()).collect();
+        let found = core.sessions_list_many(&paths, &agent, config_dir.as_deref());
+        let found = found
+            .into_iter()
+            .map(value)
+            .collect::<Result<Vec<_>, _>>()?;
+        put_back(&mut lists, &here, found);
+
+        for (host, group) in elsewhere {
+            let rests: Vec<&str> = group.iter().map(|(_, rest)| rest.as_str()).collect();
+            let answer = remotes.connection(&host).and_then(|connection| {
+                connection.call(
+                    "sessions_list_many",
+                    json!({ "projects": rests, "agent": agent, "configDir": config_dir }),
+                )
+            });
+            // A host that cannot be reached has no history.
+            if let Ok(Value::Array(answer)) = answer {
+                put_back(&mut lists, &group, answer);
+            }
+        }
+        Ok(Value::Array(lists))
+    })
+    .await
+}
+
 /// A session's title has no path to route by, so the core here is asked
 /// first and then every host with a connection open.
 #[tauri::command]
@@ -1150,6 +1232,7 @@ pub fn run() {
             set_selection,
             project_info,
             sessions_list,
+            sessions_list_many,
             session_title,
             hook_status,
             hook_install,
@@ -1224,4 +1307,73 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(launch::on_event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn projects_are_split_by_machine_keeping_their_places() {
+        let routed = split_by_host(&text(&[
+            "/home/ada/one",
+            "ssh://ada@lab/srv/a",
+            "/home/ada/two",
+            "ssh://ada@box/srv/b",
+            "ssh://ada@lab/srv/c",
+        ]));
+        assert_eq!(
+            routed.here,
+            vec![
+                (0, PathBuf::from("/home/ada/one")),
+                (2, PathBuf::from("/home/ada/two"))
+            ]
+        );
+        assert_eq!(
+            routed.elsewhere,
+            vec![
+                (
+                    "ada@lab".to_string(),
+                    vec![(1, "/srv/a".to_string()), (4, "/srv/c".to_string())]
+                ),
+                ("ada@box".to_string(), vec![(3, "/srv/b".to_string())]),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_asked_for_is_nothing_split() {
+        let routed = split_by_host(&[]);
+        assert!(routed.here.is_empty() && routed.elsewhere.is_empty());
+    }
+
+    #[test]
+    fn answers_go_back_to_their_places_and_a_silent_host_leaves_empty_lists() {
+        let routed = split_by_host(&text(&["/a", "ssh://h/x", "/b", "ssh://h/y"]));
+        let mut lists = vec![json!([]); 4];
+        put_back(&mut lists, &routed.here, vec![json!(["a"]), json!(["b"])]);
+        assert_eq!(
+            lists,
+            vec![json!(["a"]), json!([]), json!(["b"]), json!([])]
+        );
+
+        let (_, group) = &routed.elsewhere[0];
+        put_back(&mut lists, group, vec![json!(["x"]), json!(["y"])]);
+        assert_eq!(
+            lists,
+            vec![json!(["a"]), json!(["x"]), json!(["b"]), json!(["y"])]
+        );
+    }
+
+    #[test]
+    fn a_short_answer_fills_only_what_it_covers() {
+        let routed = split_by_host(&text(&["ssh://h/x", "ssh://h/y"]));
+        let mut lists = vec![json!([]); 2];
+        put_back(&mut lists, &routed.elsewhere[0].1, vec![json!(["x"])]);
+        assert_eq!(lists, vec![json!(["x"]), json!([])]);
+    }
 }
