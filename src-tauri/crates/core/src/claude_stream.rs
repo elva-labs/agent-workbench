@@ -420,7 +420,19 @@ struct Stream {
     taken: HashSet<String>,
     interrupting: bool,
     minted: u64,
+    /// What passed of a line too long to read: the end of the last piece,
+    /// where a key may be cut in two, and the tool calls whose results it
+    /// named.
+    skipped_tail: Vec<u8>,
+    skipped_calls: Vec<String>,
 }
+
+/// What names the tool call a result belongs to, in a line from the agent.
+/// Inside a JSON string a quote is escaped, so this is never part of one.
+const RESULT_KEY: &[u8] = br#""tool_use_id":""#;
+
+/// The longest tool call id looked for in a line too long to read.
+const CALL_KEEP: usize = 128;
 
 fn text(value: &Value) -> Option<String> {
     value.as_str().map(str::to_string)
@@ -594,6 +606,8 @@ impl Stream {
             taken: HashSet::new(),
             interrupting: false,
             minted: 0,
+            skipped_tail: Vec::new(),
+            skipped_calls: Vec::new(),
         }
     }
 
@@ -1588,6 +1602,57 @@ impl Driver for Stream {
             self.interrupting = false;
         }
     }
+
+    fn skipping(&mut self, bytes: &[u8]) {
+        let mut seen = std::mem::take(&mut self.skipped_tail);
+        seen.extend_from_slice(bytes);
+        let mut from = 0;
+        while let Some(at) = seen[from..]
+            .windows(RESULT_KEY.len())
+            .position(|window| window == RESULT_KEY)
+        {
+            let start = from + at + RESULT_KEY.len();
+            let Some(length) = seen[start..].iter().position(|&byte| byte == b'"') else {
+                // The id runs past what has come: keep the key for the
+                // next piece.
+                from = start - RESULT_KEY.len();
+                break;
+            };
+            if length <= CALL_KEEP {
+                let call = String::from_utf8_lossy(&seen[start..start + length]).to_string();
+                if !self.skipped_calls.contains(&call) {
+                    self.skipped_calls.push(call);
+                }
+            }
+            from = start + length;
+        }
+        // Enough of the end to hold a key and an id cut by the next piece.
+        let keep = seen
+            .len()
+            .saturating_sub(RESULT_KEY.len() + CALL_KEEP)
+            .max(from);
+        self.skipped_tail = seen[keep.min(seen.len())..].to_vec();
+    }
+
+    /// A result too long to read finishes its call as cut short, with no
+    /// output, so the call does not wait for the end of the turn.
+    fn skipped(&mut self) -> Reading {
+        let mut out = Reading::default();
+        self.skipped_tail.clear();
+        for call in std::mem::take(&mut self.skipped_calls) {
+            if let Some(parent) = self.calls.remove(&call) {
+                out.events.push(Event::ToolFinished {
+                    call,
+                    parent,
+                    output: String::new(),
+                    error: true,
+                    truncated: true,
+                    changes: vec![],
+                });
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -1829,6 +1894,51 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_result_too_long_to_read_finishes_its_call_as_cut_short() {
+        let mut stream = stream();
+        events(
+            &mut stream,
+            &[
+                init(),
+                json!({"type":"assistant","message":{"id":"m1","content":[
+                    {"type":"tool_use","id":"toolu_read","name":"Read","input":{}},
+                    {"type":"tool_use","id":"toolu_other","name":"Read","input":{}}]},"parent_tool_use_id":null}),
+            ],
+        );
+        // As the agent writes it: the content first, then the call's id,
+        // the line passing in pieces that cut the key and the id apart.
+        let line = format!(
+            r#"{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","content":"{}","tool_use_id":"toolu_read"}}]}},"parent_tool_use_id":null,"tool_use_result":{{"note":"\"tool_use_id\":\"toolu_other\""}}}}"#,
+            "x".repeat(5000)
+        );
+        let bytes = line.as_bytes();
+        let cut = line.find("toolu_read").unwrap();
+        for piece in [
+            &bytes[..cut - 7],
+            &bytes[cut - 7..cut + 3],
+            &bytes[cut + 3..cut + 4],
+            &bytes[cut + 4..],
+        ] {
+            stream.skipping(piece);
+        }
+        let out = stream.skipped().events;
+        assert_eq!(
+            out,
+            [Event::ToolFinished {
+                call: "toolu_read".into(),
+                parent: None,
+                output: String::new(),
+                error: true,
+                truncated: true,
+                changes: vec![],
+            }],
+            "only the call the result names, not one quoted inside a string"
+        );
+        assert!(stream.calls.contains_key("toolu_other"));
+        assert!(stream.skipped().events.is_empty(), "said once");
     }
 
     #[test]

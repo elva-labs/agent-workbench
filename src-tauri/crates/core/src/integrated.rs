@@ -53,7 +53,18 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long the agent has to answer a control request: an interrupt, a
 /// model or a permission mode.
+#[cfg(not(test))]
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const CONTROL_TIMEOUT: Duration = Duration::from_millis(2500);
+
+/// How long a change of settings has in all, however many requests it
+/// takes: less than a call to another machine is given, so that one
+/// answers before the call gives up on it.
+#[cfg(not(test))]
+const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(45);
+#[cfg(test)]
+const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long a stopped session has to end once its stdin is closed before it
 /// is asked to end.
@@ -741,6 +752,16 @@ pub trait Driver: Send {
 
     /// A control request whose reply the core no longer waits for.
     fn forget(&mut self, _key: &str) {}
+
+    /// The next bytes of a line too long to read, as they pass: what a
+    /// driver can still learn from them without the whole.
+    fn skipping(&mut self, _bytes: &[u8]) {}
+
+    /// The end of a line too long to read: what the driver makes of what
+    /// passed.
+    fn skipped(&mut self) -> Reading {
+        Reading::default()
+    }
 }
 
 /// The model, mode and effort the session runs on, as its events last
@@ -1246,6 +1267,29 @@ impl Live {
             return;
         }
         let reading = machine.driver.read(line);
+        self.absorb(&mut machine, reading);
+    }
+
+    /// Passes the driver the next bytes of a line too long to read.
+    fn skipping(&self, bytes: &[u8]) {
+        let mut machine = self.machine.lock().expect("machine lock");
+        if !machine.ended {
+            machine.driver.skipping(bytes);
+        }
+    }
+
+    /// The end of a line too long to read.
+    fn skipped(&self) {
+        let mut machine = self.machine.lock().expect("machine lock");
+        if machine.ended {
+            return;
+        }
+        let reading = machine.driver.skipped();
+        self.absorb(&mut machine, reading);
+    }
+
+    /// Acts on what the driver made of a line.
+    fn absorb(&self, machine: &mut Machine, reading: Reading) {
         for line in reading.writes {
             // Nothing waits on these: the agent is reading, since it just
             // asked, and a failure shows as the session ending.
@@ -1260,7 +1304,7 @@ impl Live {
             }
             machine.tracker.observe(bounded(event), &mut out);
         }
-        self.release(&mut machine, &mut out);
+        self.release(machine, &mut out);
         self.emit(&out);
         // After the events, so whoever waits on a reply wakes to a stream
         // that already holds what the reply changed.
@@ -1627,25 +1671,29 @@ fn read_lines(live: &Live, stdout: impl Read, _reading: Sender<()>) {
         };
         let end = available.iter().position(|&byte| byte == b'\n');
         let piece = &available[..end.unwrap_or(available.len())];
-        if !skipping {
-            if line.len() + piece.len() > LINE_KEEP {
-                skipping = true;
-                line.clear();
-                live.fail(
-                    ErrorKind::Protocol,
-                    format!(
-                        "the agent wrote a line longer than {} MiB, which was skipped",
-                        LINE_KEEP / (1024 * 1024)
-                    ),
-                );
-            } else {
-                line.extend_from_slice(piece);
-            }
+        if skipping {
+            live.skipping(piece);
+        } else if line.len() + piece.len() > LINE_KEEP {
+            skipping = true;
+            live.fail(
+                ErrorKind::Protocol,
+                format!(
+                    "the agent wrote a line longer than {} MiB, which was skipped",
+                    LINE_KEEP / (1024 * 1024)
+                ),
+            );
+            live.skipping(&line);
+            live.skipping(piece);
+            line.clear();
+        } else {
+            line.extend_from_slice(piece);
         }
         let used = end.map_or(available.len(), |at| at + 1);
         reader.consume(used);
         if end.is_some() {
-            if !skipping {
+            if skipping {
+                live.skipped();
+            } else {
                 let text = String::from_utf8_lossy(&line);
                 let text = text.trim();
                 if !text.is_empty() {
@@ -1936,6 +1984,22 @@ fn settle(
 
 /// Sends a control request and waits for the agent's reply.
 pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value, String> {
+    request(
+        sessions,
+        id,
+        control,
+        std::time::Instant::now() + CONTROL_TIMEOUT,
+    )
+}
+
+/// Sends a control request and waits for the agent's reply, for as long
+/// as a request may and no later than `by`.
+fn request(
+    sessions: &Sessions,
+    id: &str,
+    control: &Control,
+    by: std::time::Instant,
+) -> Result<Value, String> {
     let live = sessions.get(id)?;
     let (went, key, reply) = {
         let mut machine = live.machine.lock().expect("machine lock");
@@ -1968,7 +2032,8 @@ pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value
         }
     };
     live.written(went)?;
-    match reply.recv_timeout(CONTROL_TIMEOUT) {
+    let by = by.min(std::time::Instant::now() + CONTROL_TIMEOUT);
+    match reply.recv_timeout(by.saturating_duration_since(std::time::Instant::now())) {
         Ok(result) => result,
         Err(RecvTimeoutError::Timeout) => {
             let mut machine = live.machine.lock().expect("machine lock");
@@ -1981,8 +2046,8 @@ pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value
 }
 
 /// Switches what the session runs on: each of the model, the mode and the
-/// effort that is given, in that order. Answers with the settings as the
-/// session's events now say them.
+/// effort that is given, in that order, all within [`CONFIGURE_TIMEOUT`].
+/// Answers with the settings as the session's events now say them.
 pub fn configure(
     sessions: &Sessions,
     id: &str,
@@ -1990,14 +2055,15 @@ pub fn configure(
     mode: Option<&str>,
     effort: Option<&str>,
 ) -> Result<Settings, String> {
+    let by = std::time::Instant::now() + CONFIGURE_TIMEOUT;
     if let Some(model) = model {
-        control(sessions, id, &Control::SetModel(model.to_string()))?;
+        request(sessions, id, &Control::SetModel(model.to_string()), by)?;
     }
     if let Some(mode) = mode {
-        control(sessions, id, &Control::SetMode(mode.to_string()))?;
+        request(sessions, id, &Control::SetMode(mode.to_string()), by)?;
     }
     if let Some(effort) = effort {
-        control(sessions, id, &Control::SetEffort(effort.to_string()))?;
+        request(sessions, id, &Control::SetEffort(effort.to_string()), by)?;
     }
     let live = sessions.get(id)?;
     let machine = live.machine.lock().expect("machine lock");
@@ -2517,10 +2583,18 @@ mod tests {
     /// An agent that takes no message while a turn runs, spoken to in
     /// lines of words: `start <ids>` begins a turn for the messages named,
     /// `end` ends it, `ack` is a reply that means nothing, `drop <id>`
-    /// says a message will not be answered. The line it sends a message
-    /// with names the model it runs on when it is sent.
+    /// says a message will not be answered, `answer <key>` answers a
+    /// request. The line it sends a message with names the model it runs
+    /// on when it is sent. A model is settled without asking it; a mode or
+    /// an effort is asked for with `ask <key>`.
     struct Fake {
         model: String,
+    }
+
+    fn fake() -> Box<Fake> {
+        Box::new(Fake {
+            model: "haiku".into(),
+        })
     }
 
     impl Driver for Fake {
@@ -2544,6 +2618,12 @@ mod tests {
                     MessageState::Dropped,
                     Some("refused".into()),
                 )],
+                (Some("answer"), Some(key)) => {
+                    return Reading {
+                        replies: vec![(key.to_string(), Ok(Value::Null))],
+                        ..Reading::default()
+                    }
+                }
                 _ => vec![],
             };
             Reading {
@@ -2572,8 +2652,15 @@ mod tests {
         }
 
         fn control(&mut self, control: &Control) -> Result<Sending, String> {
-            let Control::SetModel(model) = control else {
-                return Err("not here".into());
+            let model = match control {
+                Control::SetModel(model) => model,
+                Control::SetMode(key) | Control::SetEffort(key) => {
+                    return Ok(Sending::Request {
+                        line: format!("ask {key}"),
+                        key: key.clone(),
+                    })
+                }
+                Control::Interrupt => return Err("not here".into()),
             };
             self.model = model.clone();
             Ok(Sending::Local {
@@ -2663,9 +2750,7 @@ mod tests {
 
     #[test]
     fn an_agent_that_takes_no_message_mid_turn_gets_one_at_a_time() {
-        let bench = Bench::new(Box::new(Fake {
-            model: "haiku".into(),
-        }));
+        let bench = Bench::new(fake());
         bench.send(M1, "one");
         assert_eq!(
             bench.next().as_deref(),
@@ -2743,10 +2828,38 @@ mod tests {
     }
 
     #[test]
+    fn a_change_of_settings_answers_in_time_however_many_requests_it_takes() {
+        let Bench {
+            sessions,
+            live,
+            written,
+            ..
+        } = Bench::new(fake());
+        // The agent answers each request, but slowly: each in time on its
+        // own, the two together not.
+        let slow = CONFIGURE_TIMEOUT.mul_f64(0.66);
+        assert!(slow < CONTROL_TIMEOUT);
+        std::thread::spawn(move || {
+            for line in written {
+                if let Some(key) = line.strip_prefix("ask ") {
+                    std::thread::sleep(slow);
+                    live.take(&format!("answer {key}"));
+                }
+            }
+        });
+        let started = std::time::Instant::now();
+        let changed = configure(&sessions, "int-bench", None, Some("plan"), Some("high"));
+        assert!(changed.is_err(), "{changed:?}");
+        let took = started.elapsed();
+        assert!(
+            took < CONFIGURE_TIMEOUT + Duration::from_millis(500),
+            "{took:?}"
+        );
+    }
+
+    #[test]
     fn a_held_message_the_agent_cannot_take_is_dropped_and_the_next_goes() {
-        let bench = Bench::new(Box::new(Fake {
-            model: "haiku".into(),
-        }));
+        let bench = Bench::new(fake());
         bench.send(M1, "one");
         bench.next();
         bench.send(M2, "bad");
@@ -2788,7 +2901,7 @@ mod tests {
         }
 
         fn driver(&self, _: &Launch) -> Box<dyn Driver> {
-            Box::new(Fake { model: "m".into() })
+            fake()
         }
 
         fn trusted(&self, _: &Path, _: Option<&Path>, _: &Path) -> bool {

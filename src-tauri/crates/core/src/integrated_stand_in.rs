@@ -6,7 +6,8 @@
 //! with `@ID@` replaced by the request id of the line last expected and
 //! `@UUID@` by its uuid, `sleep`, `exit` and `die` do what they say,
 //! `drain` reads until stdin closes, `err` writes a line to stderr, `big`
-//! writes a line of that many bytes, and `spawn` leaves a command running
+//! writes a line of that many bytes, `bigresult` the result of a tool call
+//! with that much content, and `spawn` leaves a command running
 //! in the background with its pid in a file beside the scenario, and
 //! `linger` ignores the end of its stdin and, asked to end, writes a file
 //! beside the scenario and ends cleanly. It writes
@@ -48,6 +49,11 @@ while IFS= read -r step || [ -n "$step" ]; do
     "die") kill -9 $$ ;;
     "err "*) printf '%s\n' "${step#err }" >&2 ;;
     "big "*) head -c "${step#big }" /dev/zero | tr '\0' x; printf '\n' ;;
+    "bigresult "*)
+      set -- ${step#bigresult }
+      printf '%s' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"'
+      head -c "$2" /dev/zero | tr '\0' x
+      printf '","tool_use_id":"%s"}]},"parent_tool_use_id":null}\n' "$1" ;;
     "spawn") sleep 300 & echo $! > "$dir/child" ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
     "linger")
@@ -853,6 +859,9 @@ fn a_line_too_long_is_skipped_and_the_session_goes_on() {
         TAKE.into(),
         format!("big {}", LINE_KEEP + 10),
         INIT.into(),
+        r#"say {"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}]},"parent_tool_use_id":null}"#.into(),
+        format!("bigresult toolu_1 {}", LINE_KEEP + 10),
+        r#"say {"type":"system","subtype":"status","status":"requesting"}"#.into(),
         DONE.into(),
         "drain".into(),
     ]
@@ -864,6 +873,16 @@ fn a_line_too_long_is_skipped_and_the_session_goes_on() {
     let error = events.iter().find(|e| e["type"] == "error").unwrap();
     assert_eq!(error["kind"], "protocol");
     assert_eq!(events.last().unwrap()["outcome"], "done");
+    // The call whose result was too long finishes as cut short when its
+    // result goes by, not when the turn ends.
+    let finished: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "toolFinished")
+        .collect();
+    assert_eq!(finished.len(), 1, "{events:#?}");
+    assert_eq!(finished[0]["call"], "toolu_1");
+    assert_eq!(finished[0]["truncated"], true);
+    assert_eq!(finished[0]["error"], true);
     h.stop();
 }
 
