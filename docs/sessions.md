@@ -22,7 +22,7 @@ opens in place into a row per agent; see [agents](adapters.md).
 A row's own button appears over its end on hover, so a name is never
 squeezed to make room for it. On a live row it is ×, which stops the session
 and leaves it under the project's own past; on a past row it is archive,
-which files the session with the ones to resume, behind the fold. Two steps,
+which files the session with the earlier ones, behind their row. Two steps,
 so nothing running is archived by accident. On the keyboard, Delete does
 either for the row under the cursor.
 
@@ -96,6 +96,19 @@ so it is never taken for an unread session.
 
 ## What a row says
 
+A session that is running, or ran since the app started, takes two lines.
+The first is its name and, at the end, when the row last changed: `now`,
+`4m`, `1h`, a weekday within the week, then `3w`. The second is the line
+the agent left for the row, or for a session that started others what it
+has out, or else what it is doing in a word, in the accent while it asks
+for a permission; at its end is the model the session was started on, when
+the app knows it, and nothing otherwise. A row left from the last quit
+with nothing running behind it takes one line, its name and its time, the
+time its transcript was last written. Those rows come after the running
+ones, and once a project has more than three of them the first two stand
+and the rest fold into one row that counts them, such as `8 more from this
+week`, which opens in place. No row says which agent it runs.
+
 A row says what its agent is doing. Codex's turn-start, completion and
 interruption events are read from its session log every half second. A new
 session waits until a turn starts, and a resumed session follows only new
@@ -110,8 +123,9 @@ seconds running is **working**, with the dot breathing, and two seconds
 without another such second is waiting. A single burst, a clock ticking
 over in the footer or a cursor blinking, is not work and holds nothing
 back, and nothing the agent draws while starting counts
-until you have sent it a line or a minute has passed. The dot is the whole of it on the
-row, with the words on hover and for a screen reader; the agent pane's
+until you have sent it a line or a minute has passed. The dot says it on
+the row, with the words on hover and for a screen reader, and in the
+second line while the agent has left nothing there; the agent pane's
 header spells the state out. A session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the
 name in ink, `waiting for you` in the agent pane, a count in the status bar,
@@ -215,13 +229,17 @@ it as another live session through the agent's resume command, so a past
 conversation becomes a row like any other and the one you were in keeps
 running.
 
-Ours first, the rest behind a row. The agent's history holds every session
+Ours first, the rest behind a row. The agents' history holds every session
 run in the project, including ones started from a plain terminal, and months
 of those would bury the app's own. The sessions this app has run lately are
-remembered by id and listed outright; the others sit behind a single row per
-agent that counts them and opens a dialog over them, with a filter that
-takes every word you type against a session's name, its id and the worktree
-it ran in, and Enter or a click on one to resume it. Resuming one adopts it.
+remembered by id and listed under the project on screen, one line each
+with its time, among the rows left from the last quit and folded with them
+once there are more than a few. The others, every agent's together, sit
+behind a single row, `33 earlier sessions`, that counts them and opens a
+dialog over them, with a filter that takes every word you type against a
+session's name, its id and the worktree it ran in, and Enter or a click on
+one to resume it. With more than one agent installed, the dialog says
+whose each one is. Resuming one adopts it.
 How long lately is, is a [setting](settings.md#sessions): forever to begin
 with, or a span after which a session of the app's own that has not changed
 goes behind the row with the rest, and a row left from the last quit with

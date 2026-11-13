@@ -39,7 +39,7 @@ own, as a person does. `wait` sits
 until a session stops working, asks for permission or ends, or until the
 seconds it was given run out. `read` answers with the last lines on a
 session's screen, as you see them. `stop` stops a session and files it
-with the sessions to resume, behind the fold, rather than leaving a row
+with the earlier sessions to resume, behind their row, rather than leaving a row
 of it under the project. A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.

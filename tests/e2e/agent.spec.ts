@@ -881,8 +881,41 @@ test.describe("several sessions in one project", () => {
     await row.click();
     await expect.poll(() => spawnCount(page)).toBe(2);
     expect((await spawns(page)).at(-1)?.session).toBe("session-1");
+    // Started, it moves from the quiet rows up among the running ones: the
+    // row it leaves fades where it stood, and then there is one.
+    await expect(row).toHaveCount(1);
     await expect(waiting).not.toHaveClass(/dormant/);
     await expect(row).toContainText("running");
+  });
+
+  // A session with something running takes two lines, its time at the
+  // end of the first and the line under the name; a row left from the
+  // last quit takes one, with its time.
+  test("draws a running session on two lines and a row left from the last quit on one", async ({
+    page,
+  }) => {
+    await page.reload();
+    await expect(rows(page)).toHaveCount(2);
+    await expect(page.locator(AGENT)).toContainText("running");
+    const live = rows(page).filter({ has: page.locator(".dot.live") });
+    const left = rows(page).filter({ has: page.locator(".dot.dormant") });
+
+    const name = (await live.locator(".label").boundingBox())!;
+    const when = (await live.locator(".when").boundingBox())!;
+    const line = (await live.getByTestId("session-state").boundingBox())!;
+    await expect(live.locator(".when")).toHaveText("now");
+    await expect(live.getByTestId("session-state")).toHaveText("running");
+    expect(Math.abs(when.y + when.height / 2 - (name.y + name.height / 2))).toBeLessThan(3);
+    expect(when.x).toBeGreaterThan(name.x + name.width - 1);
+    expect(line.y).toBeGreaterThanOrEqual(name.y + name.height - 1);
+    expect(Math.abs(line.x - name.x)).toBeLessThan(1);
+
+    await expect(left.getByTestId("session-state")).toHaveCount(0);
+    await expect(left.locator(".when")).toBeVisible();
+    const one = (await left.boundingBox())!;
+    const two = (await live.boundingBox())!;
+    expect(two.height).toBeGreaterThan(one.height + 8);
+    await expect(page.getByTestId("agent-tag")).toHaveCount(0);
   });
 
   test("a session closed before a restart stays closed", async ({ page }) => {
@@ -1080,8 +1113,8 @@ test.describe("working, and waiting for you", () => {
     await page.getByTestId("past-session").hover();
     await page.getByTestId("archive-past").click();
     await expect(page.getByTestId("past-session")).toHaveCount(0);
-    await expect(page.getByTestId("outside-fold")).toHaveText(
-      /1 claude session to resume/,
+    await expect(page.getByTestId("earlier-sessions")).toHaveText(
+      /1 earlier session/,
     );
   });
 
@@ -1355,7 +1388,8 @@ test.describe("with codex installed too", () => {
     await expect(page.getByTestId("agent-choice")).toHaveCount(0);
     await expect.poll(() => spawns(page)).toHaveLength(1);
     expect((await spawns(page))[0].agent).toBe("codex");
-    await expect(page.getByTestId("agent-tag")).toHaveText("codex");
+    // No row says whose agent it is.
+    await expect(page.getByTestId("agent-tag")).toHaveCount(0);
     await expect(page.locator(AGENT)).toContainText("Codex");
   });
 
@@ -1385,7 +1419,7 @@ test.describe("with codex installed too", () => {
     );
   });
 
-  test("folds codex sessions from outside apart, and resumes one", async ({
+  test("counts codex sessions from outside with the earlier ones, and resumes one", async ({
     page,
   }) => {
     await open(page, {
@@ -1395,8 +1429,8 @@ test.describe("with codex installed too", () => {
         { id: "old", title: "Old thread", modified: 900, size: 10 },
       ],
     });
-    const fold = page.getByTestId("outside-fold");
-    await expect(fold).toHaveText(/1 codex session to resume/);
+    const fold = page.getByTestId("earlier-sessions");
+    await expect(fold).toHaveText(/1 earlier session/);
     await fold.click();
     await expect(page.getByTestId("resume-filter")).toBeFocused();
     await page.getByTestId("resume-row").click();
@@ -1425,8 +1459,8 @@ test.describe("when a dialog closes", () => {
     });
     await page.keyboard.press(`${MOD}+1`);
     await expect(page.getByTestId("sessions-nav")).toBeFocused();
-    const fold = page.getByTestId("outside-fold");
-    await expect(fold).toHaveText(/1 codex session to resume/);
+    const fold = page.getByTestId("earlier-sessions");
+    await expect(fold).toHaveText(/1 earlier session/);
     await page.keyboard.press("End");
     await page.keyboard.press("ArrowUp");
     await expect(fold).toHaveClass(/cursor/);

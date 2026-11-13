@@ -100,9 +100,9 @@ tools they bring the agent, is in [hooks](hooks.md).
 
 How long a past session stays listed under its project: forever, 30 days,
 7 days or 1 day, forever to begin with. A session this app ran is listed
-under its project, greyed, ready to resume, as [sessions](sessions.md#past-sessions)
+under its project, one line with its time, ready to resume, as [sessions](sessions.md#past-sessions)
 describes. Left unchanged for longer than the span chosen, it goes behind
-the fold with the rest of the project's history instead, where it is still
+the row of earlier sessions with the rest of the project's history instead, where it is still
 there to resume and to search; a row left from the last quit, with nothing
 running behind it, goes the same way. Resuming one brings it back to the
 list. Nothing is deleted: the transcripts are the agent's own and stay where

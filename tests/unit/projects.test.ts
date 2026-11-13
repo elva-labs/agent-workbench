@@ -32,6 +32,8 @@ import {
   byChange,
   create,
   lastChanged,
+  modelLabel,
+  moreLabel,
   nextNeedingYou,
   reopened,
   reset as resetSessions,
@@ -238,5 +240,21 @@ describe("the order of a project's rows", () => {
 
     second.changedAt = NOW;
     expect(byChange([first, second, left])[0].key).toBe(second.key);
+  });
+});
+
+describe("what a row says", () => {
+  it("names a model the way it is said", () => {
+    expect(modelLabel("opus")).toBe("Opus");
+    expect(modelLabel("claude-sonnet-5-5")).toBe("Sonnet 5.5");
+    expect(modelLabel("claude-opus-4-1-20250805")).toBe("Opus 4.1");
+    expect(modelLabel("gpt-5-codex")).toBe("gpt-5-codex");
+  });
+
+  it("counts the folded tail by how long ago its oldest changed", () => {
+    expect(moreLabel(3, NOW - 3600_000, NOW)).toBe("3 more from today");
+    expect(moreLabel(8, NOW - 3 * DAY, NOW)).toBe("8 more from this week");
+    expect(moreLabel(2, NOW - 12 * DAY, NOW)).toBe("2 more from this month");
+    expect(moreLabel(9, NOW - 90 * DAY, NOW)).toBe("9 more");
   });
 });

@@ -457,6 +457,28 @@ export function since(ms: number, now = Date.now()): string {
   return `${Math.floor(days / 365)}y`;
 }
 
+/** How the rows that fold away at the end of a project are counted on
+    the row that holds them: `8 more from this week`, by how long ago the
+    oldest of them changed. */
+export function moreLabel(count: number, oldest: number, now = Date.now()): string {
+  const days = (now - oldest) / 86_400_000;
+  if (days < 1) return `${count} more from today`;
+  if (days < 7) return `${count} more from this week`;
+  if (days < 30) return `${count} more from this month`;
+  return `${count} more`;
+}
+
+/** What a model is called on a row. Claude's own names read as they are
+    said, `opus-4-1` as Opus 4.1 and `sonnet` as Sonnet; any other model
+    is named as it was given. */
+export function modelLabel(model: string): string {
+  const bare = model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+  const [family, ...version] = bare.split("-");
+  if (!/^(opus|sonnet|haiku|fable)$/i.test(family)) return model;
+  const name = family[0].toUpperCase() + family.slice(1).toLowerCase();
+  return version.length === 0 ? name : `${name} ${version.join(".")}`;
+}
+
 let counter = 0;
 /** Next ordinal per project. Never reused, so labels never shift. */
 let ordinals: Record<string, number> = {};

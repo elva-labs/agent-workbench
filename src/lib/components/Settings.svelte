@@ -633,10 +633,10 @@
           <section data-testid="settings-sessions">
             <h3>Past sessions</h3>
             <p class="note">
-              A session this app ran stays listed under its project, greyed, ready to resume. Left
-              unchanged for longer than this, it goes behind the fold with the rest of the project's
-              history instead, where it is still there to resume and to search. A session left from
-              the last quit goes the same way. Nothing is deleted.
+              A session this app ran stays listed under its project, ready to resume. Left unchanged
+              for longer than this, it goes behind the row of earlier sessions with the rest of the
+              project's history instead, where it is still there to resume and to search. A session
+              left from the last quit goes the same way. Nothing is deleted.
             </p>
             <div class="seg" role="radiogroup" aria-label="How long past sessions stay listed">
               {#each PAST_SESSIONS as span (span.choice)}

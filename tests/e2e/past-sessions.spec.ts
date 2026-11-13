@@ -39,7 +39,7 @@ async function withTwo(page: Page, settings: Record<string, unknown> = {}) {
 test("lists every past session of its own until a span is chosen", async ({ page }) => {
   await withTwo(page);
   await expect(page.getByTestId("past-session")).toHaveCount(2);
-  await expect(page.getByTestId("outside-fold")).toHaveCount(0);
+  await expect(page.getByTestId("earlier-sessions")).toHaveCount(0);
 
   await page.keyboard.press(`${MOD}+,`);
   await page.getByTestId("settings-tab-sessions").click();
@@ -52,7 +52,7 @@ test("lists every past session of its own until a span is chosen", async ({ page
   // bring back by widening the span.
   await expect(page.getByTestId("past-session")).toHaveCount(1);
   await expect(page.getByTestId("past-session")).toContainText("fresh work");
-  await expect(page.getByTestId("outside-fold")).toContainText("1");
+  await expect(page.getByTestId("earlier-sessions")).toContainText("1");
 
   await page.keyboard.press(`${MOD}+,`);
   await page.getByTestId("past-sessions-month").click();
@@ -63,5 +63,5 @@ test("lists every past session of its own until a span is chosen", async ({ page
 test("reads the span from the machine's settings", async ({ page }) => {
   await withTwo(page, { pastSessions: "week" });
   await expect(page.getByTestId("past-session")).toHaveCount(1);
-  await expect(page.getByTestId("outside-fold")).toContainText("1");
+  await expect(page.getByTestId("earlier-sessions")).toContainText("1");
 });

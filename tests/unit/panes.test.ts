@@ -107,6 +107,7 @@ import {
   loadRemembered,
   started,
   sessions,
+  reopened,
   close as closeStore,
 } from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
@@ -231,7 +232,8 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     expect(screen.getByText("one")).toBeInTheDocument();
     expect(screen.getByText("session 1")).toBeInTheDocument();
-    expect(screen.getByText("running")).toBeInTheDocument();
+    // Nothing left for the row, so its second line says what it is doing.
+    expect(screen.getByTestId("session-state")).toHaveTextContent("running");
   });
 
   // The right pane is entirely git-based, so say so rather than sit there empty.
@@ -243,8 +245,9 @@ describe("SessionsPane", () => {
     expect(screen.getByText("no git")).toBeInTheDocument();
   });
 
-  // With codex installed too, every row says whose it is, the new-session
-  // row offers the choice, and each agent's outside sessions fold apart.
+  // With codex installed too, the new-session row offers the choice, and
+  // every agent's outside sessions are one row of earlier sessions. No row
+  // says whose agent it is.
   it("offers both agents and tells their sessions apart", async () => {
     applyDetect(
       {
@@ -267,7 +270,7 @@ describe("SessionsPane", () => {
     ];
 
     render(SessionsPane);
-    expect(screen.getByTestId("agent-tag")).toHaveTextContent("claude");
+    expect(screen.queryByTestId("agent-tag")).toBeNull();
     // The new-session row opens, in place, into one row per agent.
     await fireEvent.click(screen.getByTestId("new-session"));
     expect(screen.queryByTestId("new-session")).toBeNull();
@@ -280,11 +283,8 @@ describe("SessionsPane", () => {
     expect(options[1]).toHaveTextContent("Codex");
 
     await waitFor(() =>
-      expect(screen.getAllByTestId("outside-fold")).toHaveLength(2),
+      expect(screen.getByTestId("earlier-sessions")).toHaveTextContent("2 earlier sessions"),
     );
-    const folds = screen.getAllByTestId("outside-fold");
-    expect(folds[0]).toHaveTextContent("1 claude session to resume");
-    expect(folds[1]).toHaveTextContent("1 codex session to resume");
 
     await fireEvent.click(options[1]);
     expect(sessions.all.at(-1)?.agent).toBe("codex");
@@ -292,11 +292,12 @@ describe("SessionsPane", () => {
     expect(screen.queryByTestId("agent-choice")).toBeNull();
     expect(screen.getByTestId("new-session")).toBeInTheDocument();
 
-    // The fold opens the list to resume from, for that agent.
-    await fireEvent.click(folds[1]);
+    // The row opens the list to resume from, every agent's together.
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     expect(resume.open).toBe(true);
-    expect(resume.agent).toBe("codex");
-    pickResume(offered()[0]);
+    expect(resume.agent).toBeNull();
+    expect(offered().map((entry) => entry.id)).toEqual(["c1", "x1"]);
+    pickResume(offered()[1]);
     const resumed = sessions.all.at(-1)!;
     expect(resumed.agent).toBe("codex");
     expect(resumed.resumedFrom).toBe("x1");
@@ -395,14 +396,16 @@ describe("SessionsPane", () => {
     started(first.key, "pty-1", "session-1");
     const second = create("/repo");
     started(second.key, "pty-2", "session-2");
+    first.changedAt = second.changedAt - 1000;
     layout.focus = "sessions";
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
 
-    // The cursor starts on the session you are in.
-    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    // The cursor starts on the session you are in, the latest change on
+    // top, and the first is under it.
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(sessions.active).toBe(first.key);
     expect(layout.focus).toBe("agent");
@@ -423,7 +426,7 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
 
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
@@ -431,7 +434,7 @@ describe("SessionsPane", () => {
       "cursor",
     );
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(resume.open).toBe(true);
   });
@@ -450,11 +453,11 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(resume.open).toBe(true);
 
@@ -463,7 +466,7 @@ describe("SessionsPane", () => {
     expect(document.activeElement).toBe(document.body);
     returnFocus();
     await waitFor(() => expect(document.activeElement).toBe(nav));
-    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowUp" });
     expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
       "cursor",
@@ -641,6 +644,67 @@ describe("SessionsPane", () => {
     expect(screen.queryByTestId("inactive-fold")).toBeNull();
   });
 
+  // A live row: the name and when it last changed, then the line the
+  // agent left and the model. A row left from the last quit: one line
+  // with its time, and nothing else.
+  it("draws a live session on two lines and a row left from the last quit on one", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const live = create("/repo", null, "claude-code", null, null, "claude-opus-4-1");
+    started(live.key, "pty-1", "session-1");
+    live.note = "Tests green, ready to merge.";
+    const left = reopened("/repo", "t-1", "claude-code", null, "sonnet", null);
+    fake.transcripts = [{ id: "t-1", title: "yesterday's work", modified: Math.floor(Date.now() / 1000) - 3 * 86_400, size: 1 }];
+
+    render(SessionsPane);
+    const row = (key: string) =>
+      document.querySelector<HTMLElement>(`[data-row="session:${key}"] [data-testid="session-row"]`)!;
+    await waitFor(() => expect(row(left.key).querySelector(".when")!.textContent).not.toBe("now"));
+    expect(row(live.key).querySelector(".label")).toHaveTextContent("session 1");
+    expect(row(live.key).querySelector(".when")).toHaveTextContent("now");
+    expect(within(row(live.key)).getByTestId("session-note")).toHaveTextContent("Tests green, ready to merge.");
+    expect(within(row(live.key)).getByTestId("session-model")).toHaveTextContent("Opus 4.1");
+    expect(row(live.key)).toHaveClass("two");
+
+    expect(row(left.key)).not.toHaveClass("two");
+    expect(row(left.key).querySelector(".dot")).toHaveClass("dormant");
+    expect(row(left.key).querySelector(".when")!.textContent).toMatch(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/);
+    expect(within(row(left.key)).queryByTestId("session-model")).toBeNull();
+    expect(screen.queryByTestId("agent-tag")).toBeNull();
+
+    // A session asking for a permission says so in the accent.
+    live.needs = "permission";
+    await tick();
+    expect(within(row(live.key)).getByTestId("session-note")).toHaveClass("asking");
+  });
+
+  // More than a few rows with nothing running fold their tail into one row
+  // that counts them, on the cursor path like the rest.
+  it("folds the tail of the quiet rows into one row that counts them", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const day = 86_400;
+    const at = Math.floor(Date.now() / 1000);
+    fake.transcripts = [1, 2, 3, 4, 5].map((n) => ({ id: `t-${n}`, title: `work ${n}`, modified: at - n * day, size: 1 }));
+    for (const n of [1, 2, 3, 4, 5]) reopened("/repo", `t-${n}`, "claude-code", null, null, null);
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    // Each row's time is its transcript's, once the history is read.
+    await waitFor(() => expect(screen.getByTestId("quiet-more")).toHaveTextContent("3 more from this week"));
+    const labels = () => screen.getAllByTestId("session-row").map((row) => row.querySelector(".label")!.textContent);
+    expect(labels()).toHaveLength(2);
+
+    const nav = screen.getByTestId("sessions-nav");
+    await waitFor(() => expect(document.activeElement).toBe(nav));
+    await fireEvent.keyDown(nav, { key: "Home" });
+    for (let i = 0; i < 6; i += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("quiet-more")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(screen.queryByTestId("quiet-more")).toBeNull();
+    expect(labels()).toHaveLength(5);
+  });
+
   // A live row's × sits over its end and stops the session, which leaves
   // it under the project's own past; a past row's archive button files it
   // with the sessions to resume. Two steps, never both at once.
@@ -663,8 +727,8 @@ describe("SessionsPane", () => {
       expect(screen.getByTestId("past-session")).toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "1 claude session to resume",
+      expect(screen.getByTestId("earlier-sessions")).toHaveTextContent(
+        "1 earlier session",
       ),
     );
 
@@ -673,8 +737,8 @@ describe("SessionsPane", () => {
       expect(screen.queryByTestId("past-session")).not.toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "2 claude sessions to resume",
+      expect(screen.getByTestId("earlier-sessions")).toHaveTextContent(
+        "2 earlier sessions",
       ),
     );
 
@@ -756,7 +820,7 @@ describe("SessionsPane", () => {
     await waitFor(() =>
       expect(screen.getByText("rename the token cache")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("earlier-sessions")).not.toBeInTheDocument();
   });
 
   // Transcripts from Claude Code run in a plain terminal share the directory.
@@ -771,14 +835,14 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-      "2 claude sessions to resume",
+    expect(screen.getByTestId("earlier-sessions")).toHaveTextContent(
+      "2 earlier sessions",
     );
     expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     expect(resume.open).toBe(true);
     expect(offered().map((entry) => entry.id)).toEqual(["abc-123", "def-456"]);
   });
@@ -792,9 +856,9 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     pickResume(offered()[0]);
 
     expect(sessions.all).toHaveLength(1);
@@ -810,13 +874,13 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     pickResume(offered()[0]);
 
     await waitFor(() =>
-      expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument(),
+      expect(screen.queryByTestId("earlier-sessions")).not.toBeInTheDocument(),
     );
   });
 

@@ -1024,9 +1024,10 @@ describe("the real app", () => {
     options = await driver.findElements(choice);
     await options[1].click();
     await waitForText(driver, "FAKE CODEX");
-    const tags = await driver.findElements(By.css("[data-testid='agent-tag']"));
-    const texts = await Promise.all(tags.map((tag) => tag.getText()));
-    expect(texts.slice(-2)).toEqual(["claude", "codex"]);
+    // Both run side by side, and no row says whose agent it is.
+    const rows = await driver.findElements(By.css("[data-testid='session-row']"));
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(await driver.findElements(By.css("[data-testid='agent-tag']"))).toHaveLength(0);
   });
 
   it("runs codex under an account, making its home first", async () => {
