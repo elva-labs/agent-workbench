@@ -433,6 +433,16 @@ test.describe("go to with nothing open", () => {
     await expect(page.getByTestId("palette")).toHaveCount(0);
     await expect(page.locator(".project.on")).toContainText("two");
   });
+
+  test("keeps the Open project row while what is typed matches it", async ({ page }) => {
+    await open(page);
+    await page.keyboard.press(`${MOD}+P`);
+    await page.keyboard.type("open");
+    await expect(page.getByTestId("palette-row")).toHaveCount(1);
+    await expect(page.getByTestId("palette-row").first()).toContainText("Open project");
+    await page.keyboard.type("zzz");
+    await expect(page.getByTestId("palette-row")).toHaveCount(0);
+  });
 });
 
 test.describe("one project", () => {
@@ -1907,6 +1917,46 @@ test.describe("the palettes", () => {
       // Wide again, the pane is still the one the user hid.
       await page.setViewportSize({ width: 1200, height: 800 });
       await expect(page.getByTestId("unfold-sessions")).toBeVisible();
+    });
+
+    test("Escape from go to leaves the keyboard on New session in a project with no session", async ({ page }) => {
+      await page.setViewportSize({ width: 800, height: 800 });
+      await page.keyboard.press(GOTO);
+      await page.keyboard.type("two");
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect(page.getByTestId("start-agent")).toBeFocused();
+      await page.keyboard.press(GOTO);
+      await expect(field(page)).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect(page.getByTestId("start-agent")).toBeFocused();
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    });
+
+    test("narrowing the window past the sessions pane hands the keyboard to the agent pane, and the palette gives it back there", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      await page.keyboard.type("two");
+      await page.keyboard.press("Enter");
+      await expect.poll(() => inSessions(page)).toBe(true);
+      await page.setViewportSize({ width: 800, height: 800 });
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+      await page.keyboard.press(GOTO);
+      await expect(field(page)).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect(page.getByTestId("start-agent")).toBeFocused();
+    });
+
+    test("the agent chord from the sessions pane lands on New session in a project with no session", async ({ page }) => {
+      await page.keyboard.press(GOTO);
+      await page.keyboard.type("two");
+      await page.keyboard.press("Enter");
+      await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+      await expect.poll(() => inSessions(page)).toBe(true);
+      await page.keyboard.press(`${MOD}+2`);
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+      await expect(page.getByTestId("start-agent")).toBeFocused();
     });
 
     test("picking go to from the commands opens that palette", async ({ page }) => {

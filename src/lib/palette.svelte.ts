@@ -295,17 +295,17 @@ export function goToItems(query: string): PaletteItem[] {
       end: standing(path),
     }))
     .filter((item) => matches(item.label, query));
-  if (rows.length + projects.length === 0 && query.trim() === "")
-    return [
-      {
-        kind: "command",
-        id: "command:open",
-        label: "Open project",
-        group: null,
-        command: "open",
-        chord: "",
-      },
-    ];
+  if (sessions.all.length === 0 && workspace.open.length === 0) {
+    const open: PaletteItem = {
+      kind: "command",
+      id: "command:open",
+      label: "Open project",
+      group: null,
+      command: "open",
+      chord: "",
+    };
+    return matches(open.label, query) ? [open] : [];
+  }
   return [...rows, ...projects];
 }
 

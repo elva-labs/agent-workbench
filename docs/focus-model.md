@@ -65,24 +65,24 @@ list to the entries holding every word of it, in any order, as
 picks. The cursor starts on the first entry that can be picked, and stays on
 the same entry while sessions change state and move under it.
 
-**Go to** opens on <kbd>Cmd</kbd><kbd>P</kbd> and lists the sessions, then
-the projects. A session matches on its name or on the label of its project.
+**Go to** opens on <kbd>Cmd</kbd><kbd>P</kbd> and lists the sessions, then the
+projects. A session matches on its name or on the label of its project.
 Sessions are listed by when they last changed, the latest first, each with a
 dot for its state, its project and the time since. With nothing typed the
 cursor starts on the first session that is not the one on screen, so Enter
-goes to the previous one. Every open project is
-listed, with how many sessions are live in it or the time since it was last
-used, the most recently used first. <kbd>Enter</kbd> on a session shows it and
-puts the keyboard in its agent, as a click on its row does. On a project it
-brings the project forward, with the keyboard in the session on screen or, for
-a project with none, in the sessions pane. A sessions pane that is folded
-opens for that, or peeks over the agent while reviewing, so the viewer stays,
-and in a window too narrow for the pane it stays as the user set it and the
-keyboard goes to the agent pane's New session button.
-<kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session in that project, as
-below. A <kbd>&gt;</kbd> typed as the first character switches to the
-commands, with the rest of what was typed. With nothing open the list holds
-one row, Open project. The footer names only what the list on screen can do.
+goes to the previous one. Every open project is listed, with how many sessions
+are live in it or the time since it was last used, the most recently used
+first. <kbd>Enter</kbd> on a session shows it and puts the keyboard in its
+agent, as a click on its row does. On a project it brings the project forward,
+with the keyboard in the session on screen or, for a project with none, in the
+sessions pane. A sessions pane that is folded opens for that, or peeks over
+the agent while reviewing, so the viewer stays, and in a window too narrow for
+the pane it stays as the user set it and the keyboard goes to the agent pane's
+New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session
+in that project, as below. A <kbd>&gt;</kbd> typed as the first character
+switches to the commands, with the rest of what was typed. With nothing open
+the list holds one row, Open project. The footer names only what the list on
+screen can do.
 
 **Commands** open on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> and list every
 action the keys can do, each with its chord, and the ones that have none: new
@@ -97,13 +97,13 @@ project, unless only one is open: the one on screen above the others, then by
 when they were last used. Then the account, when accounts are named in the
 [settings](settings.md#accounts), with the project's own under the cursor;
 then the agent, when more than one is installed, with the one last started in
-the project under the cursor. A step with nothing to choose is not asked.
-Each answer stays in the field as a chip, and <kbd>Backspace</kbd> on an empty
+the project under the cursor. A step with nothing to choose is not asked. Each
+answer stays in the field as a chip, and <kbd>Backspace</kbd> on an empty
 field takes the last one back, one step to a press however long the key is
 held; from the first step it returns to the commands with what was typed there
-still in the field. The last answer brings
-the project forward and starts the session the way the new-session row of the
-sessions pane does, and the keyboard goes to the new agent.
+still in the field. The last answer brings the project forward and starts the
+session the way the new-session row of the sessions pane does, and the
+keyboard goes to the new agent.
 
 <kbd>Escape</kbd> puts the palette away from any step, and so does the chord
 of the list that is up: <kbd>Cmd</kbd><kbd>P</kbd> for go to,
@@ -126,11 +126,15 @@ where the dialog has it.
   modifier is <kbd>Cmd</kbd>. On Windows and Linux the modifier is
   <kbd>Ctrl</kbd>, so the bound chords are taken from the terminal there,
   and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them.
-- **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent
-  needs it, and so does a shell in the panel. A pane that owns focus may use
-  it: the file viewer closes on it and leaves the keyboard in the tree, and
-  a list pane hands the keyboard back to the agent. This is the one key whose meaning depends on context, so
-  the resolution takes the focus state and lives in one testable place.
+- **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
+  it, and so does a shell in the panel. A pane that owns focus may use it: the
+  file viewer closes on it and leaves the keyboard in the tree, and a list
+  pane hands the keyboard back to the agent. This is the one key whose meaning
+  depends on context, so the resolution takes the focus state and lives in one
+  testable place.
+- **A pane that goes away does not keep the keyboard.** When the window
+  narrows past the sessions or changes pane while it has focus, the keyboard
+  goes to the agent pane.
 - **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** The
   terminal would send the same carriage return as for <kbd>Enter</kbd>, so
   the app sends Meta+Enter, which Claude Code takes as a newline. A shell in

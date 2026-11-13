@@ -171,6 +171,14 @@ describe("go to", () => {
     expect(projectPaths(goToItems("ada"))).toEqual([]);
   });
 
+  it("matches the Open project row against what is typed when nothing is open", () => {
+    resetWorkspace();
+    reset();
+    expect(goToItems("").map((item) => item.label)).toEqual(["Open project"]);
+    expect(goToItems("open").map((item) => item.label)).toEqual(["Open project"]);
+    expect(goToItems("zzz")).toEqual([]);
+  });
+
   it("gives a session its project and the time of its change", () => {
     const own = create(A);
     own.changedAt = Date.now() - 3 * 60_000;

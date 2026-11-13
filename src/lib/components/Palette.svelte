@@ -1,9 +1,9 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-    import { coversBrowser } from "$lib/browser.svelte";
+  import { coversBrowser } from "$lib/browser.svelte";
   import type { Action } from "$lib/keymap";
   import { isMac } from "$lib/platform";
-    import {
+  import {
     chipOf,
     closePalette,
     palette,
@@ -190,7 +190,10 @@
 <div
   class="scrim"
   class:leaving={!palette.open}
-  onclick={closePalette} use:coversBrowser data-testid="palette-scrim">
+  onclick={closePalette}
+  use:coversBrowser
+  data-testid="palette-scrim"
+>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
@@ -440,6 +443,8 @@
     font-family: var(--chrome);
     font-size: 10.5px;
     font-weight: 500;
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
     color: var(--ink-3);
   }
 

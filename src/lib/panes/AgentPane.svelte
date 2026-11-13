@@ -70,15 +70,22 @@
 
   // A project with no session has no terminal to take the keyboard, so a
   // request for the agent pane gives it to the New session button, unless it
-  // is already on a control of its own. It is taken from the page body and
-  // from a terminal that is out of sight.
+  // is already on a control inside this pane. It is taken from the page body,
+  // from a terminal that is out of sight and from a control in another pane.
   $effect(() => {
     layout.focusRequest;
     untrack(() => {
       if (layout.focus !== "agent" || !agentVisible() || wrap === null) return;
       if (current !== null || blocked !== null || workspace.active === null) return;
       const owner = document.activeElement;
-      if (owner !== null && owner !== document.body && owner.closest("[data-terminal]") === null) return;
+      const pane = wrap.closest("section");
+      if (
+        owner !== null &&
+        pane?.contains(owner) &&
+        owner !== document.body &&
+        owner.closest("[data-terminal]") === null
+      )
+        return;
       void tick().then(() => {
         (owner as HTMLElement | null)?.blur?.();
         wrap?.querySelector<HTMLElement>("[data-testid='start-agent']")?.focus();
