@@ -525,13 +525,13 @@
     margin-left: 0;
   }
 
-  .instructions {
+  .link.instructions {
     margin: -2px 0 0;
     font-size: var(--conv-fine);
     color: var(--ink-2);
   }
 
-  .instructions:hover {
+  .link.instructions:hover {
     color: var(--ink);
   }
 
