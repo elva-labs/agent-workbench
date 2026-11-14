@@ -824,6 +824,36 @@ fn stopping_twice_or_before_ready_ends_the_session_once() {
 }
 
 #[test]
+fn stopping_with_a_permission_asked_withdraws_it_and_a_late_answer_fails() {
+    let scenario = [
+        READY,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        r#"say {"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        "drain",
+    ]
+    .join("\n");
+    let h = start("stop-asking", &scenario);
+    h.until_type("ready");
+    h.send("go");
+    h.until_type("permissionAsked");
+    stop(&h.sessions, &h.id).unwrap();
+    stop(&h.sessions, &h.id).unwrap();
+    let late = answer(&h.sessions, &h.id, "p1", Choice::Allow, None);
+    let events = h.until_type("ended");
+    let tail: Vec<String> = kinds(&events).into_iter().rev().take(3).rev().collect();
+    assert_eq!(tail, ["turnEnded", "withdrawn", "ended"]);
+    assert_eq!(events.last().unwrap()["clean"], true);
+    let answered = events.iter().filter(|e| e["type"] == "answered").count();
+    assert_eq!(
+        (late.is_err(), answered),
+        (true, 0),
+        "an answer after the stop does not reach the agent: {late:?}"
+    );
+}
+
+#[test]
 fn an_agent_that_never_says_it_is_ready_is_ended_with_one_error() {
     let h = start("never-ready", "sleep 60");
     let events = h.until_type("ended");
