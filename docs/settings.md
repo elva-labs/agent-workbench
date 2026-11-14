@@ -369,7 +369,35 @@ window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
 reaches an open window at once. A value in the file that the app does not
-know is passed over and the default stands for it.
+know is passed over and the default stands for it, and a workflow that breaks
+a rule is set aside as [workflows](#workflows) describes; neither makes the
+file unreadable.
+
+A read finds the file in one of three states: there is none, it is whole, or
+it is there and is not a JSON object, because it is empty, cut short or not
+settings at all. A file that is not there is the defaults, and the window
+hands over the copy it keeps. A file that is not readable is not the defaults:
+the window keeps the settings it has, hands nothing over, and takes the file
+once a whole one is announced. A whole file is announced when it differs from
+what was last announced, and also when the look before it found the file
+unreadable, so the same content written again after the file was emptied
+still reaches the window. The window's first read is passed over only when
+it has already taken settings that are as new or newer, from news or from the
+answer to a change of its own. News that arrives while a change of its own is
+on its way is not taken, and does not count.
+
+A change builds on the file as it is. If the file is not readable, the save
+looks again a few times, forty milliseconds apart, since whatever writes a
+file by emptying it first is usually done within moments. If the file is whole
+by then, the change is laid over it. If it is still not readable, nothing is
+written, the file is left as it is, and the change is refused with a reason
+that says the file could not be read and where it is, so a hand edit under
+way is never written over with the defaults. The window then shows the change
+it made and keeps the reason, as for any change the file refuses.
+
+The app writes the file whole: the text goes to a temporary file beside it,
+is flushed to disk and is moved over the settings file, so anything reading
+the file, the app's own watcher included, finds the old settings or the new.
 
 The window keeps a copy of its own as well, so the first frame of a start is
 painted as the last one was before the file has been read. On a machine
