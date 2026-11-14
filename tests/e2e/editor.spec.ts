@@ -1245,6 +1245,46 @@ test.describe("many tabs, round two", () => {
   });
 });
 
+test.describe("the tab in front as the row narrows", () => {
+  test("is brought back into view, its name whole", async ({ page }) => {
+    await open(page, 1440);
+    await flip(page);
+    // The tab in front last, at the end a narrowing cuts.
+    for (const name of ["Cargo.toml", "main.rs", "lib.rs", "mod.rs", "store.rs", "eviction.rs", "README.md"]) {
+      await treeRow(page, name).dblclick();
+    }
+    await tab(page, "README.md").click();
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await settled(page);
+    await expect
+      .poll(async () => {
+        const strip = await box(page, "[data-testid='tab-row'] [role='tablist']");
+        const front = await box(page, "[data-testid='editor-tab'][data-path='README.md']");
+        return front.x >= strip.x - 1 && front.x + front.width <= strip.x + strip.width + 1;
+      })
+      .toBe(true);
+  });
+});
+
+test.describe("the session question from the keyboard", () => {
+  test("takes the keyboard, on Cancel, when Delete raises it", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(page.getByTestId("sessions-nav")).toBeFocused();
+    await page.keyboard.press("Delete");
+    await expect(page.getByTestId("close-owner")).toBeVisible();
+    await expect(page.getByTestId("close-owner-cancel")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("close-owner")).toHaveCount(0);
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
+  });
+});
+
 test.describe("the File menu's items", () => {
   test("say which can act", async ({ page }) => {
     await open(page, 1728);

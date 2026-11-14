@@ -65,6 +65,8 @@ const controls: string[] = [];
 let heldReads: (() => void)[] | null = null;
 /** Files the fake core will not write. */
 const readOnly = new Set<string>();
+/** What the fake core says when it cannot write a file, by file. */
+const writeErrors = new Map<string, string>();
 /** A stamp names exact content. */
 const stampOf = (text: string) => `s:${text}`;
 
@@ -95,6 +97,8 @@ vi.mock("$lib/core", () => ({
     async fileWrite(_root: string, file: string, text: string, stamp: string | null, overwrite: boolean) {
       writes.push({ file, text, stamp, overwrite });
       if (readOnly.has(file)) throw new Error(`${file} is read-only`);
+      const refusal = writeErrors.get(file);
+      if (refusal !== undefined) throw new Error(refusal);
       const current = disk.get(file);
       if (!overwrite) {
         if (stamp === null && current !== undefined) return { written: false, stamp: stampOf(current) };
@@ -145,6 +149,7 @@ beforeEach(async () => {
   writes.length = 0;
   controls.length = 0;
   readOnly.clear();
+  writeErrors.clear();
   heldReads = null;
   disk.set("docs/a.md", "# A\n\nfirst\nsecond\n");
   disk.set("src/b.rs", "fn b() {}\n");
@@ -468,6 +473,19 @@ describe("saving", () => {
     disk.delete("docs/a.md");
     expect(await save()).toBe(false);
     expect(editor.buffers[keyOf("/one", "docs/a.md")].changed).toEqual({ stamp: null, problem: null });
+    view.destroy();
+  });
+
+  it("names a file with a short name in a failed save, whatever the core's sentence holds", async () => {
+    disk.set("e", "short\n");
+    await openFile("e");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    writeErrors.set("e", "could not write: Permission denied (os error 13)");
+    expect(await save()).toBe(false);
+    expect(editor.buffers[keyOf("/one", "e")].failed).toBe(
+      "Could not save e: could not write: Permission denied (os error 13)",
+    );
     view.destroy();
   });
 
@@ -796,6 +814,25 @@ describe("a reload", () => {
     diskChanged(["/one/src/b.rs"]);
     await settle();
     expect(view.state.doc.toString()).toBe("# A\n\nfirst\nsecond\n");
+    view.destroy();
+  });
+
+  it("keeps the newer text when two reads are answered in the order they were asked", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    heldReads = [];
+    disk.set("docs/a.md", "older\n");
+    diskChanged(["/one/docs/a.md"]);
+    disk.set("docs/a.md", "newer\n");
+    diskChanged(["/one/docs/a.md"]);
+    await settle();
+    const [older, newer] = heldReads;
+    // The older answer, landing first, is not taken in: a newer read is out.
+    older();
+    await settle();
+    newer();
+    await settle();
+    expect(view.state.doc.toString()).toBe("newer\n");
     view.destroy();
   });
 

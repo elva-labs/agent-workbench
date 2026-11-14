@@ -45,23 +45,35 @@
     fadeEnd = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
   }
 
+  // The row narrowing, with the window or a pane beside it, keeps the tab
+  // in front in view too.
   $effect(() => {
     if (strip === null) return;
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(() => {
+      showFront();
+      measure();
+    });
     observer.observe(strip);
     return () => observer.disconnect();
   });
+
+  /** Scrolls the tab in front into view. */
+  function showFront() {
+    const key = editor.active;
+    if (strip === null || key === null) return;
+    const at = [...strip.querySelectorAll<HTMLElement>("[data-testid='editor-tab']")].find(
+      (tab) => tab.dataset.key === key,
+    );
+    at?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 
   // The tab in front is never hidden past an edge.
   $effect(() => {
     const key = editor.active;
     editor.tabs.length;
     void tick().then(() => {
-      if (strip === null || key === null) return;
-      const at = [...strip.querySelectorAll<HTMLElement>("[data-testid='editor-tab']")].find(
-        (tab) => tab.dataset.key === key,
-      );
-      at?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (key !== editor.active) return;
+      showFront();
       measure();
     });
   });

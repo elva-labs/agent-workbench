@@ -357,10 +357,12 @@ async function load(root: string, path: string) {
   }
 }
 
-/** Why a save failed, naming the file once: the core's sentence names it
-    already when it says what is wrong with it. */
+/** Why a save failed, naming the file once: the core's sentence starts
+    with it already when it says what is wrong with it. */
 function couldNotSave(path: string, why: string): string {
-  return why.includes(path) ? `Could not save: ${why}` : `Could not save ${lastSegment(path)}: ${why}`;
+  return why.startsWith(`${path} `)
+    ? `Could not save: ${why}`
+    : `Could not save ${lastSegment(path)}: ${why}`;
 }
 
 /** An error from the core as the sentence it is. */

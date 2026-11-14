@@ -334,6 +334,9 @@
     if (folded && editor.closing !== null) untrack(closingCancel);
   });
 
+  /** The question about closing a session or a project, while it is up. */
+  let closingStrip = $state<HTMLDivElement | null>(null);
+
   /** Closes a session, asking first when tabs beside it hold the only
       copy of unsaved edits. */
   function closeSessionAsking(session: Session) {
@@ -362,6 +365,8 @@
     const arrived = here && previous !== "sessions";
     previous = layout.focus;
     if (!here || !nav || nav.contains(document.activeElement)) return;
+    // A question in the pane keeps the keyboard it was given.
+    if (closingStrip?.contains(document.activeElement)) return;
     if (arrived) cursor = null;
     nav.focus();
   });
@@ -817,7 +822,7 @@
   {#if editor.closing !== null}
     <!-- Closing a session or a project whose tabs hold the only copy of
          unsaved edits asks first, here where it was closed. -->
-    <div class="closing" class:folded inert={folded}>
+    <div class="closing" class:folded inert={folded} bind:this={closingStrip}>
       <ConfirmStrip
         question="Close {editor.closing.what} with unsaved edits?"
         detail="{editor.closing.keys.length === 1 ? '1 file' : `${editor.closing.keys.length} files`} open beside it {editor.closing.keys.length === 1 ? 'has' : 'have'} edits not yet saved: {unsavedNames(editor.closing.keys).join(', ')}."
