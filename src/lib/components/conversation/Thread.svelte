@@ -99,7 +99,7 @@
     if (col === null || scroller === null) return;
     const scrolled = scroller;
     const observer = new ResizeObserver(() => {
-      if (pinned && performance.now() - touched > 400) scrolled.scrollTop = scrolled.scrollHeight;
+      if (pinned && performance.now() - touched > 400) toEnd(scrolled);
     });
     observer.observe(col);
     return () => observer.disconnect();
@@ -114,15 +114,28 @@
         pinned = true;
         behind = false;
         void tick().then(() => {
-          if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
+          if (scroller !== null) toEnd(scroller);
         });
       }
       lastSent = now;
     });
   });
 
+  /** Where the thread last scrolled itself to: a scroll that lands there
+      is its own, and says nothing of where the user wants to be. */
+  let ownTop = -1;
+
+  function toEnd(node: HTMLDivElement) {
+    node.scrollTop = node.scrollHeight;
+    ownTop = node.scrollTop;
+  }
+
   function onscroll() {
     if (scroller === null) return;
+    // The thread's own scroll to its foot can be heard after more has come,
+    // when it is no longer at the foot; it is not the user leaving it.
+    if (Math.abs(scroller.scrollTop - ownTop) < 2) return;
+    ownTop = -1;
     pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 32;
     if (pinned) behind = false;
   }

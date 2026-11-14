@@ -566,3 +566,18 @@ test("shows the characters that would disguise a command, and draws it left to r
   expect(await code.evaluate((node) => getComputedStyle(node).unicodeBidi)).toBe("isolate");
   expect(await code.evaluate((node) => getComputedStyle(node).direction)).toBe("ltr");
 });
+
+test("keeps following when its own scroll to the foot is heard after more has come", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", Array.from({ length: 30 }, (_, at) => "Earlier line " + at).join("\\n\\n"));`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  // More comes before the scroll event of the last follow is heard, as it
+  // does under load: the event then finds the thread short of its foot.
+  await page.getByTestId("thread").evaluate((node) => {
+    const more = document.createElement("div");
+    more.style.height = "600px";
+    node.querySelector(".col")!.appendChild(more);
+    node.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+});
