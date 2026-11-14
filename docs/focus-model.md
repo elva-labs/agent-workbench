@@ -174,7 +174,19 @@ run, which is read before its buttons are reached.
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing and does nothing else |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
-| <kbd>Tab</kbd> | Moves between the pane's controls, as on any page |
+| <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last |
+
+Every control of the view is reached by keyboard alone in WebKit, the
+app's own webview on macOS, which passes over a button on Tab unless it is
+made a stop. Groups that are lists are one stop for Tab, walked with the
+arrows, as the app's other lists are: the thread, where the arrows move
+through its folds, steps and links from what is in view and
+<kbd>Enter</kbd> opens one, and the dock's choices. The composer's
+controls, attach, the model and the mode, Send and Stop, the dock's folds,
+and the buttons of the cards that ask before a session can run are stops
+of their own in reading order. Focus is always drawn where the keyboard
+is.
 
 The dock's choices are one stop for the keyboard. The arrow keys move
 between them, <kbd>Home</kbd> and <kbd>End</kbd> jump, <kbd>Enter</kbd> or a

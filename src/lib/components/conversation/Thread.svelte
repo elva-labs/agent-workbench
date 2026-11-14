@@ -214,6 +214,48 @@
     pinned = false;
   }
 
+  /** What the arrows walk in the thread: its folds, steps and links, in
+      the order they stand, while they are drawn. */
+  function items(): HTMLElement[] {
+    if (col === null) return [];
+    return [...col.querySelectorAll<HTMLElement>("[data-thread-item], a[href]")].filter(
+      (item) => item.getClientRects().length > 0 && !(item as HTMLButtonElement).disabled,
+    );
+  }
+
+  /** The thread is one stop for Tab, as a list is. Up and Down move
+      through what it holds, from where the keyboard is or, from the thread
+      itself, from what is in view; Home and End go to the first and the
+      last. The other keys that scroll scroll it. */
+  function onThreadKey(e: KeyboardEvent) {
+    touched = performance.now();
+    if (scroller === null) return;
+    const all = items();
+    const at = all.indexOf(document.activeElement as HTMLElement);
+    const walk = ["ArrowDown", "ArrowUp"].includes(e.key) || (at !== -1 && ["Home", "End"].includes(e.key));
+    if (!walk || all.length === 0 || e.metaKey || e.ctrlKey || e.altKey) {
+      if (SCROLL_KEYS.has(e.key)) userScrolls();
+      return;
+    }
+    e.preventDefault();
+    let next: number;
+    if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = all.length - 1;
+    else if (at !== -1) next = Math.max(0, Math.min(all.length - 1, at + (e.key === "ArrowDown" ? 1 : -1)));
+    else {
+      const view = scroller.getBoundingClientRect();
+      const seen = all.filter((item) => {
+        const box = item.getBoundingClientRect();
+        return box.bottom > view.top && box.top < view.bottom;
+      });
+      const pick = e.key === "ArrowDown" ? seen[0] : seen[seen.length - 1];
+      next = pick === undefined ? (e.key === "ArrowDown" ? 0 : all.length - 1) : all.indexOf(pick);
+    }
+    userScrolls();
+    all[next].focus({ preventScroll: true });
+    all[next].scrollIntoView({ block: "nearest" });
+  }
+
   function toFoot() {
     if (scroller === null) return;
     pinned = true;
@@ -243,9 +285,10 @@
 </script>
 
 <div class="frame">
-<!-- The handlers only note that the user acted in the thread. -->
+<!-- One stop for Tab, walked with the arrows; the pointer handlers only
+     note that the user acted in the thread. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="thread"
   bind:this={scroller}
@@ -255,14 +298,13 @@
     // A press on the scrollbar itself scrolls.
     if (e.target === scroller) userScrolls();
   }}
-  onkeydown={(e) => {
-    touched = performance.now();
-    if (SCROLL_KEYS.has(e.key)) userScrolls();
-  }}
+  onkeydown={onThreadKey}
   onwheel={userScrolls}
   ontouchmove={userScrolls}
+  role="log"
+  aria-label="The conversation"
   data-testid="thread"
-  tabindex="-1"
+  tabindex="0"
 >
   <div class="col" bind:this={col}>
     {#if conversation.late || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0)}
@@ -323,7 +365,7 @@
 </div>
 
 {#if behind}
-  <button class="latest" onclick={toFoot} data-testid="jump-latest">
+  <button class="latest" tabindex="0" onclick={toFoot} data-testid="jump-latest">
     <Icon name="down" size={12} />Latest
   </button>
 {/if}
@@ -346,7 +388,7 @@
         <b>You</b>
       {:else}
         <span>From</span><span class="sender" data-testid="message-sender"><Plain text={from.name} /></span>
-        {#if from.key !== null}<button class="link go" onclick={() => goToSender(from)} data-testid="message-sender-go"
+        {#if from.key !== null}<button class="link go" tabindex="-1" data-thread-item onclick={() => goToSender(from)} data-testid="message-sender-go"
             >Go to it</button
           >{/if}
       {/if}
@@ -365,6 +407,8 @@
     {#if words.instructions !== null}
       <button
         class="link instructions"
+        tabindex="-1"
+        data-thread-item
         onclick={() => (unfolded[said.id] = !unfolded[said.id])}
         aria-expanded={unfolded[said.id] === true}
         data-testid="workbench-instructions">Instructions from the workbench</button
@@ -379,14 +423,14 @@
       <p class="state bad">
         Not answered{said.error ? `: ${said.error}` : ""}
         {#if onPutBack}
-          <button class="link" onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+          <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {:else if said.state === "failed"}
       <p class="state bad">
         Not sent{said.error ? `: ${said.error}` : ""}
         {#if onPutBack}
-          <button class="link" onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+          <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {/if}
@@ -407,7 +451,6 @@
     min-height: 0;
     overflow-y: auto;
     padding: 22px 24px 12px;
-    outline: none;
   }
 
   @container conversation (max-width: 520px) {

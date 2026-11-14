@@ -73,6 +73,8 @@
 <div class="step" class:open data-testid="step" data-tool={part.kind === "tool" ? part.tool : "thinking"}>
   <button
     class="row"
+    tabindex="-1"
+    data-thread-item
     onclick={() => (open = !open)}
     aria-expanded={open}
     data-testid="step-row"

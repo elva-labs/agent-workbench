@@ -31,6 +31,13 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
     },
+    // WebKit is the app's own webview on macOS, where Tab passes over a
+    // control unless it is made a stop; what depends on that runs there too.
+    {
+      name: "webkit",
+      testMatch: /\.webkit\.spec\.ts$/,
+      use: { ...devices["Desktop Safari"], viewport: { width: 1440, height: 900 } },
+    },
   ],
   webServer: {
     command: "npm run dev",

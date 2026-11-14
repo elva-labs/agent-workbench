@@ -376,17 +376,17 @@
       {#if command !== null || lines_ !== null || full !== null}
         <div class="folds">
           {#if command !== null}
-            <button class="reveal" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-command">
+            <button class="reveal" tabindex="0" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-command">
               <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>The whole command
             </button>
           {/if}
           {#if lines_ !== null}
-            <button class="reveal" onclick={() => (showChange = !showChange)} aria-expanded={showChange} data-testid="permission-details">
+            <button class="reveal" tabindex="0" onclick={() => (showChange = !showChange)} aria-expanded={showChange} data-testid="permission-details">
               <span class="chev" class:open={showChange}><Icon name="chev" size={11} /></span>The change
             </button>
           {/if}
           {#if full !== null}
-            <button class="reveal" onclick={() => (showWhole = !showWhole)} aria-expanded={showWhole} data-testid="permission-whole">
+            <button class="reveal" tabindex="0" onclick={() => (showWhole = !showWhole)} aria-expanded={showWhole} data-testid="permission-whole">
               <span class="chev" class:open={showWhole}><Icon name="chev" size={11} /></span>The whole request
             </button>
           {/if}
@@ -416,7 +416,7 @@
             aria-label="Why the call is denied"
             data-testid="deny-words"
           />
-          <button class="choice" onclick={() => denying && choose(denying)} data-testid="deny-send">Deny</button>
+          <button class="choice" tabindex="0" onclick={() => denying && choose(denying)} data-testid="deny-send">Deny</button>
         </div>
       {:else}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -525,12 +525,13 @@
           {#if !direct(questions) || (own[0] ?? "").trim() !== ""}
             <button
               class="choice primary"
+              tabindex="0"
               disabled={request.answering || answers(questions) === null}
               onclick={() => send(questions)}
               data-testid="question-send">{direct(questions) ? "Send your answer" : "Answer"}</button
             >
           {/if}
-          <button class="choice quiet" disabled={request.answering} onclick={decline} data-testid="question-decline"
+          <button class="choice quiet" tabindex="0" disabled={request.answering} onclick={decline} data-testid="question-decline"
             >Don't answer</button
           >
         </div>

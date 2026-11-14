@@ -313,7 +313,7 @@
       {#each link.images as image, at (at)}
         <span class="thumb">
           <img src="data:{image.mediaType};base64,{image.data}" alt="Attached image {at + 1}" />
-          <button class="remove" onclick={() => remove(image)} aria-label="Remove image {at + 1}" data-testid="remove-attachment"
+          <button class="remove" tabindex="0" onclick={() => remove(image)} aria-label="Remove image {at + 1}" data-testid="remove-attachment"
             ><Icon name="x" size={10} /></button
           >
         </span>
@@ -343,7 +343,7 @@
     <p class="hint" data-testid="composer-held">Sends once the images are read.</p>
   {/if}
   <div class="bar">
-    <button class="chip bare" onclick={() => picker?.click()} aria-label="Attach images" title="Attach images" data-testid="attach"
+    <button class="chip bare" tabindex="0" onclick={() => picker?.click()} aria-label="Attach images" title="Attach images" data-testid="attach"
       ><Icon name="clip" /></button
     >
     <input
@@ -361,6 +361,7 @@
     <div class="picker">
       <button
         class="chip"
+        tabindex="0"
         onclick={() => openMenu("model")}
         disabled={models.length === 0 || !ready}
         aria-haspopup="menu"
@@ -392,6 +393,7 @@
       <div class="picker">
         <button
           class="chip"
+          tabindex="0"
           onclick={() => openMenu("mode")}
           disabled={modes.length === 0 || !ready}
           aria-haspopup="menu"
@@ -426,13 +428,14 @@
     {/if}
     <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
     {#if running}
-      <button class="round stop" onclick={stop} aria-label="Stop" title="Stop the agent (Esc)" data-testid="stop"
+      <button class="round stop" tabindex="0" onclick={stop} aria-label="Stop" title="Stop the agent (Esc)" data-testid="stop"
         ><Icon name="stop" size={12} /></button
       >
     {/if}
     {#if !running || hasWords}
       <button
         class="round send"
+        tabindex="0"
         onclick={submit}
         disabled={!ready || !hasWords || reading > 0}
         aria-label={running ? "Send, to wait for the agent" : "Send"}

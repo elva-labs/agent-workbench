@@ -142,10 +142,10 @@
           where its files came from.
         </p>
         <div class="buttons">
-          <button class="primary" disabled={link.busy} onclick={() => trust(session.key)} data-testid="trust-folder"
+          <button class="primary" tabindex="0" disabled={link.busy} onclick={() => trust(session.key)} data-testid="trust-folder"
             >Trust and start</button
           >
-          <button onclick={() => close(session.key)} data-testid="trust-not-now">Not now</button>
+          <button tabindex="0" onclick={() => close(session.key)} data-testid="trust-not-now">Not now</button>
         </div>
       </div>
     </div>
@@ -159,7 +159,7 @@
           session again. The workbench never signs in for you.
         </p>
         <div class="buttons">
-          <button class="primary" disabled={link.busy} onclick={() => resume(session.key)} data-testid="login-retry"
+          <button class="primary" tabindex="0" disabled={link.busy} onclick={() => resume(session.key)} data-testid="login-retry"
             >Try again</button
           >
         </div>
@@ -178,7 +178,7 @@
       {#if over}
         <div class="ended" data-testid="session-ended">
           <span class="why">{why}</span>
-          <button class="primary" disabled={link.busy} onclick={() => resume(session.key)} data-testid="resume-session"
+          <button class="primary" tabindex="0" disabled={link.busy} onclick={() => resume(session.key)} data-testid="resume-session"
             >{session.status === "failed" ? "Try again" : "Resume"}</button
           >
         </div>

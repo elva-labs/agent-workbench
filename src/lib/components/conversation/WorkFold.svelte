@@ -30,7 +30,7 @@
 </script>
 
 <div class="fold" class:open data-testid="work">
-  <button class="line" onclick={() => (open = !open)} aria-expanded={open} data-testid="work-line">
+  <button class="line" tabindex="-1" data-thread-item onclick={() => (open = !open)} aria-expanded={open} data-testid="work-line">
     <span class="chev"><Icon name="chev" size={12} /></span>
     <span class="head" class:running={summary.running}>{summary.head}{summary.detail ? "," : ""}</span>
     {#if summary.detail}<span class="detail">{summary.detail}</span>{/if}

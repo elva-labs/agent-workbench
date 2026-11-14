@@ -42,7 +42,7 @@
           {session.needs === "permission" ? "asking" : statusLabel(session)}
         </span>
         <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)} /></span>
-        <button class="open" onclick={() => open(session)} data-testid="open-started">Open</button>
+        <button class="open" tabindex="-1" data-thread-item onclick={() => open(session)} data-testid="open-started">Open</button>
       </div>
     {/each}
   </div>

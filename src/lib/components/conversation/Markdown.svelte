@@ -1,6 +1,7 @@
 <script lang="ts">
   import { core } from "$lib/core";
   import { renderSaid } from "$lib/media.svelte";
+  import { tick } from "svelte";
 
   /**
    * What the agent wrote, as a reader sees it: the same Markdown the viewer
@@ -40,6 +41,19 @@
 
   let html = $derived(renderSaid(shown));
 
+  let box = $state<HTMLDivElement | null>(null);
+
+  // A link is walked with the arrows in the thread, which is one stop for
+  // Tab, rather than being a stop of its own.
+  $effect(() => {
+    html;
+    const node = box;
+    // After the text is drawn again, which can be a turn after this runs.
+    void tick().then(() => {
+      for (const link of node?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) link.tabIndex = -1;
+    });
+  });
+
   function onclick(e: MouseEvent) {
     const anchor = (e.target as HTMLElement | null)?.closest("a");
     if (anchor === null || anchor === undefined) return;
@@ -51,7 +65,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="md" class:streaming {onclick} data-testid="markdown">{@html html}</div>
+<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown">{@html html}</div>
 
 <style>
   .md {
