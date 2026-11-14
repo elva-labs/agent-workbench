@@ -97,13 +97,18 @@
     color: var(--ink);
   }
 
+  /* In a narrow pane the buttons wrap to rows of their own, each on one
+     line. */
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
     margin-left: auto;
   }
 
   button {
+    white-space: nowrap;
     padding: 4px 10px;
     border: 0;
     border-radius: var(--radius);
