@@ -768,13 +768,12 @@ fn concerns(event: &notify::Result<notify::Event>, path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::events::testing::Recorder;
+    use crate::scratch::Scratch;
     use serde_json::json;
     use std::time::{Duration, Instant};
 
-    fn home(name: &str) -> PathBuf {
-        let home = std::env::temp_dir().join(format!("workbench-settings-{name}"));
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
+    fn home(name: &str) -> Scratch {
+        let home = Scratch::new(&format!("settings-{name}"));
         home
     }
 

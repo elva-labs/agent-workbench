@@ -54,9 +54,7 @@ fn pairs_with_this_machine_by_token_and_runs_the_daemon_there() {
         workbench_core::pair::connect(&real_home, &daemon, Some("localhost".into()), 22).unwrap();
 
     // The desktop's side, with files of its own.
-    let home = std::env::temp_dir().join("workbench-localhost-home");
-    std::fs::remove_dir_all(&home).ok();
-    std::fs::create_dir_all(&home).unwrap();
+    let home = workbench_core::scratch::Scratch::new("localhost-home");
     let files = Files::new(&home);
     let saved = files.pair(&token).unwrap();
     assert_eq!(saved.host, "localhost");

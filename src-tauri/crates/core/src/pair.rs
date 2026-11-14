@@ -299,6 +299,7 @@ pub fn own_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     fn pairing() -> Pairing {
         Pairing {
@@ -385,9 +386,7 @@ mod tests {
 
     #[test]
     fn reads_the_host_key_sshd_keeps_preferring_ed25519() {
-        let etc = std::env::temp_dir().join("workbench-pair-etc");
-        std::fs::remove_dir_all(&etc).ok();
-        std::fs::create_dir_all(&etc).unwrap();
+        let etc = Scratch::new("pair-etc");
         assert_eq!(host_key(&etc), None);
         std::fs::write(
             etc.join("ssh_host_rsa_key.pub"),
@@ -406,11 +405,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn connect_authorises_a_fresh_key_for_the_daemon_and_hands_it_over_in_the_token() {
-        let home = std::env::temp_dir().join("workbench-pair-home");
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
-        let etc = std::env::temp_dir().join("workbench-pair-etc2");
-        std::fs::create_dir_all(&etc).unwrap();
+        let home = Scratch::new("pair-home");
+        let etc = Scratch::new("pair-etc2");
         std::fs::write(
             etc.join("ssh_host_ed25519_key.pub"),
             "ssh-ed25519 AAAAC3 root@lab\n",

@@ -251,6 +251,7 @@ pub fn watch_log(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn classifies_what_the_rows_show_and_nothing_else() {
@@ -347,7 +348,8 @@ mod tests {
 
     #[test]
     fn reads_only_what_is_new_and_only_whole_lines() {
-        let path = std::env::temp_dir().join("workbench-activity-tail.jsonl");
+        let dir = Scratch::new("activity-tail");
+        let path = dir.join("tail.jsonl");
         std::fs::write(&path, "{\"a\":1}\n{\"b\":2}\n").unwrap();
         let (lines, offset) = read_new(&path, 0);
         assert_eq!(lines, ["{\"a\":1}", "{\"b\":2}"]);

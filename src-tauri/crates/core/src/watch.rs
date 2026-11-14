@@ -441,6 +441,7 @@ fn accessed(event: &Event) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn worktree_changes_are_interesting() {
@@ -512,10 +513,8 @@ mod tests {
         );
     }
 
-    fn repo_with_ignore(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-watch-{name}"));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+    fn repo_with_ignore(name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("watch-{name}"));
         Repository::init(&dir).unwrap();
         std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
         dir
@@ -545,10 +544,9 @@ mod tests {
     // Unsure means not ignored: a spurious refresh is cheap, a missed one is not.
     #[test]
     fn without_a_repository_nothing_is_covered() {
-        let dir = std::env::temp_dir().join("workbench-watch-norepo");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("watch-norepo");
         let ignored = Ignored {
-            root: dir.clone(),
+            root: dir.to_path_buf(),
             repo: None,
         };
         assert!(!ignored.covers(&event(&[dir.join("target/debug/app")])));
@@ -556,10 +554,8 @@ mod tests {
     }
 
     /// A repository with a linked worktree under it, and the worktree's path.
-    fn repo_with_worktree(name: &str) -> (PathBuf, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("workbench-watch-{name}"));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+    fn repo_with_worktree(name: &str) -> (Scratch, PathBuf) {
+        let dir = Scratch::new(&format!("watch-{name}"));
         let git = |args: &[&str], at: &Path| {
             std::process::Command::new("git")
                 .args(args)
@@ -615,8 +611,7 @@ mod tests {
     #[test]
     fn shown_files_are_watched_by_directory_outside_the_tree_only() {
         let dir = repo_with_ignore("shown-dirs");
-        let elsewhere = std::env::temp_dir().join("workbench-watch-shown-elsewhere");
-        std::fs::create_dir_all(&elsewhere).unwrap();
+        let elsewhere = Scratch::new("watch-shown-elsewhere");
         let dirs = shown_dirs(
             &dir,
             &[
@@ -626,7 +621,7 @@ mod tests {
                 PathBuf::from("/nowhere/at/all/d.md"),
             ],
         );
-        assert_eq!(dirs, HashSet::from([elsewhere]));
+        assert_eq!(dirs, HashSet::from([elsewhere.to_path_buf()]));
     }
 
     /// What the sink saw of an event, waiting for it to arrive.
@@ -674,9 +669,7 @@ mod tests {
     #[test]
     fn a_change_to_a_shown_file_is_emitted_wherever_it_is() {
         let dir = repo_with_ignore("shown-change");
-        let elsewhere = std::env::temp_dir().join("workbench-watch-shown-change-elsewhere");
-        std::fs::remove_dir_all(&elsewhere).ok();
-        std::fs::create_dir_all(&elsewhere).unwrap();
+        let elsewhere = Scratch::new("watch-shown-change-elsewhere");
         let outside = elsewhere.join("draft.md");
         std::fs::write(&outside, "one\n").unwrap();
         std::fs::create_dir_all(dir.join("target")).unwrap();
@@ -686,7 +679,7 @@ mod tests {
         let recorder = Arc::new(crate::events::testing::Recorder::default());
         let sink: Arc<dyn Sink> = Arc::clone(&recorder) as Arc<dyn Sink>;
         let watchers = Watchers::default();
-        watch(sink, &watchers, dir.clone(), None).unwrap();
+        watch(sink, &watchers, dir.to_path_buf(), None).unwrap();
         watch_shown(&watchers, &[outside.clone(), ignored.clone()]);
         // The watcher takes a moment to be looking, and macOS may still
         // deliver the writes made before it was: those are let through.

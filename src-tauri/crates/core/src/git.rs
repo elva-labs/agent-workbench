@@ -673,15 +673,14 @@ pub fn worktree_remove(project: &Path, name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
     use std::process::Command;
 
     /// A throwaway repository. Shelling out to git rather than building one
     /// through the API keeps the fixtures readable and matches what a user's
     /// tree actually looks like.
-    fn repo(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-git-{name}"));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+    fn repo(name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("git-{name}"));
 
         let run = |args: &[&str]| {
             Command::new("git")
@@ -945,8 +944,7 @@ mod tests {
 
     #[test]
     fn says_plainly_when_there_is_no_repository() {
-        let dir = std::env::temp_dir().join("workbench-git-none");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("git-none");
         // A temp directory can sit inside someone's repository, so only assert
         // on the error when discovery genuinely finds nothing.
         if let Err(message) = status(&dir) {
@@ -1054,9 +1052,7 @@ mod tests {
 
     #[test]
     fn a_directory_that_is_no_repository_says_so() {
-        let dir = std::env::temp_dir().join("workbench-git-worktree-bare");
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("git-worktree-bare");
         let refused = worktree_add(&dir, "review").unwrap_err();
         assert!(refused.contains("not a git repository"), "{refused}");
     }

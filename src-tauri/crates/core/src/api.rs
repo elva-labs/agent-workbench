@@ -948,6 +948,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 mod tests {
     use super::*;
     use crate::events::testing::Recorder;
+    use crate::scratch::Scratch;
 
     fn core() -> Core {
         Core::new(Arc::new(Recorder::default()))
@@ -991,8 +992,7 @@ mod tests {
 
     #[test]
     fn lists_the_directories_under_a_path_and_skips_the_hidden() {
-        let dir = std::env::temp_dir().join("workbench-api-dirs");
-        std::fs::remove_dir_all(&dir).ok();
+        let dir = Scratch::absent("api-dirs");
         std::fs::create_dir_all(dir.join("beta")).unwrap();
         std::fs::create_dir_all(dir.join("Alpha")).unwrap();
         std::fs::create_dir_all(dir.join(".hidden")).unwrap();

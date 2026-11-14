@@ -26,6 +26,7 @@ use serde_json::{json, Value};
 use super::*;
 use crate::claude_stream::CLAUDE_STREAM;
 use crate::events::testing::Recorder;
+use crate::scratch::Scratch;
 
 const STAND_IN: &str = r#"#!/bin/sh
 dir=$(dirname "$FAKE_CLAUDE_SCENARIO")
@@ -83,7 +84,7 @@ const INIT: &str = r#"say {"type":"system","subtype":"init","model":"claude-haik
 const DONE: &str = r#"say {"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.01,"duration_ms":5,"usage":{"input_tokens":3,"output_tokens":4}}"#;
 
 struct Harness {
-    dir: PathBuf,
+    dir: Scratch,
     sessions: Arc<Sessions>,
     recorder: Arc<Recorder>,
     id: String,
@@ -105,12 +106,7 @@ fn start_in(
     adjust: impl FnOnce(&mut Launch),
 ) -> Harness {
     use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!(
-        "workbench-integrated-{name}-{}",
-        std::process::id()
-    ));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = Scratch::new(&format!("integrated-{name}"));
     let claude = dir.join("claude");
     std::fs::write(&claude, STAND_IN).unwrap();
     std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1068,9 +1064,7 @@ fn a_missing_agent_explains_itself() {
 #[test]
 #[ignore = "runs the real claude, signed in, and spends a little of its usage"]
 fn real_claude_holds_a_short_turn() {
-    let dir =
-        std::env::temp_dir().join(format!("workbench-integrated-real-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = Scratch::new("integrated-real");
     let environment = crate::env::environment();
     let recorder = Arc::new(Recorder::default());
     let sessions = Arc::new(Sessions::default());

@@ -90,12 +90,10 @@ pub fn single_instance() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use workbench_core::scratch::Scratch;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp(name: &str) -> Scratch {
+        Scratch::new(name)
     }
 
     fn args(list: &[&str]) -> Vec<String> {
@@ -116,13 +114,19 @@ mod tests {
             "missing",
             elsewhere.to_str().unwrap(),
         ]);
-        assert_eq!(folders(named, &dir), vec![dir.join("project"), elsewhere]);
+        assert_eq!(
+            folders(named, &dir),
+            vec![dir.join("project"), elsewhere.to_path_buf()]
+        );
     }
 
     #[test]
     fn a_dot_is_where_the_command_ran() {
         let dir = temp("workbench-launch-dot");
-        assert_eq!(folders(args(&["agent-workbench", "."]), &dir), vec![dir]);
+        assert_eq!(
+            folders(args(&["agent-workbench", "."]), &dir),
+            vec![dir.to_path_buf()]
+        );
     }
 
     #[test]
