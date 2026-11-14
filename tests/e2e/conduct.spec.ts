@@ -504,7 +504,12 @@ test.describe("a session that follows a workflow", () => {
 
     // The worker's tag says what its step allows, in the settings' words,
     // to the person reading it rather than to the orchestrator.
-    await page.getByTestId("started-session").first().click();
+    // On the pane's rail the worker shows its place where a started row
+    // shows its model.
+    const workerRow = page.getByTestId("started-session").first();
+    await expect(workerRow.getByTestId("started-role")).toHaveText("Work");
+    await expect(workerRow.getByTestId("started-model")).toHaveCount(0);
+    await workerRow.click();
     await expect(page.getByTestId("workflow-tag-role")).toHaveText("Work");
     await page.getByTestId("workflow-tag").click();
     const rules = page.getByTestId("workflow-rules");
