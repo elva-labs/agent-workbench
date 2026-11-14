@@ -2363,6 +2363,10 @@ pub fn stop_all(sessions: &Arc<Sessions>) {
 #[path = "integrated_stand_in.rs"]
 mod stand_in;
 
+#[cfg(all(test, unix))]
+#[path = "codex_stand_in.rs"]
+mod codex_stand_in;
+
 #[cfg(test)]
 mod tests {
     use super::*;
