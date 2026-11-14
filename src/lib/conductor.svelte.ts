@@ -42,7 +42,7 @@ import {
   type Session,
 } from "$lib/sessions.svelte";
 import type { AgentId } from "$lib/core";
-import { screen } from "$lib/screens";
+import { screen, takesPaste } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -70,12 +70,76 @@ export const OUTCOME_ASK =
     a newline in it rather than a send. */
 export const ENTER_AFTER = 150;
 
-/** Types a line into a session the way a person does: the text, and then
-    Enter on its own. The agent has been spoken to, as by a line typed
+/** The size in bytes from which a line is not typed in one write. An
+    agent's input loses the start of a long run of characters that arrives
+    at once, so a longer line goes in as a paste or in small pieces. */
+export const PASTE_FROM = 200;
+/** The size in bytes of each piece of a line typed in pieces, and the wait
+    between them. */
+export const PIECE = 64;
+export const PIECE_EVERY = 10;
+/** The most a line's Enter waits after a paste, which grows with the line
+    so the agent has taken the paste in before the key arrives. */
+export const ENTER_AFTER_MAX = 1000;
+
+const encoder = new TextEncoder();
+
+/** The line in pieces of at most PIECE bytes, none cut through a character. */
+function pieces(line: string): string[] {
+  const out: string[] = [];
+  let piece = "";
+  let size = 0;
+  for (const char of line) {
+    const bytes = encoder.encode(char).length;
+    if (size + bytes > PIECE) {
+      out.push(piece);
+      piece = "";
+      size = 0;
+    }
+    piece += char;
+    size += bytes;
+  }
+  if (piece !== "") out.push(piece);
+  return out;
+}
+
+/** Writes text into a session's pty whole, without Enter. Short text goes in
+    as it is. Long text goes in as one bracketed paste when the session's
+    terminal has asked for paste, and otherwise in small pieces with a short
+    wait between them, so no markers reach a program that did not ask for
+    them. Answers with how long to wait before a key that follows it. */
+export async function typeWhole(
+  key: string,
+  ptyId: string,
+  text: string,
+): Promise<number> {
+  const size = encoder.encode(text).length;
+  if (size < PASTE_FROM) {
+    await core().write(ptyId, text);
+    return ENTER_AFTER;
+  }
+  if (takesPaste(key)) {
+    await core().write(ptyId, `\x1b[200~${text}\x1b[201~`);
+    return Math.min(ENTER_AFTER + size / 20, ENTER_AFTER_MAX);
+  }
+  const parts = pieces(text);
+  for (const [index, part] of parts.entries()) {
+    if (index > 0) await pause(PIECE_EVERY);
+    await core().write(ptyId, part);
+  }
+  return ENTER_AFTER;
+}
+
+/** Types a line into a session the way a person does: the text, whole, and
+    then Enter on its own. The agent has been spoken to, as by a line typed
     into its terminal. */
-export async function typeLine(ptyId: string, line: string): Promise<void> {
-  await core().write(ptyId, line);
-  await pause(ENTER_AFTER);
+export async function typeLine(
+  key: string,
+  ptyId: string,
+  line: string,
+): Promise<void> {
+  const wait = await typeWhole(key, ptyId, line);
+  await pause(wait);
   await core().write(ptyId, "\r");
   typed(ptyId, "\r");
 }
@@ -679,7 +743,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   if (!mine(request, session)) return notMine(id);
   if (session.status !== "running" || session.ptyId === null)
     return refused(`Session ${id} is not running.`);
-  await typeLine(session.ptyId, oneLine(line));
+  await typeLine(session.key, session.ptyId, oneLine(line));
   return said(`Sent to session ${id}. Call wait to hear what it does next.`);
 }
 
