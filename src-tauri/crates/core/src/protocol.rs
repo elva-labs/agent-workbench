@@ -975,14 +975,17 @@ mod tests {
         )
         .expect_err("a trust names its project");
         assert!(missing.contains("bad parameters"), "{missing}");
+        // A Codex home of its own, so that no trust the developer gave decides.
+        let folder = Scratch::new("protocol-codex-untrusted");
+        let codex_home = Scratch::new("protocol-codex-home");
         let codex = dispatch(
             &core,
             "integrated_start",
-            json!({ "agent": "codex", "project": "/tmp" }),
+            json!({ "agent": "codex", "project": folder.path(), "configDir": codex_home.path() }),
             no_output,
         )
-        .expect_err("codex has no integrated mode here");
-        assert!(codex.contains("integrated"), "{codex}");
+        .expect_err("codex runs integrated only in a folder it trusts");
+        assert!(codex.starts_with(crate::integrated::UNTRUSTED), "{codex}");
         for (method, params) in [
             (
                 "integrated_send",

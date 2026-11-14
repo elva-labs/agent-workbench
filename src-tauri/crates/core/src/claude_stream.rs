@@ -200,11 +200,23 @@ impl Protocol for ClaudeStream {
         ))
     }
 
-    fn trusted(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> bool {
+    fn trusted(
+        &self,
+        home: &Path,
+        config_dir: Option<&Path>,
+        _: &HashMap<String, String>,
+        folder: &Path,
+    ) -> bool {
         hook::claude_trusts(&state_file(home, config_dir), folder)
     }
 
-    fn trust(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> Result<(), String> {
+    fn trust(
+        &self,
+        home: &Path,
+        config_dir: Option<&Path>,
+        _: &HashMap<String, String>,
+        folder: &Path,
+    ) -> Result<(), String> {
         hook::claude_trust(&state_file(home, config_dir), folder)
     }
 }
