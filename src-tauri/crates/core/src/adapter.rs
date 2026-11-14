@@ -372,6 +372,20 @@ impl AgentAdapter for Codex {
 static CLAUDE_CODE: ClaudeCode = ClaudeCode;
 static CODEX: Codex = Codex;
 
+/// Every agent the workbench drives, by id.
+pub const AGENT_IDS: &[&str] = &["claude-code", "codex"];
+
+/// The agents whose sessions can run integrated: the ones whose adapter
+/// drives them in messages. Asked here alone, so the settings, the window
+/// and every start agree.
+pub fn integrated_agents() -> Vec<&'static str> {
+    AGENT_IDS
+        .iter()
+        .copied()
+        .filter(|id| adapter_for(id).is_some_and(|adapter| adapter.caps().integrated))
+        .collect()
+}
+
 pub fn adapter_for(id: &str) -> Option<&'static dyn AgentAdapter> {
     match id {
         "claude-code" => Some(&CLAUDE_CODE),
@@ -384,6 +398,14 @@ pub fn adapter_for(id: &str) -> Option<&'static dyn AgentAdapter> {
 mod tests {
     use super::*;
     use crate::scratch::Scratch;
+
+    #[test]
+    fn the_agents_that_run_integrated_are_the_ones_whose_adapter_drives_them() {
+        assert_eq!(integrated_agents(), vec!["claude-code", "codex"]);
+        for id in integrated_agents() {
+            assert!(adapter_for(id).unwrap().integrated().is_some(), "{id}");
+        }
+    }
 
     fn vars_with_path(dir: &Path) -> HashMap<String, String> {
         HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())])

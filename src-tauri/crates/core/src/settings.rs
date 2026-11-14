@@ -52,9 +52,6 @@ pub const INTERFACE_FONTS: &[&str] = &["system", "plex", "inter"];
 /// How long a past session stays listed under its project before it goes
 /// behind the fold with the rest of the history.
 pub const PAST_SESSIONS: &[&str] = &["forever", "month", "week", "day"];
-/// The agents whose sessions can run integrated, driven in messages with
-/// the conversation drawn by the window.
-pub const INTEGRATED_AGENTS: &[&str] = &["claude-code"];
 /// How long a project goes unused before the sessions pane folds it under
 /// Inactive. Never keeps every project in the list.
 pub const INACTIVE_AFTER: &[&str] = &["day", "week", "month", "never"];
@@ -772,23 +769,25 @@ fn themes_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<Stri
 }
 
 /// The agents a value names as running integrated, each once, in the order
-/// `INTEGRATED_AGENTS` has them, or why it will not do.
+/// the adapters list them, or why it will not do. Which agents can is the
+/// adapters' to say.
 fn integrated(value: &Value) -> Result<Vec<String>, String> {
     let named = value
         .as_array()
         .ok_or("integrated is a list of the agents whose sessions run integrated")?;
+    let able = crate::adapter::integrated_agents();
     for agent in named {
         match agent.as_str() {
-            Some(agent) if INTEGRATED_AGENTS.contains(&agent) => {}
+            Some(agent) if able.contains(&agent) => {}
             _ => {
                 return Err(format!(
                     "only {} can run integrated, not {agent}",
-                    INTEGRATED_AGENTS.join(", ")
+                    able.join(", ")
                 ))
             }
         }
     }
-    Ok(INTEGRATED_AGENTS
+    Ok(able
         .iter()
         .filter(|known| named.iter().any(|agent| agent.as_str() == Some(known)))
         .map(|known| known.to_string())
@@ -1880,10 +1879,25 @@ mod tests {
         assert_eq!(next.integrated, vec!["claude-code".to_string()]);
         let back = apply(&next, &json!({ "integrated": [] })).unwrap();
         assert!(back.integrated.is_empty());
-        let error = apply(&settings, &json!({ "integrated": ["codex"] })).unwrap_err();
-        assert!(error.contains("only claude-code"), "{error}");
+        // Codex runs integrated as its adapter says, and the order is the
+        // adapters'.
+        let both = apply(
+            &settings,
+            &json!({ "integrated": ["codex", "claude-code"] }),
+        )
+        .unwrap();
+        assert_eq!(
+            both.integrated,
+            vec!["claude-code".to_string(), "codex".to_string()]
+        );
+        let error = apply(&settings, &json!({ "integrated": ["gemini"] })).unwrap_err();
+        assert!(error.contains("only claude-code, codex"), "{error}");
         assert!(apply(&settings, &json!({ "integrated": "claude-code" })).is_err());
-        assert!(parse(r#"{ "integrated": ["codex"] }"#)
+        assert_eq!(
+            parse(r#"{ "integrated": ["codex"] }"#).unwrap().integrated,
+            vec!["codex".to_string()]
+        );
+        assert!(parse(r#"{ "integrated": ["gemini"] }"#)
             .unwrap()
             .integrated
             .is_empty());

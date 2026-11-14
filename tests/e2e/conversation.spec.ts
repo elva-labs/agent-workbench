@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { PROJECT, installFakeCore } from "./fake";
 
 // An integrated session as the user meets it: the conversation the agent
@@ -606,6 +607,52 @@ test.describe("a session of an agent shaped as Codex is", () => {
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
   }
+
+  test("drawn as the real Codex driver tells it, replayed from what the driver emits", async ({ page }) => {
+    // The events of one session through main's Codex driver against its
+    // stand-in, written by the core's test that plays it.
+    const events: { type: string }[] = JSON.parse(
+      readFileSync(new URL("../fixtures/codex-session.json", import.meta.url), "utf8"),
+    );
+    await openCodex(page);
+    // The view starts Codex in its safe mode, one the driver offers.
+    const start = (await calls(page)).find((call) => call.method === "start") as unknown as { options: { mode: string } };
+    const ready = events[0] as unknown as { modes: { value: string }[] };
+    expect(ready.modes.map((mode) => mode.value)).toContain(start.options.mode);
+    const play = (bodies: unknown[]) =>
+      page.evaluate((bodies) => {
+        const f = (window as unknown as { __integrated: { replay: (id: string, bodies: unknown) => void } }).__integrated;
+        f.replay("int-1", bodies);
+      }, bodies);
+    const asked = events.findIndex((event) => event.type === "questionAsked");
+    await play(events.slice(0, asked));
+    // A mode the user's configuration sets that is not among the modes
+    // shows as it is; full access is said to ask for nothing.
+    await expect(page.getByTestId("mode-chip")).toHaveText("untrusted, workspace-write");
+    await page.getByTestId("mode-chip").click();
+    await expect(page.getByTestId("mode-menu")).toContainText("From the agent's own configuration");
+    await expect(page.getByTestId("mode-menu")).toContainText("Changes anything and runs anything without asking");
+    await page.keyboard.press("Escape");
+    // A command as Codex wraps it, asked about as a command.
+    await expect(page.getByTestId("permission-dock")).toContainText("Codex asks to run /bin/zsh -lc 'npm test'");
+    await play(events.slice(asked));
+    // The question resolved itself, and the approval was withdrawn at the
+    // turn's end; the output came only when the command finished.
+    await expect(page.getByTestId("permission-dock")).toHaveCount(0);
+    await expect(page.getByTestId("asked")).toContainText("The agent stopped waiting for an answer.");
+    await page.getByTestId("work-line").last().click();
+    const step = page.getByTestId("step").first();
+    await expect(step.getByTestId("step-row")).toContainText("Ran /bin/zsh -lc 'npm test'");
+    await expect(step.getByTestId("step-status")).toHaveText("permission withdrawn");
+    await step.getByTestId("step-row").click();
+    await expect(step.getByTestId("step-output")).toHaveText("12 passed");
+    // The message Codex refused is dropped with its words, and can be put
+    // back.
+    const dropped = page.locator("[data-testid='user-message'][data-state='dropped']");
+    await expect(dropped).toContainText("And again");
+    await expect(dropped).toContainText("Not answered: the input is too long");
+    await expect(dropped.getByTestId("put-back")).toHaveCount(1);
+  });
 
   test("asked about by what its request is, a command shown whole, under the agent's own name", async ({ page }) => {
     await openCodex(page);

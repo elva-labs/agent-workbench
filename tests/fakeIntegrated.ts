@@ -103,6 +103,9 @@ export interface FakeIntegrated {
 
   /** Says anything at all for a session, under the core's rules. */
   emit(id: string, event: IntegratedEventBody): void;
+  /** Hands events the real core emitted to the window as they are, with
+      none of this fake's own rules: a replay of what a driver said. */
+  replay(id: string, events: IntegratedEventBody[]): void;
   /** Starts a turn for `messages`: by default all those waiting, or for a
       holding agent the one handed over. */
   startTurn(id: string, messages?: string[]): void;
@@ -559,6 +562,14 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     subscribe(handler) {
       handlers.add(handler);
       return () => handlers.delete(handler);
+    },
+
+    replay(id, events) {
+      for (const body of events) {
+        const event = { ...body, id } as IntegratedEvent;
+        fake.events.push(event);
+        for (const handler of handlers) handler(event);
+      }
     },
 
     emit(id, body) {
