@@ -41,7 +41,10 @@ its owner alone, and removed when the session's process ends. Each
 workbench process keeps its sessions' files in a folder of its own, beside
 a lock it holds for as long as it runs; the folder of a process that ended
 without removing its files, because it crashed, is removed the next time a
-workbench starts a session under a workflow.
+workbench starts a session under a workflow. On a filesystem that cannot
+lock, sessions start all the same, and nothing is removed: the folder has
+no lock, so no workbench takes it for one left behind, and a workbench that
+cannot lock removes no folder at all.
 
 Claude Code records the system prompt a conversation is first given and
 sends that on every resume. A resumed session told something other than

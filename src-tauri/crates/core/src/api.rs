@@ -1045,7 +1045,20 @@ const LOCK_SETTLES: std::time::Duration = std::time::Duration::from_secs(60);
 /// as it runs. The first time it is asked for, what processes that ended
 /// without removing their files left behind is removed.
 fn own_dir(home: &Path) -> Result<PathBuf, String> {
-    type Owned = Vec<(PathBuf, PathBuf, std::fs::File)>;
+    own_dir_locking(home, |file| file.try_lock())
+}
+
+/// `own_dir`, taking the lock with `lock`. Where the lock cannot be taken,
+/// as on a filesystem that does not lock, the folder has no lock file, so
+/// no process sweeps it, and this one sweeps nothing: it cannot tell a
+/// folder left behind from one in use.
+fn own_dir_locking(
+    home: &Path,
+    lock: impl Fn(&std::fs::File) -> Result<(), std::fs::TryLockError>,
+) -> Result<PathBuf, String> {
+    // Each folder with the lock this process holds on it, where it could
+    // take one.
+    type Owned = Vec<(PathBuf, PathBuf, Option<std::fs::File>)>;
     static OWNED: std::sync::Mutex<Owned> = std::sync::Mutex::new(Vec::new());
     let mut owned = OWNED.lock().unwrap_or_else(|e| e.into_inner());
     let made = |dir: &Path| {
@@ -1066,19 +1079,25 @@ fn own_dir(home: &Path) -> Result<PathBuf, String> {
     }
     let root = sessions_dir(home);
     made(&root)?;
-    sweep_sessions(&root);
     let name = new_session_id();
     let lock_path = root.join(format!("{name}.lock"));
-    let lock = std::fs::OpenOptions::new()
+    let file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&lock_path)
         .map_err(|e| format!("could not create {}: {e}", lock_path.display()))?;
-    lock.try_lock()
-        .map_err(|e| format!("could not lock {}: {e}", lock_path.display()))?;
+    let held = if lock(&file).is_ok() {
+        sweep_sessions(&root);
+        Some(file)
+    } else {
+        drop(file);
+        std::fs::remove_file(&lock_path)
+            .map_err(|e| format!("could not remove {}: {e}", lock_path.display()))?;
+        None
+    };
     let dir = root.join(&name);
     made(&dir)?;
-    owned.push((home.to_path_buf(), dir.clone(), lock));
+    owned.push((home.to_path_buf(), dir.clone(), held));
     Ok(dir)
 }
 
@@ -1239,6 +1258,36 @@ mod tests {
         assert!(std::fs::File::open(&own_lock).unwrap().try_lock().is_err());
         drop(held_lock);
         drop(files);
+    }
+
+    #[test]
+    fn a_filesystem_that_cannot_lock_still_starts_sessions_and_sweeps_nothing() {
+        let home = std::env::temp_dir().join("workbench-api-no-lock");
+        std::fs::remove_dir_all(&home).ok();
+        let root = sessions_dir(&home);
+        std::fs::create_dir_all(&root).unwrap();
+        // What looks left behind, which a process that cannot lock cannot
+        // tell from a folder in use.
+        let gone = root.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let gone_lock = std::fs::File::create(root.join("gone.lock")).unwrap();
+        gone_lock
+            .set_modified(std::time::SystemTime::now() - 2 * LOCK_SETTLES)
+            .unwrap();
+        drop(gone_lock);
+
+        let unsupported = |_: &std::fs::File| {
+            Err(std::fs::TryLockError::Error(std::io::Error::from(
+                std::io::ErrorKind::Unsupported,
+            )))
+        };
+        let own = own_dir_locking(&home, unsupported).unwrap();
+        assert!(own.is_dir());
+        assert!(gone.exists() && root.join("gone.lock").exists());
+        // Its folder has no lock file, so no other process sweeps it.
+        assert!(!own.with_extension("lock").exists());
+        // Asked again, it answers with the same folder.
+        assert_eq!(own_dir_locking(&home, unsupported).unwrap(), own);
     }
 
     #[cfg(unix)]
