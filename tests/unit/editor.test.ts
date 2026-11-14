@@ -3,6 +3,19 @@ import { EditorView } from "@codemirror/view";
 import {
   activeTab,
   activate,
+  anyUnsaved,
+  cancelAsk,
+  closeWindowAnyway,
+  closeWithoutSaving,
+  compare,
+  diskText,
+  keepMine,
+  loadFromDisk,
+  recheckOpen,
+  requestWindowClose,
+  save,
+  saveAndClose,
+  watchedFiles,
   attachView,
   closeTab,
   editor,
@@ -31,6 +44,12 @@ import { showRequested } from "$lib/show.svelte";
 const disk = new Map<string, string>();
 /** Paths the fake core reads as binary. */
 const binary = new Set<string>();
+/** Every write the fake core was asked for. */
+const writes: { file: string; text: string; stamp: string | null; overwrite: boolean }[] = [];
+/** The window controls the fake core was asked for. */
+const controls: string[] = [];
+/** A stamp names exact content. */
+const stampOf = (text: string) => `s:${text}`;
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -51,7 +70,22 @@ vi.mock("$lib/core", () => ({
       if (binary.has(file)) throw new Error(`${file} is a binary file, not text`);
       const text = disk.get(file);
       if (text === undefined) throw new Error(`${file} is not there`);
-      return { text, stamp: `s:${text.length}` };
+      return { text, stamp: stampOf(text) };
+    },
+    async fileWrite(_root: string, file: string, text: string, stamp: string | null, overwrite: boolean) {
+      writes.push({ file, text, stamp, overwrite });
+      const current = disk.get(file);
+      if (!overwrite) {
+        if (stamp === null && current !== undefined) return { written: false, stamp: stampOf(current) };
+        if (stamp !== null && current === undefined) return { written: false, stamp: null };
+        if (stamp !== null && current !== undefined && stampOf(current) !== stamp)
+          return { written: false, stamp: stampOf(current) };
+      }
+      disk.set(file, text);
+      return { written: true, stamp: stampOf(text) };
+    },
+    async windowControl(action: string) {
+      controls.push(action);
     },
     async setSelection() {},
     async watchShown() {},
@@ -80,6 +114,8 @@ beforeEach(async () => {
   clear();
   disk.clear();
   binary.clear();
+  writes.length = 0;
+  controls.length = 0;
   disk.set("docs/a.md", "# A\n\nfirst\nsecond\n");
   disk.set("src/b.rs", "fn b() {}\n");
   disk.set("src/c.rs", "fn c() {}\n");
@@ -134,7 +170,7 @@ describe("opening files", () => {
     await openFile("docs/a.md");
     const buffer = editor.buffers[keyOf("/one", "docs/a.md")];
     expect(buffer.loading).toBe(false);
-    expect(buffer.stamp).toBe("s:18");
+    expect(buffer.stamp).toBe(stampOf("# A\n\nfirst\nsecond\n"));
     expect(stateOf(keyOf("/one", "docs/a.md"))?.doc.toString()).toBe("# A\n\nfirst\nsecond\n");
     expect(files.selected).toBe("docs/a.md");
   });
@@ -318,3 +354,188 @@ describe("the language at the foot", () => {
   });
 });
 
+
+/** Lets every pending read and write land. */
+async function settle() {
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe("saving", () => {
+  it("writes the buffer with the stamp it was read with, and is saved after", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    expect(await save()).toBe(true);
+    expect(writes).toEqual([
+      {
+        file: "docs/a.md",
+        text: "x# A\n\nfirst\nsecond\n",
+        stamp: stampOf("# A\n\nfirst\nsecond\n"),
+        overwrite: false,
+      },
+    ]);
+    const buffer = editor.buffers[keyOf("/one", "docs/a.md")];
+    expect(buffer.dirty).toBe(false);
+    expect(buffer.stamp).toBe(stampOf("x# A\n\nfirst\nsecond\n"));
+    view.destroy();
+  });
+
+  it("never writes over a file that changed underneath: the bar goes up instead", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "mine " } });
+    disk.set("docs/a.md", "theirs\n");
+    expect(await save()).toBe(false);
+    expect(disk.get("docs/a.md")).toBe("theirs\n");
+    const buffer = editor.buffers[keyOf("/one", "docs/a.md")];
+    expect(buffer.changed).toEqual({ stamp: stampOf("theirs\n") });
+    expect(buffer.dirty).toBe(true);
+    // A second save does not try again over it.
+    expect(await save()).toBe(false);
+    expect(writes).toHaveLength(1);
+    view.destroy();
+  });
+
+  it("writes mine over the disk on Keep mine", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "mine " } });
+    disk.set("docs/a.md", "theirs\n");
+    await save();
+    await keepMine();
+    expect(writes.at(-1)).toMatchObject({ overwrite: true });
+    expect(disk.get("docs/a.md")).toBe("mine # A\n\nfirst\nsecond\n");
+    const buffer = editor.buffers[keyOf("/one", "docs/a.md")];
+    expect(buffer.changed).toBeNull();
+    expect(buffer.dirty).toBe(false);
+    view.destroy();
+  });
+
+  it("drops my edits for the disk's on Load from disk, undoably", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "mine " } });
+    disk.set("docs/a.md", "theirs\n");
+    await save();
+    await loadFromDisk();
+    expect(view.state.doc.toString()).toBe("theirs\n");
+    const buffer = editor.buffers[keyOf("/one", "docs/a.md")];
+    expect(buffer.dirty).toBe(false);
+    expect(buffer.changed).toBeNull();
+    view.destroy();
+  });
+
+  it("compares the disk's version against mine", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "mine " } });
+    disk.set("docs/a.md", "theirs\n");
+    await save();
+    await compare();
+    expect(editor.comparing).toBe(true);
+    expect(diskText(keyOf("/one", "docs/a.md"))).toBe("theirs\n");
+    await compare();
+    expect(editor.comparing).toBe(false);
+    view.destroy();
+  });
+
+  it("says why a save could not be made", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    disk.delete("docs/a.md");
+    expect(await save()).toBe(false);
+    expect(editor.buffers[keyOf("/one", "docs/a.md")].changed).toEqual({ stamp: null });
+    view.destroy();
+  });
+});
+
+describe("a change on disk", () => {
+  it("is read in at once with no unsaved edits, keeping the cursor where it was", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ selection: { anchor: 12 } });
+    disk.set("docs/a.md", "# A\n\nfirst\nsecond\nthird\n");
+    recheckOpen();
+    await settle();
+    expect(view.state.doc.toString()).toBe("# A\n\nfirst\nsecond\nthird\n");
+    expect(view.state.selection.main.head).toBe(12);
+    expect(editor.buffers[keyOf("/one", "docs/a.md")].dirty).toBe(false);
+    view.destroy();
+  });
+
+  it("raises the bar under unsaved edits, and leaves them be", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    disk.set("docs/a.md", "theirs\n");
+    recheckOpen();
+    await settle();
+    expect(view.state.doc.toString().startsWith("x# A")).toBe(true);
+    expect(editor.buffers[keyOf("/one", "docs/a.md")].changed).toEqual({ stamp: stampOf("theirs\n") });
+    view.destroy();
+  });
+
+  it("is nothing when the disk holds what the buffer was read with", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    recheckOpen();
+    await settle();
+    expect(editor.buffers[keyOf("/one", "docs/a.md")].changed).toBeNull();
+    view.destroy();
+  });
+
+  it("names the open files for the core to watch", async () => {
+    await openFile("docs/a.md", { keep: true });
+    await openFile("logo.png", { keep: true });
+    expect(watchedFiles()).toEqual(["/one/docs/a.md"]);
+  });
+});
+
+describe("closing with unsaved edits", () => {
+  it("asks first, and closes without saving on the answer", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    const key = keyOf("/one", "docs/a.md");
+    closeTab(key);
+    expect(editor.asking).toEqual({ kind: "close", key });
+    expect(editor.tabs).toHaveLength(1);
+    cancelAsk();
+    expect(editor.tabs).toHaveLength(1);
+    closeTab(key);
+    closeWithoutSaving();
+    expect(editor.tabs).toHaveLength(0);
+    expect(anyUnsaved()).toBe(false);
+    view.destroy();
+  });
+
+  it("saves and closes on the other answer", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    closeTab(keyOf("/one", "docs/a.md"));
+    await saveAndClose();
+    expect(disk.get("docs/a.md")?.startsWith("x# A")).toBe(true);
+    expect(editor.tabs).toHaveLength(0);
+    view.destroy();
+  });
+
+  it("asks before the window closes, and closes it on the answer", async () => {
+    requestWindowClose();
+    expect(controls).toEqual(["close"]);
+    controls.length = 0;
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    requestWindowClose();
+    expect(editor.asking).toEqual({ kind: "window" });
+    expect(controls).toEqual([]);
+    closeWindowAnyway();
+    await settle();
+    expect(controls).toEqual(["close"]);
+    view.destroy();
+  });
+});

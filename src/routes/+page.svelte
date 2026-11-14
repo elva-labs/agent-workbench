@@ -40,6 +40,7 @@
     loadEditorSize,
     otherKindShown,
     putAwayOther,
+    save,
     walkView,
     zoomEditor,
   } from "$lib/editor.svelte";
@@ -565,8 +566,10 @@
       case "toggleMode":
         flipMode();
         break;
-      case "newFile":
       case "save":
+        void save();
+        break;
+      case "newFile":
         break;
       case "findInFile":
         findInFile();

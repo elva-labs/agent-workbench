@@ -99,8 +99,10 @@
     layout.focusRequest;
     untrack(() => {
       if (view === null || layout.focus !== "changes" || editor.target !== "editor") return;
-      // Anything inside the editor, its find panel included, keeps it.
-      if (overlayHoldsKeyboard() || view.dom.contains(document.activeElement)) return;
+      // Anything inside the editor, its find panel included, keeps it, and
+      // so does a question put over it.
+      if (overlayHoldsKeyboard() || editor.asking !== null) return;
+      if (view.dom.contains(document.activeElement)) return;
       view.focus();
     });
   });

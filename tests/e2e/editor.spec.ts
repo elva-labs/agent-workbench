@@ -456,3 +456,121 @@ test.describe("what a tool points at in editor mode", () => {
     await expect.poll(() => editorText(page)).toContain("// README.md");
   });
 });
+
+/** The writes the fake core took. */
+function writes(page: Page) {
+  return page.evaluate(
+    () => (window as unknown as { __writes?: { file: string; text: string; overwrite: boolean }[] }).__writes ?? [],
+  );
+}
+
+/** Changes a file behind the editor's back, as the agent would. */
+async function diskWrite(page: Page, file: string, text: string) {
+  await page.evaluate(
+    ({ file, text }) =>
+      (window as unknown as { __disk: { write: (f: string, t: string) => void } }).__disk.write(file, text),
+    { file, text },
+  );
+}
+
+test.describe("saving and changes on disk", () => {
+  test.beforeEach(async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await treeRow(page, "README.md").click();
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+  });
+
+  test("writes nothing until saved, and saves on Cmd+S", async ({ page }) => {
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("mine");
+    await expect(page.getByTestId("editor-tab-dirty")).toBeVisible();
+    expect(await writes(page)).toEqual([]);
+    await page.keyboard.press(`${MOD}+s`);
+    await expect(page.getByTestId("editor-state")).toHaveText("Saved");
+    await expect(page.getByTestId("editor-tab-dirty")).toHaveCount(0);
+    await expect(page.locator(`${TREE} [data-testid='tree-unsaved']`)).toHaveCount(0);
+    expect(await writes(page)).toMatchObject([
+      { file: "README.md", text: "use std::collections::HashMap;\n\n// README.md\nmine", overwrite: false },
+    ]);
+  });
+
+  test("reads a change on disk in at once with no unsaved edits, keeping the cursor", async ({ page }) => {
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.press("ArrowUp");
+    await expect(page.getByTestId("editor-position")).toHaveText("Ln 3, Col 1");
+    await diskWrite(page, "README.md", "use std::collections::HashMap;\n\n// README.md\nmore from the agent\n");
+    await expect.poll(() => editorText(page)).toContain("more from the agent");
+    await expect(page.getByTestId("editor-position")).toHaveText("Ln 3, Col 1");
+    await expect(page.getByTestId("disk-bar")).toHaveCount(0);
+    await expect(page.getByTestId("editor-state")).toHaveText("Saved");
+  });
+
+  test("raises the bar for a change on disk under unsaved edits, and compares", async ({ page }) => {
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("mine");
+    await diskWrite(page, "README.md", "theirs\n");
+    await expect(page.getByTestId("disk-bar")).toContainText("changed on disk while you have unsaved edits");
+    await expect(page.getByTestId("editor-state")).toHaveText("Unsaved, and changed on disk");
+    // The bar does not say who changed it.
+    await expect(page.getByTestId("disk-bar")).not.toContainText("agent");
+
+    await page.getByTestId("disk-compare").click();
+    const compared = page.getByTestId("disk-compare-view");
+    await expect(compared.locator("tr.del")).toHaveText(/theirs/);
+    await expect(compared.locator("tr.add").last()).toHaveText(/mine/);
+    await page.getByTestId("disk-compare").click();
+    await expect(page.locator(".cm-content")).toBeVisible();
+
+    // A save does not overwrite what changed underneath.
+    await page.locator(".cm-content").click();
+    await page.keyboard.press(`${MOD}+s`);
+    expect(await writes(page)).toEqual([]);
+  });
+
+  test("writes mine over the disk on Keep mine", async ({ page }) => {
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("mine");
+    await diskWrite(page, "README.md", "theirs\n");
+    await page.getByTestId("disk-keep").click();
+    await expect(page.getByTestId("disk-bar")).toHaveCount(0);
+    await expect(page.getByTestId("editor-state")).toHaveText("Saved");
+    expect((await writes(page)).at(-1)).toMatchObject({ file: "README.md", overwrite: true });
+    expect((await writes(page)).at(-1)?.text).toContain("mine");
+  });
+
+  test("drops my edits for the disk's on Load from disk", async ({ page }) => {
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("mine");
+    await diskWrite(page, "README.md", "theirs\n");
+    await page.getByTestId("disk-load").click();
+    await expect(page.getByTestId("disk-bar")).toHaveCount(0);
+    await expect.poll(() => editorText(page)).toContain("theirs");
+    expect(await editorText(page)).not.toContain("mine");
+    await expect(page.getByTestId("editor-state")).toHaveText("Saved");
+  });
+
+  test("asks before closing a tab with unsaved edits", async ({ page }) => {
+    await page.locator(".cm-content").click();
+    await page.keyboard.type("mine");
+    await tab(page, "README.md").hover();
+    await page.getByTestId("editor-tab-close").click();
+    await expect(page.getByTestId("close-unsaved")).toContainText("Close README.md without saving?");
+    await expect(page.getByTestId("close-unsaved-cancel")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("close-unsaved")).toHaveCount(0);
+    await expect(tab(page, "README.md")).toBeVisible();
+    await expect(page.locator(".cm-content")).toBeFocused();
+
+    await page.getByTestId("editor-tab-close").click();
+    await page.getByTestId("close-unsaved-alternative").click();
+    await expect(tab(page, "README.md")).toHaveCount(0);
+    expect((await writes(page)).at(-1)?.text).toContain("mine");
+    await expect(page.getByTestId("editor-empty")).toBeVisible();
+  });
+});

@@ -14,10 +14,12 @@
     action: string;
     onConfirm: () => void;
     onCancel: () => void;
+    /** A way out that keeps what would go, such as saving first. */
+    alternative?: { label: string; onClick: () => void } | null;
     testid: string;
   }
 
-  let { question, detail = null, action, onConfirm, onCancel, testid }: Props = $props();
+  let { question, detail = null, action, onConfirm, onCancel, alternative = null, testid }: Props = $props();
 
   function cancelFirst(node: HTMLElement) {
     node.focus();
@@ -39,6 +41,11 @@
   </p>
   <div class="actions">
     <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+    {#if alternative !== null}
+      <button type="button" class="cancel" onclick={alternative.onClick} data-testid="{testid}-alternative"
+        >{alternative.label}</button
+      >
+    {/if}
     <button type="button" class="go" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
   </div>
 </div>
