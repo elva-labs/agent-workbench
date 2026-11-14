@@ -132,7 +132,9 @@ seconds running is **working**, with the dot breathing, and two seconds
 without another such second is waiting. A single burst, a clock ticking
 over in the footer or a cursor blinking, is not work and holds nothing
 back, and nothing the agent draws while starting counts
-until you have sent it a line or a minute has passed. The dot is the whole of it on the
+until it has been sent a line or a minute has passed. A session started
+with a prompt has been sent one, and so has one that another session
+types a line into. The dot is the whole of it on the
 row, with the words on hover and for a screen reader; the agent pane's
 header spells the state out. A session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the

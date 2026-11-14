@@ -1216,6 +1216,23 @@ describe("working, and waiting for you", () => {
     }
   });
 
+  // A prompt on the command line is a line sent: the agent goes to work on
+  // it at once, whether or not anybody ever looks at its terminal.
+  it("takes output for work at once from a session started with a prompt", () => {
+    vi.useFakeTimers();
+    try {
+      const session = create(A, null, "claude-code", null, "Fix the test");
+      started(session.key, "pty-1", "session-pty-1");
+      attention.focused = false;
+      streams(session, WORK_WINDOWS);
+      expect(session.working).toBe(true);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      expect(session.working).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("takes output for work a minute after the start without a word", () => {
     vi.useFakeTimers();
     try {

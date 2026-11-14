@@ -38,6 +38,7 @@ import {
   onDirected,
   sessions,
   statusMessage,
+  typed,
   type Session,
 } from "$lib/sessions.svelte";
 import type { AgentId } from "$lib/core";
@@ -70,11 +71,13 @@ export const OUTCOME_ASK =
 export const ENTER_AFTER = 150;
 
 /** Types a line into a session the way a person does: the text, and then
-    Enter on its own. */
+    Enter on its own. The agent has been spoken to, as by a line typed
+    into its terminal. */
 export async function typeLine(ptyId: string, line: string): Promise<void> {
   await core().write(ptyId, line);
   await pause(ENTER_AFTER);
   await core().write(ptyId, "\r");
+  typed(ptyId, "\r");
 }
 
 /** Stops a session another session started, and files it away: it was
