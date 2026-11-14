@@ -400,8 +400,8 @@
   }
 
   /** Whether a change of shape is a flip between agent and editor mode,
-      which moves every pane at once and is drawn as a whole rather than
-      column by column. */
+      which puts the panes in another order: no column eases into it, and
+      the layout lands in one step. */
   function flipped(was: string, now: string) {
     return was !== now && (was === "editing" || now === "editing");
   }

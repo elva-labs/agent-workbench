@@ -35,25 +35,11 @@ async function settled(page: Page) {
     .toBe(true);
 }
 
-/** Waits for the panes to arrive where a flip put them: the drawing of the
-    way between the two layouts covers the window until it ends. */
-async function arrived(page: Page) {
-  await page.waitForFunction(
-    () =>
-      document
-        .getAnimations()
-        .filter((a) => (a.effect as KeyframeEffect | null)?.pseudoElement?.startsWith("::view-transition"))
-        .length === 0,
-  );
-  await settled(page);
-}
-
 async function flip(page: Page) {
   const was = await page.getByTestId("mode-readout").textContent();
   await page.keyboard.press(`${MOD}+Shift+E`);
   await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await arrived(page);
+  await settled(page);
 }
 
 async function open(page: Page, width: number) {

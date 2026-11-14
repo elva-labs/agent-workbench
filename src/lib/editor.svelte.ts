@@ -62,7 +62,6 @@ import {
   toggleRightPane,
 } from "$lib/layout.svelte";
 import { lineEdits } from "$lib/lineDiff";
-import { reduced } from "$lib/motion";
 import { isMac } from "$lib/platform";
 import { lastSegment } from "$lib/paths";
 import { pathOn } from "$lib/remote.svelte";
@@ -1132,66 +1131,49 @@ let agentScope: Scope | null = null;
 /** The tree's scope in editor mode: every file until the user narrows it. */
 let editingScope: Scope = "all";
 
-/** The panes travel to their new places rather than jump, where the
-    webview can draw the way between two layouts and the system does not
-    ask for less movement. The layout changes in one step either way, so
-    the agent is told one new size. */
-function travel(change: () => void) {
-  const start = (
-    document as Document & { startViewTransition?: (update: () => void) => unknown }
-  ).startViewTransition;
-  if (typeof start !== "function" || reduced()) {
-    change();
-    return;
-  }
-  start.call(document, change);
-}
-
-/** Into editor mode. A file the viewer showed opens in the editor at the
-    place it was shown; `then` runs once the window has flipped. */
+/** Into editor mode, in one step, so the agent is told one new size. A
+    file the viewer showed opens in the editor at the place it was shown;
+    `then` runs once the window has flipped. */
 export function enterEditor(then?: () => void) {
   if (layout.mode === "editing") {
     then?.();
     return;
   }
-  travel(() => {
-    const carried =
-      layout.mode === "reviewing" && files.selected !== null && !otherKindShown()
-        ? {
-            path: files.selected,
-            line: files.target?.path === files.selected ? files.target.line : undefined,
-            view: files.view === "diff" ? ("diff" as const) : ("edit" as const),
-          }
-        : null;
-    agentScope = files.scope;
-    setEditing(true);
-    if (files.scope !== editingScope) void setScope(editingScope);
-    if (carried !== null) {
-      void openFile(carried.path, {
-        line: carried.line !== undefined && carried.line > 0 ? carried.line : undefined,
-        view: carried.view,
-      });
-    } else if (!otherKindShown()) {
-      void showInViewer();
-    }
-    editor.target = activeTab() === null ? "tree" : "editor";
-    then?.();
-  });
+  const carried =
+    layout.mode === "reviewing" && files.selected !== null && !otherKindShown()
+      ? {
+          path: files.selected,
+          line: files.target?.path === files.selected ? files.target.line : undefined,
+          view: files.view === "diff" ? ("diff" as const) : ("edit" as const),
+        }
+      : null;
+  agentScope = files.scope;
+  setEditing(true);
+  if (files.scope !== editingScope) void setScope(editingScope);
+  if (carried !== null) {
+    void openFile(carried.path, {
+      line: carried.line !== undefined && carried.line > 0 ? carried.line : undefined,
+      view: carried.view,
+    });
+  } else if (!otherKindShown()) {
+    void showInViewer();
+  }
+  editor.target = activeTab() === null ? "tree" : "editor";
+  then?.();
 }
 
-/** Back to agent mode: the viewer opens again on what took the editor's
-    place, else the agent has the middle with the changes beside it. */
+/** Back to agent mode, in one step: the viewer opens again on what took
+    the editor's place, else the agent has the middle with the changes
+    beside it. */
 export function leaveEditor() {
   if (layout.mode !== "editing") return;
-  travel(() => {
-    editingScope = files.scope;
-    const other = otherKindShown();
-    if (!other) deselect();
-    setEditing(false);
-    if (agentScope !== null && files.scope !== agentScope) void setScope(agentScope);
-    agentScope = null;
-    if (other) enterReview();
-  });
+  editingScope = files.scope;
+  const other = otherKindShown();
+  if (!other) deselect();
+  setEditing(false);
+  if (agentScope !== null && files.scope !== agentScope) void setScope(agentScope);
+  agentScope = null;
+  if (other) enterReview();
 }
 
 /** The right pane's button, or its chord: shows or hides the right pane,

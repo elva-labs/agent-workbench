@@ -152,10 +152,9 @@ rather than squeezes, and its shells are measured once it arrives. In the
 sessions pane a row that goes fades where it stands, and the rows below it
 close the gap rather than jump into it; a row that arrives fades in.
 
-Flipping between agent mode and editor mode moves every pane at once, so it
-is drawn as one movement rather than column by column: the panes travel from
-where they were to where they go. The layout changes in a single step under
-it, so the agent is told one new size per flip, and none while it is hidden.
+Flipping between agent mode and editor mode puts the panes in another
+order, so no column eases into it: the layout lands in a single step, the
+agent is told one new size per flip, and none while it is hidden.
 
 None of this happens when the system asks for reduced motion. Panes and rows
 are then simply where they end up.
