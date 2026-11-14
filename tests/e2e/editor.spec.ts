@@ -1416,7 +1416,10 @@ test.describe("the session question in a peek", () => {
     // The peek put away by its chord, from wherever the keyboard is.
     await page.keyboard.press(`${MOD}+1`);
     await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual(FOLDED + 1);
-    await page.getByTestId("unfold-sessions").click();
+    // Peeked again by the same chord: a click on the folded column races
+    // the peek the pointer resting there opens, which takes the button away.
+    await page.keyboard.press(`${MOD}+1`);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan(FOLDED + 1);
     await expect(page.getByTestId("close-owner")).toHaveCount(0);
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
   });
