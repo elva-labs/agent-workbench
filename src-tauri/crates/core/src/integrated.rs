@@ -76,6 +76,13 @@ const TERM_GRACE: Duration = Duration::from_secs(3);
 #[cfg(test)]
 const TERM_GRACE: Duration = Duration::from_secs(1);
 
+/// How long what the agent left in its process group has, once asked to
+/// end with the agent gone, before it is killed.
+#[cfg(not(test))]
+const GROUP_GRACE: Duration = Duration::from_secs(1);
+#[cfg(test)]
+const GROUP_GRACE: Duration = Duration::from_millis(500);
+
 /// How often the waiter looks at the child between kill requests.
 const POLL: Duration = Duration::from_millis(50);
 
@@ -1824,12 +1831,25 @@ fn kill_tree(child: &mut Child) {
 }
 
 /// Ends what the agent left running in its process group once it is gone
-/// itself.
+/// itself: asked to end, and killed if any of it is still there a little
+/// later.
 fn end_group(child: &Child) {
     #[cfg(unix)]
     if let Ok(group) = i32::try_from(child.id()) {
+        // The group lives as long as one of its members does, so its id is
+        // not given to another process until it is empty.
+        let left = || unsafe { libc::killpg(group, 0) } == 0;
         unsafe {
             libc::killpg(group, libc::SIGTERM);
+        }
+        let deadline = std::time::Instant::now() + GROUP_GRACE;
+        while left() && std::time::Instant::now() < deadline {
+            std::thread::sleep(POLL);
+        }
+        if left() {
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
+            }
         }
     }
     #[cfg(not(unix))]
@@ -2222,7 +2242,8 @@ pub fn stop_all(sessions: &Arc<Sessions>) {
     for id in sessions.ids() {
         let _ = stop(sessions, &id);
     }
-    let deadline = std::time::Instant::now() + STOP_GRACE + TERM_GRACE + Duration::from_secs(1);
+    let deadline =
+        std::time::Instant::now() + STOP_GRACE + TERM_GRACE + GROUP_GRACE + Duration::from_secs(1);
     while !sessions.ids().is_empty() && std::time::Instant::now() < deadline {
         std::thread::sleep(POLL);
     }

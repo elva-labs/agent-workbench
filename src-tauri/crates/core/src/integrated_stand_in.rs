@@ -7,8 +7,10 @@
 //! `@UUID@` by its uuid, `sleep`, `exit` and `die` do what they say,
 //! `drain` reads until stdin closes, `err` writes a line to stderr, `big`
 //! writes a line of that many bytes, `bigresult` the result of a tool call
-//! with that much content, and `spawn` leaves a command running
-//! in the background with its pid in a file beside the scenario, and
+//! with that much content, `spawn` leaves a command running
+//! in the background with its pid in a file beside the scenario, `deaf`
+//! does the same with a command that ignores the signal asking it to end,
+//! and
 //! `linger` ignores the end of its stdin and, asked to end, writes a file
 //! beside the scenario and ends cleanly. It writes
 //! its arguments, its environment and every line it read beside the
@@ -55,6 +57,7 @@ while IFS= read -r step || [ -n "$step" ]; do
       head -c "$2" /dev/zero | tr '\0' x
       printf '","tool_use_id":"%s"}]},"parent_tool_use_id":null}\n' "$1" ;;
     "spawn") sleep 300 & echo $! > "$dir/child" ;;
+    "deaf") (trap '' TERM; exec sleep 300) & echo $! > "$dir/child" ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
     "linger")
       trap 'echo yes > "$dir/termed"; exit 0' TERM
@@ -924,32 +927,44 @@ fn a_turn_the_agent_starts_by_itself_names_no_message() {
     h.stop();
 }
 
-#[test]
-fn what_the_agent_left_running_goes_with_it() {
-    let h = start("group", &format!("{READY}\nspawn\ndrain"));
-    h.until_type("ready");
+/// The pid of what the stand-in left running, once it has.
+fn spawned(h: &Harness) -> String {
     let deadline = Instant::now() + Duration::from_secs(5);
-    let child = loop {
+    loop {
         if let Ok(pid) = std::fs::read_to_string(h.dir.join("child")) {
             if !pid.trim().is_empty() {
-                break pid.trim().to_string();
+                return pid.trim().to_string();
             }
         }
         assert!(Instant::now() < deadline, "the stand-in never spawned");
         std::thread::sleep(Duration::from_millis(20));
-    };
-    let alive = |pid: &str| {
-        std::process::Command::new("kill")
-            .args(["-0", pid])
-            .status()
-            .is_ok_and(|status| status.success())
-    };
-    assert!(alive(&child));
-    assert_eq!(h.stop()["clean"], true);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while alive(&child) {
-        assert!(Instant::now() < deadline, "{child} outlived the session");
-        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn alive(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[test]
+fn what_the_agent_left_running_goes_with_it() {
+    for (name, step) in [("group", "spawn"), ("group-deaf", "deaf")] {
+        let h = start(name, &format!("{READY}\n{step}\ndrain"));
+        h.until_type("ready");
+        let child = spawned(&h);
+        assert!(alive(&child));
+        assert_eq!(h.stop()["clean"], true);
+        // One that ignores being asked to end is killed a little later.
+        let deadline = Instant::now() + GROUP_GRACE + Duration::from_secs(5);
+        while alive(&child) {
+            assert!(
+                Instant::now() < deadline,
+                "{step}: {child} outlived the session"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 

@@ -277,7 +277,8 @@ The agent runs in a process group of its own. An agent the core ends, on a
 stop or after an error, is first asked to end with a termination signal,
 and is killed with its whole group, its MCP servers among it, if it is
 still there a few seconds later. What is still in the group once the agent
-has ended is ended too. Claude Code runs a command it leaves in the
+has ended is asked to end too, and killed if it is still there a moment
+later. Claude Code runs a command it leaves in the
 background, such as a dev server, in a process group of its own, which
 killing the agent's group does not reach. It ends those commands itself
 when it is asked to end, so a stopped session takes them with it, but an
