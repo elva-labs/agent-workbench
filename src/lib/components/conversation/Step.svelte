@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TextPart, ToolCall } from "$lib/conversation.svelte";
-  import { answered, glyph, span, stepTitle } from "$lib/thread";
+  import { answered, glyph, inputPath, span, stepTitle } from "$lib/thread";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
@@ -41,18 +41,27 @@
     return took >= 1000 ? { text: span(took), tone: "quiet" } : null;
   });
 
-  /** The input as the user reads it: a command as typed, the rest as the
-      agent gave it. */
-  let input = $derived.by((): { command: string } | { json: string } | null => {
-    if (part.kind !== "tool") return null;
-    const value = part.inputDone ? part.input : null;
-    if (value === null || value === undefined) return part.inputText ? { json: part.inputText } : null;
-    if (part.tool === "command" && typeof value === "object") {
-      const command = (value as Record<string, unknown>).command;
-      if (typeof command === "string") return { command };
-    }
-    return { json: JSON.stringify(value, null, 2) };
-  });
+  /** The input as the user reads it: a command as typed, the rest as its
+      fields, each named, leaving out what the row already says. Nothing
+      when the row says all of it; while it streams, as it comes. */
+  let input = $derived.by(
+    (): { command: string } | { fields: { name: string; value: string }[] } | { json: string } | null => {
+      if (part.kind !== "tool") return null;
+      const value = part.inputDone ? part.input : null;
+      if (value === null || value === undefined) return part.inputText ? { json: part.inputText } : null;
+      if (typeof value !== "object" || Array.isArray(value)) return { json: JSON.stringify(value, null, 2) };
+      const record = value as Record<string, unknown>;
+      if (part.tool === "command" && typeof record.command === "string") return { command: record.command };
+      const said = new Set([inputPath(value), title.object].filter((known) => known !== null));
+      const fields = Object.entries(record)
+        .filter(([, field]) => field !== null && field !== undefined && field !== "" && !said.has(field as string))
+        .map(([name, field]) => ({
+          name: name.replace(/_/g, " "),
+          value: typeof field === "string" ? field : JSON.stringify(field, null, 2),
+        }));
+      return fields.length === 0 ? null : { fields };
+    },
+  );
 
   let output = $derived(
     part.kind === "tool" ? (part.done ? (part.result ?? part.output) : part.output) : "",
@@ -67,6 +76,7 @@
     aria-expanded={open}
     data-testid="step-row"
   >
+    <span class="chev"><Icon name="chev" size={12} /></span>
     <span class="glyph"><Icon name={glyph(part.kind === "tool" ? part.tool : "thinking")} size={13} /></span>
     <span class="title">
       <span class="verb">{title.verb}</span>
@@ -75,7 +85,6 @@
     {#if status !== null}
       <span class="status {status.tone}" data-testid="step-status">{status.text}</span>
     {/if}
-    <span class="chev"><Icon name="chev" size={12} /></span>
   </button>
 
   {#if open}
@@ -106,7 +115,16 @@
               {#if input.command.includes("\n") || input.command.length > 72}
                 <pre class="block command"><span class="prompt">$ </span><Plain text={input.command} /></pre>
               {/if}
-            {:else if part.tool !== "edit" || part.changes.length === 0}
+            {:else if "fields" in input}
+              {#if part.tool !== "edit" || part.changes.length === 0}
+                <dl class="block fields" data-testid="step-input">
+                  {#each input.fields as field (field.name)}
+                    <dt>{field.name}</dt>
+                    <dd><Plain text={field.value} /></dd>
+                  {/each}
+                </dl>
+              {/if}
+            {:else}
               <pre class="block input">{input.json}</pre>
             {/if}
           {/if}
@@ -158,7 +176,7 @@
     background: none;
     color: var(--ink-2);
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     text-align: left;
     cursor: pointer;
     min-width: 0;
@@ -198,14 +216,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: var(--conv-fine);
     color: var(--ink);
   }
 
   .status {
     flex: none;
-    font-size: 11.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
     font-variant-numeric: tabular-nums;
   }
 
@@ -241,7 +259,7 @@
     border: 1px solid var(--rule);
     border-radius: var(--radius);
     background: var(--surface-2);
-    font: 11.5px/1.5 var(--mono);
+    font: var(--conv-fine)/1.5 var(--mono);
     color: var(--ink);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -249,6 +267,22 @@
     overflow: auto;
     user-select: text;
     -webkit-user-select: text;
+  }
+
+  .fields {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 2px 12px;
+  }
+
+  .fields dt {
+    color: var(--ink-2);
+  }
+
+  .fields dd {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .prompt {
@@ -268,7 +302,7 @@
 
   .thinking {
     color: var(--ink-2);
-    font-size: 12.5px;
+    font-size: var(--conv-small);
   }
 
   .nested {
@@ -280,7 +314,7 @@
     margin: 0;
     padding: 0;
     list-style: none;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--ink-2);
   }
 
@@ -310,14 +344,14 @@
 
   .task-state {
     margin-left: auto;
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .cut,
   .said {
     margin: 0;
-    font-size: 11.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
   }
 
   @keyframes breathe {

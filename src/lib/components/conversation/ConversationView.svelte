@@ -198,8 +198,13 @@
     visibility: hidden;
     background: var(--surface);
     font-family: var(--chrome);
-    --conv-size: 13.5px;
     container: conversation / inline-size;
+    /* The conversation's type scale, from the look's own sizes: what is
+       said, what goes beside it, what notes it, and the finest print. */
+    --conv-size: 13.5px;
+    --conv-small: var(--row-size);
+    --conv-meta: var(--meta-size);
+    --conv-fine: calc(var(--meta-size) - 0.5px);
   }
 
   @container conversation (max-width: 520px) {
@@ -231,7 +236,7 @@
     border-radius: calc(var(--radius) * 2);
     background: var(--surface-2);
     box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     color: var(--ink-2);
   }
 
@@ -270,28 +275,28 @@
     place-items: center;
     width: 30px;
     height: 30px;
-    border-radius: 50%;
+    border-radius: calc(var(--radius) * 4);
     background: var(--accent-soft);
     color: var(--accent);
   }
 
   h2 {
     margin: 0;
-    font-size: 14px;
+    font-size: calc(var(--conv-size) + 0.5px);
     font-weight: 600;
     color: var(--ink);
   }
 
   .card p {
     margin: 0;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     line-height: 1.55;
     color: var(--ink-2);
   }
 
   code {
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: var(--conv-fine);
     padding: 1px 5px;
     border-radius: var(--radius-sm);
     background: var(--surface-2);
@@ -313,7 +318,7 @@
     background: none;
     box-shadow: inset 0 0 0 1px var(--rule-strong);
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     font-weight: 500;
     color: var(--ink);
     white-space: nowrap;
@@ -327,11 +332,24 @@
   button.primary {
     background: var(--accent);
     box-shadow: none;
-    color: var(--bg);
+    color: var(--surface);
   }
 
   button.primary:hover {
     background: color-mix(in srgb, var(--accent) 88%, var(--ink));
+  }
+
+  button:active:not(:disabled) {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--ink-3);
+  }
+
+  button.primary:active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 78%, var(--ink));
+  }
+
+  button.primary:focus-visible {
+    outline-offset: 2px;
   }
 
   button:disabled {

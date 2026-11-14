@@ -86,7 +86,7 @@
 
   .parts.nested {
     gap: 6px;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
   }
 
   .text {
@@ -95,8 +95,8 @@
 
   .gap {
     margin: 4px 0 0;
-    font-size: 11.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
   }
 
   .plan {
@@ -112,7 +112,7 @@
     gap: 6px;
     margin-bottom: 4px;
     font-family: var(--chrome);
-    font-size: 12px;
+    font-size: var(--conv-meta);
     font-weight: 600;
     letter-spacing: var(--label-track-fine);
     text-transform: var(--label-case);
@@ -126,7 +126,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
   }
 
   .plan-steps li {
@@ -147,7 +147,7 @@
   }
 
   .plan-steps .done {
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .plan-steps .done .mark {
@@ -166,7 +166,7 @@
   }
 
   .plan-text {
-    font-size: 12.5px;
+    font-size: var(--conv-small);
   }
 
   .asked {
@@ -176,7 +176,7 @@
     padding: 6px 10px;
     border-radius: var(--radius);
     background: var(--surface-2);
-    font-size: 12.5px;
+    font-size: var(--conv-small);
   }
 
   .asked p {
@@ -188,10 +188,10 @@
     min-width: 48px;
     margin-right: 6px;
     font-family: var(--chrome);
-    font-size: 11.5px;
+    font-size: var(--conv-fine);
     letter-spacing: var(--label-track-fine);
     text-transform: var(--label-case);
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .answer {
@@ -199,6 +199,6 @@
   }
 
   .quiet {
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 </style>

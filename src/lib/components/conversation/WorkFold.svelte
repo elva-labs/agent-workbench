@@ -60,7 +60,7 @@
     border-radius: var(--radius-sm);
     background: none;
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     color: var(--ink-2);
     cursor: pointer;
     text-align: left;
@@ -93,7 +93,7 @@
 
   .detail {
     min-width: 0;
-    color: var(--ink-3);
+    color: var(--ink-2);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

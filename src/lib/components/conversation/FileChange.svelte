@@ -83,19 +83,19 @@
     align-items: baseline;
     gap: 6px;
     padding: 5px 10px;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--ink-2);
     min-width: 0;
   }
 
   .verb {
     flex: none;
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .path {
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: var(--conv-fine);
     color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
@@ -124,7 +124,7 @@
     padding: 4px 0;
     max-height: 320px;
     overflow: auto;
-    font: 11.5px/1.55 var(--mono);
+    font: var(--conv-fine)/1.55 var(--mono);
     user-select: text;
     -webkit-user-select: text;
   }
@@ -161,14 +161,14 @@
   }
 
   .line.hunk {
-    color: var(--ink-3);
+    color: var(--ink-2);
     padding-left: 22px;
   }
 
   .cut {
     margin: 0;
     padding: 4px 10px 6px;
-    font-size: 11.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
   }
 </style>

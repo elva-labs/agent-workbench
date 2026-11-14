@@ -481,13 +481,13 @@
   }
 
   textarea::placeholder {
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .hint {
     margin: 0;
     padding: 0 2px;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--ink-2);
   }
 
@@ -522,15 +522,15 @@
     height: 18px;
     padding: 0;
     border: 0;
-    border-radius: 50%;
+    border-radius: calc(var(--radius) * 4);
     background: var(--ink);
     color: var(--surface);
     cursor: pointer;
   }
 
   .reading {
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
   }
 
   .bar {
@@ -547,11 +547,11 @@
     height: 26px;
     padding: 0 9px;
     border: 0;
-    border-radius: 999px;
+    border-radius: calc(var(--radius) * 4);
     background: none;
     box-shadow: inset 0 0 0 1px var(--rule-strong);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--ink-2);
     white-space: nowrap;
     cursor: pointer;
@@ -579,14 +579,14 @@
   }
 
   .after {
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--ink-2);
     white-space: nowrap;
   }
 
   .menu-note {
     margin: 4px 8px 2px;
-    font-size: 11.5px;
+    font-size: var(--conv-fine);
     color: var(--ink-2);
   }
 
@@ -617,7 +617,7 @@
     border-radius: var(--radius-sm);
     background: none;
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     color: var(--ink-2);
     text-align: left;
     cursor: pointer;
@@ -640,8 +640,8 @@
 
   .about {
     grid-column: 1;
-    font-size: 11.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
   }
 
   .tick {
@@ -655,15 +655,15 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--del);
   }
 
   .ctx {
     margin-left: auto;
     padding-right: 4px;
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
@@ -676,13 +676,46 @@
     height: 28px;
     padding: 0;
     border: 0;
-    border-radius: 50%;
+    border-radius: calc(var(--radius) * 4);
     cursor: pointer;
   }
 
   .send {
     background: var(--accent);
-    color: var(--bg);
+    color: var(--surface);
+  }
+
+  .send:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 86%, var(--ink));
+  }
+
+  .send:active:not(:disabled),
+  .stop:active {
+    transform: scale(0.94);
+  }
+
+  .stop:hover {
+    background: color-mix(in srgb, var(--ink) 82%, var(--surface));
+  }
+
+  /* The ring sits clear of a filled button, where an inset one would not
+     show against the fill. */
+  .round:focus-visible,
+  .remove:focus-visible {
+    outline-offset: 2px;
+  }
+
+  .remove:hover {
+    background: var(--del);
+  }
+
+  .remove:active {
+    transform: scale(0.9);
+  }
+
+  .chip:active:not(:disabled) {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--ink-3);
   }
 
   .send:disabled {

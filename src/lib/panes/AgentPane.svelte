@@ -308,7 +308,7 @@
     font-size: var(--meta-size);
     letter-spacing: var(--label-track);
     text-transform: var(--label-case);
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .crumb + .crumb {

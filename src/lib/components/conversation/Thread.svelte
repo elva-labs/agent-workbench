@@ -352,8 +352,8 @@
 
   .intro {
     margin: 0;
-    font-size: 12.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-small);
+    color: var(--ink-2);
     text-align: center;
   }
 
@@ -369,10 +369,10 @@
     align-items: center;
     gap: 7px;
     font-family: var(--chrome);
-    font-size: 12px;
+    font-size: var(--conv-meta);
     letter-spacing: var(--label-track-fine);
     text-transform: var(--label-case);
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .who b {
@@ -437,8 +437,8 @@
 
   .state {
     margin: -2px 0 0;
-    font-size: 11.5px;
-    color: var(--ink-3);
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
     text-align: right;
   }
 
@@ -466,7 +466,7 @@
     align-items: center;
     gap: 8px;
     margin: 0;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     color: var(--ink-2);
     min-width: 0;
     overflow: hidden;
@@ -485,8 +485,8 @@
 
   .outcome {
     margin: 0;
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
   }
 
   .outcome.bad {
@@ -499,8 +499,8 @@
     justify-content: center;
     gap: 6px;
     margin: 0;
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
     text-align: center;
   }
 
@@ -516,8 +516,8 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
   }
 
   .divider::before,
@@ -538,11 +538,11 @@
     gap: 5px;
     padding: 4px 10px;
     border: 1px solid var(--divider, var(--rule));
-    border-radius: 999px;
+    border-radius: calc(var(--radius) * 4);
     background: var(--surface);
     box-shadow: 0 4px 14px color-mix(in srgb, black 14%, transparent);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--ink-2);
     cursor: pointer;
     z-index: 2;

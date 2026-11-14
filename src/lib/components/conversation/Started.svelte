@@ -61,7 +61,7 @@
     align-items: center;
     column-gap: 10px;
     padding: 5px 6px 5px 12px;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
   }
 
   .row + .row {
@@ -106,8 +106,8 @@
 
   .state,
   .model {
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
     white-space: nowrap;
   }
 
@@ -121,7 +121,7 @@
     border-radius: var(--radius-sm);
     background: none;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--accent);
     cursor: pointer;
   }

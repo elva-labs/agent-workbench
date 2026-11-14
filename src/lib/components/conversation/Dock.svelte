@@ -510,7 +510,7 @@
     border-radius: calc(var(--radius) + 5px);
     box-shadow: inset 0 0 0 1px var(--accent);
     background: var(--surface);
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     color: var(--ink-2);
     max-height: 55vh;
     overflow: auto;
@@ -537,7 +537,8 @@
 
   .ring {
     flex: none;
-    align-self: center;
+    align-self: flex-start;
+    margin-top: calc((1lh - var(--dot)) / 2);
     width: var(--dot);
     height: var(--dot);
     border-radius: 50%;
@@ -546,12 +547,12 @@
 
   .more {
     flex: none;
-    font-size: 11.5px;
+    font-size: var(--conv-fine);
     color: var(--accent);
   }
 
   code {
-    font: 11.5px var(--mono);
+    font: var(--conv-fine) var(--mono);
     padding: 1px 5px;
     border-radius: var(--radius-sm);
     background: var(--surface-2);
@@ -596,7 +597,7 @@
 
   .description {
     margin: -4px 0 0 calc(var(--dot) + 9px);
-    color: var(--ink-3);
+    color: var(--ink-2);
   }
 
   .reveal {
@@ -610,8 +611,8 @@
     border-radius: var(--radius-sm);
     background: none;
     font: inherit;
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
     cursor: pointer;
   }
 
@@ -635,7 +636,7 @@
     border: 1px solid var(--rule);
     border-radius: var(--radius);
     background: var(--surface-2);
-    font: 11.5px/1.5 var(--mono);
+    font: var(--conv-fine)/1.5 var(--mono);
     color: var(--ink);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -667,7 +668,7 @@
   }
 
   .line.head {
-    color: var(--ink-3);
+    color: var(--ink-2);
     padding-left: 28px;
   }
 
@@ -703,7 +704,7 @@
     background: none;
     box-shadow: inset 0 0 0 1px var(--rule-strong);
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     font-weight: 500;
     color: var(--ink);
     white-space: nowrap;
@@ -722,7 +723,7 @@
   .choice.primary {
     background: var(--accent);
     box-shadow: none;
-    color: var(--bg);
+    color: var(--surface);
   }
 
   .choice.primary:hover {
@@ -732,6 +733,19 @@
   .choice.quiet {
     box-shadow: none;
     color: var(--ink-2);
+  }
+
+  .choice:active:not(:disabled) {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--ink-3);
+  }
+
+  .choice.primary:active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 78%, var(--ink));
+  }
+
+  .choice.primary:focus-visible {
+    outline-offset: 2px;
   }
 
   .choice:disabled {
@@ -746,16 +760,16 @@
     height: 15px;
     padding: 0 3px;
     border-radius: 4px;
-    font-size: 10.5px;
+    font-size: var(--label-size);
     font-variant-numeric: tabular-nums;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
-    opacity: 0.75;
+    opacity: 1;
   }
 
   .means {
     margin: -2px 0 0;
-    font-size: 12px;
-    color: var(--ink-3);
+    font-size: var(--conv-meta);
+    color: var(--ink-2);
     overflow-wrap: anywhere;
   }
 
@@ -774,7 +788,7 @@
   .ask {
     margin: 0;
     color: var(--ink);
-    font-size: 13px;
+    font-size: var(--conv-size);
   }
 
   .chip {
@@ -784,7 +798,7 @@
     border-radius: var(--radius-tag);
     background: var(--accent-soft);
     color: var(--accent);
-    font-size: 11px;
+    font-size: var(--label-size);
     line-height: 17px;
     vertical-align: 1px;
   }
@@ -836,7 +850,7 @@
     height: 14px;
     border-radius: 4px;
     box-shadow: inset 0 0 0 1px var(--rule-strong);
-    color: var(--bg);
+    color: var(--surface);
   }
 
   .box.round {
@@ -849,8 +863,8 @@
   }
 
   .hint {
-    color: var(--ink-3);
-    font-size: 12px;
+    color: var(--ink-2);
+    font-size: var(--conv-meta);
   }
 
   input {
@@ -861,7 +875,7 @@
     background: var(--surface-2);
     box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--conv-small);
     color: var(--ink);
   }
 
@@ -872,7 +886,7 @@
 
   .error {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     color: var(--del);
   }
 

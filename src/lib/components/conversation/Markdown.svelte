@@ -124,7 +124,7 @@
   .md :global(pre code) {
     padding: 0;
     background: none;
-    font-size: 12px;
+    font-size: var(--conv-meta);
     white-space: pre;
   }
 

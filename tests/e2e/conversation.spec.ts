@@ -894,3 +894,119 @@ test.describe("the composer while something is pending", () => {
     expect(sent.text).toContain("look at this");
   });
 });
+
+test.describe("the conversation's text", () => {
+  test.setTimeout(240_000);
+
+  /** Every piece of text in the conversation whose contrast with what is
+      behind it falls short of 4.5 to 1, with the ratio. */
+  function shortfalls(page: Page) {
+    return page.evaluate(() => {
+      const parse = (text: string): [number, number, number, number] => {
+        const nums = text.match(/-?[\d.]+(e-?\d+)?/g)?.map(Number) ?? [0, 0, 0, 0];
+        if (text.startsWith("color(")) {
+          const [r, g, b, a = 1] = nums;
+          return [r * 255, g * 255, b * 255, a];
+        }
+        const [r, g, b, a = 1] = nums;
+        return [r, g, b, a];
+      };
+      const over = (top: number[], bottom: number[]) => {
+        const a = top[3];
+        return [0, 1, 2].map((i) => top[i] * a + bottom[i] * (1 - a)).concat(1);
+      };
+      const luminance = (c: number[]) => {
+        const [r, g, b] = c.map((v) => {
+          const x = v / 255;
+          return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const behind = (element: Element): number[] => {
+        const layers: number[][] = [];
+        for (let node: Element | null = element; node !== null; node = node.parentElement) {
+          const colour = parse(getComputedStyle(node).backgroundColor);
+          if (colour[3] > 0) layers.push(colour);
+          if (colour[3] >= 1) break;
+        }
+        let colour = [255, 255, 255, 1];
+        for (const layer of layers.reverse()) colour = over(layer, colour);
+        return colour;
+      };
+      const out: string[] = [];
+      const root = document.querySelector("[data-testid='conversation'].active")!;
+      for (const element of root.querySelectorAll("*")) {
+        const own = [...element.childNodes].some((node) => node.nodeType === 3 && node.textContent!.trim() !== "");
+        if (!own) continue;
+        const style = getComputedStyle(element);
+        if (style.visibility !== "visible" || (element as HTMLElement).offsetParent === null) continue;
+        if (element.closest("button:disabled")) continue;
+        let opacity = 1;
+        for (let node: Element | null = element; node !== null && node !== root; node = node.parentElement)
+          opacity *= Number(getComputedStyle(node).opacity);
+        const text = parse(style.color);
+        text[3] *= opacity;
+        const ground = behind(element);
+        const seen = over(text, ground);
+        const [a, b] = [luminance(seen), luminance(ground)].sort((x, y) => y - x);
+        const ratio = (a + 0.05) / (b + 0.05);
+        if (ratio < 4.5) out.push(`${element.className || element.tagName} "${element.textContent!.trim().slice(0, 24)}" ${ratio.toFixed(2)}`);
+      }
+      return out;
+    });
+  }
+
+  test("holds 4.5 to 1 in every look, appearance and palette", async ({ browser }) => {
+    const failures: string[] = [];
+    for (const look of ["modern", "terminal"])
+      for (const appearance of ["light", "dark"])
+        for (const palette of ["teal", "indigo", "amber", "rose", "mono"]) {
+          const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+          await installFakeCore(page, {
+            open: [PROJECT],
+            settings: { integrated: ["claude-code"], look, appearance, palette },
+          });
+          await page.goto("/");
+          await page.getByTestId("start-agent").click();
+          await expect(page.getByTestId("composer-input")).toBeVisible();
+          await agent(
+            page,
+            `f.send("${H}", crypto.randomUUID(), "Fix the scan"); f.startTurn("${H}");
+             f.tool("${H}", "Read", { file_path: "${PROJECT}/src/a.ts" }, "x", { kind: "read" });
+             f.emit("${H}", { type: "text", block: "t", parent: null, text: "Done, with \`code\` and a [link](https://example.com).", done: true });
+             f.notice("${H}", "Fell back to Sonnet", "warning");
+             f.startTool("${H}", "Bash", { command: "ls" }, { kind: "command" });
+             f.ask("${H}", "Bash", { command: "ls" }, { always: "Bash(ls) in this project's uncommitted local settings" });
+             f.context("${H}", 50000, 200000);`,
+          );
+          await page.getByTestId("work-line").first().click();
+          await page.getByTestId("step-row").first().click();
+          await page.getByTestId("composer-input").fill("A draft");
+          for (const found of await shortfalls(page)) failures.push(`${look} ${appearance} ${palette}: ${found}`);
+          await page.close();
+        }
+    expect(failures).toEqual([]);
+  });
+});
+
+test("draws its controls square in the terminal look and round in the modern one", async ({ browser }) => {
+  for (const [look, round] of [["terminal", false], ["modern", true]] as const) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"], look } });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await page.getByTestId("composer-input").fill("x");
+    const radius = async (testid: string) =>
+      page.getByTestId(testid).evaluate((node) => parseFloat(getComputedStyle(node).borderTopLeftRadius));
+    if (round) {
+      expect(await radius("send")).toBeGreaterThanOrEqual(14);
+      expect(await radius("model-chip")).toBeGreaterThanOrEqual(13);
+    } else {
+      expect(await radius("send")).toBe(0);
+      expect(await radius("model-chip")).toBe(0);
+    }
+    const size = await page.getByTestId("model-chip").evaluate((node) => getComputedStyle(node).fontSize);
+    expect(size).toBe(look === "modern" ? "12px" : "10.5px");
+    await page.close();
+  }
+});
