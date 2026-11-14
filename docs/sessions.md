@@ -159,8 +159,11 @@ so it is never taken for an unread session.
 
 ## What a row says
 
-A row's first line is its name and, at the end, when the row last
-changed: `now`, `4m`, `1h`, a weekday within the week, then `3w`. A session
+A row's dot is green while a process runs behind it, the yellow below for
+a row left from the last quit, the accent while it waits for you, and a
+quiet grey once it is done or has ended; only a session asking for a
+permission has a ring. A row's first line is its name and, at the end,
+when the row last changed: `now`, `4m`, `1h`, a weekday within the week, then `3w`. A session
 the agent has left a line for, or one that started others, takes a second
 line: the agent's line, in the accent while it asks for a permission, or
 for a session that started others what those are doing; at its end is the
@@ -191,7 +194,9 @@ until you have sent it a line or a minute has passed. The dot says it on
 the row, with the words on hover and for a screen reader; the agent
 pane's header spells the state out. A session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the
-name in ink, `waiting for you` in the agent pane, a count in the status bar,
+name a step stronger than a live session's that has been read, as it is
+while a session asks for a permission, `waiting for you` in the agent pane,
+a count in the status bar,
 and the same count on the app's icon. Having it on
 screen in a focused window reads it. A session that goes unread while the
 window is in the background also says so through the system, once each time

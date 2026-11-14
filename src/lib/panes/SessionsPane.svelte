@@ -908,8 +908,10 @@
         title={statusLabel(session)}
       ></span>
       <span class="first">
-        <span class="label" class:strong={session.status !== "dormant"} class:unread={session.unread}
-          >{label(session)}</span
+        <span
+          class="label"
+          class:strong={session.status !== "dormant"}
+          class:unread={session.unread || isAsking(session)}>{label(session)}</span
         >
         <span class="when" data-testid="session-when">{since(lastChanged(session), now)}</span>
       </span>
@@ -999,7 +1001,7 @@
               title={statusLabel(kid)}
             ></span>
             <span class="fit">
-              <span class="label" class:unread={kid.unread}>{label(kid)}</span>
+              <span class="label" class:unread={kid.unread || isAsking(kid)}>{label(kid)}</span>
               {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
                   >{projectLabel(kid.project)}</span
                 >{/if}
@@ -2214,9 +2216,10 @@
     color: var(--ink);
   }
 
+  /* A live row's name in ink. One that needs the user, unread or asking,
+     is a step stronger still, so what needs them reads at a glance. */
   .label.strong {
     color: var(--ink);
-    font-weight: 500;
   }
 
   .note.asking {
@@ -2436,14 +2439,18 @@
     color: var(--ink-3);
   }
 
-  /* A filled dot is a live process; hollow is a row you can still read but
-     nothing is running behind. */
+  /* The dot says what is behind the row: green while a process runs, the
+     dormant yellow for a row left from the last quit, the accent while it
+     waits for you, and the quiet grey once it is done or ended. Only
+     asking is a ring. */
   .dot {
+    --done: color-mix(in srgb, var(--ink-3) 60%, transparent);
     width: var(--dot);
     height: var(--dot);
     flex: none;
-    border: 1px solid var(--ink-3);
+    border: 1px solid var(--done);
     border-radius: 50%;
+    background: var(--done);
   }
 
   .dot.live {
@@ -2458,8 +2465,8 @@
     border-color: var(--dormant);
   }
 
-  /* At work: the dot breathes. Waiting for you: the accent, and the name in
-     ink rather than grey, until you look. */
+  /* At work: the dot breathes. Waiting for you: the accent, and the name
+     stronger, until you look. */
   .dot.working {
     animation: breathe 1.2s ease-in-out infinite;
   }

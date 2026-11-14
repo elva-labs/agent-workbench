@@ -1035,6 +1035,27 @@ test.describe("working, and waiting for you", () => {
     await expect(named(page, "session 1").locator(".dot")).toHaveClass(/unread/);
   });
 
+  // What needs the user reads at a glance: an unread name is a step
+  // stronger than the name of a session read and idle. A session that has
+  // ended has a dot filled in the quiet grey, not a ring.
+  test("tells an unread session from an idle one, and an ended one from one asking", async ({
+    page,
+  }) => {
+    await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
+    await expect(named(page, "session 1").locator(".dot")).toHaveClass(/unread/);
+    const weight = (name: string) =>
+      named(page, name).locator(".label").evaluate((label) => Number(getComputedStyle(label).fontWeight));
+    expect(await weight("session 1")).toBeGreaterThan(await weight("session 2"));
+
+    await page.evaluate(() => window.__fake.end("pty-2", 0, true));
+    const dot = named(page, "session 2").locator(".dot");
+    await expect(dot).not.toHaveClass(/live|unread|permission/);
+    const fill = await dot.evaluate((dot) => getComputedStyle(dot).backgroundColor);
+    expect(fill).not.toBe("rgba(0, 0, 0, 0)");
+    const surface = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    expect(fill).not.toBe(surface);
+  });
+
   // With the hooks installed the transitions are exact: the agent says when
   // it starts, stops and asks, and quiet on the pty no longer means anything.
   test("takes the hooks' word over the heuristic", async ({ page }) => {
