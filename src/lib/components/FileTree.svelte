@@ -34,6 +34,9 @@
     label: string;
     /** What goes in the empty field, saying what it is for. */
     placeholder: string;
+    /** Counts the namings begun: the field is one element for as long as
+        one naming lasts, whatever the rows around it do. */
+    session: number;
     onInput: (value: string) => void;
     onCommit: () => void;
     onCancel: () => void;
@@ -222,6 +225,16 @@
     node.setSelectionRange(0, dot > 0 ? dot : node.value.length);
   }
 
+  /** The field lost the keyboard. One taken off the page, or made for a
+      naming that has ended, has nothing to say: only the field of the
+      naming going on, still on the page, was left by the user. */
+  function left(e: FocusEvent) {
+    const input = e.currentTarget as HTMLElement;
+    if (!input.isConnected || field === null) return;
+    if (input.dataset.session !== String(field.session)) return;
+    field.onLeave();
+  }
+
   function fieldKeys(e: KeyboardEvent) {
     // Every key is the field's: the tree's arrows and Enter stand down.
     e.stopPropagation();
@@ -350,8 +363,8 @@
   }}
   data-testid="file-tree"
 >
-  {#snippet nameInput(depth: number, prefix: string)}
-    <div class="row naming" style:padding-left="{8 + depth * 13}px" data-testid="name-row">
+  {#snippet nameInput(depth: number, prefix: string, order: number)}
+    <div class="row naming" style:padding-left="{8 + depth * 13}px" style:order={order} data-testid="name-row">
       <span class="twist">{field?.folderIcon ? "▸" : "·"}</span>
       <span class="field-box">
         {#if prefix !== ""}<span class="prefix">{prefix}</span>{/if}
@@ -360,7 +373,8 @@
           use:takeKeys
           oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
           onkeydown={fieldKeys}
-          onblur={() => field?.onLeave()}
+          onblur={left}
+          data-session={field?.session}
           placeholder={field?.placeholder}
           aria-label={field?.label}
           aria-invalid={field?.problem !== null}
@@ -371,25 +385,17 @@
       </span>
     </div>
     {#if field?.problem}
-      <p class="problem" style:padding-left="{8 + depth * 13 + 20}px" role="alert" data-testid="name-problem">
+      <p
+        class="problem"
+        style:padding-left="{8 + depth * 13 + 20}px"
+        style:order={order}
+        role="alert"
+        data-testid="name-problem"
+      >
         {field.problem}
       </p>
     {/if}
   {/snippet}
-  {#snippet placed()}
-    {#if placement !== null}
-      {#if placement.virtual !== null}
-        <div class="row dir pending" style:padding-left="{8 + placement.virtual.depth * 13}px" data-testid="pending-folder">
-          <span class="twist">▾</span>
-          <span class="name">{placement.virtual.name}</span>
-        </div>
-      {/if}
-      {@render nameInput(placement.depth, placement.prefix)}
-    {/if}
-  {/snippet}
-  {#if placement !== null && placement.after === -1}
-    {@render placed()}
-  {/if}
   {#each rows as row, index (row.node.path)}
     {@const node = row.node}
     <!-- Keyboard handling belongs to the tree, not to each row: that is the
@@ -411,6 +417,7 @@
       aria-selected={!node.dir && files.selected === node.path}
       aria-expanded={node.dir ? isOpen(node) : undefined}
       style:padding-left="{8 + row.depth * 13}px"
+      style:order={index * 2}
       onclick={() => {
         cursor = rows.indexOf(row);
         touched = true;
@@ -436,7 +443,8 @@
             use:takeKeys
             oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
             onkeydown={fieldKeys}
-            onblur={() => field?.onLeave()}
+            onblur={left}
+            data-session={field.session}
             onclick={(e) => e.stopPropagation()}
             aria-label={field.label}
             aria-invalid={field.problem !== null}
@@ -459,20 +467,48 @@
       {/if}
     </div>
     {#if field !== null && field.rename === node.path && field.problem}
-      <p class="problem" style:padding-left="{8 + row.depth * 13 + 20}px" role="alert" data-testid="name-problem">
+      <p
+        class="problem"
+        style:padding-left="{8 + row.depth * 13 + 20}px"
+        style:order={index * 2}
+        role="alert"
+        data-testid="name-problem"
+      >
         {field.problem}
       </p>
     {/if}
-    {#if placement !== null && placement.after === index}
-      {@render placed()}
-    {/if}
   {/each}
+  <!-- The field for a new file or folder, and a folder shown before it
+       exists, are drawn once for the naming and set among the rows by
+       their order, so rows coming and going around them, as the agent adds
+       files, never make them again. -->
+  {#if field !== null && placement !== null}
+    {#key field.session}
+      {@const order = placement.after * 2 + 1}
+      {#if placement.virtual !== null}
+        <div
+          class="row dir pending"
+          style:padding-left="{8 + placement.virtual.depth * 13}px"
+          style:order={order}
+          data-testid="pending-folder"
+        >
+          <span class="twist">▾</span>
+          <span class="name">{placement.virtual.name}</span>
+        </div>
+      {/if}
+      {@render nameInput(placement.depth, placement.prefix, order)}
+    {/key}
+  {/if}
 </div>
 
 <style>
+  /* A column of rows, in the order each says: the name field takes its
+     place among them by its own. */
   .tree {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
     overflow: auto;
     padding: 6px 0;
     font-family: var(--chrome);
@@ -487,6 +523,8 @@
   /* The first column is the twist or the status letter, at a width of its
      own so no letter ever reaches the name beside it. */
   .row {
+    flex: none;
+    min-width: 0;
     display: grid;
     grid-template-columns: var(--tree-glyph) 1fr auto;
     gap: 6px;
@@ -612,6 +650,8 @@
   }
 
   .problem {
+    flex: none;
+    min-width: 0;
     margin: 2px var(--row-inset) 4px;
     font-size: 11.5px;
     line-height: 1.4;

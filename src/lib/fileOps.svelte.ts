@@ -51,6 +51,9 @@ export const fileOps = $state({
   problem: null as string | null,
   /** The name field is being acted on: the core has not answered yet. */
   busy: false,
+  /** Counts the namings begun, so the field stays one element for as long
+      as one lasts. */
+  session: 0,
   /** A folder named but not made yet: the tree shows it until its first
       file makes it, or Escape drops it. */
   pending: null as string | null,
@@ -83,6 +86,7 @@ function openFolder(folder: string | null) {
 }
 
 function begin(naming: Naming, name = "") {
+  fileOps.session += 1;
   fileOps.menu = null;
   fileOps.deleting = null;
   fileOps.failed = null;
@@ -128,11 +132,14 @@ export function setName(name: string) {
 
 /** The field lost the keyboard to something else in the window: a name
     that will do is made or applied, as Enter would; one that will not
-    stays in the field with why. Losing it to another app keeps the field
-    as it is, to come back to. */
+    stays in the field with why. Losing it to another app, or a folder's
+    name losing it at all, keeps the field as it is, to come back to. */
 export function nameLeft() {
   if (fileOps.naming === null || fileOps.busy) return;
   if (typeof document !== "undefined" && !document.hasFocus()) return;
+  // A folder is made only with its first file: its name is left as it
+  // is, to come back to, rather than half made.
+  if (fileOps.naming.kind === "folder") return;
   void commitName();
 }
 

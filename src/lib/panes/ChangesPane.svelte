@@ -551,6 +551,7 @@
       onCommit: () => void commitName(),
       onCancel: cancelName,
       onLeave: nameLeft,
+      session: fileOps.session,
     };
   });
   let deleting = $derived(deleteQuestion());

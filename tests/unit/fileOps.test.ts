@@ -259,6 +259,19 @@ describe("deleting", () => {
   });
 });
 
+describe("a folder's name when the field loses the keyboard", () => {
+  it("is left as it is, since the folder is made only with its first file", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    newFolder("src");
+    setName("policy");
+    nameLeft();
+    await settle();
+    expect(fileOps.naming).toEqual({ kind: "folder", folder: "src" });
+    expect(fileOps.pending).toBeNull();
+    expect(fileOps.name).toBe("policy");
+  });
+});
+
 describe("a name field when the window loses the keyboard", () => {
   it("stays as it is, to come back to", async () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(false);
