@@ -1019,6 +1019,7 @@
                 field={nameField}
                 onMenu={editing ? openMenu : undefined}
                 onCursorRow={(row) => (fileOps.cursor = row)}
+                marked={fileOps.menu?.path ?? null}
                 {beyond}
               />
             {/if}

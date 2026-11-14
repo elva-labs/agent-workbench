@@ -638,6 +638,8 @@ test.describe("the tree's own edits", () => {
     await treeRow(page, "store.rs").click({ button: "right" });
     const menu = page.getByTestId("row-menu");
     await expect(menu).toBeVisible();
+    // The row the menu is for is marked while it is open.
+    await expect(page.locator(`${TREE} [role='treeitem'].marked`)).toHaveText(/store\.rs/);
     await expect(menu.getByRole("menuitem")).toHaveText([
       /New file/,
       "New folder",

@@ -55,6 +55,8 @@
     onMenu?: (path: string | null, dir: boolean, x: number, y: number) => void;
     /** The row the cursor is on, whenever it moves. */
     onCursorRow?: (row: { path: string; dir: boolean } | null) => void;
+    /** A row marked while a menu for it is open. */
+    marked?: string | null;
   }
 
   let {
@@ -67,6 +69,7 @@
     field = null,
     onMenu,
     onCursorRow,
+    marked = null,
   }: Props = $props();
 
   let root: HTMLDivElement;
@@ -370,6 +373,7 @@
       class:selected={!node.dir && files.selected === node.path}
       class:cursor={active === row}
       class:quiet={!node.hasChange}
+      class:marked={marked === node.path}
       role="treeitem"
       aria-level={row.depth + 1}
       aria-selected={!node.dir && files.selected === node.path}
@@ -487,6 +491,11 @@
   /* The keyboard cursor is distinct from the open file: you can walk the tree
      without changing what the viewer is showing. */
   .tree:focus-visible .row.cursor {
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  /* The row a menu is open for. */
+  .row.marked {
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
