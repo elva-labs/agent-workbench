@@ -156,6 +156,9 @@ test.describe("the conductor", () => {
     await expect(ask).toBeVisible();
     await expect(ask).toContainText(PROJECT);
     await expect(ask).toContainText("Fix the flaky test");
+    // The session would run under the project's own account, so none is
+    // named.
+    await expect(ask.getByTestId("conduct-account")).toHaveCount(0);
     // The question sits over the agent pane, where the session it is about
     // will appear.
     const card = (await ask.boundingBox())!;

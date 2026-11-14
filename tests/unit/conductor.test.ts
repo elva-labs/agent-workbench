@@ -37,6 +37,7 @@ import {
   sessions,
   started,
 } from "$lib/sessions.svelte";
+import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
@@ -179,6 +180,7 @@ beforeEach(() => {
   resetSessions();
   resetConductor();
   resetScreens();
+  resetAccounts();
   answers.length = 0;
   written.length = 0;
   killed.length = 0;
@@ -532,6 +534,170 @@ describe("starting a session", () => {
     await answering;
     expect(last().error).toContain("did not allow");
     expect(forProject(A)).toHaveLength(0);
+  });
+});
+
+describe("the account a started session runs under", () => {
+  const REMOTE = "ssh://ada@box/home/ada/dev/three";
+
+  let begun = 0;
+
+  beforeEach(() => {
+    begun = 0;
+    accounts.list = {
+      Work: { claude: "~/.claude-work", codex: null },
+      Home: { claude: "~/.claude-home", codex: "~/.codex-home" },
+    };
+  });
+
+  /** The calling session, running under an account. */
+  function caller(project: string, account: string | null) {
+    const row = create(project, null, "claude-code", null, null, null, account);
+    started(row.key, "pty-caller", "caller-1");
+    return row;
+  }
+
+  /** A start that names no account unless the arguments do. */
+  function start(
+    args: Record<string, unknown> = {},
+    session: string | null = "caller-1",
+  ) {
+    begun += 1;
+    return startAllowed(
+      call("start", { project: A, prompt: "Fix it", ...args }, { session }),
+      `pty-${begun}`,
+      `sid-${begun}`,
+    );
+  }
+
+  it("is the caller's, whatever account the project is set to", async () => {
+    // The project runs under the agents' own, and the caller was started
+    // under another account.
+    caller(A, "Work");
+    const row = await start();
+    expect(last().error).toBeNull();
+    expect(row.account).toBe("Work");
+    expect(conductor.started["caller-1"][0].account).toBe("Work");
+  });
+
+  it("is the caller's in another project too", async () => {
+    accounts.overrides[B] = "Home";
+    caller(A, "Work");
+    const row = await start({ project: B });
+    expect(row.project).toBe(B);
+    expect(row.account).toBe("Work");
+  });
+
+  it("is the agents' own when that is what the caller runs under", async () => {
+    accounts.everywhere = "Work";
+    caller(A, null);
+    const row = await start();
+    expect(row.account).toBeNull();
+  });
+
+  it("is the one the start names, whatever the caller's", async () => {
+    caller(A, "Work");
+    const row = await start({ account: "Home" });
+    expect(row.account).toBe("Home");
+    expect(conductor.started["caller-1"][0].account).toBe("Home");
+  });
+
+  it("is the project's when the window has no session for the caller", async () => {
+    accounts.overrides[A] = "Home";
+    expect((await start({}, null)).account).toBe("Home");
+    expect((await start({}, "unknown-1")).account).toBe("Home");
+  });
+
+  it("is the project's when the project is on another machine than the caller", async () => {
+    workspace.open.push(repo(REMOTE));
+    accounts.overrides[REMOTE] = "Home";
+    caller(A, "Work");
+    const row = await start({ project: REMOTE });
+    expect(row.account).toBe("Home");
+  });
+
+  it("is the caller's on the machine they share", async () => {
+    workspace.open.push(repo(REMOTE), repo(`${REMOTE}-too`));
+    caller(REMOTE, "Work");
+    const row = await start({ project: `${REMOTE}-too` });
+    expect(row.account).toBe("Work");
+  });
+
+  it("is the project's when the caller's has no directory for the agent", async () => {
+    // Work keeps Claude Code only, and the session to start is Codex.
+    accounts.overrides[A] = "Home";
+    caller(A, "Work");
+    const row = await start({ agent: "codex" });
+    expect(row.agent).toBe("codex");
+    expect(row.account).toBe("Home");
+  });
+
+  it("is the project's when the settings no longer hold the caller's", async () => {
+    accounts.overrides[A] = "Home";
+    caller(A, "Work");
+    delete accounts.list.Work;
+    const row = await start();
+    expect(row.account).toBe("Home");
+  });
+
+  it("is named in the question and in the answer when it is not the project's own", async () => {
+    caller(A, "Work");
+    const answering = handle(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking?.account).toBe("Work");
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().content).toContain(`Started session sid-1 in ${A}, under the Work account.`);
+  });
+
+  it("is named as Default when the agents' own is handed into a project set to another", async () => {
+    accounts.overrides[A] = "Work";
+    caller(B, null);
+    const answering = handle(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking?.account).toBe("Default");
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().content).toContain("under the Default account");
+  });
+
+  it("goes unsaid when it is the project's own", async () => {
+    accounts.overrides[A] = "Work";
+    caller(A, "Work");
+    const answering = handle(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking).not.toBeNull();
+    expect(conductor.asking?.account).toBeNull();
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().content).toContain(`Started session sid-1 in ${A}. It has the prompt.`);
+  });
+
+  it("is the one it ran under for a session resumed, whatever the caller's", async () => {
+    caller(A, "Work");
+    await start();
+    const id = conductor.started["caller-1"][0].id;
+    restarted();
+    caller(A, "Home");
+    const row = await resumed(
+      call("start", { session: id }, { session: "caller-1" }),
+      "pty-resumed",
+    );
+    expect(last().error).toBeNull();
+    expect(row.id).toBe(id);
+    expect(row.account).toBe("Work");
   });
 });
 

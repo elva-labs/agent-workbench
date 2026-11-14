@@ -18,6 +18,9 @@
     <p class="title">{ask.caller} wants to start a session</p>
     <p class="where">
       In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
+      {#if ask.account !== null}
+        <span data-testid="conduct-account">Under the {ask.account} account, not the project's own.</span>
+      {/if}
     </p>
     <p class="prompt">{ask.prompt}</p>
     <div class="actions">
