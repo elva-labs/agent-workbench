@@ -168,6 +168,8 @@ test.describe("the switch", () => {
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
     await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    // Every file is listed, not only what changed.
+    await expect(page.locator("[data-testid='file-tree']").getByText("README.md", { exact: true })).toBeVisible();
   });
 
   test("is in the command palette with its chord", async ({ page }) => {

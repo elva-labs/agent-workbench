@@ -49,7 +49,7 @@ import {
   type View,
 } from "$lib/files.svelte";
 import { say } from "$lib/flash.svelte";
-import { enterReview, focusPane, layout, setEditing } from "$lib/layout.svelte";
+import { editTreeVisible, enterReview, focusPane, layout, setEditing } from "$lib/layout.svelte";
 import { reduced } from "$lib/motion";
 import { lastSegment } from "$lib/paths";
 import { pathOn } from "$lib/remote.svelte";
@@ -841,7 +841,11 @@ export function putAwayOther() {
 /** Where the keyboard goes in the files pane, and asks for it there. With
     nothing open there is nothing to type into, and the tree takes it. */
 export function focusFiles(target: "editor" | "tree") {
-  editor.target = target === "editor" && activeTab() === null ? "tree" : target;
+  const open = activeTab() !== null;
+  if (target === "editor" && !open) target = "tree";
+  // A window too narrow for the tree's column has only the editor to give.
+  if (target === "tree" && open && layout.mode === "editing" && !editTreeVisible()) target = "editor";
+  editor.target = target;
   focusPane("changes");
 }
 
