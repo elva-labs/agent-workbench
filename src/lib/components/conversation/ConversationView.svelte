@@ -161,6 +161,13 @@
     background: var(--surface);
     font-family: var(--chrome);
     --conv-size: 13.5px;
+    container: conversation / inline-size;
+  }
+
+  @container conversation (max-width: 520px) {
+    .conv .foot {
+      padding: 0 14px 12px;
+    }
   }
 
   :global(:root:not([data-look="modern"])) .conv {

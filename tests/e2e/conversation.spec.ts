@@ -468,3 +468,30 @@ test.describe("the composer", () => {
     await expect(input(page)).toHaveValue("draft");
   });
 });
+
+test("says nothing is at work under a run that was interrupted, though a message still waits", async ({ page }) => {
+  await openIntegrated(page);
+  await page.getByTestId("composer-input").fill("go");
+  await page.keyboard.press("Enter");
+  await agent(page, `f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "sleep 9" }, { kind: "command" });`);
+  await page.getByTestId("composer-input").fill("and then this");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("now")).toHaveText("Running sleep 9");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("turn-outcome")).toHaveText("Interrupted");
+  await expect(page.getByTestId("now")).toHaveCount(0);
+  await expect(page.getByTestId("message-waiting")).toBeVisible();
+});
+
+test("keeps the thread's text clear of the edges in a narrow agent pane", async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 800 });
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", "A reply that runs long enough to wrap in a narrow pane, so its edges show.");`);
+  const pane = (await page.locator(AGENT).boundingBox())!;
+  const text = (await page.getByTestId("agent-text").boundingBox())!;
+  expect(text.x - pane.x).toBeLessThan(40);
+  expect(text.x + text.width).toBeLessThanOrEqual(pane.x + pane.width);
+  const composer = (await page.getByTestId("composer").boundingBox())!;
+  expect(composer.x - pane.x).toBeLessThanOrEqual(16);
+  expect(pane.x + pane.width - (composer.x + composer.width)).toBeLessThanOrEqual(16);
+});

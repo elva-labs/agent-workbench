@@ -37,6 +37,14 @@
       is said. */
   let liveKey = $derived.by(() => {
     if (!conversation.working || conversation.ended !== null) return null;
+    // With no turn running the run that ended says how it ended; only a
+    // compaction or subagents still to report are said under it.
+    if (
+      conversation.current === null &&
+      !conversation.compacting &&
+      !conversation.tasks.some((task) => task.kind === "agent" && !task.ambient && task.status === "running")
+    )
+      return null;
     for (let at = conversation.entries.length - 1; at >= 0; at--) {
       const entry = conversation.entries[at];
       if (entry.kind === "agent") return conversation.current === null || entry.turn === conversation.current ? entry.key : null;
@@ -233,6 +241,16 @@
     overflow-y: auto;
     padding: 22px 24px 12px;
     outline: none;
+  }
+
+  @container conversation (max-width: 520px) {
+    .frame .thread {
+      padding: 16px 14px 10px;
+    }
+
+    .you .bubble {
+      max-width: 92%;
+    }
   }
 
   .col {
