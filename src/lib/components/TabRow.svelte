@@ -8,8 +8,10 @@
    *
    * While what the agent presented, a plugin's page or the browser takes the
    * editor's place, no tab is drawn in front and the views control goes. The
-   * tab in front is always scrolled into view; tabs narrow before they
-   * overflow, and an edge with tabs past it fades.
+   * tab in front is always scrolled into view and keeps its whole name. The
+   * others give their close button no room until hovered, narrow no further
+   * than a short name, and past that the row scrolls, an edge with tabs past
+   * it fading.
    */
   import { tick } from "svelte";
   import {
@@ -199,10 +201,12 @@
     mask-image: linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent);
   }
 
-  /* Tabs narrow to a name's first letters before the row overflows. */
+  /* Tabs narrow before the row overflows, no further than a short name such
+     as mod.rs; the tab in front keeps its whole name. */
   .tab {
+    position: relative;
     flex: 0 1 auto;
-    min-width: 72px;
+    min-width: 64px;
     max-width: 220px;
     display: flex;
     align-items: center;
@@ -224,9 +228,28 @@
   }
 
   .tab.on {
+    flex: none;
+    max-width: none;
     background: var(--surface-2);
     color: var(--ink);
     box-shadow: inset 0 0 0 1px var(--head-rule);
+  }
+
+  /* A tab behind, with nothing unsaved, gives its close button no room:
+     the button comes over the end of the name when the tab is hovered. */
+  .tab:not(.on):not(.dirty) {
+    padding-right: 10px;
+  }
+
+  .tab:not(.on):not(.dirty) .close {
+    position: absolute;
+    right: 4px;
+    visibility: hidden;
+    background: var(--surface-2);
+  }
+
+  .tab:not(.on):not(.dirty):hover .close {
+    visibility: visible;
   }
 
   .tab.preview .name {
