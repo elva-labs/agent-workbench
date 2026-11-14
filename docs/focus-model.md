@@ -175,7 +175,7 @@ run, which is read before its buttons are reached.
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing and does nothing else |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
 
 Every control of the view is reached by keyboard alone in WebKit, the
 app's own webview on macOS, which passes over a button on Tab unless it is

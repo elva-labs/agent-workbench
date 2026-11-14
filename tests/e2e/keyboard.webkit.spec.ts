@@ -80,6 +80,11 @@ test("walks the thread as one stop, with the arrows", async ({ page }) => {
   expect(await focused(page)).toBe("step-row");
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("step-detail")).toHaveCount(1);
+  // Escape from an item gives the keyboard back to the composer.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("composer-input")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("End");
   expect(await focused(page)).toBe("a");
   // Tab leaves the thread for the composer: the thread is one stop.

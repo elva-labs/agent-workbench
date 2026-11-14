@@ -226,10 +226,22 @@
   /** The thread is one stop for Tab, as a list is. Up and Down move
       through what it holds, from where the keyboard is or, from the thread
       itself, from what is in view; Home and End go to the first and the
-      last. The other keys that scroll scroll it. */
+      last, and Escape goes back to the composer. The other keys that
+      scroll scroll it. */
   function onThreadKey(e: KeyboardEvent) {
     touched = performance.now();
     if (scroller === null) return;
+    // Escape gives the keyboard back to the composer, as it does from the
+    // palette, when there is one to type in.
+    if (e.key === "Escape" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const field = scroller.closest("[data-session]")?.querySelector<HTMLElement>("[data-testid='composer-input']");
+      if (field) {
+        e.preventDefault();
+        e.stopPropagation();
+        field.focus();
+      }
+      return;
+    }
     const all = items();
     const at = all.indexOf(document.activeElement as HTMLElement);
     const walk = ["ArrowDown", "ArrowUp"].includes(e.key) || (at !== -1 && ["Home", "End"].includes(e.key));
