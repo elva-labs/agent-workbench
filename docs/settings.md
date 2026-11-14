@@ -442,10 +442,12 @@ asked for waits for this, and the agent is told which of the settings it asked
 for were saved and which were not, with the reason. Turning custom styles off
 from the app's menu shows a failure in a dialog.
 
-The app writes the file whole: the text goes to a temporary file beside it,
-is flushed to disk and is moved over the settings file, or put in its place
-when there is none, so anything reading the file, the app's own watcher
-included, finds the old settings or the new.
+The app writes the file whole: the text goes to a new temporary file beside
+it, any temporary file left there by an earlier run being removed first, so
+the settings file is never written into in place. The text is flushed to disk
+and is moved over the settings file, or put in its place when there is none,
+so anything reading the file, the app's own watcher included, finds the old
+settings or the new.
 A settings file that is a link stays a link: the write goes to the file it
 points at.
 

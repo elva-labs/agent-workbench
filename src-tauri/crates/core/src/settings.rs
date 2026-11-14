@@ -1005,6 +1005,9 @@ fn stage(path: &Path, text: &str) -> Result<PathBuf, String> {
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
     let temporary = path.with_extension("json.tmp");
+    // A temporary file left behind may be a second name of the settings
+    // file itself, which creating it would empty in place.
+    let _ = std::fs::remove_file(&temporary);
     let written = std::fs::File::create(&temporary).and_then(|mut file| {
         file.write_all(text.as_bytes())?;
         file.sync_all()
@@ -2585,6 +2588,29 @@ mod tests {
         assert_eq!(file["accounts"]["everywhere"], "Bad");
         assert!(file["keys"].get("lost").is_none());
         assert_eq!(changes(&recorder).len(), 1);
+    }
+
+    #[test]
+    fn a_leftover_temporary_name_of_the_file_does_not_turn_a_save_into_an_in_place_write() {
+        let home = home("leftover-temporary");
+        put(&home, &whole_text());
+        let path = settings_path(&home);
+        // The temporary name and a witness are both second names of the
+        // settings file, as when the app died after linking it into place.
+        std::fs::hard_link(&path, path.with_extension("json.tmp")).unwrap();
+        let witness = path.with_extension("witness");
+        std::fs::hard_link(&path, &witness).unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        assert!(store.load().stored);
+        store.set(&json!({ "palette": "amber" })).unwrap();
+        assert_eq!(file_of(&home)["palette"], "amber");
+        assert_eq!(
+            std::fs::read_to_string(&witness).unwrap(),
+            whole_text(),
+            "the old file was never written into"
+        );
+        assert!(!path.with_extension("json.tmp").exists());
     }
 
     #[test]
