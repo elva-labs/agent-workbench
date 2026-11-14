@@ -2,7 +2,6 @@
   import type { Snippet } from "svelte";
   import Corner from "$lib/components/Corner.svelte";
   import { core } from "$lib/core";
-  import { requestWindowClose } from "$lib/editor.svelte";
   import { isMac } from "$lib/keymap";
   import {
     layout,
@@ -64,12 +63,7 @@
       .catch(() => {});
   }
 
-  /** Closing the window asks first when the editor has unsaved edits. */
   function control(action: "minimize" | "maximize" | "close") {
-    if (action === "close") {
-      requestWindowClose();
-      return;
-    }
     core()
       .windowControl(action)
       .catch(() => {});

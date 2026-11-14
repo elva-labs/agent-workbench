@@ -21,17 +21,21 @@
  * a dot until then. A save sends the stamp the buffer was read with, and the
  * core writes only while the disk still holds that: a file that changed
  * underneath is never overwritten unasked. With no unsaved edits a change on
- * disk is read in at once, keeping the cursor and the scroll; with unsaved
- * edits a bar over the editor says the file changed and offers to compare,
- * to keep the editor's version, or to load the disk's.
+ * disk is read in at once, change by change, so the lines between keep their
+ * places; with unsaved edits a bar over the editor says the file changed and
+ * offers to compare, to keep the editor's version, or to load the disk's.
+ *
+ * Nothing that holds the only copy of unsaved edits goes without a question:
+ * a tab, a session or a project closed, the window closed or the app quit.
  */
 
-import { tick } from "svelte";
-import type { EditorState, Text, TransactionSpec } from "@codemirror/state";
+import { tick, untrack } from "svelte";
+import { Transaction, type EditorState, type Text, type TransactionSpec } from "@codemirror/state";
+import { isolateHistory } from "@codemirror/commands";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 import { openSearchPanel } from "@codemirror/search";
 import { browser } from "$lib/browser.svelte";
-import { changeBetween, onEditorUpdate, stateFor } from "$lib/codeEditor";
+import { onEditorUpdate, stateFor } from "$lib/codeEditor";
 import { core } from "$lib/core";
 import {
   canDiff,
@@ -42,18 +46,26 @@ import {
   pick,
   select,
   setScope,
-  showRange,
   treeSettled,
   type FileEntry,
   type Scope,
   type View,
 } from "$lib/files.svelte";
 import { say } from "$lib/flash.svelte";
-import { editTreeVisible, enterReview, focusPane, layout, setEditing } from "$lib/layout.svelte";
+import {
+  editTreeVisible,
+  enterReview,
+  focusPane,
+  layout,
+  setEditing,
+  toggleRightPane,
+} from "$lib/layout.svelte";
+import { lineEdits } from "$lib/lineDiff";
 import { reduced } from "$lib/motion";
+import { isMac } from "$lib/platform";
 import { lastSegment } from "$lib/paths";
 import { pathOn } from "$lib/remote.svelte";
-import { sessions } from "$lib/sessions.svelte";
+import { onOwnerGone, sessions } from "$lib/sessions.svelte";
 import { watchRoot, workspace } from "$lib/workspace.svelte";
 import { MAX_SIZE, MIN_SIZE, DEFAULT_SIZE } from "$lib/zoom.svelte";
 
@@ -89,14 +101,31 @@ export interface Buffer {
   dirty: boolean;
   /** Being written. */
   saving: boolean;
-  /** The file changed on disk while the buffer has unsaved edits: the
-      stamp of what is there now, null when nothing is. */
-  changed: { stamp: string | null } | null;
+  /** The disk no longer holds what the buffer was read with while it has
+      unsaved edits: the stamp of what is there now, or null with
+      `problem` saying why it could not be read, or with neither when the
+      file is gone. */
+  changed: { stamp: string | null; problem: string | null } | null;
+  /** Why the last save of this file could not be made, until the next. */
+  failed: string | null;
 }
 
 /** A question put over the editor before something is lost: closing a
-    tab with unsaved edits, or the window with any. */
-export type Ask = { kind: "close"; key: string } | { kind: "window" };
+    tab with unsaved edits, or the window or the app with any. */
+export type Ask = { kind: "close"; key: string } | { kind: "leave"; leave: "window" | "quit" };
+
+/** A session or a project being closed while tabs beside it hold the only
+    copy of unsaved edits: the question in the sessions pane. */
+export interface Closing {
+  /** What is being closed, as the pane names it. */
+  what: string;
+  /** The owners that go with it: the session, or the project's sessions
+      and the project's own tabs. */
+  owners: string[];
+  /** The buffers whose edits would go. */
+  keys: string[];
+  close: () => void;
+}
 
 export const editor = $state({
   /** The tabs of the session on screen. */
@@ -120,8 +149,8 @@ export const editor = $state({
   /** The disk's version shown against the editor's, for the file in front
       when it changed on disk under unsaved edits. */
   comparing: false,
-  /** Why the last save could not be made, until the next. */
-  failed: null as string | null,
+  /** The question before closing a session or a project, if one is up. */
+  closing: null as Closing | null,
 });
 
 /** A file's key: the working tree and the path in it. */
@@ -151,6 +180,14 @@ const generations = new Map<string, number>();
 function bump(key: string) {
   generations.set(key, (generations.get(key) ?? 0) + 1);
 }
+
+/** Counts the reads of each buffer's file from disk, so an answer to an
+    older read that comes back after a newer one is dropped. */
+const reads = new Map<string, number>();
+
+/** Tabs whose session went while they held the only copy of unsaved
+    edits, without the user being asked: they join the tabs shown next. */
+let rescued: Tab[] = [];
 
 /** The tabs of the sessions not on screen, by owner. */
 const owners = new Map<string, { tabs: Tab[]; active: string | null }>();
@@ -216,12 +253,17 @@ export function scrollOf(key: string) {
   return scrolls.get(key) ?? null;
 }
 
+/** What marks a transaction that takes in what the disk holds, rather
+    than an edit of the user's. */
+const RELOAD = "reload";
+
 onEditorUpdate((update: ViewUpdate) => {
   const key = shown;
   if (key === null) return;
   states.set(key, update.state);
   if (update.docChanged) {
-    edited(key, update.state);
+    const reload = update.transactions.some((tr) => tr.isUserEvent(RELOAD));
+    edited(key, update.state, reload);
   }
   if (update.docChanged || update.selectionSet) {
     cursorFrom(update.state);
@@ -230,12 +272,15 @@ onEditorUpdate((update: ViewUpdate) => {
 });
 
 /** A buffer was edited: it is unsaved unless the edit took it back to what
-    it was read with, and every tab showing it is kept rather than reused. */
-function edited(key: string, state: EditorState) {
+    it was read with, and every tab showing it is kept rather than reused.
+    What the disk holds read in is not the user's edit: the tab stays as
+    it was. */
+function edited(key: string, state: EditorState, reload = false) {
   const buffer = editor.buffers[key];
   if (buffer === undefined) return;
   const base = saved.get(key);
   buffer.dirty = base === undefined || !state.doc.eq(base);
+  if (reload) return;
   for (const tab of editor.tabs) {
     if (tabKey(tab) !== key) continue;
     tab.preview = false;
@@ -282,6 +327,7 @@ async function load(root: string, path: string) {
     dirty: false,
     saving: false,
     changed: null,
+    failed: null,
   };
   try {
     const read = await core().fileRead(root, path);
@@ -324,6 +370,7 @@ function release(key: string) {
   scrolls.delete(key);
   onDisk.delete(key);
   generations.delete(key);
+  reads.delete(key);
 }
 
 export interface OpenOptions {
@@ -371,7 +418,7 @@ export async function openFile(path: string, options: OpenOptions = {}) {
       editor.tabs.splice(at === -1 ? editor.tabs.length : at + 1, 0, tab);
     }
   }
-  editor.active = key;
+  bringForward(key);
   if (options.line !== undefined) {
     editor.reveal = { key, from: options.line, to: options.to ?? options.line };
   }
@@ -382,9 +429,16 @@ export async function openFile(path: string, options: OpenOptions = {}) {
 /** Brings a tab to the front and gives the editor the keyboard. */
 export async function activate(key: string, focus = true) {
   if (!editor.tabs.some((tab) => tabKey(tab) === key)) return;
-  editor.active = key;
+  bringForward(key);
   if (focus) focusFiles("editor");
   await showInViewer();
+}
+
+/** Another tab coming to the front puts away the question about closing
+    the one that was there: the answer is only ever about the tab shown. */
+function bringForward(key: string) {
+  if (editor.asking?.kind === "close" && editor.asking.key !== key) editor.asking = null;
+  editor.active = key;
 }
 
 /** A double-click on a tab, or on its row in the tree: the tab is kept. */
@@ -470,19 +524,20 @@ export async function save(key: string | null = editor.active): Promise<boolean>
   if (buffer.changed !== null) return false;
   const doc = state.doc;
   buffer.saving = true;
-  editor.failed = null;
+  buffer.failed = null;
   bump(key);
   try {
     const result = await core().fileWrite(buffer.root, buffer.path, doc.toString(), buffer.stamp, false);
     if (!result.written) {
-      buffer.changed = { stamp: result.stamp };
+      buffer.changed = { stamp: result.stamp, problem: null };
       if (result.stamp !== null) await readDisk(key);
       return false;
     }
     wrote(key, doc, result.stamp);
     return true;
   } catch (error) {
-    editor.failed = `Could not save ${lastSegment(buffer.path)}: ${reason(error)}`;
+    const still = editor.buffers[key];
+    if (still !== undefined) still.failed = `Could not save ${lastSegment(buffer.path)}: ${reason(error)}`;
     return false;
   } finally {
     const still = editor.buffers[key];
@@ -534,13 +589,14 @@ export async function keepMine(key: string | null = editor.active) {
   if (buffer === undefined || state === undefined) return;
   const doc = state.doc;
   buffer.saving = true;
-  editor.failed = null;
+  buffer.failed = null;
   bump(key);
   try {
     const result = await core().fileWrite(buffer.root, buffer.path, doc.toString(), null, true);
     wrote(key, doc, result.stamp);
   } catch (error) {
-    editor.failed = `Could not save ${lastSegment(buffer.path)}: ${reason(error)}`;
+    const still = editor.buffers[key];
+    if (still !== undefined) still.failed = `Could not save ${lastSegment(buffer.path)}: ${reason(error)}`;
   } finally {
     const still = editor.buffers[key];
     if (still !== undefined) still.saving = false;
@@ -548,7 +604,7 @@ export async function keepMine(key: string | null = editor.active) {
 }
 
 /** Load from disk: the editor's edits are dropped for what the disk holds,
-    as one change that undo can take back. A file that is gone closes. */
+    as one change that undo can take back. */
 export async function loadFromDisk(key: string | null = editor.active) {
   if (key === null) return;
   const buffer = editor.buffers[key];
@@ -557,16 +613,50 @@ export async function loadFromDisk(key: string | null = editor.active) {
   try {
     const read = await core().fileRead(buffer.root, buffer.path);
     takeIn(key, read.text, read.stamp);
-  } catch {
+  } catch (error) {
+    const still = editor.buffers[key];
+    if (still !== undefined) still.changed = failedRead(still, reason(error));
+  }
+}
+
+/** The bar's answer for a file that is gone: the tab closes, and the edits
+    with it, as its button says. */
+export function closeDropping(key: string | null = editor.active) {
+  if (key === null) return;
+  const buffer = editor.buffers[key];
+  if (buffer !== undefined) {
     buffer.dirty = false;
     buffer.changed = null;
-    dropTab(key);
   }
+  dropTab(key);
+  focusFiles("editor");
+}
+
+/** The bar's answer for a file that could not be read: look again. */
+export function tryAgain(key: string | null = editor.active) {
+  if (key === null) return;
+  void recheck(key);
+}
+
+/** What a read that failed says about the file under unsaved edits: gone
+    when the core says nothing is there, else that it could not be read and
+    why. */
+function failedRead(buffer: Buffer, problem: string): NonNullable<Buffer["changed"]> {
+  const gone = problem.endsWith(" does not exist") || !stillListed(buffer);
+  return { stamp: null, problem: gone ? null : problem };
+}
+
+/** Whether the tree still lists the buffer's file, when it is the tree on
+    screen and the tree lists every file. */
+function stillListed(buffer: Buffer): boolean {
+  if (buffer.root !== watchRoot() || files.scope !== "all" || !files.everythingLoaded) return true;
+  return files.everything.some((file) => file.path === buffer.path && file.status !== "D");
 }
 
 /** Compare: the disk's version against the editor's, or back to editing. */
 export async function compare(key: string | null = editor.active) {
-  if (key === null || editor.buffers[key]?.changed == null) return;
+  const changed = key === null ? null : editor.buffers[key]?.changed;
+  if (key === null || changed == null || changed.stamp === null) return;
   if (editor.comparing) {
     editor.comparing = false;
     return;
@@ -575,14 +665,22 @@ export async function compare(key: string | null = editor.active) {
   editor.comparing = true;
 }
 
-/** Takes what the disk holds into a buffer: only the part that differs is
-    replaced, so the cursor, the selection and the scroll around it hold. */
+/** Takes what the disk holds into a buffer, one change per run of lines
+    that differ, so the lines between keep their places with the cursor,
+    the selection and the scroll on them. It is one step of its own in the
+    history, which undo can take back, and not the user's edit. */
 function takeIn(key: string, text: string, stamp: string) {
   const buffer = editor.buffers[key];
   const state = states.get(key);
   if (buffer === undefined || state === undefined) return;
-  const changes = changeBetween(state.doc.toString(), text);
-  if (changes !== null) change(key, { changes });
+  bump(key);
+  const changes = lineEdits(state.doc.toString(), text);
+  if (changes.length > 0) {
+    change(key, {
+      changes,
+      annotations: [Transaction.userEvent.of(RELOAD), isolateHistory.of("full")],
+    });
+  }
   const doc = states.get(key)!.doc;
   saved.set(key, doc);
   buffer.stamp = stamp;
@@ -606,16 +704,19 @@ function change(key: string, spec: TransactionSpec) {
 }
 
 /**
- * Looks at the disk for an open buffer, after the watcher or the core said
- * something changed. The same stamp is nothing to do. Another, with no
- * unsaved edits, is read in; with unsaved edits, the bar goes up. A file
- * that is gone with nothing unsaved says so in place of the editor.
+ * Looks at the disk for an open buffer, after the core said its file
+ * changed or its tab came on screen. The same stamp is nothing to do.
+ * Another, with no unsaved edits, is read in; with unsaved edits, the bar
+ * goes up. A file that cannot be read with nothing unsaved says why in
+ * place of the editor.
  */
 async function recheck(key: string) {
   const buffer = editor.buffers[key];
   if (buffer === undefined || buffer.loading || buffer.saving) return;
   if (buffer.error !== null && buffer.stamp === null) return;
   const generation = generations.get(key) ?? 0;
+  const asked = (reads.get(key) ?? 0) + 1;
+  reads.set(key, asked);
   let read: { text: string; stamp: string } | null = null;
   let failure: string | null = null;
   try {
@@ -624,7 +725,8 @@ async function recheck(key: string) {
     failure = reason(error);
   }
   const now = editor.buffers[key];
-  if (now === undefined || now.saving || (generations.get(key) ?? 0) !== generation) return;
+  if (now === undefined || now.saving) return;
+  if ((generations.get(key) ?? 0) !== generation || reads.get(key) !== asked) return;
   if (read !== null) {
     if (read.stamp === now.stamp) {
       now.changed = null;
@@ -635,20 +737,20 @@ async function recheck(key: string) {
       takeIn(key, read.text, read.stamp);
       return;
     }
-    now.changed = { stamp: read.stamp };
+    now.changed = { stamp: read.stamp, problem: null };
     onDisk.set(key, read.text);
     return;
   }
   if (now.dirty) {
-    now.changed = { stamp: null };
-    onDisk.set(key, "");
+    now.changed = failedRead(now, failure ?? "");
+    onDisk.delete(key);
   } else {
     now.error = failure;
   }
 }
 
-/** The disk may have moved under the open files: each tab on screen whose
-    file is loaded is checked. */
+/** The tabs that came on screen look at the disk, since the core watches
+    only the files of the tabs on screen. */
 export function recheckOpen() {
   const seen = new Set<string>();
   for (const tab of editor.tabs) {
@@ -659,6 +761,20 @@ export function recheckOpen() {
   }
 }
 
+/** The core says files it watches changed, by the paths it was given:
+    the buffers on them look at the disk again. */
+export function diskChanged(paths: string[]) {
+  const changed = new Set(paths);
+  for (const [key, buffer] of Object.entries(editor.buffers)) {
+    if (changed.has(watchedPath(buffer.root, buffer.path))) void recheck(key);
+  }
+}
+
+/** A file of a tree as the machine the tree is on names it. */
+function watchedPath(root: string, path: string): string {
+  return `${pathOn(root).replace(/[\\/]+$/, "")}/${path}`;
+}
+
 /** The open files of the tabs on screen, as the machine their tree is on
     names them, for the core to watch where they are. */
 export function watchedFiles(): string[] {
@@ -666,51 +782,162 @@ export function watchedFiles(): string[] {
   for (const tab of editor.tabs) {
     const buffer = editor.buffers[tabKey(tab)];
     if (buffer === undefined || buffer.error !== null) continue;
-    out.push(`${pathOn(tab.root).replace(/[\\/]+$/, "")}/${tab.path}`);
+    out.push(watchedPath(tab.root, tab.path));
   }
   return out;
 }
 
-/** The close button the app draws on Windows and Linux: with unsaved edits
-    anywhere it asks first, over the editor. */
-export function requestWindowClose() {
-  if (!anyUnsaved()) {
-    void core().windowControl("close").catch(() => {});
-    return;
-  }
-  const ask = () => {
+/** The core asks before the window closes or the app quits while the
+    editor holds unsaved edits: the question goes over the editor, which
+    comes forward for it, with the first unsaved file in front when this
+    session has it open. The core hears at once that the question is up;
+    without that it lets the window go. */
+export function leaveRequested(ask: { kind: "window" | "quit"; generation: number }) {
+  void core().leaveHeard(ask.generation).catch(() => {});
+  const show = () => {
     const first = Object.entries(editor.buffers).find(([, buffer]) => buffer.dirty);
     if (first !== undefined && editor.tabs.some((tab) => tabKey(tab) === first[0])) {
-      editor.active = first[0];
+      bringForward(first[0]);
       void showInViewer();
     }
-    editor.asking = { kind: "window" };
+    editor.asking = { kind: "leave", leave: ask.kind };
   };
-  if (layout.mode === "editing") ask();
-  else enterEditor(ask);
+  if (layout.mode === "editing") show();
+  else enterEditor(show);
 }
 
 /** The files with unsaved edits, by name, for the question. */
-export function unsavedNames(): string[] {
-  return Object.values(editor.buffers)
-    .filter((buffer) => buffer.dirty)
-    .map((buffer) => lastSegment(buffer.path));
+export function unsavedNames(keys: string[] = unsavedKeys()): string[] {
+  return keys.map((key) => lastSegment(editor.buffers[key]?.path ?? key));
 }
 
-/** The window closes, unsaved edits and all. */
-export function closeWindowAnyway() {
-  editor.asking = null;
-  void core().windowControl("close").catch(() => {});
-}
-
-/** Every unsaved file written, then the window closes if they all were. */
-export async function saveAllAndClose() {
-  editor.asking = null;
-  const keys = Object.entries(editor.buffers)
+function unsavedKeys(): string[] {
+  return Object.entries(editor.buffers)
     .filter(([, buffer]) => buffer.dirty)
     .map(([key]) => key);
-  const written = await Promise.all(keys.map((key) => save(key)));
-  if (written.every(Boolean)) void core().windowControl("close").catch(() => {});
+}
+
+/** The window closes, or the app quits, unsaved edits and all. */
+export function leaveWithoutSaving() {
+  const asked = editor.asking;
+  if (asked?.kind !== "leave") return;
+  editor.asking = null;
+  void core().leaveConfirmed(asked.leave).catch(() => {});
+}
+
+/** Every unsaved file written, then the window closes or the app quits if
+    they all were; a file that could not be written stays, with why. */
+export async function saveAllAndLeave() {
+  const asked = editor.asking;
+  if (asked?.kind !== "leave") return;
+  editor.asking = null;
+  const written = await Promise.all(unsavedKeys().map((key) => save(key)));
+  if (written.every(Boolean)) void core().leaveConfirmed(asked.leave).catch(() => {});
+}
+
+/** The user's answer to the window or the app going: stay. */
+export function leaveCancelled() {
+  if (editor.asking?.kind !== "leave") return;
+  editor.asking = null;
+  focusFiles("editor");
+}
+
+/** Closes the editor's tab in front, asking as its × does: the chord, or
+    the palette. Nothing outside editor mode. */
+export function closeTabInFront() {
+  const tab = activeTab();
+  if (layout.mode !== "editing" || tab === null || otherKindShown()) return false;
+  closeTab(tabKey(tab));
+  return true;
+}
+
+/** Close Tab in the menu. With no tab to close it is the window's close on
+    macOS, where its chord is the one every window closes on. */
+export function closeFront() {
+  if (closeTabInFront()) return;
+  if (isMac()) void core().windowControl("close").catch(() => {});
+}
+
+/** Keeps the core told whether anything is unsaved, so it knows whether
+    to ask before the window closes or the app quits. */
+function tellUnsaved() {
+  $effect(() => {
+    const any = anyUnsaved();
+    untrack(() => void core().setUnsaved(any).catch(() => {}));
+  });
+}
+
+/** The tabs a set of owners hold whose buffers have the only copy of
+    unsaved edits: no owner left after them has the file open. */
+function unsavedOnlyIn(gone: string[]): string[] {
+  const goneSet = new Set(gone);
+  const tabsOf = (key: string) => (key === owner ? editor.tabs : (owners.get(key)?.tabs ?? []));
+  const held = new Set<string>();
+  for (const key of gone) for (const tab of tabsOf(key)) held.add(tabKey(tab));
+  const kept = new Set<string>();
+  const others = [...owners.keys(), ...(owner === null ? [] : [owner])].filter((key) => !goneSet.has(key));
+  for (const key of others) for (const tab of tabsOf(key)) kept.add(tabKey(tab));
+  return [...held].filter((key) => editor.buffers[key]?.dirty && !kept.has(key));
+}
+
+/**
+ * Closes a session or a project as the user asked, after asking first when
+ * tabs beside it hold the only copy of unsaved edits: the question goes in
+ * the sessions pane, with Save and close, Close without saving and Cancel.
+ */
+export function closeAsking(what: string, gone: string[], close: () => void) {
+  const keys = unsavedOnlyIn(gone);
+  if (keys.length === 0) {
+    close();
+    return;
+  }
+  editor.closing = { what, owners: gone, keys, close };
+}
+
+export async function closingSave() {
+  const asked = editor.closing;
+  if (asked === null) return;
+  editor.closing = null;
+  const written = await Promise.all(asked.keys.map((key) => save(key)));
+  if (written.every(Boolean)) asked.close();
+}
+
+export function closingDrop() {
+  const asked = editor.closing;
+  if (asked === null) return;
+  editor.closing = null;
+  for (const key of asked.keys) {
+    const buffer = editor.buffers[key];
+    if (buffer !== undefined) buffer.dirty = false;
+  }
+  asked.close();
+}
+
+export function closingCancel() {
+  editor.closing = null;
+}
+
+/** A session or a project went: its tabs go with it. One that holds the
+    only copy of unsaved edits, which only happens when the user was not
+    asked, joins the tabs shown next rather than losing them. */
+function ownerGone(key: string) {
+  const tabs = key === owner ? editor.tabs : (owners.get(key)?.tabs ?? []);
+  const keep = new Set(unsavedOnlyIn([key]));
+  if (key === owner) {
+    editor.tabs = [];
+    editor.active = null;
+    editor.asking = editor.asking?.kind === "leave" ? editor.asking : null;
+    owner = null;
+  } else {
+    owners.delete(key);
+  }
+  for (const tab of tabs) {
+    if (keep.has(tabKey(tab))) rescued.push({ ...tab, preview: false });
+    else release(tabKey(tab));
+  }
+  // Whoever is shown next is chosen after this, by the store that closed
+  // the session: the rescued tabs join them then.
+  if (rescued.length > 0) queueMicrotask(() => void ownerShown());
 }
 
 /** Whether `path` is `base` or inside it. */
@@ -909,22 +1136,29 @@ export function enterEditor(then?: () => void) {
 }
 
 /** Back to agent mode: the viewer opens again on what took the editor's
-    place, or on the file in front at its line when `review` asks, else the
-    agent has the middle with the changes beside it. */
-export function leaveEditor(review = false) {
+    place, else the agent has the middle with the changes beside it. */
+export function leaveEditor() {
   if (layout.mode !== "editing") return;
   travel(() => {
     editingScope = files.scope;
-    const tab = activeTab();
     const other = otherKindShown();
-    const line = editor.cursor.line;
     if (!other) deselect();
     setEditing(false);
     if (agentScope !== null && files.scope !== agentScope) void setScope(agentScope);
     agentScope = null;
     if (other) enterReview();
-    else if (review && tab !== null) void showRange(tab.path, line, line, null);
   });
+}
+
+/** The right pane's button, or its chord: shows or hides the right pane,
+    and says so when the window is too narrow to show it at all. */
+export function toggleRight() {
+  if (toggleRightPane() !== "no room") return;
+  say(
+    layout.mode === "editing"
+      ? "The window is too narrow for the agent beside the editor"
+      : "The window is too narrow for the changes beside the agent",
+  );
 }
 
 /** The switch, or its chord. */
@@ -946,16 +1180,26 @@ export function editAt(path: string, line: number | undefined) {
 export async function ownerShown() {
   const next =
     sessions.active ?? (workspace.active === null ? null : `project:${workspace.active}`);
-  if (next === owner) return;
-  if (owner !== null) owners.set(owner, { tabs: editor.tabs, active: editor.active });
-  const back = next === null ? undefined : owners.get(next);
-  if (next !== null) owners.delete(next);
-  owner = next;
-  editor.tabs = back?.tabs ?? [];
-  editor.active = back?.active ?? null;
-  editor.reveal = null;
-  editor.comparing = false;
-  if (editor.asking?.kind === "close") editor.asking = null;
+  if (next !== owner) {
+    if (owner !== null) owners.set(owner, { tabs: editor.tabs, active: editor.active });
+    const back = next === null ? undefined : owners.get(next);
+    if (next !== null) owners.delete(next);
+    owner = next;
+    editor.tabs = back?.tabs ?? [];
+    editor.active = back?.active ?? null;
+    editor.reveal = null;
+    editor.comparing = false;
+    if (editor.asking?.kind === "close") editor.asking = null;
+  } else if (rescued.length === 0) {
+    return;
+  }
+  if (owner !== null && rescued.length > 0) {
+    for (const tab of rescued) {
+      if (!editor.tabs.some((candidate) => tabKey(candidate) === tabKey(tab))) editor.tabs.push(tab);
+    }
+    if (editor.active === null) editor.active = tabKey(rescued[0]);
+    rescued = [];
+  }
   recheckOpen();
   if (layout.mode !== "editing") return;
   // The switch may have moved the project or the worktree, and the tree
@@ -965,21 +1209,17 @@ export async function ownerShown() {
   if (owner === next) await showInViewer();
 }
 
-/** Keeps `ownerShown` called as the session or project on screen changes,
-    and the open files checked against the disk whenever the tree is read
-    again or the core says a watched file changed. Runs in an effect root:
-    call once, from the page. */
+/** Keeps `ownerShown` called as the session or project on screen
+    changes, the tabs of one that goes let go, and the core told whether
+    anything is unsaved. Runs in an effect root: call once, from the page. */
 export function followOwner() {
   $effect(() => {
     sessions.active;
     workspace.active;
-    void ownerShown();
+    untrack(() => void ownerShown());
   });
-  $effect(() => {
-    files.treeReads;
-    files.shownReads;
-    recheckOpen();
-  });
+  onOwnerGone(ownerGone);
+  tellUnsaved();
 }
 
 const SIZE_KEY = "workbench.editorSize";
@@ -1027,7 +1267,12 @@ export function resetEditor() {
   editor.size = DEFAULT_SIZE;
   editor.asking = null;
   editor.comparing = false;
-  editor.failed = null;
+  editor.closing = null;
   onDisk.clear();
   generations.clear();
+  reads.clear();
+  rescued = [];
 }
+
+/** Test seam: a session or project went, as the sessions store says. */
+export const ownerGoneForTests = (key: string) => ownerGone(key);

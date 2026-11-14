@@ -1,12 +1,23 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
+  import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
+  import {
+    closeAsking,
+    closingCancel,
+    closingDrop,
+    closingSave,
+    editor,
+    unsavedNames,
+  } from "$lib/editor.svelte";
   import { AGENTS, agentLabel, agentTag, installed, isReady } from "$lib/agent.svelte";
   import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
   import type { AgentId } from "$lib/core";
   import {
     ago,
+    byKey,
     byStatus,
     close as closeSession,
+    forProject,
     create,
     defaultAgent,
     historyFor,
@@ -301,17 +312,31 @@
       // The orchestrator's own project has no close button, and nothing
       // here closes it either.
       const path = id.slice("project:".length);
-      if (path !== orchestrator.dir) closeProject(path);
+      if (path !== orchestrator.dir) closeProjectAsking(path);
     } else if (id.startsWith("session:")) {
       // A session an orchestrator started is quiet under the fold: the
       // cursor walks through those rows, and a key pressed on the way past
       // is no reason to stop work the orchestrator is waiting on. Its own ×
       // on hover stops it, and the fold's stops the group.
       const key = id.slice("session:".length);
-      if (startedFor(key) === null) closeSession(key);
+      const session = byKey(key);
+      if (startedFor(key) === null && session !== null) closeSessionAsking(session);
     } else if (id.startsWith("past:") && workspace.active !== null) {
       disown(workspace.active, id.slice("past:".length));
     }
+  }
+
+  /** Closes a session, asking first when tabs beside it hold the only
+      copy of unsaved edits. */
+  function closeSessionAsking(session: Session) {
+    closeAsking(label(session), [session.key], () => closeSession(session.key));
+  }
+
+  /** Closes a project, asking first when tabs beside it or beside one of
+      its sessions hold the only copy of unsaved edits. */
+  function closeProjectAsking(path: string) {
+    const owners = [...forProject(path).map((session) => session.key), `project:${path}`];
+    closeAsking(projectLabel(path), owners, () => closeProject(path));
   }
 
   /** The pane the focus state named last time this was looked at, so an
@@ -530,7 +555,7 @@
       <button
         class="icon"
         tabindex="-1"
-        onclick={() => closeSession(session.key)}
+        onclick={() => closeSessionAsking(session)}
         aria-label="Close {label(session)}"
         title="Stop"
         data-testid="close-session">×</button
@@ -616,7 +641,7 @@
       <button
         class="icon"
         tabindex="-1"
-        onclick={() => closeSession(session.key)}
+        onclick={() => closeSessionAsking(session)}
         aria-label="Close {label(session)}"
         title="Stop"
         data-testid="close-session">×</button
@@ -642,7 +667,7 @@
     <button
       class="icon"
       tabindex="-1"
-      onclick={() => closeProject(project.path)}
+      onclick={() => closeProjectAsking(project.path)}
       aria-label="Close {projectLabel(project.path)}"
       data-testid="close-project">×</button
     >
@@ -779,6 +804,23 @@
       title="Show sessions ({describe(chordFor('toggle.sessions'))})"
       data-testid="unfold-sessions"><span class="unfold-mark" aria-hidden="true">›</span></button
     >
+  {/if}
+
+  {#if editor.closing !== null}
+    <!-- Closing a session or a project whose tabs hold the only copy of
+         unsaved edits asks first, here where it was closed. -->
+    <div class="closing" class:folded inert={folded}>
+      <ConfirmStrip
+        question="Close {editor.closing.what} with unsaved edits?"
+        detail="{editor.closing.keys.length === 1 ? '1 file' : `${editor.closing.keys.length} files`} open beside it {editor.closing.keys.length === 1 ? 'has' : 'have'} edits not yet saved: {unsavedNames(editor.closing.keys).join(', ')}."
+        action="Close without saving"
+        alternative={{ label: "Save and close", onClick: () => void closingSave() }}
+        safe
+        onConfirm={closingDrop}
+        onCancel={closingCancel}
+        testid="close-owner"
+      />
+    </div>
   {/if}
 
   {#if workspace.error}
@@ -1025,7 +1067,7 @@
                   <button
                     class="icon"
                     tabindex="-1"
-                    onclick={() => closeSession(session.key)}
+                    onclick={() => closeSessionAsking(session)}
                     aria-label="Close {label(session)}"
                     title="Stop"
                     data-testid="close-session">×</button
@@ -1896,6 +1938,15 @@
 
   .error {
     color: var(--del);
+  }
+
+  .closing {
+    flex: none;
+    padding: 8px 10px 4px;
+  }
+
+  .closing.folded {
+    visibility: hidden;
   }
 
   .error-row {

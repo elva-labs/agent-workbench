@@ -1492,6 +1492,24 @@ export interface Core {
   /** Puts text on the system clipboard. */
   copyText(text: string): Promise<void>;
 
+  /** Whether the editor holds unsaved edits, for the core to ask before
+      the window closes or the app quits while it does. */
+  setUnsaved(unsaved: boolean): Promise<void>;
+  /** The core held back the window's close or the app's quit to ask. */
+  onLeaveRequested(
+    handler: (ask: { kind: "window" | "quit"; generation: number }) => void,
+  ): Promise<() => void>;
+  /** The question is up. Without this soon after asking, the core lets the
+      window go, so a page that cannot answer never keeps it open. */
+  leaveHeard(generation: number): Promise<void>;
+  /** The user's answer: close the window, or quit, after all. */
+  leaveConfirmed(kind: "window" | "quit"): Promise<void>;
+  /** An item of the app's own File menu was chosen, by its action. */
+  onMenuAction(handler: (action: string) => void): Promise<() => void>;
+  /** The chord table, for the menu items that do what an action does to
+      show and answer that action's chord. */
+  menuKeys(table: Record<string, KeyChord>): Promise<void>;
+
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
   /** Opens the connection to a target, putting the daemon there first if it is missing. */
@@ -1862,6 +1880,18 @@ const tauriCore: Core = {
   pathDelete: (root, path) => invoke<void>("path_delete", { root, path }),
   revealPath: (path) => revealItemInDir(path),
   copyText: (text) => navigator.clipboard.writeText(text),
+  setUnsaved: (unsaved) => invoke("leave_unsaved", { unsaved }),
+  async onLeaveRequested(handler) {
+    return listen<{ kind: "window" | "quit"; generation: number }>("leave_requested", (event) =>
+      handler(event.payload),
+    );
+  },
+  leaveHeard: (generation) => invoke("leave_heard", { generation }),
+  leaveConfirmed: (kind) => invoke("leave_confirmed", { kind }),
+  async onMenuAction(handler) {
+    return listen<string>("menu_action", (event) => handler(event.payload));
+  },
+  menuKeys: (table) => invoke("menu_keys", { table }),
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
   remoteConnect: (host) =>
@@ -2190,6 +2220,16 @@ const detachedCore: Core = {
   },
   async revealPath() {},
   async copyText() {},
+  async setUnsaved() {},
+  async onLeaveRequested() {
+    return () => {};
+  },
+  async leaveHeard() {},
+  async leaveConfirmed() {},
+  async onMenuAction() {
+    return () => {};
+  },
+  async menuKeys() {},
   async remoteHosts() {
     return { configured: [], saved: [] };
   },

@@ -26,6 +26,13 @@ if (!Element.prototype.setPointerCapture) {
   Element.prototype.hasPointerCapture = vi.fn(() => false);
 }
 
+// jsdom lays nothing out, so a range has no boxes. The editor measures the
+// text it scrolls to with them; empty boxes leave it where it is.
+if (!Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
+
 // jsdom implements no layout, so it has no scrollIntoView. The tree calls it
 // to keep the keyboard cursor on screen.
 if (!Element.prototype.scrollIntoView) {

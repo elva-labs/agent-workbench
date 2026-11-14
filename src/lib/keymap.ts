@@ -30,9 +30,11 @@ export { isMac };
  * terminal has focus, the agent's or a shell's, and to the chrome otherwise.
  *
  * The editor is a text field of the app's own, and keeps what a text field
- * needs while it has the keyboard: Escape, and every chord on an arrow key,
- * which moves or selects there. Find there is find in the file, and save is
- * only there.
+ * needs while it has the keyboard: Escape, every chord on an arrow key,
+ * which moves or selects there, and the viewer's chord, which selects the
+ * next occurrence there. Find there is find in the file. Save and close tab
+ * are editor mode's, from anywhere but a terminal, where on Windows and
+ * Linux the same Ctrl chords are the process's.
  */
 
 export type Action =
@@ -47,8 +49,10 @@ export type Action =
   | { type: "toggleMode" }
   /** A name field for a new file in the tree, in editor mode. */
   | { type: "newFile" }
-  /** The file in the editor written to disk. */
+  /** The file in front in the editor written to disk. */
   | { type: "save" }
+  /** The editor's tab in front closed, or the window on macOS with none. */
+  | { type: "closeTab" }
   /** Find in the file in the editor. */
   | { type: "findInFile" }
   /** The keyboard to the editor, from elsewhere in editor mode. */
@@ -122,6 +126,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   findLines: { type: "find", mode: "lines" },
   "file.new": { type: "newFile" },
   "file.save": { type: "save" },
+  "file.close": { type: "closeTab" },
   theme: { type: "cycleTheme" },
   settings: { type: "openSettings" },
 };
@@ -171,9 +176,15 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   // the file.
   if (action === "find" && ctx.inEditor) return { type: "findInFile" };
   if (action === "find" && isTerminal(ctx.focus)) return null;
-  // Saving is the editor's: anywhere else the chord passes through, to a
-  // terminal above all, where Ctrl+S is the process's.
-  if (action === "file.save" && !ctx.inEditor) return null;
+  // The viewer's chord has no viewer to open in editor mode; in the editor
+  // it is the editor's own.
+  if (action === "review" && ctx.editing) return null;
+  // Saving and closing a tab are editor mode's, from the tree as well as the
+  // editor. A terminal keeps the chords: Ctrl+S and Ctrl+W are the
+  // process's on Windows and Linux. On macOS the File menu answers what
+  // the page lets through, so Cmd+W still closes the window there.
+  if (action === "file.save" && (!ctx.editing || isTerminal(ctx.focus))) return null;
+  if (action === "file.close" && (!ctx.editing || isTerminal(ctx.focus))) return null;
   return ACTION_OF[action];
 }
 

@@ -10,7 +10,8 @@
    * Over the editor go the questions before something is lost, and the bar
    * for a file that changed on disk under unsaved edits: Compare shows the
    * disk's version against the editor's, Keep mine writes the editor's over
-   * it, Load from disk drops the edits for it.
+   * it, Load from disk drops the edits for it. A file that is gone, or that
+   * cannot be read any more, says which, and offers what makes sense there.
    */
   import BrowserView from "$lib/components/BrowserView.svelte";
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
@@ -23,17 +24,20 @@
     activeTab,
     bufferText,
     cancelAsk,
-    closeWindowAnyway,
+    closeDropping,
     closeWithoutSaving,
     compare,
     diskText,
     editor,
     keepMine,
+    leaveCancelled,
+    leaveWithoutSaving,
     loadFromDisk,
     otherKindShown,
     putAwayOther,
-    saveAllAndClose,
+    saveAllAndLeave,
     saveAndClose,
+    tryAgain,
     unsavedNames,
   } from "$lib/editor.svelte";
   import { lineDiff } from "$lib/lineDiff";
@@ -51,32 +55,50 @@
   let compared = $derived(
     comparing && editor.active !== null ? lineDiff(diskText(editor.active), bufferText(editor.active)) : [],
   );
-  let gone = $derived(buffer?.changed?.stamp === null);
-  let names = $derived(editor.asking?.kind === "window" ? unsavedNames() : []);
+  /** What the disk holds now under unsaved edits: another version, nothing,
+      or something that could not be read. */
+  let disk = $derived.by(() => {
+    const changed = buffer?.changed ?? null;
+    if (changed === null) return null;
+    if (changed.stamp !== null) return "changed" as const;
+    return changed.problem === null ? ("gone" as const) : ("unreadable" as const);
+  });
+  let names = $derived(editor.asking?.kind === "leave" ? unsavedNames() : []);
+  /** The file the close question is about, by its own key: whatever tab is
+      in front, the answer is about this one. */
+  let asked = $derived(
+    editor.asking?.kind === "close" ? (editor.buffers[editor.asking.key]?.path ?? null) : null,
+  );
+  let leaving = $derived(editor.asking?.kind === "leave" ? editor.asking.leave : null);
 </script>
 
 {#snippet asking()}
-  {#if editor.asking?.kind === "close" && tab !== null}
+  {#if asked !== null}
     <div class="strip">
       <ConfirmStrip
-        question="Close {lastSegment(tab.path)} without saving?"
-        detail="Its unsaved edits are dropped."
+        question="Close {lastSegment(asked)} with unsaved edits?"
+        detail="Closing it without saving drops them."
         action="Close without saving"
         alternative={{ label: "Save and close", onClick: () => void saveAndClose() }}
+        safe
         onConfirm={closeWithoutSaving}
         onCancel={cancelAsk}
         testid="close-unsaved"
       />
     </div>
-  {:else if editor.asking?.kind === "window"}
+  {:else if leaving !== null}
     <div class="strip">
       <ConfirmStrip
-        question="Close the window with unsaved edits?"
+        question={leaving === "quit" ? "Quit with unsaved edits?" : "Close the window with unsaved edits?"}
         detail="{names.length === 1 ? '1 file has' : `${names.length} files have`} edits not yet saved: {names.join(', ')}."
-        action="Close without saving"
-        alternative={{ label: "Save all and close", onClick: () => void saveAllAndClose() }}
-        onConfirm={closeWindowAnyway}
-        onCancel={cancelAsk}
+        action={leaving === "quit" ? "Quit without saving" : "Close without saving"}
+        alternative={{
+          label: leaving === "quit" ? "Save all and quit" : "Save all and close",
+          onClick: () => void saveAllAndLeave(),
+        }}
+        safe
+        onConfirm={leaveWithoutSaving}
+        onCancel={leaveCancelled}
         testid="close-window"
       />
     </div>
@@ -98,29 +120,43 @@
     </div>
   {:else}
     {@render asking()}
-    {#if buffer.changed !== null && editable}
-      <div class="banner" role="status" data-testid="disk-bar">
+    {#if disk !== null && editable}
+      <div class="banner" role="status" data-testid="disk-bar" data-disk={disk}>
         <span class="what">
           <span class="mark" aria-hidden="true"></span>
           <span>
-            {gone
-              ? "This file was deleted on disk while you have unsaved edits"
-              : "This file changed on disk while you have unsaved edits"}
+            {#if disk === "changed"}
+              This file changed on disk while you have unsaved edits
+            {:else if disk === "gone"}
+              This file was deleted on disk while you have unsaved edits
+            {:else}
+              This file could not be read from disk: {buffer.changed?.problem}
+            {/if}
           </span>
         </span>
         <span class="btns">
-          <button class="btn primary" onclick={() => void compare()} data-testid="disk-compare"
-            >{editor.comparing ? "Back to editing" : "Compare"}</button
+          {#if disk === "changed"}
+            <button class="btn primary" onclick={() => void compare()} data-testid="disk-compare"
+              >{editor.comparing ? "Back to editing" : "Compare"}</button
+            >
+          {/if}
+          <button class="btn" class:primary={disk !== "changed"} onclick={() => void keepMine()} data-testid="disk-keep"
+            >{disk === "gone" ? "Keep mine, write it back" : "Keep mine"}</button
           >
-          <button class="btn" onclick={() => void keepMine()} data-testid="disk-keep">Keep mine</button>
-          <button class="btn" onclick={() => void loadFromDisk()} data-testid="disk-load"
-            >{gone ? "Close" : "Load from disk"}</button
-          >
+          {#if disk === "changed"}
+            <button class="btn" onclick={() => void loadFromDisk()} data-testid="disk-load">Load from disk</button>
+          {:else if disk === "unreadable"}
+            <button class="btn" onclick={() => tryAgain()} data-testid="disk-retry">Try again</button>
+          {:else}
+            <button class="btn quiet" onclick={() => closeDropping()} data-testid="disk-close"
+              >Close without saving</button
+            >
+          {/if}
         </span>
       </div>
     {/if}
-    {#if editor.failed !== null}
-      <p class="failed" role="alert" data-testid="editor-failed">{editor.failed}</p>
+    {#if buffer.failed !== null}
+      <p class="failed" role="alert" data-testid="editor-failed">{buffer.failed}</p>
     {/if}
     {#if tab.note}
       <p class="note" data-testid="editor-note">{tab.note}</p>
@@ -175,6 +211,7 @@
         <span>Read only</span>
       {:else if tab.view === "diff"}
         <span>Against HEAD, read only</span>
+        {#if buffer.dirty}<span class="saved-version" data-testid="saved-version">The saved version</span>{/if}
         {#if entry !== null}
           <span class="end num">
             {#if entry.add}<span class="add">+{entry.add}</span>{/if}
@@ -183,6 +220,7 @@
         {/if}
       {:else}
         <span>Rendered, read only</span>
+        {#if buffer.dirty}<span class="saved-version" data-testid="saved-version">The saved version</span>{/if}
       {/if}
     </footer>
   {/if}
@@ -321,6 +359,15 @@
     background: var(--accent);
     box-shadow: none;
     color: var(--surface);
+  }
+
+  .btn.quiet {
+    box-shadow: none;
+    color: var(--del);
+  }
+
+  .saved-version {
+    color: var(--accent);
   }
 
   .btn:focus-visible {

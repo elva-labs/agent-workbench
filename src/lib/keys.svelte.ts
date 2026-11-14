@@ -32,6 +32,7 @@ export type ActionKey =
   | "findLines"
   | "file.new"
   | "file.save"
+  | "file.close"
   | "zoom.in"
   | "zoom.out"
   | "zoom.reset"
@@ -61,22 +62,23 @@ export interface ActionInfo {
 export const ACTIONS: ActionInfo[] = [
   { key: "focus.sessions", label: "Focus sessions", group: "Panes" },
   { key: "focus.agent", label: "Focus agent", group: "Panes" },
-  { key: "focus.changes", label: "Focus changes", group: "Panes" },
+  { key: "focus.changes", label: "Focus changes or files", group: "Panes" },
   { key: "focus.terminal", label: "Focus terminal", group: "Panes" },
   { key: "toggle.sessions", label: "Show or hide sessions", group: "Panes" },
   { key: "toggle.changes", label: "Show or hide the right pane", group: "Panes" },
   { key: "toggle.terminal", label: "Show or hide the terminal", group: "Panes" },
-  { key: "mode", label: "Agent or editor in the middle", group: "Panes" },
+  { key: "mode", label: "Agent mode or editor mode", group: "Panes" },
   { key: "session.next", label: "Next session or shell", group: "Sessions" },
   { key: "session.previous", label: "Previous session or shell", group: "Sessions" },
   { key: "session.attention", label: "Next session that needs you", group: "Sessions" },
   { key: "review", label: "Open or close the file viewer", group: "Changes" },
   { key: "view", label: "Diff, whole file or rendered", group: "Changes" },
   { key: "scope", label: "Changed files or all files", group: "Changes" },
-  { key: "find", label: "Filter files, or find in the file in the editor", group: "Changes" },
+  { key: "find", label: "Find", group: "Changes" },
   { key: "findLines", label: "Search in files", group: "Changes" },
   { key: "file.new", label: "New file", group: "Editor" },
-  { key: "file.save", label: "Save the file (in the editor)", group: "Editor" },
+  { key: "file.save", label: "Save", group: "Editor" },
+  { key: "file.close", label: "Close tab", group: "Editor" },
   { key: "zoom.in", label: "Zoom the terminal in", group: "Terminal" },
   { key: "zoom.out", label: "Zoom the terminal out", group: "Terminal" },
   { key: "zoom.reset", label: "Reset the terminal's zoom", group: "Terminal" },
@@ -110,6 +112,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     findLines: shifted("f"),
     "file.new": withAlt("n"),
     "file.save": plain("s"),
+    "file.close": plain("w"),
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
@@ -139,6 +142,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     findLines: shifted("f"),
     "file.new": withAlt("n"),
     "file.save": plain("s"),
+    "file.close": plain("w"),
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),

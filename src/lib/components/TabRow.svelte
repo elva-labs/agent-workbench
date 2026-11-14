@@ -5,13 +5,20 @@
    * walked with the view chord. A tab only looked at is drawn in italics
    * until it is edited or double-clicked; one with unsaved edits carries a
    * dot where its close button is.
+   *
+   * While what the agent presented, a plugin's page or the browser takes the
+   * editor's place, no tab is drawn in front and the views control goes. The
+   * tab in front is always scrolled into view; tabs narrow before they
+   * overflow, and an edge with tabs past it fades.
    */
+  import { tick } from "svelte";
   import {
     activate,
     activeTab,
     closeTab,
     editor,
     keep,
+    otherKindShown,
     setTabView,
     tabKey,
     viewsOf,
@@ -21,8 +28,41 @@
   import { chordFor, describe } from "$lib/keys.svelte";
   import { lastSegment } from "$lib/paths";
 
-  let front = $derived(activeTab());
+  let other = $derived(otherKindShown());
+  let front = $derived(other ? null : activeTab());
   let views = $derived(viewsOf(front));
+
+  let strip = $state<HTMLDivElement | null>(null);
+  let fadeStart = $state(false);
+  let fadeEnd = $state(false);
+
+  /** Which edges have tabs past them. */
+  function measure() {
+    if (strip === null) return;
+    fadeStart = strip.scrollLeft > 1;
+    fadeEnd = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
+  }
+
+  $effect(() => {
+    if (strip === null) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(strip);
+    return () => observer.disconnect();
+  });
+
+  // The tab in front is never hidden past an edge.
+  $effect(() => {
+    const key = editor.active;
+    editor.tabs.length;
+    void tick().then(() => {
+      if (strip === null || key === null) return;
+      const at = [...strip.querySelectorAll<HTMLElement>("[data-testid='editor-tab']")].find(
+        (tab) => tab.dataset.key === key,
+      );
+      at?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      measure();
+    });
+  });
 
   const LABELS: Record<TabView, string> = { edit: "Edit", diff: "Diff", preview: "Preview" };
 
@@ -44,19 +84,27 @@
 </script>
 
 <div class="row" data-testid="tab-row">
-  <div class="tabs" role="tablist" aria-label="Open files">
+  <div
+    class="tabs"
+    class:fade-start={fadeStart}
+    class:fade-end={fadeEnd}
+    role="tablist"
+    aria-label="Open files"
+    bind:this={strip}
+    onscroll={measure}
+  >
     {#each editor.tabs as tab (tabKey(tab))}
       {@const key = tabKey(tab)}
       {@const label = named(tab)}
       {@const dirty = editor.buffers[key]?.dirty === true}
       <div
         class="tab"
-        class:on={editor.active === key}
+        class:on={!other && editor.active === key}
         class:preview={tab.preview}
         class:dirty
         role="tab"
         tabindex="-1"
-        aria-selected={editor.active === key}
+        aria-selected={!other && editor.active === key}
         title={tab.path}
         onclick={() => void activate(key)}
         ondblclick={() => keep(key)}
@@ -66,6 +114,7 @@
         }}
         data-testid="editor-tab"
         data-path={tab.path}
+        data-key={key}
       >
         <span class="name">{label.name}</span>
         {#if label.folder !== null}<span class="folder">{label.folder}</span>{/if}
@@ -96,7 +145,7 @@
       title="Walk the views  {describe(chordFor('view'))}"
       data-testid="editor-views"
     >
-      {#each ["edit", "diff", "preview"] as const as option (option)}
+      {#each (["edit", "diff", "preview"] as const).filter((option) => option !== "preview" || views.includes("preview")) as option (option)}
         <button
           role="radio"
           aria-checked={front.view === option}
@@ -138,8 +187,23 @@
     display: none;
   }
 
+  .tabs.fade-start {
+    mask-image: linear-gradient(to right, transparent, black 24px);
+  }
+
+  .tabs.fade-end {
+    mask-image: linear-gradient(to left, transparent, black 24px);
+  }
+
+  .tabs.fade-start.fade-end {
+    mask-image: linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent);
+  }
+
+  /* Tabs narrow to a name's first letters before the row overflows. */
   .tab {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 72px;
+    max-width: 220px;
     display: flex;
     align-items: center;
     gap: 5px;
@@ -167,6 +231,16 @@
 
   .tab.preview .name {
     font-style: italic;
+  }
+
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .close {
+    flex: none;
   }
 
   .folder {

@@ -112,10 +112,40 @@ export async function installFakeCore(
 
       let ptyCount = 0;
 
+      // The core's side of leaving with unsaved edits: what the window last
+      // said, and the questions asked. A test quits through `__quit` and
+      // picks a menu item through `__menuAction`.
+      const leave = {
+        unsaved: false,
+        allowed: false,
+        asked: 0,
+        heard: 0,
+        handler: null as ((ask: { kind: string; generation: number }) => void) | null,
+      };
+      const askToLeave = (kind: "window" | "quit") => {
+        leave.asked += 1;
+        leave.handler?.({ kind, generation: leave.asked });
+      };
+      (window as unknown as Record<string, unknown>).__quit = () => {
+        const w = window as unknown as { __windowControls?: string[] };
+        if (leave.unsaved && !leave.allowed) askToLeave("quit");
+        else (w.__windowControls ??= []).push("quit");
+      };
+      (window as unknown as Record<string, unknown>).__leave = leave;
+
       // The working tree's text by path, for the files the editor has
       // written; any other listed file reads as the viewer shows it.
       const disk = new Map<string, string>();
       const gone = new Set<string>();
+      // What the core refuses: a read-only file, anything in .git, a folder
+      // holding another repository; and a file that became binary.
+      const readOnly = new Set<string>();
+      const nested = new Set<string>();
+      const binaryNow = new Set<string>();
+      const inGit = (path: string) => path === ".git" || path.startsWith(".git/");
+      const holdsRepository = (path: string) =>
+        [...nested].some((repo) => repo === path || repo.startsWith(`${path}/`));
+      (window as unknown as Record<string, unknown>).__refusals = { readOnly, nested, binaryNow };
       const listedPaths = () => [
         ...new Set([
           ...state.fixture.files,
@@ -482,8 +512,14 @@ export async function installFakeCore(
         }),
         setWindowTitle: async () => {},
         openUrl: async () => {},
+        // The window's close goes through the core's question while the
+        // editor says it holds unsaved edits, as the core's does.
         windowControl: async (action: string) => {
           const w = window as unknown as { __windowControls?: string[] };
+          if (action === "close" && leave.unsaved && !leave.allowed) {
+            askToLeave("window");
+            return;
+          }
           (w.__windowControls ??= []).push(action);
         },
         openAppMenu: async () => {
@@ -1271,12 +1307,12 @@ export async function installFakeCore(
         // keeps, held to the rules the core keeps: a stamp names exact
         // content, and a write that expected other content is refused.
         fileRead: async (_root: string, file: string) => {
-          if (file.endsWith(".png"))
-            throw new Error(`${file} is a binary file, not text`);
+          if (file.endsWith(".png") || binaryNow.has(file))
+            throw new Error(`${file} is a binary file`);
           if (file.includes("huge"))
             throw new Error(`${file} is larger than 4 MB`);
           const text = textOf(file);
-          if (text === undefined) throw new Error(`${file} is not there`);
+          if (text === undefined) throw new Error(`${file} does not exist`);
           return { text, stamp: stampOf(text) };
         },
         fileWrite: async (
@@ -1288,6 +1324,8 @@ export async function installFakeCore(
         ) => {
           const refusal = (window as unknown as { __refuseWrites?: string }).__refuseWrites;
           if (refusal !== undefined) throw new Error(refusal);
+          if (inGit(file)) throw new Error(`${file} is in .git, which is not changed from here`);
+          if (readOnly.has(file)) throw new Error(`${file} is read-only`);
           const current = textOf(file);
           if (!overwrite) {
             if (stamp === null && current !== undefined)
@@ -1306,10 +1344,18 @@ export async function installFakeCore(
         pathRename: async (_root: string, from: string, to: string) => {
           const under = (path: string, base: string) =>
             path === base || path.startsWith(`${base}/`);
+          if (inGit(from)) throw new Error(`${from} is in .git, which is not changed from here`);
+          if (inGit(to)) throw new Error(`${to} is in .git, which is not changed from here`);
+          if (holdsRepository(from))
+            throw new Error(
+              `${from} holds another repository or a worktree, with a .git inside, and is not moved from here`,
+            );
           const moving = listedPaths().filter((path) => under(path, from));
-          if (moving.length === 0) throw new Error(`${from} is not there`);
-          if (listedPaths().some((path) => under(path, to)))
-            throw new Error(`something is already at ${to}`);
+          if (moving.length === 0) throw new Error(`${from} does not exist`);
+          // A rename that changes only the case of the name is allowed.
+          const caseOnly = from.toLowerCase() === to.toLowerCase();
+          if (!caseOnly && listedPaths().some((path) => under(path, to)))
+            throw new Error(`${to} already exists`);
           for (const path of moving) {
             const text = textOf(path) ?? "";
             removeFile(path);
@@ -1320,10 +1366,15 @@ export async function installFakeCore(
           treeMoved();
         },
         pathDelete: async (_root: string, path: string) => {
+          if (inGit(path)) throw new Error(`${path} is in .git, which is not changed from here`);
+          if (holdsRepository(path))
+            throw new Error(
+              `${path} holds another repository or a worktree, with a .git inside, and is not deleted from here`,
+            );
           const going = listedPaths().filter(
             (candidate) => candidate === path || candidate.startsWith(`${path}/`),
           );
-          if (going.length === 0) throw new Error(`${path} is not there`);
+          if (going.length === 0) throw new Error(`${path} does not exist`);
           for (const candidate of going) removeFile(candidate);
           const w = window as unknown as { __deletes?: string[] };
           (w.__deletes ??= []).push(path);
@@ -1336,6 +1387,28 @@ export async function installFakeCore(
         copyText: async (text: string) => {
           const w = window as unknown as { __copied?: string[] };
           (w.__copied ??= []).push(text);
+        },
+        setUnsaved: async (unsaved: boolean) => {
+          leave.unsaved = unsaved;
+        },
+        onLeaveRequested: async (handler: (ask: { kind: string; generation: number }) => void) => {
+          leave.handler = handler;
+          return () => {};
+        },
+        leaveHeard: async (generation: number) => {
+          leave.heard = Math.max(leave.heard, generation);
+        },
+        leaveConfirmed: async (kind: string) => {
+          leave.allowed = true;
+          const w = window as unknown as { __windowControls?: string[] };
+          (w.__windowControls ??= []).push(kind === "quit" ? "quit" : "close");
+        },
+        onMenuAction: async (handler: (action: string) => void) => {
+          (window as unknown as Record<string, unknown>).__menuAction = handler;
+          return () => {};
+        },
+        menuKeys: async (table: Record<string, unknown>) => {
+          (window as unknown as Record<string, unknown>).__menuKeys = table;
         },
         settingsGet: async () => {
           const found = readSettings();

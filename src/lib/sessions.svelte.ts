@@ -982,6 +982,19 @@ export function disown(project: string, id: string) {
   }
 }
 
+/** Who hears that a session, or a project with `project:` before its
+    path, has gone: the editor, which lets its tabs go. */
+let goneHandler: ((owner: string) => void) | null = null;
+
+export function onOwnerGone(handler: ((owner: string) => void) | null) {
+  goneHandler = handler;
+}
+
+/** A session or a project's own place has gone. */
+export function ownerGone(owner: string) {
+  goneHandler?.(owner);
+}
+
 export function close(key: string) {
   const session = byKey(key);
   if (session === null) return;
@@ -1012,6 +1025,7 @@ export function close(key: string) {
   sessions.all.splice(at, 1);
   // The row is gone, so its transcript is history again.
   if (session.id !== null) loadHistory(session.project);
+  ownerGone(key);
 
   if (sessions.active !== key) return;
   // Prefer another session in the same project, so closing one does not throw

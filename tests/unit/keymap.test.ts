@@ -248,10 +248,18 @@ describe("editor mode", () => {
     expect(resolveAction(mod("n", { altKey: true, code: "KeyN" }), tree)).toEqual({ type: "newFile" });
   });
 
-  it("saves on Cmd+S only while the editor has the keyboard", () => {
+  it("saves on Cmd+S anywhere in editor mode but a terminal", () => {
     expect(resolveAction(mod("s"), editor)).toEqual({ type: "save" });
-    expect(resolveAction(mod("s"), tree)).toBeNull();
+    expect(resolveAction(mod("s"), tree)).toEqual({ type: "save" });
+    expect(resolveAction(mod("s"), { focus: "agent", editing: true })).toBeNull();
     expect(resolveAction(mod("s"))).toBeNull();
+  });
+
+  it("closes the tab on Cmd+W in editor mode, and leaves it to the menu elsewhere", () => {
+    expect(resolveAction(mod("w"), editor)).toEqual({ type: "closeTab" });
+    expect(resolveAction(mod("w"), tree)).toEqual({ type: "closeTab" });
+    expect(resolveAction(mod("w"), { focus: "terminal", editing: true })).toBeNull();
+    expect(resolveAction(mod("w"), { focus: "changes" })).toBeNull();
   });
 
   it("finds in the file from the editor, and filters the tree from the tree", () => {
@@ -267,8 +275,13 @@ describe("editor mode", () => {
 
   it("keeps the app's other chords while the editor has the keyboard", () => {
     expect(resolveAction(mod("1"), editor)).toEqual({ type: "focus", pane: "sessions" });
-    expect(resolveAction(mod("d"), editor)).toEqual({ type: "toggleReview" });
     expect(resolveAction(mod("e"), editor)).toEqual({ type: "toggleView" });
+  });
+
+  it("leaves Cmd+D to the editor, and does nothing with it elsewhere in editor mode", () => {
+    expect(resolveAction(mod("d"), editor)).toBeNull();
+    expect(resolveAction(mod("d"), tree)).toBeNull();
+    expect(resolveAction(mod("d"), { focus: "changes" })).toEqual({ type: "toggleReview" });
   });
 
   it("leaves Escape to the editor, and sends it there from the panes around it", () => {

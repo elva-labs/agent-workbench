@@ -6,16 +6,16 @@
    * modes whatever the panes under it do. It is window chrome rather than
    * part of the pane it sits in: pressing it leaves the keyboard where it is.
    */
-  import { flipMode } from "$lib/editor.svelte";
+  import { flipMode, toggleRight } from "$lib/editor.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
-  import { layout, toggleRightPane } from "$lib/layout.svelte";
+  import { layout } from "$lib/layout.svelte";
 
   let editing = $derived(layout.mode === "editing");
   /** Whether the right pane is asked for, the agent while editing and the
       changes otherwise; the window may still be too narrow to show it. */
   let rightShown = $derived(editing ? layout.agentChosen : layout.changesChosen);
   let rightTitle = $derived(`Show or hide the right pane  ${describe(chordFor("toggle.changes"))}`);
-  let modeTitle = $derived(`Agent or editor in the middle  ${describe(chordFor("mode"))}`);
+  let modeTitle = $derived(`Agent mode or editor mode  ${describe(chordFor("mode"))}`);
 
   function chrome(e: PointerEvent) {
     e.preventDefault();
@@ -27,12 +27,15 @@
   }
 </script>
 
-<div class="corner" data-testid="corner">
+<!-- Focus moving in by Tab stays where the pane focus was: the corner is
+     the window's, not the pane's it stands in. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="corner" data-testid="corner" onfocusin={(e) => e.stopPropagation()}>
   <button
     class="right"
     class:off={!rightShown}
     onpointerdown={chrome}
-    onclick={toggleRightPane}
+    onclick={toggleRight}
     aria-pressed={rightShown}
     aria-label="Show or hide the right pane"
     title={rightTitle}
@@ -40,7 +43,7 @@
   >
     <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M10 3v10" /></svg>
   </button>
-  <div class="mode" role="radiogroup" aria-label="What takes the middle" title={modeTitle}>
+  <div class="mode" role="radiogroup" aria-label="Agent mode or editor mode" title={modeTitle}>
     <button
       role="radio"
       aria-checked={!editing}

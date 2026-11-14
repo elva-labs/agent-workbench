@@ -496,11 +496,14 @@ export function setEditing(on: boolean) {
 
 /** Shows or hides the right pane: the changes pane in agent mode, the
     agent pane while editing. */
-export function toggleRightPane() {
+export function toggleRightPane(): "shown" | "hidden" | "no room" {
   if (layout.mode !== "editing") {
+    // A pane the window is too narrow for has nowhere to come back to.
+    if (layout.changesForced && !changesVisible()) return "no room";
     togglePane("changes");
-    return;
+    return changesVisible() ? "shown" : "hidden";
   }
+  if (layout.agentHidden) return "no room";
   layout.agentChosen = !layout.agentChosen;
   if (!agentVisible() && layout.focus === "agent") {
     layout.focus = "changes";
@@ -508,6 +511,7 @@ export function toggleRightPane() {
   }
   applyLayout(layout.width);
   saveLayout();
+  return agentVisible() ? "shown" : "hidden";
 }
 
 export function enterReview() {

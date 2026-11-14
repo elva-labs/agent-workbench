@@ -33,15 +33,18 @@
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
   import { newFile } from "$lib/fileOps.svelte";
   import {
+    closeFront,
+    closeTabInFront,
     findInFile,
     flipMode,
     focusFiles,
     followOwner,
-    leaveEditor,
+    leaveRequested,
     loadEditorSize,
     otherKindShown,
     putAwayOther,
     save,
+    toggleRight,
     walkView,
     zoomEditor,
   } from "$lib/editor.svelte";
@@ -108,6 +111,7 @@
     changesSpan,
     changesVisible,
     changesWidth,
+    editTreeVisible,
     enterReview,
     exitReview,
     focusPane,
@@ -124,7 +128,6 @@
     terminalOpen,
     terminalVisible,
     togglePane,
-    toggleRightPane,
     toggleTerminal,
   } from "$lib/layout.svelte";
 
@@ -237,6 +240,15 @@
     core()
       .onFullScreen((fullScreen) => (layout.fullScreen = fullScreen))
       .then((unlisten) => offs.push(unlisten));
+    // The core held back the window's close or the app's quit while the
+    // editor has unsaved edits: the question goes over the editor.
+    core()
+      .onLeaveRequested((ask) => leaveRequested(ask))
+      .then((unlisten) => offs.push(unlisten));
+    // The File menu's items do what their actions do.
+    core()
+      .onMenuAction((action) => menuAction(action))
+      .then((unlisten) => offs.push(unlisten));
     // A connection going away takes every pty on it: each ends the way a
     // killed one does, and the pane says why.
     core()
@@ -334,6 +346,13 @@
     void core().browserKeys(Object.values(keys.bindings));
   });
 
+  // The File menu's items show and answer the chords of their actions.
+  $effect(() => {
+    void core()
+      .menuKeys({ ...keys.bindings })
+      .catch(() => {});
+  });
+
   let reviewing = $derived(layout.mode === "reviewing");
   let editing = $derived(layout.mode === "editing");
 
@@ -395,6 +414,15 @@
       void changesSpan.set(width, { duration: easing(moved), easing: cubicOut });
     });
   });
+
+  /** How wide the peeked pane is drawn: its own width, and while editing at
+      least as wide as the folded column and the tree's, so no sliver of the
+      tree stands beside it. */
+  let peekWidth = $derived(
+    editing && editTreeVisible()
+      ? `max(${layout.sessions}px, calc(${FOLDED + layout.editTree}px + var(--splitter-w) * 2))`
+      : `${layout.sessions}px`,
+  );
 
   /** The sessions column's width, folded or open or on its way, the splitter
       beside it included. */
@@ -555,7 +583,7 @@
         focusPane(action.pane);
         break;
       case "toggle":
-        if (action.pane === "changes") toggleRightPane();
+        if (action.pane === "changes") toggleRight();
         else if (editing && layout.sessionsForced) {
           // A window that folds the pane for the editor has nothing to open
           // it into: the chord peeks it, and puts it back.
@@ -568,7 +596,10 @@
         flipMode();
         break;
       case "save":
-        void save();
+        if (editing) void save();
+        break;
+      case "closeTab":
+        closeTabInFront();
         break;
       case "newFile":
         newFile();
@@ -586,10 +617,8 @@
         cycleTheme();
         break;
       case "toggleReview":
-        // The editor has no viewer to open: the chord shows the file in
-        // front in the viewer, beside the agent, at the cursor's line.
-        if (editing) leaveEditor(true);
-        else if (reviewing) closeViewer();
+        if (editing) break;
+        if (reviewing) closeViewer();
         else {
           // Opening the viewer with nothing chosen shows the first file rather
           // than an empty pane; with nothing listed, the empty pane is honest.
@@ -647,6 +676,14 @@
       default:
         action satisfies never;
     }
+  }
+
+  /** An item of the File menu: what its action does, except that Close Tab
+      with no tab to close is the window's close there. */
+  function menuAction(action: string) {
+    if (action === "file.new") newFile();
+    else if (action === "file.save" && editing) void save();
+    else if (action === "file.close") closeFront();
   }
 
   /** Whether the keyboard is in the editor, its find panel included. */
@@ -718,6 +755,7 @@
       class:folded={!sessionsShown()}
       class:peeking={layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
+      style:--peek-w={peekWidth}
       style:--head-h="{sessionsHead}px"
     >
       <SessionsPane />
@@ -898,7 +936,7 @@
 
   .sessions-slot.peeking :global(.pane) {
     flex: none;
-    width: var(--sessions-w);
+    width: var(--peek-w);
     box-shadow: var(--pane-shadow-on), 12px 0 28px rgba(0, 0, 0, 0.3);
   }
 

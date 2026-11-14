@@ -293,6 +293,7 @@ describe("the editor's chords", () => {
       expect(PRESETS[name].mode).toEqual({ key: "e", shift: true, alt: false });
       expect(PRESETS[name]["file.new"]).toEqual({ key: "n", shift: false, alt: true });
       expect(PRESETS[name]["file.save"]).toEqual({ key: "s", shift: false, alt: false });
+      expect(PRESETS[name]["file.close"]).toEqual({ key: "w", shift: false, alt: false });
     }
   });
 
