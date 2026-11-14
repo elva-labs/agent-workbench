@@ -409,6 +409,42 @@ describe("the real app", () => {
     writeFileSync(join(repo, "README.md"), "# demo\n\nfrom the disk\n");
     await waitForPaneText(driver, ".cm-content", "from the disk");
 
+    // A save under unsaved edits after the disk changed is refused by the
+    // real core's stamp: asked directly with the stamp the editor read, and
+    // through the editor, which then raises the bar.
+    const read = (await driver.executeAsyncScript(
+      (root: string, done: (value: unknown) => void) => {
+        const ipc = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } })
+          .__TAURI_INTERNALS__;
+        ipc.invoke("file_read", { root, file: "README.md" }).then(done, (error) => done({ error: String(error) }));
+      },
+      repo,
+    )) as { stamp: string };
+    expect(read.stamp).toBeTruthy();
+    await (await driver.findElement(By.css(".cm-content"))).click();
+    await driver.actions().keyDown(key).sendKeys(Key.END).keyUp(key).perform();
+    await driver.actions().sendKeys(" mine").perform();
+    await located(driver, "[data-testid='editor-tab-dirty']", 5_000);
+    writeFileSync(join(repo, "README.md"), "# demo\n\nfrom the agent\n");
+    const refused = (await driver.executeAsyncScript(
+      (root: string, stamp: string, done: (value: unknown) => void) => {
+        const ipc = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } })
+          .__TAURI_INTERNALS__;
+        ipc
+          .invoke("file_write", { root, file: "README.md", text: "stale", stamp, overwrite: false })
+          .then(done, (error) => done({ error: String(error) }));
+      },
+      repo,
+      read.stamp,
+    )) as { written: boolean; stamp: string | null };
+    expect(refused.written).toBe(false);
+    expect(refused.stamp).not.toBe(read.stamp);
+    await driver.actions().keyDown(key).sendKeys("s").keyUp(key).perform();
+    await located(driver, "[data-testid='disk-bar']", 10_000);
+    expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("# demo\n\nfrom the agent\n");
+    await (await located(driver, "[data-testid='disk-load']")).click();
+    await waitForPaneText(driver, ".cm-content", "from the agent");
+
     await (await located(driver, "[data-testid='mode-agent']")).click();
     await driver.wait(async () => (await mode()) === "working", 10_000);
   });
