@@ -584,5 +584,7 @@ test.describe("a round of review past the workflow's limit", () => {
     await page.getByTestId("conduct-no").click();
     await expect.poll(() => answerTo(page, "c-5")).not.toBeNull();
     expect((await answerTo(page, "c-5"))!.error).toContain("the user did not allow another");
+    // The user's own answer is not put back to them as a refused start.
+    await expect(page.getByTestId("workflow-refused")).toHaveCount(0);
   });
 });

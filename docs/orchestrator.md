@@ -234,8 +234,8 @@ the pointer rests on it, or on a click, Enter or Space, and Escape puts
 them away. For the orchestrator they are its instructions. For a session
 started for a step they are what the step allows, in the words of its
 settings: the models it may use, how many sessions it runs at once, and
-for a review when the work passes, where it goes back and how many rounds
-it gives each piece. A start the workflow refuses its orchestrator is shown over the
+for a review when the work passes, and where and how often it sends the
+work back. A start the workflow refuses its orchestrator is shown over the
 terminal in one line, whole while the pointer or the keyboard is on it, as
 well as answered to the agent, until a start goes through or the line is
 put away.

@@ -2031,7 +2031,6 @@ describe("starting in a workflow's shape", () => {
       "Models it may use: Opus.",
       "The work passes when the reviewer approves and the orchestrator agrees.",
       "Otherwise: go back to Work at most 3 times, then ask me.",
-      "Rounds of review for each piece: 4, and another only when I allow it.",
     ]);
     for (const line of tag.rules) expect(line).not.toMatch(/\byou\b|`/i);
     // A deleted workflow followed by its kept copy says so by its name.

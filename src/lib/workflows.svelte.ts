@@ -713,8 +713,8 @@ export function passesText(step: ReviewStep): string {
 
 /** What a step allows, a line each in the words its settings use, for the
     person reading about a session that runs for it: what it does, the
-    models, and how many sessions at once or what a review passes and how
-    many rounds it gives a piece. A review names the work it checks when
+    models, and how many sessions at once or when a review passes the work
+    and how often it sends it back. A review names the work it checks when
     that is known. */
 export function stepFacts(step: WorkflowStep, work: string | null = null): string[] {
   const [first, ...rest] = step.models;
@@ -733,7 +733,6 @@ export function stepFacts(step: WorkflowStep, work: string | null = null): strin
     `Models it may use: ${models}.`,
     `The work passes when ${passesText(step)}.`,
     `Otherwise: go back to ${step.backTo} at most ${times}, then ask me.`,
-    `Rounds of review for each piece: ${step.limit + 1}, and another only when I allow it.`,
   ];
 }
 
