@@ -25,6 +25,7 @@ const DEFAULTS: Settings = {
   keys: {},
   hooks: { everywhere: true, overrides: {} },
   accounts: { list: {}, everywhere: null, overrides: {} },
+  workflows: { list: [], default: null, overrides: {} },
   pastSessions: "forever",
   themes: {},
   userStyles: false,

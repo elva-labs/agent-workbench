@@ -24,23 +24,27 @@ export function sending(): boolean {
   return inFlight > 0;
 }
 
-export function persist(change: Partial<Settings>) {
+/** Sends a change, and answers with the core's reason when it refuses it,
+    or null once it is kept. */
+export function persist(change: Partial<Settings>): Promise<string | null> {
   let answer: Promise<Settings>;
   try {
     answer = core().settingsSet(change);
-    if (typeof answer?.then !== "function") return;
+    if (typeof answer?.then !== "function") return Promise.resolve(null);
   } catch {
     // A core without settings: the window's own copy holds for this run.
-    return;
+    return Promise.resolve(null);
   }
   inFlight += 1;
-  answer.then(
+  return answer.then(
     (settings) => {
       inFlight -= 1;
       if (inFlight === 0) settle?.(settings);
+      return null;
     },
-    () => {
+    (error: unknown) => {
       inFlight -= 1;
+      return error instanceof Error ? error.message : String(error);
     },
   );
 }

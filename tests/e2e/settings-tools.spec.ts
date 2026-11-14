@@ -208,3 +208,60 @@ test("asks one change at a time", async ({ page }) => {
   expect((await answerTo(page, "q-1"))!.error).toBeNull();
   expect((await answerTo(page, "q-2"))!.error).toMatch(/declined/);
 });
+
+test.describe("workflows", () => {
+  const quick = {
+    name: "Quick fix",
+    orchestrator: { agent: "claude-code", model: "opus" },
+    steps: [{ kind: "work", name: "Fix", models: [], parallel: 2 }],
+  };
+
+  test("are read with the settings, and a change is put to the user as what it makes of them", async ({
+    page,
+  }) => {
+    await push(page, { id: "w-1", tool: "settings" });
+    await expect.poll(() => answerTo(page, "w-1")).not.toBeNull();
+    expect((await answerTo(page, "w-1"))!.content).toContain('"name": "Build and review"');
+
+    await push(page, {
+      id: "w-2",
+      tool: "settings_change",
+      arguments: { workflow: quick, reason: "For small fixes." },
+    });
+    const ask = page.getByTestId("settings-ask");
+    await expect(ask).toBeVisible();
+    const row = page.getByTestId("settings-ask-change");
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("Workflow Quick fix");
+    await expect(row).toContainText("Opus directs Fix (any model, 2 at once)");
+    // Nothing is made while the user decides.
+    expect((await file(page)).workflows).toBeUndefined();
+    expect(await answerTo(page, "w-2")).toBeNull();
+
+    await page.getByTestId("settings-allow").click();
+    await expect.poll(async () => (await file(page)).workflows.list.map((w: { name: string }) => w.name)).toEqual([
+      "Build and review",
+      "Quick fix",
+    ]);
+    await expect.poll(() => answerTo(page, "w-2")).not.toBeNull();
+    expect((await answerTo(page, "w-2"))!.error).toBeNull();
+
+    // The editor shows it.
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-workflows").click();
+    await expect(
+      page.locator('[data-testid="workflow-chip"][data-workflow="Quick fix"]'),
+    ).toBeVisible();
+  });
+
+  test("one that will not do is refused without troubling the user", async ({ page }) => {
+    await push(page, {
+      id: "w-3",
+      tool: "settings_change",
+      arguments: { workflow: { ...quick, steps: [] } },
+    });
+    await expect.poll(() => answerTo(page, "w-3")).not.toBeNull();
+    expect((await answerTo(page, "w-3"))!.error).toContain("at least one step");
+    await expect(page.getByTestId("settings-ask")).toHaveCount(0);
+  });
+});

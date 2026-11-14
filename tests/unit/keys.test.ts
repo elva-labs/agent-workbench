@@ -217,6 +217,7 @@ describe("a whole table", () => {
 describe("the palette, the jump and the zoom", () => {
   it("have chords of their own in the default preset", () => {
     expect(chordFor("palette")).toEqual(chord("p", true));
+    expect(chordFor("goto")).toEqual(chord("p"));
     expect(chordFor("session.attention")).toEqual(chord("."));
     expect(chordFor("zoom.in")).toEqual(chord("="));
     expect(chordFor("zoom.out")).toEqual(chord("-"));
@@ -227,7 +228,15 @@ describe("the palette, the jump and the zoom", () => {
   it("open the palette on Cmd+; in the vim preset", () => {
     applyPreset("vim");
     expect(chordFor("palette")).toEqual(chord(";"));
+    expect(chordFor("goto")).toEqual(chord("p"));
     expect(chordFor("session.previous")).toEqual(chord("p", true));
+  });
+
+  it("can be rebound, go to apart from commands", () => {
+    expect(setBinding("goto", chord("k"))).toBeNull();
+    expect(chordFor("goto")).toEqual(chord("k"));
+    expect(chordFor("palette")).toEqual(chord("p", true));
+    expect(setBinding("goto", chord("p", true))).toContain("already");
   });
 });
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import HooksNotice from "$lib/components/HooksNotice.svelte";
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
   import Pane from "$lib/components/Pane.svelte";
@@ -15,7 +15,7 @@
     installed,
     unavailableReason,
   } from "$lib/agent.svelte";
-  import { agentVisible, layout } from "$lib/layout.svelte";
+  import { agentVisible, layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import {
     activeSession,
     create,
@@ -66,6 +66,34 @@
     choosing = false;
   });
 
+  let wrap = $state<HTMLDivElement | null>(null);
+
+  // A project with no session has no terminal to take the keyboard, so a
+  // request for the agent pane gives it to the New session button, unless it
+  // is already on a control inside this pane. It is taken from the page body,
+  // from a terminal that is out of sight and from a control in another pane.
+  $effect(() => {
+    layout.focusRequest;
+    untrack(() => {
+      if (layout.focus !== "agent" || !agentVisible() || wrap === null) return;
+      if (current !== null || blocked !== null || workspace.active === null) return;
+      if (overlayHoldsKeyboard()) return;
+      const owner = document.activeElement;
+      const pane = wrap.closest("section");
+      if (
+        owner !== null &&
+        pane?.contains(owner) &&
+        owner !== document.body &&
+        owner.closest("[data-terminal]") === null
+      )
+        return;
+      void tick().then(() => {
+        (owner as HTMLElement | null)?.blur?.();
+        wrap?.querySelector<HTMLElement>("[data-testid='start-agent']")?.focus();
+      });
+    });
+  });
+
   function startAnother() {
     if (installed().length > 1) choosing = true;
     else if (workspace.active !== null) create(workspace.active);
@@ -110,7 +138,7 @@
 {/snippet}
 
 <Pane id="agent" {title} meta={statusLabel(current)}>
-  <div class="wrap">
+  <div class="wrap" bind:this={wrap}>
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
          is visible, so its PTY keeps its size and coming back to it costs

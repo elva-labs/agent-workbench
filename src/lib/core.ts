@@ -48,6 +48,60 @@ export interface AccountDirs {
   codex: string | null;
 }
 
+/** An agent and the name of one of its models. */
+export interface WorkflowModel {
+  agent: AgentId;
+  model: string;
+}
+
+/** A step that does the task, with how many sessions may run at once. An
+    empty `models` allows any model. */
+export interface WorkStep {
+  kind: "work";
+  name: string;
+  models: WorkflowModel[];
+  parallel: number;
+}
+
+/** A step that checks the work. It passes when each condition that is on
+    holds; otherwise the work goes back to the earlier step `backTo`, at
+    most `limit` times, and then the user is asked. */
+export interface ReviewStep {
+  kind: "review";
+  name: string;
+  models: WorkflowModel[];
+  reviewerApproves: boolean;
+  orchestratorAgrees: boolean;
+  backTo: string;
+  limit: number;
+}
+
+export type WorkflowStep = WorkStep | ReviewStep;
+
+/** A workflow in the settings file that does not read or keep the rules.
+    It is not used, and the file keeps it where it stood, with the default
+    and the project choices that named it, until the user removes it. */
+export interface UnreadWorkflow {
+  name: string | null;
+  /** The rule it breaks. */
+  reason: string;
+  /** The entry as the file holds it. */
+  entry: unknown;
+  /** Where it stands in the file's list. */
+  at: number;
+  /** Whether the file names it as the workflow new sessions start with. */
+  default: boolean;
+  /** The projects whose choice names it. */
+  projects: string[];
+}
+
+/** The model a session starts on, and the steps it hands out. */
+export interface Workflow {
+  name: string;
+  orchestrator: WorkflowModel;
+  steps: WorkflowStep[];
+}
+
 export interface SpawnOptions {
   agent: AgentId;
   project: string;
@@ -956,6 +1010,16 @@ export interface Settings {
     list: Record<string, AccountDirs>;
     everywhere: string | null;
     overrides: Record<string, string | null>;
+  };
+  /** The workflows in the order they are shown, the name of the one new
+      sessions start with (null is none), and the projects that choose
+      another, each naming a workflow or null for none. */
+  workflows: {
+    list: Workflow[];
+    default: string | null;
+    overrides: Record<string, string | null>;
+    /** The workflows in the file that are not used, carried as written. */
+    unread?: UnreadWorkflow[];
   };
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */

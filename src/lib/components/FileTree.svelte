@@ -1,7 +1,7 @@
 <script lang="ts">
   import { buildTree, flatten, parentOf, type Row, type TreeNode } from "$lib/tree";
   import { files, isOpen, toggleDir, visible } from "$lib/files.svelte";
-  import { layout } from "$lib/layout.svelte";
+  import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import { untrack } from "svelte";
 
   /** Rows that follow the tree's own in the same column, the media section
@@ -38,7 +38,7 @@
     // Read so a request to take the keyboard again re-runs this: the
     // viewer's close leaves the document's focus on nothing.
     layout.focusRequest;
-    if (!focused || !root) return;
+    if (!focused || !root || overlayHoldsKeyboard()) return;
     const active = document.activeElement;
     if (active === root || root.contains(active)) return;
     // Another control of the same pane, the filter field most of all, keeps
