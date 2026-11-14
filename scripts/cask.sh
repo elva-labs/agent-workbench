@@ -39,7 +39,7 @@ RUBY
     livecheck=$(cat <<'RUBY'
   livecheck do
     url :url
-    regex(/^v?(\d+(?:\.\d+)+(?:-beta\.\d+)?)$/i)
+    regex(/^v?(\d+(?:\.\d+)+(?:-[0-9a-z.]+)?)$/i)
     strategy :github_releases do |json, regex|
       json.map do |release|
         next if release["draft"]

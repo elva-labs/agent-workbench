@@ -55,12 +55,13 @@ signed as any release is, and differs in three ways:
 - Its draft is a GitHub pre-release. The latest release stays the last
   stable one, which is what the daemon's install script and the stable
   cask and formula serve.
-- Windows gets the NSIS installer alone. The MSI format takes numeric
-  versions only and has no place for the suffix.
-- The `.deb` and the `.rpm` carry the suffix, and both package managers
-  order it after the release with the same number. Going from
-  `1.0.0-beta.1` to `1.0.0` on Linux is a downgrade to them and has to be
-  asked for as one.
+- Two formats are left out, since neither can carry the suffix as the
+  bundler writes it: the `.msi`, which takes numeric versions only, and the
+  `.rpm`, whose version may hold no hyphen. Windows gets the NSIS installer
+  and Linux the `.AppImage` and the `.deb`.
+- The `.deb` carries the suffix, and dpkg orders it after the release with
+  the same number. Going from `1.0.0-beta.1` to `1.0.0` with the package
+  is a downgrade to it and has to be asked for as one.
 
 The tap has a beta channel beside the stable one: the cask
 `agent-workbench@beta` and the formula `agent-workbench-remote-beta`, a
@@ -87,8 +88,8 @@ daemon was installed by hand, which follows the beta through the beta
 formula or through the install script with
 `AGENT_WORKBENCH_VERSION=v1.0.0-beta.1`.
 
-Since a pre-release runs on the settings and state of the stable version
-and hands them back to it, every version keeps to three rules. Settings
+A pre-release runs on the settings and state of the stable version and
+hands them back to it, so a change to either follows three rules. Settings
 and stored state only grow. A version ignores what it does not know in a
 file it reads and does not reject the file. A change to the shape of
 something stored says how the version before it reads the result.
