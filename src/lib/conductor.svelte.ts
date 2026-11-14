@@ -29,8 +29,11 @@ import {
   accounts,
   dirFor,
   dirsOf,
+  hasAccounts,
   names,
+  OWN_LABEL,
 } from "$lib/accounts.svelte";
+import { agentLabel } from "$lib/agent.svelte";
 import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
@@ -178,9 +181,41 @@ export interface Ask {
   /** The prompt's first line. */
   prompt: string;
   worktree: boolean;
-  /** The account the session would run under, as it is shown, when that
-      is not the project's own. Null when it is the project's. */
+  /** The account the session would run under, by name; null for the
+      agents' own. */
   account: string | null;
+  /** What the question says of the account, when it names it. */
+  named: Named | null;
+}
+
+/** The account a started session runs under, as the question and the
+    answer name it. */
+export interface Named {
+  /** The account as it is shown: its name, or Default for the agents' own. */
+  label: string;
+  /** Whether it is the account the project runs under. */
+  projects: boolean;
+  /** The agent being started, when the account keeps no directory for it
+      and the agent runs on its own. */
+  bare: AgentId | null;
+}
+
+/** What the question says of the account a session would run under. */
+export function accountWords(named: Named): string {
+  const which = named.projects
+    ? `Under the project's account, ${named.label}.`
+    : `Under the ${named.label} account, not the project's own.`;
+  if (named.bare === null) return which;
+  const agent = agentLabel(named.bare);
+  return `${which} ${named.label} has no ${agent} directory, so ${agent} uses the ${OWN_LABEL} one.`;
+}
+
+/** What the answer to a start says of the account, after where it runs. */
+function underWords(named: Named | null): string {
+  if (named === null) return "";
+  return named.projects
+    ? `, under the project's account, ${named.label}`
+    : `, under the ${named.label} account`;
 }
 
 /** What the user answered: allowed from now on, allowed this once, or no. */
@@ -568,8 +603,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     );
   if (!workspace.open.some((open) => open.path === project))
     return refused(`No project at ${project} is open in the workbench.`);
-  // An account is one the user named in the settings; a start that names
-  // none runs under the caller's.
+  // An account is one the user named in the settings.
   const wanted = text(request, "account");
   if (wanted !== null && !(wanted in accounts.list))
     return refused(
@@ -578,16 +612,26 @@ async function startSession(request: ConductRequest): Promise<Answered> {
         : `There is no account called ${wanted}. The accounts are ${names().join(", ")}.`,
     );
   const agent = agentOf(request, project);
-  const account = wanted ?? handedOn(request, project, agent);
+  const { account, say } = underFor(request, project, agent, wanted);
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
 
   const wants = flag(request, "worktree");
-  // An account that is not the project's own is said, to the user in the
-  // question and to the caller in the answer.
-  const other = account === accountOf(project) ? null : accountLabel(account);
-  if ((await askUser(request, project, prompt, wants, other)) === "no")
+  // The account is said to the user in the question and to the caller in
+  // the answer.
+  const named: Named | null = say
+    ? {
+        label: accountLabel(account),
+        projects: account === accountOf(project),
+        bare:
+          account !== null && dirFor(account, agent) === undefined
+            ? agent
+            : null,
+      }
+    : null;
+  const answer = await askUser(request, project, prompt, wants, account, named);
+  if (answer === "no")
     return refused("The user did not allow the session to be started.");
 
   let startIn: string | null = null;
@@ -641,33 +685,75 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
-  const under = other === null ? "" : `, under the ${other} account`;
   return said(
-    `Started session ${id} in ${where}${under}. It has the prompt. Call wait to hear how it goes.`,
+    `Started session ${id} in ${where}${underWords(named)}. It has the prompt. Call wait to hear how it goes.`,
   );
 }
 
 /**
- * The account a start runs under when it names none: the calling session's,
- * the agents' own included, whatever the project is set to. The project's
- * when the caller's cannot be handed on: the window has no row for the
- * caller, the project is on another machine than the caller, where the
- * caller's login may not be, or the caller's account holds no directory
- * for the agent to run, which is also how one the settings no longer hold
- * reads.
+ * The account a start runs under, and whether the question and the answer
+ * name it.
+ *
+ * An account the start names is the one. Otherwise the caller's own is
+ * handed on when it was chosen for the caller's session, which is when it
+ * is not the account of the caller's project; a caller that runs under its
+ * project's, the one for every project included, hands nothing on, and the
+ * session runs under the account of the project it starts in. That is the
+ * project's as well when the caller's chosen account cannot be handed on:
+ * no session can be placed as the caller, the project is on another
+ * machine than the caller, where the caller's login may not be, or the
+ * settings no longer hold the account. An account handed on that keeps no
+ * directory for the agent runs it on the agent's own, as a blank directory
+ * does anywhere.
+ *
+ * Once there are accounts to tell apart, the account is named when it is
+ * not the project's own, when the caller could not be placed or its chosen
+ * account was not handed on, and when one handed on keeps no directory for
+ * the agent.
  */
-function handedOn(
+function underFor(
   request: ConductRequest,
   project: string,
   agent: AgentId,
-): string | null {
-  const calling = request.session === null ? null : byId(request.session);
-  if (calling === null) return accountOf(project);
-  if (hostOf(calling.project) !== hostOf(project)) return accountOf(project);
-  const { account } = calling;
-  if (account !== null && dirFor(account, agent) === undefined)
-    return accountOf(project);
-  return account;
+  wanted: string | null,
+): { account: string | null; say: boolean } {
+  const own = accountOf(project);
+  const under = (account: string | null, anyway: boolean) => ({
+    account,
+    say: hasAccounts() && (anyway || account !== own),
+  });
+  if (wanted !== null) return under(wanted, false);
+  const calling = callingSession(request);
+  if (calling === null) return under(own, true);
+  const theirs = calling.account;
+  if (theirs === accountOf(calling.project)) return under(own, false);
+  if (hostOf(calling.project) !== hostOf(project)) return under(own, true);
+  if (theirs !== null && !(theirs in accounts.list)) return under(own, true);
+  return under(theirs, theirs !== null && dirFor(theirs, agent) === undefined);
+}
+
+/**
+ * The session a call comes from: the one it names, else the one live
+ * session running where the call does, when that session was not told its
+ * id and so makes its calls without one, as a Codex session that was not
+ * resumed does. Null when the call names a session the window does not
+ * have, and when no session or more than one runs there.
+ */
+function callingSession(request: ConductRequest): Session | null {
+  if (request.session !== null) return byId(request.session);
+  const here = withoutEnd(request.cwd);
+  const there = sessions.all.filter(
+    (session) =>
+      isLive(session) &&
+      (withoutEnd(session.startIn ?? session.project) === here ||
+        (session.cwd !== null && withoutEnd(session.cwd) === here)),
+  );
+  return there.length === 1 && !there[0].told ? there[0] : null;
+}
+
+/** A directory without a separator at its end. */
+function withoutEnd(path: string): string {
+  return path.replace(/(.)[\\/]+$/, "$1");
 }
 
 /** Why a caller may not start another session right now, when it may not:
@@ -1024,10 +1110,11 @@ function askUser(
   prompt: string,
   worktree: boolean,
   account: string | null,
+  named: Named | null,
 ): Promise<Choice> {
-  const caller = callerOf(request);
-  if (allowed.has(`${caller}\n${project}`)) return Promise.resolve("allow");
-  const session = request.session === null ? null : byId(request.session);
+  if (allowed.has(`${callerOf(request)}\n${project}`))
+    return Promise.resolve("allow");
+  const session = callingSession(request);
   const ask: Ask = {
     request,
     caller: session === null ? "A session" : label(session),
@@ -1035,6 +1122,7 @@ function askUser(
     prompt: prompt.split("\n")[0],
     worktree,
     account,
+    named,
   };
   return new Promise<Choice>((settle) => {
     queue.push({ ask, settle });

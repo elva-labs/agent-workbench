@@ -1,6 +1,6 @@
 <script lang="ts">
   import { coversBrowser } from "$lib/browser.svelte";
-  import { allow, conductor, once, refuse } from "$lib/conductor.svelte";
+  import { accountWords, allow, conductor, once, refuse } from "$lib/conductor.svelte";
   import { returnFocus } from "$lib/layout.svelte";
 
   let ask = $derived(conductor.asking);
@@ -18,8 +18,8 @@
     <p class="title">{ask.caller} wants to start a session</p>
     <p class="where">
       In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
-      {#if ask.account !== null}
-        <span data-testid="conduct-account">Under the {ask.account} account, not the project's own.</span>
+      {#if ask.named !== null}
+        <span data-testid="conduct-account">{accountWords(ask.named)}</span>
       {/if}
     </p>
     <p class="prompt">{ask.prompt}</p>

@@ -10,6 +10,7 @@ import {
   PIECE,
   PIECE_EVERY,
   OUTCOME_ASK,
+  accountWords,
   allow,
   allowedProjects,
   conductor,
@@ -33,6 +34,7 @@ import {
   exact,
   failed,
   forProject,
+  label,
   output,
   QUIET_MS,
   reset as resetSessions,
@@ -41,7 +43,7 @@ import {
   WORK_BYTES,
   WORK_WINDOWS,
 } from "$lib/sessions.svelte";
-import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { accounts, dirFor, reset as resetAccounts } from "$lib/accounts.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
@@ -554,139 +556,282 @@ describe("the account a started session runs under", () => {
     };
   });
 
-  /** The calling session, running under an account. */
+  /** The calling session, told its id, running under an account. */
   function caller(project: string, account: string | null) {
     const row = create(project, null, "claude-code", null, null, null, account);
     started(row.key, "pty-caller", "caller-1");
     return row;
   }
 
-  /** A start that names no account unless the arguments do. */
+  /** A start the user allows. It names no account unless the arguments
+      do, and comes from caller-1 unless it says otherwise. */
   function start(
     args: Record<string, unknown> = {},
-    session: string | null = "caller-1",
+    from: Partial<ConductRequest> = { session: "caller-1" },
   ) {
     begun += 1;
     return startAllowed(
-      call("start", { project: A, prompt: "Fix it", ...args }, { session }),
+      call("start", { project: A, prompt: "Fix it", ...args }, from),
       `pty-${begun}`,
       `sid-${begun}`,
     );
   }
 
-  it("is the caller's, whatever account the project is set to", async () => {
-    // The project runs under the agents' own, and the caller was started
-    // under another account.
-    caller(A, "Work");
-    const row = await start();
-    expect(last().error).toBeNull();
-    expect(row.account).toBe("Work");
-    expect(conductor.started["caller-1"][0].account).toBe("Work");
-  });
-
-  it("is the caller's in another project too", async () => {
-    accounts.overrides[B] = "Home";
-    caller(A, "Work");
-    const row = await start({ project: B });
-    expect(row.project).toBe(B);
-    expect(row.account).toBe("Work");
-  });
-
-  it("is the agents' own when that is what the caller runs under", async () => {
-    accounts.everywhere = "Work";
-    caller(A, null);
-    const row = await start();
-    expect(row.account).toBeNull();
-  });
-
-  it("is the one the start names, whatever the caller's", async () => {
-    caller(A, "Work");
-    const row = await start({ account: "Home" });
-    expect(row.account).toBe("Home");
-    expect(conductor.started["caller-1"][0].account).toBe("Home");
-  });
-
-  it("is the project's when the window has no session for the caller", async () => {
-    accounts.overrides[A] = "Home";
-    expect((await start({}, null)).account).toBe("Home");
-    expect((await start({}, "unknown-1")).account).toBe("Home");
-  });
-
-  it("is the project's when the project is on another machine than the caller", async () => {
-    workspace.open.push(repo(REMOTE));
-    accounts.overrides[REMOTE] = "Home";
-    caller(A, "Work");
-    const row = await start({ project: REMOTE });
-    expect(row.account).toBe("Home");
-  });
-
-  it("is the caller's on the machine they share", async () => {
-    workspace.open.push(repo(REMOTE), repo(`${REMOTE}-too`));
-    caller(REMOTE, "Work");
-    const row = await start({ project: `${REMOTE}-too` });
-    expect(row.account).toBe("Work");
-  });
-
-  it("is the project's when the caller's has no directory for the agent", async () => {
-    // Work keeps Claude Code only, and the session to start is Codex.
-    accounts.overrides[A] = "Home";
-    caller(A, "Work");
-    const row = await start({ agent: "codex" });
-    expect(row.agent).toBe("codex");
-    expect(row.account).toBe("Home");
-  });
-
-  it("is the project's when the settings no longer hold the caller's", async () => {
-    accounts.overrides[A] = "Home";
-    caller(A, "Work");
-    delete accounts.list.Work;
-    const row = await start();
-    expect(row.account).toBe("Home");
-  });
-
-  it("is named in the question and in the answer when it is not the project's own", async () => {
-    caller(A, "Work");
-    const answering = handle(
-      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
-    );
-    expect(conductor.asking?.account).toBe("Work");
-    allow();
-    await settle();
-    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
-    flushSync();
-    await answering;
-    expect(last().content).toContain(`Started session sid-1 in ${A}, under the Work account.`);
-  });
-
-  it("is named as Default when the agents' own is handed into a project set to another", async () => {
-    accounts.overrides[A] = "Work";
-    caller(B, null);
-    const answering = handle(
-      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
-    );
-    expect(conductor.asking?.account).toBe("Default");
-    allow();
-    await settle();
-    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
-    flushSync();
-    await answering;
-    expect(last().content).toContain("under the Default account");
-  });
-
-  it("goes unsaid when it is the project's own", async () => {
-    accounts.overrides[A] = "Work";
-    caller(A, "Work");
-    const answering = handle(
-      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
-    );
+  /** What the question says of the account for a start held on it, or
+      null when it says nothing. The start is refused afterwards. */
+  async function question(
+    args: Record<string, unknown> = {},
+    from: Partial<ConductRequest> = { session: "caller-1" },
+  ) {
+    void handle(call("start", { project: A, prompt: "Fix it", ...args }, from));
     expect(conductor.asking).not.toBeNull();
-    expect(conductor.asking?.account).toBeNull();
-    allow();
+    const named = conductor.asking!.named;
+    refuse();
     await settle();
-    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
-    flushSync();
-    await answering;
-    expect(last().content).toContain(`Started session sid-1 in ${A}. It has the prompt.`);
+    return named === null ? null : accountWords(named);
+  }
+
+  describe("a caller whose account was chosen for it", () => {
+    it("hands it on, whatever the project is set to", async () => {
+      // The project runs under the agents' own, and the caller was started
+      // under another account.
+      caller(A, "Work");
+      const row = await start();
+      expect(last().error).toBeNull();
+      expect(row.account).toBe("Work");
+      expect(conductor.started["caller-1"][0].account).toBe("Work");
+    });
+
+    it("hands it on into another project with an account of its own", async () => {
+      accounts.overrides[B] = "Home";
+      caller(A, "Work");
+      expect(await question({ project: B })).toBe(
+        "Under the Work account, not the project's own.",
+      );
+      const row = await start({ project: B });
+      expect(row.project).toBe(B);
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(
+        `Started session sid-1 in ${B}, under the Work account. It has the prompt.`,
+      );
+    });
+
+    it("hands on the agents' own when that was the one chosen", async () => {
+      // The project is set to Work, and the caller was started under the
+      // agents' own in it.
+      accounts.overrides[A] = "Work";
+      caller(A, null);
+      expect(await question()).toBe(
+        "Under the Default account, not the project's own.",
+      );
+      const row = await start();
+      expect(row.account).toBeNull();
+      expect(last().content).toContain(`in ${A}, under the Default account.`);
+    });
+  });
+
+  describe("a caller that runs under its project's account", () => {
+    it("hands nothing on into a project with an account of its own", async () => {
+      // Every project follows the agents' own but B, which is set to Work.
+      accounts.overrides[B] = "Work";
+      caller(A, null);
+      expect(await question({ project: B })).toBeNull();
+      const row = await start({ project: B });
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(
+        `Started session sid-1 in ${B}. It has the prompt.`,
+      );
+    });
+
+    it("hands nothing on when it follows the account for every project", async () => {
+      accounts.everywhere = "Home";
+      accounts.overrides[B] = "Work";
+      caller(A, "Home");
+      const row = await start({ project: B });
+      expect(row.account).toBe("Work");
+    });
+
+    it("runs a start in its own project under that account, unsaid", async () => {
+      accounts.overrides[A] = "Work";
+      caller(A, "Work");
+      expect(await question()).toBeNull();
+      const row = await start();
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(
+        `Started session sid-1 in ${A}. It has the prompt.`,
+      );
+    });
+  });
+
+  describe("an account the start names", () => {
+    it("wins over the caller's and the project's", async () => {
+      accounts.overrides[A] = "Work";
+      caller(A, "Work");
+      const row = await start({ account: "Home" });
+      expect(row.account).toBe("Home");
+      expect(conductor.started["caller-1"][0].account).toBe("Home");
+      expect(last().content).toContain(`in ${A}, under the Home account.`);
+    });
+
+    it("is refused when the settings hold none by that name, with the names there are", async () => {
+      caller(A, "Work");
+      await handle(
+        call(
+          "start",
+          { project: A, prompt: "Fix it", account: "Play" },
+          { session: "caller-1" },
+        ),
+      );
+      expect(conductor.asking).toBeNull();
+      expect(last().content).toBeNull();
+      expect(last().error).toBe(
+        "There is no account called Play. The accounts are Home, Work.",
+      );
+      expect(forProject(A)).toHaveLength(1);
+    });
+
+    it("is refused when the settings hold no accounts at all", async () => {
+      accounts.list = {};
+      await handle(
+        call("start", { project: A, prompt: "Fix it", account: "Work" }),
+      );
+      expect(last().error).toBe(
+        "There are no accounts in the workbench's settings; leave the account out.",
+      );
+    });
+  });
+
+  describe("a caller's account that cannot be handed on", () => {
+    it("gives way to the project's on another machine, and says so", async () => {
+      workspace.open.push(repo(REMOTE));
+      accounts.overrides[REMOTE] = "Home";
+      caller(A, "Work");
+      expect(await question({ project: REMOTE })).toBe(
+        "Under the project's account, Home.",
+      );
+      const row = await start({ project: REMOTE });
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(
+        `in ${REMOTE}, under the project's account, Home.`,
+      );
+    });
+
+    it("is handed on to a project on the machine the caller runs on", async () => {
+      workspace.open.push(repo(REMOTE), repo(`${REMOTE}-too`));
+      caller(REMOTE, "Work");
+      const row = await start({ project: `${REMOTE}-too` });
+      expect(row.account).toBe("Work");
+    });
+
+    it("gives way to the project's once the settings no longer hold it, and says so", async () => {
+      accounts.overrides[A] = "Home";
+      caller(A, "Work");
+      delete accounts.list.Work;
+      expect(await question()).toBe("Under the project's account, Home.");
+      const row = await start();
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(
+        `in ${A}, under the project's account, Home.`,
+      );
+    });
+
+    it("is handed on with no directory for the agent, which then runs on its own", async () => {
+      // Work keeps Claude Code only, and the session to start is Codex.
+      accounts.overrides[A] = "Home";
+      caller(A, "Work");
+      expect(await question({ agent: "codex" })).toBe(
+        "Under the Work account, not the project's own. Work has no Codex directory, so Codex uses the Default one.",
+      );
+      const row = await start({ agent: "codex" });
+      expect(row.agent).toBe("codex");
+      expect(row.account).toBe("Work");
+      expect(dirFor(row.account, row.agent)).toBeUndefined();
+      expect(last().content).toContain(`in ${A}, under the Work account.`);
+    });
+
+    it("is named with no directory for the agent even where it is the project's", async () => {
+      accounts.overrides[A] = "Home";
+      accounts.overrides[B] = "Work";
+      caller(A, "Work");
+      expect(await question({ project: B, agent: "codex" })).toBe(
+        "Under the project's account, Work. Work has no Codex directory, so Codex uses the Default one.",
+      );
+    });
+  });
+
+  describe("a caller the call does not name", () => {
+    /** A session that was not told its id, as a Codex one that was not
+        resumed is not, running where the call comes from. */
+    function untold(project: string, account: string | null) {
+      const row = create(project, null, "codex", null, null, null, account);
+      started(row.key, `pty-untold-${row.key}`, null);
+      return row;
+    }
+
+    it("is placed by where it runs when one session runs there", async () => {
+      accounts.overrides[A] = "Home";
+      const calling = untold(A, "Work");
+      // The window learned its id after its tools had started.
+      calling.id = "codex-1";
+      const answering = handle(call("start", { project: A, prompt: "Fix it" }));
+      expect(conductor.asking?.caller).toBe(label(calling));
+      expect(accountWords(conductor.asking!.named!)).toBe(
+        "Under the Work account, not the project's own.",
+      );
+      allow();
+      await settle();
+      const row = forProject(A).at(-1)!;
+      started(row.key, "pty-1", "sid-1");
+      flushSync();
+      await answering;
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(`in ${A}, under the Work account.`);
+    });
+
+    it("cannot be placed where two sessions run, and gets the project's, said", async () => {
+      accounts.overrides[A] = "Home";
+      untold(A, "Work");
+      untold(A, "Work");
+      expect(await question({}, { session: null })).toBe(
+        "Under the project's account, Home.",
+      );
+      const row = await start({}, { session: null });
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(
+        `in ${A}, under the project's account, Home.`,
+      );
+    });
+
+    it("cannot be placed where no session runs, or as a session told its id", async () => {
+      accounts.overrides[A] = "Home";
+      // A session told its id names it in every call, so a call without
+      // one is not its.
+      caller(A, "Work");
+      expect(await question({}, { session: null })).toBe(
+        "Under the project's account, Home.",
+      );
+      expect(
+        await question({}, { session: null, cwd: `${A}/elsewhere` }),
+      ).toBe("Under the project's account, Home.");
+      expect((await start({}, { session: null })).account).toBe("Home");
+    });
+
+    it("cannot be placed by an id the window does not have", async () => {
+      accounts.overrides[A] = "Home";
+      expect(await question({}, { session: "unknown-1" })).toBe(
+        "Under the project's account, Home.",
+      );
+      expect((await start({}, { session: "unknown-1" })).account).toBe("Home");
+    });
+
+    it("says nothing of accounts when there are none to tell apart", async () => {
+      accounts.list = {};
+      expect(await question({}, { session: null })).toBeNull();
+      expect((await start({}, { session: null })).account).toBeNull();
+      expect(last().content).toContain(
+        `Started session sid-1 in ${A}. It has the prompt.`,
+      );
+    });
   });
 
   it("is the one it ran under for a session resumed, whatever the caller's", async () => {

@@ -70,27 +70,40 @@ of work when it starts it rather than sending a model command afterwards.
 A model's name belongs to one agent, so a start that names a model names
 the agent too, and one that leaves the agent out is refused rather than
 given the project's last.
-A started session runs under the account of the session that started it,
-the agents' own included, whatever account its project is set to. A start
-can name another account, by the name it has in the settings; one that
-names an account there is not is refused with the names there are. A start
-that names none runs under the project's account when the caller's cannot
-be handed on. That is so when the workbench cannot tell which session is
-calling, as with an agent run outside the workbench, or a Codex session
-that has not been resumed, whose id is learned after its tools have
-started; when the project is on another machine than the caller, where the
-caller's login may not be; and when the caller's account has no directory
-for the agent being started, or is no longer in the settings.
-A session resumed comes back under the account it ran under.
+A start can name an account, by the name it has in the settings, for work
+the user asked to have done under a particular login; one that names an
+account there is not is refused with the names there are. A start that
+names none runs under the account of the session that started it when that
+account was chosen for the starter itself, which is when it is not the
+account of the starter's project; the agents' own, chosen that way, is
+handed on like any other. A starter that
+runs under its project's account, or under the one for every project,
+hands nothing on, and the session runs under the account of the project it
+starts in, so a project's own login is never lost to a starter that only
+follows a default. The project's account is used as well when the
+starter's chosen account cannot be handed on: when the project is on
+another machine than the starter, where the starter's login may not be,
+and when the account is no longer in the settings. An account handed on
+that keeps no directory for the agent being started runs that agent on its
+own directory, as a blank directory does anywhere. A session resumed comes
+back under the account it ran under.
+
+The starter is the session whose id the call carries. An agent that was not
+told its id calls without one, as a Codex session that has not been
+resumed does, since its id is learned after its tools have started; it is
+taken to be the one live session running where the call comes from, when
+exactly one runs there. Where none or more than one does, or the call names
+a session the window does not have, as an agent run outside the workbench
+may, the starter cannot be placed and the session runs under the project's
+account.
 
 ## What is remembered
 
 What a session started is written down by session id, with the project,
 the worktree, the agent, the name and the account, and kept between runs
 beside the sessions the app knows as its own. An orchestrator closed and
-resumed
-keeps its id, so the sessions it started are still its own: the ones
-still running answer to its tools as before, and a row with one of its
+resumed keeps its id, so the sessions it started are still its own: the
+ones still running answer to its tools as before, and a row with one of its
 ids, resumed from the pane by hand, hangs under it all the same. When
 the app itself was closed, the orchestrator comes back with the other
 sessions that were open, and the sessions it started do not. `sessions`
@@ -119,12 +132,18 @@ whatever it has been told to do by something it read.
 The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. An allowed
-caller is remembered for that project for as long as the app runs. When
-the session would run under an account other than the project's own, the
-question names the account, and so does the answer the caller gets to its
-start. A refusal is an answer the agent reads, not an error. Bringing back a
+caller is remembered for that project for as long as the app runs. A
+refusal is an answer the agent reads, not an error. Bringing back a
 session it already started is never asked about: the consent was given
 when the session was, and the resumed session is that one going on.
+
+Once there are accounts to tell apart, the question names the account the
+session would run under when it is not the project's own, when the
+starter could not be placed, when the starter's chosen account could not
+be handed on, and when an account handed on keeps no directory for the
+agent being started. When the account it names keeps no directory for that
+agent, it says the agent uses its own. The answer the caller gets to its
+start names the account in the same cases.
 
 A session started by another may not start any of its own, and no session
 may have more than eight running at a time.

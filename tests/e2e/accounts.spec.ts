@@ -270,6 +270,40 @@ test.describe("a new session from the palette with accounts", () => {
   });
 });
 
+/** A call on the start tool, as the core delivers one. */
+async function startCall(
+  page: Page,
+  id: string,
+  args: Record<string, unknown>,
+  session: string | null,
+) {
+  await page.evaluate(
+    ({ id, args, session, project }) =>
+      (
+        window as unknown as { __conductRequest: (call: unknown) => void }
+      ).__conductRequest({
+        id,
+        tool: "start",
+        arguments: args,
+        cwd: project,
+        session,
+      }),
+    { id, args, session, project: PROJECT },
+  );
+}
+
+/** What a call was answered with, once it has been. */
+const answerTo = (page: Page, id: string) =>
+  page.evaluate(
+    (id) =>
+      (
+        window as unknown as {
+          __conductAnswers?: { id: string; content: string | null; error: string | null }[];
+        }
+      ).__conductAnswers?.find((answer) => answer.id === id) ?? null,
+    id,
+  );
+
 test.describe("a session started by a session under another account", () => {
   test("runs under the starting session's account, not the project's", async ({ page }) => {
     // The project runs under the agents' own, and there is an account to
@@ -296,19 +330,7 @@ test.describe("a session started by a session under another account", () => {
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
 
     // That session starts another and names no account.
-    await page.evaluate(
-      (project) =>
-        (
-          window as unknown as { __conductRequest: (call: unknown) => void }
-        ).__conductRequest({
-          id: "c-1",
-          tool: "start",
-          arguments: { project, prompt: "Fix the flaky test" },
-          cwd: project,
-          session: "session-1",
-        }),
-      PROJECT,
-    );
+    await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, "session-1");
     // The question says the account, since it is not the project's own.
     const ask = page.getByTestId("conduct-ask");
     await expect(ask).toBeVisible();
@@ -324,16 +346,29 @@ test.describe("a session started by a session under another account", () => {
     expect((await spawns(page))[1].prompt).toContain("Fix the flaky test");
     expect((await spawns(page))[1].configDir).toBe("~/.claude-work");
     await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            (
-              window as unknown as {
-                __conductAnswers?: { id: string; content: string | null }[];
-              }
-            ).__conductAnswers?.find((answer) => answer.id === "c-1")?.content ?? null,
-        ),
-      )
-      .toContain("under the Work account");
+      .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
+      .toContain(`in ${PROJECT}, under the Work account.`);
+
+  });
+
+  test("names the project's account when it cannot tell which session asks", async ({
+    page,
+  }) => {
+    await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+
+    // A call that names no session, from where no session runs.
+    await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, null);
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask.getByTestId("conduct-account")).toHaveText(
+      "Under the project's account, Work.",
+    );
+    await page.getByTestId("conduct-once").click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
+    await expect
+      .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
+      .toContain(`in ${PROJECT}, under the project's account, Work.`);
   });
 });
