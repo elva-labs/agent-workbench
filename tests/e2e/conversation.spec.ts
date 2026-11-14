@@ -1010,3 +1010,25 @@ test("draws its controls square in the terminal look and round in the modern one
     await page.close();
   }
 });
+
+test("takes up a session the core still runs when the window is reloaded", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] }, keepIntegrated: true });
+  await page.goto("/");
+  await page.getByTestId("start-agent").click();
+  await page.getByTestId("composer-input").fill("Run the tests");
+  await page.keyboard.press("Enter");
+  await agent(page, `f.startTurn("${H}"); f.emit("${H}", { type: "text", block: "b", parent: null, text: "Running them now", done: false }); f.ask("${H}", "Bash", { command: "npm test" });`);
+  await expect(page.getByTestId("permission-dock")).toBeVisible();
+  await page.reload();
+  // The core's session goes on: the window takes it up from its snapshot,
+  // the request it asked still open, and starts nothing.
+  await expect(page.getByTestId("permission-dock")).toContainText("Claude asks to run npm test");
+  await expect(page.getByTestId("thread-intro")).toContainText("Earlier messages of this session are in its transcript");
+  await expect(page.locator(`${AGENT} header .meta`)).toHaveText("waits for permission");
+  expect((await calls(page)).map((call) => call.method)).toEqual(["snapshot"]);
+  await page.getByTestId("choice-allow").click();
+  expect((await calls(page)).at(-1)).toMatchObject({ method: "answer", id: H, choice: "allow" });
+  await agent(page, `f.emit("${H}", { type: "text", block: "c", parent: null, text: "All 12 pass.", done: true }); f.endTurn("${H}");`);
+  await expect(page.getByTestId("agent-text").last()).toHaveText("All 12 pass.");
+  await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+});

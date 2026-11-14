@@ -49,6 +49,12 @@ export interface FakeIntegratedOptions {
   /** A mode the agent reports from its own configuration, whatever the
       start asked for, and which the list of modes does not hold. */
   ownMode?: string;
+  /** Keeps the sessions across a reload of the page, as the core keeps
+      them while a window reloads: every call made on the fake is kept in
+      the page's session storage under this key and played again when the
+      fake is made anew. The calls a window made are its own, so a fake
+      made anew starts with none. */
+  keep?: string;
 }
 
 /** A scripted integrated session behind the seam, for the unit tests and
@@ -277,6 +283,15 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const sessions = new Map<string, Session>();
   const handlers = new Set<(event: IntegratedEvent) => void>();
   let count = 0;
+  /** How deep in its own calls the fake is, and whether it is playing
+      back what was kept across a reload. */
+  let depth = 0;
+  let replaying = false;
+  /** Runs `then` after the call that asked for it, as the agent would;
+      while calls are played back, what it did then is played back too. */
+  const later = (then: () => void) => {
+    if (!replaying) queueMicrotask(then);
+  };
   let blocks = 0;
   let requests = 0;
   let calls = 0;
@@ -435,7 +450,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         return;
       }
       // The core answers first; the turn's end comes from the agent after.
-      queueMicrotask(() => {
+      later(() => {
         for (const request of [...session.asked.keys()])
           fake.emit(id, { type: "withdrawn", request });
         if (session.turn) fake.endTurn(id, "interrupted");
@@ -447,7 +462,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.calls.push({ method: "compact", id });
       session.compactAsked = true;
       // The agent takes it once no turn runs, after the call answers.
-      queueMicrotask(() => {
+      later(() => {
         if (!session.turn) compactNow(id);
       });
     },
@@ -464,7 +479,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.emit(id, { type: "answered", request, choice, answers: null, message: said });
       // Cancelling stops the turn, which the agent then ends.
       if (choice === "cancel")
-        queueMicrotask(() => {
+        later(() => {
           if (session.turn) fake.endTurn(id, "interrupted");
         });
     },
@@ -538,7 +553,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     stop(id) {
       live(id);
       fake.calls.push({ method: "stop", id });
-      queueMicrotask(() => fake.end(id, true));
+      later(() => fake.end(id, true));
     },
 
     subscribe(handler) {
@@ -918,7 +933,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   /** What the agent does once a turn is over: compact, if it was asked. */
   function afterTurn(id: string) {
     const session = sessions.get(id);
-    if (session?.compactAsked) queueMicrotask(() => compactNow(id));
+    if (session?.compactAsked) later(() => compactNow(id));
   }
 
   function compactNow(id: string) {
@@ -962,6 +977,49 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     if (state === session.state) return;
     session.state = state;
     fake.emit(id, { type: "state", state });
+  }
+
+  // Kept across a reload: every call made from outside is written down,
+  // and a fake made anew plays them again before anything listens. Calls
+  // the fake makes on itself, and what it does later of its own accord,
+  // follow from those and are not written down.
+  if (options.keep !== undefined) {
+    const key = options.keep;
+    const log: { name: string; args: unknown[] }[] = (() => {
+      try {
+        return JSON.parse(sessionStorage.getItem(key) ?? "[]");
+      } catch {
+        return [];
+      }
+    })();
+    const own = fake as unknown as Record<string, (...args: unknown[]) => unknown>;
+    for (const name of Object.keys(own)) {
+      const call = own[name];
+      if (typeof call !== "function" || name === "subscribe" || name === "snapshot") continue;
+      own[name] = (...args: unknown[]) => {
+        if (depth === 0 && !replaying) {
+          log.push({ name, args });
+          sessionStorage.setItem(key, JSON.stringify(log));
+        }
+        depth += 1;
+        try {
+          return call(...args);
+        } finally {
+          depth -= 1;
+        }
+      };
+    }
+    replaying = true;
+    for (const { name, args } of [...log]) {
+      try {
+        own[name](...args);
+      } catch {
+        // A call that failed the first time fails again, as it should.
+      }
+    }
+    replaying = false;
+    fake.calls.length = 0;
+    fake.events.length = 0;
   }
 
   return fake;

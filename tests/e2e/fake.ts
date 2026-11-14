@@ -72,6 +72,8 @@ export async function installFakeCore(
     /** The agents the core can drive in messages, Claude Code alone unless
         said. */
     integrable?: string[];
+    /** Keeps the integrated sessions across a reload, as the core does. */
+    keepIntegrated?: boolean;
     /** Past Claude Code sessions the core reports for the first project,
         each from the agent's own directory unless it names an account's. */
     transcripts?: {
@@ -86,7 +88,7 @@ export async function installFakeCore(
   // The scripted integrated session, as `window.__integrated`, for a test
   // to drive with `page.evaluate`.
   await page.addInitScript(
-    `window.__integrated = (${fakeIntegrated.toString()})();`,
+    `window.__integrated = (${fakeIntegrated.toString()})(${options.keepIntegrated ? '{ keep: "fake.integrated" }' : ""});`,
   );
   await page.addInitScript(
     ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable }) => {
