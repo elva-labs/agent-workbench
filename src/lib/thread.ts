@@ -615,7 +615,7 @@ export function lastRun(
   }
   for (const message of conversation.waiting)
     if (message.state === "queued" || message.state === "sending")
-      out.push(`A message waits for the turn: ${spoken(message.text).text}`);
+      out.push(`A message from ${who(message) ?? "the user"} waits for the turn: ${spoken(message.text).text}`);
   return out.slice(-lines).join("\n");
 }
 

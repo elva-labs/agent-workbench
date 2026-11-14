@@ -148,6 +148,24 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(byKey(second.key)!.title).toBe("Fix the scan");
   });
 
+  it("says whose each waiting message is", async () => {
+    // The reviewer's case: "yes" from session 1 and "yes" from the user,
+    // both waiting for the turn.
+    const { key, id, handle: core } = await own();
+    await handle(call("send", { session: id, text: "Fix it" }));
+    fake.startTurn(core);
+    await handle(call("send", { session: id, text: "yes" }));
+    send(key, "yes");
+    fake.emit(core, { type: "text", block: "b", parent: null, text: "Working.", done: true });
+    const read = call("read", { session: id });
+    await handle(read);
+    const lines = answerTo(read)!.content!.split("\n");
+    expect(lines.filter((line) => line.includes("waits for the turn"))).toEqual([
+      "A message from an agent in one waits for the turn: yes",
+      "A message from the user waits for the turn: yes",
+    ]);
+  });
+
   it("reads what the agent last said and did, as plain text", async () => {
     const { key, id, handle: core } = await own();
     const empty = call("read", { session: id });
