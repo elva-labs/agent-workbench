@@ -10,6 +10,8 @@
 
 /** As much of a terminal as reading its lines needs. */
 export interface Screen {
+  /** What the program in it has switched on. */
+  modes?: { bracketedPasteMode: boolean };
   buffer: {
     active: {
       length: number;
@@ -39,6 +41,15 @@ export function screen(id: string, lines: number): string | null {
   const terminal = screens.get(id);
   if (terminal === undefined) return null;
   return read(terminal, lines).join("\n");
+}
+
+/**
+ * Whether the program in a session's terminal has asked for bracketed
+ * paste. False for a session with no terminal in the window, so a paste is
+ * only ever sent to one that has said it takes it.
+ */
+export function takesPaste(id: string): boolean {
+  return screens.get(id)?.modes?.bracketedPasteMode === true;
 }
 
 export function read(terminal: Screen, lines: number): string[] {

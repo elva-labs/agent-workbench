@@ -579,3 +579,77 @@ test("turns the notifications and the chime on and off, and keeps them", async (
   await expect(page.getByTestId("notifications-off")).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("chime-on")).toHaveAttribute("aria-checked", "true");
 });
+
+test.describe("a change the settings file refuses", () => {
+  test("is said over the window wherever it was made, and the window shows what is stored", async ({
+    page,
+  }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.evaluate(() => {
+      (window as unknown as { __refuseSettings?: string }).__refuseSettings =
+        "the settings file is empty or not valid settings. Try again in a moment, or mend it";
+    });
+    const before = await page.evaluate(() => document.documentElement.dataset.palette);
+    await page.getByTestId("palette-rose").click();
+    const refused = page.getByTestId("settings-refused");
+    await expect(refused).toBeVisible();
+    await expect(refused).toContainText(
+      "The change was not saved: the settings file is empty or not valid settings. Try again in a moment, or mend it. The window shows what is stored.",
+    );
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.dataset.palette))
+      .toBe(before);
+
+    await page.getByTestId("settings-refused-dismiss").click();
+    await expect(refused).toBeHidden();
+  });
+});
+
+test.describe("what the file holds that is not used", () => {
+  test("names a theme and the palette that chose it under Colour", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("unread-entry")).toHaveCount(0);
+    await page.evaluate(() => {
+      const w = window as unknown as { __settingsChanged?: (settings: unknown) => void };
+      w.__settingsChanged?.({
+        unreadEntries: [
+          {
+            field: "themes",
+            section: "",
+            name: "dusk",
+            reason: "accent in the light colours of dusk is a hex colour such as #1a2b3c, not \"red\"",
+          },
+          { field: "palette", section: "", name: "", reason: "it is dusk, a theme that is not used" },
+        ],
+      });
+    });
+    const entries = page.getByTestId("unread-entry");
+    await expect(entries).toHaveCount(2);
+    await expect(entries.first()).toBeVisible();
+    await expect(entries.first()).toContainText("dusk is not used: accent in the light colours");
+    await expect(entries.nth(1)).toContainText("The palette in the file is not used: it is dusk");
+  });
+
+  test("is named on the keys tab with the rule it breaks", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-keys").click();
+    await expect(page.getByTestId("unread-entry")).toHaveCount(0);
+    await page.evaluate(() => {
+      const w = window as unknown as { __settingsChanged?: (settings: unknown) => void };
+      w.__settingsChanged?.({
+        unreadEntries: [
+          {
+            field: "keys",
+            section: "",
+            name: "find",
+            reason: "the chord for find is not a key with shift and alt",
+          },
+        ],
+      });
+    });
+    const entry = page.getByTestId("unread-entry");
+    await expect(entry).toBeVisible();
+    await expect(entry).toContainText("find");
+    await expect(entry).toContainText("is not a key with shift and alt");
+  });
+});

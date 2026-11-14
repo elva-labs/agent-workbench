@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{App, AppHandle, Emitter, Manager, State, Window, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use workbench_core::Core;
 
 pub const OPEN_SETTINGS: &str = "open_settings";
@@ -45,9 +46,14 @@ fn styles_off_item(handle: &AppHandle) -> tauri::Result<MenuItem<Wry>> {
 /// follows.
 fn styles_off(app: &AppHandle) {
     let core = Arc::clone(&app.state::<Arc<Core>>());
+    let app = app.clone();
     std::thread::spawn(move || {
         if let Err(error) = core.settings_set(&serde_json::json!({ "userStyles": false })) {
-            eprintln!("custom styles: {error}");
+            app.dialog()
+                .message(format!("Custom styles could not be turned off: {error}"))
+                .title("Custom styles")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
         }
     });
 }

@@ -11,6 +11,8 @@ const sets: Partial<Settings>[] = [];
 const sheets: string[] = [];
 let refuseSheet: string | null = null;
 let refuseSettings: string | null = null;
+/** A setting the core refuses to save, and why. */
+let refuseField: [string, string] | null = null;
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -24,6 +26,7 @@ vi.mock("$lib/core", () => ({
     },
     settingsSet: async (change: Partial<Settings>) => {
       if (refuseSettings !== null) throw new Error(refuseSettings);
+      if (refuseField !== null && refuseField[0] in change) throw new Error(refuseField[1]);
       sets.push(change);
       return change as Settings;
     },
@@ -81,6 +84,7 @@ beforeEach(() => {
   sheets.length = 0;
   refuseSheet = null;
   refuseSettings = null;
+  refuseField = null;
   resetUserStyles();
   answers.length = 0;
   sets.length = 0;
@@ -217,6 +221,33 @@ describe("a change", () => {
     expect(answers[0].content).toMatch(/allowed the change\. Palette is now Amber/);
     expect(settingsAsk.undo?.caller).toBe("Tidy the docs");
     sessions.all = [];
+  });
+
+  it("is told the core refused it, when the user allowed it and the core could not keep it", async () => {
+    refuseSettings = "the settings file could not be read, so nothing was saved";
+    const done = handle(request("settings_change", { palette: "amber" }));
+    await settle();
+    allowChange();
+    await done;
+    expect(answers[0].error).toMatch(/allowed the change, but it could not be saved/);
+    expect(answers[0].error).toMatch(/could not be read/);
+    expect(answers[0].content).toBeNull();
+    expect(settingsAsk.undo).toBeNull();
+  });
+
+  it("is told which settings were saved and which were not, when the core refuses only some", async () => {
+    refuseField = ["look", "the disk is full"];
+    const done = handle(request("settings_change", { appearance: "dark", look: "terminal" }));
+    await settle();
+    allowChange();
+    await done;
+    expect(answers[0].error).toBeNull();
+    const said = answers[0].content!;
+    expect(said).toMatch(/only part of it was saved/);
+    expect(said).toMatch(/Appearance is now Dark/);
+    expect(said).toMatch(/Not saved: Look to Terminal, because the disk is full\./);
+    expect(said).not.toMatch(/Nothing changed/);
+    expect(settingsAsk.undo?.changes.map((change) => change.field)).toEqual(["appearance"]);
   });
 
   it("changes nothing when the user declines, and says so", async () => {

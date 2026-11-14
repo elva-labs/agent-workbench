@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { core } from "$lib/core";
+  import { typeWhole } from "$lib/conductor.svelte";
   import { type PluginPage, pluginViews, send } from "$lib/pluginView.svelte";
   import { activeSession } from "$lib/sessions.svelte";
   import { showPlace } from "$lib/show.svelte";
@@ -66,9 +66,7 @@
     if (text === "") return;
     const session = activeSession();
     if (session === null || session.ptyId === null || session.status !== "running") return;
-    core()
-      .write(session.ptyId, text)
-      .catch(() => {});
+    typeWhole(session.key, session.ptyId, text).catch(() => {});
   }
 
   $effect(() => {

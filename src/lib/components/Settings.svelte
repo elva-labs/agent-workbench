@@ -78,6 +78,7 @@
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
+  import UnreadEntries from "$lib/components/UnreadEntries.svelte";
   import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
 
   /**
@@ -393,6 +394,7 @@
       <div class="panel" class:fill={tab === "workflows"}>
         {#if tab === "appearance"}
           <h3>Appearance</h3>
+          <UnreadEntries field="appearance" />
           <div class="seg" role="radiogroup" aria-label="Appearance">
             {#each THEMES as option (option.choice)}
               <button
@@ -407,6 +409,7 @@
           </div>
 
           <h3>Theme</h3>
+          <UnreadEntries field="look" />
           <div class="looks" role="radiogroup" aria-label="Theme">
             {#each LOOKS as look (look.name)}
               <button
@@ -424,6 +427,7 @@
           </div>
 
           <h3>Font</h3>
+          <UnreadEntries field={["terminalFont", "interfaceFont"]} />
           <div class="fonts">
             <div class="font-row">
               <span class="font-what">Terminal</span>
@@ -464,6 +468,7 @@
           </div>
 
           <h3>Colour</h3>
+          <UnreadEntries field={["themes", "palette"]} />
           <div class="swatches" role="radiogroup" aria-label="Colour">
             {#each PALETTES as palette (palette.name)}
               <button
@@ -515,6 +520,7 @@
           {/if}
 
           <h3>Custom styles</h3>
+          <UnreadEntries field="userStyles" />
           <div class="seg" role="radiogroup" aria-label="Custom styles">
             <button
               role="radio"
@@ -552,6 +558,7 @@
         {:else if tab === "live"}
           <section class="live" class:lit bind:this={live} data-testid="settings-live">
             <h3>Live updates</h3>
+            <UnreadEntries field="hooks" />
             <p class="note">
               The watcher sees every change in the project. Agent hooks, written into the project's
               <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
@@ -671,6 +678,7 @@
               {/each}
             </div>
             <h3>Past sessions</h3>
+            <UnreadEntries field="pastSessions" />
             <p class="note">
               A session this app ran stays listed under its project, greyed, ready to resume. Left
               unchanged for longer than this, it goes behind the fold with the rest of the project's
@@ -694,6 +702,7 @@
         {:else if tab === "accounts"}
           <section data-testid="settings-accounts">
             <h3>Accounts</h3>
+            <UnreadEntries field="accounts" />
             <p class="note">
               An account is a login kept apart from the others: Claude Code's in a configuration
               directory of its own, Codex's in a home of its own, each with that agent's settings and
@@ -957,6 +966,7 @@
           {/if}
         {:else if tab === "notifications"}
           <h3>System notifications</h3>
+          <UnreadEntries field="notifications" />
           <div class="seg" role="radiogroup" aria-label="System notifications">
             <button
               role="radio"
@@ -975,6 +985,7 @@
           </div>
 
           <h3>Chime</h3>
+          <UnreadEntries field="chime" />
           <div class="seg" role="radiogroup" aria-label="Chime">
             <button
               role="radio"
@@ -993,6 +1004,7 @@
           </div>
         {:else}
           <h3>Keys</h3>
+          <UnreadEntries field="keys" />
           <p class="note">
             Every chord carries {describe({ key: "", shift: false, alt: false }).replace(/\+$/, "")}: the
             keys without it belong to the agent. Pick a preset, or click a chord and press a new one.

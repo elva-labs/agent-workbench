@@ -1262,6 +1262,12 @@ async fn settings_set(core: State<'_, Arc<Core>>, change: Value) -> Result<Value
     blocking(move || core.settings_set(&change).and_then(value)).await
 }
 
+#[tauri::command]
+async fn settings_hand_over(core: State<'_, Arc<Core>>, held: Value) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    blocking(move || core.settings_hand_over(&held).and_then(value)).await
+}
+
 /// The user's own stylesheet on this machine. Never routed, like the
 /// settings.
 #[tauri::command]
@@ -1615,6 +1621,7 @@ pub fn run() {
             integrated_stop,
             settings_get,
             settings_set,
+            settings_hand_over,
             styles_get,
             styles_set,
             plugin_sources,

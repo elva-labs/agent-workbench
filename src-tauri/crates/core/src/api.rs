@@ -263,6 +263,16 @@ impl Core {
         self.settings()?.set(change)
     }
 
+    /// Hands over the settings a window holds, for a machine whose file is
+    /// not there. They are written only if it is still not there; a file
+    /// that is there by then stands, and is what the answer holds.
+    pub fn settings_hand_over(
+        &self,
+        held: &serde_json::Value,
+    ) -> Result<crate::settings::Stored, String> {
+        self.settings()?.hand_over(held)
+    }
+
     /// Tails the session log for as long as the core lives, whether or not
     /// any hook is installed yet: installing one later just starts the lines
     /// coming.

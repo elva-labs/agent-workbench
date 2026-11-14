@@ -640,7 +640,7 @@
       send tool types a line: one line, and nothing that drives the terminal. */
   function sendTo(session: Session) {
     const line = oneLine(sendLine);
-    if (line !== "" && session.ptyId !== null) void typeLine(session.ptyId, line);
+    if (line !== "" && session.ptyId !== null) void typeLine(session.key, session.ptyId, line);
     closeSend();
   }
 
