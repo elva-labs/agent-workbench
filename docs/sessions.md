@@ -5,7 +5,11 @@ own terminal and scrollback. A project holds as many as you start, several
 projects can be open at once, and switching between any of them stops
 nothing. The sessions you are not looking at are hidden rather than
 unmounted, and hidden in a way that keeps their box in layout, so a
-background session's pty is never resized and never reflows.
+background session's pty is never resized and never reflows. Each
+terminal takes in what its agent draws as it arrives: on the next frame
+the window paints, or a moment later when the window paints none, as when
+it is minimised or behind other windows. A session that has never been on
+screen still has its screen to read, its title and its bell.
 
 Nothing new starts by itself. Opening a project shows what the project has:
 live sessions if any, past ones to resume, and a new-session row. Opening the

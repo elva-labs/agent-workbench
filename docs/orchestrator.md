@@ -48,7 +48,7 @@ told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
 telling anything. `read` answers with the last lines on a session's screen,
-as you see them. `stop` stops a session and files it with the sessions to
+as you would see them, whether or not it has ever been on screen. `stop` stops a session and files it with the sessions to
 resume, behind the fold, rather than leaving a row of it under the project.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
