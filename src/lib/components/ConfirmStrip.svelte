@@ -47,15 +47,17 @@
   function fit(node: HTMLElement) {
     const strip = node.parentElement!;
     let row = 0;
+    // Widths to the fraction of a pixel: a whole-pixel sum rounds a row
+    // that is a fraction too wide down to one that fits.
     const measure = () => {
       if (!stacked) {
         const buttons = [...node.children] as HTMLElement[];
         const gap = parseFloat(getComputedStyle(node).columnGap) || 0;
-        row = buttons.reduce((sum, button) => sum + button.offsetWidth, 0) + gap * (buttons.length - 1);
+        row = buttons.reduce((sum, button) => sum + button.getBoundingClientRect().width, 0) + gap * (buttons.length - 1);
       }
       const style = getComputedStyle(strip);
-      const room = strip.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-      stacked = row > room + 0.5;
+      const room = strip.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      stacked = row > room;
     };
     measure();
     // A frame later, so what the column does to the strip's height is not

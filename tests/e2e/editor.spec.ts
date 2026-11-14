@@ -11,6 +11,8 @@ const AGENT = "section[data-pane='agent']";
 const FILES = "section[data-pane='changes']";
 const MOD = "ControlOrMeta";
 const FOLDED = 50;
+/** The sessions pane's width until it is dragged. */
+const DEFAULT_SESSIONS = 300;
 /** A window that holds every pane open in editor mode, the sessions pane
     included. The agent's pane opens wider where the app draws the window's
     own buttons, which is everywhere the browser is not on macOS, and the
@@ -1531,6 +1533,61 @@ test.describe("the question's three buttons", () => {
     expect(await oneLine(page, "close-unsaved")).toBe(true);
   });
 
+  test("stand in a column where the row is a fraction of a pixel too wide, and on one line where it fits", async ({
+    page,
+  }) => {
+    const TERMINAL = { settings: { look: "terminal" } };
+    /** The session question raised in editor mode, the sessions pane `sessions` wide. */
+    async function raise(at: Page, sessions: number | null) {
+      await at.setViewportSize({ width: 2000, height: 900 });
+      await installFakeCore(at, TERMINAL);
+      if (sessions !== null) {
+        await at.addInitScript((sessions) => {
+          const saved = JSON.parse(localStorage.getItem("workbench.layout") ?? "{}");
+          localStorage.setItem("workbench.layout", JSON.stringify({ ...saved, sessions, editing: true }));
+        }, sessions);
+      }
+      await at.goto("/");
+      await expect(at.locator(AGENT)).toBeVisible();
+      if ((await at.getByTestId("mode-readout").textContent()) !== "editing") await flip(at);
+      await at.getByTestId("new-session").click();
+      await expect(at.locator(AGENT)).toContainText("running");
+      await treeRow(at, "README.md").dblclick();
+      await typeAtEnd(at, "mine");
+      await at.keyboard.press(`${MOD}+1`);
+      await at.keyboard.press("Delete");
+      await expect(at.getByTestId("close-owner")).toBeVisible();
+    }
+    /** The room the strip gives its buttons, to the fraction of a pixel. */
+    const room = (at: Page) =>
+      at.evaluate(() => {
+        const strip = document.querySelector<HTMLElement>("[data-testid='close-owner']")!;
+        const style = getComputedStyle(strip);
+        return strip.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      });
+
+    // The row's own width, from the same three buttons over the editor,
+    // and how much the strip in the sessions pane leaves of the pane.
+    await raise(page, null);
+    const short = DEFAULT_SESSIONS - (await room(page));
+    await page.keyboard.press("Escape");
+    await tab(page, "README.md").hover();
+    await tab(page, "README.md").getByRole("button").click();
+    await expect(page.getByTestId("close-unsaved")).toBeVisible();
+    const [quiet, cancel, save] = await threeButtons(page, "close-unsaved");
+    const row = quiet.width + cancel.width + save.width + 2 * 6;
+
+    const narrow = await page.context().newPage();
+    await raise(narrow, row + short - 0.25);
+    expect(await room(narrow)).toBeLessThan(row);
+    const column = await threeButtons(narrow, "close-owner");
+    expect(new Set(column.map((button) => Math.round(button.x))).size).toBe(1);
+
+    const wide = await page.context().newPage();
+    await raise(wide, row + short + 0.25);
+    expect(await room(wide)).toBeGreaterThanOrEqual(row);
+    expect(await oneLine(wide, "close-owner")).toBe(true);
+  });
 });
 
 test.describe("closing what the pane folds away or hangs under another", () => {
