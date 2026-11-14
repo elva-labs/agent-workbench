@@ -361,13 +361,15 @@ test.describe("responsive collapse", () => {
   test("works at half of a 1440-wide display", async ({ page }) => {
     await page.setViewportSize({ width: 720, height: 800 });
     await expect(page.locator(AGENT)).toBeVisible();
-    expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
-    const overflow = await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth >
-        document.documentElement.clientWidth,
-    );
-    expect(overflow).toBe(false);
+    // The panes settle on the new width over a few frames.
+    await expect.poll(() => widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        ),
+      )
+      .toBe(false);
   });
 
   test("brings the panes back when the window grows", async ({ page }) => {

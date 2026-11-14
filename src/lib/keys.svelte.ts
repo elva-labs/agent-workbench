@@ -1,5 +1,6 @@
 import { isMac } from "$lib/platform";
 import { persist } from "$lib/persist";
+import { unreadOf } from "$lib/unread.svelte";
 
 /**
  * The chords the app claims, and who decides them.
@@ -425,9 +426,23 @@ function remember() {
   }
 }
 
+/** The chord table as the core is sent it. An action whose chord the file
+    holds and the app does not use keeps the default here, and is left out
+    until it is chosen, so the file's entry is not written over. */
+export function keysSettings(): Keymap {
+  const table = { ...keys.bindings };
+  for (const entry of unreadOf("keys")) {
+    const action = entry.name as ActionKey;
+    if (table[action] !== undefined && sameChord(table[action], PRESETS.default[action])) {
+      delete (table as Partial<Keymap>)[action];
+    }
+  }
+  return table;
+}
+
 function save() {
   remember();
-  persist({ keys: { ...keys.bindings } });
+  persist({ keys: keysSettings() });
 }
 
 /** Test seam. */

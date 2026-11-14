@@ -289,6 +289,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         settingsSet: async () => {
           throw new Error("no settings here");
         },
+        settingsHandOver: async () => {
+          throw new Error("no settings here");
+        },
         onSettingsChanged: async () => () => {},
         stylesGet: async () => {
           throw new Error("no styles here");

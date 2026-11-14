@@ -1265,6 +1265,16 @@ export async function installFakeCore(
           settingsChanged(next);
           return next;
         },
+        // Written only while there is no file; a file that is there stands.
+        settingsHandOver: async (held: Record<string, unknown>) => {
+          const found = readSettings();
+          if (found !== null) return { stored: true, settings: found };
+          const { unreadEntries: _unread, ...settings } = held;
+          const next = { ...settingsDefaults, ...settings };
+          localStorage.setItem(settingsFile, JSON.stringify(next));
+          settingsChanged(next);
+          return { stored: true, settings: next };
+        },
         // The user's stylesheet, kept in the page's storage like the
         // settings file, held to the core's rules in brief.
         stylesGet: async () => {
