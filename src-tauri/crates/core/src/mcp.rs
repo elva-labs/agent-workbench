@@ -50,10 +50,11 @@ pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
      and a name for the work, on a worktree of its own when pieces touch the \
      same files. When a piece calls for a particular model, name it with \
      start's model argument, which takes effect before the session's first \
-     turn; sending /model to a running session is for changing its mind \
-     later. When this session follows a workflow, its instructions name the \
-     steps: every start names the one it is for, and a review names the \
-     session whose work it checks. Call the sessions tool before starting \
+     turn; outside a workflow, sending /model to a running session is for \
+     changing its mind later. When this session follows a workflow, its \
+     instructions name the steps: every start names the one it is for, a \
+     review names the session whose work it checks, and a session stays on \
+     the model its step gave it. Call the sessions tool before starting \
      anything: sessions you \
      started in an earlier run of yours are listed there too, stopped, and \
      start with the session named picks one up where it left off. Send is \
@@ -622,7 +623,7 @@ pub fn start_tool() -> Value {
 pub fn send_tool() -> Value {
     json!({
         "name": "send",
-        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next.",
+        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next. When you follow a workflow, a session started for a step stays on the model it was given, so a line that changes its model is refused, and a line to a review that has finished its round asks it for another look, which counts as another round of that piece.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1829,6 +1830,14 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("round"));
+        // Under a workflow a session keeps its step's model, and nothing
+        // invites the orchestrator to change it.
+        assert!(named("send")["description"]
+            .as_str()
+            .unwrap()
+            .contains("a line that changes its model is refused"));
+        assert!(ORCHESTRATOR_INSTRUCTIONS
+            .contains("outside a workflow, sending /model to a running session"));
         for tool in conductor_tools() {
             assert!(
                 !tool.to_string().contains('\u{2014}'),
