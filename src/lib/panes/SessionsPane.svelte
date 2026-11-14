@@ -42,6 +42,7 @@
     focusPane,
     layout,
     peekSessions,
+    peekable,
     sessionsShown,
     sessionsVisible,
     setSessionsView,
@@ -428,14 +429,15 @@
   /** Folded to its narrow column: the rows keep their places, and the pane
       is one button that opens it. Peeked over the agent, it is open. */
   let folded = $derived(!sessionsShown());
-  /** Reviewing folds the pane, and the column peeks it over the agent; a
-      window too narrow for it has nothing to open it into. */
-  let unfoldable = $derived(layout.mode === "reviewing" || !layout.sessionsForced);
+  /** Reviewing folds the pane, and so does editing in a window that keeps
+      the editor's room, and the column peeks it over the pane beside it;
+      a window too narrow for it otherwise has nothing to open it into. */
+  let unfoldable = $derived(peekable() || !layout.sessionsForced);
 
-  /** The column was clicked: while reviewing the pane peeks over the
-      agent, so the viewer stays; otherwise it opens for real. */
+  /** The column was clicked: where the pane peeks, so the viewer or the
+      editor stays; otherwise it opens for real. */
   function unfold() {
-    if (layout.mode === "reviewing") peekSessions(true);
+    if (peekable()) peekSessions(true);
     else unfoldSessions();
     focusPane("sessions");
   }
@@ -446,8 +448,8 @@
   const PEEK_AFTER = 200;
   const UNPEEK_AFTER = 300;
 
-  // The pointer resting on the folded column peeks the pane over the agent
-  // while reviewing, and leaving the pane puts it back, unless the keyboard
+  // The pointer resting on the folded column peeks the pane over the pane
+  // beside it where it peeks, and leaving the pane puts it back, unless the keyboard
   // is in it: then Escape, Enter or the focus chord put it back.
   $effect(() => {
     const pane = nav?.closest<HTMLElement>('[data-pane="sessions"]');
@@ -461,7 +463,7 @@
       }, after);
     };
     const enter = () => {
-      if (layout.mode !== "reviewing" || sessionsVisible() || layout.sessionsPeek) return;
+      if (!peekable() || sessionsVisible() || layout.sessionsPeek) return;
       later(() => peekSessions(true), PEEK_AFTER);
     };
     const leave = () => {

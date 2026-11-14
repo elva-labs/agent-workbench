@@ -5,6 +5,7 @@
   import FileViewer from "$lib/components/FileViewer.svelte";
   import BrowserView from "$lib/components/BrowserView.svelte";
   import SearchResults from "$lib/components/SearchResults.svelte";
+  import EditorColumn from "$lib/components/EditorColumn.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import { onMount, untrack } from "svelte";
@@ -83,10 +84,25 @@
     type Session,
   } from "$lib/sessions.svelte";
   import { activate, activeProject, followedWorktree, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
-  import { DEFAULT, MIN, applyLayout, enterReview, focusPane, layout, saveLayout } from "$lib/layout.svelte";
+  import {
+    DEFAULT,
+    MIN,
+    applyLayout,
+    editTreeVisible,
+    enterReview,
+    focusPane,
+    layout,
+    resetEditTree,
+    resizeEditTree,
+    saveLayout,
+  } from "$lib/layout.svelte";
 
   let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
+  let editing = $derived(layout.mode === "editing");
+  /** While editing, the tree's column beside the editor, unless the window
+      gave it up for the editor's room. */
+  let treeColumn = $derived(!editing || editTreeVisible());
   /** A page that asked for the whole pane has it: the tree stands down
       while it shows, and comes back with its folds and its selection. */
   let fullView = $derived(files.pluginView?.width === "full");
@@ -504,7 +520,19 @@
   );
   let paneMeta = $derived.by(() => {
     if (conducting !== null) return boardMeta;
+    if (editing) return worktree === null ? undefined : `worktree ${worktree}`;
     return worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`;
+  });
+  /** While editing the pane is named for the project, heading the tree's
+      column, and the editor's tabs head the column beside it. */
+  let paneTitle = $derived.by(() => {
+    if (conducting !== null) return "Orchestrator";
+    if (editing) return workspace.active === null ? "Files" : projectLabel(workspace.active);
+    return "Changes";
+  });
+  let titleWidth = $derived.by(() => {
+    if (!editing || conducting !== null) return null;
+    return editTreeVisible() ? `calc(${layout.editTree}px + var(--splitter-w))` : "auto";
   });
 
   let startedOpen = $state(true);
@@ -701,7 +729,7 @@
   }
 </script>
 
-<Pane id="changes" title={conducting === null ? "Changes" : "Orchestrator"} meta={paneMeta}>
+<Pane id="changes" title={paneTitle} meta={paneMeta} {titleWidth}>
   {#if conducting !== null}
     <!-- The sessions an orchestrator started, in place of the tree. One tab
          stop with a cursor inside it, the sessions pane's pattern: the rows
@@ -841,138 +869,39 @@
       {/if}
     </div>
   {:else}
-    <!-- The field is the toolbar: what you type narrows the tree, or searches
-         inside the files. Scope and view moved into the menu at the end, with
-         their chords beside them. -->
-    <div class="head">
-      <label class="field" class:lines={files.mode === "lines"}>
-        <span class="glyph" aria-hidden="true">⌕</span>
-        <input
-          type="search"
-          bind:this={field}
-          value={files.query}
-          oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
-          onkeydown={onFieldKeydown}
-          placeholder={files.mode === "lines" ? "search in files…" : "filter files…"}
-          aria-label={files.mode === "lines" ? "Search in files" : "Filter files"}
-          spellcheck="false"
-          autocomplete="off"
-          data-testid="search-field"
-        />
-        <span class="modes" role="radiogroup" aria-label="What to search">
-          <button
-            role="radio"
-            aria-checked={files.mode === "files"}
-            class:on={files.mode === "files"}
-            onclick={() => setMode("files")}
-            title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
-            data-testid="mode-files">files</button
-          >
-          <button
-            role="radio"
-            aria-checked={files.mode === "lines"}
-            class:on={files.mode === "lines"}
-            onclick={() => setMode("lines")}
-            title="Search inside the files ({describe(chordFor('findLines'))})"
-            data-testid="mode-lines">lines</button
-          >
-        </span>
-      </label>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="more" onkeydown={onMenuKeydown}>
-        <button
-          class="tool"
-          onclick={() => (menuOpen = !menuOpen)}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label="More"
-          data-testid="changes-menu">⋯</button
-        >
-        {#if menuOpen}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <div class="scrim" onclick={() => (menuOpen = false)}></div>
-          <div class="menu" role="menu" use:coversBrowser data-testid="changes-menu-items">
-            <button
-              role="menuitemradio"
-              aria-checked={files.scope === "changed"}
-              onclick={() => choose(() => setScope("changed"))}
-              data-testid="menu-scope-changed"
-            >
-              <span>Changed files</span><kbd>{describe(chordFor("scope"))}</kbd>
-            </button>
-            <button
-              role="menuitemradio"
-              aria-checked={files.scope === "all"}
-              onclick={() => choose(() => setScope("all"))}
-              data-testid="menu-scope-all"
-            >
-              <span>All files</span><kbd>{describe(chordFor("scope"))}</kbd>
-            </button>
-            <hr />
-            <button
-              role="menuitemradio"
-              aria-checked={view === "diff"}
-              disabled={!diffable}
-              onclick={() => choose(() => setView("diff"))}
-              data-testid="menu-view-diff"
-            >
-              <span>Diff</span><kbd>{describe(chordFor("view"))}</kbd>
-            </button>
-            <button
-              role="menuitemradio"
-              aria-checked={view === "content"}
-              disabled={files.selected === null}
-              onclick={() => choose(() => setView("content"))}
-              data-testid="menu-view-content"
-            >
-              <span>Whole file</span><kbd>{describe(chordFor("view"))}</kbd>
-            </button>
-            <button
-              role="menuitemradio"
-              aria-checked={view === "rendered"}
-              disabled={!renderable}
-              onclick={() => choose(() => setView("rendered"))}
-              data-testid="menu-view-rendered"
-            >
-              <span>Rendered</span><kbd>{describe(chordFor("view"))}</kbd>
-            </button>
-            <hr />
-            <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
-              <span>Reload</span>
-            </button>
-            <button role="menuitem" onclick={() => choose(() => openBrowser())} data-testid="menu-browser">
-              <span>Browser</span>
-            </button>
-          </div>
-        {/if}
-      </div>
-    </div>
-
-    {#if files.error}
-      <p class="notice error" data-testid="changes-error">{files.error}</p>
-    {/if}
-
-    {#if notGit}
-      <p class="notice" data-testid="not-git">
-        This folder is not a git repository, so there are no changes to show. Sessions still run in it.
-      </p>
+    {#if !editing}
+      {@render fieldRow()}
     {/if}
 
     <!-- The tree is the same component in both shapes. Working, it has the pane
          to itself; reviewing, it becomes the left column and keeps its scroll
          position, its open folders and its selection. -->
-    <div class="split" class:reviewing class:full={fullView} style:--tree-w="{layout.tree}px">
+    <div
+      class="split"
+      class:reviewing
+      class:editing
+      class:treeless={editing && !editTreeVisible()}
+      class:full={fullView}
+      style:--tree-w="{editing ? layout.editTree : layout.tree}px"
+    >
       <!-- The tree's column: the tree, and beneath it what the agent
            presented for the session on screen, a section of its own with a
            divider to drag, folded to its header when asked. -->
-      {#if !fullView}
+      {#if !fullView && treeColumn}
         <div class="column" bind:clientHeight={columnHeight} data-testid="tree-column">
+          {#if editing}
+            {@render fieldRow()}
+          {/if}
           <div class="tree-slot">
             {#if searchingLines()}
               <SearchResults onOpen={openHit} />
             {:else}
-              <FileTree onOpen={open} onBlank={closeViewer} focused={layout.focus === "changes"} {beyond} />
+              <FileTree
+                onOpen={open}
+                onBlank={editing ? undefined : closeViewer}
+                focused={layout.focus === "changes"}
+                {beyond}
+              />
             {/if}
           </div>
           {#if anyOpen}
@@ -1261,10 +1190,141 @@
           <FileViewer />
         {/if}
       {/if}
+      {#if editing}
+        {#if !fullView && treeColumn}
+          <Splitter label="Resize the file tree" onDelta={resizeEditTree} onReset={resetEditTree} onCommit={saveLayout} />
+        {/if}
+        <EditorColumn />
+      {/if}
     </div>
   {/if}
 </Pane>
 
+
+
+<!-- The field above the tree, with the notices under it: across the pane
+     while working and reviewing, at the top of the tree's column while
+     editing. -->
+{#snippet fieldRow()}
+  <!-- The field is the toolbar: what you type narrows the tree, or searches
+       inside the files. Scope and view moved into the menu at the end, with
+       their chords beside them. -->
+  <div class="head">
+    <label class="field" class:lines={files.mode === "lines"}>
+      <span class="glyph" aria-hidden="true">⌕</span>
+      <input
+        type="search"
+        bind:this={field}
+        value={files.query}
+        oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+        onkeydown={onFieldKeydown}
+        placeholder={files.mode === "lines" ? "search in files…" : "filter files…"}
+        aria-label={files.mode === "lines" ? "Search in files" : "Filter files"}
+        spellcheck="false"
+        autocomplete="off"
+        data-testid="search-field"
+      />
+      <span class="modes" role="radiogroup" aria-label="What to search">
+        <button
+          role="radio"
+          aria-checked={files.mode === "files"}
+          class:on={files.mode === "files"}
+          onclick={() => setMode("files")}
+          title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
+          data-testid="mode-files">files</button
+        >
+        <button
+          role="radio"
+          aria-checked={files.mode === "lines"}
+          class:on={files.mode === "lines"}
+          onclick={() => setMode("lines")}
+          title="Search inside the files ({describe(chordFor('findLines'))})"
+          data-testid="mode-lines">lines</button
+        >
+      </span>
+    </label>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="more" onkeydown={onMenuKeydown}>
+      <button
+        class="tool"
+        onclick={() => (menuOpen = !menuOpen)}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label="More"
+        data-testid="changes-menu">⋯</button
+      >
+      {#if menuOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div class="scrim" onclick={() => (menuOpen = false)}></div>
+        <div class="menu" role="menu" use:coversBrowser data-testid="changes-menu-items">
+          <button
+            role="menuitemradio"
+            aria-checked={files.scope === "changed"}
+            onclick={() => choose(() => setScope("changed"))}
+            data-testid="menu-scope-changed"
+          >
+            <span>Changed files</span><kbd>{describe(chordFor("scope"))}</kbd>
+          </button>
+          <button
+            role="menuitemradio"
+            aria-checked={files.scope === "all"}
+            onclick={() => choose(() => setScope("all"))}
+            data-testid="menu-scope-all"
+          >
+            <span>All files</span><kbd>{describe(chordFor("scope"))}</kbd>
+          </button>
+          <hr />
+          <button
+            role="menuitemradio"
+            aria-checked={view === "diff"}
+            disabled={!diffable}
+            onclick={() => choose(() => setView("diff"))}
+            data-testid="menu-view-diff"
+          >
+            <span>Diff</span><kbd>{describe(chordFor("view"))}</kbd>
+          </button>
+          <button
+            role="menuitemradio"
+            aria-checked={view === "content"}
+            disabled={files.selected === null}
+            onclick={() => choose(() => setView("content"))}
+            data-testid="menu-view-content"
+          >
+            <span>Whole file</span><kbd>{describe(chordFor("view"))}</kbd>
+          </button>
+          <button
+            role="menuitemradio"
+            aria-checked={view === "rendered"}
+            disabled={!renderable}
+            onclick={() => choose(() => setView("rendered"))}
+            data-testid="menu-view-rendered"
+          >
+            <span>Rendered</span><kbd>{describe(chordFor("view"))}</kbd>
+          </button>
+          <hr />
+          <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
+            <span>Reload</span>
+          </button>
+          <button role="menuitem" onclick={() => choose(() => openBrowser())} data-testid="menu-browser">
+            <span>Browser</span>
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  {#if files.error}
+    <p class="notice error" data-testid="changes-error">{files.error}</p>
+  {/if}
+
+  {#if notGit}
+    <p class="notice" data-testid="not-git">
+      This folder is not a git repository, so there are no changes to show. Sessions still run in it.
+    </p>
+  {/if}
+
+{/snippet}
 
 <!-- One section's rows, on the fold itself or a step in under a group. -->
 {#snippet pluginRows(section: PluginSection, deep: boolean)}
@@ -1936,8 +1996,14 @@
     grid-template-columns: 1fr;
   }
 
-  .split.reviewing {
-    grid-template-columns: var(--tree-w) var(--splitter-w) 1fr;
+  .split.reviewing,
+  .split.editing {
+    grid-template-columns: var(--tree-w) var(--splitter-w) minmax(0, 1fr);
+  }
+
+  /* Editing in a window that gave up the tree's column: the editor alone. */
+  .split.editing.treeless {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /* A page that asked for the whole pane: the viewer is the only column. */

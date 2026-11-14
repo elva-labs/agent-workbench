@@ -28,6 +28,11 @@ export { isMac };
  * this function takes the context rather than leaving the caller to decide:
  * the whole model stays testable without a DOM. It belongs to whichever
  * terminal has focus, the agent's or a shell's, and to the chrome otherwise.
+ *
+ * The editor is a text field of the app's own, and keeps what a text field
+ * needs while it has the keyboard: Escape, and every chord on an arrow key,
+ * which moves or selects there. Find there is find in the file, and save is
+ * only there.
  */
 
 export type Action =
@@ -38,6 +43,16 @@ export type Action =
   | { type: "toggleView" }
   | { type: "toggleScope" }
   | { type: "toggleTerminal" }
+  /** Agent mode or editor mode: what takes the middle of the window. */
+  | { type: "toggleMode" }
+  /** A name field for a new file in the tree, in editor mode. */
+  | { type: "newFile" }
+  /** The file in the editor written to disk. */
+  | { type: "save" }
+  /** Find in the file in the editor. */
+  | { type: "findInFile" }
+  /** The keyboard to the editor, from elsewhere in editor mode. */
+  | { type: "toEditor" }
   | { type: "exitReview" }
   | { type: "openSettings" }
   /** The search field: narrowing the tree, or searching inside files. */
@@ -56,6 +71,7 @@ export type Action =
 
 export interface KeyState {
   key: string;
+  code?: string;
   metaKey?: boolean;
   ctrlKey?: boolean;
   shiftKey?: boolean;
@@ -65,6 +81,10 @@ export interface KeyState {
 export interface KeyContext {
   focus: PaneId;
   reviewing: boolean;
+  /** The window is in editor mode. */
+  editing?: boolean;
+  /** The editor has the keyboard. */
+  inEditor?: boolean;
   /** Whether Cmd is the modifier. Defaults to what the browser reports. */
   mac?: boolean;
 }
@@ -86,6 +106,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   "toggle.sessions": { type: "toggle", pane: "sessions" },
   "toggle.changes": { type: "toggle", pane: "changes" },
   "toggle.terminal": { type: "toggleTerminal" },
+  mode: { type: "toggleMode" },
   "session.next": { type: "cycle", direction: 1 },
   "session.previous": { type: "cycle", direction: -1 },
   "session.attention": { type: "attention" },
@@ -99,6 +120,8 @@ const ACTION_OF: Record<ActionKey, Action> = {
   scope: { type: "toggleScope" },
   find: { type: "find", mode: "files" },
   findLines: { type: "find", mode: "lines" },
+  "file.new": { type: "newFile" },
+  "file.save": { type: "save" },
   theme: { type: "cycleTheme" },
   settings: { type: "openSettings" },
 };
@@ -126,13 +149,16 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   if (chord === null) {
     // Escape belongs to the agent whenever the agent has it. A pane that owns
     // focus may use it: the viewer closes on it, and a list pane hands the
-    // keyboard back to the agent, so a look at the side panes ends where
-    // typing resumes.
+    // keyboard back to where typing resumes, the agent, or the editor in
+    // editor mode, which keeps its own Escape.
     if (e.key === "Escape" && !isTerminal(ctx.focus)) {
+      if (ctx.editing) return ctx.inEditor ? null : { type: "toEditor" };
       return ctx.reviewing ? { type: "exitReview" } : { type: "focus", pane: "agent" };
     }
     return null;
   }
+
+  if (ctx.inEditor && chord.key.startsWith("Arrow")) return null;
 
   let action = actionOf(chord);
   if (action === null) {
@@ -141,8 +167,13 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   }
   if (action === null) return null;
   // Filtering the tree is the changes pane's own: in a terminal the same
-  // chord is the process's, Ctrl+F most of all.
+  // chord is the process's, Ctrl+F most of all. In the editor it finds in
+  // the file.
+  if (action === "find" && ctx.inEditor) return { type: "findInFile" };
   if (action === "find" && isTerminal(ctx.focus)) return null;
+  // Saving is the editor's: anywhere else the chord passes through, to a
+  // terminal above all, where Ctrl+S is the process's.
+  if (action === "file.save" && !ctx.inEditor) return null;
   return ACTION_OF[action];
 }
 

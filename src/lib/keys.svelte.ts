@@ -21,6 +21,7 @@ export type ActionKey =
   | "toggle.sessions"
   | "toggle.changes"
   | "toggle.terminal"
+  | "mode"
   | "session.next"
   | "session.previous"
   | "session.attention"
@@ -29,6 +30,8 @@ export type ActionKey =
   | "scope"
   | "find"
   | "findLines"
+  | "file.new"
+  | "file.save"
   | "zoom.in"
   | "zoom.out"
   | "zoom.reset"
@@ -61,16 +64,19 @@ export const ACTIONS: ActionInfo[] = [
   { key: "focus.changes", label: "Focus changes", group: "Panes" },
   { key: "focus.terminal", label: "Focus terminal", group: "Panes" },
   { key: "toggle.sessions", label: "Show or hide sessions", group: "Panes" },
-  { key: "toggle.changes", label: "Show or hide changes", group: "Panes" },
+  { key: "toggle.changes", label: "Show or hide the right pane", group: "Panes" },
   { key: "toggle.terminal", label: "Show or hide the terminal", group: "Panes" },
+  { key: "mode", label: "Agent or editor in the middle", group: "Panes" },
   { key: "session.next", label: "Next session or shell", group: "Sessions" },
   { key: "session.previous", label: "Previous session or shell", group: "Sessions" },
   { key: "session.attention", label: "Next session that needs you", group: "Sessions" },
   { key: "review", label: "Open or close the file viewer", group: "Changes" },
   { key: "view", label: "Diff, whole file or rendered", group: "Changes" },
   { key: "scope", label: "Changed files or all files", group: "Changes" },
-  { key: "find", label: "Filter files (in the changes pane)", group: "Changes" },
+  { key: "find", label: "Filter files, or find in the file in the editor", group: "Changes" },
   { key: "findLines", label: "Search in files", group: "Changes" },
+  { key: "file.new", label: "New file", group: "Editor" },
+  { key: "file.save", label: "Save the file (in the editor)", group: "Editor" },
   { key: "zoom.in", label: "Zoom the terminal in", group: "Terminal" },
   { key: "zoom.out", label: "Zoom the terminal out", group: "Terminal" },
   { key: "zoom.reset", label: "Reset the terminal's zoom", group: "Terminal" },
@@ -82,6 +88,7 @@ export const ACTIONS: ActionInfo[] = [
 
 const plain = (key: string): Chord => ({ key, shift: false, alt: false });
 const shifted = (key: string): Chord => ({ key, shift: true, alt: false });
+const withAlt = (key: string): Chord => ({ key, shift: false, alt: true });
 
 export const PRESETS: Record<PresetName, Keymap> = {
   default: {
@@ -92,6 +99,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "toggle.sessions": plain("b"),
     "toggle.changes": plain("\\"),
     "toggle.terminal": plain("j"),
+    mode: shifted("e"),
     "session.next": shifted("ArrowDown"),
     "session.previous": shifted("ArrowUp"),
     "session.attention": plain("."),
@@ -100,6 +108,8 @@ export const PRESETS: Record<PresetName, Keymap> = {
     scope: shifted("a"),
     find: plain("f"),
     findLines: shifted("f"),
+    "file.new": withAlt("n"),
+    "file.save": plain("s"),
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
@@ -118,6 +128,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "toggle.sessions": plain("b"),
     "toggle.changes": plain("\\"),
     "toggle.terminal": shifted("j"),
+    mode: shifted("e"),
     "session.next": shifted("n"),
     "session.previous": shifted("p"),
     "session.attention": plain("."),
@@ -126,6 +137,8 @@ export const PRESETS: Record<PresetName, Keymap> = {
     scope: shifted("a"),
     find: plain("f"),
     findLines: shifted("f"),
+    "file.new": withAlt("n"),
+    "file.save": plain("s"),
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
@@ -292,13 +305,33 @@ export function labelOf(action: ActionKey): string {
 
 /** The chord a key event spells, or null when the modifier is not down. */
 export function chordFromEvent(
-  e: { key: string; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean },
+  e: {
+    key: string;
+    code?: string;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+    altKey?: boolean;
+  },
   mac: boolean = isMac(),
 ): Chord | null {
   const mod = Boolean(mac ? e.metaKey : e.ctrlKey);
   if (!mod) return null;
   if (["Meta", "Control", "Shift", "Alt"].includes(e.key)) return null;
-  return { key: normalise(e.key), shift: Boolean(e.shiftKey), alt: Boolean(e.altKey) };
+  return { key: keyOf(e), shift: Boolean(e.shiftKey), alt: Boolean(e.altKey) };
+}
+
+/** The key a chord is on. With Alt held, macOS spells the character Option
+    makes, or a dead key, so a letter or a digit is read from where it sits
+    on the keyboard instead. */
+function keyOf(e: { key: string; code?: string; altKey?: boolean }): string {
+  if (e.altKey && e.code !== undefined) {
+    const letter = /^Key([A-Z])$/.exec(e.code);
+    if (letter !== null) return letter[1].toLowerCase();
+    const digit = /^Digit(\d)$/.exec(e.code);
+    if (digit !== null) return digit[1];
+  }
+  return normalise(e.key);
 }
 
 /** Letters in lower case, so Shift does not spell a second chord. */

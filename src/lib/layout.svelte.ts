@@ -1,11 +1,17 @@
 /**
- * Pane geometry, focus, and the two layouts.
+ * Pane geometry, focus, and the three layouts.
  *
- * The app has two shapes. **Working** is three panes with the agent taking the
- * room. **Reviewing** is the changes pane grown into a file viewer, with the
- * sessions pane folded to a narrow column because a session list is no use
- * while reading a diff. One deliberate transition between them, and the agent
- * resizes once on the way in rather than once per file opened.
+ * The app has three shapes. **Working** is three panes with the agent taking
+ * the room. **Reviewing** is the changes pane grown into a file viewer, with
+ * the sessions pane folded to a narrow column because a session list is no
+ * use while reading a diff. One deliberate transition between them, and the
+ * agent resizes once on the way in rather than once per file opened.
+ * **Editing** is the window's other mode: the file tree and an editor take
+ * the middle and the agent moves to the right pane at a width of its own.
+ * The editor comes before the agent there: when the window cannot give the
+ * editor `MIN.editor` with everything open, the sessions pane folds, then the
+ * tree column goes, and the agent is hidden rather than squeezed below its
+ * minimum.
  *
  * Below either shape sits the terminal panel: a strip along the bottom of the
  * window holding the project's shells, hidden until asked for. It takes its
@@ -30,7 +36,7 @@
 import { Tween } from "svelte/motion";
 
 export type PaneId = "sessions" | "agent" | "changes" | "terminal";
-export type Mode = "working" | "reviewing";
+export type Mode = "working" | "reviewing" | "editing";
 
 export const SPLITTER = 6;
 export const FRAME_PADDING = 20;
@@ -51,6 +57,9 @@ export const MIN = {
   terminalList: 140,
   /** What the shells keep beside the list: one usable shell at least. */
   shells: 320,
+  /** What the editor keeps with everything open beside it: the sessions
+      pane folds, then the tree column goes, before it gets less. */
+  editor: 640,
 } as const;
 
 /** The review pane holds a tree and the content side by side. */
@@ -68,6 +77,10 @@ export const DEFAULT = {
   review: 700,
   terminal: 260,
   terminalList: 200,
+  /** The tree column beside the editor. */
+  editTree: 240,
+  /** The agent pane on the right while editing. */
+  editAgent: 420,
 } as const;
 
 /** How wide the sessions pane's column is while the pane is folded. */
@@ -99,6 +112,10 @@ export const layout = $state({
   tree: DEFAULT.tree as number,
   terminal: DEFAULT.terminal as number,
   terminalList: DEFAULT.terminalList as number,
+  /** The tree column and the agent pane while editing, remembered apart
+      from the other shapes' widths. */
+  editTree: DEFAULT.editTree as number,
+  editAgent: DEFAULT.editAgent as number,
   sessionsChosen: true,
   changesChosen: true,
   terminalChosen: false,
@@ -106,8 +123,15 @@ export const layout = $state({
   changesForced: false,
   terminalForced: false,
   agentHidden: false,
-  /** The folded sessions pane drawn over the agent at its open width, while
-      reviewing: from a hover on its column or the focus chord. Transient. */
+  /** The agent pane on the right while editing, shown rather than put
+      away by the right pane's toggle. Persisted. */
+  agentChosen: true,
+  /** The tree column beside the editor given up because the window cannot
+      hold it. Transient. */
+  editTreeForced: false,
+  /** The folded sessions pane drawn over the pane beside it at its open
+      width, while reviewing or while the window folds it for the editor:
+      from a hover on its column or the focus chord. Transient. */
   sessionsPeek: false,
   /** Set once you drag the viewer's splitter, so we stop sizing it for you. */
   reviewTouched: false,
@@ -148,12 +172,19 @@ export function sessionsShown() {
   return sessionsVisible() || layout.sessionsPeek;
 }
 
-/** Peeks the folded sessions pane over the agent, or puts it back. Only
-    while reviewing, where the fold is the shape's and opening the pane for
-    real would close the viewer. Putting it back takes the keyboard with
-    it, to the viewer. */
+/** Whether the folded sessions pane peeks rather than opens: while
+    reviewing, where the fold is the shape's and opening the pane for real
+    would close the viewer, and while editing in a window that folds it to
+    keep the editor's room, where there is nothing to open it into. */
+export function peekable(): boolean {
+  return layout.mode === "reviewing" || (layout.mode === "editing" && layout.sessionsForced);
+}
+
+/** Peeks the folded sessions pane over the pane beside it, or puts it
+    back. Only where `peekable` says. Putting it back takes the keyboard
+    with it, to the files pane: the viewer or the editor. */
 export function peekSessions(on: boolean) {
-  if (on && (layout.mode !== "reviewing" || sessionsVisible())) return;
+  if (on && (!peekable() || sessionsVisible())) return;
   if (layout.sessionsPeek === on) return;
   layout.sessionsPeek = on;
   if (!on && layout.focus === "sessions") {
@@ -190,12 +221,30 @@ export function sliding() {
   return columnsMoving;
 }
 
+/** The changes pane is there: on the right by its toggle while working
+    and reviewing, and always while editing, where it is the middle. */
 export function changesVisible() {
+  if (layout.mode === "editing") return true;
   return layout.changesChosen && !layout.changesForced;
 }
 
+/** The agent pane is shown: everywhere but reviewing in a narrow window,
+    and while editing, wherever the window and its toggle leave it. */
 export function agentVisible() {
-  return !layout.agentHidden;
+  if (layout.agentHidden) return false;
+  return layout.mode !== "editing" || layout.agentChosen;
+}
+
+/** The tree column beside the editor is there. */
+export function editTreeVisible() {
+  return layout.mode === "editing" && !layout.editTreeForced;
+}
+
+/** The pane at the right of the window in this mode: the changes pane in
+    agent mode, the agent pane while editing. Its toggle shows and hides
+    it, and the mode switch stands at the end of its header. */
+export function rightPane(): "changes" | "agent" {
+  return layout.mode === "editing" ? "agent" : "changes";
 }
 
 export function terminalVisible() {
@@ -207,13 +256,20 @@ export function terminalVisible() {
     whose header then runs on under the controls from the folded column. */
 export function leftmost(): PaneId {
   if (sessionsVisible()) return "sessions";
-  if (agentVisible()) return "agent";
-  return "changes";
+  return besideSessions();
+}
+
+/** The pane beside the sessions column: the agent, or the changes pane
+    when the agent is away, and the changes pane while editing. */
+export function besideSessions(): PaneId {
+  if (layout.mode === "editing") return "changes";
+  return agentVisible() ? "agent" : "changes";
 }
 
 /** The pane at the right edge of the top row, whose header carries the
-    window controls on Windows and Linux. */
+    mode switch, and the window controls on Windows and Linux. */
 export function rightmost(): PaneId {
+  if (layout.mode === "editing") return agentVisible() ? "agent" : "changes";
   if (changesVisible()) return "changes";
   if (agentVisible()) return "agent";
   return "sessions";
@@ -247,10 +303,13 @@ export function applyLayout(width: number, height: number = layout.height) {
 function leaveHiddenPane() {
   const hidden =
     (layout.focus === "sessions" && !sessionsShown()) ||
-    (layout.focus === "changes" && !changesVisible());
+    (layout.focus === "changes" && !changesVisible()) ||
+    (layout.focus === "agent" && !agentVisible() && changesVisible());
   if (!hidden) return;
   const gone = layout.focus;
-  layout.focus = "agent";
+  // The agent is the pane that is there when the others are gone; while it
+  // is hidden, the files pane is.
+  layout.focus = gone === "agent" ? "changes" : agentVisible() ? "agent" : "changes";
   if (typeof document === "undefined") {
     layout.focusRequest += 1;
     return;
@@ -281,6 +340,11 @@ function resolveLayout(width: number, height: number) {
     Math.max(layout.terminalList, MIN.terminalList),
     Math.max(MIN.terminalList, listRoom),
   );
+
+  if (layout.mode === "editing") {
+    resolveEditing(width);
+    return;
+  }
 
   if (layout.mode === "reviewing") {
     layout.sessionsForced = true;
@@ -343,8 +407,111 @@ function resolveLayout(width: number, height: number) {
   layout.changes = changes;
 }
 
+/**
+ * What gives way while editing, in order: the sessions pane folds, the tree
+ * column goes, and the agent is hidden rather than squeezed below its
+ * minimum. The agent and the tree keep their widths until the editor would
+ * get less than `MIN.editor` with the panes before them folded, and then
+ * give way down to their minimums before they go.
+ */
+function resolveEditing(width: number) {
+  layout.changesForced = false;
+  const folded = FOLDED + SPLITTER;
+  const beside = width - folded;
+
+  layout.agentHidden = beside - SPLITTER - MIN.agent < MIN.editor;
+  if (!layout.agentHidden) {
+    layout.editAgent = clamp(layout.editAgent, MIN.agent, beside - SPLITTER - MIN.editor);
+  }
+  const agent = agentVisible() ? SPLITTER + layout.editAgent : 0;
+
+  layout.editTreeForced = beside - agent - SPLITTER - MIN.tree < MIN.editor;
+  if (!layout.editTreeForced) {
+    layout.editTree = clamp(layout.editTree, MIN.tree, beside - agent - SPLITTER - MIN.editor);
+  }
+  const tree = layout.editTreeForced ? 0 : layout.editTree + SPLITTER;
+
+  layout.sessionsForced = width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
+  layout.sessionsPeek &&= !sessionsVisible() && layout.sessionsForced;
+}
+
+function clamp(value: number, least: number, most: number) {
+  return Math.min(Math.max(value, least), Math.max(least, most));
+}
+
+/** What the sessions column takes while editing, the splitter included. */
+function sessionsColumn() {
+  return (sessionsVisible() ? layout.sessions : FOLDED) + SPLITTER;
+}
+
+/** Drags the agent pane's edge while editing. The editor keeps its room
+    with the panes as they are: a drag never folds or hides one. */
+export function resizeEditAgent(dx: number) {
+  const tree = editTreeVisible() ? layout.editTree + SPLITTER : 0;
+  const most = layout.width - sessionsColumn() - tree - SPLITTER - MIN.editor;
+  layout.editAgent = clamp(layout.editAgent - dx, MIN.agent, most);
+  applyLayout(layout.width);
+}
+
+/** Drags the tree column's edge while editing, on the same terms. */
+export function resizeEditTree(dx: number) {
+  const agent = agentVisible() ? SPLITTER + layout.editAgent : 0;
+  const most = layout.width - sessionsColumn() - agent - SPLITTER - MIN.editor;
+  layout.editTree = clamp(layout.editTree + dx, MIN.tree, most);
+  applyLayout(layout.width);
+}
+
+/** The editing widths back at their defaults, as far as the window allows. */
+export function resetEditAgent() {
+  layout.editAgent = DEFAULT.editAgent;
+  applyLayout(layout.width);
+  saveLayout();
+}
+
+export function resetEditTree() {
+  layout.editTree = DEFAULT.editTree;
+  applyLayout(layout.width);
+  saveLayout();
+}
+
+/**
+ * Flips the window between agent mode and editor mode. Into editing the
+ * keyboard goes to the files pane, which puts it in the editor or the tree;
+ * back out, the agent has the middle again and takes it. The sessions pane
+ * keeps the choice it had: a fold the editor forced is forgotten with the
+ * shape.
+ */
+export function setEditing(on: boolean) {
+  if (on === (layout.mode === "editing")) return;
+  layout.sessionsPeek = false;
+  layout.mode = on ? "editing" : "working";
+  layout.sessionsForced = false;
+  layout.editTreeForced = false;
+  layout.agentHidden = false;
+  applyLayout(layout.width);
+  layout.focus = on ? "changes" : "agent";
+  layout.focusRequest += 1;
+  saveLayout();
+}
+
+/** Shows or hides the right pane: the changes pane in agent mode, the
+    agent pane while editing. */
+export function toggleRightPane() {
+  if (layout.mode !== "editing") {
+    togglePane("changes");
+    return;
+  }
+  layout.agentChosen = !layout.agentChosen;
+  if (!agentVisible() && layout.focus === "agent") {
+    layout.focus = "changes";
+    layout.focusRequest += 1;
+  }
+  applyLayout(layout.width);
+  saveLayout();
+}
+
 export function enterReview() {
-  if (layout.mode === "reviewing") return;
+  if (layout.mode === "reviewing" || layout.mode === "editing") return;
 
   // The pane holds a tree beside the content, and the content is what is
   // being read: it opens at its share of the window, or wider when the
@@ -371,7 +538,7 @@ export function enterReview() {
     a step back to the list and not a jump to the agent; it goes to the agent
     only when the changes pane is not there to hold it. */
 export function exitReview() {
-  if (layout.mode === "working") return;
+  if (layout.mode !== "reviewing") return;
   layout.mode = "working";
   layout.sessionsForced = false;
   applyLayout(layout.width);
@@ -476,6 +643,10 @@ export function loadLayout() {
     if (typeof v.terminal === "number") layout.terminal = v.terminal;
     if (typeof v.terminalList === "number")
       layout.terminalList = v.terminalList;
+    if (typeof v.editTree === "number") layout.editTree = v.editTree;
+    if (typeof v.editAgent === "number") layout.editAgent = v.editAgent;
+    if (typeof v.agentChosen === "boolean") layout.agentChosen = v.agentChosen;
+    if (v.editing === true) layout.mode = "editing";
     if (typeof v.reviewTouched === "boolean")
       layout.reviewTouched = v.reviewTouched;
     if (
@@ -510,9 +681,10 @@ export function loadLayout() {
 }
 
 /**
- * Persists intent and widths only. Forced collapses are a fact about the
- * current window, and the mode is where you happen to be right now: neither
- * belongs in storage, and saving either would make the app reopen wrong.
+ * Persists intent and widths, and whether the window is in editor mode,
+ * which belongs to the window. Forced collapses are a fact about the current
+ * window, and reviewing is where you happen to be right now: neither belongs
+ * in storage, and saving either would make the app reopen wrong.
  */
 export function saveLayout() {
   try {
@@ -525,6 +697,10 @@ export function saveLayout() {
         tree: layout.tree,
         terminal: layout.terminal,
         terminalList: layout.terminalList,
+        editTree: layout.editTree,
+        editAgent: layout.editAgent,
+        agentChosen: layout.agentChosen,
+        editing: layout.mode === "editing",
         reviewTouched: layout.reviewTouched,
         mediaShare: layout.mediaShare,
         mediaOpen: layout.mediaOpen,

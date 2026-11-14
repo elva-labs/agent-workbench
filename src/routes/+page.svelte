@@ -31,6 +31,7 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
+  import { flipMode } from "$lib/editor.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import {
     stateChanged as pluginStateChanged,
@@ -99,6 +100,9 @@
     focusPane,
     layout,
     peekSessions,
+    peekable,
+    resetEditAgent,
+    resizeEditAgent,
     saveLayout,
     sessionsOpen,
     sessionsShown,
@@ -107,6 +111,7 @@
     terminalOpen,
     terminalVisible,
     togglePane,
+    toggleRightPane,
     toggleTerminal,
   } from "$lib/layout.svelte";
 
@@ -313,6 +318,7 @@
   });
 
   let reviewing = $derived(layout.mode === "reviewing");
+  let editing = $derived(layout.mode === "editing");
 
   // Until the window has drawn a couple of frames the sessions column is
   // simply where it belongs: the saved layout and the window's width both
@@ -332,6 +338,13 @@
     return settled && moved && !reduced() ? PANE_MOTION : 0;
   }
 
+  /** Whether a change of shape is a flip between agent and editor mode,
+      which moves every pane at once and is drawn as a whole rather than
+      column by column. */
+  function flipped(was: string, now: string) {
+    return was !== now && (was === "editing" || now === "editing");
+  }
+
   // The sessions column eases between folded and open when the pane is
   // toggled or the shape changes, and the panes beside it take and give back
   // the room as it goes. The pane keeps its own width the whole way and the
@@ -343,7 +356,9 @@
     const chosen = layout.sessionsChosen;
     const mode = layout.mode;
     untrack(() => {
-      const moved = chosen !== sessionsWasChosen || mode !== sessionsWasMode;
+      const moved =
+        chosen !== sessionsWasChosen ||
+        (mode !== sessionsWasMode && !flipped(sessionsWasMode, mode));
       sessionsWasChosen = chosen;
       sessionsWasMode = mode;
       void sessionsOpen.set(shown ? 1 : 0, { duration: easing(moved), easing: cubicOut });
@@ -399,6 +414,13 @@
     // The sessions pane and the splitter beside it share one column, folded
     // or open, and move together as it eases between the two.
     cols.push(sessionsColumn);
+    // Editing: the files pane takes the middle and the agent the right, at
+    // a width of its own.
+    if (editing) {
+      cols.push("1fr");
+      if (agentVisible()) cols.push("var(--splitter-w)", `${layout.editAgent}px`);
+      return cols.join(" ");
+    }
     if (agentVisible()) cols.push("1fr");
     if (changesVisible()) {
       if (agentVisible()) cols.push("var(--splitter-w)");
@@ -464,7 +486,12 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    const action = resolveAction(e, { focus: layout.focus, reviewing });
+    const action = resolveAction(e, {
+      focus: layout.focus,
+      reviewing,
+      editing,
+      inEditor: editing && editorHasKeyboard(),
+    });
     if (!action) return;
     // Opening the palette and the jump move the keyboard, so with a dialog up
     // they do nothing and the webview gets nothing from them either. The
@@ -493,9 +520,9 @@
     switch (action.type) {
       case "focus":
         // Going to the sessions pane opens it out of its fold. While
-        // reviewing it peeks over the agent instead, so the viewer stays,
-        // and the chord again puts it back.
-        if (action.pane === "sessions" && reviewing) {
+        // reviewing, and while editing in a window that folds it, it peeks
+        // over the pane beside it instead, and the chord again puts it back.
+        if (action.pane === "sessions" && peekable()) {
           if (layout.sessionsPeek) {
             peekSessions(false);
             break;
@@ -505,8 +532,24 @@
         focusPane(action.pane);
         break;
       case "toggle":
-        if (action.pane === "sessions" && !sessionsVisible()) unfoldSessions();
+        if (action.pane === "changes") toggleRightPane();
+        else if (editing && layout.sessionsForced) {
+          // A window that folds the pane for the editor has nothing to open
+          // it into: the chord peeks it, and puts it back.
+          peekSessions(!layout.sessionsPeek);
+          if (layout.sessionsPeek) focusPane("sessions");
+        } else if (!sessionsVisible()) unfoldSessions();
         else togglePane(action.pane);
+        break;
+      case "toggleMode":
+        flipMode();
+        break;
+      case "newFile":
+      case "save":
+      case "findInFile":
+        break;
+      case "toEditor":
+        focusPane("changes");
         break;
       case "cycleTheme":
         cycleTheme();
@@ -569,6 +612,11 @@
       default:
         action satisfies never;
     }
+  }
+
+  /** Whether the keyboard is in the editor, its find panel included. */
+  function editorHasKeyboard(): boolean {
+    return document.activeElement?.closest(".cm-editor") != null;
   }
 
   /** The next session waiting on the user, brought forward with the
@@ -652,13 +700,14 @@
 
     <!-- Hidden rather than unmounted, always. Unmounting would destroy the
          terminal; hiding leaves the pane at its width, so the PTY is never
-         resized and the agent comes back exactly as it was. -->
-    <div class="agent-slot" class:hidden={!agentVisible()}>
+         resized and the agent comes back exactly as it was. While editing
+         the same slot is placed last, on the right. -->
+    <div class="agent-slot" class:hidden={!agentVisible()} class:right={editing}>
       <AgentPane />
     </div>
 
     {#if changesVisible()}
-      {#if agentVisible()}
+      {#if agentVisible() && !editing}
         <Splitter
           label={reviewing ? "Resize the viewer" : "Resize changes"}
           onDelta={resizeChanges}
@@ -667,6 +716,9 @@
         />
       {/if}
       <ChangesPane />
+      {#if agentVisible() && editing}
+        <Splitter label="Resize the agent" onDelta={resizeEditAgent} onReset={resetEditAgent} onCommit={saveLayout} />
+      {/if}
     {/if}
   </main>
 
@@ -869,6 +921,10 @@
 
   .agent-slot.hidden {
     display: none;
+  }
+
+  .agent-slot.right {
+    order: 1;
   }
 
   .agent-slot :global(.pane) {

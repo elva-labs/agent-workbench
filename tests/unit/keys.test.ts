@@ -285,3 +285,37 @@ describe("actions a stored table does not have yet", () => {
     expect(keys.preset).toBe("default");
   });
 });
+
+describe("the editor's chords", () => {
+  it("are free in both presets", () => {
+    for (const name of ["default", "vim"] as const) {
+      expect(tableProblem(PRESETS[name])).toBeNull();
+      expect(PRESETS[name].mode).toEqual({ key: "e", shift: true, alt: false });
+      expect(PRESETS[name]["file.new"]).toEqual({ key: "n", shift: false, alt: true });
+      expect(PRESETS[name]["file.save"]).toEqual({ key: "s", shift: false, alt: false });
+    }
+  });
+
+  it("are given to a stored table that never had them", () => {
+    localStorage.setItem(
+      "workbench.keys",
+      JSON.stringify({ bindings: { "focus.sessions": { key: "1", shift: false, alt: false } } }),
+    );
+    loadKeys();
+    expect(keys.bindings["file.save"]).toEqual({ key: "s", shift: false, alt: false });
+    expect(keys.bindings.mode).toEqual({ key: "e", shift: true, alt: false });
+  });
+
+  it("read an Alt chord from the key's place, whatever Option spells", () => {
+    expect(chordFromEvent({ key: "˜", code: "KeyN", metaKey: true, altKey: true }, true)).toEqual({
+      key: "n",
+      shift: false,
+      alt: true,
+    });
+    expect(chordFromEvent({ key: "¡", code: "Digit1", metaKey: true, altKey: true }, true)).toEqual({
+      key: "1",
+      shift: false,
+      alt: true,
+    });
+  });
+});

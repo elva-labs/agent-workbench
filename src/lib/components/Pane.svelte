@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Corner from "$lib/components/Corner.svelte";
   import { core } from "$lib/core";
   import { isMac } from "$lib/keymap";
   import {
     layout,
     focusPane,
-    agentVisible,
+    besideSessions,
     leftmost,
     rightmost,
     sessionsShown,
@@ -21,10 +22,14 @@
     /** No header of its own: the pane names itself somewhere in its body,
         and the row the header would take goes to the content. */
     bare?: boolean;
+    /** The width the title's part of the header takes, for a pane whose
+        body is in columns: the title heads the first and `head` the rest,
+        with the column's edge running up through the header. */
+    titleWidth?: string | null;
     children: Snippet;
   }
 
-  let { id, title, meta, head, bare = false, children }: Props = $props();
+  let { id, title, meta, head, bare = false, titleWidth = null, children }: Props = $props();
 
   let focused = $derived(layout.focus === id);
 
@@ -36,13 +41,16 @@
   // column moves. In full screen the lights are in a bar of their own, and
   // no header keeps room for them.
   const mac = isMac();
-  let beside = $derived(id === (agentVisible() ? "agent" : "changes"));
+  let beside = $derived(id === besideSessions());
   let inset = $derived(
     mac && !layout.fullScreen && (id === "sessions" ? sessionsShown() : beside),
   );
   // Elsewhere the window is undecorated and the app draws the controls
   // itself, at the end of the rightmost header, where the platform has them.
   let controls = $derived(!mac && !bare && rightmost() === id);
+  // The right pane's button and the mode switch stand at the same end, on
+  // every platform, before the window controls.
+  let corner = $derived(!bare && rightmost() === id);
   // And a menu button at the start of the leftmost, where macOS has its
   // lights: the native popup that stands in for a menu bar.
   let appMenu = $derived(!mac && !bare && leftmost() === id);
@@ -69,15 +77,34 @@
   onfocusin={() => focusPane(id)}
 >
   {#if !bare}
-    <header class:inset class:beside class:leads={appMenu} class:lone={!head && !meta} data-tauri-drag-region>
-      {#if appMenu}
+    <header
+      class:inset
+      class:beside
+      class:leads={appMenu}
+      class:lone={!head && !meta}
+      class:columns={titleWidth !== null}
+      style:--title-w={titleWidth}
+      data-tauri-drag-region
+    >
+      {#snippet menuButton()}
         <button class="app-menu" onclick={openAppMenu} aria-label="Menu" title="Menu" data-testid="app-menu">
           <svg viewBox="0 0 12 10" aria-hidden="true"><path d="M0 1h12M0 5h12M0 9h12" /></svg>
         </button>
+      {/snippet}
+      {#if titleWidth !== null}
+        <div class="cell" data-tauri-drag-region>
+          {#if appMenu}{@render menuButton()}{/if}
+          <span class="title" data-tauri-drag-region>{title}</span>
+          {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
+        </div>
+        {#if head}<div class="head">{@render head()}</div>{/if}
+      {:else}
+        {#if appMenu}{@render menuButton()}{/if}
+        <span class="title" data-tauri-drag-region>{title}</span>
+        {#if head}<div class="head">{@render head()}</div>{/if}
+        {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
       {/if}
-      <span class="title" data-tauri-drag-region>{title}</span>
-      {#if head}<div class="head">{@render head()}</div>{/if}
-      {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
+      {#if corner}<Corner />{/if}
       {#if controls}
         <div class="controls" data-testid="window-controls">
           <button onclick={() => control("minimize")} aria-label="Minimize" title="Minimize">
@@ -117,12 +144,16 @@
     box-shadow: var(--pane-shadow-on);
   }
 
+  /* --lead is the room before the title: the pane's padding, or what the
+     macOS window controls need. A header in columns gives it to its first
+     cell instead. */
   header {
+    --lead: var(--pane-pad);
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
-    padding: 9px var(--pane-pad);
+    padding: 9px var(--pane-pad) 9px var(--lead);
     border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
@@ -136,18 +167,43 @@
 
   /* The frame's padding and the pane's border are already part of the inset. */
   header.inset {
-    padding-left: calc(var(--controls-inset) - var(--frame-pad) - 1px);
+    --lead: calc(var(--controls-inset) - var(--frame-pad) - 1px);
   }
 
   header.inset.beside {
-    padding-left: max(
+    --lead: max(
       var(--pane-pad),
       calc(var(--controls-inset) - var(--frame-pad) - 1px - var(--sessions-col))
     );
   }
 
   header.leads {
+    --lead: 0px;
+  }
+
+  /* In columns: the first cell is as wide as the column under it, takes the
+     lead, and carries the column's edge up through the header. */
+  header.columns {
     padding-left: 0;
+    gap: 0;
+  }
+
+  .cell {
+    flex: none;
+    width: var(--title-w);
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    align-self: stretch;
+    margin: -9px 0;
+    padding: 9px 10px 9px var(--lead);
+    border-right: 1px solid var(--head-rule);
+    overflow: hidden;
+  }
+
+  header.columns .head {
+    padding-left: 8px;
   }
 
   .app-menu {
