@@ -99,8 +99,10 @@ fn styles_off(app: &AppHandle) {
     });
 }
 
-fn quit_item(handle: &AppHandle, text: &str) -> tauri::Result<MenuItem<Wry>> {
-    MenuItem::with_id(handle, QUIT_ID, text, true, Some("CmdOrCtrl+Q"))
+/// Quit, with its chord on the menu bar and none on the popup, which
+/// answers no keys.
+fn quit_item(handle: &AppHandle, text: &str, chord: bool) -> tauri::Result<MenuItem<Wry>> {
+    MenuItem::with_id(handle, QUIT_ID, text, true, chord.then_some("CmdOrCtrl+Q"))
 }
 
 /// The editor's items, with the chords the table starts with or none.
@@ -132,7 +134,7 @@ pub fn install(app: &App) -> tauri::Result<()> {
             &settings_item(handle)?,
             &styles_off_item(handle)?,
             &PredefinedMenuItem::separator(handle)?,
-            &quit_item(handle, "Quit")?,
+            &quit_item(handle, "Quit", false)?,
         ],
     )?;
     app.manage(AppMenu(popup));
@@ -277,7 +279,7 @@ fn menu_bar(app: &App) -> tauri::Result<Menu<Wry>> {
             &PredefinedMenuItem::hide_others(handle, None)?,
             &PredefinedMenuItem::show_all(handle, None)?,
             &PredefinedMenuItem::separator(handle)?,
-            &quit_item(handle, &format!("Quit {name}"))?,
+            &quit_item(handle, &format!("Quit {name}"), true)?,
         ],
     )?;
     Menu::with_items(handle, &[&application, &file, &edit, &window])
