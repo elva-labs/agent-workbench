@@ -1025,6 +1025,7 @@ fn write_whole(path: &Path, text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     thread_local! {
         /// How many account states `read_servers` has read on this thread.
@@ -1035,14 +1036,11 @@ mod tests {
         account::claude_json(home, None)
     }
 
-    fn fixture(name: &str) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("workbench-hook-{name}"));
-        std::fs::remove_dir_all(&base).ok();
-        let home = base.join("home");
-        let project = base.join("project");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(&project).unwrap();
-        (home, project)
+    fn fixture(name: &str) -> (Scratch, Scratch) {
+        (
+            Scratch::new(&format!("hook-{name}-home")),
+            Scratch::new(&format!("hook-{name}-project")),
+        )
     }
 
     #[test]
@@ -1862,16 +1860,27 @@ mod tests {
         install(&home, &project, &[]).unwrap();
         assert!(status(&home, &project, &[]).installed);
     }
-    fn many_projects(name: &str, count: usize) -> (PathBuf, Vec<PathBuf>) {
-        let (home, first) = fixture(name);
-        let base = first.parent().unwrap().to_path_buf();
-        let mut projects = vec![first];
-        for at in 1..count {
-            let project = base.join(format!("project-{at}"));
-            std::fs::create_dir_all(&project).unwrap();
-            projects.push(project);
+    /// Project folders that live as long as this value does.
+    struct Projects {
+        paths: Vec<PathBuf>,
+        _held: Vec<Scratch>,
+    }
+
+    impl std::ops::Deref for Projects {
+        type Target = Vec<PathBuf>;
+        fn deref(&self) -> &Vec<PathBuf> {
+            &self.paths
         }
-        (home, projects)
+    }
+
+    fn many_projects(name: &str, count: usize) -> (Scratch, Projects) {
+        let (home, first) = fixture(name);
+        let mut held = vec![first];
+        for at in 1..count {
+            held.push(Scratch::new(&format!("hook-{name}-project-{at}")));
+        }
+        let paths = held.iter().map(|folder| folder.to_path_buf()).collect();
+        (home, Projects { paths, _held: held })
     }
 
     fn work_account() -> Vec<Dirs> {
@@ -1922,12 +1931,12 @@ mod tests {
         let (home, projects) = many_projects("batch-reads", 30);
         with_daemon(&home);
         let accounts = work_account();
-        for project in &projects {
+        for project in projects.iter() {
             install(&home, project, &accounts).unwrap();
         }
 
         let alone = reads_during(|| {
-            for project in &projects {
+            for project in projects.iter() {
                 assert!(status(&home, project, &accounts).installed);
             }
         });
@@ -1950,7 +1959,7 @@ mod tests {
         });
         assert_eq!(reads, 0);
         assert!(!claude_json_path(&home).exists());
-        for project in &projects {
+        for project in projects.iter() {
             assert!(!settings_path(project).exists());
         }
     }

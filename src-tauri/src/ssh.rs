@@ -586,6 +586,7 @@ pub fn ensure_daemon(target: &str, resources: Option<&Path>) -> Result<(), Strin
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use workbench_core::scratch::Scratch;
 
     // The check is a subprocess; thirty projects asking is one.
     #[test]
@@ -689,8 +690,8 @@ mod tests {
 
     #[test]
     fn pairing_keeps_every_address_and_puts_the_one_that_answered_first() {
-        let files = Files::new(&std::env::temp_dir().join("workbench-ssh-addresses"));
-        let _ = std::fs::remove_dir_all(&files.dir);
+        let home = Scratch::absent("ssh-addresses");
+        let files = Files::new(&home);
         let saved = files
             .pair(&token("lab.example", 22, "ssh-ed25519 AAAA"))
             .unwrap();
@@ -704,9 +705,7 @@ mod tests {
 
     #[test]
     fn pairing_keeps_the_key_the_host_key_and_the_machine_under_its_name() {
-        let home = std::env::temp_dir().join("workbench-ssh-pair");
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
+        let home = Scratch::new("ssh-pair");
         let files = Files::new(&home);
         assert!(files.options("ada@lab").is_empty());
 
@@ -766,8 +765,7 @@ mod tests {
 
     #[test]
     fn a_token_naming_a_flag_is_refused() {
-        let home = std::env::temp_dir().join("workbench-ssh-pair-bad");
-        std::fs::create_dir_all(&home).unwrap();
+        let home = Scratch::new("ssh-pair-bad");
         let bad = Pairing {
             name: "lab".into(),
             host: "-oProxyCommand=x".into(),
@@ -793,7 +791,7 @@ mod tests {
 
     #[test]
     fn a_build_named_outright_wins_over_the_bundle() {
-        let dir = std::env::temp_dir().join("workbench-ssh-build");
+        let dir = Scratch::new("ssh-build");
         let folder = dir.join(BUNDLED_DAEMONS).join("linux-x86_64");
         std::fs::create_dir_all(&folder).unwrap();
         let bundled = folder.join(DAEMON_NAME);

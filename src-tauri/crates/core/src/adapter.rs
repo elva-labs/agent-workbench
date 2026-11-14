@@ -383,14 +383,14 @@ pub fn adapter_for(id: &str) -> Option<&'static dyn AgentAdapter> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     fn vars_with_path(dir: &Path) -> HashMap<String, String> {
         HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())])
     }
 
-    fn fake_claude(dir_name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(dir_name);
-        std::fs::create_dir_all(&dir).unwrap();
+    fn fake_claude(label: &str) -> Scratch {
+        let dir = Scratch::new(label);
         let bin = dir.join("claude");
         std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
         #[cfg(unix)]
@@ -416,8 +416,7 @@ mod tests {
         assert!(ClaudeCode.takes_id());
         assert!(!Codex.takes_id());
 
-        let dir = std::env::temp_dir().join("workbench-adapter-codex");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("adapter-codex");
         let bin = dir.join("codex");
         std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
         #[cfg(unix)]
@@ -456,8 +455,7 @@ mod tests {
 
     #[test]
     fn a_first_prompt_follows_the_flags_and_cannot_be_one() {
-        let dir = std::env::temp_dir().join("workbench-adapter-prompt");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("adapter-prompt");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
             std::fs::write(&bin, "#!/bin/sh\n").unwrap();
@@ -504,8 +502,7 @@ mod tests {
 
     #[test]
     fn an_account_s_directory_reaches_each_agent_as_its_own_variable() {
-        let dir = std::env::temp_dir().join("workbench-adapter-account");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("adapter-account");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
             std::fs::write(&bin, "#!/bin/sh\n").unwrap();
@@ -544,8 +541,7 @@ mod tests {
 
     #[test]
     fn the_model_goes_on_the_command_line_before_the_prompt_for_a_launch_and_a_resume() {
-        let dir = std::env::temp_dir().join("workbench-adapter-model");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("adapter-model");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
             std::fs::write(&bin, "#!/bin/sh\n").unwrap();
@@ -614,7 +610,7 @@ mod tests {
 
     #[test]
     fn finds_the_binary_on_the_given_path() {
-        let dir = fake_claude("workbench-adapter-detect");
+        let dir = fake_claude("adapter-detect");
         let vars = vars_with_path(&dir);
         assert_eq!(ClaudeCode.detect(&vars), Some(dir.join("claude")));
     }
@@ -627,7 +623,7 @@ mod tests {
 
     #[test]
     fn names_the_session_to_the_agent_when_it_is_known() {
-        let dir = fake_claude("workbench-adapter-session");
+        let dir = fake_claude("adapter-session");
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
@@ -660,8 +656,7 @@ mod tests {
 
     #[test]
     fn tells_the_agent_its_role_only_when_it_directs_the_others() {
-        let dir = std::env::temp_dir().join("workbench-adapter-role");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("adapter-role");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
             std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
@@ -717,7 +712,7 @@ mod tests {
 
     #[test]
     fn launch_builds_a_pty_surface() {
-        let dir = fake_claude("workbench-adapter-launch");
+        let dir = fake_claude("adapter-launch");
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
@@ -741,7 +736,7 @@ mod tests {
 
     #[test]
     fn resume_passes_the_session_id_through() {
-        let dir = fake_claude("workbench-adapter-resume");
+        let dir = fake_claude("adapter-resume");
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
@@ -765,7 +760,7 @@ mod tests {
 
     #[test]
     fn drops_the_parent_session_markers() {
-        let dir = fake_claude("workbench-adapter-markers");
+        let dir = fake_claude("adapter-markers");
         let mut vars = vars_with_path(&dir);
         vars.insert("CLAUDE_CODE_CHILD_SESSION".to_string(), "1".to_string());
         vars.insert("CLAUDE_CODE_SESSION_ID".to_string(), "abc".to_string());
@@ -797,7 +792,7 @@ mod tests {
     fn keeps_configuration_under_the_same_prefix() {
         // The user's own settings are meant to be inherited; only the parent's
         // session identity is not.
-        let dir = fake_claude("workbench-adapter-config");
+        let dir = fake_claude("adapter-config");
         let mut vars = vars_with_path(&dir);
         vars.insert("CLAUDE_CODE_USE_BEDROCK".to_string(), "1".to_string());
         let ctx = LaunchCtx {
@@ -819,7 +814,7 @@ mod tests {
 
     #[test]
     fn carries_the_captured_environment_into_the_command() {
-        let dir = fake_claude("workbench-adapter-env");
+        let dir = fake_claude("adapter-env");
         let mut vars = vars_with_path(&dir);
         vars.insert("NVM_BIN".to_string(), "/home/ada/.nvm/bin".to_string());
         let ctx = LaunchCtx {

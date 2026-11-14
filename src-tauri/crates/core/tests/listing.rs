@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use workbench_core::scratch::Scratch;
 use workbench_core::{codex, transcripts};
 
 const ACCOUNTS: usize = 2;
@@ -79,14 +80,7 @@ fn write_codex(home: &Path, projects: usize) {
 fn listing_every_open_project() {
     let projects = env_number("WORKBENCH_LISTING_PROJECTS", 40);
     let bytes = env_number("WORKBENCH_LISTING_BYTES", 4 * 1024);
-    let root = std::env::temp_dir().join(format!(
-        "workbench-listing-bench-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos())
-    ));
-    std::fs::remove_dir_all(&root).ok();
+    let root = Scratch::new("listing-bench");
     let claude: Vec<PathBuf> = (0..ACCOUNTS)
         .map(|a| root.join(format!("claude-{a}")))
         .collect();
@@ -156,5 +150,4 @@ fn listing_every_open_project() {
         );
     }
     assert_eq!(total, 2 * 4 * projects * PER_PROJECT * ACCOUNTS);
-    std::fs::remove_dir_all(&root).ok();
 }

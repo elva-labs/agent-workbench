@@ -28,6 +28,8 @@ pub mod processes;
 pub mod project;
 pub mod protocol;
 pub mod pty;
+#[cfg(any(test, feature = "test-support"))]
+pub mod scratch;
 pub mod selection;
 pub mod settings;
 pub mod shell;

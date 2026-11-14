@@ -654,6 +654,7 @@ pub fn dispatch(
 mod tests {
     use super::*;
     use crate::events::testing::Recorder;
+    use crate::scratch::Scratch;
     use std::sync::Arc;
     #[cfg(unix)]
     use std::sync::Mutex;
@@ -670,8 +671,7 @@ mod tests {
     // the list a request for that project alone would give.
     #[test]
     fn sessions_for_several_projects_come_back_one_list_each_in_order() {
-        let dir = std::env::temp_dir().join("workbench-protocol-sessions-many");
-        std::fs::remove_dir_all(&dir).ok();
+        let dir = Scratch::absent("protocol-sessions-many");
         let project = std::path::Path::new("/home/ada/dev/demo");
         let folder = crate::transcripts::directory_for(&dir, project);
         std::fs::create_dir_all(&folder).unwrap();
@@ -808,7 +808,7 @@ mod tests {
         )
         .expect_err("the projects are a list");
         assert!(error.contains("bad parameters"), "{error}");
-        let missing = std::env::temp_dir().join("workbench-no-such-project");
+        let missing = Scratch::absent("no-such-project");
         let projects = json!([
             missing.join("one"),
             missing.join("two"),
@@ -865,15 +865,19 @@ mod tests {
         let Some(home) = core.home().map(|home| home.to_path_buf()) else {
             return;
         };
+        let id = format!(
+            "workbench-protocol-answer-{}",
+            uuid::Uuid::new_v4().simple()
+        );
         let sent = dispatch(
             &core,
             "conduct_answer",
-            json!({ "id": "workbench-protocol-conduct", "content": "Started session s-2." }),
+            json!({ "id": id, "content": "Started session s-2." }),
             no_output,
         )
         .unwrap();
         assert_eq!(sent, Value::Null);
-        let path = crate::show::answer_path(&home, "workbench-protocol-conduct");
+        let path = crate::show::answer_path(&home, &id);
         let text = std::fs::read_to_string(&path).unwrap();
         let answer: crate::show::Answer = serde_json::from_str(&text).unwrap();
         assert_eq!(answer.content.as_deref(), Some("Started session s-2."));
@@ -899,15 +903,19 @@ mod tests {
         let Some(home) = core.home().map(|home| home.to_path_buf()) else {
             return;
         };
+        let id = format!(
+            "workbench-protocol-answer-{}",
+            uuid::Uuid::new_v4().simple()
+        );
         let sent = dispatch(
             &core,
             "browser_answer",
-            json!({ "id": "workbench-protocol-browser", "content": "1  https://example.com/  Example" }),
+            json!({ "id": id, "content": "1  https://example.com/  Example" }),
             no_output,
         )
         .unwrap();
         assert_eq!(sent, Value::Null);
-        let path = crate::show::answer_path(&home, "workbench-protocol-browser");
+        let path = crate::show::answer_path(&home, &id);
         let text = std::fs::read_to_string(&path).unwrap();
         let answer: crate::show::Answer = serde_json::from_str(&text).unwrap();
         assert_eq!(
@@ -923,15 +931,19 @@ mod tests {
         let Some(home) = core.home().map(|home| home.to_path_buf()) else {
             return;
         };
+        let id = format!(
+            "workbench-protocol-answer-{}",
+            uuid::Uuid::new_v4().simple()
+        );
         let sent = dispatch(
             &core,
             "settings_answer",
-            json!({ "id": "workbench-protocol-settings", "error": "The user declined the change." }),
+            json!({ "id": id, "error": "The user declined the change." }),
             no_output,
         )
         .unwrap();
         assert_eq!(sent, Value::Null);
-        let path = crate::show::answer_path(&home, "workbench-protocol-settings");
+        let path = crate::show::answer_path(&home, &id);
         let text = std::fs::read_to_string(&path).unwrap();
         let answer: crate::show::Answer = serde_json::from_str(&text).unwrap();
         assert_eq!(
@@ -1064,9 +1076,9 @@ mod tests {
             dispatch(&core(), "session_title", params, no_output).unwrap(),
             Value::Null
         );
-        let dir = std::env::temp_dir().join("workbench-protocol-dirs");
+        let dir = Scratch::new("protocol-dirs");
         std::fs::create_dir_all(dir.join("one")).unwrap();
-        let dirs = dispatch(&core(), "list_dirs", json!({"path": dir}), no_output).unwrap();
+        let dirs = dispatch(&core(), "list_dirs", json!({"path": dir.path()}), no_output).unwrap();
         assert_eq!(dirs[0]["name"], "one");
     }
 
