@@ -1698,6 +1698,8 @@ test.describe("after a reload, an orchestrated session", () => {
     const view = page.locator("[data-testid='conversation']:visible");
     await expect(view.getByTestId("user-message")).toHaveAttribute("data-from", "integrated-session-1");
     await expect(view.getByTestId("thread-intro")).toContainText("Earlier messages of this session are in its transcript");
+    // The message keeps the time it was sent at.
+    await expect(view.getByTestId("user-message").locator("time")).toHaveText(/\d{1,2}:\d{2}/);
     expect((await calls(page)).filter((call) => call.method === "start")).toHaveLength(0);
   });
 

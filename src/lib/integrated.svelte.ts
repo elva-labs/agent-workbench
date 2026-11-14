@@ -1,7 +1,7 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
 import { readsAsYou } from "$lib/unseen";
-import { sentBy, starterOf } from "$lib/senders.svelte";
+import { sentAt, sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
 import {
   core,
@@ -430,6 +430,7 @@ export function send(
   session.engaged = true;
   session.note = null;
   if (from !== null) sentBy(id, from);
+  sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt.
   if (session.title === null) {

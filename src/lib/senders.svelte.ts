@@ -88,6 +88,47 @@ export function senderOf(message: { id: string }): Sender | null {
 /** Test seam. */
 export function resetSenders() {
   senders.byMessage = {};
+  times.at = {};
   loaded = false;
   load();
+  loadTimes();
+}
+
+const TIMES_KEY = "workbench.sent-at";
+
+/** When this window sent each message, by its id, kept between runs: a
+    message read back from the core after a reload carries no time of its
+    own. */
+const times = $state({ at: {} as Record<string, number> });
+
+function loadTimes() {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(TIMES_KEY) ?? "{}");
+    if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return;
+    const at: Record<string, number> = {};
+    for (const [message, when] of Object.entries(stored)) if (typeof when === "number") at[message] = when;
+    times.at = at;
+  } catch {
+    // No times remembered, then: such a message shows none.
+  }
+}
+
+// Read when the module loads, as the senders are.
+loadTimes();
+
+/** The window sent the message with this id at `at`. */
+export function sentAt(message: string, at: number) {
+  times.at[message] = at;
+  const kept = Object.entries(times.at);
+  if (kept.length > KEEP) times.at = Object.fromEntries(kept.slice(-KEEP));
+  try {
+    localStorage.setItem(TIMES_KEY, JSON.stringify(times.at));
+  } catch {
+    // Non-fatal: it is known until the window closes.
+  }
+}
+
+/** When the window sent a message, if it did. */
+export function timeOf(message: string): number | null {
+  return times.at[message] ?? null;
 }

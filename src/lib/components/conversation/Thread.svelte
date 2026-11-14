@@ -3,7 +3,7 @@
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
   import { clock, nowDoing, speaker, startedIds, tokens } from "$lib/thread";
   import { spoken } from "$lib/instructions";
-  import type { Sender } from "$lib/senders.svelte";
+  import { timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { goTo } from "$lib/workspace.svelte";
   import Icon from "./Icon.svelte";
@@ -385,6 +385,7 @@
 
 {#snippet userMessage(said: Message)}
   {@const from = sender?.(said) ?? null}
+  {@const at = said.at ?? timeOf(said.id)}
   {@const words = spoken(said.text)}
   <article
     class="msg you"
@@ -404,7 +405,7 @@
             >Go to it</button
           >{/if}
       {/if}
-      {#if said.at !== null}<time class="num">{clock(said.at)}</time>{/if}
+      {#if at !== null}<time class="num">{clock(at)}</time>{/if}
     </header>
     <div class="bubble">
       {#if said.images.length > 0}

@@ -453,8 +453,8 @@ session that ended or could not start says why, and Resume starts it again
 on the same conversation, the thread drawn so far staying above what comes.
 A resumed session's earlier messages are in its transcript and are not drawn.
 A window reloaded while the core still runs a session takes it up where it
-is, its open requests and waiting messages included, with its own name and
-who sent each message; it says it has earlier messages only when it was
+is, its open requests and waiting messages included, with its own name,
+who sent each message and when; it says it has earlier messages only when it was
 spoken to. That holds for an orchestrator's sessions and for an integrated
 session another session started, which comes back under its starter, as
 after a restart, when it waits to be resumed like any other.
