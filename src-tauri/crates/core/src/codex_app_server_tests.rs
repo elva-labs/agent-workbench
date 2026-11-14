@@ -1694,140 +1694,806 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         .contains("PATH"));
 }
 
-/// The protocol of the Codex this driver was built against, as a checked-in
-/// copy of the generated schema's methods and the item types the driver
-/// reads.
-const PROTOCOL: &str = include_str!("codex_app_server_protocol.json");
+/// What the driver reads from Codex's protocol and writes to it, each
+/// checked against the schema the installed Codex generates. A use is
+/// where it starts, a path of fields from there, and the values the driver
+/// reads or writes at the end of it.
+///
+/// It starts at a method: `request` and `response` for one this side
+/// calls, `client` for a notification this side sends, `notification` for
+/// one Codex sends, `server` and `answer` for a request Codex makes; or at
+/// an `item` of a turn by its type. A path is fields joined by dots, with
+/// `{name}` for the variant of a union whose `type` is the name, `[]` for
+/// the items of a list and `*` for the values of a map. A value is a
+/// member of an enumeration, or the one field of an object a union holds,
+/// as Codex spells its decisions.
+const USES: &[(&str, &str, &[&str])] = &[
+    ("request initialize", "clientInfo.name", &[]),
+    ("request initialize", "clientInfo.title", &[]),
+    ("request initialize", "clientInfo.version", &[]),
+    ("request initialize", "capabilities.experimentalApi", &[]),
+    ("response initialize", "userAgent", &[]),
+    ("client initialized", "", &[]),
+    ("request account/read", "refreshToken", &[]),
+    ("response account/read", "account", &[]),
+    ("response account/read", "requiresOpenaiAuth", &[]),
+    ("request model/list", "", &[]),
+    ("response model/list", "data.[].id", &[]),
+    ("response model/list", "data.[].model", &[]),
+    ("response model/list", "data.[].displayName", &[]),
+    ("response model/list", "data.[].description", &[]),
+    ("response model/list", "data.[].hidden", &[]),
+    ("response model/list", "data.[].defaultReasoningEffort", &[]),
+    (
+        "response model/list",
+        "data.[].supportedReasoningEfforts.[].reasoningEffort",
+        &[],
+    ),
+    ("request config/read", "cwd", &[]),
+    ("request config/read", "includeLayers", &[]),
+    (
+        "response config/read",
+        "config.sandbox_workspace_write.writable_roots",
+        &[],
+    ),
+    (
+        "response config/read",
+        "config.sandbox_workspace_write.network_access",
+        &[],
+    ),
+    (
+        "response config/read",
+        "config.sandbox_workspace_write.exclude_tmpdir_env_var",
+        &[],
+    ),
+    (
+        "response config/read",
+        "config.sandbox_workspace_write.exclude_slash_tmp",
+        &[],
+    ),
+    ("request thread/start", "cwd", &[]),
+    ("request thread/start", "model", &[]),
+    ("request thread/start", "approvalsReviewer", &["user"]),
+    (
+        "request thread/start",
+        "approvalPolicy",
+        &["on-request", "never"],
+    ),
+    (
+        "request thread/start",
+        "sandbox",
+        &["read-only", "workspace-write", "danger-full-access"],
+    ),
+    ("request thread/start", "config", &[]),
+    ("request thread/resume", "threadId", &[]),
+    ("request thread/resume", "excludeTurns", &[]),
+    ("request thread/resume", "cwd", &[]),
+    ("request thread/resume", "model", &[]),
+    ("request thread/resume", "approvalsReviewer", &["user"]),
+    (
+        "request thread/resume",
+        "approvalPolicy",
+        &["on-request", "never"],
+    ),
+    (
+        "request thread/resume",
+        "sandbox",
+        &["read-only", "workspace-write", "danger-full-access"],
+    ),
+    ("request thread/resume", "config", &[]),
+    ("response thread/start", "thread.id", &[]),
+    ("response thread/start", "model", &[]),
+    ("response thread/start", "reasoningEffort", &[]),
+    (
+        "response thread/start",
+        "approvalPolicy",
+        &["on-request", "never"],
+    ),
+    (
+        "response thread/start",
+        "sandbox.type",
+        &[
+            "readOnly",
+            "workspaceWrite",
+            "dangerFullAccess",
+            "externalSandbox",
+        ],
+    ),
+    ("response thread/resume", "thread.id", &[]),
+    ("response thread/resume", "model", &[]),
+    ("response thread/resume", "reasoningEffort", &[]),
+    (
+        "response thread/resume",
+        "approvalPolicy",
+        &["on-request", "never"],
+    ),
+    (
+        "response thread/resume",
+        "sandbox.type",
+        &[
+            "readOnly",
+            "workspaceWrite",
+            "dangerFullAccess",
+            "externalSandbox",
+        ],
+    ),
+    ("request turn/start", "threadId", &[]),
+    ("request turn/start", "clientUserMessageId", &[]),
+    ("request turn/start", "input.[].{text}.text", &[]),
+    ("request turn/start", "input.[].{text}.text_elements", &[]),
+    ("request turn/start", "input.[].{image}.url", &[]),
+    ("request turn/start", "model", &[]),
+    ("request turn/start", "effort", &[]),
+    (
+        "request turn/start",
+        "approvalPolicy",
+        &["on-request", "never"],
+    ),
+    ("request turn/start", "sandboxPolicy.{readOnly}", &[]),
+    (
+        "request turn/start",
+        "sandboxPolicy.{dangerFullAccess}",
+        &[],
+    ),
+    (
+        "request turn/start",
+        "sandboxPolicy.{workspaceWrite}.writableRoots",
+        &[],
+    ),
+    (
+        "request turn/start",
+        "sandboxPolicy.{workspaceWrite}.networkAccess",
+        &[],
+    ),
+    (
+        "request turn/start",
+        "sandboxPolicy.{workspaceWrite}.excludeTmpdirEnvVar",
+        &[],
+    ),
+    (
+        "request turn/start",
+        "sandboxPolicy.{workspaceWrite}.excludeSlashTmp",
+        &[],
+    ),
+    ("response turn/start", "turn.id", &[]),
+    ("request turn/interrupt", "threadId", &[]),
+    ("request turn/interrupt", "turnId", &[]),
+    ("request thread/compact/start", "threadId", &[]),
+    ("notification turn/started", "threadId", &[]),
+    ("notification turn/started", "turn.id", &[]),
+    ("notification turn/completed", "threadId", &[]),
+    ("notification turn/completed", "turn.id", &[]),
+    (
+        "notification turn/completed",
+        "turn.status",
+        &["completed", "interrupted", "failed"],
+    ),
+    ("notification turn/completed", "turn.error.message", &[]),
+    (
+        "notification turn/completed",
+        "turn.error.additionalDetails",
+        &[],
+    ),
+    ("notification turn/completed", "turn.durationMs", &[]),
+    ("notification item/started", "threadId", &[]),
+    ("notification item/started", "turnId", &[]),
+    ("notification item/started", "item", &[]),
+    ("notification item/completed", "threadId", &[]),
+    ("notification item/completed", "item", &[]),
+    ("notification item/agentMessage/delta", "threadId", &[]),
+    ("notification item/agentMessage/delta", "itemId", &[]),
+    ("notification item/agentMessage/delta", "delta", &[]),
+    (
+        "notification item/reasoning/summaryTextDelta",
+        "itemId",
+        &[],
+    ),
+    ("notification item/reasoning/summaryTextDelta", "delta", &[]),
+    (
+        "notification item/reasoning/summaryTextDelta",
+        "summaryIndex",
+        &[],
+    ),
+    ("notification item/reasoning/textDelta", "itemId", &[]),
+    ("notification item/reasoning/textDelta", "delta", &[]),
+    ("notification item/reasoning/textDelta", "contentIndex", &[]),
+    (
+        "notification item/commandExecution/outputDelta",
+        "itemId",
+        &[],
+    ),
+    (
+        "notification item/commandExecution/outputDelta",
+        "delta",
+        &[],
+    ),
+    ("notification item/fileChange/outputDelta", "itemId", &[]),
+    ("notification item/fileChange/outputDelta", "delta", &[]),
+    ("notification item/fileChange/patchUpdated", "itemId", &[]),
+    ("notification item/fileChange/patchUpdated", "changes", &[]),
+    ("notification turn/plan/updated", "plan.[].step", &[]),
+    (
+        "notification turn/plan/updated",
+        "plan.[].status",
+        &["pending", "inProgress", "completed"],
+    ),
+    ("notification turn/diff/updated", "diff", &[]),
+    ("notification thread/tokenUsage/updated", "threadId", &[]),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.modelContextWindow",
+        &[],
+    ),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.total.inputTokens",
+        &[],
+    ),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.total.cachedInputTokens",
+        &[],
+    ),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.total.outputTokens",
+        &[],
+    ),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.total.reasoningOutputTokens",
+        &[],
+    ),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.total.totalTokens",
+        &[],
+    ),
+    (
+        "notification thread/tokenUsage/updated",
+        "tokenUsage.last.totalTokens",
+        &[],
+    ),
+    ("notification thread/settings/updated", "threadId", &[]),
+    (
+        "notification thread/settings/updated",
+        "threadSettings.model",
+        &[],
+    ),
+    (
+        "notification thread/settings/updated",
+        "threadSettings.effort",
+        &[],
+    ),
+    (
+        "notification thread/settings/updated",
+        "threadSettings.approvalPolicy",
+        &["on-request", "never"],
+    ),
+    (
+        "notification thread/settings/updated",
+        "threadSettings.sandboxPolicy.type",
+        &["readOnly", "workspaceWrite", "dangerFullAccess"],
+    ),
+    ("notification thread/compacted", "", &[]),
+    ("notification error", "threadId", &[]),
+    ("notification error", "error.message", &[]),
+    (
+        "notification error",
+        "error.codexErrorInfo",
+        &["unauthorized"],
+    ),
+    (
+        "notification error",
+        "error.codexErrorInfo.responseStreamDisconnected.httpStatusCode",
+        &[],
+    ),
+    ("notification error", "willRetry", &[]),
+    (
+        "notification thread/status/changed",
+        "status.type",
+        &["systemError"],
+    ),
+    ("notification serverRequest/resolved", "requestId", &[]),
+    ("notification warning", "message", &[]),
+    ("notification guardianWarning", "message", &[]),
+    ("notification configWarning", "summary", &[]),
+    ("notification configWarning", "details", &[]),
+    ("notification deprecationNotice", "summary", &[]),
+    ("notification deprecationNotice", "details", &[]),
+    ("notification model/rerouted", "fromModel", &[]),
+    ("notification model/rerouted", "toModel", &[]),
+    ("notification mcpServer/startupStatus/updated", "name", &[]),
+    (
+        "notification mcpServer/startupStatus/updated",
+        "status",
+        &["failed"],
+    ),
+    ("notification mcpServer/startupStatus/updated", "error", &[]),
+    ("item agentMessage", "id", &[]),
+    ("item agentMessage", "text", &[]),
+    ("item reasoning", "summary", &[]),
+    ("item reasoning", "content", &[]),
+    ("item plan", "text", &[]),
+    ("item contextCompaction", "id", &[]),
+    ("item commandExecution", "command", &[]),
+    ("item commandExecution", "cwd", &[]),
+    ("item commandExecution", "commandActions", &[]),
+    ("item commandExecution", "aggregatedOutput", &[]),
+    ("item commandExecution", "exitCode", &[]),
+    ("item commandExecution", "status", &["completed"]),
+    ("item fileChange", "changes.[].path", &[]),
+    ("item fileChange", "changes.[].diff", &[]),
+    (
+        "item fileChange",
+        "changes.[].kind.type",
+        &["add", "delete", "update"],
+    ),
+    ("item fileChange", "changes.[].kind.{update}.move_path", &[]),
+    ("item fileChange", "status", &["completed"]),
+    ("item mcpToolCall", "server", &[]),
+    ("item mcpToolCall", "tool", &[]),
+    ("item mcpToolCall", "arguments", &[]),
+    ("item mcpToolCall", "result.content", &[]),
+    ("item mcpToolCall", "error.message", &[]),
+    ("item mcpToolCall", "status", &["failed"]),
+    ("item dynamicToolCall", "tool", &[]),
+    ("item dynamicToolCall", "arguments", &[]),
+    ("item dynamicToolCall", "contentItems", &[]),
+    ("item dynamicToolCall", "success", &[]),
+    ("item dynamicToolCall", "status", &["failed"]),
+    ("item collabAgentToolCall", "tool", &[]),
+    ("item collabAgentToolCall", "prompt", &[]),
+    ("item collabAgentToolCall", "model", &[]),
+    ("item webSearch", "query", &[]),
+    ("item webSearch", "action", &[]),
+    ("item imageView", "path", &[]),
+    (
+        "server item/commandExecution/requestApproval",
+        "threadId",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "turnId",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "itemId",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "command",
+        &[],
+    ),
+    ("server item/commandExecution/requestApproval", "cwd", &[]),
+    (
+        "server item/commandExecution/requestApproval",
+        "commandActions",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "reason",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "proposedExecpolicyAmendment",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "proposedNetworkPolicyAmendments.[].action",
+        &["allow"],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "proposedNetworkPolicyAmendments.[].host",
+        &[],
+    ),
+    (
+        "server item/commandExecution/requestApproval",
+        "networkApprovalContext.host",
+        &[],
+    ),
+    (
+        "answer item/commandExecution/requestApproval",
+        "decision",
+        &[
+            "accept",
+            "acceptForSession",
+            "acceptWithExecpolicyAmendment",
+            "applyNetworkPolicyAmendment",
+            "decline",
+            "cancel",
+        ],
+    ),
+    (
+        "answer item/commandExecution/requestApproval",
+        "decision.acceptWithExecpolicyAmendment.execpolicy_amendment",
+        &[],
+    ),
+    (
+        "answer item/commandExecution/requestApproval",
+        "decision.applyNetworkPolicyAmendment.network_policy_amendment",
+        &[],
+    ),
+    ("server item/fileChange/requestApproval", "threadId", &[]),
+    ("server item/fileChange/requestApproval", "turnId", &[]),
+    ("server item/fileChange/requestApproval", "itemId", &[]),
+    ("server item/fileChange/requestApproval", "grantRoot", &[]),
+    ("server item/fileChange/requestApproval", "reason", &[]),
+    (
+        "answer item/fileChange/requestApproval",
+        "decision",
+        &["accept", "acceptForSession", "decline", "cancel"],
+    ),
+    ("server item/permissions/requestApproval", "threadId", &[]),
+    ("server item/permissions/requestApproval", "turnId", &[]),
+    ("server item/permissions/requestApproval", "itemId", &[]),
+    ("server item/permissions/requestApproval", "cwd", &[]),
+    ("server item/permissions/requestApproval", "reason", &[]),
+    (
+        "server item/permissions/requestApproval",
+        "permissions.network.enabled",
+        &[],
+    ),
+    (
+        "server item/permissions/requestApproval",
+        "permissions.fileSystem.read",
+        &[],
+    ),
+    (
+        "server item/permissions/requestApproval",
+        "permissions.fileSystem.write",
+        &[],
+    ),
+    (
+        "server item/permissions/requestApproval",
+        "permissions.fileSystem.entries.[].access",
+        &[],
+    ),
+    (
+        "server item/permissions/requestApproval",
+        "permissions.fileSystem.entries.[].path",
+        &[],
+    ),
+    (
+        "answer item/permissions/requestApproval",
+        "permissions",
+        &[],
+    ),
+    (
+        "answer item/permissions/requestApproval",
+        "scope",
+        &["turn", "session"],
+    ),
+    ("server item/tool/requestUserInput", "threadId", &[]),
+    ("server item/tool/requestUserInput", "turnId", &[]),
+    ("server item/tool/requestUserInput", "itemId", &[]),
+    ("server item/tool/requestUserInput", "questions.[].id", &[]),
+    (
+        "server item/tool/requestUserInput",
+        "questions.[].header",
+        &[],
+    ),
+    (
+        "server item/tool/requestUserInput",
+        "questions.[].question",
+        &[],
+    ),
+    (
+        "server item/tool/requestUserInput",
+        "questions.[].isOther",
+        &[],
+    ),
+    (
+        "server item/tool/requestUserInput",
+        "questions.[].isSecret",
+        &[],
+    ),
+    (
+        "server item/tool/requestUserInput",
+        "questions.[].options.[].label",
+        &[],
+    ),
+    (
+        "server item/tool/requestUserInput",
+        "questions.[].options.[].description",
+        &[],
+    ),
+    (
+        "answer item/tool/requestUserInput",
+        "answers.*.answers",
+        &[],
+    ),
+    ("server mcpServer/elicitation/request", "threadId", &[]),
+    ("server mcpServer/elicitation/request", "turnId", &[]),
+    ("server mcpServer/elicitation/request", "serverName", &[]),
+    ("server mcpServer/elicitation/request", "message", &[]),
+    ("server mcpServer/elicitation/request", "_meta", &[]),
+    (
+        "answer mcpServer/elicitation/request",
+        "action",
+        &["accept", "decline", "cancel"],
+    ),
+    ("answer mcpServer/elicitation/request", "content", &[]),
+    ("answer mcpServer/elicitation/request", "_meta", &[]),
+];
 
-/// What the generated schema of the installed Codex says, in the shape of
-/// the checked-in copy.
-fn installed_protocol(codex: &Path, version: &str) -> Value {
-    let out = std::env::temp_dir().join(format!(
-        "workbench-codex-schema-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let status = crate::adapter::process(codex, &std::env::vars().collect())
-        .args(["app-server", "generate-json-schema", "--out"])
-        .arg(&out)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
-    assert!(status.success(), "codex could not generate its schema");
-    let read = |file: &str| -> Value {
-        serde_json::from_str(&std::fs::read_to_string(out.join(file)).unwrap()).unwrap()
-    };
-    let methods = |file: &str| -> Vec<String> {
-        let mut methods: Vec<String> = read(file)["oneOf"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|variant| text(&variant["properties"]["method"]["enum"][0]))
-            .collect();
-        methods.sort();
-        methods
-    };
-    let bundle = read("codex_app_server_protocol.v2.schemas.json");
-    let mut items: Vec<String> = bundle["definitions"]["ThreadItem"]["oneOf"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|variant| text(&variant["properties"]["type"]["enum"][0]))
-        .collect();
-    items.sort();
-    let protocol = json!({
-        "version": version,
-        "clientRequests": methods("ClientRequest.json"),
-        "serverNotifications": methods("ServerNotification.json"),
-        "serverRequests": methods("ServerRequest.json"),
-        "itemTypes": items,
-    });
-    std::fs::remove_dir_all(&out).ok();
-    protocol
+/// The schema the installed Codex generates, as definitions by name. Where
+/// two files define a name, the bundle of the protocol's second version
+/// wins, then a type's own file, then the rest.
+struct Schema {
+    definitions: HashMap<String, Value>,
 }
 
-/// The installed Codex's protocol against the checked-in copy, when there
-/// is a Codex on the PATH. Any method added or gone, or an item type the
-/// driver reads that is gone, fails it, so a developer who upgrades Codex
-/// sees what moved. `WORKBENCH_CODEX_PROTOCOL_WRITE=1` writes the copy from
-/// the installed Codex instead, once the driver has been checked against
-/// what moved.
-#[test]
-fn the_protocol_copy_matches_the_installed_codex() {
-    let copy: Value = serde_json::from_str(PROTOCOL).unwrap();
-    let mut used: Vec<&str> = ITEM_TYPES.to_vec();
-    used.sort();
-    let writing = std::env::var_os("WORKBENCH_CODEX_PROTOCOL_WRITE").is_some();
-    if !writing {
-        assert_eq!(
-            copy["itemTypes"],
-            json!(used),
-            "the copy lists what the driver reads"
-        );
+impl Schema {
+    fn generate(codex: &Path) -> Self {
+        let out = std::env::temp_dir().join(format!(
+            "workbench-codex-schema-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let status = crate::adapter::process(codex, &std::env::vars().collect())
+            .args(["app-server", "generate-json-schema", "--out"])
+            .arg(&out)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "codex could not generate its schema");
+        let mut files = Vec::new();
+        let mut folders = vec![out.clone()];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    folders.push(path);
+                } else if path.extension().is_some_and(|e| e == "json") {
+                    files.push(path);
+                }
+            }
+        }
+        let rank = |path: &PathBuf| {
+            let name = path.file_name().unwrap().to_string_lossy();
+            let tier = if name.ends_with(".v2.schemas.json") {
+                0
+            } else if path.parent() == Some(out.as_path()) {
+                1
+            } else {
+                2
+            };
+            (tier, path.clone())
+        };
+        files.sort_by_key(rank);
+        let mut definitions = HashMap::new();
+        for file in files {
+            let schema: Value =
+                serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            let stem = file.file_stem().unwrap().to_string_lossy().to_string();
+            for (name, definition) in schema["definitions"].as_object().into_iter().flatten() {
+                definitions
+                    .entry(name.clone())
+                    .or_insert_with(|| definition.clone());
+            }
+            definitions.entry(stem).or_insert(schema);
+        }
+        std::fs::remove_dir_all(&out).ok();
+        Self { definitions }
     }
 
-    let vars: HashMap<String, String> = std::env::vars().collect();
-    let Some(codex) = find_on_path(&vars, "codex") else {
-        eprintln!("no codex on the PATH: the protocol copy is not compared");
-        return;
-    };
-    let version = crate::adapter::process(&codex, &vars)
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-        .and_then(|said| said.split_whitespace().last().map(str::to_string))
-        .unwrap_or_default();
-    let installed = installed_protocol(&codex, &version);
-
-    if writing {
-        let mut written = installed.clone();
-        written["itemTypes"] = json!(used);
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("codex_app_server_protocol.json");
-        let mut text = serde_json::to_string_pretty(&written).unwrap();
-        text.push('\n');
-        std::fs::write(path, text).unwrap();
-        return;
+    /// The schemas a node stands for: itself, what it refers to, and each
+    /// branch of a union or an intersection, followed through.
+    fn alternatives<'a>(&'a self, node: &'a Value, out: &mut Vec<&'a Value>, depth: usize) {
+        if depth > 40 {
+            return;
+        }
+        if let Some(reference) = node["$ref"].as_str() {
+            let name = reference.rsplit('/').next().unwrap_or_default();
+            if let Some(definition) = self.definitions.get(name) {
+                self.alternatives(definition, out, depth + 1);
+            }
+        }
+        for key in ["allOf", "anyOf", "oneOf"] {
+            for branch in node[key].as_array().into_iter().flatten() {
+                self.alternatives(branch, out, depth + 1);
+            }
+        }
+        out.push(node);
     }
 
-    let list = |value: &Value| -> Vec<String> {
-        value
+    fn resolve<'a>(&'a self, node: &'a Value) -> Vec<&'a Value> {
+        let mut out = Vec::new();
+        self.alternatives(node, &mut out, 0);
+        out
+    }
+
+    /// The method given in one of the lists of methods, by its params.
+    fn method(&self, list: &str, method: &str) -> Result<Option<String>, String> {
+        self.definitions[list]["oneOf"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(text)
-            .collect()
+            .find(|variant| variant["properties"]["method"]["enum"][0] == method)
+            .map(|variant| {
+                variant["properties"]["params"]["$ref"]
+                    .as_str()
+                    .map(|reference| reference.rsplit('/').next().unwrap().to_string())
+            })
+            .ok_or_else(|| format!("{list} has no {method}"))
+    }
+
+    /// Where a use starts.
+    fn start(&self, at: &str) -> Result<Vec<&Value>, String> {
+        let (kind, name) = at.split_once(' ').unwrap();
+        let params = |list: &str| -> Result<String, String> {
+            self.method(list, name)?
+                .ok_or_else(|| format!("{name} has no params"))
+        };
+        let definition = match kind {
+            "request" => params("ClientRequest")?,
+            "notification" => params("ServerNotification")?,
+            "server" => params("ServerRequest")?,
+            "response" => params("ClientRequest")?.replace("Params", "Response"),
+            "answer" => params("ServerRequest")?.replace("Params", "Response"),
+            "client" => {
+                self.method("ClientNotification", name)?;
+                return Ok(vec![]);
+            }
+            "item" => {
+                return self.step(
+                    self.resolve(&self.definitions["ThreadItem"]),
+                    &format!("{{{name}}}"),
+                )
+            }
+            other => panic!("no such start as {other}"),
+        };
+        let schema = self
+            .definitions
+            .get(&definition)
+            .ok_or_else(|| format!("{definition} is not in the schema"))?;
+        Ok(self.resolve(schema))
+    }
+
+    /// One step along a path. A schema that allows anything allows any
+    /// step.
+    fn step<'a>(&'a self, nodes: Vec<&'a Value>, step: &str) -> Result<Vec<&'a Value>, String> {
+        let any = nodes.iter().any(|node| {
+            **node == Value::Bool(true)
+                || node.as_object().is_some_and(|node| {
+                    ![
+                        "type",
+                        "properties",
+                        "items",
+                        "additionalProperties",
+                        "enum",
+                        "$ref",
+                        "allOf",
+                        "anyOf",
+                        "oneOf",
+                    ]
+                    .iter()
+                    .any(|key| node.contains_key(*key))
+                })
+        });
+        let mut next = Vec::new();
+        if let Some(tag) = step.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            for node in &nodes {
+                let tagged = node["properties"]["type"]
+                    .get("enum")
+                    .or_else(|| {
+                        self.resolve(&node["properties"]["type"])
+                            .into_iter()
+                            .find_map(|t| t.get("enum"))
+                    })
+                    .and_then(Value::as_array)
+                    .is_some_and(|values| values.iter().any(|v| v == tag));
+                if tagged {
+                    // With the branches of a union the variant holds.
+                    next.extend(self.resolve(node));
+                }
+            }
+        } else {
+            for node in &nodes {
+                let child = match step {
+                    "[]" => node.get("items"),
+                    "*" => node.get("additionalProperties"),
+                    field => node["properties"].get(field),
+                };
+                if let Some(child) = child {
+                    next.extend(self.resolve(child));
+                }
+            }
+        }
+        if next.is_empty() && !any {
+            return Err(format!("no {step}"));
+        }
+        Ok(next)
+    }
+
+    /// The values a node can take: the members of its enumerations, and the
+    /// one field of each object it may be.
+    fn values(&self, nodes: &[&Value]) -> Vec<String> {
+        let mut values = Vec::new();
+        for node in nodes {
+            for value in node["enum"].as_array().into_iter().flatten() {
+                values.extend(text(value));
+            }
+            values.extend(text(&node["const"]));
+            if let [only] = node["required"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                if node["properties"].as_object().is_some_and(|p| p.len() == 1) {
+                    values.extend(text(only));
+                }
+            }
+        }
+        values
+    }
+
+    /// What is wrong with a use, if anything.
+    fn check(&self, at: &str, path: &str, values: &[&str]) -> Option<String> {
+        let mut nodes = match self.start(at) {
+            Ok(nodes) => nodes,
+            Err(error) => return Some(format!("{at}: {error}")),
+        };
+        for step in path.split('.').filter(|step| !step.is_empty()) {
+            nodes = match self.step(nodes, step) {
+                Ok(nodes) => nodes,
+                Err(error) => return Some(format!("{at} {path}: {error}")),
+            };
+        }
+        let known = self.values(&nodes);
+        let missing: Vec<&&str> = values
+            .iter()
+            .filter(|value| !known.iter().any(|known| known == **value))
+            .collect();
+        (!missing.is_empty()).then(|| format!("{at} {path}: no {missing:?} among {known:?}"))
+    }
+}
+
+/// The installed Codex against what the driver reads and writes, when
+/// there is a Codex on the PATH: a method, a field or a value the driver
+/// uses that the installed Codex no longer has fails it, so a developer
+/// who upgrades Codex sees what moved. What the driver does not use may
+/// come and go.
+#[test]
+fn what_the_driver_uses_is_in_the_installed_codex_s_protocol() {
+    let vars: HashMap<String, String> = std::env::vars().collect();
+    let Some(codex) = find_on_path(&vars, "codex") else {
+        eprintln!("no codex on the PATH: the protocol is not compared");
+        return;
     };
-    let mut moved = Vec::new();
-    for key in ["clientRequests", "serverNotifications", "serverRequests"] {
-        let (was, now) = (list(&copy[key]), list(&installed[key]));
-        let added: Vec<&String> = now.iter().filter(|m| !was.contains(m)).collect();
-        let gone: Vec<&String> = was.iter().filter(|m| !now.contains(m)).collect();
-        if !added.is_empty() {
-            moved.push(format!("{key} added: {added:?}"));
-        }
-        if !gone.is_empty() {
-            moved.push(format!("{key} gone: {gone:?}"));
-        }
-    }
-    let items = list(&installed["itemTypes"]);
-    let gone: Vec<&&str> = used
+    let schema = Schema::generate(&codex);
+    let moved: Vec<String> = USES
         .iter()
-        .filter(|item| !items.iter().any(|i| i == **item))
+        .filter_map(|(at, path, values)| schema.check(at, path, values))
         .collect();
-    if !gone.is_empty() {
-        moved.push(format!("item types the driver reads gone: {gone:?}"));
-    }
     assert!(
         moved.is_empty(),
-        "Codex {version} speaks another protocol than the copy for {}:\n{}\n\
-         Check the driver against what moved, then write the copy again with \
-         WORKBENCH_CODEX_PROTOCOL_WRITE=1 cargo test -p workbench-core the_protocol_copy",
-        copy["version"].as_str().unwrap_or("?"),
+        "the installed Codex does not have what the driver uses:\n{}",
         moved.join("\n")
     );
+    // The check itself tells a field, a value and a method that are not
+    // there from those that are.
+    assert!(schema
+        .check("request turn/start", "noSuchField", &[])
+        .is_some());
+    assert!(schema
+        .check(
+            "notification turn/completed",
+            "turn.status",
+            &["noSuchStatus"]
+        )
+        .is_some());
+    assert!(schema
+        .check("notification no/such/method", "", &[])
+        .is_some());
 }
 
 #[test]

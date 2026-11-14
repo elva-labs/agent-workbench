@@ -52,23 +52,6 @@ const OLDEST: (u64, u64, u64) = (0, 168, 0);
 /// The media types the agent takes an image in.
 const IMAGE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
 
-/// The item types this driver reads, as Codex names them. The checked-in
-/// copy of the protocol lists the same, and its test says when the
-/// installed Codex no longer has one.
-pub const ITEM_TYPES: &[&str] = &[
-    "agentMessage",
-    "reasoning",
-    "plan",
-    "commandExecution",
-    "fileChange",
-    "mcpToolCall",
-    "dynamicToolCall",
-    "collabAgentToolCall",
-    "webSearch",
-    "imageView",
-    "contextCompaction",
-];
-
 /// A mode the session runs in: how much the agent may do without asking,
 /// as Codex's approval policy and sandbox together.
 struct Mode {

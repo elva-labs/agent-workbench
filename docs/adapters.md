@@ -62,8 +62,9 @@ old index behind when its schema moves; the newest is read.
 The protocols the integrated sessions speak move with the agents' versions
 too, and are read the same way, as [integrated sessions](integrated.md)
 describes. Codex generates its app-server's protocol from its own code for
-each version, and a version can drop what an earlier one had. A copy of
-the methods of the version the workbench was built against, and of the
-item types it reads, is kept with the code, and a test compares it with
-the Codex installed on a developer's machine, so what moved shows when
-Codex is upgraded.
+each version, and a version can drop what an earlier one had. Everything
+the workbench reads from that protocol and writes to it, each method,
+field, status and shape of an answer, is listed with the code, and a test
+checks each against the schema the Codex installed on a developer's
+machine generates, so what moved shows when Codex is upgraded. What the
+workbench does not use may come and go.
