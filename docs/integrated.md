@@ -38,6 +38,10 @@ removed when it ends, so it needs no entry in the account's configuration.
 `--bare` is never used: it would skip the hooks, the instructions and the
 MCP servers, and refuse the user's login.
 
+The agent is also asked, through its environment, to say when its session
+goes idle: after a turn, and after the turns that report the subagents it
+left running. That is the moment nothing it began can still be at work.
+
 A model name, a mode, an effort and a session id are checked before they
 go on the command line: letters and digits, and for a model name a few
 characters of punctuation besides. On Windows an agent installed as a
@@ -63,7 +67,15 @@ folder with no such entry fails with an error of its own kind, which the
 window can tell from other failures. The window asks the user, and on a
 yes the trust command writes the entry for the folder, where the agent's
 own question would have, and the session can start. A worktree the
-workbench makes gets the entry when its project has one.
+workbench makes gets the entry when its project has one. Nothing is made
+for the session, not even the account's folder, before the folder is
+trusted.
+
+Running agents, the user's own terminal sessions among them, read and
+rewrite the same state file. The workbench reads it right before it
+changes it, and writes it whole to a file beside it that is then moved
+over it, so a reader never finds it half written. A link to the file is
+followed, and the file keeps its permissions.
 
 ## Commands
 
@@ -73,20 +85,26 @@ the same way.
 
 | Command | What it does |
 | --- | --- |
-| Start | Starts or resumes a session in a project, with a model, a mode, an effort and an account. Answers with the session's id and the agent's id for the conversation, or fails because the folder is not trusted. |
+| Start | Starts or resumes a session in a project, with a model, a mode, an effort and an account. Answers with the session's id and the conversation's id where the workbench knows it then, or fails because the folder is not trusted. |
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
+| Compact | Compacts the conversation, the way the agent does it. Claude Code is sent a compact command as a message of its own, so the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or the user's own words. It can also decline to answer. |
-| Configure | Switches the model, the mode or the effort, each that is given. Answers with what the session now runs on. |
-| Stop | Closes the agent's stdin, which ends the conversation, and kills the process if it is still there a few seconds later. |
+| Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. Answers with what the session now runs on. |
+| Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
 Events can name an id before the command that hands it back has answered:
 a session's first events can arrive before the start does. The window
 keeps the events of an id it does not know yet, and plays them once it
 does. Since the window chooses a message's id before sending it, the events
 that name a message never come before the window knows the id.
+
+The conversation's id is known at the start only where the workbench
+chooses it, as it does for Claude Code, or resumes one. An agent that makes
+its own ids has none to give yet. The ready event carries the agent's id in
+either case, and that is the one to keep for resuming.
 
 ## Permissions
 
@@ -122,17 +140,24 @@ grants; the plan itself arrives as a plan event first.
 Everything the session says arrives as one event, `integrated_event`,
 naming the session and its kind:
 
-- **ready**, once, before anything else: the model, mode and effort, the
-  agent's version, and what it offers: models (each with the efforts it
-  takes), modes, the efforts of the model it runs on, and its slash
-  commands.
+- **ready**, once, before anything else: the conversation's id, the model,
+  mode and effort, the agent's version, and what it offers: models (each
+  with the efforts it takes), modes, the efforts of the model it runs on,
+  and its slash commands. A mode can be one the list does not hold, when it
+  comes from the user's own configuration.
 - **configured**: the model, the mode or the effort changed.
-- **message**: a sent message is queued behind a running turn, was taken
-  into the running turn, or was dropped and will not be answered.
+- **message**: a sent message went to the agent with nothing ahead of it,
+  is queued behind a running turn, was taken into the running turn, or
+  was dropped and will not be answered, because the agent refused,
+  discarded or cancelled it. The first of these for a message carries its
+  text and the images it attached, so that any window can draw it.
 - **turn started**, with the messages it answers, and **turn ended**: how
   it ended (done, interrupted or failed, with why), its time and token
   usage, and the agent's running total cost for its process so far, which
-  is not the turn's own cost.
+  is not the turn's own cost. Usage counts every token the model read,
+  with how many came from a cache, and every token it wrote, with how
+  many were reasoning. A turn stopped by an interrupt, or by cancelling a
+  permission, ends as interrupted.
 - **text** and **thinking**, by block: pieces as they stream, then the
   whole block.
 - **tool started**, with the agent's name for the tool and what kind of
@@ -144,14 +169,26 @@ naming the session and its kind:
 - **plan**: the agent's plan, written out or as a list of steps, whole
   each time it changes; and **turn diff**: everything the turn has changed
   so far as one diff, for an agent that keeps one.
-- **permission asked**, **question asked**, and **withdrawn** when the
-  agent stops waiting for either.
+- **permission asked** and **question asked**; **answered**, with the
+  choice, or for a question the answers, from whichever window answered;
+  and **withdrawn** when the agent stops waiting for either.
 - **task started**, **task progress** and **task finished**, for subagents
-  and background commands. A task ends completed, failed, stopped, or lost:
-  gone from what the agent lists as running, with no word of how it ended.
-- **compacting** and **compacted**.
+  and background commands. A task the agent marks as housekeeping says so,
+  and a window may leave it out. A task ends completed, failed, stopped,
+  or lost: ended with no word of how by the time the turn, or the agent's
+  work as a whole, was over. A finished task says whether the agent
+  reports it in a turn of its own.
+- **compacting** and **compacted**, which says whether it was asked for or
+  the context window was full.
+- **context**: how much of the model's context window the conversation
+  takes, and how big the window is, where the agent says.
+- **notice**: something the agent says that is neither an error nor part
+  of a turn, such as that it fell back to another model, as information or
+  as a warning.
 - **retrying**: a request to the model failed and the agent tries again;
   the turn goes on.
+- **skipped**: streamed pieces left out because the window or its
+  connection fell behind, as described under failure.
 - **state**, **error** and **ended**.
 
 A subagent's text, tool calls, plans and requests name the tool call that
@@ -181,8 +218,11 @@ started by itself, which happens when work it left running in the
 background finishes while the session is idle. A turn the agent ends
 without having said it started is started first, so every end has a start.
 
-Where an agent takes no message while a turn runs, the core holds each one
-and hands it over when the turn is done.
+Where an agent takes no message while a turn runs, the core holds each one.
+It hands one over only when no turn runs and the agent has named the one
+handed over before, in a turn's start or as dropped, and makes the line for
+it then, so that it goes with the settings the session runs on at that
+moment.
 
 The state a session's row shows comes from the same events, never from
 timing or hooks:
@@ -191,11 +231,18 @@ timing or hooks:
   answer;
 - **working** while a turn runs, a message waits for one, the conversation
   is compacted, or a subagent is still at work, including the moment
-  between a subagent ending and the turn its report starts. A subagent
-  that is lost has no report to wait for, and an interrupt while no turn
-  runs stops waiting for one;
+  between a task ending and the turn its report starts, where the agent
+  says one is coming. A task that is lost has no report to wait for, and
+  an interrupt while no turn runs stops waiting for one;
 - **idle** otherwise. A command left running in the background, such as a
-  dev server, does not keep a session working.
+  dev server, does not keep a session working, nor does housekeeping the
+  agent does on its own account.
+
+Claude Code says which tasks run in the background as a whole list, in no
+promised order with the start and the end of each. A task the list leaves
+out is lost only if it is still left out, with no word of its end, when the
+turn ends or the agent says it is idle; a word that comes later is dropped.
+A subagent the main turn waited on is over with that turn.
 
 A tool call the agent leaves without a finish is finished by the core, as
 failed with no output: those of the main conversation when the turn ends,
@@ -209,26 +256,82 @@ kept apart and reads defensively, as the transcript readers are: an
 unknown message or field is ignored, a line that is not JSON is skipped,
 and a request from the agent that the workbench does not handle is refused
 rather than left unanswered. A line longer than a few megabytes is skipped,
-with an error that says so.
+with an error that says so. The driver still sees its bytes pass, and a
+tool call whose result was in it finishes at once as failed and cut short.
 
 Every wait on the process has a limit. The agent has a minute and a half
 to say it is ready, and is ended with an error if it does not. A line it
 does not take within half a minute means it has stopped reading: the
 session is ended with an error, so that nothing queued behind the line is
 written late. A control request it does not answer within half a minute
-fails, and the session goes on. A stopped session has a few seconds to end
-before it is killed.
+fails, and the session goes on.
 
-The agent runs in a process group of its own. Killing it kills the group,
-its MCP servers and the commands it left running among them, and what is
-still in the group once the agent has ended is ended too. Every integrated
-session is stopped when the app exits, and when the daemon's stdin ends on
-another machine. A connection to another machine that goes away ends its
-sessions for the window, with an error saying why.
+The agent runs in a process group of its own. An agent the core ends, on a
+stop or after an error, is first asked to end with a termination signal,
+and is killed with its whole group, its MCP servers among it, if it is
+still there a few seconds later. What is still in the group once the agent
+has ended is ended too. Claude Code runs a command it leaves in the
+background, such as a dev server, in a process group of its own, which
+killing the agent's group does not reach. It ends those commands itself
+when it is asked to end, so a stopped session takes them with it, but an
+agent that is killed outright, or that dies, leaves them running. Every
+integrated session is stopped when the app exits, and when the daemon's
+stdin ends on another machine. A connection to another machine that goes
+away ends its sessions for the window, once each, with an error saying
+why. The tool server's configuration for a session is a file only its owner
+can read, under a name that cannot be guessed, removed when the session
+ends.
 
 Events go out in order through a thread of their own, so a slow window or
-connection never holds up a command. A process that dies fails the turn
+connection never holds up a command. While too many wait for it, streamed
+pieces of text, thinking and a tool call's input and output are left out,
+and the next event to go out after them is a skipped event saying how many;
+the whole that follows each piece holds all of it. Whole events and the
+answers to commands are never left out. When still more wait, the core
+stops reading the agent's output until there is room, which in time holds
+up the agent rather than any command. A process that dies fails the turn
 it was in, finishes its open tool calls, withdraws what it asked, drops
 the messages that waited, says what its last words on stderr were, and
 ends with **ended**, so a session never hangs and never brings down the
 core.
+
+## Not covered yet
+
+Two things another agent offers have no event yet: the conversations of
+Codex's own sub-agents, which it keeps as threads of their own, and forms
+an MCP server asks the user to fill in from a schema. A question the agent
+asks covers options and words of the user's own, not such a form.
+
+## Drawing a conversation
+
+What a window that draws an integrated session can rely on, and what it
+has to do itself:
+
+- **Order.** A session's events come in order. The first ones can arrive
+  before the start answers, so the window keeps the events of an id it
+  does not know yet.
+- **Messages.** A message's id is the window's own, chosen before it is
+  sent. A turn names the messages it answers, several where the agent
+  took them together; a turn that names none is one the agent began by
+  itself. The first message event for an id carries its text and images,
+  so a second window can draw a message it did not send.
+- **Requests.** Each permission and question is settled by an answered or
+  a withdrawn event, whichever window answered it.
+- **The end.** Nothing comes after ended, and no last state comes with it:
+  the open tool calls, the turn, the open requests and the waiting
+  messages are closed first, then the session ends.
+- **History.** Nothing is kept or played back. A resumed session's past
+  turns, and everything before a window reloaded, are read from the
+  agent's transcript, not from these events.
+- **Content.** Images in a tool's result and a command's output kept apart
+  from its errors or its exit code arrive as plain text. Long content is
+  cut down and flagged.
+- **Hooks.** The workbench's hooks still fire for an integrated session.
+  Its state comes from these events, and the hooks' are left alone.
+- **The sessions pane and the tools.** The browser tools and the
+  orchestrator's waits act only for a session the window shows as a
+  running row whose id is the conversation's id, so an integrated session
+  needs such a row for its agent's tools to work. The orchestrator's send
+  and read act on terminals and do not reach an integrated session.
+  Past sessions are listed from the transcripts, integrated ones among
+  them.
