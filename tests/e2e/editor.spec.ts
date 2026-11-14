@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installFakeCore } from "./fake";
+import { PROJECT, installFakeCore } from "./fake";
 
 /**
  * Editor mode: the file tree and an editor in the middle, the agent on the
@@ -332,7 +332,8 @@ test.describe("the editor and its tabs", () => {
     await treeRow(page, "Cargo.toml").click();
     await expect(tab(page, "Cargo.toml")).toBeVisible();
 
-    await page.locator("[data-testid='session-row']").first().click();
+    // The pane lists sessions latest first.
+    await page.locator("[data-testid='session-row']").filter({ hasText: "session 1" }).click();
     await expect(tab(page, "README.md")).toBeVisible();
     await expect(tab(page, "Cargo.toml")).toHaveCount(0);
     await expect(page.getByTestId("mode-readout")).toHaveText("editing");
@@ -819,6 +820,26 @@ test.describe("questions before anything unsaved goes", () => {
     await page.getByTestId("close-owner-confirm").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(0);
     await expect(page.locator(`${TREE} [data-testid='tree-unsaved']`)).toHaveCount(0);
+  });
+
+  test("asks before Close project in the project's menu, and Cancel keeps it", async ({ page }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    const head = page.locator(`${SESSIONS} [data-row="project:${PROJECT}"]`);
+    await head.hover();
+    await head.getByTestId("project-more").click();
+    await head.getByTestId("close-project").click();
+    const strip = page.getByTestId("close-owner");
+    await expect(strip).toContainText("Close demo with unsaved edits?");
+    await expect(strip).toContainText("README.md");
+    await expect(page.getByTestId("close-owner-cancel")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(strip).toHaveCount(0);
+    await expect(head).toBeVisible();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
+    await expect(tab(page, "README.md")).toHaveClass(/dirty/);
   });
 });
 
