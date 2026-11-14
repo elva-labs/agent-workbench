@@ -181,12 +181,21 @@ const theme = EditorView.theme({
 
 /** Past this many, the find bar counts no further. */
 const MOST_COUNTED = 999;
+/** A file longer than this is counted only once typing pauses, the query's
+    as well as the file's: a count walks the whole file. */
+export const LARGE_FILE = 200_000;
+/** How long typing pauses before a count, in milliseconds. */
+export const COUNT_AFTER = 300;
 
 /**
  * Find in the file, in the app's own look and words: the field, how many
  * matches there are, Previous, Next and All, and whether case, whole words
  * or a regular expression count. Enter is the next match, Shift+Enter the
  * one before, Escape closes it. There is nothing to replace with.
+ *
+ * Counting walks the whole file, so it is done when the query changes, at
+ * once for a small file and after a pause for a large one, and after typing
+ * in the file pauses, never on every key.
  */
 class FindPanel implements Panel {
   dom: HTMLElement;
@@ -195,6 +204,7 @@ class FindPanel implements Panel {
   private count: HTMLElement;
   private toggles: Record<"caseSensitive" | "wholeWord" | "regexp", HTMLButtonElement>;
   private query: SearchQuery;
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private view: EditorView) {
     this.query = getSearchQuery(view.state);
@@ -263,6 +273,21 @@ class FindPanel implements Panel {
     this.view.dispatch({ effects: setSearchQuery.of(query) });
   }
 
+  /** Counts now for a small file, after a pause for a large one, or after
+      a pause whatever the size. */
+  private countSoon(always = false) {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    if (!always && this.view.state.doc.length <= LARGE_FILE) {
+      this.recount();
+      return;
+    }
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.recount();
+    }, COUNT_AFTER);
+  }
+
   private keydown(e: KeyboardEvent) {
     if (runScopeHandlers(this.view, e, "search-panel")) {
       e.preventDefault();
@@ -291,11 +316,11 @@ class FindPanel implements Panel {
   }
 
   update(update: ViewUpdate) {
-    let changed = update.docChanged;
+    let asked = false;
     for (const tr of update.transactions) {
       for (const effect of tr.effects) {
         if (!effect.is(setSearchQuery)) continue;
-        changed = true;
+        asked = true;
         if (effect.value.eq(this.query)) continue;
         this.query = effect.value;
         this.field.value = this.query.search;
@@ -304,7 +329,12 @@ class FindPanel implements Panel {
         }
       }
     }
-    if (changed) this.recount();
+    if (asked) this.countSoon();
+    else if (update.docChanged && this.query.search !== "") this.countSoon(true);
+  }
+
+  destroy() {
+    if (this.timer !== null) clearTimeout(this.timer);
   }
 
   mount() {
