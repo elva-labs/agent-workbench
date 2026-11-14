@@ -1032,15 +1032,16 @@ async fn worktree_remove(
     remotes: State<'_, Arc<Remotes>>,
     project: String,
     name: String,
+    accounts: Vec<Dirs>,
 ) -> Result<Value, String> {
-    let wanted = name.clone();
+    let wanted = (name.clone(), accounts.clone());
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&project),
         "worktree_remove",
-        move |rest| json!({ "project": rest, "name": name }),
-        move |core, project| core.worktree_remove(Path::new(project), &wanted),
+        move |rest| json!({ "project": rest, "name": name, "accounts": accounts }),
+        move |core, project| core.worktree_remove(Path::new(project), &wanted.0, &wanted.1),
     )
     .await
 }

@@ -58,6 +58,7 @@
   } from "$lib/accounts.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import { PAST_SESSIONS, sessions, setPastSessions } from "$lib/sessions.svelte";
+  import { INACTIVE_AFTER, projects, setInactiveAfter } from "$lib/projects.svelte";
   import {
     INTERFACE_FONTS,
     LOOKS,
@@ -642,10 +643,10 @@
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
             <p class="note">
-              A session this app ran stays listed under its project, greyed, ready to resume. Left
-              unchanged for longer than this, it goes behind the fold with the rest of the project's
-              history instead, where it is still there to resume and to search. A session left from
-              the last quit goes the same way. Nothing is deleted.
+              A session this app ran stays listed under its project, ready to resume. Left unchanged
+              for longer than this, it goes behind the row of earlier sessions with the rest of the
+              project's history instead, where it is still there to resume and to search. A session
+              left from the last quit goes the same way. Nothing is deleted.
             </p>
             <div class="seg" role="radiogroup" aria-label="How long past sessions stay listed">
               {#each PAST_SESSIONS as span (span.choice)}
@@ -655,6 +656,25 @@
                   class:on={sessions.pastSessions === span.choice}
                   onclick={() => setPastSessions(span.choice)}
                   data-testid="past-sessions-{span.choice}">{span.label}</button
+                >
+              {/each}
+            </div>
+            <h3>Inactive projects</h3>
+            <UnreadEntries field="inactiveAfter" />
+            <p class="note">
+              A project stays in the sessions pane's list while one of its sessions is running or
+              waiting for you, and for this long after it was last used. After that it folds under
+              Inactive at the foot of the pane, until it is used again. Never keeps every project in
+              the list.
+            </p>
+            <div class="seg" role="radiogroup" aria-label="How long a project stays in the list unused">
+              {#each INACTIVE_AFTER as span (span.choice)}
+                <button
+                  role="radio"
+                  aria-checked={projects.inactiveAfter === span.choice}
+                  class:on={projects.inactiveAfter === span.choice}
+                  onclick={() => setInactiveAfter(span.choice)}
+                  data-testid="inactive-after-{span.choice}">{span.label}</button
                 >
               {/each}
             </div>

@@ -14,8 +14,10 @@ import {
   forProject,
   select,
   sessions,
+  type Session,
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
+import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
 
 /**
  * The projects this window has open.
@@ -113,14 +115,14 @@ export async function openPath(path: string): Promise<boolean> {
 
   const already = workspace.open.find((project) => project.path === path);
   if (already !== undefined) {
-    activate(already.path);
+    bringForward(already.path);
     return true;
   }
 
   try {
     const info = await core().projectInfo(path);
     if (!isOpen(info.path)) workspace.open.push(info);
-    activate(info.path);
+    bringForward(info.path);
     return true;
   } catch (error) {
     workspace.error = String(error);
@@ -146,25 +148,64 @@ export function activate(path: string) {
   }
 }
 
-/** Brings a session forward, and its project with it when that is another.
-    False for a key no row has. */
+/** The user brought a project forward, from the sessions pane, go to or
+    by opening it again: it is in front and counts as used. What it shows
+    is a session drawn under it: the one on screen when that is one, else
+    its newest. A session that hangs under its starter in another project
+    is drawn there, so a project whose only sessions are such is shown with
+    none, and is itself the project on screen. The session on screen stays
+    when it hangs under this project from another one: the project in front
+    stays the one that session runs in. */
+export function bringForward(path: string) {
+  const current = sessions.active === null ? null : byKey(sessions.active);
+  if (current !== null && current.project !== path && drawnIn(current) === path) {
+    touch(path);
+    return;
+  }
+  if (workspace.active !== path) activate(path);
+  touch(path);
+  const drawnHere = (session: Session) => session.project === path && drawnIn(session) === path;
+  if (current !== null && drawnHere(current)) return;
+  const own = forProject(path).filter(drawnHere);
+  sessions.active = own.length > 0 ? own[own.length - 1].key : null;
+}
+
+/** The project on screen, as the sessions pane and the palette both mean
+    it: the one in front, except while the session on screen hangs under
+    its starter in another project, when it is the starter's. The one in
+    front stays the project the session runs in, which is the repository
+    the changes pane, the terminal and the window's title follow. */
+export function onScreen(): string | null {
+  const current = workspace.active;
+  const session = sessions.active === null ? null : byKey(sessions.active);
+  if (session === null || session.project !== current) return current;
+  return drawnIn(session);
+}
+
+/** The user picked a session: it comes forward, and its project with it
+    when that is another. The project it is drawn under counts as used,
+    which for a session hanging under its starter is the starter's. False
+    for a key no row has. */
 export function goTo(key: string): boolean {
   const session = byKey(key);
   if (session === null) return false;
   if (session.project !== workspace.active) activate(session.project);
   select(key);
+  touch(drawnIn(session));
   return true;
 }
 
 /** Starts a session in a project, brought forward, and gives it the
     keyboard. The agent is the one the project used last and the account the
-    one it runs under, unless named. */
+    one it runs under, unless named. Starting one is the user using the
+    project, so it counts as used. */
 export function startSession(
   path: string,
   agent: AgentId = defaultAgent(path),
   account: string | null = accountOf(path),
 ) {
   if (workspace.active !== path) activate(path);
+  touch(path);
   create(path, null, agent, null, null, null, account);
   focusPane("agent");
 }
@@ -218,6 +259,7 @@ export function close(path: string) {
   closeShells(path);
   void closeOwner({ kind: "project", path });
   workspace.open = workspace.open.filter((project) => project.path !== path);
+  forgetUsed(path);
 
   if (workspace.active !== path) {
     save();

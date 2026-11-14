@@ -24,6 +24,12 @@ commands over one core object, the native menu, the window chrome, and the
 routing that sends a command to the core here or to the same core on another
 machine.
 
+The git the core runs, for projects and for plugins, always works on the
+repository in the folder it is run in. It clears the variables that name a
+repository, a work tree, an index or an object directory before it starts, so
+a core started from a hook or a rebase does not follow the caller's
+repository. The user's own config and identity variables are left as they are.
+
 ## The core elsewhere
 
 The same core crate builds a daemon that speaks the core's commands as JSON

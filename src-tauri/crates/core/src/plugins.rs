@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -309,6 +310,10 @@ struct Stored {
 
 struct Running {
     child: Child,
+    /// Which start of a plugin this process is. A reader that gets to the
+    /// end of its process late can find the next one under the same key,
+    /// and this is how it tells the two apart.
+    launch: u64,
     stdin: Arc<Mutex<ChildStdin>>,
     state: State,
     detail: Option<String>,
@@ -334,6 +339,24 @@ const LAST_WORDS: Duration = Duration::from_millis(500);
 /// one that dies before it greets is broken, not unlucky, and is not
 /// started every half minute until the app closes.
 const TRIES: u32 = 5;
+
+/// Ends a process that was replaced while still going, after the time stop
+/// gives one, and collects it.
+fn reap(mut child: Child) {
+    std::thread::spawn(move || {
+        for _ in 0..20 {
+            if let Ok(Some(_)) = child.try_wait() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    });
+}
+
+/// Numbers every start of a plugin's process, for [`Running::launch`].
+static LAUNCHES: AtomicU64 = AtomicU64::new(0);
 
 type Key = (String, String);
 
@@ -583,13 +606,11 @@ pub fn read_manifest(
     Ok(declared)
 }
 
-/// Every git call the plugins make. The ext transport runs whatever a
-/// URL names, so it is off; what the caller passes is arguments alone.
+/// Every git call the plugins make. What the caller passes is arguments
+/// alone.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["-c", "protocol.ext.allow=never"])
+    let output = crate::git::command(dir)
         .args(args)
-        .current_dir(dir)
         .output()
         .map_err(|e| format!("could not run git: {e}"))?;
     if !output.status.success() {
@@ -1534,6 +1555,7 @@ impl Inner {
                 return;
             }
         };
+        let launch = LAUNCHES.fetch_add(1, Ordering::Relaxed);
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
@@ -1573,10 +1595,11 @@ impl Inner {
         }
         {
             let mut running = self.running.lock().expect("plugins lock");
-            running.insert(
+            let displaced = running.insert(
                 key.clone(),
                 Running {
                     child,
+                    launch,
                     stdin,
                     state: State::Starting,
                     detail: None,
@@ -1586,6 +1609,12 @@ impl Inner {
                     complained,
                 },
             );
+            // A process that is still going when the next one takes its
+            // place is asked to stop already; it is ended and collected
+            // here, since the stop waiting on it only follows its own launch.
+            if let Some(old) = displaced {
+                reap(old.child);
+            }
         }
         self.tell(&source.id, name, State::Starting, None, None);
 
@@ -1599,39 +1628,88 @@ impl Inner {
             let mut greeted = false;
             for line in reader.lines() {
                 let Ok(line) = line else { break };
-                let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
-                    continue;
-                };
-                let kind = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                if kind == "hello" && !greeted {
-                    greeted = true;
-                    let hello: Option<Hello> = serde_json::from_value(message.clone()).ok();
-                    {
-                        let mut running = plugins.running.lock().expect("plugins lock");
-                        if let Some(live) = running.get_mut(&(source_id.clone(), plugin.clone())) {
-                            live.state = State::Running;
-                            live.failures = 0;
-                            live.hello = hello.clone();
-                            live.detail = None;
-                        }
-                    }
-                    plugins.publish();
-                    plugins.tell(&source_id, &plugin, State::Running, None, hello);
-                } else if kind == "result" {
-                    plugins.answered(&source_id, &plugin, &message);
-                } else {
-                    plugins.said(&source_id, &plugin, kind, &message);
+                if !plugins.heard(&source_id, &plugin, launch, &mut greeted, &line) {
+                    break;
                 }
             }
-            plugins.exited(&source_id, &plugin, greeted);
+            plugins.exited(&source_id, &plugin, launch, greeted);
         });
+    }
+
+    /// One line a plugin's process wrote, as its reader takes it: the
+    /// greeting, an answer, or something the plugin says of its own accord.
+    /// A reader speaks only for the process it reads. Once another process
+    /// is under the key, what the earlier one wrote is nobody's news, and
+    /// false tells its reader to stop. An answer is the exception: it goes
+    /// to whoever asked, whichever process was asked, but only while the
+    /// reader is reading: a stale line ahead of it ends the reader, and an
+    /// answer behind that line is not taken.
+    ///
+    /// While stop waits for the process to go, its state is off and its
+    /// lines are not kept: the sections and views it was asked to forget stay
+    /// forgotten. The reader keeps reading so the process can finish.
+    fn heard(
+        self: &Arc<Self>,
+        source_id: &str,
+        name: &str,
+        launch: u64,
+        greeted: &mut bool,
+        line: &str,
+    ) -> bool {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+            return true;
+        };
+        let key: Key = (source_id.to_string(), name.to_string());
+        let kind = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if kind == "result" {
+            self.answered(source_id, name, &message);
+            return true;
+        }
+        if kind == "hello" && !*greeted {
+            *greeted = true;
+            let hello: Option<Hello> = serde_json::from_value(message.clone()).ok();
+            {
+                let mut running = self.running.lock().expect("plugins lock");
+                let Some(live) = running.get_mut(&key).filter(|live| live.launch == launch) else {
+                    return false;
+                };
+                if live.state == State::Off {
+                    return true;
+                }
+                live.state = State::Running;
+                live.failures = 0;
+                live.hello = hello.clone();
+                live.detail = None;
+            }
+            self.publish();
+            self.tell(source_id, name, State::Running, None, hello);
+            return true;
+        }
+        let mine = self
+            .running
+            .lock()
+            .expect("plugins lock")
+            .get(&key)
+            .map(|live| (live.launch == launch, live.state != State::Off));
+        match mine {
+            Some((true, true)) => {
+                self.said(source_id, name, kind, &message);
+                true
+            }
+            Some((true, false)) => true,
+            _ => false,
+        }
     }
 
     /// The process is gone: said so, and started again after a pause when
     /// it is still on and nothing here asked it to go. A process stop ended
     /// is marked off before it is told, and whoever stopped it starts the
     /// next one, so the reader does not start one of its own as well.
-    fn exited(self: &Arc<Self>, source_id: &str, name: &str, greeted: bool) {
+    ///
+    /// Stop can see the process end, and the next one start, before the
+    /// reader gets here. The reader then finds that next process under the
+    /// key, which is not the one it read, and leaves it alone.
+    fn exited(self: &Arc<Self>, source_id: &str, name: &str, launch: u64, greeted: bool) {
         let key: Key = (source_id.to_string(), name.to_string());
         let enabled = {
             let stored = self.stored.lock().expect("plugins lock");
@@ -1642,7 +1720,7 @@ impl Inner {
         };
         let (still_on, failures, detail) = {
             let mut running = self.running.lock().expect("plugins lock");
-            let Some(live) = running.get_mut(&key) else {
+            let Some(live) = running.get_mut(&key).filter(|live| live.launch == launch) else {
                 return;
             };
             let still_on = enabled && live.state != State::Off;
@@ -1711,16 +1789,20 @@ impl Inner {
     }
 
     /// Asks the process to stop, and ends it when it has not gone in time.
+    ///
+    /// Only the process that was running when this began is waited for and
+    /// ended. When it is slow to go and the plugin is turned on again, the
+    /// next process is under the key and is left alone.
     fn stop(&self, source_id: &str, name: &str) {
         let key: Key = (source_id.to_string(), name.to_string());
         self.building.lock().expect("plugins lock").remove(&key);
-        let stdin = {
+        let (launch, stdin) = {
             let mut running = self.running.lock().expect("plugins lock");
             let Some(live) = running.get_mut(&key) else {
                 return;
             };
             live.state = State::Off;
-            Arc::clone(&live.stdin)
+            (live.launch, Arc::clone(&live.stdin))
         };
         self.publish();
         self.forget_sections(source_id, name);
@@ -1734,7 +1816,7 @@ impl Inner {
                 std::thread::sleep(Duration::from_millis(100));
             }
             let mut running = self.running.lock().expect("plugins lock");
-            match running.get_mut(&key) {
+            match running.get_mut(&key).filter(|live| live.launch == launch) {
                 Some(live) => {
                     if let Ok(Some(_)) = live.child.try_wait() {
                         running.remove(&key);
@@ -1745,9 +1827,11 @@ impl Inner {
             }
         }
         let mut running = self.running.lock().expect("plugins lock");
-        if let Some(mut live) = running.remove(&key) {
-            let _ = live.child.kill();
-            let _ = live.child.wait();
+        if running.get(&key).is_some_and(|live| live.launch == launch) {
+            if let Some(mut live) = running.remove(&key) {
+                let _ = live.child.kill();
+                let _ = live.child.wait();
+            }
         }
     }
 
@@ -2583,6 +2667,255 @@ tools = ["ping"]
         again.remove(&added.id).unwrap();
         assert!(again.list().is_empty());
         assert!(plugins_at(&home, recorder).list().is_empty());
+    }
+
+    // Off and on again can end one process and start the next before the
+    // first one's reader has read to the end of it. What that reader does
+    // then must not touch the process that took its place.
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_of_a_process_that_was_replaced_leaves_the_next_one_alone() {
+        let home = Scratch::absent("plugins-replaced-home");
+        let dir = source_with(
+            "[[plugin]]\nname = \"echo\"\npath = \"github\"\nrun = [\"sh\", \"main.sh\"]\n",
+            "replaced",
+        );
+        std::fs::write(
+            dir.join("github/main.sh"),
+            "#!/bin/sh\necho '{\"type\":\"hello\",\"name\":\"echo\",\"version\":\"1.0.0\"}'\nwhile IFS= read -r line; do case \"$line\" in *stop*) exit 0;; esac; done\n",
+        )
+        .unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let plugins = plugins_at(&home, recorder.clone());
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+        let key: Key = (added.id.clone(), "echo".to_string());
+        let launch = || {
+            let running = plugins.inner.running.lock().unwrap();
+            running.get(&key).map(|live| live.launch)
+        };
+        let came_up = || {
+            for _ in 0..600 {
+                if plugins.list()[0].plugins[0].state == State::Running {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            false
+        };
+
+        plugins.enable(&added.id, "echo", true).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        let first = launch().unwrap();
+        plugins.enable(&added.id, "echo", false).unwrap();
+        plugins.enable(&added.id, "echo", true).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        let second = launch().unwrap();
+        assert_ne!(first, second);
+
+        // The first process's reader, getting to what it wrote only now: a
+        // greeting and a section are not the second process's, and tell the
+        // reader to stop.
+        let mut greeted = false;
+        assert!(!plugins.inner.heard(
+            &added.id,
+            "echo",
+            first,
+            &mut greeted,
+            r#"{"type":"hello","name":"echo","version":"0.0.1"}"#,
+        ));
+        assert!(!plugins.inner.heard(
+            &added.id,
+            "echo",
+            first,
+            &mut greeted,
+            r#"{"type":"section","id":"checks","title":"Checks","project":"/tmp","rows":[]}"#,
+        ));
+        let hello = plugins.inner.greeting(&added.id, "echo").unwrap();
+        assert_eq!(hello.version, "1.0.0");
+        assert!(plugins.inner.sections.lock().unwrap().is_empty());
+
+        // And getting to its end.
+        plugins.inner.exited(&added.id, "echo", first, true);
+        assert_eq!(launch(), Some(second));
+        assert_eq!(plugins.list()[0].plugins[0].state, State::Running);
+        assert!(!recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == PLUGIN_STATE && payload["state"] == "stopped"));
+        plugins.enable(&added.id, "echo", false).unwrap();
+    }
+
+    /// A plugin that greets, and on `stop` waits for the gate file before it
+    /// exits, so a test decides when the process goes. Each process writes
+    /// its pid to `pids`.
+    #[cfg(unix)]
+    struct Gated {
+        plugins: Plugins,
+        source: String,
+        key: Key,
+        gate: PathBuf,
+        pids: PathBuf,
+        _home: Scratch,
+        _dir: Scratch,
+        _gates: Scratch,
+    }
+
+    #[cfg(unix)]
+    impl Gated {
+        fn new(label: &str) -> Gated {
+            let home = Scratch::absent(&format!("{label}-home"));
+            let gates = Scratch::new(&format!("{label}-gates"));
+            let gate = gates.join("gate");
+            let pids = gates.join("pids");
+            let dir = source_with(
+                "[[plugin]]\nname = \"echo\"\npath = \"github\"\nrun = [\"sh\", \"main.sh\"]\n",
+                label,
+            );
+            std::fs::write(
+                dir.join("github/main.sh"),
+                format!(
+                    "#!/bin/sh\necho $$ >> '{pids}'\necho '{{\"type\":\"hello\",\"name\":\"echo\",\"version\":\"1.0.0\"}}'\nwhile IFS= read -r line; do case \"$line\" in *stop*) while [ ! -e '{gate}' ]; do sleep 0.05; done; exit 0;; esac; done\n",
+                    pids = pids.display(),
+                    gate = gate.display(),
+                ),
+            )
+            .unwrap();
+            let plugins = plugins_at(&home, Arc::new(Recorder::default()));
+            let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+            Gated {
+                key: (added.id.clone(), "echo".to_string()),
+                source: added.id,
+                plugins,
+                gate,
+                pids,
+                _home: home,
+                _dir: dir,
+                _gates: gates,
+            }
+        }
+
+        fn state(&self) -> Option<(u64, State)> {
+            let running = self.plugins.inner.running.lock().unwrap();
+            running
+                .get(&self.key)
+                .map(|live| (live.launch, live.state.clone()))
+        }
+
+        fn wait_for(&self, wanted: State) -> u64 {
+            for _ in 0..600 {
+                if let Some((launch, state)) = self.state() {
+                    if state == wanted {
+                        return launch;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            panic!("never {wanted:?}: {:?}", self.plugins.list());
+        }
+
+        fn pids(&self) -> Vec<String> {
+            std::fs::read_to_string(&self.pids)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: &str) -> bool {
+        Command::new("kill")
+            .args(["-0", pid])
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    // Off, then on again before the process has gone: the stop that is still
+    // waiting must not end the process that was started after it.
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_that_is_still_waiting_leaves_the_next_process_alone() {
+        let plugin = Gated::new("plugins-stop-replaced");
+        plugin.plugins.enable(&plugin.source, "echo", true).unwrap();
+        let first = plugin.wait_for(State::Running);
+
+        let stopping = {
+            let plugins = plugin.plugins.clone();
+            let source = plugin.source.clone();
+            std::thread::spawn(move || plugins.enable(&source, "echo", false).unwrap())
+        };
+        plugin.wait_for(State::Off);
+        plugin.plugins.enable(&plugin.source, "echo", true).unwrap();
+        let second = plugin.wait_for(State::Running);
+        assert_ne!(first, second);
+
+        // The stop, which kept polling for a process that has been replaced,
+        // is over without having touched the next one, which is still the
+        // one running.
+        stopping.join().unwrap();
+        assert_eq!(plugin.state(), Some((second, State::Running)));
+        assert_eq!(plugin.plugins.list()[0].plugins[0].state, State::Running);
+
+        // The first process is ended and collected all the same.
+        let pids = plugin.pids();
+        assert_eq!(pids.len(), 2);
+        for _ in 0..200 {
+            if !alive(&pids[0]) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!alive(&pids[0]), "the first process is still there");
+        assert_eq!(plugin.state(), Some((second, State::Running)));
+
+        std::fs::write(&plugin.gate, "").unwrap();
+        plugin
+            .plugins
+            .enable(&plugin.source, "echo", false)
+            .unwrap();
+    }
+
+    // While stop waits for a process to go, what it says is not kept, and its
+    // reader goes on reading.
+    #[cfg(unix)]
+    #[test]
+    fn what_a_plugin_says_while_it_is_being_stopped_is_not_kept() {
+        let plugin = Gated::new("plugins-said-while-stopping");
+        plugin.plugins.enable(&plugin.source, "echo", true).unwrap();
+        let launch = plugin.wait_for(State::Running);
+
+        let stopping = {
+            let plugins = plugin.plugins.clone();
+            let source = plugin.source.clone();
+            std::thread::spawn(move || plugins.enable(&source, "echo", false).unwrap())
+        };
+        plugin.wait_for(State::Off);
+
+        let mut greeted = false;
+        assert!(plugin.plugins.inner.heard(
+            &plugin.source,
+            "echo",
+            launch,
+            &mut greeted,
+            r#"{"type":"section","id":"checks","title":"Checks","project":"/tmp","rows":[]}"#,
+        ));
+        assert!(plugin.plugins.inner.heard(
+            &plugin.source,
+            "echo",
+            launch,
+            &mut greeted,
+            r#"{"type":"hello","name":"echo","version":"9.9.9"}"#,
+        ));
+        assert!(plugin.plugins.inner.sections.lock().unwrap().is_empty());
+        assert_eq!(plugin.state(), Some((launch, State::Off)));
+
+        std::fs::write(&plugin.gate, "").unwrap();
+        stopping.join().unwrap();
+        assert_eq!(plugin.state(), None);
     }
 
     #[test]

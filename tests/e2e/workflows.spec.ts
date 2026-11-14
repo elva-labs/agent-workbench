@@ -577,7 +577,6 @@ test.describe("the layout", () => {
       if (canvas === null || settings === null) return null;
       return settings.x >= canvas.x + canvas.width;
     };
-    // Measured once the dialog has laid itself out, as the last check is.
     await expect.poll(beside).toBe(true);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();

@@ -70,7 +70,7 @@ export const MIN_REVIEW = MIN.tree + SPLITTER + MIN.viewer;
 export const REVIEW_SHARE = 0.6;
 
 export const DEFAULT = {
-  sessions: 232,
+  sessions: 300,
   changes: 340,
   tree: 220,
   /** The least the viewer's pane opens at, whatever the window's width. */
@@ -145,9 +145,9 @@ export const layout = $state({
   /** A plugin's section, by source, plugin and section: open rather than
       folded. Absent is folded, which is how one first appears. */
   sectionsOpen: {} as Record<string, boolean>,
-  /** How the sessions pane lists sessions: under their projects, or in
-      groups by what they are doing, across projects. */
-  sessionsView: "project" as SessionsView,
+  /** How the sessions pane orders the projects: the latest used first,
+      or by name. */
+  projectSort: "used" as ProjectSort,
   mode: "working" as Mode,
   focus: "agent" as PaneId,
   /** Counts every request to focus a pane by key, so a pane that already
@@ -160,7 +160,7 @@ export const layout = $state({
   fullScreen: false,
 });
 
-export type SessionsView = "project" | "status";
+export type ProjectSort = "used" | "name";
 
 export function sessionsVisible() {
   return layout.sessionsChosen && !layout.sessionsForced;
@@ -568,10 +568,11 @@ export function togglePane(pane: "sessions" | "changes") {
   saveLayout();
 }
 
-/** Lists the sessions pane one way or the other, and remembers which. */
-export function setSessionsView(view: SessionsView) {
-  if (layout.sessionsView === view) return;
-  layout.sessionsView = view;
+/** Orders the sessions pane's projects one way or the other, and
+    remembers which. */
+export function setProjectSort(sort: ProjectSort) {
+  if (layout.projectSort === sort) return;
+  layout.projectSort = sort;
   saveLayout();
 }
 
@@ -671,8 +672,8 @@ export function loadLayout() {
       }
       layout.sectionsOpen = open;
     }
-    if (v.sessionsView === "project" || v.sessionsView === "status")
-      layout.sessionsView = v.sessionsView;
+    if (v.projectSort === "used" || v.projectSort === "name")
+      layout.projectSort = v.projectSort;
     if (typeof v.sessionsChosen === "boolean")
       layout.sessionsChosen = v.sessionsChosen;
     if (typeof v.changesChosen === "boolean")
@@ -711,7 +712,7 @@ export function saveLayout() {
         processesOpen: layout.processesOpen,
         browserOpen: layout.browserOpen,
         sectionsOpen: layout.sectionsOpen,
-        sessionsView: layout.sessionsView,
+        projectSort: layout.projectSort,
         sessionsChosen: layout.sessionsChosen,
         changesChosen: layout.changesChosen,
         terminalChosen: layout.terminalChosen,

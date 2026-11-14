@@ -368,8 +368,8 @@ pub fn grep(root: &Path, query: &str, paths: Option<&[String]>) -> Result<GrepRe
     }
 
     let workdir = workdir(root)?;
-    let mut command = std::process::Command::new("git");
-    command.current_dir(&workdir).args([
+    let mut command = command(&workdir);
+    command.args([
         "grep",
         "-n",
         "-I",
@@ -448,14 +448,47 @@ fn plain_worktree_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Runs git as a program, with what the caller passes as arguments alone
-/// and never as a line for a shell. The ext transport runs whatever a URL
-/// names, so it is off.
-fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+/// Variables that name a repository, a work tree, an index, objects or the
+/// refs to look under. A process started by `git rebase --exec`, a hook or
+/// `git bisect run` inherits them, and git would follow them away from the
+/// directory it is asked to work in. The user's config and identity
+/// variables are not here: those are settings, not a pointer at a repository.
+const REPOSITORY_VARIABLES: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NAMESPACE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_QUARANTINE_PATH",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+];
+
+/// Every git the core starts is built here: run in `dir`, with the variables
+/// that name a repository cleared so the repository is the one `dir` is in,
+/// and with the ext transport off, since it runs whatever a URL names.
+pub(crate) fn command(dir: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    for name in REPOSITORY_VARIABLES {
+        command.env_remove(name);
+    }
+    command
         .args(["-c", "protocol.ext.allow=never"])
+        .current_dir(dir);
+    command
+}
+
+/// Runs git as a program, with what the caller passes as arguments alone
+/// and never as a line for a shell.
+fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = command(dir)
         .args(args)
-        .current_dir(dir)
         .output()
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => "git is not installed".to_string(),
@@ -573,11 +606,13 @@ fn merged_into_head(project: &Path, reference: &str) -> bool {
         .is_ok()
 }
 
-/// The worktrees the workbench has made for the project: those git knows
-/// about whose path is under `.claude/worktrees`, with enough about each
-/// to say whether it can go. A worktree the user made elsewhere is theirs
-/// and is not listed.
-pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
+/// A worktree as git lists it: its path, the commit it has checked out and
+/// the branch it is on.
+type Listed = (PathBuf, Option<String>, Option<String>);
+
+/// The worktrees git knows of whose path is under the project's
+/// `.claude/worktrees`, each with its path resolved.
+fn made_worktrees(project: &Path) -> Result<Vec<Listed>, String> {
     // Without a repository there are no worktrees, and saying so beats
     // whatever git makes of a directory that is not there.
     open(project)?;
@@ -586,7 +621,7 @@ pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     let listed = run(project, &["worktree", "list", "--porcelain"])?;
 
     // One entry per `worktree` line, the lines under it belonging to it.
-    let mut entries: Vec<(PathBuf, Option<String>, Option<String>)> = Vec::new();
+    let mut entries: Vec<Listed> = Vec::new();
     for line in listed.lines() {
         let line = line.trim_end();
         if let Some(path) = line.strip_prefix("worktree ") {
@@ -604,12 +639,29 @@ pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     }
 
     let base = canonical(&project.join(WORKTREES));
+    Ok(entries
+        .into_iter()
+        .map(|(path, head, branch)| (canonical(&path), head, branch))
+        .filter(|(path, _, _)| path.starts_with(&base))
+        .collect())
+}
+
+/// Where each of the worktrees the workbench has made for the project is,
+/// resolved, and nothing else about them.
+pub fn worktree_paths(project: &Path) -> Result<Vec<PathBuf>, String> {
+    Ok(made_worktrees(project)?
+        .into_iter()
+        .map(|(path, _, _)| path)
+        .collect())
+}
+
+/// The worktrees the workbench has made for the project: those git knows
+/// about whose path is under `.claude/worktrees`, with enough about each
+/// to say whether it can go. A worktree the user made elsewhere is theirs
+/// and is not listed.
+pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     let mut trees: Vec<Worktree> = Vec::new();
-    for (path, head, reference) in entries {
-        let path = canonical(&path);
-        if !path.starts_with(&base) {
-            continue;
-        }
+    for (path, head, reference) in made_worktrees(project)? {
         let Some(name) = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
