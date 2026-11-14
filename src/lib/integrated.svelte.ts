@@ -425,7 +425,9 @@ export function interrupt(key: string) {
   const link = links.get(key);
   if (link === undefined || link.handle === null) return;
   if (link.conversation.current === null && !link.conversation.working) return;
-  link.conversation.interrupting = true;
+  // Only a turn has an end to wait for; with none running the interrupt
+  // stops waiting on what was left at work, and nothing is stopping.
+  if (link.conversation.current !== null) link.conversation.interrupting = true;
   core()
     .integratedInterrupt(link.handle)
     .catch(() => (link.conversation.interrupting = false));

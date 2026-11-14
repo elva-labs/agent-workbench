@@ -241,6 +241,10 @@ export class Conversation {
   #calls = new Map<string, ToolCall>();
   #taskIndex = new Map<string, Task>();
   #turnCount = 0;
+  /** Turns made for runs no turn of the agent's held: what a subagent this
+      window never saw start said, or what a window that came late heard of
+      a turn before it knew one ran. */
+  #loose = new Set<number>();
   #entryCount = 0;
 
   constructor(clock: () => number = Date.now) {
@@ -593,6 +597,9 @@ export class Conversation {
       }
       case "state":
         this.state = event.state;
+        // An interrupt while no turn ran is over once the state is told: it
+        // stopped what the session waited on, or there was nothing to stop.
+        if (this.current === null) this.interrupting = false;
         break;
       case "error":
         this.errors.push({ kind: event.kind, message: event.message });
@@ -621,8 +628,11 @@ export class Conversation {
     this.settings = { ...snapshot.settings };
     this.efforts = [...snapshot.efforts];
     this.state = snapshot.state;
-    if (snapshot.turn && this.current === null) this.#startTurn([], null);
+    if (snapshot.turn && this.current === null) this.#adoptTurn();
     else if (!snapshot.turn && this.current !== null) this.#closeTurn(now);
+    if (!snapshot.turn)
+      for (const entry of this.entries)
+        if (entry.kind === "agent" && this.#loose.has(entry.turn)) this.#closeParts(entry.parts, now);
     const open = new Set(snapshot.requests.map((asked) => asked.request));
     for (const request of this.requests)
       if (request.state === "open" && !open.has(request.request))
@@ -818,9 +828,36 @@ export class Conversation {
     return entry.kind === "agent" ? entry.parts : [];
   }
 
+  /** The turn a snapshot says runs, which this window heard of only from
+      the middle: what it heard of it before the snapshot, in runs no turn
+      held, is that turn's, so the turn's end closes it. */
+  #adoptTurn() {
+    const trailing: Entry[] = [];
+    for (let at = this.entries.length - 1; at >= 0; at--) {
+      const entry = this.entries[at];
+      if (entry.kind === "user") break;
+      if (entry.kind === "agent") {
+        if (!this.#loose.has(entry.turn)) break;
+        trailing.push(entry);
+      }
+    }
+    if (trailing.length === 0) {
+      this.#startTurn([], null);
+      return;
+    }
+    const first = trailing[trailing.length - 1];
+    const id = first.kind === "agent" ? first.turn : ++this.#turnCount;
+    this.#loose.delete(id);
+    const turn = this.turns[id];
+    turn.endedAt = null;
+    for (const entry of trailing) if (entry.kind === "agent") entry.turn = id;
+    this.current = id;
+  }
+
   /** A turn for a run that no turn of the agent's holds, already over. */
   #looseTurn(now: number): number {
     const id = ++this.#turnCount;
+    this.#loose.add(id);
     this.turns[id] = {
       id,
       messages: [],

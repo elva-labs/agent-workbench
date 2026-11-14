@@ -383,3 +383,16 @@ describe("the mode a session starts in", () => {
     expect(startMode(session, linkFor(session.key))).toBe("default");
   });
 });
+
+describe("an interrupt with no turn running", () => {
+  it("says nothing is stopping, though a subagent is still at work", async () => {
+    const { session, handle } = await started();
+    fake.task(handle, null, { kind: "agent", description: "background look" });
+    expect(conversationOf(session.key).working).toBe(true);
+    interrupt(session.key);
+    expect(conversationOf(session.key).interrupting).toBe(false);
+    await settled();
+    expect(fake.calls.some((call) => call.method === "interrupt")).toBe(true);
+    expect(conversationOf(session.key).interrupting).toBe(false);
+  });
+});

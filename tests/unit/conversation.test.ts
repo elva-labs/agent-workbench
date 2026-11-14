@@ -556,3 +556,52 @@ describe("a model changed during a turn", () => {
     expect(conversation.modelAfterTurn).toBeNull();
   });
 });
+
+describe("the order of events that could leave something running", () => {
+  it("closes a block a late window heard of before the snapshot said a turn ran, when that turn ends", () => {
+    const late = new Conversation(() => 9_000);
+    // Heard while the snapshot was asked for: a piece of a block that began
+    // before the window listened, with no turn start in sight.
+    late.apply({ type: "text", block: "mid", parent: null, text: "half of it", done: false });
+    late.restore({
+      state: "working",
+      turn: true,
+      settings: { model: null, mode: null, effort: null },
+      efforts: [],
+      ready: null,
+      requests: [],
+      messages: [],
+    });
+    expect(late.current).not.toBeNull();
+    expect(late.entries.filter((entry) => entry.kind === "agent")).toHaveLength(1);
+    late.apply({ type: "text", block: "mid", parent: null, text: " and the rest", done: false });
+    late.apply({ type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: null, usage: null });
+    const entry = late.entries.find((known) => known.kind === "agent");
+    expect(entry?.kind === "agent" && entry.parts[0]).toMatchObject({ text: "half of it and the rest", done: true });
+    expect(late.current).toBeNull();
+  });
+
+  it("closes such a block when the snapshot says no turn runs", () => {
+    const late = new Conversation(() => 9_000);
+    late.apply({ type: "text", block: "mid", parent: null, text: "half", done: false });
+    late.restore({
+      state: "idle",
+      turn: false,
+      settings: { model: null, mode: null, effort: null },
+      efforts: [],
+      ready: null,
+      requests: [],
+      messages: [],
+    });
+    const entry = late.entries.find((known) => known.kind === "agent");
+    expect(entry?.kind === "agent" && entry.parts[0]).toMatchObject({ done: true });
+  });
+
+  it("stops saying it stops once the state is told while no turn runs", () => {
+    const { fake, conversation, id } = played();
+    fake.task(id, null, { kind: "agent", description: "background look" });
+    conversation.interrupting = true;
+    fake.emit(id, { type: "state", state: "idle" });
+    expect(conversation.interrupting).toBe(false);
+  });
+});
