@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { historyDue, readQuietNext } from "$lib/projects.svelte";
   import { onMount, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import Splitter from "$lib/components/Splitter.svelte";
@@ -239,7 +240,8 @@
       followHistory(() => {
         const dir = orchestrator.dir;
         const open = workspace.open.map((project) => project.path);
-        return dir === null ? open : [...open, dir];
+        const due = untrack(() => historyDue(open, workspace.active));
+        return dir === null ? due : [...due, dir];
       }),
     );
     offs.push(followFocus());
@@ -299,7 +301,9 @@
   // Coming back to the window is when what happened elsewhere is wanted:
   // the histories are read again.
   $effect(() => {
-    if (attention.focused) refreshHistory();
+    if (!attention.focused) return;
+    readQuietNext();
+    refreshHistory();
   });
 
   $effect(() => {

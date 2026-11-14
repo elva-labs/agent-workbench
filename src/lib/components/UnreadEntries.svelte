@@ -11,6 +11,7 @@
     interfaceFont: "interface font",
     userStyles: "custom styles choice",
     pastSessions: "span past sessions stay listed",
+    inactiveAfter: "span a project stays active",
     notifications: "notifications choice",
     chime: "chime choice",
   };
