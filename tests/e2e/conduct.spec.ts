@@ -106,6 +106,42 @@ test.describe("the conductor", () => {
     await expect(page.getByTestId("conduct-ask")).toBeVisible();
   });
 
+  test("gives the keyboard back to the pane that had it when the question is answered", async ({ page }) => {
+    const written = () =>
+      page.evaluate(() =>
+        ((window as unknown as { __written?: [string, string][] }).__written ?? []).map((w) => w[1]).join(""),
+      );
+    for (const answer of ["conduct-no", "conduct-once"]) {
+      await page.keyboard.press(`${MOD}+1`);
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+      await push(page, {
+        id: `c-${answer}`,
+        tool: "start",
+        arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+        session: "session-1",
+      });
+      await expect(page.getByTestId("conduct-ask")).toBeVisible();
+      await page.getByTestId(answer).click();
+      await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+      await expect
+        .poll(() => page.evaluate(() => document.activeElement?.closest("[data-pane='sessions']") != null))
+        .toBe(true);
+    }
+    await page.keyboard.press(`${MOD}+2`);
+    await push(page, {
+      id: "c-agent",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    await expect(page.getByTestId("conduct-ask")).toBeVisible();
+    await page.getByTestId("conduct-no").click();
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+    const before = await written();
+    await page.keyboard.type("y");
+    await expect.poll(written).toBe(before + "y");
+  });
+
   test("asks before starting a session, then starts it and answers with its id", async ({
     page,
   }) => {
