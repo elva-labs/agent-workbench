@@ -65,19 +65,19 @@ export function setInactiveAfter(value: InactiveAfter) {
 }
 
 /** The user brought the project forward, or started or picked a session
-    in it: it counts as used now. */
+    in it: it counts as used now. Nothing else stamps it: neither the window
+    putting a project in front as it opens, nor an agent asking to show
+    something in one. */
 export function touch(path: string, now = Date.now()) {
   projects.used[path] = now;
   saveUsed();
 }
 
-/** Keeps the record of the projects still open and drops the rest, so the
-    record holds no more than the window does. */
-export function keepUsed(open: string[]) {
-  const kept = new Set(open);
-  const gone = Object.keys(projects.used).filter((path) => !kept.has(path));
-  if (gone.length === 0) return;
-  for (const path of gone) delete projects.used[path];
+/** Drops a closed project from the record, so the record holds no more
+    than the projects the user keeps open. */
+export function forgetUsed(path: string) {
+  if (!(path in projects.used)) return;
+  delete projects.used[path];
   saveUsed();
 }
 

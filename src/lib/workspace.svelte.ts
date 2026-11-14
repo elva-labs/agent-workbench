@@ -11,7 +11,7 @@ import {
   sessions,
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
-import { keepUsed, touch } from "$lib/projects.svelte";
+import { forgetUsed, touch } from "$lib/projects.svelte";
 
 /**
  * The projects this window has open.
@@ -110,6 +110,7 @@ export async function openPath(path: string): Promise<boolean> {
   const already = workspace.open.find((project) => project.path === path);
   if (already !== undefined) {
     activate(already.path);
+    touch(already.path);
     return true;
   }
 
@@ -117,6 +118,7 @@ export async function openPath(path: string): Promise<boolean> {
     const info = await core().projectInfo(path);
     if (!isOpen(info.path)) workspace.open.push(info);
     activate(info.path);
+    touch(info.path);
     return true;
   } catch (error) {
     workspace.error = String(error);
@@ -126,8 +128,6 @@ export async function openPath(path: string): Promise<boolean> {
 
 export function activate(path: string) {
   workspace.active = path;
-  keepUsed(workspace.open.map((project) => project.path));
-  touch(path);
   // Follow the project with its own most recent session rather than leaving
   // the pane pointed at another project's terminal.
   const own = forProject(path);
@@ -144,13 +144,15 @@ export function activate(path: string) {
   }
 }
 
-/** Brings a session forward, and its project with it when that is another.
-    False for a key no row has. */
+/** The user picked a session: it comes forward, and its project with it
+    when that is another, and the project counts as used. False for a key
+    no row has. */
 export function goTo(key: string): boolean {
   const session = byKey(key);
   if (session === null) return false;
   if (session.project !== workspace.active) activate(session.project);
   select(key);
+  touch(session.project);
   return true;
 }
 
@@ -202,7 +204,7 @@ export function close(path: string) {
   closeShells(path);
   void closeOwner({ kind: "project", path });
   workspace.open = workspace.open.filter((project) => project.path !== path);
-  keepUsed(workspace.open.map((project) => project.path));
+  forgetUsed(path);
 
   if (workspace.active !== path) {
     save();

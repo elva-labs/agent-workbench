@@ -221,7 +221,7 @@
       and the pane scrolls to where it lands among the active ones, with
       the cursor on its header. */
   async function wake(path: string) {
-    activate(path);
+    bringForward(path);
     cursor = `project:${path}`;
     await tick();
     nav
@@ -343,7 +343,15 @@
       the session starts there, or the choice opens under its name. */
   function newIn(path: string) {
     if (workspace.active !== path) activate(path);
+    touch(path);
     offer(path);
+  }
+
+  /** The user brought a project forward from the pane: it is on screen,
+      and counts as used. */
+  function bringForward(path: string) {
+    activate(path);
+    touch(path);
   }
 
   /** The account the session on screen runs under, for the foot, which
@@ -357,7 +365,7 @@
   function startOrchestrator() {
     const dir = orchestrator.dir;
     if (dir === null) return;
-    activate(dir);
+    bringForward(dir);
     offer(dir);
   }
 
@@ -490,12 +498,12 @@
     if (workspace.open.length === 0) out.push({ id: "open", run: () => void pick() });
     const dir = pinned;
     if (dir !== null) {
-      out.push({ id: `project:${dir}`, run: () => activate(dir) });
+      out.push({ id: `project:${dir}`, run: () => bringForward(dir) });
       out.push(...body(dir));
     }
     for (const project of split.active) {
       const path = project.path;
-      out.push({ id: `project:${path}`, run: () => activate(path) });
+      out.push({ id: `project:${path}`, run: () => bringForward(path) });
       out.push(...body(path));
     }
     if (split.inactive.length > 0) {
@@ -608,7 +616,6 @@
       one under another project brings that project forward first. */
   function choose(key: string) {
     if (!goTo(key)) return;
-    if (workspace.active !== null) touch(workspace.active);
     focusPane("agent");
   }
 
@@ -1118,7 +1125,7 @@
     <button
       class="row project-row"
       tabindex="-1"
-      onclick={() => activate(project.path)}
+      onclick={() => bringForward(project.path)}
       oncontextmenu={(e) => openProjectMenu(project.path, e)}
       title={project.path}
     >
@@ -1153,7 +1160,7 @@
     data-row="project:{dir}"
     data-testid="project-head"
   >
-    <button class="row project-row" tabindex="-1" onclick={() => activate(dir)} title={dir} data-testid="orchestrator-project">
+    <button class="row project-row" tabindex="-1" onclick={() => bringForward(dir)} title={dir} data-testid="orchestrator-project">
       <span class="name">{LABEL}</span>
     </button>
     <button

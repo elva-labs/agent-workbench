@@ -1232,7 +1232,7 @@ test.describe("several projects", () => {
       ([one, two]) =>
         localStorage.setItem(
           "workbench.used",
-          JSON.stringify({ [one]: Date.now() - 60_000, [two]: Date.now() - 1000 }),
+          JSON.stringify({ [one]: Date.now() - 1000, [two]: Date.now() - 60_000 }),
         ),
       [ONE, TWO],
     );
@@ -1241,7 +1241,6 @@ test.describe("several projects", () => {
     const top = async (name: string) =>
       (await page.locator(SESSIONS).locator("[data-row^='project:']", { hasText: name }).boundingBox())!.y;
 
-    // One is on screen, so it was brought forward as the window opened.
     await expect(page.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Last used");
     expect(await top("one")).toBeLessThan(await top("two"));
     // Picking two uses it, but nothing moves under the pointer or the

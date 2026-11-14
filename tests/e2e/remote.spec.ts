@@ -143,3 +143,58 @@ test.describe("a remote project", () => {
     await expect(page.getByTestId("project-error")).toHaveCount(0);
   });
 });
+
+// The projects are ordered by when the user last used each. The window
+// putting one in front as it opens, or an agent asking to show something
+// in one, is not the user using it, and moves nothing.
+test.describe("when each project was last used", () => {
+  const REMOTE = "ssh://lab/srv/remote";
+  const A = "/home/ada/dev/alpha";
+  const B = "/home/ada/dev/beta";
+  const HOUR = 3600 * 1000;
+  const heads = (page: Page) =>
+    page.locator(SESSIONS).locator("[data-row^='project:'] .name");
+
+  test("stays as it was while the window opens, a remote project answering late", async ({
+    page,
+  }) => {
+    await installFakeCore(page, {
+      open: [REMOTE, A, B],
+      active: REMOTE,
+      used: { [A]: HOUR, [REMOTE]: 2 * HOUR, [B]: 3 * HOUR },
+      held: [REMOTE],
+    });
+    await page.goto("/");
+    // Alpha is in front while the remote project waits for its machine.
+    await expect(heads(page)).toHaveText(["alpha", "beta"]);
+    await expect(page.locator(`[data-row="project:${A}"]`)).toHaveClass(/on/);
+
+    await page.evaluate((path) => {
+      (window as unknown as { __describe: (path: string) => void }).__describe(path);
+    }, REMOTE);
+    await expect(page.locator(`[data-row="project:${REMOTE}"]`)).toHaveClass(/on/);
+    await expect(heads(page)).toHaveText(["alpha", "remote", "beta"]);
+  });
+
+  test("stays as it was when an agent shows something in another project", async ({
+    page,
+  }) => {
+    await installFakeCore(page, {
+      open: [A, B, REMOTE],
+      used: { [A]: HOUR, [REMOTE]: 2 * HOUR, [B]: 3 * HOUR },
+    });
+    await page.goto("/");
+    await expect(heads(page)).toHaveText(["alpha", "remote", "beta"]);
+    await page.evaluate((cwd) => {
+      (window as unknown as { __showRequest: (request: unknown) => void }).__showRequest({
+        path: `${cwd}/src/main.rs`,
+        from: 1,
+        to: 1,
+        note: null,
+        cwd,
+      });
+    }, B);
+    await expect(page.locator(`[data-row="project:${B}"]`)).toHaveClass(/on/);
+    await expect(heads(page)).toHaveText(["alpha", "remote", "beta"]);
+  });
+});

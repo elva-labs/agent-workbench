@@ -87,13 +87,16 @@ active, is drawn once they have been, in whichever half they put it.
 
 The order of the projects is the user's own: the order button on the title
 row is a menu of two, Last used, the latest first, which is where every
-setup starts, or Name. Last used is when the user last brought the project
-forward, or started or picked a session in it; for a project with no such
-record, when one of its own transcripts was last written. What the agents do
-keeps a project out of Inactive but never moves it. When each project was
-last used is kept in the window's own storage, for the projects open and
-no others. The choice of order is kept there too, and Inactive is listed in
-the same order. The sessions inside a project are in the order they last
+setup starts, or Name. Last used is when the user last opened the project
+or brought it forward, or started or picked a session in it, from the pane,
+the palette or the chord that goes to the next session needing them; for a
+project with no such record, when one of its own transcripts was last
+written. The window putting a project in front as it opens, and an agent
+asking to show something in one, is not the user using it. What the agents
+do keeps a project out of Inactive but never moves it. When each project
+was last used is kept in the window's own storage, and a project's record
+goes when it is closed. The choice of order is kept there too, and Inactive
+is listed in the same order. The sessions inside a project are in the order they last
 changed, the latest first.
 
 While the pointer is over the pane or the keyboard is in it, the order

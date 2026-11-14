@@ -11,6 +11,7 @@
 import type { AgentId } from "$lib/core";
 import { focusPane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
+import { touch } from "$lib/projects.svelte";
 import {
   create,
   historyLabel,
@@ -65,6 +66,7 @@ export function offered(): HistoryEntry[] {
 /** Starts the session as a live one and closes. */
 export function pickResume(entry: HistoryEntry) {
   if (resume.project === null) return;
+  touch(resume.project);
   create(resume.project, entry.id, entry.agent, entry.cwd ?? null, null, null, entry.account);
   closeResume();
   focusPane("agent");

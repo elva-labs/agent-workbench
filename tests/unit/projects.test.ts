@@ -19,7 +19,6 @@ import {
   adoptInactiveAfter,
   inactiveAfterSettings,
   isActive,
-  keepUsed,
   lastActive,
   lastUsed,
   loadUsed,
@@ -46,7 +45,7 @@ import {
   since,
   started,
 } from "$lib/sessions.svelte";
-import { activate, close, goTo, reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { activate, close, goTo, openPath, reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 10, 13, 12);
@@ -106,34 +105,44 @@ describe("last used", () => {
     expect(lastActive("/repo")).toBeNull();
   });
 
-  // The record holds the projects the window has open and no others, so
-  // it does not grow with every project ever opened.
-  it("forgets a project once it is closed", () => {
+  // The record holds no project once it is closed, so it does not grow
+  // with every project ever opened; a project still on its way in keeps
+  // its own.
+  it("forgets a project once it is closed, and only then", () => {
     workspace.open.push(
       { path: "/a", name: "a", repository: "/a", isGit: true },
       { path: "/b", name: "b", repository: "/b", isGit: true },
     );
-    activate("/a");
-    activate("/b");
-    expect(Object.keys(projects.used).sort()).toEqual(["/a", "/b"]);
+    touch("/a", NOW - DAY);
+    touch("/b", NOW - 2 * DAY);
+    touch("/arriving", NOW - 3 * DAY);
     close("/a");
-    expect(Object.keys(projects.used)).toEqual(["/b"]);
+    expect(projects.used).toEqual({ "/b": NOW - 2 * DAY, "/arriving": NOW - 3 * DAY });
     expect(JSON.parse(localStorage.getItem("workbench.used")!)).not.toHaveProperty("/a");
-
-    touch("/gone", NOW);
-    keepUsed(["/b"]);
-    expect(Object.keys(projects.used)).toEqual(["/b"]);
   });
 
-  it("is stamped when a project is brought forward, and kept between runs", () => {
-    workspace.open.push({ path: "/repo", name: "repo", repository: "/repo", isGit: true });
+  // Only what the user does stamps a project: the window or an agent
+  // bringing one forward does not.
+  it("is stamped by the user alone, and kept between runs", async () => {
+    workspace.open.push(
+      { path: "/repo", name: "repo", repository: "/repo", isGit: true },
+      { path: "/other", name: "other", repository: "/other", isGit: true },
+    );
     activate("/repo");
-    const at = projects.used["/repo"];
-    expect(at).toBeGreaterThan(0);
+    expect(projects.used).toEqual({});
+
+    const row = create("/other");
+    started(row.key, "pty-1", "s-1");
+    goTo(row.key);
+    const at = projects.used["/other"];
+    expect(Date.now() - at).toBeLessThan(1000);
+    expect(projects.used["/repo"]).toBeUndefined();
+    await openPath("/repo");
+    expect(projects.used["/repo"]).toBeGreaterThanOrEqual(at);
 
     projects.used = {};
     loadUsed();
-    expect(projects.used["/repo"]).toBe(at);
+    expect(projects.used["/other"]).toBe(at);
 
     localStorage.setItem("workbench.used", "not json");
     projects.used = {};
