@@ -14,18 +14,19 @@ import { core, type Settings } from "$lib/core";
 import { adoptWorkflows, workflowsSettings } from "$lib/workflows.svelte";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptPastSessions, pastSessionsSettings } from "$lib/sessions.svelte";
-import { adoptKeys, keys } from "$lib/keys.svelte";
+import { adoptKeys, keysSettings } from "$lib/keys.svelte";
 import { adoptNotify, notifySettings } from "$lib/notify.svelte";
-import { onSettled, sending } from "$lib/persist";
+import { onRefused, onSettled, persist, sending } from "$lib/persist";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
 import { adoptUserStylesSetting, followStyles, userStyles } from "$lib/userStyles.svelte";
+import { adoptUnread } from "$lib/unread.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
 /** The settings as the window has them now. */
 export function currentSettings(): Settings {
   return {
     ...themeSettings(),
-    keys: { ...keys.bindings },
+    keys: keysSettings(),
     hooks: hooksSettings(),
     accounts: accountsSettings(),
     workflows: workflowsSettings(),
@@ -35,8 +36,16 @@ export function currentSettings(): Settings {
   };
 }
 
+/** The settings last taken from the core, and the news that was let pass
+    because a change of the window's own was on its way. */
+let known: Settings | null = null;
+let passed: Settings | null = null;
+
 /** Takes the core's settings into every store that holds a part of them. */
 export function adopt(settings: Settings) {
+  known = settings;
+  passed = null;
+  adoptUnread(settings.unreadEntries);
   adoptTheme(settings);
   adoptKeys(settings.keys ?? {});
   adoptUserStylesSetting(settings.userStyles);
@@ -65,18 +74,46 @@ export async function followSettings(): Promise<() => void> {
   // Only settings the window took count: news let pass because a write is
   // in flight is not taken, and the answer to that write is.
   let heard = false;
+  known = null;
+  passed = null;
   onSettled((settings) => {
     heard = true;
     adopt(settings);
   });
+  // A refused change takes the window back to what is stored: the file when
+  // it can be read whole, otherwise the news that was let pass, otherwise
+  // what the window last took.
+  onRefused(async () => {
+    heard = true;
+    let found: Awaited<ReturnType<ReturnType<typeof core>["settingsGet"]>> | null = null;
+    try {
+      found = await core().settingsGet();
+    } catch {
+      found = null;
+    }
+    if (found !== null && found.stored && !found.unreadable) adopt(found.settings);
+    else if (passed !== null) adopt(passed);
+    else if (known !== null) adopt(known);
+  });
   let stop = () => {};
+  let stopMissing = () => {};
   const stopStyles = await followStyles();
   try {
     stop = await core().onSettingsChanged((settings) => {
-      if (sending()) return;
+      if (sending()) {
+        passed = settings;
+        return;
+      }
       heard = true;
       adopt(settings);
     });
+    // A file that was there and is gone: what the window holds is handed
+    // over, as at the start of a machine with no file, so the next change is
+    // laid over it and not over the defaults.
+    stopMissing =
+      (await core().onSettingsMissing?.(() => {
+        void persist(currentSettings());
+      })) ?? stopMissing;
     const found = await core().settingsGet();
     // A file that could not be read whole says nothing about the settings:
     // the window keeps what it has, and takes the file when the core
@@ -90,7 +127,9 @@ export async function followSettings(): Promise<() => void> {
   }
   return () => {
     stop();
+    stopMissing();
     stopStyles();
     onSettled(null);
+    onRefused(null);
   };
 }

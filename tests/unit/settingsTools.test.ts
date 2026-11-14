@@ -219,6 +219,18 @@ describe("a change", () => {
     sessions.all = [];
   });
 
+  it("is told the core refused it, when the user allowed it and the core could not keep it", async () => {
+    refuseSettings = "the settings file could not be read, so nothing was saved";
+    const done = handle(request("settings_change", { palette: "amber" }));
+    await settle();
+    allowChange();
+    await done;
+    expect(answers[0].error).toMatch(/allowed the change, but it could not be saved/);
+    expect(answers[0].error).toMatch(/could not be read/);
+    expect(answers[0].content).toBeNull();
+    expect(settingsAsk.undo).toBeNull();
+  });
+
   it("changes nothing when the user declines, and says so", async () => {
     const done = handle(request("settings_change", { look: "terminal" }));
     await settle();

@@ -579,3 +579,51 @@ test("turns the notifications and the chime on and off, and keeps them", async (
   await expect(page.getByTestId("notifications-off")).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("chime-on")).toHaveAttribute("aria-checked", "true");
 });
+
+test.describe("a change the settings file refuses", () => {
+  test("is said over the window wherever it was made, and the window shows what is stored", async ({
+    page,
+  }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.evaluate(() => {
+      (window as unknown as { __refuseSettings?: string }).__refuseSettings =
+        "the settings file could not be read, so nothing was saved";
+    });
+    const before = await page.evaluate(() => document.documentElement.dataset.palette);
+    await page.getByTestId("palette-rose").click();
+    const refused = page.getByTestId("settings-refused");
+    await expect(refused).toBeVisible();
+    await expect(refused).toContainText("could not be read");
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.dataset.palette))
+      .toBe(before);
+
+    await page.getByTestId("settings-refused-dismiss").click();
+    await expect(refused).toBeHidden();
+  });
+});
+
+test.describe("what the file holds that is not used", () => {
+  test("is named on the keys tab with the rule it breaks", async ({ page }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-keys").click();
+    await expect(page.getByTestId("unread-entry")).toHaveCount(0);
+    await page.evaluate(() => {
+      const w = window as unknown as { __settingsChanged?: (settings: unknown) => void };
+      w.__settingsChanged?.({
+        unreadEntries: [
+          {
+            field: "keys",
+            section: "",
+            name: "find",
+            reason: "the chord for find is not a key with shift and alt",
+          },
+        ],
+      });
+    });
+    const entry = page.getByTestId("unread-entry");
+    await expect(entry).toBeVisible();
+    await expect(entry).toContainText("find");
+    await expect(entry).toContainText("is not a key with shift and alt");
+  });
+});

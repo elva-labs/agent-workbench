@@ -10,7 +10,7 @@ import type {
 } from "$lib/core";
 import { AGENT_ORDER, modelLabel, mostCapable, sameModel } from "$lib/models";
 import { core } from "$lib/core";
-import { persist } from "$lib/persist";
+import { persist, recovering } from "$lib/persist";
 
 /**
  * The workflows a session can follow.
@@ -308,15 +308,9 @@ function edit(name: string, change: (draft: Workflow) => string | null): string 
  */
 function keep() {
   workflows.refused = null;
-  void Promise.resolve(save()).then(async (refused) => {
+  void Promise.resolve(save()).then((refused) => {
     if (refused === null || refused === undefined) return;
     workflows.refused = refused;
-    try {
-      const stored = await core().settingsGet();
-      if (!stored.unreadable) adoptWorkflows(stored.settings.workflows);
-    } catch {
-      // A core that cannot say what it holds leaves the window as it is.
-    }
   });
 }
 
@@ -756,7 +750,7 @@ export async function setWorkflows(next: Settings["workflows"]): Promise<string 
   adoptWorkflows(next);
   const refused = (await save()) ?? null;
   if (refused !== null) {
-    adoptWorkflows(before);
+    if (!recovering()) adoptWorkflows(before);
     workflows.refused = refused;
   }
   return refused;
@@ -818,7 +812,7 @@ export async function takeWorkflowChange(change: WorkflowChange): Promise<() => 
 }
 
 function save(): Promise<string | null> {
-  return persist({ workflows: workflowsSettings() });
+  return persist({ workflows: workflowsSettings() }, { quiet: true });
 }
 
 /** Test seam. */

@@ -11,6 +11,7 @@ const state = {
   holdingRead: false,
   heldRead: null as (() => void) | null,
   changed: null as ((settings: Settings) => void) | null,
+  missing: null as (() => void) | null,
   noCore: false,
   refuse: null as string | null,
   /** The file is there and does not parse. */
@@ -46,6 +47,8 @@ vi.mock("$lib/core", () => ({
           ? { stored: false, settings: DEFAULTS }
           : { stored: true, settings: state.stored };
       if (!state.holdingRead) return answer;
+      // Only the first read is held; a later one answers at once.
+      state.holdingRead = false;
       return new Promise((resolve) => (state.heldRead = () => resolve(answer)));
     },
     settingsSet(change: Partial<Settings>): Promise<Settings> {
@@ -70,6 +73,12 @@ vi.mock("$lib/core", () => ({
         state.changed = null;
       };
     },
+    async onSettingsMissing(handler: () => void) {
+      state.missing = handler;
+      return () => {
+        state.missing = null;
+      };
+    },
     async hookStatus(project: string) {
       state.hookCalls.push(`status:${project}`);
       return { installed: false, settings: "", events: "" };
@@ -87,7 +96,9 @@ vi.mock("$lib/core", () => ({
 
 import { ensure, hook, loadHooks, reset as resetHooks, setEverywhere } from "$lib/hook.svelte";
 import { PRESETS, applyPreset, keys, resetKeys, setBinding } from "$lib/keys.svelte";
-import { resetPersist } from "$lib/persist";
+import { flush, resetPersist } from "$lib/persist";
+import { refusal, showRefusal } from "$lib/refusal.svelte";
+import { unread } from "$lib/unread.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { adopt, currentSettings, followSettings } from "$lib/preferences.svelte";
 import { loadTheme, setLook, setPalette, theme } from "$lib/theme.svelte";
@@ -104,11 +115,14 @@ beforeEach(() => {
   state.holdingRead = false;
   state.heldRead = null;
   state.changed = null;
+  state.missing = null;
   state.noCore = false;
   state.refuse = null;
   state.unreadable = false;
   state.hookCalls = [];
   localStorage.clear();
+  showRefusal(null);
+  unread.entries = [];
   resetPersist();
   resetKeys();
   resetHooks();
@@ -232,7 +246,7 @@ describe("followSettings", () => {
     expect(accounts.overrides).toEqual({ "/p": "Work" });
   });
 
-  it("takes the file's read when the news that overtook it was let pass and its write was refused", async () => {
+  it("takes the newer file, not the older read, when the news that overtook it was let pass and its write was refused", async () => {
     state.stored = { ...DEFAULTS, look: "terminal" };
     state.holdingRead = true;
     state.holding = true;
@@ -241,16 +255,32 @@ describe("followSettings", () => {
     await vi.waitFor(() => expect(state.heldRead).not.toBeNull());
     // A change made before the first read answers is on its way, news of
     // another change arrives meanwhile and is let pass, and the write is
-    // then refused: nothing has been taken yet.
+    // then refused: nothing has been taken yet. The file holds the news.
     setPalette("amber");
-    state.changed?.({ ...DEFAULTS, look: "terminal", palette: "indigo" });
+    state.stored = { ...DEFAULTS, look: "terminal", palette: "indigo" };
+    state.changed?.(state.stored);
     expect(theme.look).toBe("modern");
     state.held.forEach((release) => release());
     await settle();
+    expect(theme.palette).toBe("indigo");
+    expect(theme.look).toBe("terminal");
+    // The first read answers last, older than what was taken, and is passed over.
     state.heldRead?.();
     await following;
-    expect(theme.look).toBe("terminal");
-    expect(theme.palette).toBe("teal");
+    expect(theme.palette).toBe("indigo");
+  });
+
+  it("takes the news that was let pass when a refused write finds the file unreadable", async () => {
+    state.stored = { ...DEFAULTS };
+    await followSettings();
+    state.holding = true;
+    state.refuse = "the settings file could not be read";
+    setPalette("amber");
+    state.unreadable = true;
+    state.changed?.({ ...DEFAULTS, palette: "indigo" });
+    state.held.forEach((release) => release());
+    await settle();
+    expect(theme.palette).toBe("indigo");
   });
 
   it("counts a write's answer as heard, so the older read does not undo it", async () => {
@@ -362,11 +392,76 @@ describe("a change in the window", () => {
     expect(theme.look).toBe("terminal");
   });
 
-  it("holds in the window when the core refuses it", async () => {
+  it("goes back to what is stored when the core refuses it, and says why", async () => {
     state.refuse = "the disk is full";
     setPalette("amber");
     await settle();
-    expect(theme.palette).toBe("amber");
+    expect(theme.palette).toBe("teal");
+    expect(refusal.reason).toBe("the disk is full");
+    state.refuse = null;
+    setPalette("rose");
+    await settle();
+    expect(refusal.reason).toBeNull();
+  });
+
+  it("takes the file as it is now when a change is refused, even when no news of it arrived", async () => {
+    state.refuse = "the disk is full";
+    // The file was edited by hand and the news has not reached the window.
+    state.stored = { ...DEFAULTS, palette: "rose", look: "terminal" };
+    setPalette("amber");
+    await settle();
+    expect(theme.palette).toBe("rose");
+    expect(theme.look).toBe("terminal");
+  });
+
+  it("keeps the change a refusal could not be recovered from, and says why", async () => {
+    state.unreadable = true;
+    state.refuse = "the settings file could not be read";
+    setPalette("amber");
+    await settle();
+    expect(theme.palette).toBe("teal");
+    expect(refusal.reason).toContain("could not be read");
+  });
+
+  it("tells an agent's change that the core refused it", async () => {
+    state.refuse = "the disk is full";
+    setPalette("amber");
+    expect(await flush()).toBe("the disk is full");
+    state.refuse = null;
+    setPalette("rose");
+    expect(await flush()).toBeNull();
+  });
+
+  it("hands over what it holds when the file goes missing", async () => {
+    await followSettings();
+    setPalette("indigo");
+    await settle();
+    state.sets = [];
+    state.missing?.();
+    await settle();
+    expect(state.sets).toHaveLength(1);
+    expect(state.sets[0].palette).toBe("indigo");
+    expect(Object.keys(state.sets[0].keys ?? {}).length).toBeGreaterThan(0);
+  });
+
+  it("leaves a key the file holds and the app does not use out of what it sends", async () => {
+    await followSettings();
+    state.changed?.({
+      ...DEFAULTS,
+      unreadEntries: [
+        { field: "keys", section: "", name: "find", reason: "the chord for find is not a key" },
+      ],
+    });
+    expect(unread.entries).toHaveLength(1);
+    setPalette("amber");
+    setBinding("review", { key: "g", shift: false, alt: false });
+    await settle();
+    const sentKeys = state.sets.at(-1)?.keys ?? {};
+    expect(sentKeys.review).toEqual({ key: "g", shift: false, alt: false });
+    expect(sentKeys.find).toBeUndefined();
+    setBinding("find", { key: "f", shift: true, alt: true });
+    await settle();
+    expect(state.sets.at(-1)?.keys?.find).toEqual({ key: "f", shift: true, alt: true });
   });
 });
 

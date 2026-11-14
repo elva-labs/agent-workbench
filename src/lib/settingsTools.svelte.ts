@@ -23,6 +23,7 @@
  * refused with a word saying they are the user's, in the settings.
  */
 
+import { flush } from "$lib/persist";
 import { core, type SettingsRequest, type UnreadWorkflow } from "$lib/core";
 import {
   COLOUR_TOKENS,
@@ -750,6 +751,16 @@ async function take(next: Next): Promise<() => void> {
   if (next.interfaceFont !== undefined) setSans(next.interfaceFont);
   if (next.keys !== undefined) setBindings(next.keys);
   if (next.userStyles !== undefined) setUserStyles(next.userStyles);
+  // The settings are changed in the window first and sent after. The agent
+  // is told what the core did with them, not what the window shows.
+  const refusal = await flush();
+  if (refusal !== null) {
+    if (next.css !== undefined) void core().stylesSet(sheet).catch(() => {});
+    workflowsBack?.();
+    throw new Error(
+      `The user allowed the change, but it could not be saved: ${refusal.replace(/\.$/, "")}. Nothing changed.`,
+    );
+  }
   return () => {
     if (next.css !== undefined) void core().stylesSet(sheet).catch(() => {});
     if (next.userStyles !== undefined) setUserStyles(before.userStyles);

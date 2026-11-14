@@ -630,6 +630,15 @@ export interface Settings {
     /** The workflows in the file that are not used, carried as written. */
     unread?: UnreadWorkflow[];
   };
+  /** What the file holds in the keys, the hooks and the accounts that is
+      not used, each with the rule it breaks. The core writes it back as it
+      was. */
+  unreadEntries?: {
+    field: "keys" | "hooks" | "accounts";
+    section: string;
+    name: string;
+    reason: string;
+  }[];
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
   pastSessions: PastSessions;
@@ -842,6 +851,9 @@ export interface Core {
   /** The settings changed, by this window, another, or an edit to the
       file. */
   onSettingsChanged(handler: (settings: Settings) => void): Promise<() => void>;
+  /** The settings file was there and is gone: the window hands over the
+      settings it holds. A core that cannot say leaves it out. */
+  onSettingsMissing?(handler: () => void): Promise<() => void>;
   /** The user's own stylesheet on the machine the window runs on. */
   stylesGet(): Promise<UserStyles>;
   /** Writes it, once it passes; rejects with the reason when it does not.
@@ -1206,6 +1218,9 @@ const tauriCore: Core = {
     return listen<Settings>("settings_changed", (event) =>
       handler(event.payload),
     );
+  },
+  async onSettingsMissing(handler) {
+    return listen("settings_missing", () => handler());
   },
   stylesGet: () => invoke<UserStyles>("styles_get"),
   stylesSet: (css) => invoke<UserStyles>("styles_set", { css }),

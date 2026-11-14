@@ -76,6 +76,7 @@
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
+  import UnreadEntries from "$lib/components/UnreadEntries.svelte";
   import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
 
   /**
@@ -550,6 +551,7 @@
         {:else if tab === "live"}
           <section class="live" class:lit bind:this={live} data-testid="settings-live">
             <h3>Live updates</h3>
+            <UnreadEntries field="hooks" />
             <p class="note">
               The watcher sees every change in the project. Agent hooks, written into the project's
               <code>.claude</code> and <code>.codex</code> settings and kept out of its repository,
@@ -656,6 +658,7 @@
         {:else if tab === "accounts"}
           <section data-testid="settings-accounts">
             <h3>Accounts</h3>
+            <UnreadEntries field="accounts" />
             <p class="note">
               An account is a login kept apart from the others: Claude Code's in a configuration
               directory of its own, Codex's in a home of its own, each with that agent's settings and
@@ -955,6 +958,7 @@
           </div>
         {:else}
           <h3>Keys</h3>
+          <UnreadEntries field="keys" />
           <p class="note">
             Every chord carries {describe({ key: "", shift: false, alt: false }).replace(/\+$/, "")}: the
             keys without it belong to the agent. Pick a preset, or click a chord and press a new one.

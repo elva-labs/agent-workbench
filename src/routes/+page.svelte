@@ -14,6 +14,7 @@
   import Palette from "$lib/components/Palette.svelte";
   import { closePalette, openCommands, openGoTo, palette } from "$lib/palette.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
+  import RefusalBanner from "$lib/components/RefusalBanner.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
   import {
@@ -714,6 +715,7 @@
   <ConductAsk />
 {/if}
 <SettingsAsk />
+<RefusalBanner />
 <UserStyles />
 
 
