@@ -4,6 +4,8 @@
   import { linkFor, resume, trust } from "$lib/integrated.svelte";
   import { close, type Session } from "$lib/sessions.svelte";
   import { projectLabel } from "$lib/workspace.svelte";
+  import { speaker } from "$lib/thread";
+  import Dock from "./Dock.svelte";
   import Icon from "./Icon.svelte";
   import Thread from "./Thread.svelte";
 
@@ -102,6 +104,8 @@
             >{session.status === "failed" ? "Try again" : "Resume"}</button
           >
         </div>
+      {:else}
+        <Dock {conversation} sessionKey={session.key} agent={speaker(conversation, conversation.settings.model)} root={folder} />
       {/if}
     </div>
   {/if}

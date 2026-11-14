@@ -203,3 +203,128 @@ test.describe("an integrated session", () => {
       .toMatchObject({ options: { session: "integrated-session-1" } });
   });
 });
+
+test.describe("what the agent waits on the user for", () => {
+  const ASK = `f.send("${H}", crypto.randomUUID(), "test it"); f.startTurn("${H}");
+    const c = f.startTool("${H}", "Bash", { command: "cargo test --workspace" }, { kind: "command" });
+    f.ask("${H}", "Bash", { command: "cargo test --workspace" }, { call: c, session: "Bash(cargo test:*) for the rest of this session", always: "Bash(cargo test:*) in this project's uncommitted local settings" });`;
+
+  test("docks a permission over the composer, in words, with what each choice keeps", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, ASK);
+    const dock = page.getByTestId("permission-dock");
+    await expect(dock).toContainText("Claude asks to run cargo test --workspace");
+    const choices = dock.locator("[data-choice]");
+    await expect(choices).toHaveText(["1Allow once", "2Allow for this session", "3Always allow", "4Deny", "5Deny and stop"]);
+    const means = page.getByTestId("choice-means");
+    await expect(means).toHaveText("Allows this call and remembers nothing.");
+    await page.getByTestId("choice-allowAlways").hover();
+    await expect(means).toHaveText(
+      "Allows this call and remembers Bash(cargo test:*) in this project's uncommitted local settings.",
+    );
+    // Docked under the thread, not in it, and the thread says what it waits on.
+    const thread = (await page.getByTestId("thread").boundingBox())!;
+    const box = (await dock.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(thread.y + thread.height - 1);
+    await expect(page.getByTestId("now")).toHaveText("Waiting for your answer");
+    await page.getByTestId("choice-allow").click();
+    await expect(dock).toHaveCount(0);
+    expect((await calls(page)).find((call) => call.method === "answer")).toMatchObject({ choice: "allow" });
+  });
+
+  test("is answered from the keyboard, the arrows moving between the choices and a digit picking one", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, ASK);
+    await page.getByTestId("choice-allow").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByTestId("choice-allowSession")).toBeFocused();
+    await expect(page.getByTestId("choice-means")).toContainText("for the rest of this session");
+    await page.keyboard.press("ArrowLeft");
+    await page.keyboard.press("ArrowLeft");
+    await expect(page.getByTestId("choice-cancel")).toBeFocused();
+    await page.keyboard.press("2");
+    await expect(page.getByTestId("permission-dock")).toHaveCount(0);
+    expect((await calls(page)).find((call) => call.method === "answer")).toMatchObject({ choice: "allowSession" });
+  });
+
+  test("takes the user's words with a denial", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, ASK);
+    await page.getByTestId("choice-deny").click();
+    await page.getByTestId("deny-words").fill("run only the core's tests");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("permission-dock")).toHaveCount(0);
+    expect((await calls(page)).find((call) => call.method === "answer")).toMatchObject({
+      choice: "deny",
+      message: "run only the core's tests",
+    });
+  });
+
+  test("names a subagent that asks, and says how many more wait", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "explore"); f.startTurn("${H}");
+       const t = f.startTool("${H}", "Task", { description: "Explore the history scan", prompt: "look" }, { kind: "agent" });
+       f.emit("${H}", { type: "permissionAsked", request: "sub-1", call: null, parent: t, tool: "Read", input: { file_path: "${PROJECT}/src/a.ts" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }, { choice: "deny", remembers: null, message: false }] });
+       f.ask("${H}", "Bash", { command: "ls" });`,
+    );
+    const dock = page.getByTestId("permission-dock");
+    await expect(dock).toContainText("The subagent for “Explore the history scan” asks to read src/a.ts");
+    await expect(dock).toContainText("1 more waiting");
+    await page.getByTestId("choice-allow").click();
+    await expect(dock).toContainText("Claude asks to run ls");
+  });
+
+  test("docks a question, answered by picking one of its options", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "deploy"); f.startTurn("${H}");
+       f.question("${H}", [{ header: "Stage", question: "Which stage?", options: [{ label: "dev", description: "shared" }, { label: "prod", description: "careful" }], multiple: false }]);`,
+    );
+    const dock = page.getByTestId("question-dock");
+    await expect(dock).toContainText("Which stage?");
+    await page.getByTestId("question-option").first().focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(dock).toHaveCount(0);
+    expect((await calls(page)).find((call) => call.method === "reply")).toMatchObject({ answers: [["prod"]] });
+    await expect(page.getByTestId("asked")).toContainText("Which stage?");
+    await expect(page.getByTestId("asked")).toContainText("prod");
+  });
+
+  test("types a secret answer hidden, and the thread does not show it", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "deploy"); f.startTurn("${H}");
+       f.question("${H}", [{ header: null, question: "Which regions?", options: [{ label: "eu", description: null }, { label: "us", description: null }], multiple: true, other: false }, { header: null, question: "The deploy token?", options: [], multiple: false, secret: true }]);`,
+    );
+    const secret = page.getByTestId("question-secret");
+    await expect(secret).toHaveAttribute("type", "password");
+    await expect(page.getByTestId("question-send")).toBeDisabled();
+    await page.getByTestId("question-option").filter({ hasText: "eu" }).click();
+    await page.getByTestId("question-option").filter({ hasText: "us" }).click();
+    await secret.fill("hunter2");
+    await page.getByTestId("question-send").click();
+    await expect(page.getByTestId("question-dock")).toHaveCount(0);
+    expect((await calls(page)).find((call) => call.method === "reply")).toMatchObject({
+      answers: [["eu", "us"], ["hunter2"]],
+    });
+    await expect(page.getByTestId("asked")).toContainText("answered. The answer is not shown.");
+    await expect(page.getByTestId("conversation")).not.toContainText("hunter2");
+  });
+
+  test("lets the user not answer a question", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");
+       f.question("${H}", [{ header: null, question: "Anything else?", options: [], multiple: false }]);`,
+    );
+    await page.getByTestId("question-decline").click();
+    expect((await calls(page)).find((call) => call.method === "reply")).toMatchObject({ answers: null });
+    await expect(page.getByTestId("asked")).toContainText("You chose not to answer.");
+  });
+});
