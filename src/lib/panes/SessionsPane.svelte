@@ -31,6 +31,7 @@
     activate,
     close as closeProject,
     goTo,
+    onScreen,
     pick,
     projectLabel,
     startSession,
@@ -60,7 +61,7 @@
     type PaneId,
     type ProjectSort,
   } from "$lib/layout.svelte";
-  import { lastUsed, onScreen, splitProjects, steady, touch } from "$lib/projects.svelte";
+  import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
@@ -171,11 +172,10 @@
     return a.length === b.length && a.every((item, at) => item === b[at]);
   }
 
-  /** The project on screen as the pane draws it: while the session on
-      screen hangs under its starter in another project, the starter's.
-      Everything here that follows the project on screen follows this one,
-      so the project the session runs in is not drawn as on screen. */
-  let screenProject = $derived(onScreen(workspace.active));
+  /** The project on screen, which everything here that follows the
+      project on screen follows, so the project a started session runs in
+      is not drawn as on screen while its starter's is. */
+  let screenProject = $derived(onScreen());
 
   /** The projects under the orchestrator's own: opening the directory it
       runs in is opening the project already pinned above them, and it is

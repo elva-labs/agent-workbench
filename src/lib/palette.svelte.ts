@@ -29,6 +29,7 @@ import {
 import {
   activate,
   goTo,
+  onScreen,
   pick,
   projectLabel,
   startSession,
@@ -332,16 +333,12 @@ export function commandItems(query: string): PaletteItem[] {
     command: id,
     chord: "",
   });
+  const here = onScreen();
   const commands: PaletteItem[] = [
     ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
-    ...(workspace.active === null
+    ...(here === null
       ? []
-      : [
-          command(
-            "newHere",
-            `New session in ${projectLabel(workspace.active)}`,
-          ),
-        ]),
+      : [command("newHere", `New session in ${projectLabel(here)}`)]),
     command("open", "Open project"),
     command("remote", "Open remote project"),
   ];
@@ -434,10 +431,10 @@ function runSections(
 function projectChoices(): PaletteItem[] {
   const group = "In which project";
   const order = projectsByUse();
-  const active = workspace.active;
+  const here = onScreen();
   const paths =
-    active !== null && order.includes(active)
-      ? [active, ...order.filter((path) => path !== active)]
+    here !== null && order.includes(here)
+      ? [here, ...order.filter((path) => path !== here)]
       : order;
   return paths.map((path): PaletteItem => ({
     kind: "choice",
@@ -622,7 +619,7 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
         case "new":
           return beginNew(null);
         case "newHere":
-          return beginNew(workspace.active);
+          return beginNew(onScreen());
         case "open":
           return { type: "close", then: () => void pick() };
         case "remote":

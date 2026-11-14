@@ -30,7 +30,10 @@ import { matches } from "$lib/files.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
-import { reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { activate, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { resetProjects } from "$lib/projects.svelte";
+import { conductor, resetConductor } from "$lib/conductor.svelte";
+import "$lib/orchestrator.svelte";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -59,6 +62,8 @@ const projectPaths = (items: PaletteItem[]) =>
 beforeEach(() => {
   reset();
   resetWorkspace();
+  resetProjects();
+  resetConductor();
   resetKeys();
   resetPalette();
   resetAccounts();
@@ -459,6 +464,34 @@ describe("a new session", () => {
     workspace.active = null;
     expect(stepItems("").map((item) => item.label)).toEqual(["three", "one", "two"]);
     expect(stepItems("tw").map((item) => item.label)).toEqual(["two"]);
+  });
+
+  // A session started by another hangs under its starter, in the
+  // starter's project, which is then the project on screen: the question
+  // and the command for the project on screen name it, not the project the
+  // session runs in, and the cursor starts on it.
+  it("takes the starter's project as the one on screen while a session it started is", () => {
+    const starter = create(A);
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(C);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    kid.changedAt = Date.now();
+    activate(C);
+    sessions.active = kid.key;
+    expect(workspace.active).toBe(C);
+
+    expect(commandItems("new session in").map((item) => item.label)).toEqual(["New session in one"]);
+    openCommands();
+    expect(choose("New session")).toEqual({ type: "stay" });
+    expect(stepItems("")[0]).toMatchObject({ id: `project:${A}`, label: "one" });
+    expect(startingId()).toBeNull();
+
+    openCommands();
+    const outcome = choose("New session in one");
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all.at(-1)?.project).toBe(A);
   });
 
   it("starts in the project at once when there is nothing else to choose", () => {

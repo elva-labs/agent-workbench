@@ -23,7 +23,6 @@ import {
   lastActive,
   lastUsed,
   loadUsed,
-  onScreen,
   projects,
   QUIET_EVERY,
   readQuietNext,
@@ -49,7 +48,7 @@ import {
   since,
   started,
 } from "$lib/sessions.svelte";
-import { activate, close, goTo, openPath, reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { activate, close, goTo, onScreen, openPath, reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 10, 13, 12);
@@ -297,8 +296,37 @@ describe("a session hanging under its starter", () => {
     expect(sessions.active).toBe(kid.key);
     expect(Date.now() - projects.used["/here"]).toBeLessThan(1000);
     expect(projects.used["/there"]).toBe(NOW - 60 * DAY);
-    expect(onScreen(workspace.active)).toBe("/here");
-    expect(onScreen("/elsewhere")).toBe("/elsewhere");
+    expect(onScreen()).toBe("/here");
+  });
+
+  // The project on screen is the one in front, but for a session on screen
+  // that hangs under its starter in another project: then it is the
+  // starter's, while the one in front stays the one the session runs in.
+  it("puts its starter's project on screen while it is on screen", () => {
+    workspace.open.push(
+      { path: "/here", name: "here", repository: "/here", isGit: true },
+      { path: "/there", name: "there", repository: "/there", isGit: true },
+      { path: "/else", name: "else", repository: "/else", isGit: true },
+    );
+    expect(onScreen()).toBeNull();
+    const { starter, kid } = hang("/there");
+    activate("/there");
+    sessions.active = kid.key;
+    expect(workspace.active).toBe("/there");
+    expect(onScreen()).toBe("/here");
+    // Its starter on screen is its own project's.
+    activate("/here");
+    sessions.active = starter.key;
+    expect(onScreen()).toBe("/here");
+    // A project with no session on screen is itself.
+    activate("/else");
+    expect(sessions.active).toBeNull();
+    expect(onScreen()).toBe("/else");
+    // So is one whose session on screen hangs under nobody.
+    const own = create("/there");
+    activate("/there");
+    sessions.active = own.key;
+    expect(onScreen()).toBe("/there");
   });
 });
 

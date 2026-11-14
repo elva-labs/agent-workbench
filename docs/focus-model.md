@@ -94,7 +94,10 @@ cannot be picked.
 
 **A new session** is asked for in the same field, a step at a time. First the
 project, unless only one is open: the one on screen above the others, then by
-when they were last used. Then the account, when accounts are named in the
+when they were last used. While a session that another started in a
+different project is on screen, the project on screen is the starter's, as
+[sessions](sessions.md) describes, both here and for the command that starts
+a session in the project on screen. Then the account, when accounts are named in the
 [settings](settings.md#accounts), with the project's own under the cursor;
 then the agent, when more than one is installed, with the one last started in
 the project under the cursor. A step with nothing to choose is not asked. Each

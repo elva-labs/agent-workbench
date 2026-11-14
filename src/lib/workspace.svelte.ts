@@ -148,6 +148,18 @@ export function activate(path: string) {
   }
 }
 
+/** The project on screen, as the sessions pane and the palette both mean
+    it: the one in front, except while the session on screen hangs under
+    its starter in another project, when it is the starter's. The one in
+    front stays the project the session runs in, which is the repository
+    the changes pane, the terminal and the window's title follow. */
+export function onScreen(): string | null {
+  const current = workspace.active;
+  const session = sessions.active === null ? null : byKey(sessions.active);
+  if (session === null || session.project !== current) return current;
+  return drawnIn(session);
+}
+
 /** The user picked a session: it comes forward, and its project with it
     when that is another. The project it is drawn under counts as used,
     which for a session hanging under its starter is the starter's. False

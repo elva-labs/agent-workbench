@@ -2,7 +2,7 @@ import type { InactiveAfter, Settings } from "$lib/core";
 import type { ProjectSort } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { persist } from "$lib/persist";
-import { byKey, isLive, sessions, transcriptAt, type Session } from "$lib/sessions.svelte";
+import { isLive, sessions, transcriptAt, type Session } from "$lib/sessions.svelte";
 
 /**
  * The projects as the sessions pane splits and orders them.
@@ -146,15 +146,6 @@ export function drawnWith(how: Drawing) {
     one, else its own. */
 export function drawnIn(session: Session): string {
   return drawing.parentOf(session)?.project ?? session.project;
-}
-
-/** The project on screen as the pane draws it: the one the session on
-    screen is drawn under, so a session hanging under its starter keeps the
-    starter's project on screen rather than the one it runs in. */
-export function onScreen(current: string | null): string | null {
-  const session = sessions.active === null ? null : byKey(sessions.active);
-  if (session === null || session.project !== current) return current;
-  return drawnIn(session);
 }
 
 /** The rows drawn under a project: its own, and the sessions those

@@ -63,8 +63,11 @@ on an id that may since have been reused. On shutdown the pty master closes
 with the process and the agent sees SIGHUP. Picking a session that belongs
 to another project brings that project forward. A session that hangs under
 the session that started it, in another project, is drawn there: picking it
-uses the starter's project, which the pane takes as the one on screen, and
-the project it runs in stays where it was.
+uses the starter's project, and while it is on screen the starter's project
+is the one on screen, for the pane and the [palette](focus-model.md#the-palettes)
+alike. The project it runs in stays where it was in the list, and the
+changes pane, the terminal and the window's title still follow it, since
+that is the repository the session works in.
 
 ## Active and inactive
 

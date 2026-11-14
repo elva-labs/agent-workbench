@@ -394,6 +394,41 @@ test.describe("a started session in a project of its own", () => {
     await expect(row(page, OTHER)).toHaveCount(0);
     await expect(heads.first()).toHaveAttribute("data-row", `project:${ORCHESTRATOR}`);
   });
+
+  // With that session on screen its starter's project is the one on
+  // screen, for the palette as for the pane: the head's + asks which
+  // project with the starter's first and under the cursor, though the
+  // project in front is still the one the session runs in.
+  test("offers the starter's project first for a new session from the head", async ({ page }) => {
+    await installFakeCore(page, {
+      open: [PROJECT, OTHER],
+      used: { [PROJECT]: 60_000, [OTHER]: 30 * 24 * 3600 * 1000 },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await row(page, PROJECT).getByTestId("project-new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await push(page, {
+      id: "o-1",
+      tool: "start",
+      arguments: { project: OTHER, prompt: "Bump the client" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "o-1")).not.toBeNull();
+    await page.getByTestId("started-session").click();
+    await expect(page.locator(".session.kid")).toHaveClass(/on/);
+
+    await page.getByTestId("new-session").click();
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "new");
+    const options = page.getByTestId("palette-row");
+    await expect(options).toHaveCount(2);
+    await expect(options.first()).toContainText("demo");
+    await expect(options.first()).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(async () => (await page.evaluate(() => (window as unknown as { __spawns: { project: string }[] }).__spawns)).at(-1)?.project).toBe(PROJECT);
+  });
 });
 
 // Short of room, a started row cuts its project first, then drops its
