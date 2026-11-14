@@ -240,15 +240,26 @@ export function applyLayout(width: number, height: number = layout.height) {
   leaveHiddenPane();
 }
 
-/** A pane that is no longer shown cannot hold the keyboard: it goes to the
-    agent pane, which is there whenever the other panes are gone. */
+/** A pane that is no longer shown cannot hold the keyboard: the focus state
+    goes to the agent pane, which is there whenever the other panes are gone.
+    The panes are asked to take the keyboard only when it is on the page body
+    or inside the pane that went away; an overlay holding it keeps it. */
 function leaveHiddenPane() {
   const hidden =
     (layout.focus === "sessions" && !sessionsShown()) ||
     (layout.focus === "changes" && !changesVisible());
   if (!hidden) return;
+  const gone = layout.focus;
   layout.focus = "agent";
-  layout.focusRequest += 1;
+  if (typeof document === "undefined") {
+    layout.focusRequest += 1;
+    return;
+  }
+  const owner = document.activeElement;
+  const pane = document.querySelector(`section[data-pane="${gone}"]`);
+  if (owner === null || owner === document.body || pane?.contains(owner)) {
+    layout.focusRequest += 1;
+  }
 }
 
 function resolveLayout(width: number, height: number) {
@@ -429,6 +440,13 @@ export function focusPane(id: PaneId) {
 export function browserFocused() {
   if (!changesVisible()) return;
   layout.focus = "changes";
+}
+
+/** Whether a dialog or the palette has the keyboard. A pane never takes it
+    from one; the overlay hands it back when it goes. */
+export function overlayHoldsKeyboard(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.activeElement?.closest('[aria-modal="true"]') != null;
 }
 
 /**

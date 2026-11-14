@@ -15,7 +15,7 @@
     installed,
     unavailableReason,
   } from "$lib/agent.svelte";
-  import { agentVisible, layout } from "$lib/layout.svelte";
+  import { agentVisible, layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import {
     activeSession,
     create,
@@ -77,6 +77,7 @@
     untrack(() => {
       if (layout.focus !== "agent" || !agentVisible() || wrap === null) return;
       if (current !== null || blocked !== null || workspace.active === null) return;
+      if (overlayHoldsKeyboard()) return;
       const owner = document.activeElement;
       const pane = wrap.closest("section");
       if (

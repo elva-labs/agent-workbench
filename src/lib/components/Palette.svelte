@@ -199,7 +199,7 @@
   <div
     class="dialog"
     role="dialog"
-    aria-modal="true"
+    aria-modal={palette.open ? "true" : undefined}
     aria-label="Palette"
     tabindex="-1"
     bind:this={dialog}

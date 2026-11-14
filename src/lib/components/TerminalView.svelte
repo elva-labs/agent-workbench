@@ -10,7 +10,7 @@
   import { register as registerScreen } from "$lib/screens";
   import { isMac, resolveAction } from "$lib/keymap";
   import { references } from "$lib/refs";
-  import { layout, sliding } from "$lib/layout.svelte";
+  import { layout, overlayHoldsKeyboard, sliding } from "$lib/layout.svelte";
   import { typed } from "$lib/sessions.svelte";
   import {
     WriteQueue,
@@ -313,6 +313,7 @@
   $effect(() => {
     layout.focusRequest;
     if (!focused || !active || !shown || !terminal || !host) return;
+    if (overlayHoldsKeyboard()) return;
     const owner = document.activeElement;
     if (owner !== null && owner !== document.body && !host.contains(owner)) {
       if (

@@ -1948,6 +1948,48 @@ test.describe("the palettes", () => {
       await expect(page.getByTestId("start-agent")).toBeFocused();
     });
 
+    for (const project of ["one", "two"]) {
+      test(`narrowing the window with go to open from the sessions pane in "${project}" leaves the keyboard in the field`, async ({
+        page,
+      }) => {
+        await page.keyboard.press(GOTO);
+        await page.keyboard.type(project);
+        await page.keyboard.press("Enter");
+        await expect(page.getByTestId(PALETTE)).toHaveCount(0);
+        await page.keyboard.press(`${MOD}+1`);
+        await expect.poll(() => inSessions(page)).toBe(true);
+        await page.keyboard.press(GOTO);
+        await expect(field(page)).toBeFocused();
+        await page.setViewportSize({ width: 800, height: 800 });
+        await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+        await page.waitForTimeout(200);
+        await expect(field(page)).toBeFocused();
+        await page.keyboard.type("y");
+        await page.waitForTimeout(200);
+        await expect(field(page)).toHaveValue("y");
+        expect(await writtenTo(page, "pty-1")).toBe("");
+        expect(await writtenTo(page, "pty-2")).toBe("");
+      });
+    }
+
+    test("narrowing the window with the settings open leaves the keyboard in the dialog", async ({ page }) => {
+      await page.keyboard.press(`${MOD}+1`);
+      await expect.poll(() => inSessions(page)).toBe(true);
+      await page.keyboard.press(`${MOD}+,`);
+      await expect(page.getByTestId("settings")).toBeFocused();
+      await page.setViewportSize({ width: 800, height: 800 });
+      await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+      await page.waitForTimeout(200);
+      await expect(page.getByTestId("settings")).toBeFocused();
+      await page.keyboard.type("y");
+      await page.waitForTimeout(200);
+      expect(await writtenTo(page, "pty-1")).toBe("");
+      expect(await writtenTo(page, "pty-2")).toBe("");
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("settings")).toHaveCount(0);
+      await expect(page.locator(KEYBOARD).last()).toBeFocused();
+    });
+
     test("the agent chord from the sessions pane lands on New session in a project with no session", async ({ page }) => {
       await page.keyboard.press(GOTO);
       await page.keyboard.type("two");

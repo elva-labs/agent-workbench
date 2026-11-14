@@ -115,7 +115,8 @@ first.
 
 While a dialog, or a question over the agent pane, is up, neither chord opens
 a palette and <kbd>Cmd</kbd><kbd>.</kbd> does nothing, so the keyboard stays
-where the dialog has it.
+where the dialog has it. Answering the question gives the keyboard back to
+the pane that has the focus.
 
 ## What the app never claims
 
@@ -134,7 +135,8 @@ where the dialog has it.
   testable place.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
-  goes to the agent pane.
+  goes to the agent pane. A dialog or the palette that holds the keyboard
+  at that moment keeps it, and hands it to the agent pane when it goes.
 - **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** The
   terminal would send the same carriage return as for <kbd>Enter</kbd>, so
   the app sends Meta+Enter, which Claude Code takes as a newline. A shell in
