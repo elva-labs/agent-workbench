@@ -9,9 +9,9 @@
  * Starting a session is the one call the user is brought into. The first
  * time a caller asks to start one in a project the window puts the
  * question up and holds the call until it is answered, and an allowed
- * caller is remembered for that project until the board takes it back or
- * the window goes. Calls that arrive while a question is up wait their
- * turn.
+ * caller is remembered for that project and the account its sessions run
+ * under until the board takes it back or the window goes. Calls that
+ * arrive while a question is up wait their turn.
  *
  * A session may start others, and those may not start any of their own:
  * one level deep, and no more than the cap at a time, so a loop of agents
@@ -340,7 +340,7 @@ function remembered(caller: string, id: string): Started | null {
     handled once. */
 const seen = new Set<string>();
 const SEEN = 500;
-/** Callers with a standing answer, by caller and project. */
+/** Callers with a standing answer, by caller, project and account. */
 const allowed = new SvelteSet<string>();
 /** Questions waiting for the one on screen to be answered. */
 const queue: { ask: Ask; settle: (choice: Choice) => void }[] = [];
@@ -1101,8 +1101,8 @@ function agentOf(request: ConductRequest, project: string): AgentId {
 
 /**
  * Puts the question to the user, unless this caller already has a
- * standing answer for the project. A question that arrives while another
- * is up waits behind it.
+ * standing answer for the project and the account. A question that
+ * arrives while another is up waits behind it.
  */
 function askUser(
   request: ConductRequest,
@@ -1112,7 +1112,7 @@ function askUser(
   account: string | null,
   named: Named | null,
 ): Promise<Choice> {
-  if (allowed.has(`${callerOf(request)}\n${project}`))
+  if (allowed.has(allowance(callerOf(request), project, account)))
     return Promise.resolve("allow");
   const session = callingSession(request);
   const ask: Ask = {
@@ -1144,7 +1144,7 @@ function answerAsk(choice: Choice) {
   conductor.asking = null;
   pending = null;
   if (ask !== null && choice === "allow")
-    allowed.add(`${callerOf(ask.request)}\n${ask.project}`);
+    allowed.add(allowance(callerOf(ask.request), ask.project, ask.account));
   settle?.(choice);
   nextAsk();
 }
@@ -1166,16 +1166,34 @@ export function refuse() {
 
 /** The projects a caller may start sessions in without being asked. */
 export function allowedProjects(callerId: string): string[] {
-  const prefix = `${callerId}\n`;
-  return [...allowed]
-    .filter((entry) => entry.startsWith(prefix))
-    .map((entry) => entry.slice(prefix.length));
+  const projects: string[] = [];
+  for (const entry of allowed) {
+    const [caller, project] = JSON.parse(entry) as Allowance;
+    if (caller === callerId && !projects.includes(project))
+      projects.push(project);
+  }
+  return projects;
 }
 
 /** Takes a standing answer back: the caller's next start in that project is
-    put to the user again. */
+    put to the user again, under whichever account. */
 export function revoke(callerId: string, project: string) {
-  allowed.delete(`${callerId}\n${project}`);
+  for (const entry of [...allowed]) {
+    const [caller, held] = JSON.parse(entry) as Allowance;
+    if (caller === callerId && held === project) allowed.delete(entry);
+  }
+}
+
+/** A standing answer: the caller, the project, and the account the
+    sessions it allowed run under. */
+type Allowance = [string, string, string | null];
+
+function allowance(
+  caller: string,
+  project: string,
+  account: string | null,
+): string {
+  return JSON.stringify([caller, project, account] satisfies Allowance);
 }
 
 /** Null once a row's process is up, else why it is not: the row failed,

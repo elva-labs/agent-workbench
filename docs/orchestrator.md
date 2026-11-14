@@ -132,10 +132,12 @@ whatever it has been told to do by something it read.
 The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. An allowed
-caller is remembered for that project for as long as the app runs. A
-refusal is an answer the agent reads, not an error. Bringing back a
-session it already started is never asked about: the consent was given
-when the session was, and the resumed session is that one going on.
+caller is remembered for that project and the account the session ran
+under, for as long as the app runs, so a later start there under another
+account is asked about again. A refusal is an answer the agent reads, not
+an error. Bringing back a session it already started is never asked about:
+the consent was given when the session was, and the resumed session is
+that one going on.
 
 Once there are accounts to tell apart, the question names the account the
 session would run under when it is not the project's own, when the

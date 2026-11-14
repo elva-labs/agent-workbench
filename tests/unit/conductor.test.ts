@@ -848,6 +848,72 @@ describe("the account a started session runs under", () => {
     expect(row.id).toBe(id);
     expect(row.account).toBe("Work");
   });
+
+  describe("a standing answer", () => {
+    it("holds for the account it was given under, and is asked again for another", async () => {
+      accounts.overrides[A] = "Work";
+      caller(A, "Work");
+      // The first start names the project's own account, so the question
+      // says nothing of it, and the user allows the caller from now on.
+      const first = handle(
+        call(
+          "start",
+          { project: A, prompt: "One", account: "Work" },
+          { session: "caller-1" },
+        ),
+      );
+      expect(conductor.asking?.named).toBeNull();
+      allow();
+      await settle();
+      started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+      flushSync();
+      await first;
+      expect(allowedProjects("caller-1")).toEqual([A]);
+
+      // Under the same account it is not asked again.
+      const second = handle(
+        call("start", { project: A, prompt: "Two" }, { session: "caller-1" }),
+      );
+      expect(conductor.asking).toBeNull();
+      await settle();
+      started(forProject(A).at(-1)!.key, "pty-2", "sid-2");
+      flushSync();
+      await second;
+      expect(last().content).toContain("Started session sid-2");
+
+      // Under another it is, and the question names it.
+      handle(
+        call(
+          "start",
+          { project: A, prompt: "Three", account: "Home" },
+          { session: "caller-1" },
+        ),
+      );
+      expect(conductor.asking?.prompt).toBe("Three");
+      expect(accountWords(conductor.asking!.named!)).toBe(
+        "Under the Home account, not the project's own.",
+      );
+      refuse();
+      await settle();
+
+      // Taking the project back asks again under any account.
+      revoke("caller-1", A);
+      expect(allowedProjects("caller-1")).toEqual([]);
+      handle(
+        call("start", { project: A, prompt: "Four" }, { session: "caller-1" }),
+      );
+      expect(conductor.asking?.prompt).toBe("Four");
+      refuse();
+      await settle();
+    });
+
+    it("lists a project once, whatever accounts it was given under", async () => {
+      caller(A, "Work");
+      await start({ account: "Home" });
+      await start({ account: "Work" });
+      expect(allowedProjects("caller-1")).toEqual([A]);
+    });
+  });
 });
 
 describe("the question", () => {
