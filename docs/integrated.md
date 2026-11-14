@@ -75,7 +75,8 @@ Running agents, the user's own terminal sessions among them, read and
 rewrite the same state file. The workbench reads it right before it
 changes it, and writes it whole to a file beside it that is then moved
 over it, so a reader never finds it half written. A link to the file is
-followed, and the file keeps its permissions. Within one app or daemon,
+followed, and the file keeps its permissions. A file of its own that a
+write cut off by a crash left beside it is removed by a later write. Within one app or daemon,
 a trust write takes turns with the hooks' installs and removals, which
 write the same file, so none of them loses another's entry.
 

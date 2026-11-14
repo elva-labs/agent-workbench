@@ -734,9 +734,51 @@ fn update_settings(
     Ok(())
 }
 
+/// How old a file of a write's own, beside the file it writes, must be to
+/// be taken for one a write cut off by a crash left behind.
+const STALE_WRITE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The name a write of `name` gives the file it writes first.
+fn written_first(name: &str) -> String {
+    format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple())
+}
+
+/// Removes what writes of `name` left in `parent` when they were cut off
+/// between making their own file and moving it over: files named as
+/// [`written_first`] names them, and older than [`STALE_WRITE`].
+fn remove_stale_writes(parent: &Path, name: &str) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let prefix = format!(".{name}.");
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let Some(id) = file
+            .to_str()
+            .and_then(|file| file.strip_prefix(&prefix))
+            .and_then(|rest| rest.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > STALE_WRITE);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Writes a JSON file whole, so that a reader never sees it half written:
 /// to a file of its own beside it, then moved over it. A link is followed
 /// and the file it names is replaced, and the file keeps its permissions.
+/// What an earlier write cut off by a crash left beside it goes.
 fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
     let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = path
@@ -750,7 +792,8 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
-    let temporary = parent.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    remove_stale_writes(parent, &name);
+    let temporary = parent.join(written_first(&name));
     let written = (|| {
         use std::io::Write;
         let mut file = std::fs::OpenOptions::new()
@@ -859,6 +902,33 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(left.is_empty(), "nothing left beside it: {left:?}");
+    }
+
+    #[test]
+    fn a_write_cut_off_by_a_crash_leaves_nothing_behind_for_long() {
+        let (home, project) = fixture("claude-trust-stale");
+        let state = home.join(".claude.json");
+        std::fs::write(&state, "{}").unwrap();
+        let left = |age: u64| {
+            let file = home.join(written_first(".claude.json"));
+            std::fs::write(&file, "{").unwrap();
+            let then = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+            std::fs::File::options()
+                .write(true)
+                .open(&file)
+                .unwrap()
+                .set_modified(then)
+                .unwrap();
+            file
+        };
+        let stale = left(STALE_WRITE.as_secs() * 2);
+        let fresh = left(0);
+        let other = home.join(".claude.json.backup");
+        std::fs::write(&other, "{}").unwrap();
+        claude_trust(&state, &project).unwrap();
+        assert!(!stale.exists(), "what a crash left goes");
+        assert!(fresh.exists(), "what may be another write's own stays");
+        assert!(other.exists(), "nothing else is touched");
     }
 
     #[cfg(unix)]
