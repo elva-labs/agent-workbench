@@ -86,6 +86,7 @@
         >{#each title.lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<Plain text={piece.name} />{/if}{/each}</span
       >
       {#if title.object !== null}<code class="object"><Plain text={title.object} /></code>{/if}
+      {#if part.kind === "tool" && part.inputTruncated}<span class="cut-mark" data-testid="step-cut">cut short</span>{/if}
     </span>
     {#if status !== null}
       <span class="status {status.tone}" data-testid="step-status">{status.text}</span>
@@ -208,6 +209,13 @@
 
   .verb {
     flex: none;
+  }
+
+  /* What the row shows was cut on its way to the window. */
+  .cut-mark {
+    flex: none;
+    color: var(--del);
+    font-size: var(--conv-fine);
   }
 
   .object,

@@ -377,7 +377,12 @@ the description the agent wrote, which is cut like other long text. A link
 inside the project that leads out of it cannot be seen from the window. A command, path or address
 longer than the line holds is cut, with its whole a fold away that opens
 in place, and the line says in the warning colour how many characters the
-cut leaves out, a subagent's description included. An address is read
+cut leaves out, a subagent's description included. A request the core cut
+before it reached the window, as it does past what a connection should
+carry, says so on its line in the warning colour, that it is longer than
+the workbench can show and its end is hidden; its folds say they show it as
+far as it came, never whole, and a step whose input was cut says so on its
+row. An address is read
 after trimming, whatever its slashes, and the line names the host it really
 goes to, since its start can look like another; where a client such as curl
 would read another host from it, as with a backslash before an `@`, it

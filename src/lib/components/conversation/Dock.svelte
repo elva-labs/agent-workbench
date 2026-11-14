@@ -200,7 +200,8 @@
   function whole(asked: Permission, what: { lead: Piece[]; object: string | null; shape: string | null }): string | null {
     const input = asked.input;
     if (input === null || input === undefined) return null;
-    if (typeof input === "object" && !Array.isArray(input)) {
+    // A request the core cut is never said whole on its line.
+    if (typeof input === "object" && !Array.isArray(input) && !asked.truncated) {
       const keys = Object.keys(input);
       if (keys.length === 0) return null;
       // Left out only where the line shows the input whole: a command of
@@ -389,7 +390,11 @@
                   data-testid="permission-outside">{AWAY[at.where]}</span
                 >{" "}{/if}<code class="exact"><Plain text={cut(at.text)} /></code>{@render cutOff(at.text)}{:else}<code
                 class="exact"><Plain text={cut(what.object)} /></code
-              >{@render cutOff(what.object)}{@render leadsTo(what.object)}{/if}{/if}{@render awayCount(away, headAway)}
+              >{@render cutOff(what.object)}{@render leadsTo(what.object)}{/if}{/if}{@render awayCount(away, headAway)}{#if asked.truncated}<span
+                  class="warn flow"
+                  data-testid="permission-truncated"
+                  >. The request is longer than the workbench can show, and its end is hidden</span
+                >{/if}
         </p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
@@ -413,14 +418,18 @@
         <div class="folds">
           {#if command !== null}
             <button class="reveal" tabindex="0" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-command">
-              <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>The whole command
+              <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>{asked.truncated
+                ? "The command as far as it came"
+                : "The whole command"}
             </button>
           {/if}
           {#if cutHead}
             <button class="reveal" tabindex="0" onclick={() => (showLong = !showLong)} aria-expanded={showLong} data-testid="permission-long">
-              <span class="chev" class:open={showLong}><Icon name="chev" size={11} /></span>{what.shape === "path"
-                ? "The whole path"
-                : "All of it"}
+              <span class="chev" class:open={showLong}><Icon name="chev" size={11} /></span>{asked.truncated
+                ? "As far as it came"
+                : what.shape === "path"
+                  ? "The whole path"
+                  : "All of it"}
             </button>
           {/if}
           {#if lines_ !== null}
@@ -430,15 +439,19 @@
           {/if}
           {#if full !== null}
             <button class="reveal" tabindex="0" onclick={() => (showWhole = !showWhole)} aria-expanded={showWhole} data-testid="permission-whole">
-              <span class="chev" class:open={showWhole}><Icon name="chev" size={11} /></span>The whole request
+              <span class="chev" class:open={showWhole}><Icon name="chev" size={11} /></span>{asked.truncated
+                ? "The request as far as it came"
+                : "The whole request"}
             </button>
           {/if}
         </div>
         {#if command !== null && shown}
           <pre class="details exact"><Plain text={command} /></pre>
+          {#if asked.truncated}<p class="warn flow cut-end">Cut short here: the rest did not reach the window.</p>{/if}
         {/if}
         {#if cutHead && showLong && what.object !== null}
           <pre class="details exact" data-testid="permission-long-text"><Plain text={what.object} /></pre>
+          {#if asked.truncated}<p class="warn flow cut-end">Cut short here: the rest did not reach the window.</p>{/if}
         {/if}
         {#if lines_ !== null && showChange}
           <div class="details diff">
@@ -451,6 +464,7 @@
         {/if}
         {#if full !== null && showWhole}
           <pre class="details exact" data-testid="permission-whole-text"><Plain text={full} /></pre>
+          {#if asked.truncated}<p class="warn flow cut-end" data-testid="permission-whole-cut">Cut short here: the rest did not reach the window.</p>{/if}
         {/if}
       {/if}
       </div>
@@ -724,6 +738,10 @@
   .warn {
     color: var(--del);
     white-space: nowrap;
+  }
+
+  .cut-end {
+    margin: -4px 0 0;
   }
 
   /* A warning of more than a few words flows with the line it ends. */

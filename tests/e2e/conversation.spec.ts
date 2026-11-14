@@ -1497,6 +1497,39 @@ test.describe("a request too long for its line", () => {
     await expect(page.getByTestId("permission-cut")).toHaveText(`and ${description.length - 160} more characters`);
   });
 
+  test("says a request the core cut is longer than it can show, and never calls it whole", async ({ page }) => {
+    await openIntegrated(page);
+    // The reviewer's case: padding past what the core carries, so the end
+    // that matters never reaches the window, and the core says it cut it.
+    const command = `echo ${"a".repeat(65_536 - 5)}`;
+    await agent(
+      page,
+      `f.startTurn("${H}");
+       const c = "cut-call";
+       f.replay("${H}", [
+         { type: "toolStarted", call: c, parent: null, name: "Bash", kind: "command" },
+         { type: "toolInput", call: c, parent: null, delta: null, input: { command: ${JSON.stringify(command)} }, truncated: true },
+       ]);
+       f.emit("${H}", { type: "permissionAsked", request: "cut-1", call: c, parent: null, tool: "Bash", input: { command: ${JSON.stringify(command)} }, truncated: true, description: null, path: null,
+         choices: [{ choice: "allow", remembers: null, message: false }, { choice: "deny", remembers: null, message: true }] });`,
+    );
+    const said = page.getByTestId("permission-truncated");
+    await expect(said).toHaveText(". The request is longer than the workbench can show, and its end is hidden");
+    expect(await inSight(page, "permission-truncated")).toBe(true);
+    // Nothing is called whole, and what is shown says where it was cut.
+    await expect(page.getByTestId("permission-command")).toHaveText("The command as far as it came");
+    await expect(page.getByTestId("permission-whole")).toHaveText("The request as far as it came");
+    await page.getByTestId("permission-whole").click();
+    await expect(page.getByTestId("permission-whole-cut")).toHaveText("Cut short here: the rest did not reach the window.");
+    // The first choice is still the one that allows once and remembers
+    // nothing, and the choices stay in sight.
+    await expect(page.locator("[data-choice]").first()).toHaveAttribute("data-choice", "allow");
+    expect(await inSight(page, "choice-allow")).toBe(true);
+    // The step whose input was cut says so on its row.
+    await page.getByTestId("work-line").last().click();
+    await expect(page.getByTestId("step-cut")).toHaveText("cut short");
+  });
+
   test("cuts a long command and a long address, each a fold away", async ({ page }) => {
     await openIntegrated(page);
     const command = `echo ${"a".repeat(3000)}`;
