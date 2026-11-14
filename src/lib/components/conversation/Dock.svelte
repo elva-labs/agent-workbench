@@ -598,9 +598,9 @@
      colour. -->
 {#snippet leadsTo(text: string)}{@const at = address(text)}{#if at !== null}<span data-testid="permission-host"
       >{" "}on <code class="exact"><Plain text={at.host} /></code></span
-    >{#if at.other !== null}<span class="warn" data-testid="permission-host-other"
+    >{#if at.other !== null}<span class="warn flow" data-testid="permission-host-other"
         >, or on <code class="exact"><Plain text={at.other} /></code> as some clients read it</span
-      >{/if}{#if at.warnings.length > 0}<span class="warn" data-testid="permission-address-warn"
+      >{/if}{#if at.warnings.length > 0}<span class="warn flow" data-testid="permission-address-warn"
         >, and {at.warnings.join(" and ")}</span
       >{/if}{/if}{/snippet}
 
@@ -608,7 +608,7 @@
      in it, said on its line whenever the line itself does not already mark
      the one there is. -->
 {#snippet awayCount(away: { where: "outside" | "unknown" }[], marked: boolean)}{@const out = away.filter((each) => each.where === "outside").length}{@const unsure = away.length - out}{#if away.length > (marked ? 1 : 0)}<span
-      class="warn"
+      class="warn flow"
       data-testid="permission-away-count"
       >{#if out > 0}, with {out} {out === 1 ? "path" : "paths"} outside the project{/if}{#if unsure > 0}{out > 0 ? " and" : ", with"}
         {unsure} not plainly in it{/if}</span
@@ -724,6 +724,11 @@
   .warn {
     color: var(--del);
     white-space: nowrap;
+  }
+
+  /* A warning of more than a few words flows with the line it ends. */
+  .warn.flow {
+    white-space: normal;
   }
 
   .away {
