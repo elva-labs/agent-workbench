@@ -993,9 +993,7 @@ impl SessionFiles {
     /// Writes a file of the session's own under the workbench's directory,
     /// and answers with where it is.
     fn write(&mut self, home: &Path, extension: &str, text: &str) -> Result<PathBuf, String> {
-        let dir = sessions_dir(home);
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        let dir = own_dir(home)?;
         let path = dir.join(format!("{}.{extension}", new_session_id()));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -1025,6 +1023,86 @@ impl Drop for SessionFiles {
 /// Where the files sessions read while they run are kept.
 fn sessions_dir(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("sessions")
+}
+
+/// How long a lock file is left alone after it is made, so one whose
+/// process has made it and not yet taken it is never mistaken for one left
+/// behind.
+const LOCK_SETTLES: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The folder this process keeps its sessions' files in, under the
+/// sessions folder: one of its own, beside a lock file it holds for as long
+/// as it runs. The first time it is asked for, what processes that ended
+/// without removing their files left behind is removed.
+fn own_dir(home: &Path) -> Result<PathBuf, String> {
+    type Owned = Vec<(PathBuf, PathBuf, std::fs::File)>;
+    static OWNED: std::sync::Mutex<Owned> = std::sync::Mutex::new(Vec::new());
+    let mut owned = OWNED.lock().unwrap_or_else(|e| e.into_inner());
+    let made = |dir: &Path| {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))
+    };
+    if let Some((_, dir, _)) = owned.iter().find(|(at, _, _)| at == home) {
+        made(dir)?;
+        return Ok(dir.clone());
+    }
+    let root = sessions_dir(home);
+    made(&root)?;
+    sweep_sessions(&root);
+    let name = new_session_id();
+    let lock_path = root.join(format!("{name}.lock"));
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .map_err(|e| format!("could not create {}: {e}", lock_path.display()))?;
+    lock.try_lock()
+        .map_err(|e| format!("could not lock {}: {e}", lock_path.display()))?;
+    let dir = root.join(&name);
+    made(&dir)?;
+    owned.push((home.to_path_buf(), dir.clone(), lock));
+    Ok(dir)
+}
+
+/// Removes the folders of processes that are gone: those whose lock file
+/// no process holds and that were not made a moment ago. A process that
+/// ends lets go of its lock however it ends, so this is what a crash left.
+fn sweep_sessions(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("lock") {
+            continue;
+        }
+        let settled = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.elapsed().ok())
+            .is_some_and(|age| age >= LOCK_SETTLES);
+        if !settled {
+            continue;
+        }
+        let Ok(file) = std::fs::OpenOptions::new().write(true).open(&path) else {
+            continue;
+        };
+        if file.try_lock().is_err() {
+            continue;
+        }
+        std::fs::remove_dir_all(path.with_extension("")).ok();
+        drop(file);
+        std::fs::remove_file(&path).ok();
+    }
 }
 
 /// A terminal is a character grid, so a pty is sized in cells. The pixel
@@ -1093,7 +1171,10 @@ mod tests {
         let told = files
             .write(&home, "md", "1. Direct the work.\n2. Report.")
             .unwrap();
-        assert_eq!(told.parent().unwrap(), sessions_dir(&home));
+        assert_eq!(
+            told.parent().unwrap().parent().unwrap(),
+            sessions_dir(&home)
+        );
         assert_eq!(
             std::fs::read_to_string(&told).unwrap(),
             "1. Direct the work.\n2. Report."
@@ -1108,6 +1189,46 @@ mod tests {
         assert_ne!(told, other);
         drop(files);
         assert!(!told.exists() && !other.exists());
+    }
+
+    #[test]
+    fn what_a_process_that_is_gone_left_is_swept_and_nothing_else() {
+        let home = std::env::temp_dir().join("workbench-api-sweep");
+        std::fs::remove_dir_all(&home).ok();
+        let root = sessions_dir(&home);
+        std::fs::create_dir_all(&root).unwrap();
+        let long_ago = std::time::SystemTime::now() - 2 * LOCK_SETTLES;
+        // Left by a process that crashed: its lock is free and old.
+        let gone = root.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::write(gone.join("a.md"), "1. Direct the work.").unwrap();
+        let gone_lock = std::fs::File::create(root.join("gone.lock")).unwrap();
+        gone_lock.set_modified(long_ago).unwrap();
+        drop(gone_lock);
+        // Held by a process that runs.
+        let held = root.join("held");
+        std::fs::create_dir_all(&held).unwrap();
+        std::fs::write(held.join("b.md"), "text").unwrap();
+        let held_lock = std::fs::File::create(root.join("held.lock")).unwrap();
+        held_lock.set_modified(long_ago).unwrap();
+        held_lock.try_lock().unwrap();
+        // Just made, by a process that has not taken its lock yet.
+        let new = root.join("new");
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::File::create(root.join("new.lock")).unwrap();
+
+        let mut files = SessionFiles::default();
+        let told = files.write(&home, "md", "text").unwrap();
+        assert!(!gone.exists() && !root.join("gone.lock").exists());
+        assert!(held.join("b.md").exists() && root.join("held.lock").exists());
+        assert!(new.exists() && root.join("new.lock").exists());
+        // This process's own folder has its lock, which it holds.
+        let own = told.parent().unwrap();
+        let own_lock = own.with_extension("lock");
+        assert!(own_lock.exists());
+        assert!(std::fs::File::open(&own_lock).unwrap().try_lock().is_err());
+        drop(held_lock);
+        drop(files);
     }
 
     #[cfg(unix)]
