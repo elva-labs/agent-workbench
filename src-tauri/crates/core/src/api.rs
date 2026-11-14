@@ -1011,8 +1011,15 @@ mod tests {
     use crate::events::testing::Recorder;
     use crate::scratch::Scratch;
 
+    /// A core made once the test process's environment is settled, so the
+    /// shell it starts is the system's `sh` and reads no startup files.
+    fn core_with(sink: Arc<dyn Sink>) -> Core {
+        crate::scratch::isolate();
+        Core::new(sink)
+    }
+
     fn core() -> Core {
-        Core::new(Arc::new(Recorder::default()))
+        core_with(Arc::new(Recorder::default()))
     }
 
     // A session started on a worktree runs with the hooks its project
@@ -1209,7 +1216,7 @@ mod tests {
     #[test]
     fn a_shell_ends_and_says_so_through_the_sink() {
         let recorder = Arc::new(Recorder::default());
-        let core = Core::new(recorder.clone());
+        let core = core_with(recorder.clone());
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let output: Output = Box::new({
             let seen = Arc::clone(&seen);
@@ -1220,9 +1227,8 @@ mod tests {
         });
         let id = core.shell(Path::new("/tmp"), 80, 24, |_| output).unwrap();
         core.pty_write(&id, b"exit 3\n").unwrap();
-        // The shell reads its own startup files before it reads the line, so
-        // the end comes when it comes; the bound is only for a shell that
-        // never ends.
+        // The shell is the system's `sh`, which reads no startup files before
+        // it reads the line; the bound is only for a shell that never ends.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         while recorder.events.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
