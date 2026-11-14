@@ -228,6 +228,8 @@ export class Conversation {
   ended = $state<{ code: number | null; clean: boolean } | null>(null);
   /** Rebuilt from a snapshot: the turns before it are in the transcript. */
   late = $state(false);
+  /** How many messages this window has sent. */
+  sentHere = $state(0);
 
   #clock: () => number;
   #blocks = new Map<string, TextPart>();
@@ -280,6 +282,7 @@ export class Conversation {
       placed: false,
     };
     this.order.push(id);
+    this.sentHere += 1;
   }
 
   /** The core refused the message: it never reached the agent. */

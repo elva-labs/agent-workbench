@@ -516,3 +516,43 @@ test("puts the keyboard in the composer of the session switched to by chord", as
   await expect(page.locator("[data-session='s2'] [data-testid='composer-input']")).toHaveValue("typed in twoX");
   await expect(page.locator("[data-session='s1'] [data-testid='composer-input']")).toHaveValue("typed in one and more");
 });
+
+/** How far the thread is from its foot, in pixels. */
+const fromFoot = (page: Page) =>
+  page.getByTestId("thread").evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight);
+
+test("follows streaming text to its last line while at the foot", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", Array.from({ length: 30 }, (_, at) => "Earlier line " + at).join("\\n\\n"));`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await agent(page, `f.startTurn("${H}");`);
+  for (let at = 0; at < 10; at++)
+    await agent(page, `f.emit("${H}", { type: "text", block: "long", parent: null, text: "Streaming paragraph ${at}, long enough to wrap onto a line of its own as it comes in.\\n\\n", done: false });`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  const last = page.getByTestId("agent-text").last();
+  await expect(last).toContainText("Streaming paragraph 9");
+  const thread = (await page.getByTestId("thread").boundingBox())!;
+  const text = (await last.boundingBox())!;
+  expect(text.y + text.height).toBeLessThanOrEqual(thread.y + thread.height);
+});
+
+test("goes to the foot when the user sends while scrolled up", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", Array.from({ length: 60 }, (_, at) => "Line " + at).join("\\n\\n"));`);
+  await page.getByTestId("thread").evaluate((node) => (node.scrollTop = 0));
+  await expect.poll(() => fromFoot(page)).toBeGreaterThan(500);
+  await page.getByTestId("composer-input").fill("Is this in sight?");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await expect(page.getByTestId("user-message").last()).toBeInViewport();
+});
+
+test("stays put when the user opens a fold at the foot", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.startTurn("${H}"); for (let at = 0; at < 12; at++) f.tool("${H}", "Bash", { command: "echo " + at }, Array.from({ length: 8 }, (_, n) => "out " + n).join("\\n"), { kind: "command" }); f.endTurn("${H}");`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  const line = page.getByTestId("work-line");
+  await line.click();
+  await expect(page.getByTestId("step")).toHaveCount(12);
+  await expect(line).toBeInViewport();
+});

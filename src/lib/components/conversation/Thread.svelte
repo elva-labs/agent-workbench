@@ -79,18 +79,45 @@
     return `${conversation.entries.length}|${conversation.waiting.length}|${tail}|${conversation.open.length}|${liveKey}`;
   }
 
-  // Follows new content down while at the foot; marks it as come while not.
+  let col = $state<HTMLDivElement | null>(null);
+  /** When the user last pressed or clicked in the thread: the thread
+      growing then is a fold they opened, not something new to follow. */
+  let touched = 0;
+
+  // Marks new content as come while the user is scrolled up.
   $effect(() => {
     pulse();
     untrack(() => {
-      if (scroller === null) return;
-      if (!pinned) {
-        behind = true;
-        return;
+      if (!pinned) behind = true;
+    });
+  });
+
+  // Follows the thread's own size while at the foot, so text that is drawn
+  // a frame after it arrives, or grows as a whole replaces its pieces, is
+  // followed all the same.
+  $effect(() => {
+    if (col === null || scroller === null) return;
+    const scrolled = scroller;
+    const observer = new ResizeObserver(() => {
+      if (pinned && performance.now() - touched > 400) scrolled.scrollTop = scrolled.scrollHeight;
+    });
+    observer.observe(col);
+    return () => observer.disconnect();
+  });
+
+  // What the user sends goes on screen: the thread goes to its foot.
+  let lastSent = 0;
+  $effect(() => {
+    const now = conversation.sentHere;
+    untrack(() => {
+      if (now > lastSent && scroller !== null) {
+        pinned = true;
+        behind = false;
+        void tick().then(() => {
+          if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
+        });
       }
-      void tick().then(() => {
-        if (scroller !== null && pinned) scroller.scrollTop = scroller.scrollHeight;
-      });
+      lastSent = now;
     });
   });
 
@@ -130,8 +157,16 @@
 
 <div class="frame">
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-<div class="thread" bind:this={scroller} {onscroll} data-testid="thread" tabindex="-1">
-  <div class="col">
+<div
+  class="thread"
+  bind:this={scroller}
+  {onscroll}
+  onpointerdown={() => (touched = performance.now())}
+  onkeydown={() => (touched = performance.now())}
+  data-testid="thread"
+  tabindex="-1"
+>
+  <div class="col" bind:this={col}>
     {#if conversation.late || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0)}
       <p class="intro" data-testid="thread-intro">
         {conversation.late ? "Earlier messages of this session are in its transcript and are not shown here." : intro}
