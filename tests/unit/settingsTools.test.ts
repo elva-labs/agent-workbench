@@ -10,6 +10,7 @@ const answers: {
 const sets: Partial<Settings>[] = [];
 const sheets: string[] = [];
 let refuseSheet: string | null = null;
+let refuseSettings: string | null = null;
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -22,6 +23,7 @@ vi.mock("$lib/core", () => ({
       answers.push({ id, cwd, content, error });
     },
     settingsSet: async (change: Partial<Settings>) => {
+      if (refuseSettings !== null) throw new Error(refuseSettings);
       sets.push(change);
       return change as Settings;
     },
@@ -52,6 +54,15 @@ import {
 } from "$lib/settingsTools.svelte";
 import { setThemes, theme } from "$lib/theme.svelte";
 import { resetUserStyles, userStyles } from "$lib/userStyles.svelte";
+import {
+  addWorkflow,
+  adoptWorkflows,
+  changed,
+  defaultWorkflow,
+  setOverride,
+  workflows,
+  workflowsSettings,
+} from "$lib/workflows.svelte";
 
 let next = 0;
 function request(
@@ -69,11 +80,13 @@ beforeEach(() => {
   theme.themes = {};
   sheets.length = 0;
   refuseSheet = null;
+  refuseSettings = null;
   resetUserStyles();
   answers.length = 0;
   sets.length = 0;
   resetSettingsTools();
   resetPersist();
+  adoptWorkflows(undefined);
   resetKeys();
   theme.choice = "system";
   theme.palette = "teal";
@@ -443,5 +456,363 @@ describe("the user's stylesheet", () => {
     userStyles.css = "";
     userStyles.problem = "the stylesheet imports another";
     expect(describeSettings()).toContain("is not used: the stylesheet imports another");
+  });
+});
+
+describe("workflows", () => {
+  const quick = {
+    name: "Quick fix",
+    orchestrator: { agent: "claude-code", model: "opus" },
+    steps: [{ kind: "work", name: "Fix", models: [], parallel: 2 }],
+  };
+
+  it("are read with the shape a change writes them in", async () => {
+    await handle(request("settings"));
+    const text = answers[0].content!;
+    expect(text).toContain("workflows: a workflow says which model a session starts on");
+    expect(text).toContain('"name": "Build and review"');
+    expect(text).toContain('"backTo": "Work"');
+    expect(text).toContain("New sessions start with the workflow Build and review.");
+    expect(text).toContain("workflow argument");
+    expect(text).toContain("claude-code takes the models fable, opus, sonnet, haiku");
+    expect(text).toContain("codex takes default");
+    expect(text).toContain("Which workflow a project follows is the user's to choose.");
+  });
+
+  it("are said to be none when there are none", async () => {
+    adoptWorkflows({ list: [], default: null, overrides: {} });
+    await handle(request("settings"));
+    expect(answers[0].content).toContain("none.");
+    expect(answers[0].content).toContain("New sessions start with no workflow.");
+  });
+
+  /** What a call would make of the workflows as they are. */
+  const made = (args: Record<string, unknown>) =>
+    changed(workflowsSettings(), plan(args).next.workflows!);
+
+  it("add one by name, shown to the user as what it makes of the workflows", () => {
+    const { changes } = plan({ workflow: quick });
+    expect(made({ workflow: quick }).list.map((workflow) => workflow.name)).toEqual([
+      "Build and review",
+      "Quick fix",
+    ]);
+    expect(made({ workflow: quick }).default).toBe("Build and review");
+    expect(changes).toEqual([
+      {
+        field: "workflow.Quick fix",
+        label: "Workflow Quick fix",
+        from: "none",
+        to: "Opus directs Fix (any model, 2 at once), new",
+      },
+    ]);
+  });
+
+  it("replace the one of the name written, and are shown from what it was", () => {
+    const written = { ...defaultWorkflow(), orchestrator: { agent: "claude-code", model: "opus" } };
+    const { changes } = plan({ workflow: written });
+    expect(made({ workflow: written }).list).toHaveLength(1);
+    expect(made({ workflow: written }).list[0].orchestrator.model).toBe("opus");
+    expect(changes).toHaveLength(1);
+    expect(changes[0].from).toMatch(/^Fable directs Work/);
+    expect(changes[0].to).toMatch(/^Opus directs Work/);
+  });
+
+  it("a workflow already so changes nothing", () => {
+    expect(plan({ workflow: defaultWorkflow() }).changes).toEqual([]);
+  });
+
+  it("are deleted by name, and the default goes with the one that was it", () => {
+    const { changes } = plan({ deleteWorkflow: "Build and review" });
+    expect(made({ deleteWorkflow: "Build and review" })).toEqual({
+      list: [],
+      default: null,
+      overrides: {},
+    });
+    expect(changes.map((change) => change.field)).toEqual([
+      "workflow.Build and review",
+      "defaultWorkflow",
+    ]);
+    expect(changes[1]).toMatchObject({ from: "Build and review", to: "none" });
+  });
+
+  it("name the default, or none", () => {
+    expect(made({ defaultWorkflow: null }).default).toBeNull();
+    const added = plan({ workflow: quick, defaultWorkflow: "Quick fix" });
+    expect(made({ workflow: quick, defaultWorkflow: "Quick fix" }).default).toBe("Quick fix");
+    expect(added.changes.map((change) => change.field)).toEqual([
+      "workflow.Quick fix",
+      "defaultWorkflow",
+    ]);
+  });
+
+  it("are refused with the reason when they will not do", () => {
+    expect(() => plan({ defaultWorkflow: "Gone" })).toThrow(/no workflow called Gone/);
+    expect(() => plan({ deleteWorkflow: "Gone" })).toThrow(/no workflow called Gone/);
+    expect(() => plan({ workflow: "quick" })).toThrow(/object/);
+    expect(() => plan({ workflow: { ...quick, extra: 1 } })).toThrow(/not extra/);
+    expect(() => plan({ workflow: { ...quick, steps: [] } })).toThrow(/at least one step/);
+    expect(() =>
+      plan({ workflow: { ...quick, orchestrator: { agent: "gpt", model: "x" } } }),
+    ).toThrow(/one of claude-code, codex/);
+    const step = (extra: object) => ({
+      ...quick,
+      steps: [{ kind: "work", name: "Fix", models: [], parallel: 2 }, extra],
+    });
+    expect(() =>
+      plan({ workflow: step({ kind: "work", name: "fix", models: [], parallel: 1 }) }),
+    ).toThrow(/taken/);
+    expect(() =>
+      plan({ workflow: step({ kind: "work", name: "More", models: [], parallel: 9 }) }),
+    ).toThrow(/between 1 and 8/);
+    expect(() =>
+      plan({
+        workflow: step({
+          kind: "review",
+          name: "Check",
+          models: [],
+          reviewerApproves: false,
+          orchestratorAgrees: false,
+          backTo: "Fix",
+          limit: 2,
+        }),
+      }),
+    ).toThrow(/passes the work/);
+    expect(() =>
+      plan({
+        workflow: step({
+          kind: "review",
+          name: "Check",
+          models: [],
+          reviewerApproves: true,
+          orchestratorAgrees: true,
+          backTo: "Later",
+          limit: 2,
+        }),
+      }),
+    ).toThrow(/before it/);
+    expect(() =>
+      plan({
+        workflow: step({ kind: "review", name: "Check", models: [], backTo: "Fix", limit: 2 }),
+      }),
+    ).toThrow(/reviewerApproves/);
+    expect(() => plan({ workflow: step({ kind: "plan", name: "P" }) })).toThrow(/work or review/);
+  });
+
+  it("are asked about, and made and sent when the user allows it", async () => {
+    const done = handle(request("settings_change", { workflow: quick, reason: "for small fixes" }));
+    await settle();
+    expect(workflows.list).toHaveLength(1);
+    expect(settingsAsk.asking?.changes[0].field).toBe("workflow.Quick fix");
+    allowChange();
+    await done;
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual([
+      "Build and review",
+      "Quick fix",
+    ]);
+    expect(sets.at(-1)).toMatchObject({ workflows: { default: "Build and review" } });
+    expect(answers[0].content).toMatch(/allowed the change\. Workflow Quick fix is now/);
+  });
+
+  it("are left as they were when the user declines", async () => {
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    declineChange();
+    await done;
+    expect(workflows.list).toHaveLength(1);
+    expect(workflows.default).toBe("Build and review");
+    expect(sets).toEqual([]);
+  });
+
+  it("can be undone, which puts back the workflows as they were", async () => {
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    allowChange();
+    await done;
+    expect(workflows.list).toEqual([]);
+    undoChange();
+    expect(workflows.list).toEqual([defaultWorkflow()]);
+    expect(workflows.default).toBe("Build and review");
+  });
+
+  it("are refused at once, without asking, when a call writes one that will not do", async () => {
+    await handle(request("settings_change", { workflow: { ...quick, steps: [] } }));
+    expect(settingsAsk.asking).toBeNull();
+    expect(answers[0].error).toMatch(/at least one step/);
+  });
+
+  it("which a project follows is not the agent's to change", () => {
+    for (const name of ["workflowOverrides", "projectWorkflow"]) {
+      expect(() => plan({ [name]: {} })).toThrow(/the user's to change/);
+    }
+  });
+
+  it("show a change to when the work passes, which would otherwise read the same", () => {
+    const written = defaultWorkflow();
+    const review = written.steps[1];
+    if (review.kind !== "review") throw new Error("the default ends in a review");
+    review.reviewerApproves = false;
+    const [line] = plan({ workflow: written }).changes;
+    expect(line.from).toContain(
+      "Review (Opus, passes when the reviewer approves and the orchestrator agrees, else back to Work 3 times at most)",
+    );
+    expect(line.to).toContain("Review (Opus, passes when the orchestrator agrees, else back to Work");
+    expect(line.from).not.toBe(line.to);
+  });
+
+  it("show each project that chose a workflow deleted, which follows new sessions again", () => {
+    adoptWorkflows({
+      list: [defaultWorkflow(), { ...defaultWorkflow(), name: "Other" }],
+      default: "Other",
+      overrides: { "/repo/app": "Build and review", "/repo/site": null, "/repo/lib": "Other" },
+    });
+    const { changes } = plan({ deleteWorkflow: "Build and review" });
+    expect(changes.map((change) => change.field)).toEqual([
+      "workflow.Build and review",
+      "workflowOverride./repo/app",
+    ]);
+    expect(changes[1]).toMatchObject({
+      label: "Workflow for app",
+      from: "Build and review",
+      to: "as for new sessions",
+    });
+  });
+
+  it("are refused before asking when the core would refuse them", () => {
+    const one = (models: object[]) => ({
+      ...quick,
+      steps: [{ kind: "work", name: "Fix", models, parallel: 1 }],
+    });
+    expect(() => plan({ workflow: one([{ agent: "codex", model: "gpt 5" }]) })).toThrow(/one word/);
+    expect(() => plan({ workflow: one([{ agent: "codex", model: "x".repeat(41) }]) })).toThrow(
+      /one word, 40 characters at most/,
+    );
+    const sonnet = { agent: "claude-code", model: "sonnet" };
+    expect(() => plan({ workflow: one([sonnet, sonnet]) })).toThrow(/Sonnet twice/);
+    const many = Array.from({ length: 17 }, (_, n) => ({ agent: "claude-code", model: `m${n}` }));
+    expect(() => plan({ workflow: one(many) })).toThrow(/16 models at most/);
+  });
+
+  it("are not said to be made when the core refuses them after the user allows", async () => {
+    const done = handle(request("settings_change", { workflow: quick }));
+    await settle();
+    refuseSettings = "the settings file could not be written";
+    allowChange();
+    await done;
+    expect(answers[0].content).toBeNull();
+    expect(answers[0].error).toBe(
+      "The user allowed the change, but it could not be made: the settings file could not be written. Nothing changed.",
+    );
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual(["Build and review"]);
+    expect(settingsAsk.undo).toBeNull();
+  });
+
+  it("are made over the user's own edits while the question is open, and undone without them", async () => {
+    const done = handle(request("settings_change", { workflow: quick }));
+    await settle();
+    expect(addWorkflow()).toBe("New workflow");
+    allowChange();
+    await done;
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual([
+      "Build and review",
+      "New workflow",
+      "Quick fix",
+    ]);
+    expect(addWorkflow()).toBe("New workflow 2");
+    undoChange();
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual([
+      "Build and review",
+      "New workflow",
+      "New workflow 2",
+    ]);
+  });
+
+  it("set aside in the file are read out with why, and writing one under its name mends it", async () => {
+    const careful = {
+      name: "Careful",
+      reason: "the step Review of Careful goes back between 1 and 10 times, not 11",
+      entry: { name: "Careful", note: "as written" },
+      at: 1,
+      default: true,
+      projects: ["/repo/app"],
+    };
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {}, unread: [careful] });
+    await handle(request("settings"));
+    const text = answers[0].content!;
+    expect(text).toContain("also holds workflows that are not used");
+    expect(text).toContain("- Careful: the step Review of Careful goes back between 1 and 10 times, not 11");
+    expect(text).toContain('"note": "as written"');
+
+    const mended = { ...defaultWorkflow(), name: "Careful" };
+    const { changes } = plan({ workflow: mended });
+    expect(changes[0]).toMatchObject({
+      field: "workflow.Careful",
+      from: "in the file but not used: the step Review of Careful goes back between 1 and 10 times, not 11",
+    });
+    expect(changes.map((change) => change.field)).toEqual([
+      "workflow.Careful",
+      "workflowOverride./repo/app",
+      "defaultWorkflow",
+    ]);
+    const after = made({ workflow: mended });
+    expect(after.unread).toBeUndefined();
+    expect(after.default).toBe("Careful");
+    expect(after.overrides).toEqual({ "/repo/app": "Careful" });
+    // A name that differs from it only in case is taken, not a mend.
+    expect(() => plan({ workflow: { ...mended, name: "careful" } })).toThrow(/not used/);
+  });
+
+  it("are asked about again when what they would reset has changed since they were asked", async () => {
+    adoptWorkflows({
+      list: [defaultWorkflow(), { ...defaultWorkflow(), name: "Other" }],
+      default: "Other",
+      overrides: {},
+    });
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    expect(settingsAsk.asking?.changes.map((change) => change.field)).toEqual(["workflow.Build and review"]);
+    // Meanwhile the user points a project at the workflow being deleted.
+    setOverride("/repo/app", "Build and review");
+    allowChange();
+    await settle();
+    expect(workflows.list).toHaveLength(2);
+    expect(settingsAsk.asking?.changes.map((change) => change.field)).toEqual([
+      "workflow.Build and review",
+      "workflowOverride./repo/app",
+    ]);
+    allowChange();
+    await done;
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual(["Other"]);
+    expect(workflows.overrides).toEqual({});
+    expect(answers[0].content).toMatch(/Workflow for app is now as for new sessions/);
+  });
+
+  it("say so when undoing them is refused, and the window keeps what is stored", async () => {
+    const done = handle(request("settings_change", { workflow: quick }));
+    await settle();
+    allowChange();
+    await done;
+    refuseSettings = "the settings file could not be written";
+    undoChange();
+    await settle();
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual(["Build and review", "Quick fix"]);
+    expect(workflows.refused).toBe("the settings file could not be written");
+  });
+
+  it("deleted come back where they stood, with the projects that chose them, on undo", async () => {
+    adoptWorkflows({
+      list: [defaultWorkflow(), { ...defaultWorkflow(), name: "Other" }],
+      default: "Build and review",
+      overrides: { "/repo/app": "Build and review" },
+    });
+    const done = handle(request("settings_change", { deleteWorkflow: "Build and review" }));
+    await settle();
+    allowChange();
+    await done;
+    expect(workflows.overrides).toEqual({});
+    undoChange();
+    await settle();
+    expect(workflows.list.map((workflow) => workflow.name)).toEqual(["Build and review", "Other"]);
+    expect(workflows.default).toBe("Build and review");
+    expect(workflows.overrides).toEqual({ "/repo/app": "Build and review" });
   });
 });
