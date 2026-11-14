@@ -16,6 +16,7 @@
 //! its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -88,6 +89,8 @@ struct Harness {
     recorder: Arc<Recorder>,
     id: String,
     session: String,
+    /// How many of the session's events the waits have gone past.
+    waited: Cell<usize>,
 }
 
 fn start(name: &str, scenario: &str) -> Harness {
@@ -160,6 +163,7 @@ fn start_in(
         recorder,
         id: started.id,
         session,
+        waited: Cell::new(0),
     }
 }
 
@@ -175,12 +179,19 @@ impl Harness {
             .collect()
     }
 
-    /// Waits for an event, and hands back every event up to and with it.
+    /// Waits for an event told after the one the last wait matched, and
+    /// hands back every event from the start up to and with it. A wait
+    /// looks only past the last match, so it cannot take an event that
+    /// came before what the test did since, or miss a state that came and
+    /// went before it looked.
     fn until(&self, what: impl Fn(&Value) -> bool) -> Vec<Value> {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             let events = self.events();
-            if let Some(at) = events.iter().position(&what) {
+            let from = self.waited.get();
+            if let Some(at) = events[from..].iter().position(&what) {
+                let at = from + at;
+                self.waited.set(at + 1);
                 return events[..=at].to_vec();
             }
             assert!(
@@ -191,10 +202,10 @@ impl Harness {
         }
     }
 
-    /// Waits until the session has told `n` states, and hands them back.
-    fn until_states(&self, n: usize) -> Vec<String> {
-        self.until(|_| states(&self.events()).len() >= n);
-        states(&self.events())
+    /// Waits for the session to go into `state`, and hands back every state
+    /// it has told up to and with it.
+    fn until_state(&self, state: &str) -> Vec<String> {
+        states(&self.until(|event| event["type"] == "state" && event["state"] == state))
     }
 
     fn until_type(&self, kind: &str) -> Vec<Value> {
@@ -294,7 +305,7 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
     assert_eq!(ended["outcome"], "done");
     assert_eq!(ended["totalCostUsd"], 0.01);
     assert_eq!(ended["usage"]["outputTokens"], 4);
-    assert_eq!(h.until_states(3), ["idle", "working", "idle"]);
+    assert_eq!(h.until_state("idle"), ["idle", "working", "idle"]);
 
     let sent = h.stdin();
     assert_eq!(sent[2]["type"], "user");
@@ -448,9 +459,9 @@ fn each_answer_to_a_permission_reaches_the_agent() {
                 "message": false,
             })
         );
-        h.until(|_| states(&h.events()).last().map(String::as_str) == Some("asking"));
+        h.until_state("asking");
         answer(&h.sessions, &h.id, request, choice, message).unwrap();
-        h.until(|_| states(&h.events()).last().map(String::as_str) == Some("working"));
+        h.until_state("working");
     }
     let events = h.until_type("turnEnded");
     assert_eq!(
@@ -526,7 +537,7 @@ fn a_question_is_answered_with_a_reply_of_its_own() {
     let asked = h.until_type("questionAsked");
     let asked = asked.last().unwrap();
     assert_eq!(asked["questions"][0]["options"][1]["label"], "Blue");
-    assert_eq!(h.until_states(3).last().unwrap(), "asking");
+    assert_eq!(h.until_state("asking"), ["idle", "working", "asking"]);
     assert!(answer(&h.sessions, &h.id, "q1", Choice::Allow, None).is_err());
     reply(&h.sessions, &h.id, "q1", Some(&[vec!["Green".into()]])).unwrap();
     let events = h.until_type("turnEnded");
@@ -543,7 +554,10 @@ fn a_question_is_answered_with_a_reply_of_its_own() {
         replied["response"]["response"]["updatedInput"]["answers"]["Which colour?"],
         "Green"
     );
-    assert_eq!(h.until_states(5).last().unwrap(), "idle");
+    assert_eq!(
+        h.until_state("idle"),
+        ["idle", "working", "asking", "working", "idle"]
+    );
     h.stop();
 }
 
@@ -574,7 +588,7 @@ fn an_interrupt_withdraws_what_was_asked_and_ends_the_turn() {
     assert_eq!(events.last().unwrap()["outcome"], "interrupted");
     assert_eq!(events.last().unwrap()["error"], Value::Null);
     assert_eq!(
-        h.until_states(5),
+        h.until_state("idle"),
         ["idle", "working", "asking", "working", "idle"]
     );
     h.stop();
@@ -682,7 +696,7 @@ fn a_subagent_s_messages_and_the_turn_the_agent_starts_after_it() {
 
     // Working from the message to the end of the agent's own turn, with no
     // idle while the subagent ran after the first turn ended.
-    assert_eq!(h.until_states(3), ["idle", "working", "idle"]);
+    assert_eq!(h.until_state("idle"), ["idle", "working", "idle"]);
     h.stop();
 }
 
@@ -709,13 +723,8 @@ fn a_message_sent_during_a_turn_is_queued_and_gets_its_own_turn() {
     let queued = h.until(|e| e["type"] == "message" && e["state"] == "queued");
     assert_eq!(queued.last().unwrap()["message"], second.as_str());
     assert_eq!(queued.last().unwrap()["text"], "second");
-    h.until(|_| {
-        h.events()
-            .iter()
-            .filter(|e| e["type"] == "turnEnded")
-            .count()
-            == 2
-    });
+    h.until_type("turnEnded");
+    h.until_type("turnEnded");
     let started: Vec<Value> = h
         .events()
         .into_iter()
@@ -953,7 +962,7 @@ fn a_turn_the_agent_starts_by_itself_names_no_message() {
     let events = h.until_type("turnEnded");
     let started = events.iter().find(|e| e["type"] == "turnStarted").unwrap();
     assert_eq!(started["messages"], json!([]));
-    assert_eq!(h.until_states(3), ["idle", "working", "idle"]);
+    assert_eq!(h.until_state("idle"), ["idle", "working", "idle"]);
     h.stop();
 }
 
@@ -1102,6 +1111,7 @@ fn real_claude_holds_a_short_turn() {
         recorder,
         id: started.id,
         session,
+        waited: Cell::new(0),
     };
     let ready = h.until_type("ready");
     assert!(ready.last().unwrap()["version"].is_string());
