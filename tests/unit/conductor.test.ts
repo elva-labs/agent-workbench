@@ -406,15 +406,39 @@ describe("starting a session", () => {
     const other = create(A);
     started(other.key, "pty-0", "sid-0");
     expect(other.title).toBeNull();
-    for (const name of ["Session 1", "session\u200b 1", "Session\n1", "Session\t1"]) {
+    for (const name of ["Session 1", "session\u200b 1", "Session\n1", "Session\t1", "Sessi\u043En 1", "S\u0435ssion 1"]) {
       const row = await startAllowed(
         call("start", { project: A, prompt: "Fix the flaky test", name }, { session: "caller-1" }),
         "pty-1",
         "sid-new",
       );
       expect(row.title).toBeNull();
-      expect(last().content).toContain("another session is called that, so the session is named by its prompt");
+      expect(last().content).toMatch(/another session is called that|its letters mix scripts/);
       close(row.key);
+    }
+  });
+
+  it("folds look-alike letters, and refuses a name whose letters mix scripts", async () => {
+    // The reviewer's case: "Sessiоn 1" with a Cyrillic о beside session 1.
+    const other = create(A);
+    started(other.key, "pty-0", "sid-0");
+    const row = await startAllowed(
+      call("start", { project: A, prompt: "Fix it", name: "Sessi\u043En 1" }, { session: "caller-1" }),
+      "pty-1",
+      "sid-new",
+    );
+    expect(row.title).toBeNull();
+    expect(last().content).toContain("its letters mix scripts");
+    close(row.key);
+    // A name in one script of its own is taken, Japanese's three included.
+    for (const name of ["Сборка", "テスト実行", "Café rewrite"]) {
+      const named = await startAllowed(
+        call("start", { project: A, prompt: "Fix it", name }, { session: "caller-1" }),
+        "pty-1",
+        "sid-new",
+      );
+      expect(named.title).toBe(name);
+      close(named.key);
     }
   });
 

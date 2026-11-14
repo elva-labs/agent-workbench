@@ -48,7 +48,7 @@ import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrate
 import { lastRun } from "$lib/thread";
 import { OUTCOME_ASK } from "$lib/instructions";
 import { senderOf, startersFrom } from "$lib/senders.svelte";
-import { readsAsYou } from "$lib/unseen";
+import { mixesScripts, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -640,7 +640,9 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   const notCalled = you
     ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
     : taken
-      ? ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
+      ? mixesScripts(candidate!)
+        ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
+        : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
       : "";
   return said(
     `Started session ${id} in ${where}. It has the prompt.${notCalled} Call wait to hear how it goes.`,

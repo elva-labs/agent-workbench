@@ -31,15 +31,42 @@ export function shown(text: string): string {
     .join("");
 }
 
+/** Letters of other scripts that read as Latin ones, folded to them. */
+const LOOKALIKE: Record<string, string> = {
+  а: "a", в: "b", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t", у: "y", х: "x",
+  ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ӏ: "l", ԛ: "q", ԝ: "w", ү: "y", һ: "h", п: "n", г: "r",
+  α: "a", β: "b", ε: "e", η: "n", ι: "i", κ: "k", ν: "v", ο: "o", ρ: "p", τ: "t", υ: "u", χ: "x", ω: "w",
+  ı: "i", ℓ: "l",
+};
+
 /** A name as it reads, for telling two names apart: without anything
-    unseen, any spaces, line breaks or tabs, the marks around it, or case,
-    so "Session 1", "Session1" and "session\n1" are one name. */
+    unseen, any spaces, line breaks or tabs, the marks around it, accents
+    or case, and with letters that look like Latin ones read as them, so
+    "Session 1", "Session1", "session\n1" and "Sessiоn 1" with a Cyrillic
+    о are one name. */
 export function bareName(name: string): string {
-  return Array.from(name)
-    .filter((char) => !UNSEEN.test(char) && !/\s/.test(char))
+  return Array.from(name.normalize("NFKD").toLowerCase())
+    .filter((char) => !UNSEEN.test(char) && !/\s/.test(char) && !/\p{M}/u.test(char))
+    .map((char) => LOOKALIKE[char] ?? char)
     .join("")
-    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
-    .toLowerCase();
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
+/** Whether a name's letters are of more than one script, as a name made to
+    pass for another's often is. */
+export function mixesScripts(name: string): boolean {
+  const scripts = new Set<string>();
+  for (const char of name) {
+    if (!/\p{L}/u.test(char)) continue;
+    const script = ["Latin", "Cyrillic", "Greek", "Armenian", "Hebrew", "Arabic", "Han", "Hiragana", "Katakana", "Hangul"].find(
+      (name) => new RegExp(`\\p{Script=${name}}`, "u").test(char),
+    );
+    scripts.add(script ?? "other");
+  }
+  // Japanese writes its words in three scripts at once.
+  const japanese = ["Han", "Hiragana", "Katakana"];
+  if ([...scripts].every((script) => japanese.includes(script))) return false;
+  return scripts.size > 1;
 }
 
 /** Whether a name would read as the user's own, "You", in any case and with
