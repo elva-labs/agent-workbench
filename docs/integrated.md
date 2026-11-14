@@ -8,10 +8,10 @@ and instructions all apply as they do in its terminal interface, and the
 transcript it writes is the same one: a session started integrated resumes
 in a terminal, and the other way round.
 
-Claude Code is the agent driven this way. The commands and events below
-are not particular to it: only the code that speaks an agent's own
-protocol is, and it is kept apart from the rest so that another agent's
-protocol can sit beside it.
+Claude Code and Codex are the agents driven this way. The commands and
+events below are not particular to either: only the code that speaks an
+agent's own protocol is, and each agent's is kept apart from the rest and
+from the other's.
 
 ## How Claude Code is started
 
@@ -56,6 +56,51 @@ signs in is passed: no token and no key. A session under an account that is
 not signed in says so as an error, and the user signs in by running `claude`
 in a terminal; the workbench never drives a sign-in.
 
+## How Codex is started
+
+Codex runs its app-server, which speaks JSON-RPC in lines on stdio and
+stays running for as long as its stdin is open:
+
+```
+codex app-server
+```
+
+Everything else is said in messages. The workbench introduces itself by
+name, which Codex files the threads it starts under, then reads the
+account, the models Codex offers and the efforts each takes, and starts a
+thread in the session's folder, or resumes the one asked for without its
+past turns, which the window reads from the transcript. The thread starts
+with the model, the effort and the mode the session asked for, and with
+approvals sent to the window whoever the user's own configuration names to
+review them. The thread's id is Codex's own, known once the thread has
+started, so the start answers with none and ready carries it.
+
+A mode is Codex's approval policy and sandbox together: read only, which
+asks before it changes anything; auto, which changes files and runs
+commands in the project and asks before going beyond it; and full access,
+which asks for nothing. A user configuration that sets another pair shows
+as that pair. Codex takes the model, the effort and the mode with each
+message, so a change of any is settled by the workbench, answers at once,
+and goes with the next message.
+
+The workbench's tool server is attached to each thread through the
+thread's own configuration, under the name the hooks install it by, with
+its tools allowed without asking, so it needs no entry in the account's
+configuration. Codex gives the servers it starts an environment of its own
+choosing, so the session's id and role go into the server's entry. For a
+fresh thread there is no id to give, since Codex makes it when it starts
+the thread and the server with it: the tools that need to know which
+session calls them, the browser and the waits, refuse a fresh Codex
+session's calls, as they do a Codex terminal session's. A resumed thread's
+server knows its session.
+
+The account is the home Codex reads from `CODEX_HOME`. An account that
+needs an OpenAI login and has none says so with the same error as for
+Claude Code, and the user signs in by running `codex login` in a terminal.
+A Codex older than the oldest version the workbench speaks to, one that
+refuses the introduction, and a thread that cannot start or resume each
+end the session with an error that says which.
+
 ## Trust
 
 Print mode skips the agent's own question of whether a folder's files are
@@ -70,6 +115,12 @@ own question would have, and the session can start. A worktree the
 workbench makes gets the entry when its project has one. Nothing is made
 for the session, not even the account's folder, before the folder is
 trusted.
+
+Codex keeps the same answer in its configuration, as a `trust_level` of
+`trusted` for the folder, or for a folder above it such as the repository,
+in the `config.toml` of the account's home. A Codex start checks that
+record instead, and the trust command writes it there, leaving the rest of
+the file as the user wrote it.
 
 Running agents, the user's own terminal sessions among them, read and
 rewrite the same state file. The workbench reads it right before it
@@ -92,10 +143,10 @@ the same way.
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
-| Compact | Compacts the conversation, the way the agent does it. Claude Code is sent a compact command as a message of its own, so the turn it starts names no message of the window's. |
+| Compact | Compacts the conversation, the way the agent does it. Claude Code is sent a compact command as a message of its own, and Codex is asked to compact its thread; either way the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
-| Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. |
+| Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
 | Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, and the messages no turn has taken yet. It answers once every event that went out before it has, so it reflects those events and none after. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
@@ -107,7 +158,7 @@ that name a message never come before the window knows the id.
 
 The conversation's id is known at the start only where the workbench
 chooses it, as it does for Claude Code, or resumes one. An agent that makes
-its own ids has none to give yet. The ready event carries the agent's id in
+its own ids, as Codex does, has none to give yet. The ready event carries the agent's id in
 either case, and that is the one to keep for resuming.
 
 ## Permissions
@@ -133,13 +184,24 @@ request with nothing suggested offers allow, deny and cancel alone. Only
 what the chosen offer names is sent back, never the rest of what the agent
 suggested.
 
+For Codex, allowing for the session remembers the command as it was
+written, the changes under the folder the request names or to the files it
+changes, or the MCP tool asked for; allowing always adds the command prefix
+Codex proposed to its rules, or a host it proposed to its network policy,
+or allows the MCP tool from now on where Codex offers that. A request for
+more permissions than the sandbox gives remembers them for the rest of the
+turn when allowed, or of the session, and offers no cancel. Codex takes no
+message with a denial, and its offers say so.
+
 A question the agent asks the user is a request of its own, answered with
 a reply rather than a permission: each question with its options, whether
 more than one may be picked, whether the user may answer in words of their
 own, and whether the answer is a secret, such as a password, that is not
 to be shown. A reply to a question that takes no words of the user's own
 names only its options. Claude Code's questions all take the user's own
-words, and none is secret. Asking to go ahead with a plan is a permission,
+words, and none is secret. Codex's may be secret, and may offer options
+alone; one with no options takes the user's own words. Declining a Codex
+question answers none of it. Asking to go ahead with a plan is a permission,
 which allowing grants; the plan itself arrives as a plan event first.
 
 ## Events
@@ -199,6 +261,13 @@ naming the session and its kind:
   connection fell behind, as described under failure.
 - **state**, **error** and **ended**.
 
+For Codex, a file change's input comes whole again each time the patch it
+writes grows; the last is the whole of it. Its new files come with their
+content and its changed ones with their hunks, read from the diff Codex
+gives. A turn reports no cost. A tool call Codex makes to start another
+agent is a tool call of the agent kind, and what that agent says has no
+event.
+
 A subagent's text, tool calls, plans and requests name the tool call that
 started it, so the window can draw them under that call.
 
@@ -226,12 +295,12 @@ started by itself, which happens when work it left running in the
 background finishes while the session is idle. A turn the agent ends
 without having said it started is started first, so every end has a start.
 
-Where an agent takes no message while a turn runs, the core holds each one.
-It hands one over only when the agent has said it is ready, no turn runs,
-and the agent has named the one handed over before, in a turn's start or as
-dropped, and makes the line for it then, so that it goes with the
-conversation the agent has started and the settings the session runs on
-at that moment.
+Codex takes no message while a turn runs. For an agent like it the core
+holds each one, and each message gets a turn of its own. It hands one over
+only when the agent has said it is ready, no turn runs, and the agent has
+named the one handed over before, in a turn's start or as dropped, and
+makes the line for it then, so that it goes with the conversation the
+agent has started and the settings the session runs on at that moment.
 
 The state a session's row shows comes from the same events, never from
 timing or hooks:
@@ -278,6 +347,10 @@ session is ended with an error, so that nothing queued behind the line is
 written late. A control request it does not answer within half a minute
 fails, and the session goes on.
 
+A Codex permission request or question still waiting when its turn ends is
+answered no, so Codex is not left holding it, and withdrawn. A form an MCP
+server asks Codex to show is declined, with a notice that says so.
+
 The agent runs in a process group of its own. An agent the core ends, on a
 stop or after an error, is first asked to end with a termination signal,
 and is killed with its whole group, its MCP servers among it, if it is
@@ -287,7 +360,12 @@ later. Claude Code runs a command it leaves in the
 background, such as a dev server, in a process group of its own, which
 killing the agent's group does not reach. It ends those commands itself
 when it is asked to end, so a stopped session takes them with it, but an
-agent that is killed outright, or that dies, leaves them running. Every
+agent that is killed outright, or that dies, leaves them running. Codex
+runs each command in a process group of its own too. An interrupt ends the
+turn and leaves a command that is still running at work. Codex ends such
+commands itself when its stdin closes, so a stopped session takes them
+with it, but a Codex that is killed outright, or that dies, leaves them
+running. Every
 integrated session is stopped when the app exits, and when the daemon's
 stdin ends on another machine. A connection to another machine that goes
 away ends its sessions for the window, once each, with an error saying
