@@ -16,8 +16,60 @@ import type { DiffLine } from "$lib/core";
 export const MOST_EDITS = 4000;
 
 export function lineDiff(before: string, after: string): DiffLine[] {
-  const a = splitLines(before);
-  const b = splitLines(after);
+  return linesOf(splitLines(before), splitLines(after));
+}
+
+/**
+ * The changes that turn `before` into `after`, one per run of lines that
+ * differ, in `before`'s positions: what a reload applies, so the lines
+ * between two changes keep their places, and the cursor and the scroll on
+ * them hold.
+ */
+export function lineEdits(
+  before: string,
+  after: string,
+): { from: number; to: number; insert: string }[] {
+  if (before === after) return [];
+  const a = withEndings(before);
+  const b = withEndings(after);
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of a) {
+    starts.push(offset);
+    offset += line.length;
+  }
+  starts.push(offset);
+  const edits: { from: number; to: number; insert: string }[] = [];
+  let open: { from: number; to: number; insert: string } | null = null;
+  // The index in `a` of the next line not yet walked past.
+  let next = 0;
+  for (const line of linesOf(a, b)) {
+    if (line.kind === "ctx") {
+      if (open !== null) edits.push(open);
+      open = null;
+      next = line.old!;
+      continue;
+    }
+    if (open === null) open = { from: starts[next], to: starts[next], insert: "" };
+    if (line.kind === "del") {
+      next = line.old!;
+      open.to = starts[next];
+    } else {
+      open.insert += b[line.new! - 1];
+    }
+  }
+  if (open !== null) edits.push(open);
+  return edits;
+}
+
+/** A text's lines with their line endings on, the last without one when
+    the text does not end in one. */
+function withEndings(text: string): string[] {
+  if (text === "") return [];
+  return text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+}
+
+function linesOf(a: string[], b: string[]): DiffLine[] {
   let head = 0;
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
   let tail = 0;
