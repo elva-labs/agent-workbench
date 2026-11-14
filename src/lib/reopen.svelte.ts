@@ -38,6 +38,9 @@ interface Open {
   /** The account it ran under, by name; null for the agents' own. A record
       from before there were accounts has none, which reads as null. */
   account?: string | null;
+  /** How it ran. A record from before there were integrated sessions has
+      none, which reads as a terminal. */
+  kind?: "terminal" | "integrated";
 }
 
 function onRecord(session: Session): boolean {
@@ -52,7 +55,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account } = entry as Record<
+  const { project, id, agent, startIn, model, account, kind } = entry as Record<
     string,
     unknown
   >;
@@ -62,7 +65,8 @@ function isOpenEntry(entry: unknown): entry is Open {
     (agent === "claude-code" || agent === "codex") &&
     (startIn === null || typeof startIn === "string") &&
     (model === null || typeof model === "string") &&
-    (account === undefined || account === null || typeof account === "string")
+    (account === undefined || account === null || typeof account === "string") &&
+    (kind === undefined || kind === "terminal" || kind === "integrated")
   );
 }
 
@@ -115,6 +119,7 @@ export function reopen(
       entry.startIn,
       entry.model,
       entry.account ?? null,
+      entry.kind ?? "terminal",
     );
   };
   // The session on screen at the quit, when its project is the one in front
@@ -170,6 +175,7 @@ export function reopen(
             startIn: session.startIn,
             model: session.model,
             account: session.account,
+            kind: session.kind,
           })),
           ...held,
         ],

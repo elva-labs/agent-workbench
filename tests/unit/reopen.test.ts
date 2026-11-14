@@ -121,6 +121,7 @@ describe("keeping the record", () => {
       startIn: "/home/ada/dev/one/tree",
       model: "opus",
       account: null,
+      kind: "terminal",
     });
   });
 });

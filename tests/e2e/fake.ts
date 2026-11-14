@@ -371,6 +371,7 @@ export async function installFakeCore(
           overrides: {},
         },
         pastSessions: "forever",
+        integrated: [],
         themes: {},
         userStyles: false,
         notifications: true,
@@ -1214,6 +1215,9 @@ export async function installFakeCore(
             } else if (field in allowed) {
               if (!allowed[field].includes(value as string))
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
+            } else if (field === "integrated") {
+              if (!Array.isArray(value) || value.some((agent) => agent !== "claude-code"))
+                throw new Error(`only claude-code can run integrated, not ${JSON.stringify(value)}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
             } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {

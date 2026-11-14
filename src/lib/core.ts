@@ -1024,6 +1024,9 @@ export interface Settings {
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
   pastSessions: PastSessions;
+  /** The agents whose sessions run integrated, drawn by the window; the
+      others run in a terminal. Missing reads as none. */
+  integrated?: AgentId[];
   /** The user's own themes, by name. A palette may name one. */
   themes: Record<
     string,

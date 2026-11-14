@@ -16,6 +16,7 @@ import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
+import { kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 
 /**
  * Every session this window has, live or finished.
@@ -43,6 +44,9 @@ export interface Session {
   project: string;
   /** Which agent is running in it. */
   agent: AgentId;
+  /** How it runs: the agent's own interface in a pty, or integrated, the
+      conversation drawn by the window. */
+  kind: SessionKind;
   ptyId: string | null;
   status: SessionStatus;
   /** The Claude Code session id. Known from the start when resuming, and from
@@ -430,7 +434,7 @@ export function isMine(project: string, id: string): boolean {
 
 /** Records a session as ours. Resuming one from outside counts: from then on
     it is a session of this workbench. */
-function adopt(project: string, id: string) {
+export function adopt(project: string, id: string) {
   if (isMine(project, id)) return;
   sessions.mine[project] = [...(sessions.mine[project] ?? []), id];
   try {
@@ -757,6 +761,7 @@ export function create(
   prompt: string | null = null,
   model: string | null = null,
   account: string | null = accountOf(project),
+  kind: SessionKind = kindFor(agent),
 ): Session {
   prefer(project, agent);
   const live = added(
@@ -769,6 +774,7 @@ export function create(
       model,
       account,
       "starting",
+      kind,
     ),
   );
   sessions.active = live.key;
@@ -788,9 +794,10 @@ export function reopened(
   startIn: string | null,
   model: string | null,
   account: string | null,
+  kind: SessionKind = "terminal",
 ): Session {
   return added(
-    row(project, id, agent, startIn, null, model, account, "dormant"),
+    row(project, id, agent, startIn, null, model, account, "dormant", kind),
   );
 }
 
@@ -812,12 +819,14 @@ function row(
   model: string | null,
   account: string | null,
   status: SessionStatus,
+  kind: SessionKind = "terminal",
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
     key: `s${++counter}`,
     project,
     agent,
+    kind,
     ptyId: null,
     status,
     id: resumedFrom,
@@ -982,9 +991,17 @@ export function disown(project: string, id: string) {
   }
 }
 
+/** What stops an integrated session's agent, which has no pty to kill. */
+let stopIntegrated: (session: Session) => void = () => {};
+
+export function onIntegratedClose(handler: (session: Session) => void) {
+  stopIntegrated = handler;
+}
+
 export function close(key: string) {
   const session = byKey(key);
   if (session === null) return;
+  if (session.kind === "integrated") stopIntegrated(session);
 
   if (session.ptyId !== null) {
     // A kill that fails is a process that is already gone.
@@ -1305,6 +1322,10 @@ export function exact(
   kind: SessionEvent["kind"],
   note: string | null = null,
 ) {
+  // An integrated session's state comes from its own events, and the
+  // hooks that fire for it are left alone.
+  if (sessions.all.some((candidate) => candidate.id === sessionId && candidate.kind === "integrated"))
+    return;
   const session = sessions.all.find(
     (candidate) =>
       candidate.id === sessionId &&

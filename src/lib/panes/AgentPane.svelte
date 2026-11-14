@@ -19,6 +19,7 @@
   import {
     activeSession,
     create,
+    defaultAgent,
     launch,
     rang,
     sessions,
@@ -28,6 +29,8 @@
     wake,
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
+  import { otherKind, type SessionKind } from "$lib/sessionKind.svelte";
+  import { accountOf } from "$lib/accounts.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
@@ -104,6 +107,19 @@
     if (workspace.active !== null) create(workspace.active, null, id);
   }
 
+  /** The agent a new session here starts with, and the other way it can
+      run, when it has one. */
+  let firstAgent = $derived(workspace.active === null ? null : defaultAgent(workspace.active));
+  let other = $derived(firstAgent === null ? null : otherKind(firstAgent));
+
+  /** One session started the other way from the agent's setting. */
+  function startOther(kind: SessionKind) {
+    choosing = false;
+    const project = workspace.active;
+    if (project === null || firstAgent === null) return;
+    create(project, null, firstAgent, null, null, null, accountOf(project), kind);
+  }
+
   /** Escape backs out of the choice while one of its buttons has focus.
       From the terminal it is the agent's. */
   function onChoiceKey(e: KeyboardEvent) {
@@ -132,6 +148,11 @@
         data-testid="start-agent-cancel">×</button
       >
     {:else}
+      {#if other !== null && firstAgent !== null}
+        <button class="quiet" onclick={() => startOther(other!)} data-testid="start-other"
+          >{other === "integrated" ? "New integrated session" : "New session in a terminal"}</button
+        >
+      {/if}
       <button onclick={startAnother} data-testid="start-agent">New session</button>
     {/if}
   </div>
@@ -144,7 +165,7 @@
          is visible, so its PTY keeps its size and coming back to it costs
          no reflow. -->
     {#each sessions.all as session (session.key)}
-      {#if session.status !== "dormant"}
+      {#if session.status !== "dormant" && session.kind === "terminal"}
         <TerminalView
           id={session.key}
           ptyId={session.ptyId}
@@ -176,6 +197,10 @@
       <div class="overlay" data-testid="agent-status">
         <p class="message">No session open. Resume a past one from the list, or start a new one.</p>
         {@render starters()}
+      </div>
+    {:else if current.kind === "integrated"}
+      <div class="overlay" data-testid="agent-status">
+        <p class="message">{statusMessage(current)}</p>
       </div>
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
@@ -242,6 +267,16 @@
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;
+  }
+
+  button.quiet {
+    border-color: transparent;
+    background: none;
+    color: var(--ink-2);
+  }
+
+  button.quiet:hover {
+    color: var(--ink);
   }
 
   .cancel {

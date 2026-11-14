@@ -58,6 +58,8 @@
   } from "$lib/accounts.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import { PAST_SESSIONS, sessions, setPastSessions } from "$lib/sessions.svelte";
+  import { canIntegrate, kindFor, setKind } from "$lib/sessionKind.svelte";
+  import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
   import {
     INTERFACE_FONTS,
     LOOKS,
@@ -632,6 +634,42 @@
           </section>
         {:else if tab === "sessions"}
           <section data-testid="settings-sessions">
+            <h3>How sessions run</h3>
+            <p class="note">
+              In a terminal, a session is the agent's own interface. Integrated, the workbench draws
+              the conversation and the agent works behind it, with the same login, settings, hooks
+              and tools. A session that is running keeps the way it started, and a single new one can
+              be started the other way from the agent pane.
+            </p>
+            <div class="projects kinds">
+              {#each installed().length > 0 ? installed() : AGENTS as id (id)}
+                <div class="project" data-testid="session-kind" data-agent={id}>
+                  <span class="project-name">{agentLabel(id)}</span>
+                  {#if canIntegrate(id)}
+                    <div class="seg" role="radiogroup" aria-label="How {agentLabel(id)} sessions run">
+                      <button
+                        role="radio"
+                        aria-checked={kindFor(id) === "terminal"}
+                        class:on={kindFor(id) === "terminal"}
+                        onclick={() => setKind(id, "terminal")}
+                        data-testid="session-kind-terminal">In a terminal</button
+                      >
+                      <button
+                        role="radio"
+                        aria-checked={kindFor(id) === "integrated"}
+                        class:on={kindFor(id) === "integrated"}
+                        onclick={() => setKind(id, "integrated")}
+                        data-testid="session-kind-integrated">Integrated</button
+                      >
+                    </div>
+                  {:else}
+                    <span class="note quiet only" data-testid="session-kind-only"
+                      >In a terminal. {agentLabel(id)} cannot run integrated yet.</span
+                    >
+                  {/if}
+                </div>
+              {/each}
+            </div>
             <h3>Past sessions</h3>
             <p class="note">
               A session this app ran stays listed under its project, greyed, ready to resume. Left
@@ -1219,6 +1257,15 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .kinds {
+    margin-bottom: 10px;
+  }
+
+  .note.only {
+    margin: 0;
+    text-align: right;
   }
 
   .project-name {
