@@ -368,8 +368,8 @@ pub fn grep(root: &Path, query: &str, paths: Option<&[String]>) -> Result<GrepRe
     }
 
     let workdir = workdir(root)?;
-    let mut command = std::process::Command::new("git");
-    command.current_dir(&workdir).args([
+    let mut command = command(&workdir);
+    command.args([
         "grep",
         "-n",
         "-I",
@@ -448,14 +448,47 @@ fn plain_worktree_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Runs git as a program, with what the caller passes as arguments alone
-/// and never as a line for a shell. The ext transport runs whatever a URL
-/// names, so it is off.
-fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+/// Variables that name a repository, a work tree, an index, objects or the
+/// refs to look under. A process started by `git rebase --exec`, a hook or
+/// `git bisect run` inherits them, and git would follow them away from the
+/// directory it is asked to work in. The user's config and identity
+/// variables are not here: those are settings, not a pointer at a repository.
+const REPOSITORY_VARIABLES: &[&str] = &[
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NAMESPACE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_QUARANTINE_PATH",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
+];
+
+/// Every git the core starts is built here: run in `dir`, with the variables
+/// that name a repository cleared so the repository is the one `dir` is in,
+/// and with the ext transport off, since it runs whatever a URL names.
+pub(crate) fn command(dir: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("git");
+    for name in REPOSITORY_VARIABLES {
+        command.env_remove(name);
+    }
+    command
         .args(["-c", "protocol.ext.allow=never"])
+        .current_dir(dir);
+    command
+}
+
+/// Runs git as a program, with what the caller passes as arguments alone
+/// and never as a line for a shell.
+fn run(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = command(dir)
         .args(args)
-        .current_dir(dir)
         .output()
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => "git is not installed".to_string(),
