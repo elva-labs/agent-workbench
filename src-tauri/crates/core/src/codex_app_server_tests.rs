@@ -741,7 +741,10 @@ fn a_file_change_finishes_with_each_file_created_updated_deleted_or_moved() {
     let project = Path::new("/work/demo");
     let absolute = |path: &str| project.join(path).to_string_lossy().to_string();
     assert_eq!(changes[3].path, absolute("src/b.rs"), "made absolute");
-    assert_eq!(changes[3].to.as_deref(), Some(absolute("src/c.rs").as_str()));
+    assert_eq!(
+        changes[3].to.as_deref(),
+        Some(absolute("src/c.rs").as_str())
+    );
     assert_eq!(changes[3].hunks[0].lines, ["-b", "+c"]);
 
     // A change the user declined changes nothing.
@@ -2827,4 +2830,52 @@ fn an_mcp_approval_names_its_own_call_or_none() {
         None,
         "nothing tells them apart"
     );
+}
+
+#[test]
+fn trust_is_read_and_written_in_the_home_the_codex_process_runs_with() {
+    let base = std::env::temp_dir().join(format!(
+        "workbench-codex-trust-home-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let home = base.join("home");
+    let shell = base.join("shell-codex");
+    let folder = base.join("work");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::create_dir_all(&shell).unwrap();
+    std::fs::create_dir_all(folder.join("relative-codex")).unwrap();
+    let key = dunce::canonicalize(&folder).unwrap();
+    let trusting = format!(
+        "[projects.'{}']\ntrust_level = \"trusted\"\n",
+        key.to_string_lossy()
+    );
+    // The home the user's own folder holds trusts the folder; the one the
+    // launch environment names does not.
+    std::fs::write(home.join(".codex").join("config.toml"), &trusting).unwrap();
+    let named =
+        |dir: &Path| HashMap::from([("CODEX_HOME".to_string(), dir.to_string_lossy().to_string())]);
+    let env = named(&shell);
+    assert!(!CODEX_APP_SERVER.trusted(&home, None, &env, &folder));
+    CODEX_APP_SERVER.trust(&home, None, &env, &folder).unwrap();
+    assert!(std::fs::read_to_string(shell.join("config.toml"))
+        .unwrap()
+        .contains("trusted"));
+    assert!(CODEX_APP_SERVER.trusted(&home, None, &env, &folder));
+
+    // With no CODEX_HOME, or an empty one, the user's `.codex`.
+    assert!(CODEX_APP_SERVER.trusted(&home, None, &HashMap::new(), &folder));
+    let empty = HashMap::from([("CODEX_HOME".to_string(), String::new())]);
+    assert!(CODEX_APP_SERVER.trusted(&home, None, &empty, &folder));
+
+    // A relative one is taken from the folder the process starts in.
+    let relative = named(Path::new("relative-codex"));
+    assert!(!CODEX_APP_SERVER.trusted(&home, None, &relative, &folder));
+    std::fs::write(folder.join("relative-codex").join("config.toml"), &trusting).unwrap();
+    assert!(CODEX_APP_SERVER.trusted(&home, None, &relative, &folder));
+
+    // An account's home wins over the environment.
+    let account = base.join("account");
+    std::fs::create_dir_all(&account).unwrap();
+    assert!(!CODEX_APP_SERVER.trusted(&home, Some(&account), &HashMap::new(), &folder));
+    std::fs::remove_dir_all(&base).ok();
 }

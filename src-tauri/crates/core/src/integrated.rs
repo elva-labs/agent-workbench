@@ -713,11 +713,24 @@ pub trait Protocol: Send + Sync {
     /// Whether the agent holds a folder as trusted to run its project's
     /// own hooks and servers, by the record the agent's own question
     /// writes, under the account whose configuration directory is given.
-    fn trusted(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> bool;
+    /// `env` is the environment the agent's process starts with.
+    fn trusted(
+        &self,
+        home: &Path,
+        config_dir: Option<&Path>,
+        env: &HashMap<String, String>,
+        folder: &Path,
+    ) -> bool;
 
     /// Records that the user trusts a folder, where the agent's own
     /// question would.
-    fn trust(&self, home: &Path, config_dir: Option<&Path>, folder: &Path) -> Result<(), String>;
+    fn trust(
+        &self,
+        home: &Path,
+        config_dir: Option<&Path>,
+        env: &HashMap<String, String>,
+        folder: &Path,
+    ) -> Result<(), String>;
 }
 
 /// What a start in a folder the agent does not trust fails with, before
@@ -3539,11 +3552,23 @@ mod tests {
             fake()
         }
 
-        fn trusted(&self, _: &Path, _: Option<&Path>, _: &Path) -> bool {
+        fn trusted(
+            &self,
+            _: &Path,
+            _: Option<&Path>,
+            _: &HashMap<String, String>,
+            _: &Path,
+        ) -> bool {
             true
         }
 
-        fn trust(&self, _: &Path, _: Option<&Path>, _: &Path) -> Result<(), String> {
+        fn trust(
+            &self,
+            _: &Path,
+            _: Option<&Path>,
+            _: &HashMap<String, String>,
+            _: &Path,
+        ) -> Result<(), String> {
             Ok(())
         }
     }
