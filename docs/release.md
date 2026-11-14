@@ -22,11 +22,13 @@ architectures, `.AppImage`, `.deb` and `.rpm` for Linux, `.msi` and an NSIS
 installer for Windows. Every bundle carries the remote daemon for each
 machine kind it can put one on.
 
-1. Set the version in `tauri.conf.json` and `package.json`, commit.
+1. Set the version in `package.json`, `tauri.conf.json` and the Cargo
+   manifests of the app and the core, let the lock files follow, commit.
 2. Tag it: `git tag v0.2.0 && git push origin v0.2.0`.
 3. The release workflow builds the daemons, then the bundles on all four
    targets, and opens a draft release for the tag with everything attached.
-   It refuses a tag that does not match the version in the configuration.
+   It refuses a tag that does not match the version in each of those
+   places.
    Attaching is a step of its own that retries and replaces what is already
    there, so a run that fell over while uploading can be run again from the
    Actions tab; the jobs that succeeded keep what they attached.
@@ -43,6 +45,61 @@ machine kind it can put one on.
 Running the workflow by hand from the Actions tab builds the same bundles
 without touching releases; they are kept as workflow artifacts for a
 fortnight.
+
+## Pre-releases
+
+A pre-release is a version with a suffix, `1.0.0-beta.1`, tagged
+`v1.0.0-beta.1`. It is cut from main by the steps above, checked, built and
+signed as any release is, and differs in three ways:
+
+- Its draft is a GitHub pre-release. The latest release stays the last
+  stable one, which is what the daemon's install script and the stable
+  cask and formula serve.
+- Windows gets the NSIS installer alone. The MSI format takes numeric
+  versions only and has no place for the suffix.
+- The `.deb` and the `.rpm` carry the suffix, and both package managers
+  order it after the release with the same number. Going from
+  `1.0.0-beta.1` to `1.0.0` on Linux is a downgrade to them and has to be
+  asked for as one.
+
+The tap has a beta channel beside the stable one: the cask
+`agent-workbench@beta` and the formula `agent-workbench-remote-beta`, a
+formula's name having no room for `@beta`. The scripts print them when
+given the channel, `scripts/cask.sh 1.0.0-beta.1 beta` for
+`Casks/agent-workbench@beta.rb` and `scripts/formula.sh 1.0.0-beta.1 beta`
+for `Formula/agent-workbench-remote-beta.rb`. A pre-release goes on the
+beta channel only, and the scripts refuse to print it for the stable one.
+A stable release goes on both, so nobody on the beta channel is left on a
+pre-release of a version that has since been released.
+
+`brew install --cask agent-workbench@beta` installs the pre-release and
+`brew upgrade` follows the channel from there. It is the same app as the
+stable one, with the same name, settings and stored state, so the two
+casks cannot be installed together and each names the other as a conflict.
+Moving between them is `brew uninstall --cask` of one and
+`brew install --cask` of the other, which leaves settings and state where
+they are. The same holds for the two daemon formulas.
+
+The suffix is part of the version wherever versions are compared: the
+desktop refuses a daemon at `1.0.0` when it is at `1.0.0-beta.1`. The app
+carries its own daemons, so this only matters on a machine where the
+daemon was installed by hand, which follows the beta through the beta
+formula or through the install script with
+`AGENT_WORKBENCH_VERSION=v1.0.0-beta.1`.
+
+Since a pre-release runs on the settings and state of the stable version
+and hands them back to it, every version keeps to three rules. Settings
+and stored state only grow. A version ignores what it does not know in a
+file it reads and does not reject the file. A change to the shape of
+something stored says how the version before it reads the result.
+
+Pre-releases are cut from main. A fix that stable needs while main holds
+work that is not ready for everyone goes on a branch from the last stable
+tag and is tagged there.
+
+A manual run of the workflow from a branch whose version carries a suffix
+builds the pre-release bundles as artifacts, which is how a change to this
+is tried out without a tag.
 
 ## Signing
 

@@ -64,3 +64,6 @@ built frontend, not the dev server.
 - A new Rust capability goes into the core crate with its own tests, is
   exposed through the wire protocol's dispatcher, and is routed in the app
   by path, so it works on a remote machine as well as here.
+- Settings and stored state are read by the version before as well as the
+  one after, since a pre-release runs in place of the stable app. The
+  release doc has the rules for changing their shape.
