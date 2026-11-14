@@ -1838,6 +1838,52 @@ mod tests {
     }
 
     #[test]
+    fn a_span_the_file_holds_that_is_not_used_is_kept_through_saves_and_hand_overs() {
+        let dir = home("bad-spans");
+        put(
+            &dir,
+            r#"{ "pastSessions": "fortnight", "inactiveAfter": "fortnight" }"#,
+        );
+        let store = Store::new(&dir, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.past_sessions, "forever");
+        assert_eq!(loaded.inactive_after, "week");
+        let fields: Vec<_> = loaded
+            .unread_entries
+            .iter()
+            .map(|u| u.field.as_str())
+            .collect();
+        assert_eq!(fields, ["inactiveAfter", "pastSessions"]);
+        assert!(loaded.unread_entries[0]
+            .reason
+            .contains("day, week, month, never"));
+
+        store.set(&json!({ "appearance": "dark" })).unwrap();
+        let file = file_of(&dir);
+        assert_eq!(file["inactiveAfter"], "fortnight");
+        assert_eq!(file["pastSessions"], "fortnight");
+
+        // Choosing the span replaces the one the file held.
+        store.set(&json!({ "inactiveAfter": "never" })).unwrap();
+        let file = file_of(&dir);
+        assert_eq!(file["inactiveAfter"], "never");
+        assert_eq!(file["pastSessions"], "fortnight");
+
+        let home = home("bad-spans-hand-over");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let mut held = serde_json::to_value(Settings::default()).unwrap();
+        held["inactiveAfter"] = json!("fortnight");
+        let stored = store.hand_over(&held).unwrap();
+        assert_eq!(stored.settings.inactive_after, "week");
+        assert!(stored
+            .settings
+            .unread_entries
+            .iter()
+            .any(|entry| entry.field == "inactiveAfter" && entry.entry == json!("fortnight")));
+        assert_eq!(file_of(&home)["inactiveAfter"], "fortnight");
+    }
+
+    #[test]
     fn a_file_is_read_leniently_field_by_field() {
         let settings = parse(
             r#"{ "palette": "rose", "look": "baroque", "appearance": 7, "keys": "none", "extra": true }"#,

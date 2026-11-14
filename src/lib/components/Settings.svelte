@@ -660,6 +660,7 @@
               {/each}
             </div>
             <h3>Inactive projects</h3>
+            <UnreadEntries field="inactiveAfter" />
             <p class="note">
               A project stays in the sessions pane's list while one of its sessions is running or
               waiting for you, and for this long after it was last used. After that it folds under
