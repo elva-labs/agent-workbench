@@ -69,6 +69,7 @@
   import { tick } from "svelte";
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
+  import { overrideOf, workflowOf } from "$lib/workflows.svelte";
 
   /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
@@ -94,7 +95,26 @@
     }
     choosing = path;
     picked = accountOf(path);
-    cursor = `pick:${path}:${defaultAgent(path)}`;
+    cursor =
+      workflowOf(path) === null
+        ? `pick:${path}:${defaultAgent(path)}`
+        : `pick:${path}:${FOLLOW}`;
+  }
+
+  /** The row id of the project's workflow in the choice. */
+  const FOLLOW = "workflow";
+
+  /** How the project came to follow its workflow, as the palette says it. */
+  function followedBy(path: string): string {
+    return overrideOf(path) === undefined ? "default" : "project's workflow";
+  }
+
+  /** Starts a session on the workflow the project follows. */
+  function startFollowing(path: string) {
+    const workflow = workflowOf(path);
+    if (workflow === null) return;
+    choosing = null;
+    startSession(path, undefined, picked, workflow);
   }
 
   function startWith(path: string, agent: AgentId) {
@@ -650,10 +670,17 @@
       while it is open under its name, else none. */
   function starting(path: string): Row[] {
     if (!isReady() || !choosable || choosing !== path) return [];
-    return installed().map((agent) => ({
-      id: `pick:${path}:${agent}`,
-      run: () => startWith(path, agent),
-    }));
+    const own: Row[] =
+      workflowOf(path) === null
+        ? []
+        : [{ id: `pick:${path}:${FOLLOW}`, run: () => startFollowing(path) }];
+    return [
+      ...own,
+      ...installed().map((agent) => ({
+        id: `pick:${path}:${agent}`,
+        run: () => startWith(path, agent),
+      })),
+    ];
   }
 
   let cursor = $state<string | null>(null);
@@ -1383,6 +1410,21 @@
           {/each}
         </div>
         <div class="choice-head"><span>with</span></div>
+      {/if}
+      {#if workflowOf(path) !== null}
+        <button
+          class="option"
+          class:cursor={current === `pick:${path}:${FOLLOW}`}
+          tabindex="-1"
+          onclick={() => startFollowing(path)}
+          data-row="pick:{path}:{FOLLOW}"
+          data-testid="workflow-option"
+          data-workflow={workflowOf(path)?.name}
+        >
+          <span class="mark">›</span>
+          <span class="label">{workflowOf(path)?.name}</span>
+          <span class="state">{followedBy(path)}</span>
+        </button>
       {/if}
       {#each installed() as id (id)}
         <button

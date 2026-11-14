@@ -86,8 +86,8 @@ resumed comes back under the account it ran under.
 A session runs one of two ways: under a workflow, as its orchestrator, or
 as one agent with no workflow. What the user picks is what starts. Picking
 an agent, in the agent pane, in a project's new-session row or in the
-palette, starts that agent alone. Picking a workflow in the palette starts
-its orchestrator, on the workflow's agent and model, and a plain new
+palette, starts that agent alone. Picking a workflow, in the palette or in
+the choice a project's new-session row opens, starts its orchestrator, on the workflow's agent and model, and a plain new
 session where there was nothing to pick follows the project's workflow, as
 [settings](settings.md#workflows) describes. A workflow whose
 orchestrator runs on an agent that is not installed is refused on the row,

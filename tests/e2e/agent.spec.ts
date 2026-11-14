@@ -2698,6 +2698,48 @@ test.describe("a new session from the palette", () => {
     expect((await spawns(page))[1].instructions).toBeUndefined();
   });
 
+  test("offers the project's workflow first in its own choice, as the palette does, and starts it", async ({
+    page,
+  }) => {
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex", withWorkflow: true });
+    await startHere(page);
+    const flow = page.getByTestId("workflow-option");
+    await expect(flow).toHaveCount(1);
+    await expect(flow).toContainText("Build and review");
+    await expect(flow).toContainText("default");
+    // It sits above the agents, with the cursor on it, as in the palette.
+    const options = page.locator("[data-testid='workflow-option'], [data-testid='agent-option']");
+    await expect(options).toHaveCount(3);
+    await expect(options.first()).toHaveAttribute("data-testid", "workflow-option");
+    const agentBox = (await page.getByTestId("agent-option").first().boundingBox())!;
+    expect((await flow.boundingBox())!.y).toBeLessThan(agentBox.y);
+    await expect(flow).toHaveClass(/cursor/);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0]).toMatchObject({ agent: "claude-code", model: "fable" });
+    expect((await spawns(page))[0].instructions).toContain('workflow "Build and review"');
+
+    // An agent picked from the same choice is that agent alone.
+    await startHere(page);
+    await page.locator('[data-testid="agent-option"][data-agent="codex"]').click();
+    await expect.poll(() => spawnCount(page)).toBe(2);
+    expect((await spawns(page))[1].agent).toBe("codex");
+    expect((await spawns(page))[1].instructions).toBeUndefined();
+  });
+
+  test("marks a workflow the project chose as the project's workflow in its own choice", async ({ page }) => {
+    await open(page, { open: [TWO], codex: "/usr/local/bin/codex", workflowElsewhere: true });
+    await startHere(page);
+    await expect(page.getByTestId("workflow-option")).toContainText("project's workflow");
+  });
+
+  test("offers no workflow in a project's own choice where it follows none", async ({ page }) => {
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex", workflowElsewhere: true });
+    await startHere(page);
+    await expect(page.getByTestId("agent-option")).toHaveCount(2);
+    await expect(page.getByTestId("workflow-option")).toHaveCount(0);
+  });
+
   test("puts the agent last started in the project under the cursor", async ({ page }) => {
     await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
     await page.keyboard.press(COMMANDS);

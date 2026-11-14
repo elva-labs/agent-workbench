@@ -184,7 +184,9 @@ none. A plain new session, where there is nothing to pick, follows it. In a
 project that follows a workflow, by its own choice or by the default, the
 palette's new session offers every workflow, the project's first, marked as
 the project's workflow or as the default, beside the agents to run alone.
-In a project that follows none it asks nothing it did not ask before
+The choice a project's own new-session row opens, when there is more than
+one agent or an account to pick, offers the project's workflow first in the
+same way, with the cursor on it, above the agents. In a project that follows none it asks nothing it did not ask before
 workflows, whatever other projects chose, and with one agent installed it
 starts that agent at once. An agent picked anywhere starts alone. A
 session under a workflow starts on the workflow's orchestrator, its agent

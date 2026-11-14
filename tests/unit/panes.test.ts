@@ -133,7 +133,7 @@ import { settings } from "$lib/settings.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import { chordFor, describe as describeChord } from "$lib/keys.svelte";
 
-import { reset as resetWorkflows } from "$lib/workflows.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
 beforeEach(() => {
   // A session follows no workflow here unless a test gives it one.
@@ -334,6 +334,40 @@ describe("SessionsPane", () => {
     expect(resumed.resumedFrom).toBe("x1");
     expect(resumed.title).toBeNull();
     expect(resume.open).toBe(false);
+  });
+
+  it("offers the project's workflow first in its own choice, marked as the palette marks it, and starts it", async () => {
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    render(SessionsPane);
+    await fireEvent.click(screen.getByTestId("project-new-session"));
+    const flow = screen.getByTestId("workflow-option");
+    expect(flow).toHaveTextContent("Build and review");
+    expect(flow).toHaveTextContent("default");
+    expect(flow).toHaveClass("cursor");
+    const choice = screen.getByTestId("agent-choice");
+    const rows = [...choice.querySelectorAll("[data-testid='workflow-option'], [data-testid='agent-option']")];
+    expect(rows[0]).toBe(flow);
+    await fireEvent.click(flow);
+    const started = sessions.all.at(-1)!;
+    expect(started.workflow?.name).toBe("Build and review");
+    expect(started.agent).toBe("claude-code");
+
+    // The project's own choice of workflow says so.
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: { "/repo": "Build and review" } });
+    await fireEvent.click(screen.getByTestId("project-new-session"));
+    expect(screen.getByTestId("workflow-option")).toHaveTextContent("project's workflow");
+    await fireEvent.click(screen.getAllByTestId("agent-option")[1]);
+    expect(sessions.all.at(-1)?.workflow).toBeNull();
+    expect(sessions.all.at(-1)?.agent).toBe("codex");
+
+    // Where the project follows none, only the agents are offered.
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+    await fireEvent.click(screen.getByTestId("project-new-session"));
+    expect(screen.queryByTestId("workflow-option")).toBeNull();
+    expect(screen.getAllByTestId("agent-option")).toHaveLength(2);
   });
 
   it("picks the agent from the keyboard, Enter opening the choice and Escape closing it", async () => {
