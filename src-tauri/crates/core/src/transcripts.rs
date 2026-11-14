@@ -546,11 +546,10 @@ pub fn tidy(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn home(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-transcripts-{name}"));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+    fn home(name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("transcripts-{name}"));
         dir
     }
 
