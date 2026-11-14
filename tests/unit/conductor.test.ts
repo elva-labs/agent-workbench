@@ -1754,6 +1754,11 @@ describe("starting in a workflow's shape", () => {
     expect(await refusedWith({ step: "Work", prompt: "/model opus" })).toContain(
       "begins with a slash",
     );
+    // Checked as it would be typed, with what a terminal would not show
+    // taken out first.
+    expect(await refusedWith({ step: "Work", prompt: "\u0007/model opus" })).toContain(
+      "begins with a slash",
+    );
     ended({ id: "pty-w1", code: 0, clean: true });
     flushSync();
     expect(await refusedWith({ session: "w1", prompt: "/model opus" })).toContain("stays on it");

@@ -708,7 +708,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // now, before anything is awaited, and given back if it does not happen.
   const flow = callerFlow(request);
   if ("refusal" in flow) return refused(flow.refusal);
-  if (flow.workflow !== null && mayChangeModel(prompt))
+  if (flow.workflow !== null && mayChangeModel(oneLine(prompt)))
     return refused(
       "A session you start for a step of your workflow runs on the model the step allows, so its prompt is words, not a command: the workbench starts none with a prompt that begins with a slash.",
     );
@@ -1079,7 +1079,7 @@ async function resumeSession(
   let hold = () => {};
   let beyond: Beyond | null = null;
   if (step !== undefined && at !== null) {
-    if (prompt !== null && mayChangeModel(prompt))
+    if (prompt !== null && mayChangeModel(oneLine(prompt)))
       return refused(keepsItsModel(id, at));
     const runs = modelFor(agent, model, step);
     if ("refusal" in runs) return refused(runs.refusal);
