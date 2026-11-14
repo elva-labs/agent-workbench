@@ -23,13 +23,14 @@ default preset:
 | <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd>               | Next or previous session, or shell when the panel has focus |
 | <kbd>Cmd</kbd><kbd>.</kbd>                                              | Go to the next session that needs you                       |
-| <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer; from the editor, the file in the viewer beside the agent |
+| <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer, in agent mode                |
 | <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff, whole file or rendered; in the editor, Edit, Diff or Preview |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
 | <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
 | <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>                                | A new file in the tree, in editor mode                      |
-| <kbd>Cmd</kbd><kbd>S</kbd>                                              | Save the file, when the editor has the keyboard             |
+| <kbd>Cmd</kbd><kbd>S</kbd>                                              | Save the file in front, in editor mode                      |
+| <kbd>Cmd</kbd><kbd>W</kbd>                                              | Close the editor's tab in front, in editor mode             |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd>                              | Cycle theme: light, dark, system                            |
 | <kbd>Cmd</kbd><kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd>                | Zoom the terminal, or the editor, that has focus in, out, or back |
 | <kbd>Cmd</kbd><kbd>P</kbd>                                              | Go to a session or project                                  |
@@ -213,21 +214,27 @@ editor, or the tree with nothing open, and pressed again from the editor it
 goes to the tree, and from the tree back to the editor. In the Vim preset
 the same holds for <kbd>h</kbd>, <kbd>k</kbd>, <kbd>l</kbd> and <kbd>j</kbd>.
 
-The editor has no viewer to open, so <kbd>Cmd</kbd><kbd>D</kbd> there shows
-the file in front in the viewer beside the agent, at the cursor's line, as
-the window goes back to agent mode. The viewer's Edit button is the way
-back. The view chord walks the tab's views, Edit, Diff and Preview.
+The view chord walks the tab's views, Edit, Diff and Preview. The viewer's
+chord, <kbd>Cmd</kbd><kbd>D</kbd>, does nothing for the app in editor mode;
+the viewer's Edit button and the switch are the ways between the modes.
 
 The editor is a text field of the app's own, and while it has the keyboard
 it keeps what a text field needs. <kbd>Esc</kbd> is its: it closes find and
 drops extra cursors, and the keyboard stays. Every chord on an arrow key is
 its too, moving or selecting, so <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd>
-selects to the end of the file there rather than stepping sessions.
-<kbd>Tab</kbd> indents. Undo and redo answer the Edit menu as well as their
-keys. The other chords are the app's as anywhere, and two change meaning
-there: <kbd>Cmd</kbd><kbd>F</kbd> finds in the file, and
-<kbd>Cmd</kbd><kbd>S</kbd> saves it. Save is the editor's alone: anywhere
-else the chord passes through, to a terminal above all.
+selects to the end of the file there rather than stepping sessions, and
+<kbd>Cmd</kbd><kbd>D</kbd> selects the next occurrence of what is selected.
+<kbd>Tab</kbd> indents. The other chords are the app's as anywhere, and
+<kbd>Cmd</kbd><kbd>F</kbd> finds in the file there.
+
+Save and close tab work from anywhere in editor mode but a terminal: from
+the tree as well as the editor. A terminal keeps their chords, since on
+Windows and Linux <kbd>Ctrl</kbd><kbd>S</kbd> and <kbd>Ctrl</kbd><kbd>W</kbd>
+are the process's. On macOS a chord the page lets through reaches the
+[File menu](editor.md#the-file-menu), whose items carry the same chords: there
+<kbd>Cmd</kbd><kbd>S</kbd> saves from a terminal too, and
+<kbd>Cmd</kbd><kbd>W</kbd> with no tab to close, or in agent mode, closes the
+window. Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>.
 
 <kbd>Esc</kbd> in the tree or the sessions pane hands the keyboard back to
 the editor, where typing resumes in this mode, and

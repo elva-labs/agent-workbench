@@ -28,7 +28,7 @@ state at a glance, and projects on other machines over ssh.
   a plain text editor in the middle and moves the agent to the right, still
   running. Files open as tabs per session, saving is explicit, and a file
   the agent changes under unsaved edits is never overwritten unasked. See
-  [layout](docs/layout.md#the-three-shapes).
+  [editor](docs/editor.md).
 - **Tools for the agent.** With hooks on, the agent can point at a place in
   a file or at a file's changes, put images, PDFs, documents, pages and
   diagrams in front of you, ask what you are looking at, type a command

@@ -20,7 +20,8 @@ running. A two-part switch, Agent and Editor, flips between working and
 editing, and so does <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd> or the
 command palette. The mode belongs to the window and is remembered across a
 restart. Reviewing stays what it is in agent mode; [editor
-mode](#editor-mode) has the editing shape's own rules.
+mode](#editor-mode) has the editing shape's own rules, and
+[editor](editor.md) what the editor does.
 
 The viewer is a pane rather than a sheet over the terminal. A sheet traps
 focus and hides what you were watching; a pane takes its room from somewhere
@@ -40,9 +41,10 @@ The switch and a button that shows and hides the right pane stand at the
 end of the rightmost pane's header, so they are in the same place in both
 modes whatever the panes under them do. The right pane is the changes pane
 in agent mode and the agent while editing; the button and
-<kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is. On Windows and
-Linux the window controls the app draws come after them. Pressing either
-leaves the keyboard where it was.
+<kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is, and in a window
+too narrow to show it at all the status bar says so. On Windows and Linux
+the window controls the app draws come after them. Neither a click nor Tab
+on them moves the pane focus or the keyboard.
 
 ## What gives way, in order
 
@@ -351,76 +353,6 @@ their edges and remembered apart from the other shapes', and a drag never
 folds or hides a pane: it stops where the editor would get less than 640.
 The column's header names the project, with the worktree a session follows,
 and holds buttons for a new file and a new folder; the editor's header holds
-its tabs and the views control.
-
-### The editor
-
-A plain editor: line numbers, the line the cursor is on, undo, find in the
-file, and at the foot the line and column, what the file is written in and
-whether it is saved. Nothing completes or highlights. It is drawn in the
-terminal's [font](settings.md#font) and the look's colours, at a size of its
-own that the zoom chords step while it has the keyboard.
-
-Files open as tabs. A file only looked at, clicked in the tree or pointed at
-by a tool, reuses one tab drawn in italics until it is edited or the tab is
-double-clicked. Each session keeps its own tabs, as it keeps its viewer, and
-a file open beside two sessions is one buffer, so an edit made beside one is
-there beside the other. Middle-click or the tab's × closes it.
-
-The views stay: Edit, Diff when git changed the file, and Preview for
-Markdown, walked with the view chord. Diff and Preview are read only and are
-drawn as the viewer draws them. A file that is binary, not UTF-8 or larger
-than 4 MB says so and shows as the viewer shows it.
-
-### Saving
-
-Nothing is written until <kbd>Cmd</kbd><kbd>S</kbd>. Until then the tab and
-the file's row in the tree carry a dot. A save sends what the file held when
-the editor read it, and the core writes only while the disk still holds that.
-Reading and writing go through the core, so a project on another machine is
-edited where it is, and a write that fails part way leaves the old file
-whole.
-
-A file that changes on disk is read in at once when the editor has no
-unsaved edits for it, replacing only what differs so the cursor and the
-scroll hold. Under unsaved edits a bar over the editor says the file changed
-on disk, without naming who changed it, and offers Compare, which shows the
-disk's version against the editor's, Keep mine, which writes the editor's
-over it, and Load from disk, which drops the edits for it as one change that
-undo can take back. A save never writes over the change silently.
-
-Closing a tab with unsaved edits asks first, with Save and close beside
-Close without saving. So does the close button the app draws on Windows and
-Linux. The window's own close and quit, from the system or its menu, do not
-ask.
-
-### New files and the row menu
-
-A new file is named in a field in place in the tree, in the folder the
-tree's cursor is in, from the button over the tree, the row menu or
-<kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>, which flips to the editor from
-agent mode. Enter makes the file and opens it, Escape drops the field, and
-slashes in the name make the folders on the way. A name that cannot be used
-says why under the field. The tree lists what git lists and git lists no
-empty folder, so naming a new folder shows it open in the tree with a field
-for its first file, and the folder is made with that file; Escape drops
-both.
-
-A right-click on a row opens a menu: New file, New folder, Rename, Delete,
-Copy path, which copies the path from the project's root, and Reveal in
-Finder, Show in Explorer or Show in file manager, for a project on this
-machine. Rename puts the field over the row, and the tabs on what was
-renamed follow it. Delete asks first and says what goes, every file in a
-folder, and deletes from the disk rather than moving to the trash.
-
-### Between the two modes
-
-In agent mode a file still opens in the viewer without moving the agent,
-and the viewer's bar has an Edit button that flips to the editor at the file
-and the line it shows. Flipping to the editor from the viewer brings the file
-along at its place. In editor mode what a tool points at opens in the
-editor's place: a file as a tab at its line, with what the tool said above
-it, a diff as that tab's Diff view, and what was presented, a plugin's page
-or the browser where the viewer shows them, until its Esc or Escape gives the
-editor back. Flipping back to agent mode shows that in the viewer, or puts
-the agent in the middle with the changes beside it.
+its tabs and the views control. Peeked, the sessions pane covers the folded
+column and the tree's together. What the editor does is in
+[editor](editor.md).
