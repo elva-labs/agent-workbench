@@ -258,8 +258,55 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const efforts = (model: string | null) =>
     MODELS.find((entry) => entry.value === model)?.efforts ?? [];
 
-  const cut = (text: string, keep: number) =>
-    text.length > keep ? { text: text.slice(0, keep), cut: true } : { text, cut: false };
+  // Lengths are in UTF-8 bytes, and a cut falls on a character's edge.
+  const size = (text: string) => new TextEncoder().encode(text).length;
+  const cut = (text: string, keep: number) => {
+    const bytes = new TextEncoder().encode(text);
+    if (bytes.length <= keep) return { text, cut: false };
+    let end = keep;
+    while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+    return { text: new TextDecoder().decode(bytes.slice(0, end)), cut: true };
+  };
+  /** Every string in a value cut down to `keep` bytes. */
+  const cutStrings = (value: unknown, keep: number): { value: unknown; cut: boolean } => {
+    if (typeof value === "string") {
+      const done = cut(value, keep);
+      return { value: done.text, cut: done.cut };
+    }
+    if (Array.isArray(value)) {
+      const items = value.map((item) => cutStrings(item, keep));
+      return { value: items.map((item) => item.value), cut: items.some((item) => item.cut) };
+    }
+    if (value !== null && typeof value === "object") {
+      const fields = Object.entries(value).map(
+        ([key, item]) => [key, cutStrings(item, keep)] as const,
+      );
+      return {
+        value: Object.fromEntries(fields.map(([key, item]) => [key, item.value])),
+        cut: fields.some(([, item]) => item.cut),
+      };
+    }
+    return { value, cut: false };
+  };
+  /** A changed file cut down: its content, and its hunks past what the
+      limit holds of their lines. */
+  const cutChange = (change: IntegratedFileChange): IntegratedFileChange => {
+    const content = change.content === null ? null : cut(change.content, CONTENT_KEEP);
+    let room = CONTENT_KEEP;
+    let keep = 0;
+    for (const hunk of change.hunks) {
+      const lines = hunk.lines.reduce((sum, line) => sum + size(line) + 1, 0);
+      if (lines > room) break;
+      room -= lines;
+      keep += 1;
+    }
+    return {
+      ...change,
+      content: content?.text ?? null,
+      hunks: change.hunks.slice(0, keep),
+      truncated: change.truncated || !!content?.cut || keep < change.hunks.length,
+    };
+  };
 
   const fake: FakeIntegrated = {
     calls: [],
@@ -513,9 +560,12 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         case "toolOutput": {
           const delta = body.delta;
           if (delta !== null) {
-            const streamed = (session.streamed.get(body.call) ?? 0) + delta.length;
+            const streamed = (session.streamed.get(body.call) ?? 0) + size(delta);
             session.streamed.set(body.call, streamed);
             if (streamed > CONTENT_KEEP) return;
+          } else if (body.type === "toolInput" && body.input !== null && body.input !== undefined) {
+            const input = cutStrings(body.input, OUTPUT_KEEP);
+            body = { ...body, input: input.value, truncated: body.truncated || input.cut };
           }
           break;
         }
@@ -523,13 +573,13 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.open.delete(body.call);
           session.streamed.delete(body.call);
           const output = cut(body.output, OUTPUT_KEEP);
-          const changes = body.changes.map((change) => {
-            const content = change.content === null ? null : cut(change.content, CONTENT_KEEP);
-            return content?.cut
-              ? { ...change, content: content.text, truncated: true }
-              : change;
-          });
+          const changes = body.changes.map(cutChange);
           body = { ...body, output: output.text, truncated: body.truncated || output.cut, changes };
+          break;
+        }
+        case "turnDiff": {
+          const diff = cut(body.diff, CONTENT_KEEP);
+          body = { ...body, diff: diff.text, truncated: body.truncated || diff.cut };
           break;
         }
         case "turnEnded": {
@@ -541,9 +591,12 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.compacting = false;
           break;
         }
-        case "permissionAsked":
+        case "permissionAsked": {
+          const input = cutStrings(body.input, OUTPUT_KEEP);
+          body = { ...body, input: input.value, truncated: body.truncated || input.cut };
           session.asked.set(body.request, { kind: "permission", offers: body.choices, event: body });
           break;
+        }
         case "questionAsked":
           session.asked.set(body.request, {
             kind: "question",

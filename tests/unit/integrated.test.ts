@@ -464,6 +464,40 @@ describe("the scripted integrated session", () => {
     const finished = heard.find((event) => event.type === "toolFinished");
     expect(finished).toMatchObject({ truncated: true });
     expect(finished?.type === "toolFinished" && finished.output.length).toBe(64 * 1024);
+
+    // In UTF-8 bytes, on a character's edge: "é" takes two.
+    const bytes = (text: string) => new TextEncoder().encode(text).length;
+    fake.tool(id, "Read", {}, "é".repeat(40 * 1024));
+    const wide = heard.filter((event) => event.type === "toolFinished").at(-1);
+    expect(wide?.type === "toolFinished" && bytes(wide.output)).toBe(64 * 1024);
+    expect(wide?.type === "toolFinished" && wide.output.endsWith("é")).toBe(true);
+
+    const long = "y".repeat(70 * 1024);
+    fake.startTool(id, "Write", { path: "/a", content: long });
+    const input = heard.filter((event) => event.type === "toolInput").at(-1);
+    expect(input).toMatchObject({ truncated: true, input: { path: "/a" } });
+    const request = fake.ask(id, "Write", { content: long });
+    const asked = heard.find((event) => event.type === "permissionAsked");
+    expect(asked).toMatchObject({ request, truncated: true });
+    expect(
+      asked?.type === "permissionAsked" && (asked.input as { content: string }).content.length,
+    ).toBe(64 * 1024);
+    fake.answer(id, request, "allow");
+
+    const hunk = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["+" + "z".repeat(200 * 1024)] };
+    fake.tool(id, "Edit", {}, "", {
+      changes: [
+        { path: "/a", kind: "update", to: null, hunks: [hunk, hunk], content: null, truncated: false },
+      ],
+    });
+    const edited = heard.filter((event) => event.type === "toolFinished").at(-1);
+    expect(edited?.type === "toolFinished" && edited.changes[0]).toMatchObject({
+      truncated: true,
+      hunks: [hunk],
+    });
+    fake.emit(id, { type: "turnDiff", diff: "d".repeat(300 * 1024), truncated: false });
+    const diff = heard.find((event) => event.type === "turnDiff");
+    expect(diff?.type === "turnDiff" && diff.truncated && diff.diff.length).toBe(256 * 1024);
   });
 
   it("changes the model, mode and effort, and ends when stopped", async () => {
