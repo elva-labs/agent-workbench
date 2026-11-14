@@ -29,9 +29,11 @@ use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
 
-/// Held across every read, change and write of an account's agent state, so
-/// two installs, removals or trust copies at the same moment cannot each
-/// write back a copy that lacks the other's entry.
+/// Held across each read, change and write of an account's agent state, so
+/// two installs, removals or trust writes at the same moment cannot each
+/// write back a copy that lacks the other's entry. It is taken where a file
+/// is read for a change and released once that file is written, never
+/// across a loop over files, so no path takes it twice.
 static STATE: Mutex<()> = Mutex::new(());
 
 fn lock_state() -> MutexGuard<'static, ()> {
@@ -313,7 +315,6 @@ pub fn trust_like(
             .to_string()
     };
     let (from, to) = (canonical(project), canonical(worktree));
-    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         trust_claude(&claude, &from, &to)?;
     }
@@ -412,6 +413,7 @@ pub fn claude_trust(state: &Path, folder: &Path) -> Result<(), String> {
 }
 
 fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
+    let _state = lock_state();
     let Ok(text) = std::fs::read_to_string(codex) else {
         return Ok(());
     };
@@ -528,7 +530,6 @@ fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), 
         .to_string_lossy()
         .to_string();
 
-    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         update_settings(&claude, |state| {
             let servers = state
@@ -595,7 +596,6 @@ fn uninstall_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<()
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
-    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         if !claude.exists() {
             continue;
@@ -716,15 +716,17 @@ pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookS
     Ok(status(home, project, accounts))
 }
 
-/// Changes a JSON file the agents keep, and that their running processes
-/// read and rewrite too: the file is read, changed by `change`, which says
-/// whether it changed anything, and written back at once. The read comes
-/// right before the write so as little as possible of another writer's
-/// work can be lost between them.
+/// Changes an account's agent state, a JSON file that the agents' running
+/// processes read and rewrite too: the file is read, changed by `change`,
+/// which says whether it changed anything, and written back at once. The
+/// state lock is held from the read to the write, so no other writer in
+/// this process comes between them, and the read comes right before the
+/// write so as little as possible of an agent's own work can be lost.
 fn update_settings(
     path: &Path,
     change: impl FnOnce(&mut Map<String, Value>) -> Result<bool, String>,
 ) -> Result<(), String> {
+    let _state = lock_state();
     let mut settings = read_for_writing(path)?;
     if change(&mut settings)? {
         write_settings(path, &settings)?;
@@ -1473,12 +1475,21 @@ mod tests {
     }
 
     #[test]
-    fn installs_and_removals_at_the_same_moment_lose_no_entry() {
+    fn installs_removals_and_trust_at_the_same_moment_lose_no_entry() {
         let count = 24;
         let (home, projects) = many_projects("concurrent", count);
         with_daemon(&home);
         let accounts = work_account();
-        let run = |projects: &[PathBuf], remove: bool| {
+        let states = account::claude_jsons(&home, &accounts);
+        let folders: Vec<PathBuf> = (0..count * 2)
+            .map(|at| home.join("trusted").join(format!("folder-{at}")))
+            .collect();
+        for folder in &folders {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        // Each run of installs or removals has trust writes for half the
+        // folders beside it, on every account's state.
+        let run = |projects: &[PathBuf], remove: bool, folders: &[PathBuf]| {
             std::thread::scope(|scope| {
                 for project in projects {
                     let (home, accounts) = (&home, &accounts);
@@ -1490,7 +1501,17 @@ mod tests {
                         }
                     });
                 }
+                for folder in folders {
+                    for state in &states {
+                        scope.spawn(move || claude_trust(state, folder).unwrap());
+                    }
+                }
             });
+        };
+        let trusted = |folders: &[PathBuf]| {
+            states
+                .iter()
+                .all(|state| folders.iter().all(|folder| claude_trusts(state, folder)))
         };
         let all = |home: &Path| -> Vec<bool> {
             status_many(home, &projects, &accounts)
@@ -1499,16 +1520,19 @@ mod tests {
                 .collect()
         };
 
-        run(&projects, false);
+        let (first, second) = folders.split_at(count);
+        run(&projects, false, first);
         assert_eq!(all(&home), vec![true; count]);
+        assert!(trusted(first), "a trust write was lost beside installs");
 
         let (gone, kept) = projects.split_at(count / 2);
-        run(gone, true);
+        run(gone, true, second);
         let mut expected = vec![false; count / 2];
         expected.extend(vec![true; count - count / 2]);
         assert_eq!(all(&home), expected);
         assert!(kept
             .iter()
             .all(|project| status(&home, project, &accounts).installed));
+        assert!(trusted(&folders), "a trust write was lost beside removals");
     }
 }
