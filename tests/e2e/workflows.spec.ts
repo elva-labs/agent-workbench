@@ -593,13 +593,15 @@ test.describe("the layout", () => {
       const canvas = await box(page, "workflow-canvas");
       return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
     };
-    expect(await beside()).toBe(true);
+    // The layout follows the editor's measured width, which settles a
+    // frame after what changed it.
+    await expect.poll(beside).toBe(true);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();
     await page.locator('[data-testid="workflow-add"][data-at="2"]').click();
     await page.getByTestId("workflow-add-work").click();
     await expect(step(page, "Work 3")).toBeVisible();
-    expect(await beside()).toBe(true);
+    await expect.poll(beside).toBe(true);
     await page.setViewportSize({ width: 1024, height: 768 });
     await expect.poll(beside).toBe(false);
   });
