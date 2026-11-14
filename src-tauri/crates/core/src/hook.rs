@@ -428,13 +428,115 @@ fn codex_keys(folder: &Path) -> Vec<String> {
     keys
 }
 
-/// The folder Codex takes a repository's trust from: the one holding the
-/// repository's common git directory, which for a worktree is its main
-/// repository's. None outside a repository.
+/// The most of a git metadata file Codex reads.
+const CODEX_GIT_FILE_LIMIT: u64 = 64 * 1024;
+
+/// A git metadata file's text, as Codex reads one: a plain file, not a
+/// link, and no larger than its limit.
+fn codex_git_file(path: &Path) -> Option<String> {
+    let link = std::fs::symlink_metadata(path).ok()?;
+    let metadata = std::fs::metadata(path).ok()?;
+    if link.file_type().is_symlink() || !metadata.is_file() || metadata.len() > CODEX_GIT_FILE_LIMIT
+    {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    (bytes.len() as u64 <= CODEX_GIT_FILE_LIMIT)
+        .then(|| String::from_utf8_lossy(&bytes).trim_ascii().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// Where a `.git` file points, from the folder it is in.
+fn codex_gitdir(dot_git: &Path) -> Option<PathBuf> {
+    let text = codex_git_file(dot_git)?;
+    let target = text.strip_prefix("gitdir:")?.trim_ascii();
+    if target.is_empty() {
+        return None;
+    }
+    Some(lexical(&dot_git.parent()?.join(target)))
+}
+
+/// A path with its `.` and `..` parts worked out by name alone.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push(part);
+                }
+            }
+            _ => out.push(part),
+        }
+    }
+    out
+}
+
+/// The repository root Codex takes a folder's trust from when the folder
+/// has no record of its own, or None, by Codex's own rule:
+///
+/// - The checkout is the nearest folder, the given one or above, with a
+///   `.git`; a `.git` folder with no `HEAD` in it is passed over.
+/// - A checkout with a `.git` folder is its own root.
+/// - A checkout with a `.git` file is a root only through a linked
+///   worktree: its git directory is in a `worktrees` folder of a common
+///   directory, records this checkout and that common directory, and the
+///   folder holding the common directory has a `.git` that leads to it.
+///   That folder is the root. A checkout whose git directory is kept
+///   elsewhere, a submodule among them, has none.
 fn codex_repository_root(folder: &Path) -> Option<PathBuf> {
-    let repo = git2::Repository::discover(folder).ok()?;
-    let common = dunce::canonicalize(repo.commondir()).ok()?;
-    common.parent().map(Path::to_path_buf)
+    let canonical = |path: &Path| dunce::canonicalize(path).ok();
+    let mut from = if folder.is_dir() {
+        folder
+    } else {
+        folder.parent()?
+    };
+    let checkout = loop {
+        let found = from.ancestors().find(|at| at.join(".git").exists())?;
+        let dot_git = found.join(".git");
+        if !dot_git.is_dir() || dot_git.join("HEAD").exists() {
+            break found;
+        }
+        from = found.parent()?;
+    };
+    let dot_git = checkout.join(".git");
+    if dot_git.is_dir() {
+        return Some(checkout.to_path_buf());
+    }
+    let git_dir = codex_gitdir(&dot_git)?;
+    if !std::fs::metadata(&git_dir).ok()?.is_dir()
+        || std::fs::symlink_metadata(&git_dir)
+            .ok()?
+            .file_type()
+            .is_symlink()
+    {
+        return None;
+    }
+    let resolved = canonical(&git_dir)?;
+    let worktrees = resolved.parent()?;
+    if worktrees.file_name()? != "worktrees" {
+        return None;
+    }
+    let common = worktrees.parent()?;
+    let registered = lexical(&resolved.join(codex_git_file(&resolved.join("gitdir"))?));
+    if registered.file_name()? != ".git" {
+        return None;
+    }
+    let linked = resolved.join(codex_git_file(&resolved.join("commondir"))?);
+    if canonical(registered.parent()?)? != canonical(checkout)?
+        || canonical(&linked)?.as_path() != common
+    {
+        return None;
+    }
+    let root = git_dir.parent()?.parent()?.parent()?;
+    let main = root.join(".git");
+    let main_git_dir = if main.is_dir() {
+        main
+    } else {
+        codex_gitdir(&main)?
+    };
+    (canonical(&main_git_dir)?.as_path() == common).then(|| root.to_path_buf())
 }
 
 /// Whether Codex holds a folder as trusted, by the records its own trust
@@ -1234,6 +1336,96 @@ mod tests {
         );
         records(&[(&sub, trusted)]);
         assert!(!codex_trusts(&config, &deeper));
+    }
+
+    /// A bare repository with one commit and a worktree of it at `tree`.
+    fn bare_with_worktree(bare: &Path, tree: &Path) {
+        let repo = git2::Repository::init_bare(bare).unwrap();
+        let empty = repo.treebuilder(None).unwrap().write().unwrap();
+        let empty = repo.find_tree(empty).unwrap();
+        let signature = git2::Signature::now("workbench", "workbench@example.invalid").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "one", &empty, &[])
+            .unwrap();
+        drop(empty);
+        let name = tree.file_name().unwrap().to_str().unwrap();
+        repo.worktree(name, tree, None).unwrap();
+    }
+
+    #[test]
+    fn codex_takes_a_repository_root_only_from_a_worktree_s_main_checkout() {
+        let (home, base) = fixture("codex-trust-layouts");
+        let config = home.join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let trusting = |folders: &[&Path]| {
+            let text: String = folders
+                .iter()
+                .map(|folder| {
+                    let key = dunce::canonicalize(folder).unwrap();
+                    format!(
+                        "[projects.'{}']\ntrust_level = \"trusted\"\n",
+                        key.to_string_lossy()
+                    )
+                })
+                .collect();
+            std::fs::write(&config, text).unwrap();
+        };
+
+        // A worktree of a bare repository whose folder has no `.git` of its
+        // own: the folder is no repository root. With a `.git` file naming
+        // the bare repository, it is.
+        let proj = base.join("proj");
+        let feature = proj.join("feature");
+        bare_with_worktree(&proj.join(".bare"), &feature);
+        trusting(&[&proj]);
+        assert!(!codex_trusts(&config, &feature), "no proj/.git");
+        std::fs::write(proj.join(".git"), "gitdir: ./.bare\n").unwrap();
+        assert!(codex_trusts(&config, &feature), "proj/.git names .bare");
+        std::fs::write(proj.join(".git"), "gitdir: ./elsewhere\n").unwrap();
+        assert!(!codex_trusts(&config, &feature), "proj/.git names another");
+
+        let w = base.join("w");
+        let bwt = w.join("bwt");
+        bare_with_worktree(&w.join("bare.git"), &bwt);
+        trusting(&[&w]);
+        assert!(!codex_trusts(&config, &bwt), "no w/.git");
+        std::fs::write(w.join(".git"), "gitdir: bare.git\n").unwrap();
+        assert!(codex_trusts(&config, &bwt), "w/.git names bare.git");
+
+        // A checkout whose git directory is kept elsewhere has no repository
+        // root, even where that elsewhere is a repository itself; its own
+        // record still counts.
+        let store = base.join("store");
+        let sep = base.join("sep");
+        let inside = sep.join("inside");
+        std::fs::create_dir_all(&store).unwrap();
+        let mut options = git2::RepositoryInitOptions::new();
+        options.workdir_path(&sep);
+        git2::Repository::init_opts(store.join("sep.git"), &options).unwrap();
+        assert!(sep.join(".git").is_file());
+        std::fs::create_dir_all(&inside).unwrap();
+        trusting(&[&store]);
+        assert!(!codex_trusts(&config, &sep), "the folder holding it");
+        repository(&store);
+        assert!(!codex_trusts(&config, &sep), "a repository holding it");
+        trusting(&[&sep]);
+        assert!(codex_trusts(&config, &sep), "its own record");
+        assert!(!codex_trusts(&config, &inside), "a folder inside it");
+
+        // A submodule is a checkout of that kind too.
+        let super2 = base.join("super2");
+        let modules = super2.join(".git").join("modules");
+        let module = super2.join("m");
+        let outer = repository(&super2);
+        let url = format!("file://{}", base.join("elsewhere").display());
+        let submodule = outer.submodule(&url, Path::new("m"), true).unwrap();
+        submodule.open().unwrap();
+        assert!(module.join(".git").is_file());
+        trusting(&[&modules]);
+        assert!(!codex_trusts(&config, &module), "super2/.git/modules");
+        trusting(&[&super2]);
+        assert!(!codex_trusts(&config, &module), "super2");
+        trusting(&[&module]);
+        assert!(codex_trusts(&config, &module), "its own record");
     }
 
     #[test]
