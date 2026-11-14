@@ -1,6 +1,6 @@
 <script module lang="ts">
   /** The columns of settings, one on screen at a time. */
-  type Tab = "appearance" | "live" | "sessions" | "accounts" | "plugins" | "keys" | "notifications";
+  type Tab = "appearance" | "live" | "sessions" | "workflows" | "accounts" | "plugins" | "keys" | "notifications";
 
   /** The tab last chosen. It belongs to the module rather than the dialog, so
       closing the settings and opening them again lands where you were; a new
@@ -76,6 +76,7 @@
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
+  import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
 
   /**
    * The settings, over the workbench. Reached from the native menu or its
@@ -95,6 +96,7 @@
     { name: "appearance", label: "Appearance" },
     { name: "live", label: "Live updates" },
     { name: "sessions", label: "Sessions" },
+    { name: "workflows", label: "Workflows" },
     { name: "accounts", label: "Accounts" },
     { name: "plugins", label: "Plugins" },
     { name: "keys", label: "Keys" },
@@ -386,7 +388,7 @@
         {/each}
       </nav>
 
-      <div class="panel">
+      <div class="panel" class:fill={tab === "workflows"}>
         {#if tab === "appearance"}
           <h3>Appearance</h3>
           <div class="seg" role="radiogroup" aria-label="Appearance">
@@ -649,6 +651,8 @@
               {/each}
             </div>
           </section>
+        {:else if tab === "workflows"}
+          <WorkflowsTab />
         {:else if tab === "accounts"}
           <section data-testid="settings-accounts">
             <h3>Accounts</h3>
@@ -1019,14 +1023,15 @@
     z-index: 20;
     background: color-mix(in srgb, var(--bg) 70%, transparent);
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
-    padding-top: 8vh;
   }
 
+  /* One size for every tab, so nothing moves when the tab changes; it is
+     what the workflows' diagram and a step's settings need side by side. */
   .dialog {
-    width: min(860px, 92vw);
-    height: min(640px, 88vh);
+    width: min(1100px, 92vw);
+    height: min(820px, 92vh);
     display: flex;
     flex-direction: column;
     background: var(--surface);
@@ -1105,6 +1110,18 @@
     min-width: 0;
     overflow-y: auto;
     padding: 6px var(--pane-pad) 16px;
+  }
+
+  /* The other tabs keep the width they read at. */
+  .panel:not(.fill) > * {
+    max-width: 664px;
+  }
+
+  /* The workflows fill the panel and scroll their own parts. */
+  .panel.fill {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .panel > h3:first-child {

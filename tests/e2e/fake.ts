@@ -66,6 +66,8 @@ export async function installFakeCore(
     settings?: Record<string, unknown>;
     /** A stylesheet of the user's already on the machine. */
     styles?: string;
+    /** The agents the machine has, Claude Code alone unless said. */
+    agents?: string[];
     /** Past Claude Code sessions the core reports for the first project,
         each from the agent's own directory unless it names an account's. */
     transcripts?: {
@@ -78,7 +80,7 @@ export async function installFakeCore(
   } = {},
 ) {
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -331,6 +333,33 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
+        workflows: {
+          list: [
+            {
+              name: "Build and review",
+              orchestrator: { agent: "claude-code", model: "fable" },
+              steps: [
+                {
+                  kind: "work",
+                  name: "Work",
+                  models: [{ agent: "claude-code", model: "sonnet" }],
+                  parallel: 1,
+                },
+                {
+                  kind: "review",
+                  name: "Review",
+                  models: [{ agent: "claude-code", model: "opus" }],
+                  reviewerApproves: true,
+                  orchestratorAgrees: true,
+                  backTo: "Work",
+                  limit: 3,
+                },
+              ],
+            },
+          ],
+          default: "Build and review",
+          overrides: {},
+        },
         pastSessions: "forever",
         themes: {},
         userStyles: false,
@@ -363,7 +392,7 @@ export async function installFakeCore(
       ).__WORKBENCH_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
-          path: agent === "claude-code" ? "/usr/local/bin/claude" : null,
+          path: agents.includes(agent) ? `/usr/local/bin/${agent}` : null,
           caps: null,
           fromLoginShell: true,
         }),
@@ -1134,6 +1163,9 @@ export async function installFakeCore(
             : { stored: true, settings: found };
         },
         settingsSet: async (change: Record<string, unknown>) => {
+          // A test can have the core refuse the next changes, as a full disk would.
+          const refusal = (window as unknown as { __refuseSettings?: string }).__refuseSettings;
+          if (refusal !== undefined) throw new Error(refusal);
           const before = readSettings() ?? settingsDefaults;
           const themes = (change.themes ?? before.themes ?? {}) as Record<string, unknown>;
           for (const [field, value] of Object.entries(change)) {
@@ -1145,7 +1177,7 @@ export async function installFakeCore(
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
-            } else if (!["keys", "hooks", "accounts", "themes"].includes(field)) {
+            } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }
           }
@@ -1195,6 +1227,7 @@ export async function installFakeCore(
       styles: options.styles ?? null,
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
+      agents: options.agents ?? ["claude-code"],
     },
   );
 }
