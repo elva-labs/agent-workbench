@@ -8,7 +8,10 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { openUrl as openWithSystem } from "@tauri-apps/plugin-opener";
+import {
+  openUrl as openWithSystem,
+  revealItemInDir,
+} from "@tauri-apps/plugin-opener";
 import { playChime } from "$lib/chime";
 
 /**
@@ -904,6 +907,22 @@ export interface FileContent {
   truncated: boolean;
 }
 
+/** A file of the working tree as the editor reads it: its exact text, and
+    a stamp that names that exact content. Two reads of the same bytes give
+    the same stamp. */
+export interface FileText {
+  text: string;
+  stamp: string;
+}
+
+/** What a write did. Not written means the disk did not hold what the
+    write expected; `stamp` then names what it does hold, or is null for
+    nothing there. */
+export interface FileWritten {
+  written: boolean;
+  stamp: string | null;
+}
+
 export interface Transcript {
   /** The Claude Code session id, which is what `claude --resume` takes. */
   id: string;
@@ -1445,6 +1464,34 @@ export interface Core {
   /** One of those files changed: the paths that did. */
   onShownChanged(handler: (files: string[]) => void): Promise<() => void>;
 
+  /** A file of the working tree as text, for the editor. Fails with a
+      sentence that can be shown as it is for a file that is missing,
+      binary, not UTF-8 or too large. */
+  fileRead(root: string, file: string): Promise<FileText>;
+  /**
+   * Writes a file of the working tree. With a stamp it writes only while
+   * the disk still holds what that stamp names; with null only while
+   * nothing is at the path, making the folders on the way; with
+   * `overwrite` whatever is there. A disk that did not match is an answer,
+   * not an error.
+   */
+  fileWrite(
+    root: string,
+    file: string,
+    text: string,
+    stamp: string | null,
+    overwrite?: boolean,
+  ): Promise<FileWritten>;
+  /** Renames or moves a file or a folder of the working tree, making the
+      folders on the way. Fails when something is already at `to`. */
+  pathRename(root: string, from: string, to: string): Promise<void>;
+  /** Deletes a file, or a folder and everything in it. */
+  pathDelete(root: string, path: string): Promise<void>;
+  /** Shows a path of this machine in the platform's file manager. */
+  revealPath(path: string): Promise<void>;
+  /** Puts text on the system clipboard. */
+  copyText(text: string): Promise<void>;
+
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
   /** Opens the connection to a target, putting the daemon there first if it is missing. */
@@ -1808,6 +1855,13 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  fileRead: (root, file) => invoke<FileText>("file_read", { root, file }),
+  fileWrite: (root, file, text, stamp, overwrite = false) =>
+    invoke<FileWritten>("file_write", { root, file, text, stamp, overwrite }),
+  pathRename: (root, from, to) => invoke<void>("path_rename", { root, from, to }),
+  pathDelete: (root, path) => invoke<void>("path_delete", { root, path }),
+  revealPath: (path) => revealItemInDir(path),
+  copyText: (text) => navigator.clipboard.writeText(text),
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
   remoteConnect: (host) =>
@@ -2122,6 +2176,20 @@ const detachedCore: Core = {
   async onShownChanged() {
     return () => {};
   },
+  async fileRead() {
+    throw new Error("no core to read the file with");
+  },
+  async fileWrite() {
+    throw new Error("no core to write the file with");
+  },
+  async pathRename() {
+    throw new Error("no core to rename it with");
+  },
+  async pathDelete() {
+    throw new Error("no core to delete it with");
+  },
+  async revealPath() {},
+  async copyText() {},
   async remoteHosts() {
     return { configured: [], saved: [] };
   },

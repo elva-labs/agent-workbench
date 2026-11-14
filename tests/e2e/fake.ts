@@ -112,6 +112,73 @@ export async function installFakeCore(
 
       let ptyCount = 0;
 
+      // The working tree's text by path, for the files the editor has
+      // written; any other listed file reads as the viewer shows it.
+      const disk = new Map<string, string>();
+      const gone = new Set<string>();
+      const listedPaths = () => [
+        ...new Set([
+          ...state.fixture.files,
+          ...state.fixture.status.filter((f) => f.status !== "D").map((f) => f.path),
+        ]),
+      ].filter((path) => !gone.has(path));
+      const textOf = (file: string): string | undefined => {
+        if (gone.has(file)) return undefined;
+        const written = disk.get(file);
+        if (written !== undefined) return written;
+        if (!listedPaths().includes(file)) return undefined;
+        return `use std::collections::HashMap;\n\n// ${file}\n`;
+      };
+      // A stamp names exact content: FNV-1a over the text, and its length.
+      const stampOf = (text: string) => {
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < text.length; i++) {
+          hash ^= text.charCodeAt(i);
+          hash = Math.imul(hash, 0x01000193) >>> 0;
+        }
+        return `${hash.toString(16)}-${text.length}`;
+      };
+      const writeFile = (file: string, text: string) => {
+        gone.delete(file);
+        disk.set(file, text);
+        if (!state.fixture.files.includes(file)) {
+          state.fixture.files = [...state.fixture.files, file].sort();
+          if (!state.fixture.status.some((f) => f.path === file))
+            state.fixture.status = [
+              ...state.fixture.status,
+              { path: file, status: "A", add: text.split("\n").length, del: 0, binary: false },
+            ];
+        }
+      };
+      const removeFile = (file: string) => {
+        disk.delete(file);
+        gone.add(file);
+        state.fixture.files = state.fixture.files.filter((path) => path !== file);
+        state.fixture.status = state.fixture.status.filter((f) => f.path !== file);
+      };
+      // The watcher noticing: the tree is read again a moment later.
+      const treeMoved = () => {
+        const w = window as unknown as { __gitChanged?: (root: string) => void };
+        setTimeout(() => w.__gitChanged?.(open[0] ?? ""), 20);
+      };
+      // A test changes a file behind the editor's back, as the agent would:
+      // the core sees it on disk and says so, and the watcher fires.
+      (window as unknown as Record<string, unknown>).__disk = {
+        write: (file: string, text: string) => {
+          writeFile(file, text);
+          const w = window as unknown as {
+            __shownChanged?: (files: string[]) => void;
+          };
+          w.__shownChanged?.([`${open[0]}/${file}`]);
+          treeMoved();
+        },
+        read: (file: string) => textOf(file) ?? null,
+        stamp: (file: string) => {
+          const text = textOf(file);
+          return text === undefined ? null : stampOf(text);
+        },
+      };
+
       // Installed by the script before this one.
       const integrated = () =>
         (window as unknown as { __integrated: FakeIntegrated }).__integrated;
@@ -1175,13 +1242,18 @@ export async function installFakeCore(
           binary: false,
           truncated: false,
         }),
-        gitContent: async (_root: string, file: string) => ({
-          lines: file.endsWith(".png")
-            ? []
-            : ["use std::collections::HashMap;", "", `// ${file}`],
-          binary: file.endsWith(".png"),
-          truncated: false,
-        }),
+        gitContent: async (_root: string, file: string) => {
+          const text = disk.get(file);
+          return {
+            lines: file.endsWith(".png")
+              ? []
+              : text !== undefined
+                ? text.replace(/\n$/, "").split("\n")
+                : ["use std::collections::HashMap;", "", `// ${file}`],
+            binary: file.endsWith(".png"),
+            truncated: false,
+          };
+        },
         gitWatch: async () => {},
         onGitChanged: async (handler: () => void) => {
           (window as unknown as Record<string, unknown>).__gitChanged = handler;
@@ -1194,6 +1266,76 @@ export async function installFakeCore(
           (window as unknown as Record<string, unknown>).__shownChanged =
             handler;
           return () => {};
+        },
+        // The editor's reads and writes go to the working tree the fake
+        // keeps, held to the rules the core keeps: a stamp names exact
+        // content, and a write that expected other content is refused.
+        fileRead: async (_root: string, file: string) => {
+          if (file.endsWith(".png"))
+            throw new Error(`${file} is a binary file, not text`);
+          if (file.includes("huge"))
+            throw new Error(`${file} is larger than 4 MB`);
+          const text = textOf(file);
+          if (text === undefined) throw new Error(`${file} is not there`);
+          return { text, stamp: stampOf(text) };
+        },
+        fileWrite: async (
+          _root: string,
+          file: string,
+          text: string,
+          stamp: string | null,
+          overwrite = false,
+        ) => {
+          const refusal = (window as unknown as { __refuseWrites?: string }).__refuseWrites;
+          if (refusal !== undefined) throw new Error(refusal);
+          const current = textOf(file);
+          if (!overwrite) {
+            if (stamp === null && current !== undefined)
+              return { written: false, stamp: stampOf(current) };
+            if (stamp !== null && current === undefined)
+              return { written: false, stamp: null };
+            if (stamp !== null && current !== undefined && stampOf(current) !== stamp)
+              return { written: false, stamp: stampOf(current) };
+          }
+          writeFile(file, text);
+          const w = window as unknown as { __writes?: unknown[] };
+          (w.__writes ??= []).push({ file, text, stamp, overwrite });
+          treeMoved();
+          return { written: true, stamp: stampOf(text) };
+        },
+        pathRename: async (_root: string, from: string, to: string) => {
+          const under = (path: string, base: string) =>
+            path === base || path.startsWith(`${base}/`);
+          const moving = listedPaths().filter((path) => under(path, from));
+          if (moving.length === 0) throw new Error(`${from} is not there`);
+          if (listedPaths().some((path) => under(path, to)))
+            throw new Error(`something is already at ${to}`);
+          for (const path of moving) {
+            const text = textOf(path) ?? "";
+            removeFile(path);
+            writeFile(`${to}${path.slice(from.length)}`, text);
+          }
+          const w = window as unknown as { __renames?: unknown[] };
+          (w.__renames ??= []).push({ from, to });
+          treeMoved();
+        },
+        pathDelete: async (_root: string, path: string) => {
+          const going = listedPaths().filter(
+            (candidate) => candidate === path || candidate.startsWith(`${path}/`),
+          );
+          if (going.length === 0) throw new Error(`${path} is not there`);
+          for (const candidate of going) removeFile(candidate);
+          const w = window as unknown as { __deletes?: string[] };
+          (w.__deletes ??= []).push(path);
+          treeMoved();
+        },
+        revealPath: async (path: string) => {
+          const w = window as unknown as { __revealed?: string[] };
+          (w.__revealed ??= []).push(path);
+        },
+        copyText: async (text: string) => {
+          const w = window as unknown as { __copied?: string[] };
+          (w.__copied ??= []).push(text);
         },
         settingsGet: async () => {
           const found = readSettings();
