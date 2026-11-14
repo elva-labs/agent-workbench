@@ -51,8 +51,37 @@
   const IMAGES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
   const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 
+  /** A send asked for while images were still being read, made once they
+      are, so no image goes with the wrong message. */
+  let held = $state(false);
+  /** A lone digit was about to go as a message while the agent waits on an
+      answer: said, and sent only on a second Enter. */
+  let digit = $state<string | null>(null);
+
+  $effect(() => {
+    if (reading === 0 && held) {
+      held = false;
+      untrack(submit);
+    }
+  });
+
+  $effect(() => {
+    // The words changed: a warning about the last ones no longer holds.
+    if (digit !== null && link.draft.trim() !== digit) digit = null;
+  });
+
   function submit() {
     if (!ready || !hasWords) return;
+    if (reading > 0) {
+      held = true;
+      return;
+    }
+    const lone = link.draft.trim();
+    if (conversation.open.length > 0 && link.images.length === 0 && /^[0-9]$/.test(lone) && digit !== lone) {
+      digit = lone;
+      return;
+    }
+    digit = null;
     const id = send(sessionKey, link.draft, link.images);
     if (id === null) return;
     link.draft = "";
@@ -297,10 +326,21 @@
     {onkeydown}
     {onpaste}
     rows="1"
-    placeholder={conversation.entries.length === 0 ? `Tell ${agent} what to do` : `Reply to ${agent}`}
+    placeholder={conversation.open.length > 0
+      ? "↑ to answer, or write a message"
+      : conversation.entries.length === 0
+        ? `Tell ${agent} what to do`
+        : `Reply to ${agent}`}
     aria-label="Message to {agent}"
     data-testid="composer-input"
   ></textarea>
+  {#if digit !== null}
+    <p class="hint" data-testid="composer-digit">
+      “{digit}” would go to {agent} as a message, not as an answer. Press ↑ to answer, or Enter again to send it.
+    </p>
+  {:else if held}
+    <p class="hint" data-testid="composer-held">Sends once the images are read.</p>
+  {/if}
   <div class="bar">
     <button class="chip bare" onclick={() => picker?.click()} aria-label="Attach images" title="Attach images" data-testid="attach"
       ><Icon name="clip" /></button
@@ -393,7 +433,7 @@
       <button
         class="round send"
         onclick={submit}
-        disabled={!ready || !hasWords}
+        disabled={!ready || !hasWords || reading > 0}
         aria-label={running ? "Send, to wait for the agent" : "Send"}
         title={running ? "Send; it waits until the agent is done (Enter)" : "Send (Enter)"}
         data-testid="send"><Icon name="up" size={14} /></button
@@ -442,6 +482,13 @@
 
   textarea::placeholder {
     color: var(--ink-3);
+  }
+
+  .hint {
+    margin: 0;
+    padding: 0 2px;
+    font-size: 12px;
+    color: var(--ink-2);
   }
 
   .attached {

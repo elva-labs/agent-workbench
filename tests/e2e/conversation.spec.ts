@@ -852,3 +852,45 @@ test.describe("the keyboard with no composer to type in", () => {
     await expect(page.getByTestId("trust-folder")).toBeFocused();
   });
 });
+
+test.describe("the composer while something is pending", () => {
+  test("says how to reach the dock, and sends no lone digit as a message by surprise", async ({ page }) => {
+    await openIntegrated(page);
+    await page.getByTestId("composer-input").fill("go");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("${H}"); f.ask("${H}", "Bash", { command: "ls" });`);
+    const input = page.getByTestId("composer-input");
+    await expect(input).toHaveAttribute("placeholder", "↑ to answer, or write a message");
+    await page.keyboard.type("1");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("composer-digit")).toContainText("“1” would go to Claude as a message");
+    expect((await calls(page)).filter((call) => call.method === "send")).toHaveLength(1);
+    expect((await calls(page)).some((call) => call.method === "answer")).toBe(false);
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("composer-digit")).toHaveCount(0);
+    expect((await calls(page)).filter((call) => call.method === "send")).toHaveLength(2);
+  });
+
+  test("holds a send until the images going with it are read", async ({ page }) => {
+    await openIntegrated(page);
+    await page.evaluate(() => {
+      const core = (window as unknown as { __WORKBENCH_CORE__: { readMedia: (path: string) => Promise<unknown> } }).__WORKBENCH_CORE__;
+      const read = core.readMedia;
+      core.readMedia = (path) => new Promise((resolve) => setTimeout(() => resolve(read(path)), 600));
+    });
+    const box = (await page.getByTestId("composer").boundingBox())!;
+    await page.getByTestId("composer-input").fill("look at this");
+    await page.evaluate(
+      ({ x, y }) =>
+        (window as unknown as { __fileDrag: (drag: unknown) => void }).__fileDrag({ type: "drop", paths: ["/home/ada/shot.png"], x, y }),
+      { x: box.x + 40, y: box.y + 20 },
+    );
+    await expect(page.getByTestId("send")).toBeDisabled();
+    await page.getByTestId("composer-input").press("Enter");
+    await expect(page.getByTestId("composer-held")).toBeVisible();
+    await expect.poll(async () => (await calls(page)).filter((call) => call.method === "send").length).toBe(1);
+    const sent = (await calls(page)).find((call) => call.method === "send") as unknown as { images: unknown[]; text: string };
+    expect(sent.images).toHaveLength(1);
+    expect(sent.text).toContain("look at this");
+  });
+});
