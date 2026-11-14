@@ -37,6 +37,43 @@
     node.focus();
   }
 
+  /** Three buttons that do not fit on one line stand in a column, one
+      group, rather than wrap two and one. */
+  let stacked = $state(false);
+
+  /** Measures the buttons at their own widths, in a row, and stacks them
+      when the strip has less room than that. The width in a row is taken
+      while they are in one, and the strip is measured again on a resize. */
+  function fit(node: HTMLElement) {
+    const strip = node.parentElement!;
+    let row = 0;
+    const measure = () => {
+      if (!stacked) {
+        const buttons = [...node.children] as HTMLElement[];
+        const gap = parseFloat(getComputedStyle(node).columnGap) || 0;
+        row = buttons.reduce((sum, button) => sum + button.offsetWidth, 0) + gap * (buttons.length - 1);
+      }
+      const style = getComputedStyle(strip);
+      const room = strip.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      stacked = row > room + 0.5;
+    };
+    measure();
+    // A frame later, so what the column does to the strip's height is not
+    // seen in the same round of resize notices.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
+    observer.observe(strip);
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+      },
+    };
+  }
+
   function keys(event: KeyboardEvent) {
     if (event.key !== "Escape") return;
     event.preventDefault();
@@ -51,7 +88,7 @@
     <b>{question}</b>
     {#if detail}<span>{detail}</span>{/if}
   </p>
-  <div class="actions">
+  {#snippet buttons()}
     {#if safe && alternative !== null}
       <button type="button" class="quiet" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
       <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
@@ -67,7 +104,12 @@
       {/if}
       <button type="button" class="go" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
     {/if}
-  </div>
+  {/snippet}
+  {#if alternative !== null}
+    <div class="actions" class:stacked use:fit data-testid="{testid}-actions">{@render buttons()}</div>
+  {:else}
+    <div class="actions">{@render buttons()}</div>
+  {/if}
 </div>
 
 <style>
@@ -105,6 +147,20 @@
     justify-content: flex-end;
     gap: 6px;
     margin-left: auto;
+  }
+
+  /* Three that do not fit on one line: a column the strip's width, in the
+     order they stand in a row, each button as wide as the others. */
+  .actions.stacked {
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: stretch;
+    margin-left: 0;
+  }
+
+  .actions.stacked button {
+    margin: 0;
+    padding-block: 5px;
   }
 
   button {
