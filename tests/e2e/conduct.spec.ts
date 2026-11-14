@@ -509,6 +509,7 @@ test.describe("a session that follows a workflow", () => {
     const workerRow = page.getByTestId("started-session").first();
     await expect(workerRow.getByTestId("started-role")).toHaveText("Work");
     await expect(workerRow.getByTestId("started-model")).toHaveCount(0);
+    await expect(workerRow.getByTestId("started-role")).toBeVisible();
     await workerRow.click();
     await expect(page.getByTestId("workflow-tag-role")).toHaveText("Work");
     await page.getByTestId("workflow-tag").click();

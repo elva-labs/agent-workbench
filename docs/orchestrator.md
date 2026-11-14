@@ -249,8 +249,8 @@ put away.
 The sessions a session started hang directly under it, one line each,
 joined to its dot by a thin rail: the state dot, the name, the model it was
 started on and when it last changed. A session started for a step of its
-starter's workflow shows its place there instead of the model, its step
-and for a review the round, since the step chose the model. One that runs in another project than
+starter's workflow shows its step there instead of the model, since the
+step chose the model; a review's round is in the agent pane's header. One that runs in another project than
 its starter names that project after its own name. Short of room, the
 project is cut first, then the model is left out and the project with it,
 and the name is cut last; the time always stands. The line speaks

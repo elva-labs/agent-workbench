@@ -47,7 +47,7 @@
     ownFor,
     parentOf,
   } from "$lib/orchestrator.svelte";
-  import { startedFor, workflowTag } from "$lib/conductor.svelte";
+  import { placeOf, startedFor } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -1084,9 +1084,10 @@
     <div class="kids" data-testid="started-rail">
       {#each kids as kid, index (kid.key)}
         <!-- A session started for a step of its starter's workflow shows
-             its place there where another shows its model: the step set
-             the model, and the place is what tells the rows apart. -->
-        {@const role = workflowTag(kid)?.role ?? null}
+             its step where another shows its model: the step set the
+             model, and the step is what tells the rows apart. The round is
+             in the header, where there is room for it. -->
+        {@const role = placeOf(kid.key)?.step ?? null}
         <div
           class="session kid"
           class:first={index === 0}
