@@ -346,41 +346,64 @@ export function startedIds(parts: Part[]): string[] {
 
 type Permission = Extract<IntegratedEventBody, { type: "permissionAsked" }>;
 
+/** Every path a permission request names: its own fields, each change it
+    lists, and the place the core says it is for when that is a path. */
+export function requestPaths(asked: Permission): string[] {
+  const out: string[] = [];
+  const add = (path: unknown) => {
+    if (typeof path === "string" && path !== "" && !out.includes(path)) out.push(path);
+  };
+  const input = asked.input;
+  if (input !== null && typeof input === "object") {
+    const fields = input as Record<string, unknown>;
+    for (const name of ["file_path", "notebook_path", "path"]) add(fields[name]);
+    if (Array.isArray(fields.changes))
+      for (const change of fields.changes as Record<string, unknown>[]) {
+        add(change?.path);
+        add(change?.move_path);
+      }
+  }
+  if (asked.path !== null && /^(\/|~|[A-Za-z]:[\\/])/.test(asked.path)) add(asked.path);
+  return out;
+}
+
 /** What a permission request asks, in words: the verb, and the thing it is
     for, drawn as code, which is a command, a path or a name. It goes by the
-    kind of the call that asks, as its start said, and by the shape of what
-    it asks with, never by what an agent calls its tools. */
+    kind of the call that asks, as its start said, and only where that is
+    not known by the shape of what it asks with; never by what an agent
+    calls its tools. A tool of an MCP server is always named as one. */
 export function asks(
   asked: Permission,
   call: ToolCall | null = null,
 ): { verb: string; object: string | null; shape: "command" | "path" | "name" | null } {
   const input = asked.input;
   if (call?.plan) return { verb: "go ahead with the plan", object: null, shape: null };
-  const command = field(input, "command");
-  if (command !== null) return { verb: "run", object: command, shape: "command" };
+  const named = mcpName(asked.tool);
+  if (named !== null) return { verb: `use ${named.server}'s`, object: named.tool, shape: "name" };
   const kind = call?.tool ?? null;
-  const path = inputPath(input) ?? asked.path;
+  const command = field(input, "command");
+  if (command !== null && (kind === "command" || kind === null))
+    return { verb: "run", object: command, shape: "command" };
+  const path = inputPath(input) ?? (requestPaths(asked)[0] ?? null);
   const more = changeCount(input);
   const paths = path !== null && more > 1 ? `${path} and ${more - 1} more` : path;
-  const edits =
-    kind === "edit" ||
-    more > 0 ||
-    (input !== null && typeof input === "object" && ("old_string" in input || "content" in input));
-  if (edits) {
+  const shaped =
+    more > 0 || (input !== null && typeof input === "object" && ("old_string" in input || "content" in input));
+  if (kind === "edit" || (kind === null && shaped)) {
     const whole = input !== null && typeof input === "object" && "content" in input && !("old_string" in input);
     return { verb: whole ? "write" : "edit", object: paths, shape: path === null ? null : "path" };
   }
   if (kind === "read" && path !== null) return { verb: "read", object: path, shape: "path" };
-  const url = field(input, "url");
-  if (url !== null) return { verb: "fetch", object: url, shape: "name" };
-  const query = field(input, "query");
-  if (kind === "web" && query !== null) return { verb: "search the web for", object: query, shape: "name" };
+  if (kind === "web" || kind === null) {
+    const url = field(input, "url");
+    if (url !== null) return { verb: "fetch", object: url, shape: "name" };
+    const query = field(input, "query");
+    if (kind === "web" && query !== null) return { verb: "search the web for", object: query, shape: "name" };
+  }
   if (kind === "agent") {
     const about = field(input, "description") ?? firstLine(field(input, "prompt"));
     return { verb: "start a subagent for", object: about, shape: about === null ? null : "name" };
   }
-  const named = mcpName(asked.tool);
-  if (named !== null) return { verb: `use ${named.server}'s`, object: named.tool, shape: "name" };
   if (path !== null) return { verb: `use ${asked.tool} on`, object: path, shape: "path" };
   return { verb: "use", object: asked.tool, shape: "name" };
 }

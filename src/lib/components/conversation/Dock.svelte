@@ -3,7 +3,7 @@
   import type { Conversation, Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
   import { answer, reply } from "$lib/integrated.svelte";
-  import { asks, choiceLabel, choiceMeans } from "$lib/thread";
+  import { asks, choiceLabel, choiceMeans, requestPaths } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
 
@@ -63,6 +63,8 @@
     const command = (asked?.type === "permissionAsked" ? (asked.input as Record<string, unknown> | null) : null)
       ?.command;
     shown = typeof command === "string" && command.includes("\n");
+    showChange = false;
+    showWhole = false;
     pointed = 0;
     denying = null;
     words = "";
@@ -118,31 +120,31 @@
 
   type Line = { kind: "add" | "del" | "ctx" | "head"; text: string };
 
-  /** What a permission is for, beyond its one line, by the shape of what it
-      asks with: a long command whole, a change as the lines it takes out
-      and puts in, anything else as the agent gave it. Null when the line
-      says it all. */
-  function details(asked: Permission): { change: boolean; lines: Line[] } | { text: string } | null {
+  /** A long command whole, when the line holds only its first line or
+      cuts it. */
+  function wholeCommand(asked: Permission, shape: string | null): string | null {
+    const command = (asked.input as Record<string, unknown> | null)?.command;
+    if (shape !== "command" || typeof command !== "string") return null;
+    return command.includes("\n") || command.length > 90 ? command : null;
+  }
+
+  /** A change the request makes, as the lines it takes out and puts in, by
+      the shape of what it asks with; null when it lists none. */
+  function change(asked: Permission): Line[] | null {
     const input = asked.input as Record<string, unknown> | null;
-    if (asked.call !== null && conversation.call(asked.call)?.plan) return null;
     if (input === null || typeof input !== "object") return null;
-    if (typeof input.command === "string")
-      return input.command.includes("\n") || input.command.length > 90 ? { text: input.command } : null;
     if (typeof input.old_string === "string" && typeof input.new_string === "string")
-      return {
-        change: true,
-        lines: [
-          ...input.old_string.split("\n").map((text) => ({ kind: "del" as const, text })),
-          ...input.new_string.split("\n").map((text) => ({ kind: "add" as const, text })),
-        ],
-      };
+      return [
+        ...input.old_string.split("\n").map((text) => ({ kind: "del" as const, text })),
+        ...input.new_string.split("\n").map((text) => ({ kind: "add" as const, text })),
+      ];
     if (typeof input.content === "string")
-      return { change: true, lines: input.content.split("\n").map((text) => ({ kind: "add" as const, text })) };
+      return input.content.split("\n").map((text) => ({ kind: "add" as const, text }));
     if (Array.isArray(input.changes)) {
       const lines: Line[] = [];
-      for (const change of input.changes as Record<string, unknown>[]) {
-        if (typeof change?.path === "string") lines.push({ kind: "head", text: change.path });
-        const diff = typeof change?.diff === "string" ? change.diff : null;
+      for (const each of input.changes as Record<string, unknown>[]) {
+        if (typeof each?.path === "string") lines.push({ kind: "head", text: each.path });
+        const diff = typeof each?.diff === "string" ? each.diff : null;
         for (const line of diff?.split("\n") ?? []) {
           if (line.startsWith("+++") || line.startsWith("---")) continue;
           if (line.startsWith("@@")) lines.push({ kind: "head", text: line });
@@ -151,12 +153,37 @@
           else if (line !== "") lines.push({ kind: "ctx", text: line.replace(/^ /, "") });
         }
       }
-      if (lines.length > 0) return { change: true, lines };
+      return lines.length > 0 ? lines : null;
     }
-    return { text: JSON.stringify(input, null, 2) };
+    return null;
   }
 
+  /** The whole request as the agent made it: the tool it names and all
+      of its input, so nothing the line leaves out goes unseen. Null when
+      the line already says all of it. */
+  function whole(asked: Permission): string | null {
+    const input = asked.input;
+    if (input === null || input === undefined) return null;
+    if (typeof input === "object" && !Array.isArray(input)) {
+      const keys = Object.keys(input);
+      if (keys.length === 0) return null;
+      const command = (input as Record<string, unknown>).command;
+      if (keys.length === 1 && typeof command === "string" && !command.includes("\n") && command.length <= 90)
+        return null;
+    }
+    return `Tool: ${asked.tool}\n${JSON.stringify(input, null, 2)}`;
+  }
+
+  /** The paths a request names that lie outside the project. */
+  function outside(asked: Permission): string[] {
+    return requestPaths(asked).filter((path) => where(path).outside);
+  }
+
+  /** Which of a request's folds are open: the whole command, the change,
+      the whole request. */
   let shown = $state(false);
+  let showChange = $state(false);
+  let showWhole = $state(false);
 
   /** A path a request names, as the user must read it to decide: from the
       project when it is plainly inside it, and whole otherwise, said to be
@@ -266,18 +293,22 @@
   >
     {#if asked.type === "permissionAsked"}
       {@const what = asks(asked, asked.call === null ? null : conversation.call(asked.call))}
-      {@const more_ = details(asked)}
+      {@const command = wholeCommand(asked, what.shape)}
+      {@const lines_ = change(asked)}
+      {@const full = whole(asked)}
+      {@const away = outside(asked)}
+      {@const headAway = what.shape === "path" && what.object !== null && where(what.object).outside}
       <div class="what">
         <span class="ring"></span>
         <p>
-          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const command = lines(what.object)}<code
-                class="exact"><Plain text={command.first} /></code
-              >{#if command.rest > 0}<span class="also" data-testid="permission-more-lines"
-                  >{" "}and {command.rest} more {command.rest === 1 ? "line" : "lines"}</span
+          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
+                class="exact"><Plain text={parts.first} /></code
+              >{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
+                  >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
                 >{/if}{:else if what.shape === "path"}{@const place = where(what.object)}<code
                 class="exact"
                 title={what.object}><Plain text={place.text} /></code
-              >{#if place.outside}<span class="also" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code class="exact"
+              >{#if place.outside}<span class="warn" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code class="exact"
                 ><Plain text={what.object} /></code
               >{/if}{/if}
         </p>
@@ -286,22 +317,44 @@
       {#if asked.description}
         <p class="description"><Plain text={asked.description} /></p>
       {/if}
-      {#if more_ !== null}
-        <button class="reveal" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-details">
-          <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>{"change" in more_ && more_.change ? "The change" : "Details"}
-        </button>
-        {#if shown}
-          {#if "text" in more_}
-            <pre class="details exact"><Plain text={more_.text} /></pre>
-          {:else}
-            <div class="details diff">
-              {#each more_.lines as line, at (at)}
-                <div class="line {line.kind}"><span class="sign" aria-hidden="true"
-                    >{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</span
-                  ><Plain text={line.text} /></div>
-              {/each}
-            </div>
+      {#if away.length > (headAway ? 1 : 0)}
+        <p class="away" data-testid="permission-outside-list">
+          <span class="warn">Outside the project:</span>
+          {#each away as path, at (path)}{#if at > 0},{" "}{/if}<code class="exact"><Plain text={path} /></code>{/each}
+        </p>
+      {/if}
+      {#if command !== null || lines_ !== null || full !== null}
+        <div class="folds">
+          {#if command !== null}
+            <button class="reveal" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-command">
+              <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>The whole command
+            </button>
           {/if}
+          {#if lines_ !== null}
+            <button class="reveal" onclick={() => (showChange = !showChange)} aria-expanded={showChange} data-testid="permission-details">
+              <span class="chev" class:open={showChange}><Icon name="chev" size={11} /></span>The change
+            </button>
+          {/if}
+          {#if full !== null}
+            <button class="reveal" onclick={() => (showWhole = !showWhole)} aria-expanded={showWhole} data-testid="permission-whole">
+              <span class="chev" class:open={showWhole}><Icon name="chev" size={11} /></span>The whole request
+            </button>
+          {/if}
+        </div>
+        {#if command !== null && shown}
+          <pre class="details exact"><Plain text={command} /></pre>
+        {/if}
+        {#if lines_ !== null && showChange}
+          <div class="details diff">
+            {#each lines_ as line, at (at)}
+              <div class="line {line.kind}"><span class="sign" aria-hidden="true"
+                  >{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</span
+                ><Plain text={line.text} /></div>
+            {/each}
+          </div>
+        {/if}
+        {#if full !== null && showWhole}
+          <pre class="details exact" data-testid="permission-whole-text"><Plain text={full} /></pre>
         {/if}
       {/if}
       {#if denying !== null}
@@ -497,7 +550,8 @@
   }
 
   .also {
-    color: var(--accent);
+    color: var(--ink-2);
+    font-weight: 500;
     white-space: nowrap;
   }
 
@@ -506,6 +560,29 @@
   .exact {
     unicode-bidi: isolate;
     direction: ltr;
+  }
+
+  /* Said in the warning colour, so it reads as a caution and not a link. */
+  .warn {
+    color: var(--del);
+    white-space: nowrap;
+  }
+
+  .away {
+    margin: -4px 0 0 calc(var(--dot) + 9px);
+    color: var(--ink-2);
+    overflow-wrap: anywhere;
+  }
+
+  .folds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    margin-left: calc(var(--dot) + 5px);
+  }
+
+  .folds .reveal {
+    margin-left: 0;
   }
 
   .description {

@@ -788,3 +788,35 @@ test("stops following when the user scrolls up, and shows the way back", async (
   await page.getByTestId("jump-latest").click();
   await expect.poll(() => fromFoot(page)).toBeLessThan(2);
 });
+
+test.describe("a permission is shown whole", () => {
+  test("with every path outside the project named, not only the first", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "edit"); f.startTurn("${H}");
+       const c = f.startTool("${H}", "fileChange", { changes: [{ path: "${PROJECT}/src/a.ts", diff: "" }, { path: "/etc/hosts", diff: "" }] }, { kind: "edit" });
+       f.ask("${H}", "fileChange", { changes: [{ path: "${PROJECT}/src/a.ts", diff: "" }, { path: "/etc/hosts", diff: "" }] }, { call: c });`,
+    );
+    const dock = page.getByTestId("permission-dock");
+    await expect(dock.locator(".what")).toContainText("asks to edit src/a.ts and 1 more");
+    await expect(page.getByTestId("permission-outside-list")).toHaveText("Outside the project: /etc/hosts");
+    const warn = page.getByTestId("permission-outside-list").locator(".warn");
+    const colours = await warn.evaluate((node) => [getComputedStyle(node).color, getComputedStyle(document.documentElement).getPropertyValue("--accent")]);
+    expect(colours[0]).not.toBe(colours[1]);
+  });
+
+  test("with the tool it names and all of its input a fold away", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "deploy"); f.startTurn("${H}");
+       f.ask("${H}", "mcp__deploy__run", { command: "ls", target: "production" });`,
+    );
+    const dock = page.getByTestId("permission-dock");
+    await expect(dock.locator(".what")).toHaveText("Claude asks to use deploy's run");
+    await page.getByTestId("permission-whole").click();
+    await expect(page.getByTestId("permission-whole-text")).toContainText("Tool: mcp__deploy__run");
+    await expect(page.getByTestId("permission-whole-text")).toContainText('"target": "production"');
+  });
+});

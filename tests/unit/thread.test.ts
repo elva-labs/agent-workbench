@@ -7,6 +7,7 @@ import {
   choiceMeans,
   inputPath,
   mcpName,
+  requestPaths,
   revealed,
   nowDoing,
   runningCall,
@@ -414,5 +415,48 @@ describe("a Codex-shaped call", () => {
     const c = new Conversation(() => 0);
     expect(speaker(c, null, "Codex")).toBe("Codex");
     expect(speaker(c, "gpt-5-codex", "Codex")).toBe("Gpt-5-codex");
+  });
+});
+
+describe("a permission request that could be read as something else", () => {
+  const asked = (tool: string, input: unknown, path: string | null = null) =>
+    ({
+      type: "permissionAsked",
+      request: "r",
+      call: null,
+      parent: null,
+      tool,
+      input,
+      truncated: false,
+      description: null,
+      path,
+      choices: [],
+    }) as Extract<IntegratedEventBody, { type: "permissionAsked" }>;
+
+  it("names a tool of an MCP server as one, whatever its input holds", () => {
+    expect(asks(asked("mcp__deploy__run", { command: "ls" }))).toEqual({ verb: "use deploy's", object: "run", shape: "name" });
+  });
+
+  it("says run only for a call that runs a command, or one whose kind is not known", () => {
+    expect(asks(asked("Edit", { command: "ls", file_path: "/r/a" }), call({ tool: "edit", name: "Edit" }))).toEqual({
+      verb: "edit",
+      object: "/r/a",
+      shape: "path",
+    });
+    expect(asks(asked("Thing", { command: "ls" }), call({ tool: "other", name: "Thing" }))).toEqual({
+      verb: "use",
+      object: "Thing",
+      shape: "name",
+    });
+    expect(asks(asked("Bash", { command: "ls" }), call({ tool: "command" })).verb).toBe("run");
+  });
+
+  it("names every path it touches, each change's and a place the core says", () => {
+    expect(
+      requestPaths(
+        asked("fileChange", { changes: [{ path: "/r/a.ts" }, { path: "/etc/hosts", move_path: "/tmp/x" }] }, "/r"),
+      ),
+    ).toEqual(["/r/a.ts", "/etc/hosts", "/tmp/x", "/r"]);
+    expect(requestPaths(asked("commandExecution", { command: "curl x" }, "example.com"))).toEqual([]);
   });
 });
