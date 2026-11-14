@@ -5,7 +5,6 @@
   import { close, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
   import { spoken } from "$lib/instructions";
-  import { startedFor } from "$lib/conductor.svelte";
   import { projectLabel } from "$lib/workspace.svelte";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
@@ -172,7 +171,7 @@
       {intro}
       agent={name}
       onPutBack={putBack}
-      sender={(message) => senderOf(session, message, startedFor(session.key))}
+      sender={(message) => senderOf(message)}
     />
     <div class="foot">
       {#if over}

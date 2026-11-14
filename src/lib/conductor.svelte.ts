@@ -46,7 +46,7 @@ import { screen, takesPaste } from "$lib/screens";
 import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
 import { lastRun } from "$lib/thread";
 import { OUTCOME_ASK } from "$lib/instructions";
-import { senderOf } from "$lib/senders.svelte";
+import { senderOf, startersFrom } from "$lib/senders.svelte";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -913,7 +913,7 @@ function readSession(request: ConductRequest): Answered {
     const run = lastRun(
       conversationOf(session.key),
       lines,
-      (message) => senderOf(session, message, startedFor(session.key))?.name ?? null,
+      (message) => senderOf(message)?.name ?? null,
     );
     if (run === "")
       return said(`Session ${id} is an integrated session and has said nothing yet. ${lastLine(session)}`);
@@ -949,6 +949,8 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+// The prompt a session is started with is its starter's.
+startersFrom(startedFor);
 
 /** The rows a session started, running or not. */
 export function startedBy(sessionId: string): Session[] {

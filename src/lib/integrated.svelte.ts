@@ -1,6 +1,6 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
-import { sentBy } from "$lib/senders.svelte";
+import { sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
 import {
   core,
@@ -289,7 +289,7 @@ export async function launch(key: string): Promise<void> {
     if (started.sessionId !== null) identify(row, started.sessionId);
     if (row.prompt !== null && !link.prompted && link.handle !== null) {
       link.prompted = true;
-      send(key, row.prompt);
+      send(key, row.prompt, [], starterOf(key));
     }
   } catch (error) {
     link.busy = false;
@@ -422,7 +422,7 @@ export function send(
   // that started it.
   session.engaged = true;
   session.note = null;
-  if (from !== null && session.id !== null) sentBy(session.id, id, text, from);
+  if (from !== null) sentBy(id, from);
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt.
   if (session.title === null) {

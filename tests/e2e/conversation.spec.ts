@@ -1399,3 +1399,39 @@ test.describe("a request too long for its line", () => {
     expect(await inSight(page, "choice-allow")).toBe(true);
   });
 });
+
+test("shows the user's own words as theirs when another session sent the same words", async ({ page }) => {
+  // The reviewer's case: session 1 starts a session and sends it "yes",
+  // and the user goes there and types "yes" too.
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("sessions-menu").click();
+  await page.getByTestId("menu-orchestrator").click();
+  await expect(page.getByTestId("conversation")).toBeVisible();
+  const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
+    page.evaluate(
+      ({ project, id, tool, args }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id,
+          tool,
+          arguments: args,
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT, id, tool, args },
+    );
+  await conduct("o-1", "start", { project: PROJECT, prompt: "Count the files" });
+  await page.getByTestId("conduct-allow").click();
+  await expect(page.getByTestId("started-session")).toHaveCount(1);
+  await conduct("o-2", "send", { session: "integrated-session-2", text: "yes" });
+  await page.getByTestId("started-session").click();
+  const view = page.locator("[data-testid='conversation']:visible");
+  await expect(view.getByTestId("user-message")).toHaveCount(2);
+  await view.getByTestId("composer-input").fill("yes");
+  await page.keyboard.press("Enter");
+  const messages = view.getByTestId("user-message");
+  await expect(messages).toHaveCount(3);
+  await expect(messages.nth(1)).toHaveAttribute("data-from", "integrated-session-1");
+  await expect(messages.nth(2)).not.toHaveAttribute("data-from");
+  await expect(messages.nth(2).locator(".who")).toContainText("You");
+});

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import { allow, conductor, handle, resetConductor, watchStops } from "$lib/conductor.svelte";
-import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated } from "$lib/integrated.svelte";
+import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated, send } from "$lib/integrated.svelte";
 import { byKey, create, forProject, reset as resetSessions, sessions } from "$lib/sessions.svelte";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
@@ -101,7 +101,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     const session = byKey(row.key)!;
     expect(session.title).toBe("Scan the history");
     const message = Object.values(conversationOf(row.key).messages)[0];
-    expect(senderOf(session, message, A)?.name).toBe("an agent in one");
+    expect(senderOf(message)?.name).toBe("an agent in one");
     fake.turn(handleOf(row.key)!, "On it.");
     const read = call("read", { session: session.id });
     await handle(read);
@@ -123,6 +123,19 @@ describe("the orchestrator's tools with an integrated session", () => {
     await handle(second);
     expect(answerTo(second)?.content).toContain("the message waits for its turn");
     expect(fake.events.findLast((event) => event.type === "message")).toMatchObject({ state: "queued" });
+  });
+
+  it("tells another session's message from the user's by its id alone, never by its words", async () => {
+    // The reviewer's case: a session sends "yes", and the user then types
+    // "yes" in the same session.
+    const { key, id } = await own();
+    await handle(call("send", { session: id, text: "yes" }));
+    send(key, "yes");
+    const [theirs, mine] = Object.values(conversationOf(key).messages);
+    expect(theirs.text).toBe("yes");
+    expect(mine.text).toBe("yes");
+    expect(senderOf(theirs)?.id).toBe(A);
+    expect(senderOf(mine)).toBeNull();
   });
 
   it("reads what the agent last said and did, as plain text", async () => {

@@ -326,7 +326,9 @@ started is named by the name its start gave, or by the first line of its
 prompt. Under it is the thread. The user's words sit to the right in a
 tinted bubble under You. What another session sent, the prompt it started
 the session with or a message it sent later, sits there in a plain bubble
-under that session's name, with a way to go to it; the sentence the
+under that session's name, with a way to go to it. A message is known as
+another session's by the id it was sent under, never by its words, so the
+user's own message reads as theirs whatever another session sent; the sentence the
 workbench adds to a started session's prompt, asking it to call notify, is
 never shown as part of it, only behind a fold of its own. The agent's run
 on the left under the model it ran on, or the agent's own name where that is
