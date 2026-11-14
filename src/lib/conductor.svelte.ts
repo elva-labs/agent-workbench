@@ -267,12 +267,20 @@ function forget(caller: string, id: string) {
   saveStarted();
 }
 
+/** The caller of each remembered session, by the session's id: the first
+    caller listed where two remember one. */
+const owners = $derived.by(() => {
+  const index = new Map<string, string>();
+  for (const [caller, entries] of Object.entries(conductor.started))
+    for (const entry of entries)
+      if (!index.has(entry.id)) index.set(entry.id, caller);
+  return index;
+});
+
 /** The caller that started a session, by its id, when one is remembered. */
 function ownerOf(id: string | null): string | null {
   if (id === null) return null;
-  for (const [caller, entries] of Object.entries(conductor.started))
-    if (entries.some((entry) => entry.id === id)) return caller;
-  return null;
+  return owners.get(id) ?? null;
 }
 
 /** A caller's remembered session, by id, when it is one. */

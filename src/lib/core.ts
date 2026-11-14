@@ -992,6 +992,10 @@ export interface KeyChord {
 /** The spans a past session may stay listed for. */
 export type PastSessions = "forever" | "month" | "week" | "day";
 
+/** How long a project goes unused before the sessions pane folds it under
+    Inactive. Never keeps every project in the list. */
+export type InactiveAfter = "day" | "week" | "month" | "never";
+
 /** The user's preferences, one set per machine, kept by the core. */
 export interface Settings {
   appearance: "system" | "light" | "dark";
@@ -1037,6 +1041,8 @@ export interface Settings {
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
   pastSessions: PastSessions;
+  /** How long a project goes unused before it folds under Inactive. */
+  inactiveAfter: InactiveAfter;
   /** The user's own themes, by name. A palette may name one. */
   themes: Record<
     string,
