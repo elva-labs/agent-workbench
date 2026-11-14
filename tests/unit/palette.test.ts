@@ -31,7 +31,7 @@ import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
 import { activate, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
-import { resetProjects } from "$lib/projects.svelte";
+import { projects, resetProjects } from "$lib/projects.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import "$lib/orchestrator.svelte";
 
@@ -327,6 +327,18 @@ describe("what picking does in go to", () => {
     expect(outcome.type).toBe("close");
     if (outcome.type === "close") outcome.then();
     expect(workspace.active).toBe(B);
+  });
+
+  // A project picked is the user using it, as a session picked is.
+  it("counts a project picked as used, the one in front too", () => {
+    workspace.active = A;
+    for (const path of [B, A]) {
+      const item = goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === path)!;
+      const outcome = pickItem(item);
+      if (outcome.type === "close") outcome.then();
+      expect(Date.now() - projects.used[path]).toBeLessThan(1000);
+    }
+    expect(projects.used[C]).toBeUndefined();
   });
 });
 

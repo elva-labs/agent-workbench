@@ -73,9 +73,10 @@ cursor starts on the first session that is not the one on screen, so Enter
 goes to the previous one. Every open project is listed, with how many sessions
 are live in it or the time since it was last used, the most recently used
 first. <kbd>Enter</kbd> on a session shows it and puts the keyboard in its
-agent, as a click on its row does. On a project it brings the project forward,
-with the keyboard in the session on screen or, for a project with none, in the
-sessions pane. A sessions pane that is folded opens for that, or peeks over
+agent, as a click on its row does. On a project it brings the project forward
+and counts it as used, as [sessions](sessions.md#active-and-inactive) orders
+them, with the keyboard in the session on screen or, for a project with none,
+in the sessions pane. A sessions pane that is folded opens for that, or peeks over
 the agent while reviewing, so the viewer stays, and in a window too narrow for
 the pane it stays as the user set it and the keyboard goes to the agent pane's
 New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session

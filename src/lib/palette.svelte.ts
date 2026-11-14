@@ -35,6 +35,7 @@ import {
   startSession,
   workspace,
 } from "$lib/workspace.svelte";
+import { touch } from "$lib/projects.svelte";
 import { unfoldSessions } from "$lib/viewers.svelte";
 import { reduced } from "$lib/motion";
 
@@ -606,6 +607,7 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
         type: "close",
         then: () => {
           if (workspace.active !== item.path) activate(item.path);
+          touch(item.path);
           if (sessions.active !== null) focusPane("agent");
           else void tick().then(keyboardToSessions);
         },
