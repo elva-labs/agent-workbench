@@ -629,6 +629,17 @@ impl Core {
         Ok(hook::status(home, project, accounts))
     }
 
+    /// The status of each project, in the order given, from one read of
+    /// every account's state.
+    pub fn hook_status_many(
+        &self,
+        projects: &[PathBuf],
+        accounts: &[account::Dirs],
+    ) -> Result<Vec<hook::HookStatus>, String> {
+        let home = self.home.as_ref().ok_or("no home directory")?;
+        Ok(hook::status_many(home, projects, accounts))
+    }
+
     pub fn hook_install(
         &self,
         project: &Path,
