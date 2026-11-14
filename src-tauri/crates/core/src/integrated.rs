@@ -26,7 +26,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -65,6 +65,15 @@ const CONTROL_TIMEOUT: Duration = Duration::from_millis(2500);
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(45);
 #[cfg(test)]
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How long an agent that takes one message at a time has to name the one
+/// handed to it, in a turn's start or as dropped. A message it has not named
+/// by then is dropped, so that one request it never answers does not hold
+/// every message after it.
+#[cfg(not(test))]
+const HANDOVER_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const HANDOVER_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long a stopped session has to end once its stdin is closed before it
 /// is asked to end.
@@ -1318,8 +1327,12 @@ struct Machine {
     /// the order sent.
     held: VecDeque<Held>,
     /// The message last handed over to such an agent, until the agent
-    /// names it in a turn or drops it. Nothing more is handed over before.
+    /// names it in a turn or drops it, or the core gives up on it. Nothing
+    /// more is handed over before.
     handed: Option<String>,
+    /// Where a message handed over is told to the watch that gives up on
+    /// it, with when it is due; None where nothing watches.
+    handovers: Option<Sender<(String, Instant)>>,
     /// Control requests waiting for their reply, by key.
     replies: HashMap<String, Sender<Result<Value, String>>>,
     /// Told when the agent is ready, for the watchdog that bounds the wait.
@@ -1328,12 +1341,22 @@ struct Machine {
 }
 
 impl Machine {
+    /// Hands a message over: nothing more goes until the agent names it,
+    /// or the time it has to do so runs out.
+    fn hand(&mut self, message: String) {
+        if let Some(handovers) = &self.handovers {
+            let _ = handovers.send((message.clone(), Instant::now() + HANDOVER_TIMEOUT));
+        }
+        self.handed = Some(message);
+    }
+
     fn new(driver: Box<dyn Driver>, ready: Option<Sender<()>>) -> Self {
         Self {
             driver,
             tracker: Tracker::default(),
             held: VecDeque::new(),
             handed: None,
+            handovers: None,
             replies: HashMap::new(),
             ready,
             ended: false,
@@ -1493,7 +1516,7 @@ impl Live {
                 Ok(line) => {
                     // A failure to write shows as the session ending.
                     let _ = self.enqueue(line);
-                    machine.handed = Some(held.message);
+                    machine.hand(held.message);
                 }
                 Err(error) => machine.tracker.observe(
                     Event::message(&held.message, MessageState::Dropped, Some(error)),
@@ -1501,6 +1524,32 @@ impl Live {
                 ),
             }
         }
+    }
+
+    /// Gives up on a message handed over that the agent has not named in
+    /// time: it is dropped, and the next one held goes.
+    fn overdue(&self, message: &str) {
+        let mut machine = self.machine.lock().expect("machine lock");
+        if machine.ended
+            || self.stopping.load(Ordering::SeqCst)
+            || machine.handed.as_deref() != Some(message)
+        {
+            return;
+        }
+        machine.handed = None;
+        let mut out = Vec::new();
+        if machine.tracker.pending.iter().any(|m| m == message) {
+            machine.tracker.observe(
+                Event::message(
+                    message,
+                    MessageState::Dropped,
+                    Some("the agent did not take the message in time".into()),
+                ),
+                &mut out,
+            );
+        }
+        self.release(&mut machine, &mut out);
+        self.emit(&out);
     }
 
     /// Says something went wrong, in the stream with everything else.
@@ -1720,6 +1769,7 @@ pub fn start(
         .lock()
         .expect("sessions lock")
         .insert(id.clone(), Arc::clone(&live));
+    watch_handovers(&live);
 
     std::thread::spawn({
         let id = id.clone();
@@ -1775,6 +1825,23 @@ pub fn start(
     });
 
     Ok(started)
+}
+
+/// Watches the messages a session hands over, and gives up on each the
+/// agent has not named by its time. The watch ends with the session.
+fn watch_handovers(live: &Arc<Live>) {
+    let (handovers, handed) = mpsc::channel::<(String, Instant)>();
+    live.machine.lock().expect("machine lock").handovers = Some(handovers);
+    let live = Arc::downgrade(live);
+    std::thread::spawn(move || {
+        for (message, due) in handed {
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+            let Some(live) = live.upgrade() else {
+                return;
+            };
+            live.overdue(&message);
+        }
+    });
 }
 
 /// Hands what a session puts out to the sink, in order, until its last.
@@ -2059,7 +2126,7 @@ pub fn send(
             match sent {
                 Ok(went) => {
                     if holding {
-                        machine.handed = Some(message.to_string());
+                        machine.hand(message.to_string());
                     }
                     Some(went)
                 }
@@ -3033,6 +3100,7 @@ mod tests {
                 lines,
                 kill,
             ));
+            watch_handovers(&live);
             let sessions = Arc::new(Sessions::default());
             sessions
                 .inner
@@ -3091,6 +3159,62 @@ mod tests {
         let at = |kind: &str| events.iter().position(|e| e["type"] == kind).unwrap();
         assert!(at("turnEnded") < at("error"), "after the events");
         assert!(bench.live.stopping.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_message_the_agent_never_names_is_dropped_and_the_next_goes() {
+        let bench = Bench::new(fake());
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        // The agent never answers the line that hands M1 over.
+        bench.send(M2, "two");
+        assert_eq!(bench.next(), None, "held behind the first");
+        let deadline = Instant::now() + HANDOVER_TIMEOUT * 3;
+        let dropped = loop {
+            let events = bench.events();
+            if let Some(dropped) = events
+                .iter()
+                .find(|e| e["type"] == "message" && e["message"] == M1 && e["state"] == "dropped")
+            {
+                break dropped.clone();
+            }
+            assert!(Instant::now() < deadline, "{events:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(
+            dropped["error"].as_str().unwrap().contains("in time"),
+            "{dropped}"
+        );
+        let next = bench
+            .written
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the next one goes");
+        assert_eq!(next, format!("send {M2} two on haiku"));
+    }
+
+    #[test]
+    fn a_message_named_in_time_is_not_given_up_on() {
+        let bench = Bench::new(fake());
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("start {M1}"));
+        bench.send(M2, "two");
+        // What the watch would do once M1's time is up, and an M2 handed
+        // over meanwhile: neither is dropped, and nothing more goes.
+        bench.live.overdue(M1);
+        bench.live.take("end");
+        assert!(bench.next().is_some(), "M2 goes once the turn ends");
+        bench.live.overdue(M1);
+        assert_eq!(bench.next(), None);
+        let events = bench.events();
+        assert!(
+            !events.iter().any(|e| e["state"] == "dropped"),
+            "{events:?}"
+        );
+        assert_eq!(
+            bench.live.machine.lock().unwrap().handed.as_deref(),
+            Some(M2)
+        );
     }
 
     #[test]

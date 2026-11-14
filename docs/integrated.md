@@ -348,7 +348,9 @@ to say it is ready, and is ended with an error if it does not. A line it
 does not take within half a minute means it has stopped reading: the
 session is ended with an error, so that nothing queued behind the line is
 written late. A control request it does not answer within half a minute
-fails, and the session goes on.
+fails, and the session goes on. A message handed to an agent that takes
+one at a time, and that the agent has not named within half a minute,
+in a turn's start or as dropped, is dropped, and the next one goes.
 
 A Codex permission request or question still waiting when its turn ends is
 answered no, so Codex is not left holding it, and withdrawn. A form an MCP
