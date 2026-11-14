@@ -50,6 +50,7 @@ import {
 import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
 import { CODEX_DEFAULT } from "$lib/models";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
+import { stepFacts } from "$lib/workflows.svelte";
 import { screen, takesPaste } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -615,8 +616,11 @@ export interface WorkflowTag {
   workflow: string | null;
   /** The session's place in it: orchestrator, or the step and round. */
   role: string;
-  /** The rules that place goes by, a sentence or a few each. */
+  /** The rules that place goes by: the orchestrator's instructions, a
+      sentence or a few each, or what a step allows, a line each. */
   rules: string[];
+  /** Whether the rules are steps in order, as instructions are. */
+  numbered: boolean;
 }
 
 /** The workflow a session is part of and its place in it, with the rules
@@ -629,6 +633,7 @@ export function workflowTag(session: Session): WorkflowTag | null {
         : session.workflow.name,
       role: "orchestrator",
       rules: instructionLines(session.workflow),
+      numbered: true,
     };
   }
   const at = placeOf(session.key);
@@ -636,21 +641,16 @@ export function workflowTag(session: Session): WorkflowTag | null {
   const caller = startedFor(session.key);
   const workflow = caller === null ? null : (byId(caller)?.workflow ?? null);
   const role = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
-  const index =
-    workflow === null ? -1 : workflow.steps.findIndex((step) => sameName(step.name, at.step));
-  const rule =
-    workflow === null || index === -1
-      ? `This session runs ${placeText(at)}.`
-      : instructionLines(workflow)[index + 1];
-  const reviews =
+  const step = workflow?.steps.find((candidate) => sameName(candidate.name, at.step));
+  const work =
     at.kind === "review" && at.work !== null && caller !== null
-      ? ` This one reviews ${workName(caller, at.work)}.`
-      : "";
-  return {
-    workflow: workflow?.name ?? null,
-    role,
-    rules: [`${rule}${reviews}`],
-  };
+      ? workName(caller, at.work)
+      : null;
+  const rules =
+    step === undefined
+      ? [`Runs for the step ${at.step}.`, ...(work === null ? [] : [`Reviews ${work}.`])]
+      : stepFacts(step, work);
+  return { workflow: workflow?.name ?? null, role, rules, numbered: false };
 }
 
 /** What the user knows a session's work by: the name its row has, or had,

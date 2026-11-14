@@ -711,6 +711,32 @@ export function passesText(step: ReviewStep): string {
   return step.reviewerApproves ? "the reviewer approves" : "the orchestrator agrees";
 }
 
+/** What a step allows, a line each in the words its settings use, for the
+    person reading about a session that runs for it: what it does, the
+    models, and how many sessions at once or what a review passes and how
+    many rounds it gives a piece. A review names the work it checks when
+    that is known. */
+export function stepFacts(step: WorkflowStep, work: string | null = null): string[] {
+  const [first, ...rest] = step.models;
+  const label = (model: WorkflowModel) => modelLabel(model.agent, model.model);
+  const models =
+    first === undefined
+      ? "any model"
+      : rest.length === 0
+        ? label(first)
+        : `${label(first)}, used first, or ${rest.map(label).join(" or ")}`;
+  if (step.kind === "work")
+    return ["Does work.", `Models it may use: ${models}.`, `Sessions at once: ${step.parallel}.`];
+  const times = step.limit === 1 ? "1 time" : `${step.limit} times`;
+  return [
+    work === null ? "Reviews work." : `Reviews ${work}.`,
+    `Models it may use: ${models}.`,
+    `The work passes when ${passesText(step)}.`,
+    `Otherwise: go back to ${step.backTo} at most ${times}, then ask me.`,
+    `Rounds of review for each piece: ${step.limit + 1}, and another only when I allow it.`,
+  ];
+}
+
 /** A workflow in a line, for showing what a change makes of it: the
     orchestrator, then each step with its models and what bounds it. */
 export function describeWorkflow(workflow: Workflow): string {

@@ -82,8 +82,8 @@ function stepLine(workflow: Workflow, index: number): string {
 /** The instructions as sentences, one per line of the list. */
 export function instructionLines(workflow: Workflow): string[] {
   const delegate = startsOnly(workflow)
-    ? "Delegate every piece by starting a session with the workbench's `start` tool, never with your own subagents."
-    : "Delegate every piece by starting a session with the workbench's `start` tool, so the user can see it; your own subagents are for help along the way, not for a piece of the work.";
+    ? "Delegate every piece by starting a session with the workbench's start tool, never with your own subagents."
+    : "Delegate every piece by starting a session with the workbench's start tool, so the user can see it; your own subagents are for help along the way, not for a piece of the work.";
   const lines = [
     `You direct this work and do not do it yourself: do not edit files. ${delegate} In each start, name the step it is for, give the agent and the model named below, and leave the model out where it says no model. A review also names the session whose work it checks, so its rounds are counted for that piece.`,
   ];

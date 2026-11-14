@@ -2011,16 +2011,29 @@ describe("starting in a workflow's shape", () => {
       workflow: "Build and review",
       role: "orchestrator",
       rules: instructionLines(defaultWorkflow()),
+      numbered: true,
     });
+    // A step's session says what the step allows, for the person reading
+    // it, in the settings' own words, and tells no one what to do.
     const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
-    expect(workflowTag(byKey(work.key)!)).toMatchObject({ workflow: "Build and review", role: "Work" });
+    expect(workflowTag(byKey(work.key)!)).toEqual({
+      workflow: "Build and review",
+      role: "Work",
+      rules: ["Does work.", "Models it may use: Sonnet.", "Sessions at once: 1."],
+      numbered: false,
+    });
     const review = await begun({ step: "Review", work: "w1" }, "r1");
     const tag = workflowTag(byKey(review.key)!)!;
     expect(tag.role).toBe("Review round 1");
-    expect(tag.rules).toHaveLength(1);
-    expect(tag.rules[0]).toContain('For the step "Review"');
     // The work it checks by the name the user knows it by.
-    expect(tag.rules[0]).toContain("This one reviews Fix the cache.");
+    expect(tag.rules).toEqual([
+      "Reviews Fix the cache.",
+      "Models it may use: Opus.",
+      "The work passes when the reviewer approves and the orchestrator agrees.",
+      "Otherwise: go back to Work at most 3 times, then ask me.",
+      "Rounds of review for each piece: 4, and another only when I allow it.",
+    ]);
+    for (const line of tag.rules) expect(line).not.toMatch(/\byou\b|`/i);
     // A deleted workflow followed by its kept copy says so by its name.
     byKey(orch.key)!.workflowGone = true;
     expect(workflowTag(byKey(orch.key)!)?.workflow).toBe("Build and review (deleted)");

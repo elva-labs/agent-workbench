@@ -216,7 +216,11 @@ and the round for a session started for a step. Where the header is short
 of room, the workflow's name is cut short and then left out, and the place
 stays whole. The rules for that place open in a popover under the tag when
 the pointer rests on it, or on a click, Enter or Space, and Escape puts
-them away. A start the workflow refuses its orchestrator is shown over the
+them away: the instructions for the orchestrator, and for a session
+started for a step what the step allows, in the words of its settings: the
+models it may use, how many sessions it runs at once, and for a review
+when the work passes, where it goes back and how many rounds it gives
+each piece. A start the workflow refuses its orchestrator is shown over the
 terminal in one line, whole while the pointer or the keyboard is on it, as
 well as answered to the agent, until a start goes through or the line is
 put away.

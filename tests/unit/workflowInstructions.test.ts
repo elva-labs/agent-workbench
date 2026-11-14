@@ -28,7 +28,11 @@ describe("what an orchestrator is told", () => {
 
   it("tells it to delegate through start, not to do the work, and when to leave the model out", () => {
     const [first] = instructionLines(defaultWorkflow());
-    expect(first).toContain("`start` tool");
+    expect(first).toContain("the workbench's start tool");
+    // Shown to the user as well, in the settings and on the tag, so no
+    // line carries a raw backtick.
+    for (const workflow of [defaultWorkflow(), { ...defaultWorkflow(), startOnly: false }])
+      for (const line of instructionLines(workflow)) expect(line).not.toContain("`");
     expect(first).toContain("never with your own subagents");
     expect(first).toContain("do not edit files");
     expect(first).toContain("leave the model out where it says no model");

@@ -119,7 +119,7 @@
     onclick={toggle}
     onblur={() => (held = false)}
     aria-expanded={open}
-    aria-controls={id}
+    aria-controls={open ? id : undefined}
     aria-label="{tag.workflow === null ? '' : `${tag.workflow}, `}{tag.role}. Show the rules"
     data-testid="workflow-tag"
   >
@@ -142,7 +142,7 @@
       data-testid="workflow-rules"
     >
       <p class="head">{tag.workflow === null ? tag.role : `${tag.workflow} · ${tag.role}`}</p>
-      {#if tag.rules.length > 1}
+      {#if tag.numbered}
         <ol>
           {#each tag.rules as rule, index (index)}<li>{rule}</li>{/each}
         </ol>

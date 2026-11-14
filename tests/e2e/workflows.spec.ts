@@ -82,7 +82,8 @@ test.describe("the workflows tab", () => {
     const list = page.getByTestId("workflow-told-list");
     await expect(list).toBeVisible();
     await expect(list.locator("li")).toHaveCount(4);
-    await expect(list).toContainText("`start` tool");
+    await expect(list).toContainText("the workbench's start tool");
+    await expect(list).not.toContainText("`");
     await expect(list).toContainText("at most 3 times");
   });
 

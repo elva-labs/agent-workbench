@@ -402,6 +402,20 @@ test.describe("a session that follows a workflow", () => {
     await push(page, { id: "c-3", tool: "sessions", session: "session-1" });
     await expect.poll(() => answerTo(page, "c-3")).not.toBeNull();
     expect((await answerTo(page, "c-3"))!.content).toContain('step "Work"');
+
+    // The worker's tag says what its step allows, in the settings' words,
+    // to the person reading it rather than to the orchestrator.
+    await page.getByTestId("started-fold").click();
+    await page.getByTestId("started-session").first().click();
+    await expect(page.getByTestId("workflow-tag-role")).toHaveText("Work");
+    await page.getByTestId("workflow-tag").click();
+    const rules = page.getByTestId("workflow-rules");
+    await expect(rules.locator(".rule")).toHaveText([
+      "Does work.",
+      "Models it may use: Sonnet.",
+      "Sessions at once: 1.",
+    ]);
+    await expect(rules).not.toContainText("you");
   });
 
   test("says in the agent pane's header which workflow a session follows, and shows a refused start", async ({
@@ -424,9 +438,14 @@ test.describe("a session that follows a workflow", () => {
     await expect(tag).not.toHaveAttribute("title");
     const rules = page.getByTestId("workflow-rules");
     await expect(rules).toHaveCount(0);
+    // Closed, the tag points at no element that is not there.
+    await expect(tag).not.toHaveAttribute("aria-controls");
     await tag.hover();
     await expect(rules).toBeVisible();
     await expect(rules).toContainText('For the step "Work"');
+    await expect(rules).not.toContainText("`");
+    const controls = await tag.getAttribute("aria-controls");
+    expect(await rules.getAttribute("id")).toBe(controls);
     const pop = (await rules.boundingBox())!;
     expect(pop.y).toBeGreaterThanOrEqual(box.y + box.height);
     const pane = (await page.locator(AGENT).boundingBox())!;
