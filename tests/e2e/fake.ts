@@ -413,6 +413,7 @@ export async function installFakeCore(
           name: path.split("/").filter(Boolean).pop() ?? path,
           repository: path,
           isGit: true,
+          branch: "main",
         }),
         setWindowTitle: async () => {},
         openUrl: async () => {},

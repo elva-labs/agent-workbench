@@ -862,6 +862,9 @@ export interface ProjectInfo {
   name: string;
   repository: string | null;
   isGit: boolean;
+  /** The branch checked out, short; null outside a repository and on a
+      detached HEAD. */
+  branch?: string | null;
 }
 
 export interface ChangedFile {

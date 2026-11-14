@@ -5,6 +5,8 @@
 
   import Pane from "$lib/components/Pane.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
+  import ConversationView from "$lib/components/conversation/ConversationView.svelte";
+  import Icon from "$lib/components/conversation/Icon.svelte";
   import { core, type AgentId } from "$lib/core";
   import {
     AGENTS,
@@ -20,6 +22,7 @@
     activeSession,
     create,
     defaultAgent,
+    label,
     launch,
     rang,
     sessions,
@@ -30,9 +33,9 @@
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
   import { otherKind, type SessionKind } from "$lib/sessionKind.svelte";
-  import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
+  import { handleOf, launch as launchIntegrated } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
-  import { workspace } from "$lib/workspace.svelte";
+  import { projectLabel, workspace } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
   let current = $derived(activeSession());
@@ -52,7 +55,36 @@
     }
   }
 
-  let title = $derived(current === null ? "Agent" : `Agent · ${agentLabel(current.agent)}`);
+  let integrated = $derived(current?.kind === "integrated");
+
+  // An integrated session's header names it, its project and its branch.
+  let title = $derived(
+    current === null
+      ? "Agent"
+      : integrated
+        ? label(current)
+        : `Agent · ${agentLabel(current.agent)}`,
+  );
+
+  let branch = $state<string | null>(null);
+  $effect(() => {
+    if (current === null || current.kind !== "integrated") return;
+    const dir = current.worktree ?? current.startIn ?? current.project;
+    // Read again when a turn ends, since the agent may have switched it.
+    void current.working;
+    let stale = false;
+    core()
+      .projectInfo(dir)
+      .then((info) => {
+        if (!stale) branch = info.branch ?? null;
+      })
+      .catch(() => {
+        if (!stale) branch = null;
+      });
+    return () => {
+      stale = true;
+    };
+  });
 
   // A session that was open when the app quit starts once it is the one
   // this pane shows.
@@ -67,7 +99,7 @@
       if (session.kind !== "integrated" || session.status !== "starting") continue;
       const key = session.key;
       untrack(() => {
-        if (handleOf(key) === null && !linkFor(key).busy) void launchIntegrated(key);
+        if (handleOf(key) === null) void launchIntegrated(key);
       });
     }
   });
@@ -171,7 +203,18 @@
   </div>
 {/snippet}
 
-<Pane id="agent" {title} meta={statusLabel(current)}>
+{#snippet where()}
+  {#if current !== null}
+    <span class="crumb" title={current.project} data-testid="conversation-project"
+      ><Icon name="folder" size={13} />{projectLabel(current.project)}</span
+    >
+    {#if branch !== null}
+      <span class="crumb" data-testid="conversation-branch"><Icon name="branch" size={13} />{branch}</span>
+    {/if}
+  {/if}
+{/snippet}
+
+<Pane id="agent" {title} meta={statusLabel(current)} head={integrated ? where : undefined}>
   <div class="wrap" bind:this={wrap}>
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
@@ -192,6 +235,8 @@
           fontSize={sizeOf(session.key, session.id)}
           newlineOnShiftEnter
         />
+      {:else if session.status !== "dormant"}
+        <ConversationView {session} active={session.key === sessions.active} />
       {/if}
     {/each}
 
@@ -212,9 +257,7 @@
         {@render starters()}
       </div>
     {:else if current.kind === "integrated"}
-      <div class="overlay" data-testid="agent-status">
-        <p class="message">{statusMessage(current)}</p>
-      </div>
+      <!-- The conversation says itself how it stands. -->
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{statusMessage(current)}</p>
@@ -233,6 +276,25 @@
     min-height: 0;
     padding: var(--term-air);
     background: var(--surface);
+  }
+
+  .crumb {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-family: var(--chrome);
+    font-size: var(--meta-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
+    color: var(--ink-3);
+  }
+
+  .crumb + .crumb {
+    margin-left: 6px;
   }
 
   /* Sits over the terminal rather than replacing it: the buffer of a stopped

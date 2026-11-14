@@ -1,0 +1,249 @@
+<script lang="ts">
+  import { agentLabel } from "$lib/agent.svelte";
+  import { dirFor } from "$lib/accounts.svelte";
+  import { linkFor, resume, trust } from "$lib/integrated.svelte";
+  import { close, type Session } from "$lib/sessions.svelte";
+  import { projectLabel } from "$lib/workspace.svelte";
+  import Icon from "./Icon.svelte";
+  import Thread from "./Thread.svelte";
+
+  /**
+   * What the agent pane draws for an integrated session in place of a
+   * terminal: the thread, and under it what the user does next. Before the
+   * session can run it may need the user: a folder to trust, or a sign-in
+   * the user does in a terminal. A session that ended or could not start
+   * says why and offers to start again.
+   */
+  interface Props {
+    session: Session;
+    /** The session on screen in the pane. */
+    active: boolean;
+  }
+
+  let { session, active }: Props = $props();
+
+  let link = $derived(linkFor(session.key));
+  let conversation = $derived(link.conversation);
+  let agent = $derived(agentLabel(session.agent));
+  let folder = $derived(session.startIn ?? session.project);
+
+  let over = $derived(
+    session.status === "exited" || session.status === "crashed" || session.status === "failed",
+  );
+
+  let intro = $derived(
+    session.status === "starting"
+      ? `Starting ${agent}…`
+      : session.resumedFrom !== null
+        ? "This session was resumed. Its earlier messages are in its transcript and are not shown here."
+        : `A new ${agent} session in ${projectLabel(session.project)}, with your login, settings, hooks and tools.`,
+  );
+
+  /** Why the session is over, in a sentence. */
+  let why = $derived.by(() => {
+    if (session.status === "failed") return `${agent} could not start: ${session.error ?? "no reason was given"}.`;
+    const said = conversation.errors.filter((error) => error.kind !== "notLoggedIn").at(-1);
+    if (session.status === "exited") return "The session ended.";
+    if (said !== undefined) return `The session stopped: ${said.message}.`;
+    return session.exitCode === null
+      ? "The session stopped."
+      : `The session stopped with code ${session.exitCode}.`;
+  });
+
+  /** How the user signs in, for an account of their own. */
+  let signIn = $derived.by(() => {
+    const dir = dirFor(session.account, session.agent);
+    return dir === undefined ? "claude" : `CLAUDE_CONFIG_DIR=${dir} claude`;
+  });
+</script>
+
+<div class="conv" class:active data-testid="conversation" data-session={session.key}>
+  {#if link.untrusted}
+    <div class="gate" data-testid="trust-gate">
+      <div class="card">
+        <span class="badge"><Icon name="lock" size={16} /></span>
+        <h2>Trust this folder?</h2>
+        <p>
+          {agent} has not been told that the files in <code>{folder}</code> can be trusted. A trusted
+          folder's settings can run hooks and MCP servers on this machine, so trust it only if you know
+          where its files came from.
+        </p>
+        <div class="buttons">
+          <button class="primary" disabled={link.busy} onclick={() => trust(session.key)} data-testid="trust-folder"
+            >Trust and start</button
+          >
+          <button onclick={() => close(session.key)} data-testid="trust-not-now">Not now</button>
+        </div>
+      </div>
+    </div>
+  {:else if conversation.notLoggedIn}
+    <div class="gate" data-testid="login-gate">
+      <div class="card">
+        <span class="badge"><Icon name="lock" size={16} /></span>
+        <h2>{agent} is not signed in</h2>
+        <p>
+          Sign in by running <code>{signIn}</code> in a terminal and following its steps, then start the
+          session again. The workbench never signs in for you.
+        </p>
+        <div class="buttons">
+          <button class="primary" disabled={link.busy} onclick={() => resume(session.key)} data-testid="login-retry"
+            >Try again</button
+          >
+        </div>
+      </div>
+    </div>
+  {:else}
+    <Thread {conversation} root={folder} {intro} />
+    <div class="foot">
+      {#if over}
+        <div class="ended" data-testid="session-ended">
+          <span class="why">{why}</span>
+          <button class="primary" disabled={link.busy} onclick={() => resume(session.key)} data-testid="resume-session"
+            >{session.status === "failed" ? "Try again" : "Resume"}</button
+          >
+        </div>
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .conv {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    visibility: hidden;
+    background: var(--surface);
+    font-family: var(--chrome);
+    --conv-size: 13.5px;
+  }
+
+  :global(:root:not([data-look="modern"])) .conv {
+    --conv-size: 12.5px;
+  }
+
+  .conv.active {
+    visibility: visible;
+  }
+
+  .foot {
+    flex: none;
+    padding: 0 24px 14px;
+  }
+
+  .ended {
+    max-width: 740px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px 9px 14px;
+    border-radius: calc(var(--radius) * 2);
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+
+  .why {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .gate {
+    flex: 1;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    overflow: auto;
+  }
+
+  .card {
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 20px 22px;
+    border-radius: calc(var(--radius) * 2);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
+  }
+
+  .badge {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .card p {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ink-2);
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  button {
+    height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--rule-strong);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: var(--surface-2);
+  }
+
+  button.primary {
+    background: var(--accent);
+    box-shadow: none;
+    color: var(--bg);
+  }
+
+  button.primary:hover {
+    background: color-mix(in srgb, var(--accent) 88%, var(--ink));
+  }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+</style>
