@@ -403,6 +403,36 @@ test.describe("a session that follows a workflow", () => {
     await expect.poll(() => answerTo(page, "c-3")).not.toBeNull();
     expect((await answerTo(page, "c-3"))!.content).toContain('step "Work"');
   });
+
+  test("says in the agent pane's header which workflow a session follows, and shows a refused start", async ({
+    page,
+  }) => {
+    const header = page.locator(`${AGENT} header`);
+    const tag = page.getByTestId("workflow-tag");
+    await expect(tag).toHaveText("Build and review · orchestrator");
+    // Quiet, and in the header beside the title.
+    const head = (await header.boundingBox())!;
+    const box = (await tag.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(head.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(head.y + head.height + 1);
+    await expect(tag).toHaveAttribute("title", /For the step "Work"/);
+
+    await push(page, {
+      id: "c-1",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix it", step: "Deploy" },
+      session: "session-1",
+    });
+    const refused = page.getByTestId("workflow-refused");
+    await expect(refused).toBeVisible();
+    await expect(refused).toContainText('Start refused: The workflow "Build and review" has no step called "Deploy".');
+    // One line over the terminal, under the header.
+    const line = (await refused.boundingBox())!;
+    expect(line.height).toBeLessThan(40);
+    expect(line.y).toBeGreaterThanOrEqual(head.y + head.height - 1);
+    await page.getByTestId("workflow-refused-dismiss").click();
+    await expect(refused).toHaveCount(0);
+  });
 });
 
 test.describe("a round of review past the workflow's limit", () => {

@@ -19,8 +19,10 @@ import {
   revoke,
   startedBy,
   startedFor,
+  dismissRefusal,
   stopAll,
   UNPLACED,
+  workflowTag,
   watchStops,
   worktreeName,
 } from "$lib/conductor.svelte";
@@ -39,6 +41,7 @@ import {
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import { instructions } from "$lib/workflowInstructions";
 import type { Workflow } from "$lib/core";
 
 const A = "/home/ada/dev/one";
@@ -1819,6 +1822,40 @@ describe("starting in a workflow's shape", () => {
     close(mate.key);
     await handle(call("start", { project: B, prompt: "Go" }));
     expect(last().error).toContain("so a start names the step it is for");
+  });
+
+  it("names the workflow and each session's place in it, with the rules that place goes by", async () => {
+    const orch = orchestrating();
+    expect(workflowTag(byKey(orch.key)!)).toEqual({
+      text: "Build and review · orchestrator",
+      rules: instructions(defaultWorkflow()),
+    });
+    const work = await begun({ step: "Work" }, "w1");
+    expect(workflowTag(byKey(work.key)!)?.text).toBe("Build and review · Work");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    const tag = workflowTag(byKey(review.key)!)!;
+    expect(tag.text).toBe("Build and review · Review round 1");
+    expect(tag.rules).toContain('For the step "Review"');
+    expect(tag.rules).toContain("This one reviews the work of session w1.");
+    // A session outside any workflow has no tag.
+    const plain = create(A, null, "claude-code", null, null, null, null, null);
+    expect(workflowTag(plain)).toBeNull();
+  });
+
+  it("keeps a refused start where the user can see it, until a start goes through", async () => {
+    const orch = orchestrating();
+    await refusedWith({ step: "Deploy" });
+    expect(conductor.refusals[orch.key]).toContain('has no step called "Deploy"');
+    await begun({ step: "Work" }, "w1");
+    expect(conductor.refusals[orch.key]).toBeUndefined();
+    await refusedWith({});
+    dismissRefusal(orch.key);
+    expect(conductor.refusals[orch.key]).toBeUndefined();
+    // A caller with no workflow is answered as before, and nothing shows.
+    const row = create(A, null, "claude-code", null, null, null, null, null);
+    started(row.key, "pty-plain", "plain");
+    await handle(call("start", { project: B }, { session: "plain" }));
+    expect(conductor.refusals[row.key]).toBeUndefined();
   });
 
   it("lets a session with no workflow start others as before, step or none", async () => {

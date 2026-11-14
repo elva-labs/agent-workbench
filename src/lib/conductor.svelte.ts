@@ -49,7 +49,11 @@ import {
 } from "$lib/sessions.svelte";
 import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
 import { CODEX_DEFAULT } from "$lib/models";
-import { modelText } from "$lib/workflowInstructions";
+import {
+  instructionLines,
+  instructions,
+  modelText,
+} from "$lib/workflowInstructions";
 import { screen } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -187,6 +191,10 @@ export const conductor = $state({
   places: {} as Record<string, Place>,
   /** What each caller has run by its workflow, by the caller's id. */
   runs: {} as Record<string, Run>,
+  /** The last start refused to a caller that follows a workflow, by the
+      caller's row key, until it starts one or the user puts it away: the
+      user sees why as well as the agent. */
+  refusals: {} as Record<string, string>,
 });
 
 /** Reads what callers started in earlier runs. A corrupt entry reads as
@@ -467,6 +475,7 @@ export async function handle(request: ConductRequest): Promise<void> {
   } catch (error) {
     answered = refused(String(error));
   }
+  if (request.tool === "start") noteRefusal(request, answered.error);
   if (given.delete(request.id)) return;
   await core()
     .conductAnswer(request.id, request.cwd, answered.content, answered.error)
@@ -495,6 +504,52 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
     default:
       return refused(`The workbench has no ${String(request.tool)} tool.`);
   }
+}
+
+/** Keeps a refused start where the user can see it, for a caller that
+    follows a workflow, and clears it once a start goes through. */
+function noteRefusal(request: ConductRequest, error: string | null) {
+  const row =
+    request.session !== null
+      ? byId(request.session)
+      : (untoldHere(request.cwd).at(0) ?? null);
+  if (row === null) return;
+  if (error === null) delete conductor.refusals[row.key];
+  else if (row.workflow !== null) conductor.refusals[row.key] = error;
+}
+
+/** Puts away the refusal shown on a caller's row. */
+export function dismissRefusal(key: string) {
+  delete conductor.refusals[key];
+}
+
+/** What a session's header says of the workflow it is part of: the
+    workflow's name and its place in it, with the rules that place goes by.
+    Null for a session outside any workflow. */
+export function workflowTag(
+  session: Session,
+): { text: string; rules: string } | null {
+  if (session.workflow !== null) {
+    const gone = session.workflowGone ? " · deleted, as it was" : "";
+    return {
+      text: `${session.workflow.name} · orchestrator${gone}`,
+      rules: instructions(session.workflow),
+    };
+  }
+  const at = placeOf(session.key);
+  if (at === null) return null;
+  const caller = startedFor(session.key);
+  const workflow = caller === null ? null : (byId(caller)?.workflow ?? null);
+  const where = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
+  if (workflow === null) return { text: where, rules: placeText(at) };
+  const index = workflow.steps.findIndex((step) => step.name === at.step);
+  return {
+    text: `${workflow.name} · ${where}`,
+    rules:
+      index === -1
+        ? placeText(at)
+        : `${instructionLines(workflow)[index + 1]}${at.kind === "review" && at.work !== null ? ` This one reviews the work of session ${at.work}.` : ""}`,
+  };
 }
 
 /** The open projects, the caller's own marked. */
@@ -1666,6 +1721,7 @@ export function resetConductor() {
   conductor.started = {};
   conductor.places = {};
   conductor.runs = {};
+  conductor.refusals = {};
   pending = null;
   queue.length = 0;
   allowed.clear();

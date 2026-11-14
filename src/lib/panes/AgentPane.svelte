@@ -29,6 +29,7 @@
     wake,
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
+  import { conductor, dismissRefusal, workflowTag } from "$lib/conductor.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
@@ -50,6 +51,9 @@
   }
 
   let title = $derived(current === null ? "Agent" : `Agent · ${agentLabel(current.agent)}`);
+  /** The workflow the session on screen is part of, and its place in it. */
+  let tag = $derived(current === null ? null : workflowTag(current));
+  let refusal = $derived(current === null ? null : (conductor.refusals[current.key] ?? null));
 
   // A session that was open when the app quit starts once it is the one
   // this pane shows.
@@ -138,8 +142,26 @@
   </div>
 {/snippet}
 
-<Pane id="agent" {title} meta={statusLabel(current)}>
+{#snippet head()}
+  {#if tag !== null}
+    <span class="tag" title={tag.rules} role="note" aria-label="{tag.text}. {tag.rules}" data-testid="workflow-tag">{tag.text}</span>
+  {/if}
+{/snippet}
+
+<Pane id="agent" {title} meta={statusLabel(current)} head={tag === null ? undefined : head}>
   <div class="wrap" bind:this={wrap}>
+    {#if refusal !== null && current !== null}
+      <!-- What the workflow refused the agent, said to the user too. -->
+      <p class="refused" title={refusal} data-testid="workflow-refused">
+        <span class="refused-text">Start refused: {refusal}</span>
+        <button
+          class="refused-close"
+          onclick={() => dismissRefusal(current!.key)}
+          aria-label="Dismiss"
+          data-testid="workflow-refused-dismiss">×</button
+        >
+      </p>
+    {/if}
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
          is visible, so its PTY keeps its size and coming back to it costs
@@ -218,6 +240,47 @@
     padding: 10px var(--pane-pad);
     border-top: 1px solid var(--rule);
     background: var(--surface-2);
+  }
+
+  /* The workflow a session is part of: quiet, beside the title. */
+  .tag {
+    max-width: 32ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    cursor: default;
+  }
+
+  /* One line over the top of the terminal, cut short with the whole of it
+     on hover. */
+  .refused {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0;
+    padding: 6px var(--pane-pad);
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .refused-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .refused-close {
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
   }
 
   .message {
