@@ -155,11 +155,10 @@ pub fn write(home: &Path, css: &str) -> Result<Styles, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn home(name: &str) -> PathBuf {
-        let home = std::env::temp_dir().join(format!("workbench-styles-{name}"));
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
+    fn home(name: &str) -> Scratch {
+        let home = Scratch::new(&format!("styles-{name}"));
         home
     }
 

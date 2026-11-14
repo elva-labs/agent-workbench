@@ -225,6 +225,7 @@ pub fn is_shell_script(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     fn env0(entries: &[&str]) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -343,8 +344,7 @@ mod tests {
 
     #[test]
     fn finds_a_program_on_the_given_path() {
-        let dir = std::env::temp_dir().join("workbench-path-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("path-test");
         let bin = dir.join("pretend-agent");
         std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
         #[cfg(unix)]
@@ -364,8 +364,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn ignores_a_non_executable_file() {
-        let dir = std::env::temp_dir().join("workbench-path-test-plain");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("path-test-plain");
         let bin = dir.join("not-executable");
         std::fs::write(&bin, b"text").unwrap();
 

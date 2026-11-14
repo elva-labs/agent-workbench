@@ -205,10 +205,7 @@ mod client {
     #[test]
     fn an_integrated_session_runs_through_the_daemon() {
         use std::os::unix::fs::PermissionsExt;
-        let dir =
-            std::env::temp_dir().join(format!("workbench-serve-integrated-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = workbench_core::scratch::Scratch::new("serve-integrated");
         let claude = dir.join("claude");
         std::fs::write(
             &claude,
@@ -247,7 +244,7 @@ while read -r line; do :; done
         .unwrap();
         // A folder the agent has not been told to trust is refused, until
         // the user's yes is recorded where the agent keeps it.
-        let start = json!({ "agent": "claude-code", "project": dir, "model": "haiku" });
+        let start = json!({ "agent": "claude-code", "project": dir.path(), "model": "haiku" });
         let refused = connection
             .call("integrated_start", start.clone())
             .unwrap_err();
@@ -257,7 +254,7 @@ while read -r line; do :; done
         let refused = connection
             .call(
                 "integrated_start",
-                json!({ "agent": "claude-code", "project": dir, "configDir": account }),
+                json!({ "agent": "claude-code", "project": dir.path(), "configDir": account }),
             )
             .unwrap_err();
         assert!(refused.starts_with("untrusted:"), "{refused}");
@@ -265,7 +262,7 @@ while read -r line; do :; done
         connection
             .call(
                 "integrated_trust",
-                json!({ "agent": "claude-code", "project": dir }),
+                json!({ "agent": "claude-code", "project": dir.path() }),
             )
             .unwrap();
         let state = std::fs::read_to_string(home.join(".claude.json")).unwrap();

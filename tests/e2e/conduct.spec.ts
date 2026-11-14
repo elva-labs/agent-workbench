@@ -169,12 +169,10 @@ test.describe("the conductor", () => {
 
     await page.getByTestId("conduct-allow").click();
     await expect(ask).toHaveCount(0);
-    // The session belongs to whoever started it, so the pane folds it under
-    // that session rather than drawing it among the project's own.
+    // The session belongs to whoever started it, so the pane hangs it
+    // under that session rather than drawing it among the project's own.
     await expect(rows(page)).toHaveCount(1);
-    await expect(page.getByTestId("started-fold")).toContainText(
-      "1 started by",
-    );
+    await expect(page.getByTestId("started-rail").getByTestId("started-session")).toHaveCount(1);
 
     await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
     const answer = (await answerTo(page, "c-1"))!;
@@ -244,6 +242,108 @@ test.describe("the conductor", () => {
     );
   });
 
+  // A window out of sight is given no animation frames. A session started
+  // on a worktree of its own, never on screen, still has what its agent
+  // drew to read, and its hooks say what it is doing.
+  test("tells the truth of a worktree session nobody has looked at, with no frames drawn", async ({
+    page,
+  }) => {
+    await push(page, {
+      id: "c-10",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Run the tests", worktree: true },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-10")).not.toBeNull();
+    expect((await answerTo(page, "c-10"))!.content).toContain(
+      ".claude/worktrees/run-the-tests",
+    );
+    const spawned = await page.evaluate(
+      () =>
+        (window as unknown as { __spawns: { cwd?: string }[] }).__spawns.at(-1)
+          ?.cwd,
+    );
+    expect(spawned).toBe(`${PROJECT}/.claude/worktrees/run-the-tests`);
+
+    // Two terminals, and only the caller's is on screen.
+    const terminals = page.getByTestId("terminal");
+    await expect(terminals).toHaveCount(2);
+    await expect(terminals.nth(0)).toBeVisible();
+    await expect(terminals.nth(1)).toBeHidden();
+
+    // From here no frame comes, as in a window behind others.
+    await page.evaluate(() => {
+      const w = window as unknown as { __heldFrames: FrameRequestCallback[] };
+      w.__heldFrames = [];
+      window.requestAnimationFrame = (callback) => {
+        w.__heldFrames.push(callback);
+        return 0;
+      };
+    });
+    const sessionEvent = (kind: string) =>
+      page.evaluate(
+        (kind) =>
+          (
+            window as unknown as {
+              __sessionEvent: (event: { sessionId: string; kind: string }) => void;
+            }
+          ).__sessionEvent({ sessionId: "session-2", kind }),
+        kind,
+      );
+    await sessionEvent("prompt");
+    await page.evaluate(() =>
+      (
+        window as unknown as { __say: (id: string, text: string) => void }
+      ).__say("pty-2", "\r\nRunning 42 tests\r\n"),
+    );
+    await expect.poll(() => drawn(page, "Running 42 tests")).toBe(true);
+    const held = await page.evaluate(
+      () =>
+        (window as unknown as { __heldFrames: unknown[] }).__heldFrames.length,
+    );
+    expect(held).toBeGreaterThan(0);
+    await expect(terminals.nth(1)).toBeHidden();
+
+    await push(page, {
+      id: "c-11",
+      tool: "read",
+      arguments: { session: "session-2" },
+      session: "session-1",
+    });
+    await expect.poll(() => answerTo(page, "c-11")).not.toBeNull();
+    expect((await answerTo(page, "c-11"))!.content).toContain(
+      "Running 42 tests",
+    );
+
+    await push(page, { id: "c-12", tool: "sessions", session: "session-1" });
+    await expect.poll(() => answerTo(page, "c-12")).not.toBeNull();
+    expect((await answerTo(page, "c-12"))!.content).toMatch(
+      /session-2 .*run-the-tests.* working/,
+    );
+
+    // A wait holds while it works, and answers when its hooks say it
+    // stopped.
+    await push(page, {
+      id: "c-13",
+      tool: "wait",
+      arguments: { session: "session-2" },
+      session: "session-1",
+    });
+    await page.evaluate(() =>
+      (
+        window as unknown as { __say: (id: string, text: string) => void }
+      ).__say("pty-2", "\r\n41 passed\r\n"),
+    );
+    await expect.poll(() => drawn(page, "41 passed")).toBe(true);
+    expect(await answerTo(page, "c-13")).toBeNull();
+    await sessionEvent("stop");
+    await expect.poll(() => answerTo(page, "c-13")).not.toBeNull();
+    expect((await answerTo(page, "c-13"))!.content).toContain(
+      "Session session-2 stopped working.",
+    );
+  });
+
   test("remembers what it started across a restart, and resumes it on request", async ({
     page,
   }) => {
@@ -282,7 +382,7 @@ test.describe("the conductor", () => {
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
     await expect(rows(page)).toHaveCount(1);
-    await expect(page.getByTestId("started-fold")).toHaveCount(0);
+    await expect(page.getByTestId("started-session")).toHaveCount(0);
     await expect.poll(async () => (await spawns()).map((spawn) => spawn.session)).toEqual([
       "session-1",
     ]);
@@ -307,10 +407,9 @@ test.describe("the conductor", () => {
     const answer = (await answerTo(page, "c-9"))!;
     expect(answer.error).toBeNull();
     expect(answer.content).toContain("Resumed session session-2");
-    // Back under the fold, resumed by id, with the prompt on its command line.
-    await expect(page.getByTestId("started-fold")).toContainText(
-      "1 started by",
-    );
+    // Back under its starter, resumed by id, with the prompt on its
+    // command line.
+    await expect(page.getByTestId("started-session")).toHaveCount(1);
     const resumed = (await spawns()).at(-1);
     expect(resumed?.session).toBe("session-2");
     expect(resumed?.prompt).toContain("Go on with the test");

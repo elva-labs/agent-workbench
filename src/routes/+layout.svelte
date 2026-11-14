@@ -31,6 +31,7 @@
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
+  import { loadUsed } from "$lib/projects.svelte";
   import { reopen } from "$lib/reopen.svelte";
   import { listenIntegrated } from "$lib/integrated.svelte";
   import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
@@ -48,6 +49,7 @@
     loadUserStyles();
     loadLayout();
     loadRemembered();
+    loadUsed();
     loadStarted();
     const stopStops = watchStops();
     let closed = false;

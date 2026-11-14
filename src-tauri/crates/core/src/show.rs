@@ -537,6 +537,7 @@ pub fn read_media(path: &Path) -> Result<Media, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     fn show(line: &str) -> Option<ShowRequest> {
         match classify(line)? {
@@ -569,8 +570,7 @@ mod tests {
 
     #[test]
     fn appends_lines_the_tail_reads_back() {
-        let home = std::env::temp_dir().join("workbench-show-append");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("show-append");
         let request = Request::Show(ShowRequest {
             path: "/p/a.rs".into(),
             from: 3,
@@ -597,11 +597,10 @@ mod tests {
 
     #[test]
     fn calls_appended_at_once_each_keep_a_line_of_their_own() {
-        let home = std::env::temp_dir().join("workbench-show-append-at-once");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("show-append-at-once");
         let threads: Vec<_> = (0..16)
             .map(|n| {
-                let home = home.clone();
+                let home = home.to_path_buf();
                 std::thread::spawn(move || {
                     for m in 0..25 {
                         append(
@@ -745,8 +744,7 @@ mod tests {
     #[test]
     fn a_settings_call_reaches_the_window_as_an_event() {
         use crate::events::testing::Recorder;
-        let home = std::env::temp_dir().join("workbench-show-settings-event");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("show-settings-event");
         let recorder = Arc::new(Recorder::default());
         watch(
             recorder.clone(),
@@ -784,8 +782,7 @@ mod tests {
     #[test]
     fn a_cancelled_conduct_call_reaches_the_window_as_an_event() {
         use crate::events::testing::Recorder;
-        let home = std::env::temp_dir().join("workbench-show-cancel-event");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("show-cancel-event");
         let recorder = Arc::new(Recorder::default());
         watch(
             recorder.clone(),
@@ -819,8 +816,7 @@ mod tests {
 
     #[test]
     fn writes_an_answer_where_the_tool_server_waits() {
-        let home = std::env::temp_dir().join("workbench-show-answer");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("show-answer");
         let answer = Answer {
             content: Some("pong".into()),
             error: None,
@@ -833,9 +829,7 @@ mod tests {
 
     #[test]
     fn reads_media_by_its_extension_and_refuses_the_rest() {
-        let dir = std::env::temp_dir().join("workbench-show-media");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("show-media");
         let png = dir.join("a.PNG");
         std::fs::write(&png, [137, 80, 78, 71]).unwrap();
         let media = read_media(&png).unwrap();

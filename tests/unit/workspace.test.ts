@@ -7,8 +7,10 @@ import {
   projectLabel,
   reset,
   restore,
+  startSession,
   workspace,
 } from "$lib/workspace.svelte";
+import { loadUsed, projects, resetProjects } from "$lib/projects.svelte";
 import {
   reopened,
   reset as resetSessions,
@@ -79,6 +81,7 @@ beforeEach(() => {
   fake.state.describing = 0;
   fake.state.mostAtOnce = 0;
   localStorage.clear();
+  resetProjects();
 });
 
 describe("restoring the open projects", () => {
@@ -132,6 +135,32 @@ describe("restoring the open projects", () => {
       "/p/two",
     ]);
     expect(workspace.active).toBe("/p/two");
+  });
+
+  // Putting projects in front while the window opens is not the user
+  // using them: when each was last used is what it was, for the remote
+  // project that answers late and the local one in front meanwhile.
+  it("leaves when each project was last used as it was", async () => {
+    const hour = 3600 * 1000;
+    const used = {
+      "ssh://ada@lab/srv/x": Date.now() - 2 * hour,
+      "/p/one": Date.now() - hour,
+      "/p/two": Date.now() - 3 * hour,
+    };
+    localStorage.setItem("workbench.used", JSON.stringify(used));
+    loadUsed();
+    localStorage.setItem(
+      "workbench.workspace",
+      JSON.stringify({ open: ["ssh://ada@lab/srv/x", "/p/one", "/p/two"], active: "ssh://ada@lab/srv/x" }),
+    );
+    fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
+    const arriving = await restore();
+    expect(workspace.active).toBe("/p/one");
+    expect(projects.used).toEqual(used);
+    await Promise.all(arriving.values());
+    expect(workspace.active).toBe("ssh://ada@lab/srv/x");
+    expect(projects.used).toEqual(used);
+    expect(JSON.parse(localStorage.getItem("workbench.used")!)).toEqual(used);
   });
 
   it("keeps a project on its way in what is stored, and after it arrives", async () => {
@@ -354,5 +383,28 @@ describe("closing a project", () => {
     workspace.active = "/one";
     close("/one");
     expect(fake.state.tabsClosed).toEqual([{ kind: "project", path: "/one" }]);
+  });
+});
+
+describe("starting a session", () => {
+  beforeEach(() => {
+    reset();
+    resetSessions();
+    resetProjects();
+  });
+
+  // Starting one is the user using the project, from the pane or the
+  // palette alike.
+  it("counts its project as used", () => {
+    workspace.open.push(
+      { path: "/a", name: "a", repository: "/a", isGit: true },
+      { path: "/b", name: "b", repository: "/b", isGit: true },
+    );
+    workspace.active = "/a";
+    startSession("/b");
+    expect(workspace.active).toBe("/b");
+    expect(sessions.all.map((session) => session.project)).toEqual(["/b"]);
+    expect(Date.now() - projects.used["/b"]).toBeLessThan(1000);
+    expect(projects.used["/a"]).toBeUndefined();
   });
 });

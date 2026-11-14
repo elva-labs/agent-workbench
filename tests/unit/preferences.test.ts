@@ -35,6 +35,7 @@ const DEFAULTS: Settings = {
   workflows: { list: [], default: null, overrides: {} },
   pastSessions: "forever",
   integrated: [],
+  inactiveAfter: "week",
   themes: {},
   userStyles: false,
   notifications: true,

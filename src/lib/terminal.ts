@@ -81,8 +81,35 @@ export function buildTheme(read: TokenReader): ITheme {
   };
 }
 
+/** How long output waits for an animation frame before it is written
+    without one. A window out of sight is given no frames, and a terminal
+    takes its output all the same: what it holds is what the read tool
+    answers with, and its title and its bell are heard from what it parses. */
+export const FRAME_WAIT_MS = 100;
+
+/** Runs `run` once: on the next animation frame, or after FRAME_WAIT_MS
+    when no frame comes first. Answers with what cancels it. */
+export function frameOrSoon(run: () => void): () => void {
+  let frame: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const cancel = () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    if (timer !== null) clearTimeout(timer);
+    frame = null;
+    timer = null;
+  };
+  const once = () => {
+    cancel();
+    run();
+  };
+  frame = requestAnimationFrame(once);
+  timer = setTimeout(once, FRAME_WAIT_MS);
+  return cancel;
+}
+
 /**
- * Batches writes onto an animation frame.
+ * Batches writes onto an animation frame, or onto a short timer when no
+ * frame comes.
  *
  * A TUI redrawing itself emits many small writes, and calling `write()` per
  * chunk makes xterm parse and lay out far more often than the screen refreshes.
@@ -91,17 +118,13 @@ export function buildTheme(read: TokenReader): ITheme {
  */
 export class WriteQueue {
   private pending: Uint8Array[] = [];
-  private frame: number | null = null;
+  private frame: unknown = null;
 
   constructor(
     private readonly write: (data: Uint8Array) => void,
-    // Wrapped rather than passed by reference: requestAnimationFrame must be
-    // called with window as its receiver, and holding it on a field would call
-    // it with the queue instead.
-    private readonly schedule: (cb: () => void) => number = (cb) =>
-      requestAnimationFrame(cb),
-    private readonly cancel: (handle: number) => void = (handle) =>
-      cancelAnimationFrame(handle),
+    private readonly schedule: (cb: () => void) => unknown = frameOrSoon,
+    private readonly cancel: (handle: unknown) => void = (handle) =>
+      (handle as () => void)(),
   ) {}
 
   push(bytes: Uint8Array) {

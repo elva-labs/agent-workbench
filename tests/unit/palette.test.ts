@@ -30,7 +30,10 @@ import { matches } from "$lib/files.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
-import { reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { activate, bringForward, onScreen, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { projects, resetProjects } from "$lib/projects.svelte";
+import { conductor, resetConductor } from "$lib/conductor.svelte";
+import "$lib/orchestrator.svelte";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -59,6 +62,8 @@ const projectPaths = (items: PaletteItem[]) =>
 beforeEach(() => {
   reset();
   resetWorkspace();
+  resetProjects();
+  resetConductor();
   resetKeys();
   resetPalette();
   resetAccounts();
@@ -323,6 +328,71 @@ describe("what picking does in go to", () => {
     if (outcome.type === "close") outcome.then();
     expect(workspace.active).toBe(B);
   });
+
+  // A project whose only session hangs under a starter in another project
+  // has none drawn under it: go to counts none live there, and picking it
+  // shows it with no session, as the project on screen, rather than that
+  // session, which would put the starter's project on screen instead.
+  it("shows a project whose only session hangs elsewhere with none", () => {
+    const starter = create(A);
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(C);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    activate(A);
+    sessions.active = starter.key;
+    const row = (path: string) =>
+      goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === path)!;
+    expect(row(A)).toMatchObject({ end: "2 live" });
+    expect(row(C)).toMatchObject({ end: "now" });
+
+    const outcome = pickItem(row(C));
+    if (outcome.type === "close") outcome.then();
+    expect(workspace.active).toBe(C);
+    expect(sessions.active).toBeNull();
+    expect(onScreen()).toBe(C);
+    expect(Date.now() - projects.used[C]).toBeLessThan(1000);
+
+    // A session of its own drawn under it is the one shown.
+    const own = create(C);
+    started(own.key, "pty-3", "own-1");
+    activate(A);
+    const again = pickItem(row(C));
+    if (again.type === "close") again.then();
+    expect(sessions.active).toBe(own.key);
+  });
+
+  // The session on screen hangs under its starter's project from another
+  // one: bringing the starter's project forward counts it as used and
+  // leaves the session and the project in front as they are.
+  it("keeps a started session on screen when its starter's project is brought forward", () => {
+    const starter = create(A);
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(C);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    activate(C);
+    sessions.active = kid.key;
+    expect(onScreen()).toBe(A);
+
+    bringForward(A);
+    expect(sessions.active).toBe(kid.key);
+    expect(workspace.active).toBe(C);
+    expect(onScreen()).toBe(A);
+    expect(Date.now() - projects.used[A]).toBeLessThan(1000);
+  });
+
+  // A project picked is the user using it, as a session picked is.
+  it("counts a project picked as used, the one in front too", () => {
+    workspace.active = A;
+    for (const path of [B, A]) {
+      const item = goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === path)!;
+      const outcome = pickItem(item);
+      if (outcome.type === "close") outcome.then();
+      expect(Date.now() - projects.used[path]).toBeLessThan(1000);
+    }
+    expect(projects.used[C]).toBeUndefined();
+  });
 });
 
 describe("commands", () => {
@@ -459,6 +529,34 @@ describe("a new session", () => {
     workspace.active = null;
     expect(stepItems("").map((item) => item.label)).toEqual(["three", "one", "two"]);
     expect(stepItems("tw").map((item) => item.label)).toEqual(["two"]);
+  });
+
+  // A session started by another hangs under its starter, in the
+  // starter's project, which is then the project on screen: the question
+  // and the command for the project on screen name it, not the project the
+  // session runs in, and the cursor starts on it.
+  it("takes the starter's project as the one on screen while a session it started is", () => {
+    const starter = create(A);
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(C);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    kid.changedAt = Date.now();
+    activate(C);
+    sessions.active = kid.key;
+    expect(workspace.active).toBe(C);
+
+    expect(commandItems("new session in").map((item) => item.label)).toEqual(["New session in one"]);
+    openCommands();
+    expect(choose("New session")).toEqual({ type: "stay" });
+    expect(stepItems("")[0]).toMatchObject({ id: `project:${A}`, label: "one" });
+    expect(startingId()).toBeNull();
+
+    openCommands();
+    const outcome = choose("New session in one");
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all.at(-1)?.project).toBe(A);
   });
 
   it("starts in the project at once when there is nothing else to choose", () => {

@@ -135,7 +135,8 @@ test.describe("an integrated session", () => {
     // Another session, in a terminal, which the fake names session-1.
     await page.getByTestId("new-session").click();
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
-    await page.getByTestId("session-row").first().click();
+    // The newest row stands first; the integrated one is the older.
+    await page.getByTestId("session-row").filter({ hasText: "session 1" }).click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await agent(
       page,

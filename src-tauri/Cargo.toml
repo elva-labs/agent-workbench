@@ -33,6 +33,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 uuid = { version = "1", features = ["v4"] }
 
+[dev-dependencies]
+workbench-core = { path = "crates/core", features = ["test-support"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow", "NSImage", "NSBitmapImageRep", "NSImageRep", "NSGraphics", "NSEvent", "NSApplication", "NSGraphicsContext", "NSScreen", "block2"] }
