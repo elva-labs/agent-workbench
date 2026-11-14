@@ -4,6 +4,7 @@
   import { core } from "$lib/core";
   import { isMac } from "$lib/keymap";
   import {
+    WINDOW_CONTROLS,
     layout,
     focusPane,
     besideSessions,
@@ -84,9 +85,11 @@
       class:beside
       class:leads={appMenu}
       class:controlled={controls}
+      class:cornered={corner}
       class:lone={!head && !meta}
       class:columns={titleWidth !== null}
       style:--title-w={titleWidth}
+      style:--controls-w={controls ? `${WINDOW_CONTROLS}px` : null}
       data-tauri-drag-region
     >
       {#snippet menuButton()}
@@ -257,7 +260,6 @@
      pane's padding before them in every header, as it ends that far
      before the header's end where there are none. */
   header.controlled {
-    --controls-w: 120px;
     position: relative;
     padding-right: calc(var(--controls-w) + var(--pane-pad));
   }
@@ -318,6 +320,24 @@
 
   .meta {
     font-size: var(--meta-size);
+  }
+
+  /* Short of room the meta gives way before the name: it takes only what
+     the name and the controls leave, and the name narrows once it is gone.
+     It stands where the room leaves it: at the header's end, or midway to
+     the corner. */
+  header > .meta,
+  .cell .meta {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  header > .meta {
+    text-align: end;
+  }
+
+  header.cornered > .meta {
+    text-align: center;
   }
 
   .pane.focused header {

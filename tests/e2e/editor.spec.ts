@@ -11,6 +11,11 @@ const AGENT = "section[data-pane='agent']";
 const FILES = "section[data-pane='changes']";
 const MOD = "ControlOrMeta";
 const FOLDED = 50;
+/** A window that holds every pane open in editor mode, the sessions pane
+    included. The agent's pane opens wider where the app draws the window's
+    own buttons, which is everywhere the browser is not on macOS, and the
+    window is wider by as much. */
+const ALL_OPEN = 1728 + (process.platform === "darwin" ? 0 : 120);
 
 async function box(page: Page, selector: string) {
   const found = await page.locator(selector).first().boundingBox();
@@ -42,6 +47,20 @@ async function flip(page: Page) {
   await settled(page);
 }
 
+/** What the window's own buttons add to the right pane's default widths:
+    nothing where the platform draws them, macOS, and their room where the
+    app does. */
+async function controlsRoom(page: Page) {
+  return page.evaluate(() => (/Mac|iPhone|iPad/.test(navigator.platform) ? 0 : 120));
+}
+
+/** Makes the page take itself for Linux, where the app draws the window's
+    own buttons. Its chords are then Ctrl's, so a test run this way on a Mac
+    clicks rather than presses them. */
+async function asLinux(page: Page) {
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "Linux x86_64" }));
+}
+
 async function open(page: Page, width: number) {
   await page.setViewportSize({ width, height: 900 });
   await installFakeCore(page);
@@ -51,7 +70,7 @@ async function open(page: Page, width: number) {
 
 test.describe("the editing shape", () => {
   test("puts the files pane in the middle and the agent on the right", async ({ page }) => {
-    await open(page, 1728);
+    await open(page, ALL_OPEN);
     const before = await box(page, AGENT);
     await flip(page);
     await expect(page.getByTestId("mode-readout")).toHaveText("editing");
@@ -59,9 +78,10 @@ test.describe("the editing shape", () => {
     const agent = await box(page, AGENT);
     const files = await box(page, FILES);
     expect(files.x).toBeLessThan(agent.x);
-    expect(agent.x + agent.width).toBeGreaterThan(1728 - 30);
-    expect(Math.round(agent.width)).toBeGreaterThanOrEqual(419);
-    expect(Math.round(agent.width)).toBeLessThanOrEqual(422);
+    expect(agent.x + agent.width).toBeGreaterThan(ALL_OPEN - 30);
+    const room = await controlsRoom(page);
+    expect(Math.round(agent.width)).toBeGreaterThanOrEqual(419 + room);
+    expect(Math.round(agent.width)).toBeLessThanOrEqual(422 + room);
     expect(agent.x).toBeGreaterThan(before.x);
 
     // The tree keeps a column on the left of the files pane, and the
@@ -250,6 +270,98 @@ test.describe("the right pane", () => {
   });
 });
 
+/** Whether a header's name and status are each drawn whole, and how wide
+    the status is drawn. The text's own width is read from a range over it,
+    which a clipped line does not shorten. */
+async function headerParts(page: Page, pane: string) {
+  return page.evaluate((pane) => {
+    const header = document.querySelector(`${pane} > header`)!;
+    const part = (selector: string) => {
+      const el = header.querySelector<HTMLElement>(selector);
+      if (el === null) return { whole: true, width: 0 };
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const box = el.getBoundingClientRect().width;
+      return { whole: range.getBoundingClientRect().width <= box + 0.01, width: box };
+    };
+    const title = part(":scope > .title, .cell .title");
+    const meta = part(":scope > .meta, .cell .meta");
+    return { title: title.whole, meta: meta.whole, metaWidth: meta.width };
+  }, pane);
+}
+
+for (const linux of [false, true]) {
+  const platform = linux ? "as Linux" : "as the platform it runs on";
+  test.describe(`the right pane's header, ${platform}`, () => {
+    test.beforeEach(async ({ page }) => {
+      if (linux) await asLinux(page);
+      await open(page, 1728);
+      await page.getByTestId("start-agent").click();
+      await expect(page.locator(AGENT)).toContainText("running");
+    });
+
+    test("reads whole at the default widths, in both modes", async ({ page }) => {
+      expect(await headerParts(page, FILES)).toMatchObject({ title: true, meta: true });
+      await page.getByTestId("mode-editor").click();
+      await settled(page);
+      expect(await headerParts(page, AGENT)).toMatchObject({ title: true, meta: true });
+    });
+
+    test("gives up its status before its name as the agent narrows", async ({ page }) => {
+      await page.getByTestId("mode-editor").click();
+      await settled(page);
+      const splitter = page.getByRole("separator", { name: "Resize the agent" });
+      let statusGave = false;
+      let width = (await box(page, AGENT)).width;
+      for (let step = 0; step < 50; step += 1) {
+        const parts = await headerParts(page, AGENT);
+        // The name never narrows while the status still has room.
+        if (!parts.title) expect(parts.metaWidth).toBeLessThan(0.5);
+        if (parts.title && !parts.meta) statusGave = true;
+        const handle = (await splitter.boundingBox())!;
+        await page.mouse.move(handle.x + handle.width / 2, handle.y + 200);
+        await page.mouse.down();
+        await page.mouse.move(handle.x + handle.width / 2 + 6, handle.y + 200, { steps: 2 });
+        await page.mouse.up();
+        const now = (await box(page, AGENT)).width;
+        if (now >= width) break;
+        width = now;
+      }
+      expect(statusGave).toBe(true);
+    });
+  });
+}
+
+test.describe("the right pane's default widths, as Linux", () => {
+  test("are wider by the window's buttons, and a width dragged by hand stays", async ({ page }) => {
+    await asLinux(page);
+    await open(page, 1728);
+    expect(Math.round((await box(page, FILES)).width)).toBeGreaterThanOrEqual(459);
+    expect(Math.round((await box(page, FILES)).width)).toBeLessThanOrEqual(462);
+    await page.getByTestId("mode-editor").click();
+    await settled(page);
+    expect(Math.round((await box(page, AGENT)).width)).toBeGreaterThanOrEqual(539);
+    expect(Math.round((await box(page, AGENT)).width)).toBeLessThanOrEqual(542);
+
+    // Dragged wider, it stays so across a restart; a double-click on the
+    // splitter gives the default back.
+    const splitter = page.getByRole("separator", { name: "Resize the agent" });
+    const handle = (await splitter.boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 - 40, handle.y + 200, { steps: 4 });
+    await page.mouse.up();
+    const dragged = Math.round((await box(page, AGENT)).width);
+    expect(dragged).toBeGreaterThanOrEqual(579);
+    await page.reload();
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    expect(Math.round((await box(page, AGENT)).width)).toBe(dragged);
+    await splitter.dblclick();
+    await settled(page);
+    expect(Math.round((await box(page, AGENT)).width)).toBeLessThanOrEqual(542);
+  });
+});
+
 test.describe("the agent across the flip", () => {
   test("is told one new size per flip", async ({ page }) => {
     await open(page, 1728);
@@ -289,7 +401,7 @@ function editorText(page: Page) {
 
 test.describe("the editor and its tabs", () => {
   test.beforeEach(async ({ page }) => {
-    await open(page, 1728);
+    await open(page, ALL_OPEN);
     await flip(page);
   });
 
@@ -748,7 +860,7 @@ function controls(page: Page) {
 
 test.describe("questions before anything unsaved goes", () => {
   test.beforeEach(async ({ page }) => {
-    await open(page, 1728);
+    await open(page, ALL_OPEN);
     await flip(page);
   });
 
@@ -1185,7 +1297,7 @@ test.describe("the corner and the keyboard", () => {
 test.describe("the leave question with an orchestrator's board on screen", () => {
   test("is drawn over the board, and heard only then", async ({ page }) => {
     const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
-    await page.setViewportSize({ width: 1728, height: 1000 });
+    await page.setViewportSize({ width: ALL_OPEN, height: 1000 });
     await installFakeCore(page, { open: [ORCHESTRATOR, "/home/ada/dev/demo"] });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
@@ -1313,7 +1425,7 @@ test.describe("the tab in front as the row narrows", () => {
 
 test.describe("the session question from the keyboard", () => {
   test("takes the keyboard, on Cancel, when Delete raises it", async ({ page }) => {
-    await open(page, 1728);
+    await open(page, ALL_OPEN);
     await flip(page);
     await page.getByTestId("new-session").click();
     await expect(page.locator(AGENT)).toContainText("running");
@@ -1384,12 +1496,13 @@ test.describe("the question's three buttons", () => {
     await expect(page.getByTestId("close-unsaved")).toBeVisible();
     expect(await oneLine(page, "close-unsaved")).toBe(true);
   });
+
 });
 
 test.describe("closing what the pane folds away or hangs under another", () => {
   test("asks before Delete closes an inactive project", async ({ page }) => {
     const TWO = "/home/ada/dev/two";
-    await page.setViewportSize({ width: 1728, height: 1000 });
+    await page.setViewportSize({ width: ALL_OPEN, height: 1000 });
     await page.clock.install();
     await installFakeCore(page, { open: [PROJECT, TWO] });
     await page.goto("/");
@@ -1420,7 +1533,7 @@ test.describe("closing what the pane folds away or hangs under another", () => {
   });
 
   test("asks before the × on a started session stops it, naming its project where the name repeats", async ({ page }) => {
-    await open(page, 1728);
+    await open(page, ALL_OPEN);
     // The orchestrator's own session 1, which starts a session 1 in demo.
     await page.getByTestId("sessions-menu").click();
     await page.getByTestId("menu-orchestrator").click();

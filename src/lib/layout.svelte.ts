@@ -34,6 +34,7 @@
  */
 
 import { Tween } from "svelte/motion";
+import { isMac } from "$lib/platform";
 
 export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing" | "editing";
@@ -83,6 +84,27 @@ export const DEFAULT = {
   editAgent: 420,
 } as const;
 
+/** The room the window's own buttons take at the end of the rightmost
+    header, where the app draws them: on every platform but macOS. */
+export const WINDOW_CONTROLS = 120;
+
+function controlsRoom(): number {
+  return isMac() ? 0 : WINDOW_CONTROLS;
+}
+
+/** The changes pane's width in agent mode until the user drags it: wider
+    by the window's own buttons where the app draws them, so its header
+    reads as it does without them. */
+export function defaultChanges(): number {
+  return DEFAULT.changes + controlsRoom();
+}
+
+/** The agent pane's width in editor mode until the user drags it, wider
+    on the same terms. */
+export function defaultEditAgent(): number {
+  return DEFAULT.editAgent + controlsRoom();
+}
+
 /** How wide the sessions pane's column is while the pane is folded. */
 export const FOLDED = 50;
 
@@ -107,7 +129,10 @@ const KEY = "workbench.layout";
 
 export const layout = $state({
   sessions: DEFAULT.sessions as number,
-  changes: DEFAULT.changes as number,
+  changes: defaultChanges(),
+  /** Whether the user dragged the changes pane's width, which then stays
+      theirs; until then it follows the default. */
+  changesDragged: false,
   review: DEFAULT.review as number,
   tree: DEFAULT.tree as number,
   terminal: DEFAULT.terminal as number,
@@ -115,7 +140,9 @@ export const layout = $state({
   /** The tree column and the agent pane while editing, remembered apart
       from the other shapes' widths. */
   editTree: DEFAULT.editTree as number,
-  editAgent: DEFAULT.editAgent as number,
+  editAgent: defaultEditAgent(),
+  /** Whether the user dragged the agent's width while editing. */
+  editAgentDragged: false,
   sessionsChosen: true,
   changesChosen: true,
   terminalChosen: false,
@@ -202,7 +229,7 @@ export const sessionsOpen = new Tween(1);
 
 /** The changes column's width in pixels, following `changesWidth` and eased
     by the page between the working and reviewing widths. */
-export const changesSpan = new Tween<number>(DEFAULT.changes);
+export const changesSpan = new Tween<number>(defaultChanges());
 
 /** How far the terminal panel is up, from 0 to 1, following
     `terminalVisible` and eased by the page. */
@@ -450,6 +477,7 @@ export function resizeEditAgent(dx: number) {
   const tree = editTreeVisible() ? layout.editTree + SPLITTER : 0;
   const most = layout.width - sessionsColumn() - tree - SPLITTER - MIN.editor;
   layout.editAgent = clamp(layout.editAgent - dx, MIN.agent, most);
+  layout.editAgentDragged = true;
   applyLayout(layout.width);
 }
 
@@ -463,7 +491,8 @@ export function resizeEditTree(dx: number) {
 
 /** The editing widths back at their defaults, as far as the window allows. */
 export function resetEditAgent() {
-  layout.editAgent = DEFAULT.editAgent;
+  layout.editAgent = defaultEditAgent();
+  layout.editAgentDragged = false;
   applyLayout(layout.width);
   saveLayout();
 }
@@ -631,6 +660,13 @@ export function returnFocus() {
   layout.focusRequest += 1;
 }
 
+/** Whether a saved width is one the user dragged: as the layout says, or,
+    where it does not say, when the width is other than the base default. */
+function dragged(said: unknown, width: unknown, base: number): boolean {
+  if (typeof width !== "number") return false;
+  return typeof said === "boolean" ? said : width !== base;
+}
+
 export function loadLayout() {
   let raw: string | null = null;
   try {
@@ -642,14 +678,21 @@ export function loadLayout() {
   try {
     const v = JSON.parse(raw);
     if (typeof v.sessions === "number") layout.sessions = v.sessions;
-    if (typeof v.changes === "number") layout.changes = v.changes;
+    // A width the user dragged stays theirs; one never dragged follows the
+    // default, which differs by platform. A layout saved without saying
+    // counts as dragged where it holds other than the base default.
+    const changesDragged = dragged(v.changesDragged, v.changes, DEFAULT.changes);
+    layout.changes = changesDragged ? v.changes : defaultChanges();
+    layout.changesDragged = changesDragged;
     if (typeof v.review === "number") layout.review = v.review;
     if (typeof v.tree === "number") layout.tree = v.tree;
     if (typeof v.terminal === "number") layout.terminal = v.terminal;
     if (typeof v.terminalList === "number")
       layout.terminalList = v.terminalList;
     if (typeof v.editTree === "number") layout.editTree = v.editTree;
-    if (typeof v.editAgent === "number") layout.editAgent = v.editAgent;
+    const editAgentDragged = dragged(v.editAgentDragged, v.editAgent, DEFAULT.editAgent);
+    layout.editAgent = editAgentDragged ? v.editAgent : defaultEditAgent();
+    layout.editAgentDragged = editAgentDragged;
     if (typeof v.agentChosen === "boolean") layout.agentChosen = v.agentChosen;
     if (v.editing === true) layout.mode = "editing";
     if (typeof v.reviewTouched === "boolean")
@@ -698,12 +741,14 @@ export function saveLayout() {
       JSON.stringify({
         sessions: layout.sessions,
         changes: layout.changes,
+        changesDragged: layout.changesDragged,
         review: layout.review,
         tree: layout.tree,
         terminal: layout.terminal,
         terminalList: layout.terminalList,
         editTree: layout.editTree,
         editAgent: layout.editAgent,
+        editAgentDragged: layout.editAgentDragged,
         agentChosen: layout.agentChosen,
         editing: layout.mode === "editing",
         reviewTouched: layout.reviewTouched,

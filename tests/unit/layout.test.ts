@@ -11,8 +11,11 @@ import {
   NEEDS_SESSIONS,
   NEEDS_TERMINAL,
   SPLITTER,
+  WINDOW_CONTROLS,
   agentVisible,
   applyLayout,
+  defaultChanges,
+  defaultEditAgent,
   besideSessions,
   editTreeVisible,
   peekable,
@@ -68,6 +71,8 @@ function reset() {
   layout.editAgent = DEFAULT.editAgent;
   layout.agentChosen = true;
   layout.editTreeForced = false;
+  layout.changesDragged = false;
+  layout.editAgentDragged = false;
 }
 
 beforeEach(reset);
@@ -452,6 +457,7 @@ describe("persistence", () => {
   it("round-trips widths and intent", () => {
     layout.sessions = 300;
     layout.changes = 420;
+    layout.changesDragged = true;
     layout.review = 720;
     layout.changesChosen = false;
     saveLayout();
@@ -913,9 +919,11 @@ describe("the editing widths", () => {
     setEditing(true);
     resizeEditAgent(-100);
     resizeEditTree(60);
+    expect(layout.editAgentDragged).toBe(true);
     resetEditAgent();
     resetEditTree();
-    expect(layout.editAgent).toBe(DEFAULT.editAgent);
+    expect(layout.editAgent).toBe(defaultEditAgent());
+    expect(layout.editAgentDragged).toBe(false);
     expect(layout.editTree).toBe(DEFAULT.editTree);
   });
 
@@ -1019,5 +1027,75 @@ describe("the edges while editing", () => {
     expect(rightmost()).toBe("agent");
     toggleRightPane();
     expect(rightmost()).toBe("changes");
+  });
+});
+
+/** Runs `body` with the browser reporting `platform`. */
+function asPlatform(platform: string, body: () => void) {
+  Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+  try {
+    body();
+  } finally {
+    delete (navigator as unknown as { platform?: string }).platform;
+  }
+}
+
+describe("the right pane's default widths", () => {
+  it("are the base ones on macOS, which draws the window's buttons itself", () => {
+    asPlatform("MacIntel", () => {
+      expect(defaultChanges()).toBe(DEFAULT.changes);
+      expect(defaultEditAgent()).toBe(DEFAULT.editAgent);
+    });
+  });
+
+  it("are wider by the window's buttons on Linux and Windows, where the app draws them", () => {
+    for (const platform of ["Linux x86_64", "Win32"]) {
+      asPlatform(platform, () => {
+        expect(defaultChanges()).toBe(DEFAULT.changes + WINDOW_CONTROLS);
+        expect(defaultEditAgent()).toBe(DEFAULT.editAgent + WINDOW_CONTROLS);
+      });
+    }
+  });
+
+  it("follow the platform across a restart until the user drags them", () => {
+    layout.changes = 300;
+    layout.editAgent = 380;
+    saveLayout();
+    asPlatform("Linux x86_64", () => {
+      loadLayout();
+      expect(layout.changes).toBe(DEFAULT.changes + WINDOW_CONTROLS);
+      expect(layout.editAgent).toBe(DEFAULT.editAgent + WINDOW_CONTROLS);
+      expect(layout.changesDragged).toBe(false);
+    });
+  });
+
+  it("stay as the user dragged them", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditAgent(-40);
+    const agent = layout.editAgent;
+    setEditing(false);
+    layout.changes = 300;
+    layout.changesDragged = true;
+    saveLayout();
+    reset();
+    asPlatform("Linux x86_64", () => {
+      loadLayout();
+      expect(layout.changes).toBe(300);
+      expect(layout.changesDragged).toBe(true);
+      expect(layout.editAgent).toBe(agent);
+      expect(layout.editAgentDragged).toBe(true);
+    });
+  });
+
+  it("read a layout saved without saying as dragged only where it holds other than the base default", () => {
+    localStorage.setItem("workbench.layout", JSON.stringify({ changes: DEFAULT.changes, editAgent: 380 }));
+    asPlatform("Linux x86_64", () => {
+      loadLayout();
+      expect(layout.changes).toBe(DEFAULT.changes + WINDOW_CONTROLS);
+      expect(layout.changesDragged).toBe(false);
+      expect(layout.editAgent).toBe(380);
+      expect(layout.editAgentDragged).toBe(true);
+    });
   });
 });

@@ -43,8 +43,12 @@ modes whatever the panes under them do. The right pane is the changes pane
 in agent mode and the agent while editing; the button and
 <kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is, and in a window
 too narrow to show it at all the status bar says so. On Windows and Linux
-the window controls the app draws come after them. A click on them leaves
-the keyboard where it was, and neither a click nor Tab moves the pane focus.
+the window controls the app draws come after them, and the right pane opens
+that much wider, in both modes, so its header reads as it does on macOS;
+a width dragged by hand stays as dragged, and a double-click on the
+splitter gives the default back. Short of room, a header's status gives
+way before its name. A click on the corner leaves the keyboard where it
+was, and neither a click nor Tab moves the pane focus.
 
 ## What gives way, in order
 
@@ -349,7 +353,8 @@ changes pane a different tree to list.
 
 The changes pane becomes the files pane: the tree keeps a column on the
 left, 240 pixels to begin with, and lists every file; the editor takes the
-rest. The agent's pane on the right opens at 420. Both widths are dragged at
+rest. The agent's pane on the right opens at 420, wider on Windows and Linux
+as [the corner](#the-corner) says. Both widths are dragged at
 their edges and remembered apart from the other shapes', and a drag never
 folds or hides a pane: it stops where the editor would get less than 640.
 The column's header names the project, with the worktree a session follows,

@@ -105,6 +105,7 @@
   import {
     CONTROLS_INSET,
     DEFAULT,
+    defaultChanges,
     FOLDED,
     MIN,
     MIN_REVIEW,
@@ -514,6 +515,7 @@
       layout.reviewTouched = true;
     } else {
       layout.changes = Math.max(MIN.changes, layout.changes - dx);
+      layout.changesDragged = true;
     }
     applyLayout(viewport);
   }
@@ -523,7 +525,8 @@
       layout.review = DEFAULT.review;
       layout.reviewTouched = true;
     } else {
-      layout.changes = DEFAULT.changes;
+      layout.changes = defaultChanges();
+      layout.changesDragged = false;
     }
     applyLayout(viewport);
     saveLayout();
