@@ -1740,6 +1740,7 @@ pub fn run() {
             remote_forget,
             menu::app_menu,
             menu::menu_keys,
+            menu::menu_enabled,
             leaving::leave_unsaved,
             leaving::leave_heard,
             leaving::leave_confirmed,

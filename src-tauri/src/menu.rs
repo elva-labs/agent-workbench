@@ -61,9 +61,27 @@ const FILE_DEFAULTS: [(&str, &str); 3] = [
 ];
 
 /// The menu bar's editor items, kept to set the chord each shows and
-/// answers.
+/// answers, and whether each can act.
 #[derive(Default)]
 pub struct FileItems(Mutex<Vec<(String, MenuItem<Wry>)>>);
+
+/// The menu bar's items with chords of their own rather than an action's:
+/// Settings, which shows the chord the table gives settings, and Close
+/// Window, whose chord gives way when the table gives it to an action.
+#[derive(Default)]
+pub struct FixedItems(Mutex<Option<(MenuItem<Wry>, MenuItem<Wry>)>>);
+
+/// Close Window's chord.
+const CLOSE_WINDOW_CHORD: &str = "CmdOrCtrl+Shift+W";
+
+/// Close Window's chord, unless the table gives Shift+W to an action: the
+/// page answers that chord first, and the menu does not claim it.
+fn close_window_accelerator(table: &HashMap<String, Chord>) -> Option<&'static str> {
+    let taken = table
+        .values()
+        .any(|chord| chord.key == "w" && chord.shift && !chord.alt);
+    (!taken).then_some(CLOSE_WINDOW_CHORD)
+}
 
 /// The popup for the platforms without a menu bar, kept so a click can show
 /// the same one each time.
@@ -139,6 +157,7 @@ pub fn install(app: &App) -> tauri::Result<()> {
     )?;
     app.manage(AppMenu(popup));
     app.manage(FileItems::default());
+    app.manage(FixedItems::default());
 
     app.on_menu_event(|app, event| match event.id().as_ref() {
         SETTINGS_ID => {
@@ -184,16 +203,47 @@ pub fn accelerator(chord: &Chord) -> Option<String> {
     Some(format!("{}+{key}", parts.join("+")))
 }
 
-/// The chord table, for the menu bar's editor items to show and answer
-/// the chords their actions have.
+/// The chord table, for the menu bar's editor items and Settings to show
+/// and answer the chords their actions have, and for Close Window to give
+/// its own up when the table uses it.
 #[tauri::command]
-pub fn menu_keys(items: State<'_, FileItems>, table: HashMap<String, Chord>) -> Result<(), String> {
+pub fn menu_keys(
+    items: State<'_, FileItems>,
+    fixed: State<'_, FixedItems>,
+    table: HashMap<String, Chord>,
+) -> Result<(), String> {
     for (action, item) in items.0.lock().unwrap().iter() {
-        let chord = table.get(action).and_then(accelerator);
-        if item.set_accelerator(chord.as_deref()).is_err() {
-            item.set_accelerator(None::<&str>)
-                .map_err(|e| e.to_string())?;
-        }
+        set_chord(item, table.get(action).and_then(accelerator).as_deref())?;
+    }
+    if let Some((settings, close_window)) = fixed.0.lock().unwrap().as_ref() {
+        set_chord(
+            settings,
+            table.get("settings").and_then(accelerator).as_deref(),
+        )?;
+        set_chord(close_window, close_window_accelerator(&table))?;
+    }
+    Ok(())
+}
+
+/// Sets an item's chord, or none when the menus cannot take it.
+fn set_chord(item: &MenuItem<Wry>, chord: Option<&str>) -> Result<(), String> {
+    if item.set_accelerator(chord).is_err() {
+        item.set_accelerator(None::<&str>)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Which of the editor's items can act, by action, as the window says
+/// each time that changes: an item that cannot is greyed out.
+#[tauri::command]
+pub fn menu_enabled(
+    items: State<'_, FileItems>,
+    state: HashMap<String, bool>,
+) -> Result<(), String> {
+    for (action, item) in items.0.lock().unwrap().iter() {
+        let enabled = state.get(action).copied().unwrap_or(true);
+        item.set_enabled(enabled).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -208,6 +258,14 @@ pub fn app_menu(window: Window, menu: State<'_, AppMenu>) -> Result<(), String> 
 fn menu_bar(app: &App) -> tauri::Result<Menu<Wry>> {
     let handle = app.handle();
     let settings = settings_item(handle)?;
+    let close_window = MenuItem::with_id(
+        handle,
+        CLOSE_WINDOW_ID,
+        "Close Window",
+        true,
+        Some(CLOSE_WINDOW_CHORD),
+    )?;
+    *app.state::<FixedItems>().0.lock().unwrap() = Some((settings.clone(), close_window.clone()));
 
     let editing = file_items(handle, true)?;
     let file = Submenu::with_items(
@@ -250,13 +308,7 @@ fn menu_bar(app: &App) -> tauri::Result<Menu<Wry>> {
             &PredefinedMenuItem::minimize(handle, None)?,
             &PredefinedMenuItem::maximize(handle, None)?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(
-                handle,
-                CLOSE_WINDOW_ID,
-                "Close Window",
-                true,
-                Some("CmdOrCtrl+Shift+W"),
-            )?,
+            &close_window,
         ],
     )?;
 
@@ -329,6 +381,15 @@ mod tests {
     fn leaves_out_a_key_the_menus_cannot_show() {
         assert_eq!(accelerator(&chord("+", false, false)), None);
         assert_eq!(accelerator(&chord("Escape", false, false)), None);
+    }
+
+    #[test]
+    fn close_window_gives_its_chord_up_to_an_action() {
+        let mut table = HashMap::new();
+        table.insert("file.close".to_string(), chord("w", false, false));
+        assert_eq!(close_window_accelerator(&table), Some(CLOSE_WINDOW_CHORD));
+        table.insert("theme".to_string(), chord("w", true, false));
+        assert_eq!(close_window_accelerator(&table), None);
     }
 
     #[test]
