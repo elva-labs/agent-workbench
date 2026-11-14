@@ -6,17 +6,18 @@
  * is a project to run in, the workbench's orchestrator directory, which
  * the sessions pane pins above the projects you opened.
  *
- * The sessions it starts stay where the work is, in the project they run
- * in, and keep out of the way there: the pane folds them into one line per
- * orchestrator, and the line speaks up when one of them is waiting on you.
- * The place to go is the orchestrator, not the session it started.
+ * The sessions a session starts hang under it in the pane, one line each
+ * on a rail from its dot, wherever they run, and speak up only when one of
+ * them needs a permission. The place to go is the session that started
+ * them, not the session it started.
  */
 
 import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Worktree } from "$lib/core";
-import { startedBy, startedFor } from "$lib/conductor.svelte";
+import { startedFor } from "$lib/conductor.svelte";
 import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
 import { workspace } from "$lib/workspace.svelte";
+import { drawnWith } from "$lib/projects.svelte";
 
 /** The name the pane gives the orchestrator's own project. */
 export const LABEL = "orchestrator";
@@ -58,9 +59,64 @@ export function conductors(): Session[] {
 
 /** A started session that is waiting on the user: it needs a permission,
     which only the user can grant. Everything else it waits on is its
-    orchestrator's to hear, so the folds speak up for nothing else. */
+    orchestrator's to hear, so its row speaks up for nothing else. */
 export function isAsking(session: Session): boolean {
   return isLive(session) && session.needs === "permission";
+}
+
+/** The rows by session id and by key together, the first row in the
+    window's order taking a name two of them answer to. */
+const named = $derived.by(() => {
+  const index = new Map<string, Session>();
+  for (const session of sessions.all) {
+    if (session.id !== null && !index.has(session.id))
+      index.set(session.id, session);
+    if (!index.has(session.key)) index.set(session.key, session);
+  }
+  return index;
+});
+
+/** Each session's starter row, the rows each starter has hanging under it
+    and the rows each caller started, worked out once for all of them
+    whenever a row comes, goes or is told who started it. */
+const tree = $derived.by(() => {
+  const parents = new Map<string, Session>();
+  const children = new Map<string, Session[]>();
+  const started = new Map<string, Session[]>();
+  const own = new Map<string, Session[]>();
+  for (const session of sessions.all) {
+    const id = startedFor(session.key);
+    if (id !== null) {
+      const list = started.get(id);
+      if (list === undefined) started.set(id, [session]);
+      else list.push(session);
+    }
+    const parent = id === null ? null : starterOf(session, id);
+    if (parent === null) {
+      const list = own.get(session.project);
+      if (list === undefined) own.set(session.project, [session]);
+      else list.push(session);
+      continue;
+    }
+    parents.set(session.key, parent);
+    const list = children.get(parent.key);
+    if (list === undefined) children.set(parent.key, [session]);
+    else list.push(session);
+  }
+  return { parents, children, started, own };
+});
+
+/** The row a starter's id names, other than the session's own. */
+function starterOf(session: Session, id: string): Session | null {
+  const found = named.get(id);
+  if (found === undefined) return null;
+  if (found !== session) return found;
+  return (
+    sessions.all.find(
+      (candidate) =>
+        candidate !== session && (candidate.id === id || candidate.key === id),
+    ) ?? null
+  );
 }
 
 /** What one orchestrator has running, for the line under its name and its
@@ -71,7 +127,7 @@ export function summary(session: Session): {
   asking: number;
   working: boolean;
 } {
-  const started = startedBy(session.id ?? session.key);
+  const started = tree.started.get(session.id ?? session.key) ?? [];
   return {
     running: started.filter(isLive).length,
     asking: started.filter(isAsking).length,
@@ -101,50 +157,27 @@ export function summaryLine(session: Session): string | null {
     : `${running} running, ${asking} asking`;
 }
 
-/** The sessions one orchestrator started in one project, folded into a
-    line of the project's own. */
-export interface Group {
-  /** The orchestrator's id, as the started sessions name it. */
-  id: string;
-  /** What the orchestrator is called, for "started by …". */
-  label: string;
-  sessions: Session[];
-  asking: number;
+/** The row of the session that started this one, while the window has
+    it. A session whose starter is gone has no parent here and stands in
+    its own project like any other. */
+export function parentOf(session: Session): Session | null {
+  return tree.parents.get(session.key) ?? null;
 }
 
-/** The sessions of a project that no orchestrator started. */
+/** The sessions that hang under a session's row, in the order they were
+    started. */
+export function childrenOf(session: Session): Session[] {
+  return tree.children.get(session.key) ?? [];
+}
+
+/** The sessions drawn under a project's name: its own, and any whose
+    starter the window no longer has. A session started by one still here
+    hangs under that one instead, whichever project it runs in. */
 export function ownFor(project: string): Session[] {
-  return sessions.all.filter(
-    (session) =>
-      session.project === project && startedFor(session.key) === null,
-  );
+  return tree.own.get(project) ?? [];
 }
 
-/** The folds under a project, one per orchestrator that has sessions
-    there, in the order the sessions were started. */
-export function groupsFor(project: string): Group[] {
-  const groups: Group[] = [];
-  for (const session of sessions.all) {
-    if (session.project !== project) continue;
-    const id = startedFor(session.key);
-    if (id === null) continue;
-    let group = groups.find((candidate) => candidate.id === id);
-    if (group === undefined) {
-      group = { id, label: conductorLabel(id), sessions: [], asking: 0 };
-      groups.push(group);
-    }
-    group.sessions.push(session);
-    if (isAsking(session)) group.asking += 1;
-  }
-  return groups;
-}
-
-/** The line on a fold: how many sessions, and who started them. The count
-    of those waiting on you is drawn beside it, in the accent, rather than
-    said here. */
-export function foldLabel(group: Group): string {
-  return `${group.sessions.length} started by ${group.label}`;
-}
+drawnWith({ ownFor, childrenOf, parentOf });
 
 /** What an orchestrator is called where its own row is not in sight. */
 export function conductorLabel(id: string): string {
@@ -203,7 +236,7 @@ export async function readWorktrees(): Promise<void> {
 export async function cleanWorktrees(): Promise<void> {
   for (const tree of removable(leftBehind.trees)) {
     try {
-      await core().worktreeRemove(tree.project, tree.name);
+      await core().worktreeRemove(tree.project, tree.name, dirsOf());
     } catch {
       // The tree grew work between the read and the removal. It stays.
     }

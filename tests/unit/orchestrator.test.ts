@@ -2,15 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Worktree } from "$lib/core";
 import {
   cleanWorktrees,
+  childrenOf,
   conductors,
-  foldLabel,
-  groupsFor,
   isAsking,
   isConductor,
   leftBehind,
   load,
   orchestrator,
   ownFor,
+  parentOf,
   readWorktrees,
   removable,
   conducting,
@@ -167,40 +167,37 @@ describe("the orchestrator's own project", () => {
 });
 
 describe("a project's sessions", () => {
-  it("keeps the started ones out of the project's own, in a fold apiece", () => {
+  it("hangs the started ones under the session that started them, wherever they run", () => {
     const one = live(DIR, "pty-1", "sid-1");
-    one.title = "Retry rollout";
     const two = live(DIR, "pty-2", "sid-2");
-    two.title = "Cache keys";
     const mine = live(A, "pty-3", "sid-3");
     const first = startedIn(A, one, "pty-4", "sid-4");
     const second = startedIn(A, two, "pty-5", "sid-5");
     const third = startedIn(A, one, "pty-6", "sid-6");
-    startedIn(B, one, "pty-7", "sid-7");
+    const elsewhere = startedIn(B, one, "pty-7", "sid-7");
 
     expect(keys(ownFor(A))).toEqual([mine.key]);
-    const groups = groupsFor(A);
-    expect(groups.map((group) => group.id)).toEqual(["sid-1", "sid-2"]);
-    expect(keys(groups[0].sessions)).toEqual([first.key, third.key]);
-    expect(keys(groups[1].sessions)).toEqual([second.key]);
-    expect(foldLabel(groups[0])).toBe("2 started by Retry rollout");
-    expect(foldLabel(groups[1])).toBe("1 started by Cache keys");
-    // The other project's fold is its own, and holds only what was started
-    // there.
-    expect(groupsFor(B)).toHaveLength(1);
-    expect(groupsFor(B)[0].sessions).toHaveLength(1);
+    expect(ownFor(B)).toEqual([]);
+    expect(parentOf(first)?.key).toBe(one.key);
+    expect(parentOf(mine)).toBeNull();
+    expect(keys(childrenOf(one))).toEqual([first.key, third.key, elsewhere.key]);
+    expect(keys(childrenOf(two))).toEqual([second.key]);
+    expect(childrenOf(mine)).toEqual([]);
   });
 
-  it("has no folds where nothing was started", () => {
-    live(A, "pty-1", "sid-1");
-    expect(groupsFor(A)).toEqual([]);
-    expect(ownFor(A)).toHaveLength(1);
+  // A session another one started in the same project hangs under it too.
+  it("hangs a session under a starter in its own project", () => {
+    const lead = live(A, "pty-1", "sid-1");
+    const helper = startedIn(A, lead, "pty-2", "sid-2");
+    expect(keys(ownFor(A))).toEqual([lead.key]);
+    expect(keys(childrenOf(lead))).toEqual([helper.key]);
   });
 
-  it("names an orchestrator the window no longer has", () => {
+  it("stands a session whose starter is gone in its own project", () => {
     const session = live(A, "pty-1", "sid-1");
     conductor.startedBy[session.key] = "sid-gone";
-    expect(foldLabel(groupsFor(A)[0])).toBe("1 started by an orchestrator");
+    expect(parentOf(session)).toBeNull();
+    expect(keys(ownFor(A))).toEqual([session.key]);
   });
 });
 
@@ -223,15 +220,12 @@ describe("what an orchestrator has out", () => {
     here.unread = true;
     expect(isAsking(here)).toBe(false);
     expect(summaryLine(one)).toBe("2 running, 1 asking");
-    expect(groupsFor(A)[0].asking).toBe(0);
-    expect(groupsFor(B)[0].asking).toBe(1);
 
     // A session that has stopped is neither running nor waiting, whatever
     // it was doing when it went.
     here.status = "exited";
     expect(isAsking(here)).toBe(false);
     expect(summaryLine(one)).toBe("1 running, 1 asking");
-    expect(groupsFor(A)[0].asking).toBe(0);
   });
 
   it("breathes when its own agent works, or one it started does", () => {
@@ -300,7 +294,7 @@ describe("what an orchestrator has out", () => {
     exact("sid-3", "permission");
     expect(child.unread).toBe(true);
     expect(summaryLine(one)).toBe("1 running, 1 asking");
-    expect(groupsFor(A)[0].asking).toBe(1);
+    expect(isAsking(child)).toBe(true);
   });
 
   it("leaves a started session that only stopped out of the jump", () => {
