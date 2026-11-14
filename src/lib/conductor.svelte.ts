@@ -38,6 +38,7 @@ import {
   onDirected,
   sessions,
   statusMessage,
+  typed,
   type Session,
 } from "$lib/sessions.svelte";
 import type { AgentId } from "$lib/core";
@@ -130,7 +131,8 @@ export async function typeWhole(
 }
 
 /** Types a line into a session the way a person does: the text, whole, and
-    then Enter on its own. */
+    then Enter on its own. The agent has been spoken to, as by a line typed
+    into its terminal. */
 export async function typeLine(
   key: string,
   ptyId: string,
@@ -139,6 +141,7 @@ export async function typeLine(
   const wait = await typeWhole(key, ptyId, line);
   await pause(wait);
   await core().write(ptyId, "\r");
+  typed(ptyId, "\r");
 }
 
 /** Stops a session another session started, and files it away: it was
