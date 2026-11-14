@@ -155,9 +155,12 @@ the pane that has the focus.
 
 The agent pane of an integrated session is a composer, a thread and, while
 the agent waits on the user, a dock between them; see
-[sessions](sessions.md#integrated-sessions). Focusing the pane by key or by
-picking the session puts the keyboard in the composer, unless another
-control of the pane has it.
+[sessions](sessions.md#integrated-sessions). Focusing the pane by key, or
+the session coming on screen in it, puts the keyboard in its composer,
+unless another control of that same session has it; a session going off
+screen lets the keyboard go. With no composer, the keyboard goes to Resume
+once the session has ended, and to the card that asks before a session can
+run, which is read before its buttons are reached.
 
 | Keys | Does |
 | --- | --- |
@@ -171,7 +174,9 @@ The dock's choices are one stop for the keyboard. The arrow keys move
 between them, <kbd>Home</kbd> and <kbd>End</kbd> jump, <kbd>Enter</kbd> or a
 digit picks one, and the first is the choice that allows the call once and
 remembers nothing. The dock never takes the keyboard by itself, so nothing
-typed for something else answers it. A question's options move the same
+typed for something else answers it, and its digits answer only while it has
+the keyboard: the composer says Up reaches it, and a lone digit sent from the
+composer while it waits goes as a message only on a second Enter. A question's options move the same
 way; where one pick answers the question, picking it answers. A denial that
 asks for words takes them in a field where <kbd>Enter</kbd> denies and
 <kbd>Esc</kbd> goes back to the choices. Once an answer is on its way the

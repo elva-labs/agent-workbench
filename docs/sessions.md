@@ -221,8 +221,9 @@ worktree.
 ## Integrated sessions
 
 How an agent's sessions run is a setting per agent, a terminal to begin
-with; see [settings](settings.md#sessions). Claude Code can run integrated,
-and Codex always runs in a terminal. With no session on screen, the agent
+with; see [settings](settings.md#sessions). An agent runs integrated only
+where the core says it can drive it in messages, and the rest run in a
+terminal. With no session on screen, the agent
 pane offers a single new session the other way beside its New session
 button. An integrated session is driven through the core in messages, as
 [integrated](integrated.md) describes, and is a row like any other: it is
@@ -230,15 +231,19 @@ listed, stopped with its ×, brought back after a restart and resumed the
 same way.
 
 The agent pane's header names the session, its project and the branch the
-folder has checked out. Under it is the thread. The user's words sit to the
-right in a tinted bubble under You; the agent's run on the left under its
-name, which is the model it runs on or Claude for the agent's default, with
-the time, down a quiet line at the side. What the agent wrote is drawn as
+folder has checked out, and what the session is doing: working, idle,
+asking the user or waiting for a permission. Under it is the thread. The
+user's words sit to the right in a tinted bubble under You; the agent's run
+on the left under the model it ran on, or the agent's own name where that is
+not known, with the time, down a quiet line at the side. What the session
+shows is chosen by the kind of each call and the shape of what it carries,
+the same for every agent. What the agent wrote is drawn as
 Markdown, its code and tables included, and grows in place while it streams,
 with a caret where the next words come. An image the agent names by an
 address is shown as a link to it rather than fetched. The thread stays at
 its foot while new content comes, and where the user scrolled to otherwise,
-with a button back down.
+with a button back down; only the user's own scrolling stops it following,
+and sending a message takes it to its foot.
 
 What the agent did between two things it said folds into one line, such as
 Worked for 3m, changed 3 files, ran 1 command, which opens into the steps:
@@ -254,9 +259,13 @@ tool show under its run as rows, each with its state, name and model and a
 way to open it.
 
 A permission the agent asks for docks over the composer rather than in the
-thread: who asks, the agent or one of its subagents, and what for, a
-command shown whole and a path outside the project marked as such, with the
-choices the core offers. The first allows the call once and remembers
+thread: who asks, the agent or one of its subagents, and what for, with the
+choices the core offers. A command of several lines is shown whole from the
+start, a path outside the project is marked as such, every other path the
+request names outside the project is listed, and any character that would
+change how the text reads without being seen, a control or a mark that
+reorders text, shows as a marker. The whole request, with the tool it names,
+is a fold away wherever the line does not say all of it. The first allows the call once and remembers
 nothing; the others allow it for the session or always, saying what each
 keeps, deny it, with words for the agent if the user wants, or deny it and
 stop the turn. A line under the choices says what the one in focus or under
@@ -266,12 +275,21 @@ where it takes them; a secret answer is typed hidden. Requests are answered
 one at a time, the oldest first, and the dock says how many more wait.
 
 The composer under the dock takes several lines, images dropped, pasted or
-picked, and any other dropped file as its path in the text. It shows the
-model the session runs on, which a click changes, and how much of the
-context window the conversation takes. While the agent works its Send button
-is a Stop button, and a message sent meanwhile stands under the thread,
-marked as waiting, until the turn that takes it. A message that never
-reached the agent can be put back in the composer. What is being written
+picked, and any other dropped file as its path in the text; a message sent
+while an image is still being read waits for it. It shows the model the
+session runs on, which a click changes: the agent's default is named once
+the agent has said which model that is, and a model chosen during a turn is
+said to be used from the next. It shows the mode the session runs in, which
+a click changes among the modes the agent offers; a session starts in the
+agent's safe mode, which asks before it acts, whatever the agent's own
+configuration says, and a mode taken from that configuration is shown as it
+is. It shows how much of the context window the conversation takes. While
+the agent works its Send button is a Stop button, and a message sent
+meanwhile stands under the thread, marked as waiting, until the turn that
+takes it. While the agent waits on an answer the composer says Up reaches
+it, and a lone digit sent then goes only on a second Enter, so it is not
+sent as a message by surprise. A message that was not delivered, refused by
+the agent or never sent, can be put back in the composer. What is being written
 stays with its session while another is on screen. The keys are in
 [focus](focus-model.md#an-integrated-session).
 

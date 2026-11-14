@@ -102,7 +102,8 @@ tools they bring the agent, is in [hooks](hooks.md).
 
 How each agent's sessions run: in a terminal, the agent's own interface, or
 integrated, the conversation drawn by the window, a terminal to begin with.
-Only Claude Code can run integrated, and the tab says so for Codex. A
+An agent the core says it can drive in messages offers the choice, and the
+tab says an agent that runs only in a terminal does. A
 session that is running keeps the way it started, and a single new one can
 be started the other way from the agent pane. What an integrated session is
 like is in [sessions](sessions.md#integrated-sessions). It is the user's to
