@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  FRAME_WAIT_MS,
   WriteQueue,
   buildTheme,
   colorReply,
@@ -239,6 +240,61 @@ describe("WriteQueue", () => {
     expect(written).toEqual(["real frame"]);
 
     expect(() => queue.dispose()).not.toThrow();
+  });
+
+  // A window out of sight is given no frames. What the agent draws still
+  // reaches the terminal, which is what the read tool and the title read.
+  it("writes without a frame when none comes", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const frames: (() => void)[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const written: string[] = [];
+      const queue = new WriteQueue((data) =>
+        written.push(new TextDecoder().decode(data)),
+      );
+      queue.push(bytes("drawn "));
+      queue.push(bytes("unseen"));
+      vi.advanceTimersByTime(FRAME_WAIT_MS - 1);
+      expect(written).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(written).toEqual(["drawn unseen"]);
+      // The frame that comes later finds nothing left to write.
+      frames.forEach((frame) => frame());
+      expect(written).toEqual(["drawn unseen"]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("writes once on a frame that comes first, and not again on the timer", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const frames: (() => void)[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const written: string[] = [];
+      const queue = new WriteQueue((data) =>
+        written.push(new TextDecoder().decode(data)),
+      );
+      queue.push(bytes("on a frame"));
+      frames.shift()!();
+      expect(written).toEqual(["on a frame"]);
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(FRAME_WAIT_MS * 2);
+      expect(written).toEqual(["on a frame"]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 
   it("drops pending output and cancels its frame when disposed", () => {

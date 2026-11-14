@@ -20,6 +20,7 @@ import {
   started,
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { projects, resetProjects } from "$lib/projects.svelte";
 
 const shown: unknown[][] = [];
 const diffed: unknown[][] = [];
@@ -68,6 +69,8 @@ beforeEach(() => {
   resetHeld();
   resetWorkspace();
   resetSessions();
+  resetProjects();
+  localStorage.clear();
 });
 
 describe("where a place is", () => {
@@ -116,6 +119,19 @@ describe("showing a place", () => {
     });
     expect(workspace.active).toBe("/two");
     expect(shown).toEqual([["src/a.rs", 3, 5, "Here."]]);
+  });
+
+  // What the agent asks to show brings its project forward, which is no
+  // use of it by the user: the order of the projects stays as it was.
+  it("leaves when the user last used either project as it was", async () => {
+    workspace.open.push(repo("/one"), repo("/two"), repo("/three"));
+    workspace.active = "/one";
+    projects.used = { "/one": 3000, "/two": 1000 };
+    await showRequested({ path: "/two/a.rs", from: 1, to: 1, note: null, cwd: "/two", session: null });
+    await diffRequested({ path: "/three/a.rs", note: null, cwd: "/three", session: null });
+    terminalRequested({ command: "ls", cwd: "/two", session: null });
+    expect(workspace.active).toBe("/two");
+    expect(projects.used).toEqual({ "/one": 3000, "/two": 1000 });
   });
 
   it("opens a diff the same way, relative to the project", async () => {

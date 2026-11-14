@@ -643,7 +643,7 @@ pub fn dispatch(
         }
         "worktree_remove" => {
             let p: WorktreeParams = parse(params)?;
-            core.worktree_remove(&p.project, &p.name)?;
+            core.worktree_remove(&p.project, &p.name, &p.accounts)?;
             Ok(Value::Null)
         }
         other => Err(format!("no such method: {other}")),
