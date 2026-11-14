@@ -147,10 +147,26 @@ mod tests {
             .args(["-c", "sleep 30; true"])
             .spawn()
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let processes = Processes::default();
         let me = std::process::id();
-        let under = processes.under(me);
+        // The shell forks the sleep once it is running, which on a busy
+        // machine is a while after the spawn. A fresh view each look, since
+        // a view that met the fork before its exec keeps the shell's name.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let (processes, under) = loop {
+            let processes = Processes::default();
+            let under = processes.under(me);
+            if under
+                .iter()
+                .any(|process| process.parent == child.id() && process.name.contains("sleep"))
+            {
+                break (processes, under);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no sleep came under the shell: {under:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
         let shell = under
             .iter()
             .find(|process| process.pid == child.id())
@@ -171,8 +187,9 @@ mod tests {
         // Not under this tree: refused, whatever it is.
         assert!(processes.stop(me, 1).is_err());
         processes.stop(me, sleep.pid).unwrap();
+        // The shell waits for its sleep before it ends, so once the shell
+        // has been waited for the sleep is gone too.
         let _ = child.wait();
-        std::thread::sleep(std::time::Duration::from_millis(200));
         assert!(!processes
             .under(me)
             .iter()

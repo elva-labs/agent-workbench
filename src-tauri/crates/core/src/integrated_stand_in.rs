@@ -16,7 +16,6 @@
 //! its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,7 +25,7 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::claude_stream::CLAUDE_STREAM;
-use crate::events::testing::Recorder;
+use crate::events::testing::{Recorder, Waits};
 use crate::scratch::Scratch;
 
 const STAND_IN: &str = r#"#!/bin/sh
@@ -90,8 +89,7 @@ struct Harness {
     recorder: Arc<Recorder>,
     id: String,
     session: String,
-    /// How many of the session's events the waits have gone past.
-    waited: Cell<usize>,
+    waits: Waits,
 }
 
 fn start(name: &str, scenario: &str) -> Harness {
@@ -159,7 +157,7 @@ fn start_in(
         recorder,
         id: started.id,
         session,
-        waited: Cell::new(0),
+        waits: Waits::default(),
     }
 }
 
@@ -175,27 +173,10 @@ impl Harness {
             .collect()
     }
 
-    /// Waits for an event told after the one the last wait matched, and
-    /// hands back every event from the start up to and with it. A wait
-    /// looks only past the last match, so it cannot take an event that
-    /// came before what the test did since, or miss a state that came and
-    /// went before it looked.
+    /// Waits for an event past the last match, and hands back every event
+    /// from the start up to and with it.
     fn until(&self, what: impl Fn(&Value) -> bool) -> Vec<Value> {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            let events = self.events();
-            let from = self.waited.get();
-            if let Some(at) = events[from..].iter().position(&what) {
-                let at = from + at;
-                self.waited.set(at + 1);
-                return events[..=at].to_vec();
-            }
-            assert!(
-                Instant::now() < deadline,
-                "never came; the session said {events:#?}"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        self.waits.until(|| self.events(), what)
     }
 
     /// Waits for the session to go into `state`, and hands back every state
@@ -1105,7 +1086,7 @@ fn real_claude_holds_a_short_turn() {
         recorder,
         id: started.id,
         session,
-        waited: Cell::new(0),
+        waits: Waits::default(),
     };
     let ready = h.until_type("ready");
     assert!(ready.last().unwrap()["version"].is_string());

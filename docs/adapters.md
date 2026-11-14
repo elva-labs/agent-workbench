@@ -1,9 +1,10 @@
 # Agents
 
 The workbench drives two agents, both full-screen TUIs in a pty: Claude Code
-and Codex CLI. Claude Code can also run as an
+and Codex CLI. Either can also run as an
 [integrated session](integrated.md), driven in messages with the
-conversation drawn by the window. The differences between them sit behind
+conversation drawn by the window: Claude Code in print mode with JSON
+lines, Codex through its app-server. The differences between them sit behind
 one seam; everything above it sees a session with an agent id, a project,
 and an id to resume by.
 
@@ -49,7 +50,8 @@ project since the spawn, and reports it: every half second for as long as the se
 Codex records the thread when the first prompt is sent, which may be a while
 after the spawn. Until then the row has no id and no name: it cannot be
 resumed and is not yet the app's own. A Codex row also polls the
-index every couple of seconds for its name.
+index every couple of seconds for its name. An integrated Codex session
+needs no watching: its thread's id comes with the session's ready event.
 
 ## What is quarantined
 
@@ -58,3 +60,13 @@ versions. Every line that reads one is kept apart, and every failure there
 is an empty answer: a
 project with no history, never a pane that will not open. Codex leaves an
 old index behind when its schema moves; the newest is read.
+
+The protocols the integrated sessions speak move with the agents' versions
+too, and are read the same way, as [integrated sessions](integrated.md)
+describes. Codex generates its app-server's protocol from its own code for
+each version, and a version can drop what an earlier one had. Everything
+the workbench reads from that protocol and writes to it, each method,
+field, status and shape of an answer, is listed with the code, and a test
+checks each against the schema the Codex installed on a developer's
+machine generates, so what moved shows when Codex is upgraded. What the
+workbench does not use may come and go.
