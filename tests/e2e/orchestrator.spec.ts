@@ -405,6 +405,8 @@ for (const width of [300, 240, 180]) {
     await page.addInitScript((width) => {
       localStorage.setItem("workbench.layout", JSON.stringify({ sessions: width }));
     }, width);
+    // Rows that move or fade in are measured where they end up.
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await installFakeCore(page, { open: [PROJECT, OTHER] });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
