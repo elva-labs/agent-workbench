@@ -152,12 +152,18 @@ export function activate(path: string) {
     is a session drawn under it: the one on screen when that is one, else
     its newest. A session that hangs under its starter in another project
     is drawn there, so a project whose only sessions are such is shown with
-    none, and is itself the project on screen. */
+    none, and is itself the project on screen. The session on screen stays
+    when it hangs under this project from another one: the project in front
+    stays the one that session runs in. */
 export function bringForward(path: string) {
+  const current = sessions.active === null ? null : byKey(sessions.active);
+  if (current !== null && current.project !== path && drawnIn(current) === path) {
+    touch(path);
+    return;
+  }
   if (workspace.active !== path) activate(path);
   touch(path);
   const drawnHere = (session: Session) => session.project === path && drawnIn(session) === path;
-  const current = sessions.active === null ? null : byKey(sessions.active);
   if (current !== null && drawnHere(current)) return;
   const own = forProject(path).filter(drawnHere);
   sessions.active = own.length > 0 ? own[own.length - 1].key : null;

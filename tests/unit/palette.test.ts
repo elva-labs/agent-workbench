@@ -30,7 +30,7 @@ import { matches } from "$lib/files.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
-import { activate, onScreen, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { activate, bringForward, onScreen, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
 import { projects, resetProjects } from "$lib/projects.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import "$lib/orchestrator.svelte";
@@ -360,6 +360,26 @@ describe("what picking does in go to", () => {
     const again = pickItem(row(C));
     if (again.type === "close") again.then();
     expect(sessions.active).toBe(own.key);
+  });
+
+  // The session on screen hangs under its starter's project from another
+  // one: bringing the starter's project forward counts it as used and
+  // leaves the session and the project in front as they are.
+  it("keeps a started session on screen when its starter's project is brought forward", () => {
+    const starter = create(A);
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(C);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    activate(C);
+    sessions.active = kid.key;
+    expect(onScreen()).toBe(A);
+
+    bringForward(A);
+    expect(sessions.active).toBe(kid.key);
+    expect(workspace.active).toBe(C);
+    expect(onScreen()).toBe(A);
+    expect(Date.now() - projects.used[A]).toBeLessThan(1000);
   });
 
   // A project picked is the user using it, as a session picked is.

@@ -395,6 +395,39 @@ test.describe("a started session in a project of its own", () => {
     await expect(heads.first()).toHaveAttribute("data-row", `project:${ORCHESTRATOR}`);
   });
 
+  // The started session on screen is drawn under its starter's project,
+  // which is the project on screen: clicking that project's header keeps
+  // the session, as it does for a session of the project's own.
+  test("keeps the started session on screen when its starter's header is clicked", async ({
+    page,
+  }) => {
+    await installFakeCore(page, {
+      open: [PROJECT, OTHER],
+      used: { [PROJECT]: 60_000, [OTHER]: 30 * 24 * 3600 * 1000 },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await push(page, {
+      id: "o-1",
+      tool: "start",
+      arguments: { project: OTHER, prompt: "Bump the client" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "o-1")).not.toBeNull();
+    await page.getByTestId("started-session").click();
+    await expect(page.locator(".session.kid")).toHaveClass(/\bon\b/);
+    await expect(row(page, ORCHESTRATOR)).toHaveClass(/\bon\b/);
+
+    await row(page, ORCHESTRATOR).locator(".project-row").click();
+    await expect(page.locator(".session.kid")).toHaveClass(/\bon\b/);
+    await expect(row(page, ORCHESTRATOR)).toHaveClass(/\bon\b/);
+    await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
+  });
+
   // The project the started session runs in has no session drawn under
   // it. Go to counts none live there, and picking it shows it with none, as
   // the project on screen, with the keyboard in the sessions pane, rather
