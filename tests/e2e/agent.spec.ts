@@ -2297,7 +2297,7 @@ test.describe("the palettes", () => {
       await expect(chosen(page)).toContainText("session 1");
       // Another way of stopping a session: through the scrim, from the
       // pane behind the palette. Session 2 is not under the cursor.
-      await rows(page).nth(1).locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
+      await named(page, "session 2").locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
       await expect(kind(page, "session")).toHaveCount(1);
       await expect(kind(page, "session").first()).toContainText("session 1");
       await expect(chosen(page)).toHaveCount(1);
@@ -2308,7 +2308,7 @@ test.describe("the palettes", () => {
       await page.keyboard.press(GOTO);
       await expect(kind(page, "session")).toHaveCount(2);
       await expect(chosen(page)).toContainText("session 1");
-      await rows(page).first().locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
+      await named(page, "session 1").locator("..").getByTestId("close-session").evaluate((el) => (el as HTMLElement).click());
       await expect(kind(page, "session")).toHaveCount(1);
       await expect(kind(page, "session").first()).toContainText("session 2");
       await expect(chosen(page)).toHaveCount(1);
