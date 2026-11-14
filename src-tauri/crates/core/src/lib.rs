@@ -17,6 +17,7 @@ pub mod codex_app_server;
 pub mod cwd;
 pub mod env;
 pub mod events;
+pub mod files;
 pub mod git;
 pub mod hook;
 pub mod integrated;

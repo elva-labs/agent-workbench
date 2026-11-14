@@ -1,7 +1,8 @@
 /**
  * The files the viewer shows as they are on disk, kept on record with the
  * core so it watches them where they are: what the agent presented, or a
- * picture or a document rendered from the tree. The record goes to the
+ * picture or a document rendered from the tree, and the files open in the
+ * editor's tabs. The record goes to the
  * machine the project is on, since that is where the files are; moving to
  * a project on another machine clears the record left behind, and a viewer
  * showing none of these clears it too.
@@ -15,6 +16,7 @@ import {
   isPicture,
   selectedEntry,
 } from "$lib/files.svelte";
+import { watchedFiles } from "$lib/editor.svelte";
 import { hostOf, pathOn } from "$lib/remote.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
@@ -24,15 +26,18 @@ import { workspace } from "$lib/workspace.svelte";
 export function viewedFiles(): { project: string; files: string[] } | null {
   const project = workspace.active;
   if (project === null) return null;
-  if (files.media !== null) {
-    return { project, files: files.media.files.map(pathOn) };
-  }
+  const editing = watchedFiles();
+  const shown = viewerFiles();
+  return { project, files: [...new Set([...shown, ...editing])] };
+}
+
+/** What the viewer itself reads from disk. */
+function viewerFiles(): string[] {
+  if (files.media !== null) return files.media.files.map(pathOn);
   const entry = selectedEntry();
-  if (entry === null || !(isPicture(entry) || effectiveView() === "rendered")) {
-    return { project, files: [] };
-  }
+  if (entry === null || !(isPicture(entry) || effectiveView() === "rendered")) return [];
   const path = absolute(entry.path);
-  return { project, files: path === null ? [] : [path] };
+  return path === null ? [] : [path];
 }
 
 let last: { project: string; sent: string } | null = null;

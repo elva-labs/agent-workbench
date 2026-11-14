@@ -154,6 +154,15 @@ export function unfoldSessions() {
 /** The user switched to a session: what the one they left had is kept,
     and what this one had comes back. Resolves once it is on screen. */
 export async function sessionShown(key: string | null) {
+  // In editor mode what each session has open is the editor's tabs, and
+  // the viewer records stand as they were left in agent mode.
+  if (layout.mode === "editing") {
+    parked = null;
+    const switching = syncOwner();
+    shown = key;
+    await switching;
+    return;
+  }
   if (shown !== null && shown !== key) {
     const own = byKey(shown)?.project ?? workspace.active;
     const leaving: BrowserOwner = { kind: "session", key: shown };

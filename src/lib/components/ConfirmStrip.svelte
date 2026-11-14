@@ -14,10 +14,24 @@
     action: string;
     onConfirm: () => void;
     onCancel: () => void;
+    /** A way out that keeps what would go, such as saving first. */
+    alternative?: { label: string; onClick: () => void } | null;
+    /** The way out is the answer to give: it is drawn filled, and the
+        destructive action quietly beside Cancel. */
+    safe?: boolean;
     testid: string;
   }
 
-  let { question, detail = null, action, onConfirm, onCancel, testid }: Props = $props();
+  let {
+    question,
+    detail = null,
+    action,
+    onConfirm,
+    onCancel,
+    alternative = null,
+    safe = false,
+    testid,
+  }: Props = $props();
 
   function cancelFirst(node: HTMLElement) {
     node.focus();
@@ -38,8 +52,21 @@
     {#if detail}<span>{detail}</span>{/if}
   </p>
   <div class="actions">
-    <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
-    <button type="button" class="go" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
+    {#if safe && alternative !== null}
+      <button type="button" class="quiet" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
+      <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+      <button type="button" class="save" onclick={alternative.onClick} data-testid="{testid}-alternative"
+        >{alternative.label}</button
+      >
+    {:else}
+      <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+      {#if alternative !== null}
+        <button type="button" class="cancel" onclick={alternative.onClick} data-testid="{testid}-alternative"
+          >{alternative.label}</button
+        >
+      {/if}
+      <button type="button" class="go" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
+    {/if}
   </div>
 </div>
 
@@ -70,13 +97,18 @@
     color: var(--ink);
   }
 
+  /* In a narrow pane the buttons wrap to rows of their own, each on one
+     line. */
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
     margin-left: auto;
   }
 
   button {
+    white-space: nowrap;
     padding: 4px 10px;
     border: 0;
     border-radius: var(--radius);
@@ -97,6 +129,19 @@
   .go {
     background: var(--del);
     color: var(--surface);
+  }
+
+  /* Where keeping is the answer: it is filled in the accent, and the
+     destructive one sits apart, as words in the warning's colour. */
+  .save {
+    background: var(--accent);
+    color: var(--surface);
+  }
+
+  .quiet {
+    margin-right: auto;
+    background: none;
+    color: var(--del);
   }
 
   button:focus-visible {

@@ -32,13 +32,14 @@ colours, so the appearance and the palette hold across either.
 
 ## Font
 
-Two families, chosen apart: the one the terminal draws in and the one the
-rest of the app is set in. Each starts on the machine's own, the monospace
+Two families, chosen apart: the one the terminal and the editor draw in and
+the one the rest of the app is set in. Each starts on the machine's own, the monospace
 and the sans the system draws with; the terminal can have IBM Plex Mono or
 JetBrains Mono instead, and the interface IBM Plex Sans or Inter, all four
 shipped with the app. Each name is shown in its own face. A change reaches
 every open terminal at once, which measures its grid again and tells the
-process the size it now has, so there is nothing to restart.
+process the size it now has, so there is nothing to restart, and the editor
+with them.
 
 ## Colour
 

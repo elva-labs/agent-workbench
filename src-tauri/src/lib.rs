@@ -13,6 +13,7 @@ mod browser_keys;
 mod browser_page;
 mod chrome;
 mod launch;
+mod leaving;
 mod menu;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod probe;
@@ -1065,6 +1066,89 @@ async fn git_content(
 }
 
 #[tauri::command]
+async fn file_read(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+    file: String,
+) -> Result<Value, String> {
+    let f = file.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "file_read",
+        move |rest| json!({ "root": rest, "file": file }),
+        move |core, root| core.file_read(Path::new(root), &f),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn file_write(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+    file: String,
+    text: String,
+    stamp: Option<String>,
+    overwrite: Option<bool>,
+) -> Result<Value, String> {
+    let overwrite = overwrite.unwrap_or(false);
+    let (f, t, s) = (file.clone(), text.clone(), stamp.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "file_write",
+        move |rest| {
+            json!({ "root": rest, "file": file, "text": text, "stamp": stamp, "overwrite": overwrite })
+        },
+        move |core, root| core.file_write(Path::new(root), &f, &t, s.as_deref(), overwrite),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn path_rename(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+    from: String,
+    to: String,
+) -> Result<Value, String> {
+    let (a, b) = (from.clone(), to.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "path_rename",
+        move |rest| json!({ "root": rest, "from": from, "to": to }),
+        move |core, root| core.path_rename(Path::new(root), &a, &b),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn path_delete(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    root: String,
+    path: String,
+) -> Result<Value, String> {
+    let p = path.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&root),
+        "path_delete",
+        move |rest| json!({ "root": rest, "path": path }),
+        move |core, root| core.path_delete(Path::new(root), &p),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn git_watch(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
@@ -1567,6 +1651,7 @@ pub fn run() {
             app.manage(Arc::new(ssh::LocalDaemon::default()));
             app.manage(Arc::new(browser::Browser::default()));
             app.manage(Arc::new(browser_keys::Keys::default()));
+            app.manage(Arc::new(leaving::Leaving::default()));
             menu::install(app)?;
             if let Some(webview_window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&webview_window.as_ref().window());
@@ -1582,6 +1667,7 @@ pub fn run() {
             launch::request(app.handle(), launch::folders(std::env::args(), &cwd));
             Ok(())
         })
+        .on_window_event(leaving::on_window_event)
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
@@ -1599,6 +1685,10 @@ pub fn run() {
             git_grep,
             git_diff,
             git_content,
+            file_read,
+            file_write,
+            path_rename,
+            path_delete,
             git_watch,
             git_unwatch,
             watch_shown,
@@ -1650,6 +1740,11 @@ pub fn run() {
             remote_pair,
             remote_forget,
             menu::app_menu,
+            menu::menu_keys,
+            menu::menu_enabled,
+            leaving::leave_unsaved,
+            leaving::leave_heard,
+            leaving::leave_confirmed,
             launch::take_opened,
             browser::browser_open,
             browser::browser_focus,

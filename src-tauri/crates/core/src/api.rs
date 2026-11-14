@@ -769,6 +769,29 @@ impl Core {
         git::content(root, file)
     }
 
+    pub fn file_read(&self, root: &Path, file: &str) -> Result<crate::files::FileText, String> {
+        crate::files::read(root, file)
+    }
+
+    pub fn file_write(
+        &self,
+        root: &Path,
+        file: &str,
+        text: &str,
+        stamp: Option<&str>,
+        overwrite: bool,
+    ) -> Result<crate::files::FileWritten, String> {
+        crate::files::write(root, file, text, stamp, overwrite)
+    }
+
+    pub fn path_rename(&self, root: &Path, from: &str, to: &str) -> Result<(), String> {
+        crate::files::rename(root, from, to)
+    }
+
+    pub fn path_delete(&self, root: &Path, path: &str) -> Result<(), String> {
+        crate::files::delete(root, path)
+    }
+
     /// An image or a PDF for the window to show, encoded.
     /// What the user is looking at, on record for the tool server to read.
     pub fn set_selection(

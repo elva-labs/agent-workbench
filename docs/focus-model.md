@@ -16,19 +16,23 @@ default preset:
 
 | Keys                                                                    | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal; while reviewing, <kbd>Cmd</kbd><kbd>1</kbd> peeks the sessions pane over the agent and puts it back |
+| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal; while reviewing, <kbd>Cmd</kbd><kbd>1</kbd> peeks the sessions pane over the agent and puts it back; while editing, see [the editor](#the-editor) |
 | <kbd>Cmd</kbd><kbd>B</kbd>                                              | Show or hide the sessions pane                              |
-| <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the changes pane                               |
+| <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the right pane: the changes, or the agent while editing |
+| <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd>                              | Agent or editor in the middle                               |
 | <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd>               | Next or previous session, or shell when the panel has focus |
 | <kbd>Cmd</kbd><kbd>.</kbd>                                              | Go to the next session that needs you                       |
-| <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer                               |
-| <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff, whole file or rendered                                |
+| <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer, in agent mode                |
+| <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff, whole file or rendered; in the editor, Edit, Diff or Preview |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
-| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus                    |
+| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
+| <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>                                | A new file in the tree, in editor mode                      |
+| <kbd>Cmd</kbd><kbd>S</kbd>                                              | Save the file in front, in editor mode                      |
+| <kbd>Cmd</kbd><kbd>W</kbd>                                              | Close the editor's tab in front, in editor mode             |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd>                              | Cycle theme: light, dark, system                            |
-| <kbd>Cmd</kbd><kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd>                | Zoom the terminal that has focus in, out, or back           |
+| <kbd>Cmd</kbd><kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd>                | Zoom the terminal, or the editor, that has focus in, out, or back |
 | <kbd>Cmd</kbd><kbd>P</kbd>                                              | Go to a session or project                                  |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd>                              | Open the command palette                                    |
 | <kbd>Cmd</kbd><kbd>,</kbd>                                              | Open the settings                                           |
@@ -54,7 +58,11 @@ panel toggles on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>J</kbd>, and sessions
 step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The command
 palette opens on <kbd>Cmd</kbd><kbd>;</kbd> there, since
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> steps sessions. Going to a session
-or project stays on <kbd>Cmd</kbd><kbd>P</kbd>.
+or project stays on <kbd>Cmd</kbd><kbd>P</kbd>, and the editor's chords are
+the default's.
+
+A chord with <kbd>Alt</kbd> is read from the key's place on the keyboard,
+since on macOS <kbd>Option</kbd> turns a letter into another character.
 
 ## The palettes
 
@@ -134,14 +142,16 @@ the pane that has the focus.
   <kbd>Ctrl</kbd>, so the bound chords are taken from the terminal there,
   and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them.
 - **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
-  it, and so does a shell in the panel. A pane that owns focus may use it: the
-  file viewer closes on it and leaves the keyboard in the tree, and a list
-  pane hands the keyboard back to the agent. This is the one key whose meaning
+  it, and so does a shell in the panel, and the editor keeps its own. A pane
+  that owns focus may use it: the file viewer closes on it and leaves the
+  keyboard in the tree, and a list pane hands the keyboard back to the agent,
+  or in editor mode to the editor. This is the one key whose meaning
   depends on context, so the resolution takes the focus state and lives in one
   testable place.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
-  goes to the agent pane. A dialog or the palette that holds the keyboard
+  goes to the agent pane; when editing hides the agent, it goes to the files
+  pane. A dialog or the palette that holds the keyboard
   at that moment keeps it, and hands it to the agent pane when it goes.
 - **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** The
   terminal would send the same carriage return as for <kbd>Enter</kbd>, so
@@ -173,7 +183,8 @@ Focusing a pane by key puts the keyboard where that pane takes it:
 <kbd>Cmd</kbd><kbd>2</kbd> lands in the agent's terminal,
 <kbd>Cmd</kbd><kbd>4</kbd> in whichever shell of the panel was last used,
 and <kbd>Cmd</kbd><kbd>1</kbd> and <kbd>Cmd</kbd><kbd>3</kbd> on the list
-panes' own cursors.
+panes' own cursors, except that <kbd>Cmd</kbd><kbd>3</kbd> in editor mode
+lands in the editor.
 
 A dialog, the settings, the remote picker or the sessions to resume, holds
 the keyboard while it is up. When it closes, the pane that had the keyboard
@@ -199,6 +210,54 @@ Confirming a session moves the keyboard into the agent, so
 <kbd>Cmd</kbd><kbd>1</kbd>, <kbd>↓</kbd>, <kbd>Enter</kbd>, type is the whole
 flow. The tree opens the file in the viewer and keeps the keyboard, because
 the next thing is usually another file.
+
+## The editor
+
+In editor mode the panes keep their keys where they now stand:
+<kbd>Cmd</kbd><kbd>1</kbd> is the sessions pane, peeked over the files when
+the window has folded it, <kbd>Cmd</kbd><kbd>2</kbd> the agent on the right,
+and <kbd>Cmd</kbd><kbd>4</kbd> the terminal panel. <kbd>Cmd</kbd><kbd>3</kbd>
+is the files pane, which holds the tree and the editor: it lands in the
+editor, or the tree with nothing open, and pressed again from the editor it
+goes to the tree, and from the tree back to the editor. In the Vim preset
+the same holds for <kbd>h</kbd>, <kbd>k</kbd>, <kbd>l</kbd> and <kbd>j</kbd>.
+
+The view chord walks the tab's views, Edit, Diff and Preview. The viewer's
+chord, <kbd>Cmd</kbd><kbd>D</kbd>, does nothing for the app in editor mode;
+the viewer's Edit button and the switch are the ways between the modes.
+
+The editor is a text field of the app's own, and while it has the keyboard
+it keeps what a text field needs. <kbd>Esc</kbd> is its: it closes find and
+drops extra cursors, and the keyboard stays. Every chord on an arrow key is
+its too, moving or selecting, so <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd>
+selects to the end of the file there rather than stepping sessions, and
+<kbd>Cmd</kbd><kbd>D</kbd> selects the next occurrence of what is selected.
+<kbd>Tab</kbd> indents. The other chords are the app's as anywhere, and
+<kbd>Cmd</kbd><kbd>F</kbd> finds in the file there.
+
+Save and close tab work from anywhere in editor mode but a terminal: from
+the tree as well as the editor. A terminal keeps their chords, since on
+Windows and Linux <kbd>Ctrl</kbd><kbd>S</kbd> and <kbd>Ctrl</kbd><kbd>W</kbd>
+are the process's. On macOS <kbd>Cmd</kbd><kbd>W</kbd> with no tab to close,
+in editor mode or out of it, closes the window, and a chord the page lets
+through reaches the [File menu](editor.md#the-file-menu), whose items carry
+the same chords, so <kbd>Cmd</kbd><kbd>S</kbd> saves from a terminal too.
+Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>. With the
+keyboard in a browser tab's page, the two are the app's only in editor
+mode; outside it they reach the menu as from anywhere else.
+
+<kbd>Esc</kbd> in the tree or the sessions pane hands the keyboard back to
+the editor, where typing resumes in this mode, and
+puts away what the agent presented in the editor's place. Opening a file from
+the tree keeps the keyboard in the tree for the next file, as it does for
+the viewer; a click on a tab, a new file made, or the Edit button gives it to
+the editor.
+
+The name field in the tree, the row menu and the confirm strips over the
+editor and the tree hold the keyboard while they are up: the arrows walk the
+menu, <kbd>Enter</kbd> picks or makes, <kbd>Esc</kbd> backs out, and the
+strips start on Cancel. When they go, the keyboard goes back to the tree or
+the editor it came from.
 
 ## What focus looks like
 

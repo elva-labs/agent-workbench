@@ -59,7 +59,9 @@ their row. Two steps, so nothing running is archived by accident. On the
 keyboard, Delete does either for the row under the cursor.
 
 Closing a session also closes the browser tabs it owns; see
-[browser](browser.md#whose-tabs-they-are).
+[browser](browser.md#whose-tabs-they-are). Closing a session or a project
+whose editor tabs hold the only copy of unsaved edits asks first, at the
+top of the pane; see [the editor](editor.md#nothing-unsaved-goes-unasked).
 
 The kill lives in one place: closing a session stops its pty and clears the
 id, and the terminal's own teardown does not, so a second signal never lands

@@ -1,5 +1,14 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
+  import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
+  import {
+    closeAsking,
+    closingCancel,
+    closingDrop,
+    closingSave,
+    editor,
+    unsavedNames,
+  } from "$lib/editor.svelte";
   import { agentLabel, installed, isReady } from "$lib/agent.svelte";
   import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
   import type { AgentId, ProjectInfo } from "$lib/core";
@@ -9,6 +18,7 @@
     close as closeSession,
     create,
     defaultAgent,
+    forProject,
     historyFor,
     historyLabel,
     isLive,
@@ -55,6 +65,7 @@
     focusPane,
     layout,
     peekSessions,
+    peekable,
     sessionsShown,
     sessionsVisible,
     setProjectSort,
@@ -66,7 +77,7 @@
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
 
@@ -343,7 +354,7 @@
         label: "Close project",
         destructive: true,
         disabled: false,
-        run: () => closeProject(path),
+        run: () => closeProjectAsking(path),
       },
     ];
   });
@@ -673,22 +684,46 @@
       or a live session, archive on a past one. */
   function remove(id: string) {
     if (id.startsWith("idle:")) {
-      closeProject(id.slice("idle:".length));
+      closeProjectAsking(id.slice("idle:".length));
     } else if (id.startsWith("project:")) {
       // The orchestrator's own project has no close button, and nothing
       // here closes it either.
       const path = id.slice("project:".length);
-      if (path !== orchestrator.dir) closeProject(path);
+      if (path !== orchestrator.dir) closeProjectAsking(path);
     } else if (id.startsWith("session:")) {
       // A session another started hangs quietly on its rail: the cursor
       // walks through those rows, and a key pressed on the way past is no
       // reason to stop work its starter is waiting on. Its own × on hover
       // stops it.
       const key = id.slice("session:".length);
-      if (startedFor(key) === null) closeSession(key);
+      const session = byKey(key);
+      if (startedFor(key) === null && session !== null) closeSessionAsking(session);
     } else if (id.startsWith("past:") && screenProject !== null) {
       disown(screenProject, id.slice("past:".length));
     }
+  }
+
+  // The question about closing a session or a project is answered in the
+  // pane: when the pane folds, a peek put away above all, it goes, and
+  // nothing is closed.
+  $effect(() => {
+    if (folded && editor.closing !== null) untrack(closingCancel);
+  });
+
+  /** The question about closing a session or a project, while it is up. */
+  let closingStrip = $state<HTMLDivElement | null>(null);
+
+  /** Closes a session, asking first when tabs beside it hold the only
+      copy of unsaved edits. */
+  function closeSessionAsking(session: Session) {
+    closeAsking(label(session), [session.key], () => closeSession(session.key));
+  }
+
+  /** Closes a project, asking first when tabs beside it or beside one of
+      its sessions hold the only copy of unsaved edits. */
+  function closeProjectAsking(path: string) {
+    const owners = [...forProject(path).map((session) => session.key), `project:${path}`];
+    closeAsking(projectLabel(path), owners, () => closeProject(path));
   }
 
   /** The pane the focus state named last time this was looked at, so an
@@ -706,6 +741,8 @@
     const arrived = here && previous !== "sessions";
     previous = layout.focus;
     if (!here || !nav || nav.contains(document.activeElement)) return;
+    // A question in the pane keeps the keyboard it was given.
+    if (closingStrip?.contains(document.activeElement)) return;
     if (arrived) cursor = null;
     nav.focus();
   });
@@ -899,14 +936,15 @@
   /** Folded to its narrow column: the rows keep their places, and the pane
       is one button that opens it. Peeked over the agent, it is open. */
   let folded = $derived(!sessionsShown());
-  /** Reviewing folds the pane, and the column peeks it over the agent; a
-      window too narrow for it has nothing to open it into. */
-  let unfoldable = $derived(layout.mode === "reviewing" || !layout.sessionsForced);
+  /** Reviewing folds the pane, and so does editing in a window that keeps
+      the editor's room, and the column peeks it over the pane beside it;
+      a window too narrow for it otherwise has nothing to open it into. */
+  let unfoldable = $derived(peekable() || !layout.sessionsForced);
 
-  /** The column was clicked: while reviewing the pane peeks over the
-      agent, so the viewer stays; otherwise it opens for real. */
+  /** The column was clicked: where the pane peeks, so the viewer or the
+      editor stays; otherwise it opens for real. */
   function unfold() {
-    if (layout.mode === "reviewing") peekSessions(true);
+    if (peekable()) peekSessions(true);
     else unfoldSessions();
     focusPane("sessions");
   }
@@ -917,8 +955,8 @@
   const PEEK_AFTER = 200;
   const UNPEEK_AFTER = 300;
 
-  // The pointer resting on the folded column peeks the pane over the agent
-  // while reviewing, and leaving the pane puts it back, unless the keyboard
+  // The pointer resting on the folded column peeks the pane over the pane
+  // beside it where it peeks, and leaving the pane puts it back, unless the keyboard
   // is in it: then Escape, Enter or the focus chord put it back. A press in
   // the pane is noted while it lasts, so the keyboard arriving with a click
   // is not taken for the keyboard walking the rows.
@@ -935,7 +973,7 @@
     };
     const enter = () => {
       pointerIn = true;
-      if (layout.mode !== "reviewing" || sessionsVisible() || layout.sessionsPeek) return;
+      if (!peekable() || sessionsVisible() || layout.sessionsPeek) return;
       later(() => peekSessions(true), PEEK_AFTER);
     };
     const press = () => {
@@ -1062,7 +1100,7 @@
       <button
         class="icon"
         tabindex="-1"
-        onclick={() => closeSession(session.key)}
+        onclick={() => closeSessionAsking(session)}
         aria-label="Close {label(session)}"
         title="Stop"
         data-testid="close-session">×</button
@@ -1123,7 +1161,7 @@
             <button
               class="icon"
               tabindex="-1"
-              onclick={() => closeSession(kid.key)}
+              onclick={() => closeSessionAsking(kid)}
               aria-label="Close {label(kid)}"
               title="Stop"
               data-testid="close-session">×</button
@@ -1488,6 +1526,23 @@
       title="Show sessions ({describe(chordFor('toggle.sessions'))})"
       data-testid="unfold-sessions"><span class="unfold-mark" aria-hidden="true">›</span></button
     >
+  {/if}
+
+  {#if editor.closing !== null}
+    <!-- Closing a session or a project whose tabs hold the only copy of
+         unsaved edits asks first, here where it was closed. -->
+    <div class="closing" class:folded inert={folded} bind:this={closingStrip}>
+      <ConfirmStrip
+        question="Close {editor.closing.what} with unsaved edits?"
+        detail="{editor.closing.keys.length === 1 ? '1 file' : `${editor.closing.keys.length} files`} open beside it {editor.closing.keys.length === 1 ? 'has' : 'have'} edits not yet saved: {unsavedNames(editor.closing.keys).join(', ')}."
+        action="Close without saving"
+        alternative={{ label: "Save and close", onClick: () => void closingSave() }}
+        safe
+        onConfirm={closingDrop}
+        onCancel={closingCancel}
+        testid="close-owner"
+      />
+    </div>
   {/if}
 
   {#if workspace.error}
@@ -2954,6 +3009,15 @@
 
   .error {
     color: var(--del);
+  }
+
+  .closing {
+    flex: none;
+    padding: 8px 10px 4px;
+  }
+
+  .closing.folded {
+    visibility: hidden;
   }
 
   .error-row {

@@ -15,6 +15,7 @@
   import Palette from "$lib/components/Palette.svelte";
   import { closePalette, openCommands, openGoTo, palette } from "$lib/palette.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
+  import LeaveAsk from "$lib/components/LeaveAsk.svelte";
   import RefusalBanner from "$lib/components/RefusalBanner.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
@@ -32,6 +33,24 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
+  import { newFile } from "$lib/fileOps.svelte";
+  import {
+    activeTab,
+    canSaveInFront,
+    closeFront,
+    findInFile,
+    flipMode,
+    focusFiles,
+    followOwner,
+    leaveRequested,
+    loadEditorSize,
+    otherKindShown,
+    putAwayOther,
+    save,
+    toggleRight,
+    walkView,
+    zoomEditor,
+  } from "$lib/editor.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import {
     stateChanged as pluginStateChanged,
@@ -95,11 +114,15 @@
     changesSpan,
     changesVisible,
     changesWidth,
+    editTreeVisible,
     enterReview,
     exitReview,
     focusPane,
     layout,
     peekSessions,
+    peekable,
+    resetEditAgent,
+    resizeEditAgent,
     saveLayout,
     sessionsOpen,
     sessionsShown,
@@ -119,12 +142,16 @@
   loadMedia();
   loadNotices();
   loadZoom();
+  loadEditorSize();
 
   // What is on screen, on record for the agent's tools and for the core
   // to watch where it is, and what runs under the sessions, for the
   // section under the tree.
   watchSelection();
   watchViewed();
+  // Each session's tabs in the editor, swapped in as the session on screen
+  // changes.
+  followOwner();
   watchProcesses();
   watchPluginUpdates();
   // Which projects are open, told to the core of each machine they are on,
@@ -215,6 +242,15 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onFullScreen((fullScreen) => (layout.fullScreen = fullScreen))
+      .then((unlisten) => offs.push(unlisten));
+    // The core held back the window's close or the app's quit while the
+    // editor has unsaved edits: the question goes over the editor.
+    core()
+      .onLeaveRequested((ask) => leaveRequested(ask))
+      .then((unlisten) => offs.push(unlisten));
+    // The File menu's items do what their actions do.
+    core()
+      .onMenuAction((action) => menuAction(action))
       .then((unlisten) => offs.push(unlisten));
     // A connection going away takes every pty on it: each ends the way a
     // killed one does, and the pane says why.
@@ -312,11 +348,38 @@
 
   // The native layer takes a chord back from a browser tab's page on the
   // app's behalf, so it needs the table again whenever a binding changes.
+  // Save and Close Tab are editor mode's: outside it a browser tab's page
+  // keeps them, and on macOS they reach the File menu as they would from
+  // anywhere else.
   $effect(() => {
-    void core().browserKeys(Object.values(keys.bindings));
+    const chords = Object.entries(keys.bindings)
+      .filter(([action]) => editing || (action !== "file.save" && action !== "file.close"))
+      .map(([, chord]) => chord);
+    void core().browserKeys(chords);
+  });
+
+  // The File menu's items that cannot act are greyed out: Save without a
+  // file in front to save, New File without a project. Close Tab can always
+  // act on macOS, where with no tab it closes the window.
+  $effect(() => {
+    void core()
+      .menuEnabled({
+        "file.new": workspace.active !== null,
+        "file.save": editing && canSaveInFront(),
+        "file.close": isMac() || (editing && activeTab() !== null),
+      })
+      .catch(() => {});
+  });
+
+  // The File menu's items show and answer the chords of their actions.
+  $effect(() => {
+    void core()
+      .menuKeys({ ...keys.bindings })
+      .catch(() => {});
   });
 
   let reviewing = $derived(layout.mode === "reviewing");
+  let editing = $derived(layout.mode === "editing");
 
   // Until the window has drawn a couple of frames the sessions column is
   // simply where it belongs: the saved layout and the window's width both
@@ -336,6 +399,13 @@
     return settled && moved && !reduced() ? PANE_MOTION : 0;
   }
 
+  /** Whether a change of shape is a flip between agent and editor mode,
+      which moves every pane at once and is drawn as a whole rather than
+      column by column. */
+  function flipped(was: string, now: string) {
+    return was !== now && (was === "editing" || now === "editing");
+  }
+
   // The sessions column eases between folded and open when the pane is
   // toggled or the shape changes, and the panes beside it take and give back
   // the room as it goes. The pane keeps its own width the whole way and the
@@ -347,7 +417,9 @@
     const chosen = layout.sessionsChosen;
     const mode = layout.mode;
     untrack(() => {
-      const moved = chosen !== sessionsWasChosen || mode !== sessionsWasMode;
+      const moved =
+        chosen !== sessionsWasChosen ||
+        (mode !== sessionsWasMode && !flipped(sessionsWasMode, mode));
       sessionsWasChosen = chosen;
       sessionsWasMode = mode;
       void sessionsOpen.set(shown ? 1 : 0, { duration: easing(moved), easing: cubicOut });
@@ -367,6 +439,15 @@
       void changesSpan.set(width, { duration: easing(moved), easing: cubicOut });
     });
   });
+
+  /** How wide the peeked pane is drawn: its own width, and while editing at
+      least as wide as the folded column and the tree's, so no sliver of the
+      tree stands beside it. */
+  let peekWidth = $derived(
+    editing && editTreeVisible()
+      ? `max(${layout.sessions}px, calc(${FOLDED + layout.editTree}px + var(--splitter-w) * 2))`
+      : `${layout.sessions}px`,
+  );
 
   /** The sessions column's width, folded or open or on its way, the splitter
       beside it included. */
@@ -403,6 +484,13 @@
     // The sessions pane and the splitter beside it share one column, folded
     // or open, and move together as it eases between the two.
     cols.push(sessionsColumn);
+    // Editing: the files pane takes the middle and the agent the right, at
+    // a width of its own.
+    if (editing) {
+      cols.push("1fr");
+      if (agentVisible()) cols.push("var(--splitter-w)", `${layout.editAgent}px`);
+      return cols.join(" ");
+    }
     if (agentVisible()) cols.push("1fr");
     if (changesVisible()) {
       if (agentVisible()) cols.push("var(--splitter-w)");
@@ -468,7 +556,12 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    const action = resolveAction(e, { focus: layout.focus, reviewing });
+    const action = resolveAction(e, {
+      focus: layout.focus,
+      reviewing,
+      editing,
+      inEditor: editing && editorHasKeyboard(),
+    });
     if (!action) return;
     // Opening the palette and the jump move the keyboard, so with a dialog up
     // they do nothing and the webview gets nothing from them either. The
@@ -497,25 +590,61 @@
     switch (action.type) {
       case "focus":
         // Going to the sessions pane opens it out of its fold. While
-        // reviewing it peeks over the agent instead, so the viewer stays,
-        // and the chord again puts it back.
-        if (action.pane === "sessions" && reviewing) {
+        // reviewing, and while editing in a window that folds it, it peeks
+        // over the pane beside it instead, and the chord again puts it back.
+        if (action.pane === "sessions" && peekable()) {
           if (layout.sessionsPeek) {
             peekSessions(false);
             break;
           }
           peekSessions(true);
         } else if (action.pane === "sessions") unfoldSessions();
+        // The files pane while editing holds the tree and the editor: the
+        // chord goes to the editor, and from the editor to the tree.
+        if (action.pane === "changes" && editing) {
+          focusFiles(editorHasKeyboard() ? "tree" : "editor");
+          break;
+        }
         focusPane(action.pane);
         break;
       case "toggle":
-        if (action.pane === "sessions" && !sessionsVisible()) unfoldSessions();
+        if (action.pane === "changes") toggleRight();
+        else if (editing && layout.sessionsForced) {
+          // A window that folds the pane for the editor has nothing to open
+          // it into: the chord peeks it, and puts it back.
+          peekSessions(!layout.sessionsPeek);
+          if (layout.sessionsPeek) focusPane("sessions");
+        } else if (!sessionsVisible()) unfoldSessions();
         else togglePane(action.pane);
+        break;
+      case "toggleMode":
+        flipMode();
+        break;
+      case "save":
+        if (editing) void save();
+        break;
+      case "closeTab":
+        // With no tab to close it is the window's close on macOS, as the
+        // menu's Close Tab is.
+        closeFront();
+        break;
+      case "newFile":
+        newFile();
+        break;
+      case "findInFile":
+        findInFile();
+        break;
+      case "toEditor":
+        // Escape from the panes around the editor: what took its place is
+        // put away, and the keyboard goes back to it.
+        if (otherKindShown()) putAwayOther();
+        focusFiles("editor");
         break;
       case "cycleTheme":
         cycleTheme();
         break;
       case "toggleReview":
+        if (editing) break;
         if (reviewing) closeViewer();
         else {
           // Opening the viewer with nothing chosen shows the first file rather
@@ -528,7 +657,8 @@
         }
         break;
       case "toggleView":
-        toggleView();
+        if (editing) walkView();
+        else toggleView();
         break;
       case "toggleScope":
         toggleScope();
@@ -575,6 +705,19 @@
     }
   }
 
+  /** An item of the File menu: what its action does, except that Close Tab
+      with no tab to close is the window's close there. */
+  function menuAction(action: string) {
+    if (action === "file.new") newFile();
+    else if (action === "file.save" && editing) void save();
+    else if (action === "file.close") closeFront();
+  }
+
+  /** Whether the keyboard is in the editor, its find panel included. */
+  function editorHasKeyboard(): boolean {
+    return document.activeElement?.closest(".cm-editor") != null;
+  }
+
   /** The next session waiting on the user, brought forward with the
       keyboard in it. */
   function nextSession() {
@@ -590,6 +733,10 @@
   /** Zooms the terminal the keyboard belongs to: the panel's shell when the
       panel has it, the agent on screen otherwise. */
   function zoomTerminal(step: 1 | -1 | 0) {
+    if (editing && editorHasKeyboard()) {
+      zoomEditor(step);
+      return;
+    }
     if (layout.focus === "terminal" && terminals.active !== null) {
       say(`${zoomed(terminals.active, null, step)} px`);
       return;
@@ -635,6 +782,7 @@
       class:folded={!sessionsShown()}
       class:peeking={layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
+      style:--peek-w={peekWidth}
       style:--head-h="{sessionsHead}px"
     >
       <SessionsPane />
@@ -656,13 +804,14 @@
 
     <!-- Hidden rather than unmounted, always. Unmounting would destroy the
          terminal; hiding leaves the pane at its width, so the PTY is never
-         resized and the agent comes back exactly as it was. -->
-    <div class="agent-slot" class:hidden={!agentVisible()}>
+         resized and the agent comes back exactly as it was. While editing
+         the same slot is placed last, on the right. -->
+    <div class="agent-slot" class:hidden={!agentVisible()} class:right={editing}>
       <AgentPane />
     </div>
 
     {#if changesVisible()}
-      {#if agentVisible()}
+      {#if agentVisible() && !editing}
         <Splitter
           label={reviewing ? "Resize the viewer" : "Resize changes"}
           onDelta={resizeChanges}
@@ -671,6 +820,9 @@
         />
       {/if}
       <ChangesPane />
+      {#if agentVisible() && editing}
+        <Splitter label="Resize the agent" onDelta={resizeEditAgent} onReset={resetEditAgent} onCommit={saveLayout} />
+      {/if}
     {/if}
   </main>
 
@@ -719,6 +871,7 @@
   <ConductAsk />
 {/if}
 <SettingsAsk />
+<LeaveAsk />
 <RefusalBanner />
 <UserStyles />
 
@@ -811,7 +964,7 @@
 
   .sessions-slot.peeking :global(.pane) {
     flex: none;
-    width: var(--sessions-w);
+    width: var(--peek-w);
     box-shadow: var(--pane-shadow-on), 12px 0 28px rgba(0, 0, 0, 0.3);
   }
 
@@ -873,6 +1026,10 @@
 
   .agent-slot.hidden {
     display: none;
+  }
+
+  .agent-slot.right {
+    order: 1;
   }
 
   .agent-slot :global(.pane) {

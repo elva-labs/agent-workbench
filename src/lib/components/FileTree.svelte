@@ -19,18 +19,66 @@
     fold: (index: number, open: boolean) => void;
   }
 
+  /** A name field in the tree: for a new file or folder, in place in the
+      folder it goes in, or over a row being renamed. */
+  export interface NameField {
+    /** The folder a new one goes in, null for the top. */
+    folder: string | null;
+    /** The row being renamed, when it is a rename. */
+    rename: string | null;
+    /** A folder shown open before it exists, the field inside it. */
+    pending: string | null;
+    folderIcon: boolean;
+    value: string;
+    problem: string | null;
+    label: string;
+    /** What goes in the empty field, saying what it is for. */
+    placeholder: string;
+    /** Counts the namings begun: the field is one element for as long as
+        one naming lasts, whatever the rows around it do. */
+    session: number;
+    onInput: (value: string) => void;
+    onCommit: () => void;
+    onCancel: () => void;
+    /** The field lost the keyboard. */
+    onLeave: () => void;
+  }
+
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
     onOpen: (path: string) => void;
+    /** A double-click on a file row. */
+    onDouble?: (path: string) => void;
+    /** Whether a file has edits not yet saved: its row carries a dot. */
+    unsaved?: (path: string) => boolean;
     /** A click on the tree itself, below the last row. */
     onBlank?: () => void;
     /** The pane has focus: the keyboard belongs on the tree, so the arrows
         work without a click first. */
     focused?: boolean;
     beyond?: Beyond;
+    field?: NameField | null;
+    /** A right-click on a row, or on the tree below its rows with no path. */
+    onMenu?: (path: string | null, dir: boolean, x: number, y: number) => void;
+    /** The row the cursor is on, once the user has moved it, and whenever
+        they move it after. */
+    onCursorRow?: (row: { path: string; dir: boolean } | null) => void;
+    /** A row marked while a menu for it is open. */
+    marked?: string | null;
   }
 
-  let { onOpen, onBlank, focused = false, beyond }: Props = $props();
+  let {
+    onOpen,
+    onDouble,
+    unsaved,
+    onBlank,
+    focused = false,
+    beyond,
+    field = null,
+    onMenu,
+    onCursorRow,
+    marked = null,
+  }: Props = $props();
 
   let root: HTMLDivElement;
 
@@ -42,8 +90,14 @@
     const active = document.activeElement;
     if (active === root || root.contains(active)) return;
     // Another control of the same pane, the filter field most of all, keeps
-    // the keyboard it was given; the tree takes it from anywhere else.
-    if (active !== null && root.closest("section[data-pane]")?.contains(active)) return;
+    // the keyboard it was given; the tree takes it from anywhere else, the
+    // editor beside it included.
+    if (
+      active !== null &&
+      active.closest(".cm-editor") === null &&
+      root.closest("section[data-pane]")?.contains(active)
+    )
+      return;
     root.focus();
   });
 
@@ -69,6 +123,22 @@
     if (cursor > total - 1) cursor = Math.max(0, total - 1);
   });
 
+  // A row going from under the cursor leaves it on the row that took its
+  // place in the tree, or the last row of the tree, rather than letting it
+  // run on into the sections beneath.
+  let cursorPath: string | null = null;
+  $effect(() => {
+    const now = rows;
+    untrack(() => {
+      if (cursorPath === null || now.some((row) => row.node.path === cursorPath)) return;
+      if (cursor >= now.length && now.length > 0) cursor = now.length - 1;
+    });
+  });
+  $effect(() => {
+    const row = cursor < rows.length ? rows[cursor] : undefined;
+    cursorPath = row?.node.path ?? null;
+  });
+
   /** The tree's row under the cursor, none when the cursor is beyond. */
   let active = $derived(cursor < rows.length ? rows[cursor] : undefined);
   /** Which of the rows beyond the cursor is on, -1 in the tree. */
@@ -84,6 +154,98 @@
     const at = beyondAt;
     untrack(() => beyond?.onCursor(at));
   });
+
+  // Where a new file or folder is named: after the last row inside the
+  // folder it goes in, a step in from it, under a folder shown before it
+  // exists when there is one. A folder the tree draws as part of a longer
+  // row, or not at all, puts the field at the end, its path written before.
+  let placement = $derived.by(() => {
+    if (field === null || field.rename !== null) return null;
+    const host = field.pending ?? field.folder;
+    if (host === null) return { after: rows.length - 1, depth: 0, prefix: "", virtual: null };
+    let at = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const node = rows[i].node;
+      if (!node.dir) continue;
+      if (node.path === host || host.startsWith(`${node.path}/`)) {
+        if (at === -1 || node.path.length > rows[at].node.path.length) at = i;
+      }
+    }
+    if (at === -1) {
+      return field.pending === null
+        ? { after: rows.length - 1, depth: 0, prefix: `${host}/`, virtual: null }
+        : { after: rows.length - 1, depth: 1, prefix: "", virtual: { name: host, depth: 0 } };
+    }
+    const shown = rows[at];
+    let end = at + 1;
+    while (end < rows.length && rows[end].depth > shown.depth) end++;
+    if (shown.node.path === host) {
+      return { after: end - 1, depth: shown.depth + 1, prefix: "", virtual: null };
+    }
+    const rest = host.slice(shown.node.path.length + 1);
+    if (field.pending !== null && field.pending === host) {
+      return {
+        after: end - 1,
+        depth: shown.depth + 2,
+        prefix: "",
+        virtual: { name: rest, depth: shown.depth + 1 },
+      };
+    }
+    return { after: end - 1, depth: shown.depth + 1, prefix: `${rest}/`, virtual: null };
+  });
+
+  /** The user has put the cursor somewhere: by a key, a click or the menu.
+      Until then it sits on the first row by default and says nothing. */
+  let touched = $state(false);
+
+  // Tells whoever asked where the user put the cursor, for where a new
+  // file goes.
+  $effect(() => {
+    const row = active;
+    if (!touched) return;
+    untrack(() => onCursorRow?.(row === undefined ? null : { path: row.node.path, dir: row.node.dir }));
+  });
+
+  function menu(e: MouseEvent, row: Row | null) {
+    if (onMenu === undefined) return;
+    e.preventDefault();
+    if (row !== null) {
+      cursor = rows.indexOf(row);
+      touched = true;
+    }
+    root.focus();
+    onMenu(row?.node.path ?? null, row?.node.dir ?? true, e.clientX, e.clientY);
+  }
+
+  /** The field takes the keyboard as it opens, with the name selected up to
+      its extension, so typing replaces the name and keeps the kind. */
+  function takeKeys(node: HTMLInputElement) {
+    node.focus();
+    const dot = node.value.lastIndexOf(".");
+    node.setSelectionRange(0, dot > 0 ? dot : node.value.length);
+  }
+
+  /** The field lost the keyboard. One taken off the page, or made for a
+      naming that has ended, has nothing to say: only the field of the
+      naming going on, still on the page, was left by the user. */
+  function left(e: FocusEvent) {
+    const input = e.currentTarget as HTMLElement;
+    if (!input.isConnected || field === null) return;
+    if (input.dataset.session !== String(field.session)) return;
+    field.onLeave();
+  }
+
+  function fieldKeys(e: KeyboardEvent) {
+    // Every key is the field's: the tree's arrows and Enter stand down.
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      field?.onCommit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      field?.onCancel();
+    }
+  }
 
   function rowId(row: Row) {
     return `tree-${row.node.path}`;
@@ -106,6 +268,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) touched = true;
     if (!active) {
       if (beyond === undefined || beyondAt < 0) return;
       // On a row beyond the tree: the arrows still walk, Home comes back
@@ -195,9 +358,45 @@
   onclick={(e) => {
     if (e.target === e.currentTarget) onBlank?.();
   }}
+  oncontextmenu={(e) => {
+    if (e.target === e.currentTarget) menu(e, null);
+  }}
   data-testid="file-tree"
 >
-  {#each rows as row (row.node.path)}
+  {#snippet nameInput(depth: number, prefix: string, order: number)}
+    <div class="row naming" style:padding-left="{8 + depth * 13}px" style:order={order} data-testid="name-row">
+      <span class="twist">{field?.folderIcon ? "▸" : "·"}</span>
+      <span class="field-box">
+        {#if prefix !== ""}<span class="prefix">{prefix}</span>{/if}
+        <input
+          value={field?.value ?? ""}
+          use:takeKeys
+          oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
+          onkeydown={fieldKeys}
+          onblur={left}
+          data-session={field?.session}
+          placeholder={field?.placeholder}
+          aria-label={field?.label}
+          aria-invalid={field?.problem !== null}
+          spellcheck="false"
+          autocomplete="off"
+          data-testid="name-field"
+        />
+      </span>
+    </div>
+    {#if field?.problem}
+      <p
+        class="problem"
+        style:padding-left="{8 + depth * 13 + 20}px"
+        style:order={order}
+        role="alert"
+        data-testid="name-problem"
+      >
+        {field.problem}
+      </p>
+    {/if}
+  {/snippet}
+  {#each rows as row, index (row.node.path)}
     {@const node = row.node}
     <!-- Keyboard handling belongs to the tree, not to each row: that is the
          ARIA tree pattern, and one tab stop is what keeps a few hundred rows
@@ -212,15 +411,22 @@
       class:selected={!node.dir && files.selected === node.path}
       class:cursor={active === row}
       class:quiet={!node.hasChange}
+      class:marked={marked === node.path}
       role="treeitem"
       aria-level={row.depth + 1}
       aria-selected={!node.dir && files.selected === node.path}
       aria-expanded={node.dir ? isOpen(node) : undefined}
       style:padding-left="{8 + row.depth * 13}px"
+      style:order={index * 2}
       onclick={() => {
         cursor = rows.indexOf(row);
+        touched = true;
         activate(node);
       }}
+      ondblclick={() => {
+        if (!node.dir) onDouble?.(node.path);
+      }}
+      oncontextmenu={(e) => menu(e, row)}
     >
       {#if node.dir}
         <span class="twist">{isOpen(node) ? "▾" : "▸"}</span>
@@ -230,22 +436,79 @@
         </span>
       {/if}
 
-      <span class="name">{node.name}</span>
+      {#if field !== null && field.rename === node.path}
+        <span class="field-box">
+          <input
+            value={field.value}
+            use:takeKeys
+            oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
+            onkeydown={fieldKeys}
+            onblur={left}
+            data-session={field.session}
+            onclick={(e) => e.stopPropagation()}
+            aria-label={field.label}
+            aria-invalid={field.problem !== null}
+            spellcheck="false"
+            autocomplete="off"
+            data-testid="name-field"
+          />
+        </span>
+      {:else}
+        <span class="name">{node.name}</span>
+      {/if}
 
-      {#if !node.dir && node.entry}
+      {#if !node.dir && unsaved?.(node.path)}
+        <span class="unsaved" title="Unsaved" data-testid="tree-unsaved"></span>
+      {:else if !node.dir && node.entry}
         <span class="stat">
           {#if node.entry.add}<span class="add">+{node.entry.add}</span>{/if}
           {#if node.entry.del}<span class="del">−{node.entry.del}</span>{/if}
         </span>
       {/if}
     </div>
+    {#if field !== null && field.rename === node.path && field.problem}
+      <p
+        class="problem"
+        style:padding-left="{8 + row.depth * 13 + 20}px"
+        style:order={index * 2}
+        role="alert"
+        data-testid="name-problem"
+      >
+        {field.problem}
+      </p>
+    {/if}
   {/each}
+  <!-- The field for a new file or folder, and a folder shown before it
+       exists, are drawn once for the naming and set among the rows by
+       their order, so rows coming and going around them, as the agent adds
+       files, never make them again. -->
+  {#if field !== null && placement !== null}
+    {#key field.session}
+      {@const order = placement.after * 2 + 1}
+      {#if placement.virtual !== null}
+        <div
+          class="row dir pending"
+          style:padding-left="{8 + placement.virtual.depth * 13}px"
+          style:order={order}
+          data-testid="pending-folder"
+        >
+          <span class="twist">▾</span>
+          <span class="name">{placement.virtual.name}</span>
+        </div>
+      {/if}
+      {@render nameInput(placement.depth, placement.prefix, order)}
+    {/key}
+  {/if}
 </div>
 
 <style>
+  /* A column of rows, in the order each says: the name field takes its
+     place among them by its own. */
   .tree {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
     overflow: auto;
     padding: 6px 0;
     font-family: var(--chrome);
@@ -260,6 +523,8 @@
   /* The first column is the twist or the status letter, at a width of its
      own so no letter ever reaches the name beside it. */
   .row {
+    flex: none;
+    min-width: 0;
     display: grid;
     grid-template-columns: var(--tree-glyph) 1fr auto;
     gap: 6px;
@@ -300,6 +565,11 @@
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
+  /* The row a menu is open for. */
+  .row.marked {
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
   .twist,
   .status {
     text-align: center;
@@ -330,6 +600,73 @@
 
   .stat {
     color: var(--ink-3);
+  }
+
+  /* The name field in place of a row's name: the row's height, ringed in
+     the accent. */
+  .row.naming,
+  .row.naming:hover {
+    background: none;
+  }
+
+  /* As tall as the row it stands in: the ring is drawn outside the line,
+     so nothing below moves when the field opens. */
+  .field-box {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    grid-column: 2 / -1;
+    padding: 0 6px;
+    margin: 0 -6px;
+    border-radius: var(--radius-sm);
+    background: var(--field-bg);
+    box-shadow: 0 0 0 1.5px var(--accent);
+    line-height: inherit;
+  }
+
+  .field-box input {
+    flex: 1;
+    min-width: 0;
+    height: 1.5em;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    line-height: inherit;
+    color: var(--ink);
+    outline: none;
+  }
+
+  .field-box input::placeholder {
+    color: var(--ink-3);
+  }
+
+  .prefix {
+    color: var(--ink-3);
+  }
+
+  .row.pending .name {
+    color: var(--ink-2);
+  }
+
+  .problem {
+    flex: none;
+    min-width: 0;
+    margin: 2px var(--row-inset) 4px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--del);
+    white-space: normal;
+  }
+
+  /* Edits not yet saved, where the counts stand. */
+  .unsaved {
+    align-self: center;
+    justify-self: end;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ink-2);
   }
 
   .add {

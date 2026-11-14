@@ -12,6 +12,18 @@
     selectedEntry,
   } from "$lib/files.svelte";
   import { lastSegment } from "$lib/paths";
+  import { editAt } from "$lib/editor.svelte";
+
+  interface Props {
+    /** No bar of its own: the editor's column shows a file's diff and its
+        rendering this way, under its own tabs. */
+    bare?: boolean;
+    /** What the bar's close button does: the viewer closes, or in editor
+        mode the editor comes back. */
+    onClose?: () => void;
+  }
+
+  let { bare = false, onClose = closeViewer }: Props = $props();
 
   // Phase 2 swaps this rendering for @codemirror/merge on a diff and a
   // read-only EditorView on content, which is also where side-by-side comes
@@ -94,22 +106,33 @@
   data-view={files.pluginView !== null ? "plugin" : files.media !== null ? "media" : view}
   bind:this={viewer}
 >
-  {#if files.pluginView !== null}
+  {#if bare}
+    <!-- Under the editor's tabs, which name the file. -->
+  {:else if files.pluginView !== null}
     <div class="bar">
       <span class="path" title={files.pluginView.plugin} data-testid="plugin-view-name">{files.pluginView.plugin}</span>
-      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
+      <button class="close" onclick={onClose} aria-label="Close the viewer">Esc</button>
     </div>
   {:else if files.media !== null}
     <div class="bar">
       <span class="path" title={files.media.files.join("\n")} data-testid="media-caption"
         >{files.media.caption ?? `${files.media.files.length} ${files.media.files.length === 1 ? "file" : "files"}`}</span
       >
-      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
+      <button class="close" onclick={onClose} aria-label="Close the viewer">Esc</button>
     </div>
   {:else if entry !== null}
     <div class="bar">
       <span class="path" title={entry.path}>{entry.path}</span>
-      <button class="close" onclick={closeViewer} aria-label="Close the viewer">Esc</button>
+      {#if entry.status !== "D" && !entry.binary}
+        <!-- To the editor at the line the viewer marks, or the first. -->
+        <button
+          class="edit"
+          onclick={() => editAt(entry.path, target !== null && target.line > 0 ? target.line : picked?.from)}
+          title="Edit this file in editor mode"
+          data-testid="viewer-edit">Edit</button
+        >
+      {/if}
+      <button class="close" onclick={onClose} aria-label="Close the viewer">Esc</button>
     </div>
   {/if}
   {#if target?.note}
@@ -201,7 +224,8 @@
     color: var(--ink-2);
   }
 
-  .close {
+  .close,
+  .edit {
     flex: none;
     font-family: var(--chrome);
     font-size: var(--btn-size);
@@ -216,7 +240,8 @@
     cursor: pointer;
   }
 
-  .close:hover {
+  .close:hover,
+  .edit:hover {
     color: var(--accent);
     border-color: var(--accent);
   }
