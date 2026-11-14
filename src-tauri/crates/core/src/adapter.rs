@@ -98,11 +98,16 @@ pub const CLAUDE_SUBAGENT_TOOLS: &[&str] = &[
     "RemoteTrigger",
 ];
 
-/// The setting that takes Codex's own subagent tools away: spawn_agent,
-/// send_message, wait_agent, list_agents, interrupt_agent and
-/// followup_task, which a model with the newer multi-agent version is
-/// given whatever the multi-agent features say.
-pub const CODEX_NO_SUBAGENTS: &str = "features.multi_agent_v2.disable_native_tools=true";
+/// The settings that take Codex's own subagent tools away. The second
+/// takes spawn_agent, send_message, wait_agent, list_agents,
+/// interrupt_agent and followup_task from a model on the newer multi-agent
+/// version, which is given them whatever the first says. The first turns
+/// off the multi-agent tools of a Codex that has no newer version, which
+/// passes over the second without a word.
+pub const CODEX_NO_SUBAGENTS: &[&str] = &[
+    "features.multi_agent=false",
+    "features.multi_agent_v2.disable_native_tools=true",
+];
 
 /// The name the tool server goes by, to Claude Code and to Codex.
 pub const SERVER_NAME: &str = "agent-workbench";
@@ -340,7 +345,7 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool) -> Result<Vec<String>, String>
         settings.push(format!("mcp_servers.{CODEX_SERVER_KEY}.args=[\"mcp\"]"));
     }
     if ctx.start_only {
-        settings.push(CODEX_NO_SUBAGENTS.to_string());
+        settings.extend(CODEX_NO_SUBAGENTS.iter().map(|setting| setting.to_string()));
     }
     if let Some(instructions) = ctx.instructions {
         settings.push(format!("developer_instructions={}", text(instructions)));
@@ -859,6 +864,8 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
             "-c".to_string(),
+            "features.multi_agent=false".to_string(),
+            "-c".to_string(),
             "features.multi_agent_v2.disable_native_tools=true".to_string(),
             "-c".to_string(),
             r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#.to_string(),
@@ -956,27 +963,40 @@ mod tests {
     }
 
     /// Codex's own subagent tools are gone from what the model is given
-    /// with the setting the workbench passes. Run where Codex is installed;
-    /// a machine without it has nothing to check.
+    /// with the settings the workbench passes, and there without them. Run
+    /// where Codex is installed, on a home of its own; a machine without it
+    /// has nothing to check.
     #[test]
-    fn codex_lists_no_subagent_tools_with_the_setting() {
+    fn codex_lists_no_subagent_tools_with_the_settings() {
         let vars: HashMap<String, String> = std::env::vars().collect();
         let Some(codex) = find_on_path(&vars, "codex") else {
             return;
         };
+        let home =
+            std::env::temp_dir().join(format!("workbench-codex-home-{}", std::process::id()));
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::create_dir_all(&home).unwrap();
         let input = |settings: &[&str]| {
             let mut command = std::process::Command::new(&codex);
-            command.args(["debug", "prompt-input"]);
+            command
+                .args(["debug", "prompt-input"])
+                .env(CODEX_HOME_VAR, &home)
+                .current_dir(&home);
             for setting in settings {
                 command.args(["-c", setting]);
             }
             let output = command.arg("hi").output().unwrap();
             String::from_utf8_lossy(&output.stdout).to_string()
         };
-        let without = input(&[CODEX_NO_SUBAGENTS]);
+        let tools = ["spawn_agent", "send_message", "wait_agent", "list_agents"];
+        let with = input(&[]);
+        let without = input(CODEX_NO_SUBAGENTS);
+        std::fs::remove_dir_all(&home).ok();
+        assert!(!with.is_empty(), "codex debug prompt-input answered");
         assert!(!without.is_empty(), "codex debug prompt-input answered");
-        for tool in ["spawn_agent", "send_message", "wait_agent", "list_agents"] {
-            assert!(!without.contains(tool), "{tool} is gone");
+        for tool in tools {
+            assert!(with.contains(tool), "{tool} is there without the settings");
+            assert!(!without.contains(tool), "{tool} is gone with them");
         }
     }
 
