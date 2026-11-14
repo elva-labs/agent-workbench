@@ -1259,7 +1259,9 @@
   {#if workspace.active === path}
     <!-- Every session the agents ran here and this window does not list,
          from a plain terminal most of all: one row that counts them and
-         opens the list to resume from. -->
+         opens the dialog to resume from. It opens something else rather
+         than opening here, so it has a glyph of its own, not the chevron,
+         and ends in an ellipsis. -->
     {#if path !== orchestrator.dir}
       {@const earlier = outsideFor(path).length}
       {#if earlier > 0}
@@ -1271,8 +1273,10 @@
           data-row="earlier:{path}"
           data-testid="earlier-sessions"
         >
-          {@render chevron(false)}
-          <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}</span>
+          <svg class="chev history" viewBox="0 0 16 16" aria-hidden="true"
+            ><path d="M2.8 8a5.2 5.2 0 1 0 1.5-3.7" /><path d="M2.6 2.6v2.6h2.6" /><path d="M8 5.2V8l1.9 1.2" /></svg
+          >
+          <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}…</span>
         </button>
       {/if}
     {/if}
@@ -1644,6 +1648,12 @@
 
   .nav.folded .project-row .name {
     text-overflow: clip;
+  }
+
+  /* The column is too narrow for the part of a path that tells two
+     projects of one name apart: it shows the name. */
+  .nav.folded .prefix {
+    display: none;
   }
 
   .nav.folded .head,
@@ -2644,6 +2654,15 @@
 
   .chev.open {
     transform: rotate(90deg);
+  }
+
+  /* The earlier sessions open a dialog: a clock turning back, drawn a
+     little smaller so it weighs what the chevron does. */
+  .chev.history {
+    width: 13px;
+    height: 13px;
+    margin: 0 0.5px;
+    stroke-width: 1.4;
   }
 
   /* The sessions a session started hang under it, a line each, joined to

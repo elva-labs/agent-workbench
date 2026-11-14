@@ -308,7 +308,7 @@ of those would bury the app's own. The sessions this app has run lately are
 remembered by id and listed under the project on screen, one line each
 with its time, among the rows left from the last quit and folded with them
 once there are more than a few. The others, every agent's together, sit
-behind a single row, `33 earlier sessions`, that counts them and opens a
+behind a single row, `33 earlier sessions…`, that counts them and opens a
 dialog over them, with a filter that takes every word you type against a
 session's name, its id and the worktree it ran in, and Enter or a click on
 one to resume it. With more than one agent installed, the dialog says

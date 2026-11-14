@@ -1395,6 +1395,28 @@ test.describe("several projects", () => {
   });
 });
 
+test.describe("two projects of one name", () => {
+  const WORK = "/home/ada/work/main-truck";
+  const SPIKE = "/home/ada/spike/main-truck";
+
+  // Folded to its narrow column, the pane shows each project's own name
+  // cut at the edge, not the part of the path that tells the two apart.
+  test("shows the name, not what tells them apart, in the folded column", async ({ page }) => {
+    await open(page, { open: [WORK, SPIKE] });
+    const prefix = page.locator(`[data-row="project:${SPIKE}"] .prefix`);
+    await expect(prefix).toHaveText("spike/");
+    await expect(prefix).toBeVisible();
+    await page.keyboard.press(`${MOD}+b`);
+    await expect.poll(async () => (await page.locator(SESSIONS).boundingBox())!.width).toBeLessThan(60);
+    await expect(prefix).toBeHidden();
+    const name = page.locator(`[data-row="project:${SPIKE}"] .name`);
+    const column = (await page.locator(SESSIONS).boundingBox())!;
+    const box = (await name.boundingBox())!;
+    expect(box.x).toBeLessThan(column.x + column.width);
+    await expect(name).toHaveText("main-truck", { useInnerText: true });
+  });
+});
+
 test.describe("with codex installed too", () => {
   test.beforeEach(async ({ page }) => {
     await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });

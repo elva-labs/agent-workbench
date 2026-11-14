@@ -1093,9 +1093,11 @@ describe("SessionsPane", () => {
     await waitFor(() =>
       expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("earlier-sessions")).toHaveTextContent(
-      "2 earlier sessions",
-    );
+    // It opens a dialog rather than opening in place: a glyph of its own,
+    // not the chevron, and an ellipsis.
+    expect(screen.getByTestId("earlier-sessions").textContent!.trim()).toBe("2 earlier sessions…");
+    expect(screen.getByTestId("earlier-sessions").querySelector(".history")).not.toBeNull();
+    expect(screen.getByTestId("earlier-sessions").querySelector(".chev:not(.history)")).toBeNull();
     expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByTestId("earlier-sessions"));

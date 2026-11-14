@@ -51,7 +51,8 @@ its time, and keeps whatever width it is dragged to.
 
 The sessions pane is never gone, only open or folded. Folded, its column is
 50 pixels wide and the pane keeps every row where it stands when open: each
-project's name, cut at the column's edge, and under it the dots of its
+project's name, cut at the column's edge and without the part of the path
+that tells two projects of one name apart, and under it the dots of its
 sessions, each in its own row. The rest of the rows keep their height
 and show nothing, so the dots stay with their heading and nothing moves
 when the pane opens again. Its header joins the header beside it into one row, and
