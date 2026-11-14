@@ -624,44 +624,67 @@ mod tests {
         assert_eq!(dirs, HashSet::from([elsewhere.to_path_buf()]));
     }
 
-    /// What the sink saw of an event, waiting for it to arrive.
-    fn wait_for(recorder: &crate::events::testing::Recorder, event: &str) -> Option<Value> {
-        let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_secs(5) {
-            let seen = recorder
-                .events
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(name, _)| name == event)
-                .map(|(_, payload)| payload.clone());
-            if seen.is_some() {
-                return seen;
+    use crate::events::testing::Recorder;
+    use std::time::Instant;
+
+    /// The shown files the sink was told changed, each once, in the order
+    /// it was told of them.
+    fn told(recorder: &Recorder) -> Vec<PathBuf> {
+        let mut told = Vec::new();
+        for (name, payload) in recorder.events.lock().unwrap().iter() {
+            if name != SHOWN_CHANGED {
+                continue;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            for path in payload.as_array().into_iter().flatten() {
+                let path = PathBuf::from(path.as_str().unwrap_or_default());
+                if !told.contains(&path) {
+                    told.push(path);
+                }
+            }
         }
-        None
+        told
     }
 
-    use serde_json::Value;
+    /// What `told` holds besides the marks.
+    fn told_unmarked(recorder: &Recorder) -> Vec<PathBuf> {
+        told(recorder)
+            .into_iter()
+            .filter(|path| {
+                !path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("mark-"))
+            })
+            .collect()
+    }
 
-    /// Waits until the sink has heard nothing for a while, so a burst that
-    /// is still being delivered or debounced from an earlier write is not
-    /// taken for the news of a later one.
-    fn settle(recorder: &crate::events::testing::Recorder) {
-        let quiet = Duration::from_millis(1500);
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        let mut seen = recorder.events.lock().unwrap().len();
-        let mut since = std::time::Instant::now();
-        while since.elapsed() < quiet && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-            let now = recorder.events.lock().unwrap().len();
-            if now != seen {
-                seen = now;
-                since = std::time::Instant::now();
-            }
+    /// Waits for the sink to be told `file` changed. The bound is only for
+    /// a watcher that never tells.
+    fn until_told(recorder: &Recorder, file: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !told(recorder).iter().any(|path| path == file) {
+            assert!(
+                Instant::now() < deadline,
+                "never told of {}; the sink saw {:?}",
+                file.display(),
+                recorder.events.lock().unwrap()
+            );
+            std::thread::sleep(Duration::from_millis(20));
         }
-        recorder.events.lock().unwrap().clear();
+    }
+
+    /// Makes a new file in `dir`, shows it beside the others, writes it,
+    /// and waits for the sink to be told of it. A watcher reports what
+    /// happened in a directory in the order it happened, so by then
+    /// whatever happened in `dir` before has been told as well.
+    fn mark(watchers: &Watchers, recorder: &Recorder, shown: &mut Vec<PathBuf>, dir: &Path) {
+        let mark = dir.join(format!("mark-{}", uuid::Uuid::new_v4().simple()));
+        // There before it is shown, so that it resolves to the path the
+        // watcher reports it by.
+        std::fs::write(&mark, "made").unwrap();
+        shown.push(mark.clone());
+        watch_shown(watchers, shown);
+        std::fs::write(&mark, "written").unwrap();
+        until_told(recorder, &mark);
     }
 
     // A document presented from outside the tree, or a file the tree
@@ -672,45 +695,63 @@ mod tests {
         let elsewhere = Scratch::new("watch-shown-change-elsewhere");
         let outside = elsewhere.join("draft.md");
         std::fs::write(&outside, "one\n").unwrap();
-        std::fs::create_dir_all(dir.join("target")).unwrap();
-        let ignored = dir.join("target/shot.png");
+        let target = dir.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let ignored = target.join("shot.png");
         std::fs::write(&ignored, "x").unwrap();
 
-        let recorder = Arc::new(crate::events::testing::Recorder::default());
+        let recorder = Arc::new(Recorder::default());
         let sink: Arc<dyn Sink> = Arc::clone(&recorder) as Arc<dyn Sink>;
         let watchers = Watchers::default();
-        watch(sink, &watchers, dir.to_path_buf(), None).unwrap();
-        watch_shown(&watchers, &[outside.clone(), ignored.clone()]);
-        // The watcher takes a moment to be looking, and macOS may still
-        // deliver the writes made before it was: those are let through.
-        settle(&recorder);
+        // The tree by its real path: what git ignores is looked up by an
+        // event's place under the root, and the watcher reports real paths.
+        watch(sink, &watchers, real(&dir), None).unwrap();
+        let mut shown = vec![outside.clone(), ignored.clone()];
+        watch_shown(&watchers, &shown);
+        // macOS may still deliver the writes made before the watch began.
+        // They come ahead of the marks, and are cleared with them.
+        mark(&watchers, &recorder, &mut shown, &elsewhere);
+        mark(&watchers, &recorder, &mut shown, &target);
+        recorder.events.lock().unwrap().clear();
 
         std::fs::write(&outside, "two\n").unwrap();
-        let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the shown file's change");
-        assert_eq!(
-            shown,
-            Value::Array(vec![Value::String(outside.to_string_lossy().to_string())])
-        );
+        until_told(&recorder, &outside);
+        // Whatever else the write is news of has been told by the time the
+        // mark after it has.
+        mark(&watchers, &recorder, &mut shown, &elsewhere);
+        assert_eq!(told_unmarked(&recorder), [outside.as_path()]);
         let seen = recorder.events.lock().unwrap().clone();
         assert!(
             !seen.iter().any(|(name, _)| name == GIT_CHANGED),
             "a file outside the tree is not the tree moving, but the sink saw {seen:?}"
         );
 
-        settle(&recorder);
+        recorder.events.lock().unwrap().clear();
         std::fs::write(&ignored, "y").unwrap();
-        let shown = wait_for(&recorder, SHOWN_CHANGED).expect("the ignored file's change");
-        assert_eq!(
-            shown,
-            Value::Array(vec![Value::String(ignored.to_string_lossy().to_string())])
+        until_told(&recorder, &ignored);
+        mark(&watchers, &recorder, &mut shown, &target);
+        assert_eq!(told_unmarked(&recorder), [ignored.as_path()]);
+
+        // Shown no more: a change is nobody's news. The marks there keep
+        // its directory watched, so the mark after the change is told only
+        // after whatever the change was going to tell.
+        shown.retain(|file| file != &outside);
+        watch_shown(&watchers, &shown);
+        recorder.events.lock().unwrap().clear();
+        std::fs::write(&outside, "three\n").unwrap();
+        mark(&watchers, &recorder, &mut shown, &elsewhere);
+        let seen = recorder.events.lock().unwrap().clone();
+        assert!(
+            told_unmarked(&recorder).is_empty()
+                && !seen.iter().any(|(name, _)| name == GIT_CHANGED),
+            "the draft is not shown, but the sink saw {seen:?}"
         );
 
-        // Shown no more: a change is nobody's news.
+        // A viewer showing nothing has nothing outside the tree watched.
         watch_shown(&watchers, &[]);
-        settle(&recorder);
-        std::fs::write(&outside, "three\n").unwrap();
-        std::thread::sleep(Duration::from_millis(1500));
-        assert!(recorder.events.lock().unwrap().is_empty());
+        let current = watchers.current.lock().unwrap();
+        assert!(current.as_ref().unwrap().dirs.is_empty());
+        drop(current);
         unwatch(&watchers);
     }
 
