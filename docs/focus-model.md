@@ -102,8 +102,8 @@ answer stays in the field as a chip, and <kbd>Backspace</kbd> on an empty
 field takes the last one back, one step to a press however long the key is
 held; from the first step it returns to the commands with what was typed there
 still in the field. The last answer brings the project forward and starts the
-session the way the new-session row of the sessions pane does, and the
-keyboard goes to the new agent.
+session the way a project's new-session button in the sessions pane does,
+and the keyboard goes to the new agent.
 
 <kbd>Escape</kbd> puts the palette away from any step, and so does the chord
 of the list that is up: <kbd>Cmd</kbd><kbd>P</kbd> for go to,
@@ -183,7 +183,7 @@ the cursor only shows while the keyboard is in the pane. A click puts the
 cursor on what was clicked; focusing the pane by key starts it over from the
 session you are in, else your project, or the selected file. Everything in
 the sessions pane but its foot is on that cursor, the order and menu
-buttons on its title row, the field that opens the palette and the
+buttons on its title row, the field that opens go to and the
 new-session button included, the menus' items walked with the arrows while
 one is open. <kbd>Delete</kbd> closes the project or session under the
 cursor, except a session another session started, which only its own × or

@@ -107,7 +107,13 @@ vi.mock("$lib/core", () => ({
     }),
   }),
 }));
-import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
+// The pane starts a session through the same call as the palette, which is
+// watched here while it does what it always does.
+vi.mock("$lib/workspace.svelte", async (original) => {
+  const actual = await original<typeof import("$lib/workspace.svelte")>();
+  return { ...actual, startSession: vi.fn(actual.startSession) };
+});
+import { workspace, reset as resetWorkspace, startSession } from "$lib/workspace.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import {
   reset as resetSessions,
@@ -125,8 +131,10 @@ import { projects, resetProjects, touch } from "$lib/projects.svelte";
 import { palette, resetPalette } from "$lib/palette.svelte";
 import { settings } from "$lib/settings.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
+import { chordFor, describe as describeChord } from "$lib/keys.svelte";
 
 beforeEach(() => {
+  vi.mocked(startSession).mockClear();
   resetRemote();
   resetResume();
   layout.sessions = DEFAULT.sessions;
@@ -290,9 +298,9 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     expect(screen.queryByTestId("agent-tag")).toBeNull();
-    // A new session opens the choice under the project's name, a row per
-    // agent.
-    await fireEvent.click(screen.getByTestId("new-session"));
+    // The project's own new session opens the choice under its name, a row
+    // per agent.
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     const options = screen.getAllByTestId("agent-option");
     expect(options.map((option) => option.dataset.agent)).toEqual([
       "claude-code",
@@ -341,12 +349,22 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     // The new-session button is the fourth stop: the sort and the menu on
-    // the title's row, then the field and the button beside it.
+    // the title's row, then the field and the button beside it. It asks in
+    // the palette, which knows the project with one open and asks for the
+    // agent.
     await fireEvent.keyDown(nav, { key: "Home" });
     for (let step = 0; step < 3; step += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("new-session")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
-    // Open under the project's name, with the cursor on its default.
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("new");
+    expect(palette.steps).toEqual([{ kind: "project", path: "/repo" }]);
+    expect(screen.queryByTestId("agent-choice")).toBeNull();
+    resetPalette();
+
+    // The project's own button opens the choice under its name, with the
+    // cursor on its default.
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     let options = screen.getAllByTestId("agent-option");
     expect(options[0]).toHaveClass("cursor");
     expect(sessions.all).toHaveLength(0);
@@ -366,7 +384,7 @@ describe("SessionsPane", () => {
     expect(sessions.all[0].agent).toBe("codex");
     // The choice sticks: the next choice opens on it, and it is marked.
     expect(sessions.preferred["/repo"]).toBe("codex");
-    await fireEvent.click(screen.getByTestId("new-session"));
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     options = screen.getAllByTestId("agent-option");
     expect(options[1]).toHaveClass("cursor");
     expect(options[1]).toHaveTextContent("last used");
@@ -448,9 +466,9 @@ describe("SessionsPane", () => {
   });
 
   // With that started session on screen, everything that follows the
-  // project on screen follows the starter's: its header is marked, its past
-  // sessions and its row of earlier ones stand under it, and the head's +
-  // opens its choice there, where it is drawn.
+  // project on screen follows the starter's: its header is marked, and its
+  // past sessions and its row of earlier ones stand under it. Its own +
+  // opens the choice there, where it is drawn, and starts in it.
   it("follows the starter's project as the one on screen while its started session is", async () => {
     applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
     workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"), repo("/other", "other"));
@@ -491,7 +509,7 @@ describe("SessionsPane", () => {
     expect(within(section("/starter")).getByTestId("earlier-sessions")).toHaveTextContent("1 earlier session");
     expect(screen.getAllByTestId("past-session")).toHaveLength(1);
 
-    await fireEvent.click(screen.getByTestId("new-session"));
+    await fireEvent.click(within(section("/starter")).getByTestId("project-new-session"));
     const choice = within(section("/starter")).getByTestId("agent-choice");
     expect(within(choice).getAllByTestId("agent-option")[0]).toHaveClass("cursor");
     await fireEvent.click(within(choice).getAllByTestId("agent-option")[1]);
@@ -1220,8 +1238,9 @@ describe("SessionsPane", () => {
     expect(screen.getByTestId("new-session")).toBeDisabled();
   });
 
-  // One new-session button in the head, for the project on screen, and one
-  // in each project's header, which brings that project forward first.
+  // One new-session button in the head, which asks in the palette which
+  // project, and one in each project's header, which brings that project
+  // forward first.
   it("offers a new session from the head and from each project's header", async () => {
     workspace.open.push(repo("/one", "one"), repo("/two", "two"));
     workspace.active = "/one";
@@ -1229,6 +1248,13 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     expect(screen.getAllByTestId("new-session")).toHaveLength(1);
+    await fireEvent.click(screen.getByTestId("new-session"));
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("new");
+    expect(palette.steps).toEqual([]);
+    expect(sessions.all).toHaveLength(0);
+    resetPalette();
+
     const heads = screen.getAllByTestId("project-new-session");
     expect(heads).toHaveLength(2);
     await fireEvent.click(
@@ -1236,6 +1262,35 @@ describe("SessionsPane", () => {
     );
     expect(workspace.active).toBe("/two");
     expect(sessions.all.map((session) => session.project)).toEqual(["/two"]);
+  });
+
+  // A project's + with nothing to choose, and the choice of agent, start
+  // the session through the palette's own call, so the two cannot drift.
+  it("starts a session the way the palette does", async () => {
+    workspace.open.push(repo("/one", "one"), repo("/two", "two"));
+    workspace.active = "/one";
+    touch("/one");
+    touch("/two");
+
+    render(SessionsPane);
+    const plus = (path: string) =>
+      document.querySelector<HTMLElement>(`[data-row="project:${path}"] [data-testid="project-new-session"]`)!;
+    await fireEvent.click(plus("/two"));
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(startSession).toHaveBeenLastCalledWith("/two");
+    expect(Date.now() - projects.used["/two"]).toBeLessThan(1000);
+
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    await tick();
+    await fireEvent.click(plus("/one"));
+    expect(startSession).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getAllByTestId("agent-option")[1]);
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(startSession).toHaveBeenLastCalledWith("/one", "codex", null);
+    expect(sessions.all.map((session) => [session.project, session.agent])).toEqual([
+      ["/two", "claude-code"],
+      ["/one", "codex"],
+    ]);
   });
 
   // Two projects of one name each show the part of the path that tells
@@ -1252,19 +1307,30 @@ describe("SessionsPane", () => {
     expect(names.map((name) => name.querySelector(".prefix")?.textContent)).toEqual(["work/", "spike/"]);
   });
 
-  // The field at the top opens the palette, and the foot holds the
-  // settings and, once there are accounts, whose login the session on
-  // screen runs under.
-  // With no accounts there is nothing for a foot to say: the settings are
-  // in the menu, and under their chord.
-  it("opens the palette from the field and the settings from the menu, with no foot", async () => {
+  // The field at the top opens go to and shows its chord, by a click and
+  // from the keyboard. With no accounts there is nothing for a foot to say:
+  // the settings are in the menu, and under their chord.
+  it("opens go to from the field and the settings from the menu, with no foot", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
+    layout.focus = "sessions";
 
     render(SessionsPane);
     expect(screen.getByTestId("go-to")).toHaveTextContent("Go to session or project");
+    expect(screen.getByTestId("go-to").querySelector("kbd")).toHaveTextContent(describeChord(chordFor("goto")));
+    expect(describeChord(chordFor("goto"))).not.toBe(describeChord(chordFor("palette")));
     await fireEvent.click(screen.getByTestId("go-to"));
     expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("goto");
+    resetPalette();
+    const nav = screen.getByTestId("sessions-nav");
+    await fireEvent.keyDown(nav, { key: "Home" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("go-to")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("goto");
     expect(document.querySelector(".foot")).toBeNull();
     expect(screen.queryByTestId("pane-settings")).toBeNull();
     await fireEvent.click(screen.getByTestId("sessions-menu"));

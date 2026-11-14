@@ -392,8 +392,6 @@ const spawns = (page: Page) => page.evaluate(() => window.__fake.spawns);
 const spawnCount = (page: Page) =>
   page.evaluate(() => window.__fake.spawns.length);
 const killed = (page: Page) => page.evaluate(() => window.__fake.killed);
-/** A running session in the project you are looking at, started if there
-    is none: nothing starts by itself any more. */
 /** The width of the bar the sessions pane draws beside the row under its
     cursor: 3px while the keyboard is in the pane, nothing otherwise. */
 const cursorBar = (page: Page) =>
@@ -401,9 +399,14 @@ const cursorBar = (page: Page) =>
     const row = document.querySelector("[data-testid='sessions-nav'] .cursor");
     return row === null ? null : getComputedStyle(row, "::before").width;
   });
+/** A new session in the project on screen, from the + on its header: it
+    starts, or the choice opens under the project's name. */
+const startHere = (page: Page) =>
+  page.locator("[data-testid='project-head'].on [data-testid='project-new-session']").click();
+/** A running session in the project you are looking at, started if there
+    is none: nothing starts by itself any more. */
 const running = async (page: Page) => {
-  if ((await spawnCount(page)) === 0)
-    await page.getByTestId("new-session").click();
+  if ((await spawnCount(page)) === 0) await startHere(page);
   await expect(page.locator(AGENT)).toContainText("running");
 };
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
@@ -574,7 +577,7 @@ test.describe("one project", () => {
     page,
   }) => {
     await running(page);
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(rows(page)).toHaveCount(2);
 
     await page.keyboard.press(`${MOD}+1`);
@@ -595,7 +598,7 @@ test.describe("one project", () => {
     page,
   }) => {
     await running(page);
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(page.locator(".session.on")).toContainText("session 2");
     await page.keyboard.press(`${MOD}+Shift+ArrowDown`);
     await expect(page.locator(".session.on")).toContainText("session 1");
@@ -809,7 +812,7 @@ test.describe("several sessions in one project", () => {
   test.beforeEach(async ({ page }) => {
     await open(page, { open: [ONE] });
     await running(page);
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(rows(page)).toHaveCount(2);
   });
 
@@ -976,7 +979,7 @@ test.describe("working, and waiting for you", () => {
     await running(page);
     // A line sent to the first: from here its output can be work.
     await page.keyboard.press("Enter");
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(rows(page)).toHaveCount(2);
     // Looking at the second; the first works behind it.
   });
@@ -1216,7 +1219,7 @@ test.describe("several projects", () => {
     await expect.poll(() => buffer(page)).toContain("work in one");
 
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect.poll(() => spawnCount(page)).toBe(2);
     expect(await killed(page)).toEqual([]);
 
@@ -1336,7 +1339,7 @@ test.describe("several projects", () => {
   }) => {
     await page.setViewportSize({ width: 1440, height: 440 });
     for (let n = 1; n <= 12; n += 1) {
-      await page.getByTestId("new-session").click();
+      await startHere(page);
       await expect(rows(page)).toHaveCount(n);
     }
     const pane = (await page.locator(SESSIONS).boundingBox())!;
@@ -1393,7 +1396,7 @@ test.describe("several projects", () => {
   }) => {
     await running(page);
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect.poll(() => spawnCount(page)).toBe(2);
 
     const head = page.locator(`[data-row="project:${ONE}"]`);
@@ -1417,7 +1420,7 @@ test.describe("several projects", () => {
     await page.getByTestId("sessions-menu").click();
     await page.getByTestId("open-project").click();
     await expect(page.locator(SESSIONS)).toContainText("three");
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect.poll(() => spawnCount(page)).toBe(2);
     expect((await spawns(page)).at(-1)!.project).toBe("/home/ada/dev/three");
   });
@@ -1544,7 +1547,7 @@ test.describe("with codex installed too", () => {
   });
 
   test("offers both agents and starts the one you pick", async ({ page }) => {
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     const options = page.getByTestId("agent-option");
     await expect(options).toHaveCount(2);
     await expect(options.nth(0)).toHaveText(/Claude Code/);
@@ -1562,7 +1565,7 @@ test.describe("with codex installed too", () => {
   test("learns a codex session's id and name, and lists it to resume later", async ({
     page,
   }) => {
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await page.getByTestId("agent-option").nth(1).click();
     await running(page);
     await page.evaluate(() => {
@@ -1698,7 +1701,7 @@ test.describe("when things are missing", () => {
     page,
   }) => {
     await open(page, { open: [ONE], failSpawn: "no pty available" });
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(page.getByTestId("agent-status")).toContainText(
       "no pty available",
     );
@@ -1721,7 +1724,7 @@ test.describe("the palettes", () => {
   test.beforeEach(async ({ page }) => {
     await open(page, { open: [ONE, TWO] });
     await running(page);
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(rows(page)).toHaveCount(2);
   });
 
@@ -2427,6 +2430,67 @@ test.describe("a new session from the palette", () => {
     await expect.poll(() => writtenTo(page, "pty-1")).toBe("y");
   });
 
+  // The field at the head of the sessions pane is go to, with go to's chord
+  // as the commands list it.
+  test("opens go to from the sessions pane's field, which shows its chord", async ({ page }) => {
+    await open(page, { open: [ONE, TWO] });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("go to a session");
+    await expect(entries(page)).toHaveCount(1);
+    const chord = (await entries(page).first().locator("kbd").textContent())!.trim();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect(page.getByTestId("go-to").locator("kbd")).toHaveText(chord);
+
+    await page.getByTestId("go-to").click();
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "goto");
+    await expect(field(page)).toBeFocused();
+  });
+
+  // The + beside it is the palette's New session: with two projects open
+  // it asks which, and starts in the one picked with the keyboard in the
+  // new agent.
+  test("asks which project from the sessions pane's +, and starts there", async ({ page }) => {
+    await open(page, { open: [ONE, TWO] });
+    await page.getByTestId("new-session").click();
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "new");
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveAttribute("placeholder", "Which project");
+    await expect(entries(page)).toHaveCount(2);
+    await page.keyboard.type("tw");
+    await expect(entries(page)).toHaveCount(1);
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0].project).toBe(TWO);
+    await expect(page.locator(".project.on")).toContainText("two");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    await page.keyboard.type("y");
+    await expect.poll(() => writtenTo(page, "pty-1")).toBe("y");
+  });
+
+  // With one project and one agent there is nothing to ask: the + starts
+  // the session at once, and the palette never shows.
+  test("starts at once from the sessions pane's + when there is nothing to ask", async ({ page }) => {
+    await open(page, { open: [ONE] });
+    await page.evaluate(() => {
+      const seen = window as unknown as { __paletteShown: boolean };
+      seen.__paletteShown = false;
+      new MutationObserver(() => {
+        const scrim = document.querySelector("[data-testid='palette-scrim']");
+        if (scrim !== null && !scrim.classList.contains("leaving")) seen.__paletteShown = true;
+      }).observe(document.body, { childList: true, subtree: true, attributes: true });
+    });
+    await page.getByTestId("new-session").click();
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0].project).toBe(ONE);
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __paletteShown: boolean }).__paletteShown)).toBe(false);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    await page.keyboard.type("x");
+    await expect.poll(() => writtenTo(page, "pty-1")).toBe("x");
+  });
+
   test("starts in the project on screen from its own command", async ({ page }) => {
     await open(page, { open: [ONE, TWO] });
     await page.keyboard.press(COMMANDS);
@@ -2528,7 +2592,7 @@ test.describe("a new session from the palette", () => {
 
   test("Escape closes it from any step and the keyboard goes back", async ({ page }) => {
     await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex" });
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await page.getByTestId("agent-option").first().click();
     await expect(page.locator(AGENT)).toContainText("running");
     await page.keyboard.press(COMMANDS);
@@ -2591,7 +2655,7 @@ test.describe("zoom", () => {
       .poll(() => page.evaluate(() => window.__fake.resizes.at(-1)))
       .toMatchObject({ cols: after.cols, rows: after.rows });
 
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     await expect(rows(page)).toHaveCount(2);
     const second = await visibleKey(page);
     expect(second).not.toBe(first);
@@ -2605,7 +2669,7 @@ test.describe("zoom", () => {
 
   test("a zoom while the session is starting reaches the pty once, with the final grid", async ({ page }) => {
     await open(page, { open: [ONE], spawnDelay: 600 });
-    await page.getByTestId("new-session").click();
+    await startHere(page);
     const key = await visibleKey(page);
     await page.keyboard.press(`${MOD}+=`);
     await page.keyboard.press(`${MOD}+=`);

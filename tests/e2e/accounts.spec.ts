@@ -129,10 +129,10 @@ test.describe("starting a session under an account", () => {
   }) => {
     await expect(page.getByTestId("project-account")).toHaveText("Work");
 
-    // With one agent on the machine the row still opens into the choice,
+    // With one agent on the machine the project's + still opens the choice,
     // since there is an account to choose. It starts on the project's
     // account, and the agent's directory reaches the spawn.
-    await page.getByTestId("new-session").click();
+    await page.getByTestId("project-new-session").click();
     const choice = page.getByTestId("account-choice");
     await expect(choice).toBeVisible();
     await expect(page.getByTestId("agent-option")).toHaveCount(1);
@@ -148,7 +148,7 @@ test.describe("starting a session under an account", () => {
     await expect(page.getByTestId("pane-account")).toHaveText("Work");
 
     // Switched in the account control, for this one session only.
-    await page.getByTestId("new-session").click();
+    await page.getByTestId("project-new-session").click();
     await page
       .locator('[data-testid="account-option"][data-account=""]')
       .click();
@@ -157,14 +157,14 @@ test.describe("starting a session under an account", () => {
     expect((await spawns(page))[1].configDir).toBeUndefined();
     await expect(page.getByTestId("account-readout")).toHaveText("account: Default");
     await expect(page.getByTestId("pane-account")).toHaveText("Default");
-    await page.getByTestId("new-session").click();
+    await page.getByTestId("project-new-session").click();
     await expect(
       page.locator('[data-testid="account-option"][data-account="Work"]'),
     ).toHaveAttribute("aria-checked", "true");
   });
 
   test("walks the accounts with the arrows", async ({ page }) => {
-    await page.getByTestId("new-session").click();
+    await page.getByTestId("project-new-session").click();
     await page.getByTestId("sessions-nav").focus();
     await page.keyboard.press("ArrowLeft");
     await expect(

@@ -25,10 +25,11 @@ The pane's title row carries two small buttons at its end: the order the
 projects are listed in, and a menu with Open project, Open remote project,
 for a folder on another machine, New orchestrator session and Settings; see
 [remote](remote.md) and [orchestrator](orchestrator.md). Under it sits a
-field, `Go to session or project` with the palette's chord, which opens the
-[palette](focus-model.md#the-command-palette), and beside it a button in the
-accent that starts a session in the project on screen. With no project
-open, the pane says so and offers Open project there as well.
+field, `Go to session or project` with the chord of go to, which opens
+[go to](focus-model.md#the-palettes), and beside it a button in the accent
+that asks for a new session in the palette, which project first when more
+than one is open, as the palette's New session does. With no project open,
+the pane says so and offers Open project there as well.
 
 Each project starts with a header: its name, the account it runs under as
 a tag when that is not the agents' own, and a button that starts a session
@@ -39,8 +40,8 @@ click on the header opens it too. Closing a project stops everything
 running in it. The header stays in view while the project's rows
 scroll under it, until the next project's pushes it out, and a hairline
 separates one project from the next. With more than one agent installed, a
-new session opens the choice in place under the project's name, a row per
-agent; see [agents](adapters.md).
+new session from a project's own button or menu opens the choice in place
+under the project's name, a row per agent; see [agents](adapters.md).
 
 Once there are accounts to tell apart, the foot of the pane names the one
 the session on screen runs under, with a button that opens the settings

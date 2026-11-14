@@ -7,6 +7,7 @@ import {
   projectLabel,
   reset,
   restore,
+  startSession,
   workspace,
 } from "$lib/workspace.svelte";
 import { loadUsed, projects, resetProjects } from "$lib/projects.svelte";
@@ -382,5 +383,28 @@ describe("closing a project", () => {
     workspace.active = "/one";
     close("/one");
     expect(fake.state.tabsClosed).toEqual([{ kind: "project", path: "/one" }]);
+  });
+});
+
+describe("starting a session", () => {
+  beforeEach(() => {
+    reset();
+    resetSessions();
+    resetProjects();
+  });
+
+  // Starting one is the user using the project, from the pane or the
+  // palette alike.
+  it("counts its project as used", () => {
+    workspace.open.push(
+      { path: "/a", name: "a", repository: "/a", isGit: true },
+      { path: "/b", name: "b", repository: "/b", isGit: true },
+    );
+    workspace.active = "/a";
+    startSession("/b");
+    expect(workspace.active).toBe("/b");
+    expect(sessions.all.map((session) => session.project)).toEqual(["/b"]);
+    expect(Date.now() - projects.used["/b"]).toBeLessThan(1000);
+    expect(projects.used["/a"]).toBeUndefined();
   });
 });

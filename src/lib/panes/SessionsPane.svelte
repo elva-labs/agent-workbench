@@ -27,7 +27,15 @@
     type HistoryEntry,
     type Session,
   } from "$lib/sessions.svelte";
-  import { activate, close as closeProject, goTo, pick, projectLabel, workspace } from "$lib/workspace.svelte";
+  import {
+    activate,
+    close as closeProject,
+    goTo,
+    pick,
+    projectLabel,
+    startSession,
+    workspace,
+  } from "$lib/workspace.svelte";
   import {
     LABEL,
     childrenOf,
@@ -54,7 +62,7 @@
   } from "$lib/layout.svelte";
   import { lastUsed, onScreen, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
-  import { openPalette } from "$lib/palette.svelte";
+  import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import { tick } from "svelte";
@@ -80,7 +88,7 @@
       used last and the account the project runs under. */
   function offer(path: string) {
     if (!choosable) {
-      start(path, defaultAgent(path));
+      startSession(path);
       return;
     }
     choosing = path;
@@ -90,7 +98,7 @@
 
   function startWith(path: string, agent: AgentId) {
     choosing = null;
-    start(path, agent, picked);
+    startSession(path, agent, picked);
   }
 
   /** The accounts the control offers, the agents' own first. */
@@ -383,14 +391,17 @@
     item.run();
   }
 
-  /** A new session in the project on screen, as its own button would. */
-  function newHere() {
-    if (screenProject !== null) offer(screenProject);
-  }
-
-  /** The button beside the go-to field. */
-  function newFromHead() {
-    newHere();
+  /** The button beside the go-to field: the palette's New session, which
+      asks which project when more than one is open, then whatever else
+      there is to choose. With nothing to ask, the session starts at once. */
+  async function newFromHead() {
+    if (!isReady() || workspace.open.length === 0) return;
+    openCommands();
+    const outcome = beginNew(null);
+    if (outcome.type === "stay") return;
+    closePalette();
+    await tick();
+    if (outcome.type === "close") outcome.then();
   }
 
   /** A project's own new-session button: the project comes forward, and
@@ -587,7 +598,7 @@
     const out: Row[] = [
       { id: "sort", run: openSort },
       { id: "menu", run: openMenu },
-      { id: "go", run: openPalette },
+      { id: "go", run: openGoTo },
       { id: "new", run: newFromHead },
     ];
     if (workspace.open.length === 0) out.push({ id: "open", run: () => void pick() });
@@ -719,12 +730,6 @@
   function resume(path: string, transcript: HistoryEntry) {
     touch(path);
     create(path, transcript.id, transcript.agent, transcript.cwd ?? null, null, null, transcript.account);
-    focusPane("agent");
-  }
-
-  function start(path: string, agent: AgentId, account: string | null = accountOf(path)) {
-    touch(path);
-    create(path, null, agent, null, null, null, account);
     focusPane("agent");
   }
 
@@ -1524,20 +1529,21 @@
     onfocusout={onFocusout}
     data-testid="sessions-nav"
   >
-  <!-- The way to any session or project, which is the palette, and a new
-     session, on the same cursor as the rows. -->
+  <!-- The way to any session or project, which is the palette's go to, and
+     a new session, asked for in the palette, on the same cursor as the
+     rows. -->
   <div class="head">
-    <button class="go" class:cursor={current === "go"} tabindex="-1" onclick={openPalette} data-row="go" data-testid="go-to">
+    <button class="go" class:cursor={current === "go"} tabindex="-1" onclick={openGoTo} data-row="go" data-testid="go-to">
       <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" /><path d="m10.2 10.2 3 3" /></svg>
       <span class="go-text">Go to session or project</span>
-      <kbd>{describe(chordFor("palette"))}</kbd>
+      <kbd>{describe(chordFor("goto"))}</kbd>
     </button>
     <button
       class="add"
       class:cursor={current === "new"}
       tabindex="-1"
       onclick={newFromHead}
-      disabled={screenProject === null || !isReady()}
+      disabled={workspace.open.length === 0 || !isReady()}
       aria-label="New session"
       title="New session"
       data-row="new"
