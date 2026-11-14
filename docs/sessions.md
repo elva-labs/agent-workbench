@@ -383,8 +383,8 @@ picking one where one is all it takes, with room for the user's own words
 where it takes them; a secret answer is typed hidden. Requests are answered
 one at a time, the oldest first, and the dock says how many more wait. A
 permission the agent withdraws before it is answered says so on the step
-that asked for it, or in a note where no step is known, as a question that
-settles itself does. When the dock goes by
+that asked for it, or where no step is known in a note that says what it
+was for, as a question that settles itself does. When the dock goes by
 itself while it has the keyboard, the keyboard goes back to the composer.
 
 Every text that comes from an agent, a tool or a server is drawn by one

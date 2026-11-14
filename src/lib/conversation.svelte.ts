@@ -11,6 +11,7 @@ import type {
   IntegratedUsage,
   PermissionChoice,
 } from "$lib/core";
+import { asks, phraseText } from "$lib/thread";
 
 /**
  * One integrated session's conversation, built from the core's events and
@@ -948,7 +949,7 @@ export class Conversation {
           kind: "note",
           key: "",
           tone: "info",
-          text: "The agent withdrew a request for permission before it was answered.",
+          text: `The agent withdrew its request to ${phraseText(asks(request.asked))} before it was answered.`,
           at: now,
         });
     }

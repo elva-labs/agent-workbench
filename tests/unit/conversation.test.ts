@@ -361,7 +361,7 @@ describe("a conversation, from the core's events", () => {
     expect(conversation.turns[1].outcome).toBe("interrupted");
     // With no step to mark, a note says it was withdrawn.
     expect(conversation.entries.filter((entry) => entry.kind === "note").map((entry) => entry.kind === "note" && entry.text)).toEqual([
-      "The agent withdrew a request for permission before it was answered.",
+      "The agent withdrew its request to use Bash to run rm -rf /tmp/x before it was answered.",
     ]);
   });
 
