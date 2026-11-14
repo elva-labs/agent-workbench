@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import Pane from "$lib/components/Pane.svelte";
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
   import {
@@ -325,6 +326,13 @@
       disown(workspace.active, id.slice("past:".length));
     }
   }
+
+  // The question about closing a session or a project is answered in the
+  // pane: when the pane folds, a peek put away above all, it goes, and
+  // nothing is closed.
+  $effect(() => {
+    if (folded && editor.closing !== null) untrack(closingCancel);
+  });
 
   /** Closes a session, asking first when tabs beside it hold the only
       copy of unsaved edits. */
