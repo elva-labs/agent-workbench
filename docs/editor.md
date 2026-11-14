@@ -22,8 +22,10 @@ Each session keeps its own tabs, as it keeps its viewer, and switching
 sessions shows the tabs that session had. A file open beside two sessions is
 one buffer, so an edit made beside one is there beside the other.
 
-The tab in front is always in view. Tabs narrow before the row overflows,
-and an edge with tabs past it fades. The × on a tab, a middle-click, Close
+The tab in front is always in view and keeps its whole name. The others
+show their close button only under the pointer and narrow before the row
+overflows, no further than a short name; past that the row scrolls, and an
+edge with tabs past it fades. The × on a tab, a middle-click, Close
 Tab in the File menu or <kbd>Cmd</kbd><kbd>W</kbd> closes it, and the tab
 beside it comes to the front.
 
@@ -39,7 +41,9 @@ Find opens a bar over the editor: the text, how many matches it has,
 Previous, Next and All, and whether case, whole words or a regular
 expression count. <kbd>Enter</kbd> goes to the next match,
 <kbd>Shift</kbd><kbd>Enter</kbd> to the one before, and <kbd>Esc</kbd>
-closes the bar. There is nothing to replace with.
+closes the bar. There is nothing to replace with. The matches are counted
+as the text is typed, and once typing pauses in a large file or in the file
+itself.
 
 The foot has the line and column, what the file is written in by its name,
 and whether it is saved.
@@ -96,12 +100,19 @@ without saving apart:
 - closing a tab, the question over the editor about that tab, put away if
   another tab comes to the front;
 - closing a session or a project whose tabs hold edits no other session has
-  open, the question in the sessions pane;
-- closing the window or quitting the app, the question over the editor,
-  which comes forward for it, naming every unsaved file.
+  open, the question in the sessions pane, which goes, closing nothing, if
+  the pane folds;
+- closing the window or quitting the app, the question over the whole
+  window, whatever the panes show, naming every unsaved file.
 
-If the window cannot answer, the close or the quit goes through rather than
-keep the window open. The system's own ways of ending the app, logging out
+When a save in Save and close or Save all cannot be made, because the file
+changed on disk or could not be written, nothing is closed: that file comes
+forward in the editor with its bar or why, and the status bar says what was
+stopped.
+
+The core takes the window's question as heard only once it is drawn; if it
+is not drawn soon, the close or the quit goes through rather than keep the
+window open. The system's own ways of ending the app, logging out
 or Quit in the Dock's menu, end it without asking. A session that goes
 without the user closing it, such as one an orchestrator stopped, hands any
 tab with the only copy of unsaved edits to the tabs shown next.
@@ -110,11 +121,14 @@ tab with the only copy of unsaved edits to the tabs shown next.
 
 On macOS a File menu holds New File, Save and Close Tab, each showing and
 answering the chord its action has in the [chord table](focus-model.md):
-move a chord there and the menu's moves with it. Close Tab with no tab in
-front, or in agent mode, closes the window, as the chord does in every Mac
-window. Close Window in the Window menu is on
-<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>. On Windows and Linux the menu
-button at the top left holds the same three items.
+move a chord there and the menu's moves with it. Save is greyed out without
+a file in front to save, New File without a project. Close Tab with no tab
+in front, or in agent mode, closes the window, as its chord does in every
+Mac window. Close Window in the Window menu is on
+<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>, and Settings shows the chord the
+table gives it; when the table gives Shift+Cmd+W to an action, Close Window
+shows no chord. On Windows and Linux the menu button at the top left holds
+the same three items.
 
 ## New files and the row menu
 
@@ -126,7 +140,9 @@ until the cursor has been put somewhere or a file chosen. Enter makes the
 file and opens it, Escape drops the field, and slashes in the name make the
 folders on the way. A click elsewhere makes the file when the name will do
 and keeps the field with why when it will not; switching to another app
-leaves the field as it is.
+leaves the field as it is, and so does a click away from a new folder's
+name. The field stays as it is while the agent adds or removes files
+around it.
 
 The tree lists what git lists and git lists no empty folder, so naming a new
 folder shows it open in the tree with a field for its first file, and the

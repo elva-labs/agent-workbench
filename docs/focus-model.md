@@ -230,11 +230,13 @@ selects to the end of the file there rather than stepping sessions, and
 Save and close tab work from anywhere in editor mode but a terminal: from
 the tree as well as the editor. A terminal keeps their chords, since on
 Windows and Linux <kbd>Ctrl</kbd><kbd>S</kbd> and <kbd>Ctrl</kbd><kbd>W</kbd>
-are the process's. On macOS a chord the page lets through reaches the
-[File menu](editor.md#the-file-menu), whose items carry the same chords: there
-<kbd>Cmd</kbd><kbd>S</kbd> saves from a terminal too, and
-<kbd>Cmd</kbd><kbd>W</kbd> with no tab to close, or in agent mode, closes the
-window. Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>.
+are the process's. On macOS <kbd>Cmd</kbd><kbd>W</kbd> with no tab to close,
+in editor mode or out of it, closes the window, and a chord the page lets
+through reaches the [File menu](editor.md#the-file-menu), whose items carry
+the same chords, so <kbd>Cmd</kbd><kbd>S</kbd> saves from a terminal too.
+Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>. With the
+keyboard in a browser tab's page, the two are the app's only in editor
+mode; outside it they reach the menu as from anywhere else.
 
 <kbd>Esc</kbd> in the tree or the sessions pane hands the keyboard back to
 the editor, where typing resumes in this mode, and
