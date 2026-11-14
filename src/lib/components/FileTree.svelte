@@ -32,9 +32,13 @@
     value: string;
     problem: string | null;
     label: string;
+    /** What goes in the empty field, saying what it is for. */
+    placeholder: string;
     onInput: (value: string) => void;
     onCommit: () => void;
     onCancel: () => void;
+    /** The field lost the keyboard. */
+    onLeave: () => void;
   }
 
   interface Props {
@@ -53,7 +57,8 @@
     field?: NameField | null;
     /** A right-click on a row, or on the tree below its rows with no path. */
     onMenu?: (path: string | null, dir: boolean, x: number, y: number) => void;
-    /** The row the cursor is on, whenever it moves. */
+    /** The row the cursor is on, once the user has moved it, and whenever
+        they move it after. */
     onCursorRow?: (row: { path: string; dir: boolean } | null) => void;
     /** A row marked while a menu for it is open. */
     marked?: string | null;
@@ -115,6 +120,22 @@
     if (cursor > total - 1) cursor = Math.max(0, total - 1);
   });
 
+  // A row going from under the cursor leaves it on the row that took its
+  // place in the tree, or the last row of the tree, rather than letting it
+  // run on into the sections beneath.
+  let cursorPath: string | null = null;
+  $effect(() => {
+    const now = rows;
+    untrack(() => {
+      if (cursorPath === null || now.some((row) => row.node.path === cursorPath)) return;
+      if (cursor >= now.length && now.length > 0) cursor = now.length - 1;
+    });
+  });
+  $effect(() => {
+    const row = cursor < rows.length ? rows[cursor] : undefined;
+    cursorPath = row?.node.path ?? null;
+  });
+
   /** The tree's row under the cursor, none when the cursor is beyond. */
   let active = $derived(cursor < rows.length ? rows[cursor] : undefined);
   /** Which of the rows beyond the cursor is on, -1 in the tree. */
@@ -170,16 +191,25 @@
     return { after: end - 1, depth: shown.depth + 1, prefix: `${rest}/`, virtual: null };
   });
 
-  // Tells whoever asked where the cursor is, for where a new file goes.
+  /** The user has put the cursor somewhere: by a key, a click or the menu.
+      Until then it sits on the first row by default and says nothing. */
+  let touched = $state(false);
+
+  // Tells whoever asked where the user put the cursor, for where a new
+  // file goes.
   $effect(() => {
     const row = active;
+    if (!touched) return;
     untrack(() => onCursorRow?.(row === undefined ? null : { path: row.node.path, dir: row.node.dir }));
   });
 
   function menu(e: MouseEvent, row: Row | null) {
     if (onMenu === undefined) return;
     e.preventDefault();
-    if (row !== null) cursor = rows.indexOf(row);
+    if (row !== null) {
+      cursor = rows.indexOf(row);
+      touched = true;
+    }
     root.focus();
     onMenu(row?.node.path ?? null, row?.node.dir ?? true, e.clientX, e.clientY);
   }
@@ -225,6 +255,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) touched = true;
     if (!active) {
       if (beyond === undefined || beyondAt < 0) return;
       // On a row beyond the tree: the arrows still walk, Home comes back
@@ -329,7 +360,8 @@
           use:takeKeys
           oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
           onkeydown={fieldKeys}
-          onblur={() => field?.onCancel()}
+          onblur={() => field?.onLeave()}
+          placeholder={field?.placeholder}
           aria-label={field?.label}
           aria-invalid={field?.problem !== null}
           spellcheck="false"
@@ -381,6 +413,7 @@
       style:padding-left="{8 + row.depth * 13}px"
       onclick={() => {
         cursor = rows.indexOf(row);
+        touched = true;
         activate(node);
       }}
       ondblclick={() => {
@@ -403,7 +436,7 @@
             use:takeKeys
             oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
             onkeydown={fieldKeys}
-            onblur={() => field?.onCancel()}
+            onblur={() => field?.onLeave()}
             onclick={(e) => e.stopPropagation()}
             aria-label={field.label}
             aria-invalid={field.problem !== null}
@@ -538,26 +571,36 @@
     background: none;
   }
 
+  /* As tall as the row it stands in: the ring is drawn outside the line,
+     so nothing below moves when the field opens. */
   .field-box {
     display: flex;
     align-items: baseline;
     min-width: 0;
     grid-column: 2 / -1;
     padding: 0 6px;
+    margin: 0 -6px;
     border-radius: var(--radius-sm);
     background: var(--field-bg);
     box-shadow: 0 0 0 1.5px var(--accent);
+    line-height: inherit;
   }
 
   .field-box input {
     flex: 1;
     min-width: 0;
+    height: 1.5em;
     padding: 0;
     border: 0;
     background: none;
     font: inherit;
+    line-height: inherit;
     color: var(--ink);
     outline: none;
+  }
+
+  .field-box input::placeholder {
+    color: var(--ink-3);
   }
 
   .prefix {

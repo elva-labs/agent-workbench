@@ -8,6 +8,7 @@ import {
   fileOps,
   newFile,
   newFolder,
+  nameLeft,
   pathFor,
   rename,
   resetFileOps,
@@ -41,7 +42,7 @@ vi.mock("$lib/core", () => ({
     },
     async fileRead(_root: string, file: string) {
       const text = disk.get(file);
-      if (text === undefined) throw new Error(`${file} is not there`);
+      if (text === undefined) throw new Error(`${file} does not exist`);
       return { text, stamp: `s:${text}` };
     },
     async fileWrite(root: string, file: string, text: string, stamp: string | null) {
@@ -52,6 +53,8 @@ vi.mock("$lib/core", () => ({
     },
     async pathRename(root: string, from: string, to: string) {
       calls.push(["rename", root, from, to]);
+      if (from === "vendor")
+        throw new Error("vendor holds another repository or a worktree, with a .git inside, and is not moved from here");
       for (const path of [...disk.keys()]) {
         if (path === from || path.startsWith(`${from}/`)) {
           disk.set(`${to}${path.slice(from.length)}`, disk.get(path)!);
@@ -61,6 +64,8 @@ vi.mock("$lib/core", () => ({
     },
     async pathDelete(root: string, path: string) {
       calls.push(["delete", root, path]);
+      if (path === "vendor")
+        throw new Error("vendor holds another repository or a worktree, with a .git inside, and is not deleted from here");
       for (const candidate of [...disk.keys()]) {
         if (candidate === path || candidate.startsWith(`${path}/`)) disk.delete(candidate);
       }
@@ -112,6 +117,11 @@ describe("a name as a path", () => {
 });
 
 describe("a new file", () => {
+  it("goes at the top until the user has put the cursor somewhere or chosen a file", () => {
+    newFile();
+    expect(fileOps.naming).toEqual({ kind: "file", folder: null });
+  });
+
   it("goes in the folder the cursor is in", () => {
     fileOps.cursor = { path: "src/lib/b.rs", dir: false };
     newFile();
@@ -137,6 +147,25 @@ describe("a new file", () => {
     expect(fileOps.problem).toBe("Something is already at docs/a.md.");
     expect(fileOps.naming).toEqual({ kind: "file", folder: "docs" });
     expect(disk.get("docs/a.md")).toBe("a\n");
+  });
+
+  it("is made when the field loses the keyboard with a name that will do", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    newFile("docs");
+    setName("b.md");
+    nameLeft();
+    await settle();
+    expect(calls).toContainEqual(["write", "/one", "docs/b.md", "", null]);
+  });
+
+  it("stays with why when the field loses the keyboard with a name that will not do", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    newFile("docs");
+    setName("../b.md");
+    nameLeft();
+    await settle();
+    expect(fileOps.naming).toEqual({ kind: "file", folder: "docs" });
+    expect(fileOps.problem).toBe("A name cannot step out of its folder.");
   });
 
   it("is dropped on Escape, and on Enter with nothing typed", async () => {
@@ -211,8 +240,8 @@ describe("deleting", () => {
   it("asks first, saying what goes", () => {
     askDelete("src/lib", true);
     expect(deleteQuestion()).toEqual({
-      question: "Delete src/lib and everything in it?",
-      detail: "The folder and all 2 files in it are deleted from the disk, not moved to the trash.",
+      question: "Delete src/lib and all 2 files?",
+      detail: "Deleted from disk, not moved to the Trash.",
     });
     askDelete("docs/a.md", false);
     expect(deleteQuestion()?.question).toBe("Delete docs/a.md?");
@@ -230,8 +259,46 @@ describe("deleting", () => {
   });
 });
 
+describe("a name field when the window loses the keyboard", () => {
+  it("stays as it is, to come back to", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    newFile("docs");
+    setName("half");
+    nameLeft();
+    await settle();
+    expect(calls).toEqual([]);
+    expect(fileOps.naming).toEqual({ kind: "file", folder: "docs" });
+    expect(fileOps.name).toBe("half");
+  });
+});
+
+describe("what the core refuses", () => {
+  it("says why a delete was refused, over the tree", async () => {
+    askDelete("vendor", true);
+    await confirmDelete();
+    expect(fileOps.failed).toBe(
+      "Could not delete vendor: vendor holds another repository or a worktree, with a .git inside, and is not deleted from here.",
+    );
+  });
+
+  it("says why a rename was refused, under its field", async () => {
+    rename("vendor", true);
+    setName("third-party");
+    await commitName();
+    expect(fileOps.problem).toBe(
+      "vendor holds another repository or a worktree, with a .git inside, and is not moved from here",
+    );
+    expect(fileOps.naming).toEqual({ kind: "rename", path: "vendor", dir: true });
+  });
+});
+
 describe("showing a file in the file manager", () => {
   it("is named for the platform", () => {
     expect(["Reveal in Finder", "Show in Explorer", "Show in file manager"]).toContain(revealLabel());
   });
 });
+
+async function settle() {
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}

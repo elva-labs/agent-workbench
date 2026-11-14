@@ -54,17 +54,22 @@ export const fileOps = $state({
   /** A folder named but not made yet: the tree shows it until its first
       file makes it, or Escape drops it. */
   pending: null as string | null,
-  /** The row the tree's cursor is on, for where a new file goes. */
+  /** The row the user put the tree's cursor on, for where a new file goes;
+      null until they have moved it. */
   cursor: null as { path: string; dir: boolean } | null,
   /** The menu a right-click on a row opens, and where. A null path is the
       tree itself, below its rows. */
   menu: null as { path: string | null; dir: boolean; x: number; y: number } | null,
   /** The question before a delete. */
   deleting: null as { path: string; dir: boolean; files: number; unsaved: number } | null,
+  /** Why the last delete could not be made, over the tree until the next
+      change. */
+  failed: null as string | null,
 });
 
 /** The folder the cursor is in: the folder under it, or the one the file
-    under it is in, else the top. */
+    under it is in. Until the user has put the cursor somewhere or chosen a
+    file, the top. */
 function cursorFolder(): string | null {
   const at = fileOps.cursor ?? (files.selected === null ? null : { path: files.selected, dir: false });
   if (at === null) return null;
@@ -80,6 +85,7 @@ function openFolder(folder: string | null) {
 function begin(naming: Naming, name = "") {
   fileOps.menu = null;
   fileOps.deleting = null;
+  fileOps.failed = null;
   fileOps.naming = naming;
   fileOps.name = name;
   fileOps.problem = null;
@@ -118,6 +124,16 @@ export function rename(path: string, dir: boolean) {
 export function setName(name: string) {
   fileOps.name = name;
   fileOps.problem = null;
+}
+
+/** The field lost the keyboard to something else in the window: a name
+    that will do is made or applied, as Enter would; one that will not
+    stays in the field with why. Losing it to another app keeps the field
+    as it is, to come back to. */
+export function nameLeft() {
+  if (fileOps.naming === null || fileOps.busy) return;
+  if (typeof document !== "undefined" && !document.hasFocus()) return;
+  void commitName();
 }
 
 /** Escape: the field goes, and a folder named for it with it. */
@@ -250,6 +266,7 @@ export function askDelete(path: string, dir: boolean) {
   if (root === null) return;
   fileOps.menu = null;
   fileOps.naming = null;
+  fileOps.failed = null;
   fileOps.deleting = { path, dir, files: filesUnder(path, dir), unsaved: unsavedUnder(root, path) };
 }
 
@@ -261,14 +278,14 @@ export function deleteQuestion(): { question: string; detail: string } | null {
   const unsaved =
     asked.unsaved === 0
       ? ""
-      : ` ${asked.unsaved === 1 ? "An open file has" : `${asked.unsaved} open files have`} unsaved edits that go too.`;
+      : ` ${asked.unsaved === 1 ? "Unsaved edits in 1 open file go" : `Unsaved edits in ${asked.unsaved} open files go`} too.`;
   if (!asked.dir) {
-    return { question: `Delete ${name}?`, detail: `It is deleted from the disk, not moved to the trash.${unsaved}` };
+    return { question: `Delete ${name}?`, detail: `Deleted from disk, not moved to the Trash.${unsaved}` };
   }
-  const count = asked.files === 1 ? "the 1 file" : `all ${asked.files} files`;
+  const count = asked.files === 1 ? "its 1 file" : `all ${asked.files} files`;
   return {
-    question: `Delete ${name} and everything in it?`,
-    detail: `The folder and ${count} in it are deleted from the disk, not moved to the trash.${unsaved}`,
+    question: `Delete ${name} and ${count}?`,
+    detail: `Deleted from disk, not moved to the Trash.${unsaved}`,
   };
 }
 
@@ -285,7 +302,8 @@ export async function confirmDelete() {
   try {
     await core().pathDelete(root, asked.path);
   } catch (error) {
-    say(`Could not delete ${asked.path}: ${reason(error)}`);
+    fileOps.failed = `Could not delete ${asked.path}: ${reason(error)}.`;
+    editorFocusToTree();
     return;
   }
   deleted(root, asked.path);
@@ -331,6 +349,7 @@ export async function revealInFiles(path: string) {
 
 /** Test seam. */
 export function resetFileOps() {
+  fileOps.failed = null;
   fileOps.naming = null;
   fileOps.name = "";
   fileOps.problem = null;

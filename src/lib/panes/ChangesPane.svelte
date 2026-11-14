@@ -11,6 +11,7 @@
     deleteQuestion,
     fileOps,
     newFile,
+    nameLeft,
     newFolder,
     openMenu,
     setName,
@@ -21,7 +22,7 @@
   import SearchResults from "$lib/components/SearchResults.svelte";
   import EditorColumn from "$lib/components/EditorColumn.svelte";
   import TabRow from "$lib/components/TabRow.svelte";
-  import { editor, keep as keepTab, keyOf, openFile, unsavedAt } from "$lib/editor.svelte";
+  import { diskChanged, editor, keep as keepTab, keyOf, openFile, unsavedAt } from "$lib/editor.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import { onMount, untrack } from "svelte";
@@ -469,7 +470,11 @@
     // A file the viewer shows from outside the tree, or one the tree
     // watcher ignores, changed: the viewer reads it again.
     core()
-      .onShownChanged(() => shownChanged())
+      .onShownChanged((paths) => {
+        shownChanged();
+        // The editor's open files are among the shown ones.
+        diskChanged(paths);
+      })
       .then((unlisten) => offs.push(unlisten));
     return () => offs.forEach((off) => off());
   });
@@ -534,9 +539,18 @@
             : naming.kind === "first"
               ? `Name of the first file in ${naming.folder}`
               : "Name of the new file",
+      placeholder:
+        naming.kind === "folder"
+          ? "Name of the new folder"
+          : naming.kind === "first"
+            ? "Name of the first file"
+            : naming.kind === "rename"
+              ? ""
+              : "Name of the new file",
       onInput: setName,
       onCommit: () => void commitName(),
       onCancel: cancelName,
+      onLeave: nameLeft,
     };
   });
   let deleting = $derived(deleteQuestion());
@@ -591,7 +605,9 @@
   });
   let titleWidth = $derived.by(() => {
     if (!editing || conducting !== null) return null;
-    return editTreeVisible() ? `calc(${layout.editTree}px + var(--splitter-w))` : "auto";
+    // The cell's edge stands on the splitter's line, which is drawn in the
+    // middle of its track.
+    return editTreeVisible() ? `calc(${layout.editTree}px + var(--splitter-w) / 2 + 0.5px)` : "auto";
   });
 
   let startedOpen = $state(true);
@@ -993,6 +1009,9 @@
         >
           {#if editing}
             {@render fieldRow()}
+            {#if fileOps.failed !== null}
+              <p class="notice error" role="alert" data-testid="tree-failed">{fileOps.failed}</p>
+            {/if}
             {#if deleting !== null}
               <div class="delete">
                 <ConfirmStrip
@@ -1015,11 +1034,11 @@
                 onDouble={editing ? keepOpen : undefined}
                 onBlank={editing ? undefined : closeViewer}
                 focused={layout.focus === "changes" && (!editing || editor.target === "tree")}
-                unsaved={editing ? unsavedAt : undefined}
+                unsaved={unsavedAt}
                 field={nameField}
                 onMenu={editing ? openMenu : undefined}
                 onCursorRow={(row) => (fileOps.cursor = row)}
-                marked={fileOps.menu?.path ?? null}
+                marked={fileOps.menu?.path ?? fileOps.deleting?.path ?? null}
                 {beyond}
               />
             {/if}
@@ -1338,7 +1357,13 @@
         value={files.query}
         oninput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
         onkeydown={onFieldKeydown}
-        placeholder={files.mode === "lines" ? "search in files…" : "filter files…"}
+        placeholder={editing
+          ? files.mode === "lines"
+            ? "search…"
+            : "filter…"
+          : files.mode === "lines"
+            ? "search in files…"
+            : "filter files…"}
         aria-label={files.mode === "lines" ? "Search in files" : "Filter files"}
         spellcheck="false"
         autocomplete="off"
@@ -1394,6 +1419,9 @@
           >
             <span>All files</span><kbd>{describe(chordFor("scope"))}</kbd>
           </button>
+          {#if !editing}
+            <!-- The viewer's views: in editor mode the tab's own control
+                 has them. -->
           <hr />
           <button
             role="menuitemradio"
@@ -1422,6 +1450,7 @@
           >
             <span>Rendered</span><kbd>{describe(chordFor("view"))}</kbd>
           </button>
+          {/if}
           <hr />
           <button role="menuitem" onclick={() => choose(() => refresh())} data-testid="menu-reload">
             <span>Reload</span>
