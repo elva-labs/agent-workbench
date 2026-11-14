@@ -2906,9 +2906,10 @@ mod tests {
     /// lines of words: `start <ids>` begins a turn for the messages named,
     /// `end` ends it, `ack` is a reply that means nothing, `drop <id>`
     /// says a message will not be answered, `answer <key>` answers a
-    /// request, `fatal` ends the turn and says the session cannot go on. The line it sends a message with names the model it runs
-    /// on when it is sent. A model is settled without asking it; a mode or
-    /// an effort is asked for with `ask <key>`.
+    /// request, `fatal` ends the turn and says the session cannot go on.
+    /// The line it sends a message with names the model it runs on when it
+    /// is sent. A model is settled without asking it; a mode or an effort
+    /// is asked for with `ask <key>`.
     struct Fake {
         model: String,
     }

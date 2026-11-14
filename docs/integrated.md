@@ -67,21 +67,30 @@ codex app-server
 
 Everything else is said in messages. The workbench introduces itself by
 name, which Codex files the threads it starts under, then reads the
-account, the models Codex offers and the efforts each takes, and starts a
-thread in the session's folder, or resumes the one asked for without its
+account, the models Codex offers and the efforts each takes, and the
+user's configuration as Codex sees it from the session's folder, and
+starts a thread in that folder, or resumes the one asked for without its
 past turns, which the window reads from the transcript. The thread starts
 with the model, the effort and the mode the session asked for, and with
 approvals sent to the window whoever the user's own configuration names to
-review them. The thread's id is Codex's own, known once the thread has
-started, so the start answers with none and ready carries it.
+review them. A start that names no mode runs in the mode the user's
+configuration sets, which can be full access. The thread's id is Codex's
+own, known once the thread has started, so the start answers with none and
+ready carries it.
 
 A mode is Codex's approval policy and sandbox together: read only, which
 asks before it changes anything; auto, which changes files and runs
 commands in the project and asks before going beyond it; and full access,
-which asks for nothing. A user configuration that sets another pair shows
-as that pair. Codex takes the model, the effort and the mode with each
-message, so a change of any is settled by the workbench, answers at once,
-and goes with the next message.
+which asks for nothing, not even for an MCP tool that would ask, which
+fails instead. A user configuration that sets another pair shows as that
+pair, such as `untrusted, workspace-write`, which is not among the modes
+and which a session switched away from cannot switch back to. Auto keeps
+the folders the user's configuration lets Codex write to and whether it
+may reach the network. Codex takes the model, the effort and the mode with
+each message, so a change of any is settled by the workbench, answers at
+once, and goes with the next message; a change made while a message is on
+its way goes with the one after, and one a message carried that Codex
+refused goes with the next.
 
 The workbench's tool server is attached to each thread through the
 thread's own configuration, under the name the hooks install it by, with
@@ -160,9 +169,10 @@ does. Since the window chooses a message's id before sending it, the events
 that name a message never come before the window knows the id.
 
 The conversation's id is known at the start only where the workbench
-chooses it, as it does for Claude Code, or resumes one. An agent that makes
-its own ids, as Codex does, has none to give yet. The ready event carries the agent's id in
-either case, and that is the one to keep for resuming.
+chooses it, as it does for Claude Code, or resumes one. An agent that
+makes its own ids, as Codex does, has none to give yet. The ready event
+carries the agent's id in either case, and that is the one to keep for
+resuming.
 
 ## Permissions
 
@@ -189,12 +199,15 @@ suggested.
 
 For Codex, allowing for the session remembers the command as it was
 written, the changes under the folder the request names or to the files it
-changes, or the MCP tool asked for; allowing always adds the command prefix
-Codex proposed to its rules, or a host it proposed to its network policy,
-or allows the MCP tool from now on where Codex offers that. A request for
-more permissions than the sandbox gives remembers them for the rest of the
-turn when allowed, or of the session, and offers no cancel. Codex takes no
-message with a denial, and its offers say so.
+changes, or the MCP tool asked for; allowing always adds the command
+prefix Codex proposed to its rules, or a host it proposed to its network
+policy, or allows the MCP tool from now on where Codex offers that. The
+command is the one Codex runs, wrapped in its shell, such as
+`/bin/zsh -lc 'touch made.txt'`, and the prefix it proposes is often the
+whole command. A request for more permissions than the sandbox gives
+remembers them for the rest of the turn when allowed, or of the session,
+and offers no cancel. Codex takes no message with a denial, and its offers
+say so.
 
 A question the agent asks the user is a request of its own, answered with
 a reply rather than a permission: each question with its options, whether
@@ -203,9 +216,11 @@ own, and whether the answer is a secret, such as a password, that is not
 to be shown. A reply to a question that takes no words of the user's own
 names only its options. Claude Code's questions all take the user's own
 words, and none is secret. Codex's may be secret, and may offer options
-alone; one with no options takes the user's own words. Declining a Codex
-question answers none of it. Asking to go ahead with a plan is a permission,
-which allowing grants; the plan itself arrives as a plan event first.
+alone; none lets more than one option be picked, and one with no options
+takes the user's own words. Declining a Codex question answers none of it,
+and Codex may stop waiting for an answer after a while, which arrives as
+withdrawn. Asking to go ahead with a plan is a permission, which allowing
+grants; the plan itself arrives as a plan event first.
 
 ## Events
 
@@ -267,9 +282,11 @@ naming the session and its kind:
 For Codex, a file change's input comes whole again each time the patch it
 writes grows; the last is the whole of it. Its new files come with their
 content and its changed ones with their hunks, read from the diff Codex
-gives. A turn reports no cost. A tool call Codex makes to start another
-agent is a tool call of the agent kind, and what that agent says has no
-event.
+gives. A command's output comes only when it finishes, and a command that
+was declined or ended with another code than zero finishes as an error. A
+web search and an image view finish with no output. A turn reports no
+cost. A tool call Codex makes to start another agent is a tool call of the
+agent kind, and what that agent says has no event.
 
 A subagent's text, tool calls, plans and requests name the tool call that
 started it, so the window can draw them under that call.
@@ -304,6 +321,12 @@ only when the agent has said it is ready, no turn runs, and the agent has
 named the one handed over before, in a turn's start or as dropped, and
 makes the line for it then, so that it goes with the conversation the
 agent has started and the settings the session runs on at that moment.
+
+Codex answers a message with the id of the turn it starts, and that turn
+is the one that names it, whatever other turn starts first, such as one
+that compacts. A turn that starts before the answer comes names no message
+at first; the answer then names the message as taken into it. A message
+Codex refuses is dropped with Codex's own words for why.
 
 The state a session's row shows comes from the same events, never from
 timing or hooks:
@@ -353,30 +376,34 @@ one at a time, and that the agent has not named within half a minute,
 in a turn's start or as dropped, is dropped, and the next one goes.
 
 A Codex permission request or question still waiting when its turn ends is
-answered no, so Codex is not left holding it, and withdrawn. A form an MCP
-server asks Codex to show is declined, with a notice that says so.
+answered no, so Codex is not left holding it, and withdrawn with no
+answered event before it. A form an MCP server asks Codex to show is
+declined, with a notice that says so. A request on a line too long to read
+is answered no from what the start of the line says. What Codex says of a
+thread other than the session's own, such as one of its sub-agents, is
+left out, and a request from such a thread is answered no.
 
 The agent runs in a process group of its own. An agent the core ends, on a
 stop or after an error, is first asked to end with a termination signal,
 and is killed with its whole group, its MCP servers among it, if it is
 still there a few seconds later. What is still in the group once the agent
 has ended is asked to end too, and killed if it is still there a moment
-later. Claude Code runs a command it leaves in the
-background, such as a dev server, in a process group of its own, which
-killing the agent's group does not reach. It ends those commands itself
-when it is asked to end, so a stopped session takes them with it, but an
-agent that is killed outright, or that dies, leaves them running. Codex
-runs each command in a process group of its own too. An interrupt ends the
-turn and leaves a command that is still running at work. Codex ends such
-commands itself when its stdin closes, so a stopped session takes them
-with it, but a Codex that is killed outright, or that dies, leaves them
-running. Every
+later. Claude Code runs a command it leaves in the background, such as a
+dev server, in a process group of its own, which killing the agent's group
+does not reach. It ends those commands itself when it is asked to end, so
+a stopped session takes them with it, but an agent that is killed
+outright, or that dies, leaves them running. Codex runs each command in a
+process group of its own too. An interrupt ends the turn; a command Codex
+has said it started is left running, and one it has not yet said it
+started ends with the turn. Codex ends the commands left running itself
+when its stdin closes, so a stopped session takes them with it, but a
+Codex that is killed outright, or that dies, leaves them running. Every
 integrated session is stopped when the app exits, and when the daemon's
 stdin ends on another machine. A connection to another machine that goes
 away ends its sessions for the window, once each, with an error saying
-why. The tool server's configuration for a session is a file only its owner
-can read, under a name that cannot be guessed, removed when the session
-ends.
+why. The tool server's configuration for a session is a file only its
+owner can read, under a name that cannot be guessed, removed when the
+session ends.
 
 Events go out in order through a thread of their own, so a slow window or
 connection never holds up a command. While too many wait for it, streamed
@@ -423,9 +450,10 @@ has to do itself:
   itself. The first message event for an id carries its text and images,
   so a second window can draw a message it did not send.
 - **Requests.** Each permission and question is settled by an answered or
-  a withdrawn event, whichever window answered it. The answer to a secret
-  question is not in it, so a window can show that the question was
-  answered, but not what with.
+  a withdrawn event, whichever window answered it, and a withdrawn one is
+  over even where no answered event came before it. The answer to a
+  secret question is not in it, so a window can show that the question
+  was answered, but not what with.
 - **The end.** Nothing comes after ended, and no last state comes with it:
   the open tool calls, the turn, the open requests and the waiting
   messages are closed first, then the session ends.
