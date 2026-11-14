@@ -453,7 +453,7 @@ fn plain_worktree_name(name: &str) -> bool {
 /// `git bisect run` inherits them, and git would follow them away from the
 /// directory it is asked to work in. The user's config and identity
 /// variables are not here: those are settings, not a pointer at a repository.
-const REPOSITORY_VARIABLES: &[&str] = &[
+pub(crate) const REPOSITORY_VARIABLES: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_DIR",

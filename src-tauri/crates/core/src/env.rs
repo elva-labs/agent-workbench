@@ -39,16 +39,28 @@ pub fn environment() -> &'static Environment {
 }
 
 fn resolve() -> Environment {
-    match from_login_shell() {
-        Some(vars) => Environment {
-            vars,
-            from_login_shell: true,
-        },
-        None => Environment {
-            vars: std::env::vars().collect(),
-            from_login_shell: false,
-        },
+    let (mut vars, from_login_shell) = match from_login_shell() {
+        Some(vars) => (vars, true),
+        None => (std::env::vars().collect(), false),
+    };
+    drop_repository_variables(&mut vars);
+    Environment {
+        vars,
+        from_login_shell,
     }
+}
+
+/// Every process started with this environment, an agent, a shell or a
+/// plugin, works on the project it is started in. The variables that name a
+/// repository, a work tree or an index are what a caller like `git rebase
+/// --exec` passes down, and git would follow them to that caller's
+/// repository. Names are compared without regard to case, as Windows does.
+fn drop_repository_variables(vars: &mut HashMap<String, String>) {
+    vars.retain(|name, _| {
+        !crate::git::REPOSITORY_VARIABLES
+            .iter()
+            .any(|variable| variable.eq_ignore_ascii_case(name))
+    });
 }
 
 /// `-l` reads the login files, `-i` the interactive ones, and `env -0` writes
@@ -340,6 +352,22 @@ mod tests {
             .spawn()
             .unwrap();
         assert!(wait_with_deadline(child, Duration::from_secs(5)).is_none());
+    }
+
+    #[test]
+    fn drops_the_variables_that_name_a_repository() {
+        let mut vars = parse_env0(&env0(&[
+            "PATH=/usr/bin",
+            "GIT_DIR=/elsewhere/.git",
+            "GIT_WORK_TREE=/elsewhere",
+            "GIT_INDEX_FILE=/elsewhere/.git/index",
+            "GIT_AUTHOR_NAME=Ada",
+            "GIT_CONFIG_GLOBAL=/home/ada/.gitconfig",
+        ]));
+        drop_repository_variables(&mut vars);
+        let mut names: Vec<_> = vars.keys().map(String::as_str).collect();
+        names.sort();
+        assert_eq!(names, ["GIT_AUTHOR_NAME", "GIT_CONFIG_GLOBAL", "PATH"]);
     }
 
     #[test]
