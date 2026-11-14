@@ -713,6 +713,72 @@ export async function saveAllAndClose() {
   if (written.every(Boolean)) void core().windowControl("close").catch(() => {});
 }
 
+/** Whether `path` is `base` or inside it. */
+function under(path: string, base: string): boolean {
+  return path === base || path.startsWith(`${base}/`);
+}
+
+/** Every tab, the sessions' not on screen included. */
+function everyTab(): Tab[] {
+  return [...editor.tabs, ...[...owners.values()].flatMap((kept) => kept.tabs)];
+}
+
+/** A file or a folder was renamed or moved in the tree: the tabs on it, or
+    on what was in it, follow it, with their buffers, edits and all. */
+export function moved(root: string, from: string, to: string) {
+  const renames = new Map<string, string>();
+  for (const tab of everyTab()) {
+    if (tab.root !== root || !under(tab.path, from)) continue;
+    const before = tabKey(tab);
+    tab.path = `${to}${tab.path.slice(from.length)}`;
+    renames.set(before, tabKey(tab));
+  }
+  for (const [before, after] of renames) {
+    const buffer = editor.buffers[before];
+    if (buffer !== undefined) {
+      delete editor.buffers[before];
+      editor.buffers[after] = { ...buffer, path: after.slice(after.indexOf("\u0000") + 1) };
+    }
+    for (const map of [states, saved, scrolls, onDisk, generations] as Map<string, unknown>[]) {
+      if (!map.has(before)) continue;
+      map.set(after, map.get(before));
+      map.delete(before);
+    }
+    if (editor.active === before) editor.active = after;
+    if (shown === before) shown = after;
+    for (const kept of owners.values()) if (kept.active === before) kept.active = after;
+  }
+  void showInViewer();
+}
+
+/** A file or a folder was deleted from the tree: the tabs on it, or on
+    what was in it, close without asking, since deleting was asked. */
+export function deleted(root: string, path: string) {
+  for (const [ownerKey, kept] of owners) {
+    const left = kept.tabs.filter((tab) => tab.root !== root || !under(tab.path, path));
+    const active = left.some((tab) => tabKey(tab) === kept.active) ? kept.active : (left[0] ? tabKey(left[0]) : null);
+    owners.set(ownerKey, { tabs: left, active });
+  }
+  for (const tab of [...editor.tabs]) {
+    if (tab.root !== root || !under(tab.path, path)) continue;
+    const key = tabKey(tab);
+    const buffer = editor.buffers[key];
+    if (buffer !== undefined) buffer.dirty = false;
+    dropTab(key);
+  }
+  for (const key of Object.keys(editor.buffers)) {
+    const buffer = editor.buffers[key];
+    if (buffer.root === root && under(buffer.path, path)) release(key);
+  }
+}
+
+/** How many open files under `path` have unsaved edits. */
+export function unsavedUnder(root: string, path: string): number {
+  return Object.values(editor.buffers).filter(
+    (buffer) => buffer.root === root && buffer.dirty && under(buffer.path, path),
+  ).length;
+}
+
 /** The views a tab has, in the order the view chord walks them: editing,
     the diff when git changed the file, and rendered for Markdown. */
 export function viewsOf(tab: Tab | null): TabView[] {

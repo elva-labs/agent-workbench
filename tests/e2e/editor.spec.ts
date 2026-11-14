@@ -574,3 +574,128 @@ test.describe("saving and changes on disk", () => {
     await expect(page.getByTestId("editor-empty")).toBeVisible();
   });
 });
+
+test.describe("the tree's own edits", () => {
+  test.beforeEach(async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+  });
+
+  test("names a new file in place, in the cursor's folder, and opens it", async ({ page }) => {
+    await treeRow(page, "store.rs").click();
+    await page.keyboard.press(`${MOD}+Alt+n`);
+    const field = page.getByTestId("name-field");
+    await expect(field).toBeFocused();
+    // In place: just under the cache folder's last file, a step in.
+    const fieldBox = await box(page, "[data-testid='name-row']");
+    const store = (await treeRow(page, "store.rs").boundingBox())!;
+    expect(fieldBox.y).toBeGreaterThan(store.y);
+    expect(fieldBox.y - store.y).toBeLessThan(store.height * 1.6);
+
+    await page.keyboard.type("lru.rs");
+    await page.keyboard.press("Enter");
+    await expect(tab(page, "src/cache/lru.rs")).toBeVisible();
+    await expect(treeRow(page, "lru.rs")).toBeVisible();
+    await expect(page.locator(".cm-content")).toBeFocused();
+    expect((await writes(page)).at(-1)).toMatchObject({ file: "src/cache/lru.rs", text: "" });
+  });
+
+  test("drops the field on Escape and keeps the keyboard in the tree", async ({ page }) => {
+    await page.getByTestId("tree-new-file").click();
+    await expect(page.getByTestId("name-field")).toBeFocused();
+    await page.keyboard.type("nothing.rs");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("name-field")).toHaveCount(0);
+    await expect(page.locator(TREE)).toBeFocused();
+    expect(await writes(page)).toEqual([]);
+  });
+
+  test("shows a new folder open with a field for its first file, and makes both with it", async ({ page }) => {
+    await treeRow(page, "cache").click({ button: "right" });
+    await page.getByTestId("row-menu-new-folder").click();
+    await page.keyboard.type("policy");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("pending-folder")).toHaveText(/policy/);
+    expect(await writes(page)).toEqual([]);
+    await page.keyboard.type("lfu.rs");
+    await page.keyboard.press("Enter");
+    await expect(tab(page, "src/cache/policy/lfu.rs")).toBeVisible();
+    await expect(page.getByTestId("pending-folder")).toHaveCount(0);
+    await expect(treeRow(page, "policy")).toBeVisible();
+  });
+
+  test("says why a name will not do, and keeps the field", async ({ page }) => {
+    await page.getByTestId("tree-new-file").click();
+    await page.keyboard.type("../out.rs");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("name-problem")).toHaveText("A name cannot step out of its folder.");
+    await expect(page.getByTestId("name-field")).toBeFocused();
+  });
+
+  test("opens the row menu on a right-click, walked by the keyboard", async ({ page }) => {
+    await treeRow(page, "store.rs").click({ button: "right" });
+    const menu = page.getByTestId("row-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      /New file/,
+      "New folder",
+      "Rename",
+      "Delete",
+      "Copy path",
+      /Reveal in Finder|Show in Explorer|Show in file manager/,
+    ]);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    expect(
+      await page.evaluate(() => (window as unknown as { __copied?: string[] }).__copied ?? []),
+    ).toEqual(["src/cache/store.rs"]);
+    await expect(menu).toHaveCount(0);
+
+    await treeRow(page, "store.rs").click({ button: "right" });
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator(TREE)).toBeFocused();
+  });
+
+  test("reveals a file of a local project in the platform's file manager", async ({ page }) => {
+    await treeRow(page, "store.rs").click({ button: "right" });
+    await page.getByTestId("row-menu-reveal").click();
+    expect(
+      await page.evaluate(() => (window as unknown as { __revealed?: string[] }).__revealed ?? []),
+    ).toEqual(["/home/ada/dev/demo/src/cache/store.rs"]);
+  });
+
+  test("renames a row in place, and the tab on it follows", async ({ page }) => {
+    await treeRow(page, "store.rs").dblclick();
+    await expect(tab(page, "src/cache/store.rs")).toBeVisible();
+    await treeRow(page, "store.rs").click({ button: "right" });
+    await page.getByTestId("row-menu-rename").click();
+    const field = page.getByTestId("name-field");
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("store.rs");
+    await page.keyboard.type("shelf");
+    await page.keyboard.press("Enter");
+    await expect(treeRow(page, "shelf.rs")).toBeVisible();
+    await expect(tab(page, "src/cache/shelf.rs")).toBeVisible();
+    await expect(tab(page, "src/cache/store.rs")).toHaveCount(0);
+  });
+
+  test("asks before deleting a folder, says what goes, and closes its tabs", async ({ page }) => {
+    await treeRow(page, "store.rs").dblclick();
+    await treeRow(page, "cache").click({ button: "right" });
+    await page.getByTestId("row-menu-delete").click();
+    const strip = page.getByTestId("delete-confirm");
+    await expect(strip).toContainText("Delete src/cache and everything in it?");
+    await expect(strip).toContainText("all 3 files in it");
+    await expect(page.getByTestId("delete-confirm-cancel")).toBeFocused();
+    await page.getByTestId("delete-confirm-confirm").click();
+    await expect(treeRow(page, "cache")).toHaveCount(0);
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => (window as unknown as { __deletes?: string[] }).__deletes ?? []),
+    ).toEqual(["src/cache"]);
+  });
+});

@@ -1,6 +1,20 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
-  import FileTree, { type Beyond } from "$lib/components/FileTree.svelte";
+  import FileTree, { type Beyond, type NameField } from "$lib/components/FileTree.svelte";
+  import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
+  import RowMenu from "$lib/components/RowMenu.svelte";
+  import {
+    cancelDelete,
+    cancelName,
+    commitName,
+    confirmDelete,
+    deleteQuestion,
+    fileOps,
+    newFile,
+    newFolder,
+    openMenu,
+    setName,
+  } from "$lib/fileOps.svelte";
   import FoldHead from "$lib/components/FoldHead.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
   import BrowserView from "$lib/components/BrowserView.svelte";
@@ -501,6 +515,32 @@
     enterReview();
   }
 
+  /** The name field in the tree while editing, as the tree draws it. */
+  let nameField: NameField | null = $derived.by(() => {
+    const naming = fileOps.naming;
+    if (!editing || naming === null) return null;
+    return {
+      folder: naming.kind === "rename" ? null : naming.folder,
+      rename: naming.kind === "rename" ? naming.path : null,
+      pending: naming.kind === "first" ? fileOps.pending : null,
+      folderIcon: naming.kind === "folder" || (naming.kind === "rename" && naming.dir),
+      value: fileOps.name,
+      problem: fileOps.problem,
+      label:
+        naming.kind === "folder"
+          ? "Name of the new folder"
+          : naming.kind === "rename"
+            ? "New name"
+            : naming.kind === "first"
+              ? `Name of the first file in ${naming.folder}`
+              : "Name of the new file",
+      onInput: setName,
+      onCommit: () => void commitName(),
+      onCancel: cancelName,
+    };
+  });
+  let deleting = $derived(deleteQuestion());
+
   /** A double-click on a file while editing keeps its tab. */
   function keepOpen(path: string) {
     if (!editing || root === null) return;
@@ -752,7 +792,39 @@
   <TabRow />
 {/snippet}
 
-<Pane id="changes" title={paneTitle} meta={paneMeta} {titleWidth} head={titleWidth === null ? undefined : tabs}>
+<!-- A new file or folder where the tree's cursor is, heading the tree's
+     column. -->
+{#snippet makers()}
+  <button
+    class="maker"
+    onpointerdown={(e) => e.preventDefault()}
+    onclick={() => newFile()}
+    aria-label="New file"
+    title="New file  {describe(chordFor('file.new'))}"
+    data-testid="tree-new-file"
+  >
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14H4V2h5l3 3v3M9 2v3h3M12 10.5v4M10 12.5h4" /></svg>
+  </button>
+  <button
+    class="maker"
+    onpointerdown={(e) => e.preventDefault()}
+    onclick={() => newFolder()}
+    aria-label="New folder"
+    title="New folder"
+    data-testid="tree-new-folder"
+  >
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.5 12.5H2v-8h4L7.5 6H14v2.5M12 10.5v4M10 12.5h4" /></svg>
+  </button>
+{/snippet}
+
+<Pane
+  id="changes"
+  title={paneTitle}
+  meta={paneMeta}
+  {titleWidth}
+  head={titleWidth === null ? undefined : tabs}
+  cellEnd={titleWidth !== null && editTreeVisible() ? makers : undefined}
+>
   {#if conducting !== null}
     <!-- The sessions an orchestrator started, in place of the tree. One tab
          stop with a cursor inside it, the sessions pane's pattern: the rows
@@ -921,6 +993,18 @@
         >
           {#if editing}
             {@render fieldRow()}
+            {#if deleting !== null}
+              <div class="delete">
+                <ConfirmStrip
+                  question={deleting.question}
+                  detail={deleting.detail}
+                  action="Delete"
+                  onConfirm={() => void confirmDelete()}
+                  onCancel={cancelDelete}
+                  testid="delete-confirm"
+                />
+              </div>
+            {/if}
           {/if}
           <div class="tree-slot">
             {#if searchingLines()}
@@ -932,6 +1016,9 @@
                 onBlank={editing ? undefined : closeViewer}
                 focused={layout.focus === "changes" && (!editing || editor.target === "tree")}
                 unsaved={editing ? unsavedAt : undefined}
+                field={nameField}
+                onMenu={editing ? openMenu : undefined}
+                onCursorRow={(row) => (fileOps.cursor = row)}
                 {beyond}
               />
             {/if}
@@ -1357,6 +1444,8 @@
   {/if}
 
 {/snippet}
+
+<RowMenu />
 
 <!-- One section's rows, on the fold itself or a step in under a group. -->
 {#snippet pluginRows(section: PluginSection, deep: boolean)}
@@ -2005,6 +2094,38 @@
     font-family: var(--chrome);
     font-size: 10.5px;
     color: var(--ink-3);
+  }
+
+  .maker {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
+  }
+
+  .maker:hover {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+
+  .maker svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .delete {
+    flex: none;
+    padding: 8px 8px 0;
   }
 
   .notice {

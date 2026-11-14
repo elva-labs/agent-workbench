@@ -27,10 +27,12 @@
         body is in columns: the title heads the first and `head` the rest,
         with the column's edge running up through the header. */
     titleWidth?: string | null;
+    /** Controls at the end of the title's part, in a header in columns. */
+    cellEnd?: Snippet;
     children: Snippet;
   }
 
-  let { id, title, meta, head, bare = false, titleWidth = null, children }: Props = $props();
+  let { id, title, meta, head, bare = false, titleWidth = null, cellEnd, children }: Props = $props();
 
   let focused = $derived(layout.focus === id);
 
@@ -102,6 +104,7 @@
           {#if appMenu}{@render menuButton()}{/if}
           <span class="title" data-tauri-drag-region>{title}</span>
           {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
+          {#if cellEnd}<div class="cell-end">{@render cellEnd()}</div>{/if}
         </div>
         {#if head}<div class="head">{@render head()}</div>{/if}
       {:else}
@@ -210,6 +213,21 @@
 
   header.columns .head {
     padding-left: 8px;
+  }
+
+  .cell .title {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .cell-end {
+    margin-left: auto;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    align-self: center;
+    margin-block: -6px;
   }
 
   .app-menu {

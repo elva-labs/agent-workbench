@@ -31,6 +31,7 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
+  import { newFile } from "$lib/fileOps.svelte";
   import {
     findInFile,
     flipMode,
@@ -570,6 +571,7 @@
         void save();
         break;
       case "newFile":
+        newFile();
         break;
       case "findInFile":
         findInFile();

@@ -19,6 +19,24 @@
     fold: (index: number, open: boolean) => void;
   }
 
+  /** A name field in the tree: for a new file or folder, in place in the
+      folder it goes in, or over a row being renamed. */
+  export interface NameField {
+    /** The folder a new one goes in, null for the top. */
+    folder: string | null;
+    /** The row being renamed, when it is a rename. */
+    rename: string | null;
+    /** A folder shown open before it exists, the field inside it. */
+    pending: string | null;
+    folderIcon: boolean;
+    value: string;
+    problem: string | null;
+    label: string;
+    onInput: (value: string) => void;
+    onCommit: () => void;
+    onCancel: () => void;
+  }
+
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
     onOpen: (path: string) => void;
@@ -32,9 +50,24 @@
         work without a click first. */
     focused?: boolean;
     beyond?: Beyond;
+    field?: NameField | null;
+    /** A right-click on a row, or on the tree below its rows with no path. */
+    onMenu?: (path: string | null, dir: boolean, x: number, y: number) => void;
+    /** The row the cursor is on, whenever it moves. */
+    onCursorRow?: (row: { path: string; dir: boolean } | null) => void;
   }
 
-  let { onOpen, onDouble, unsaved, onBlank, focused = false, beyond }: Props = $props();
+  let {
+    onOpen,
+    onDouble,
+    unsaved,
+    onBlank,
+    focused = false,
+    beyond,
+    field = null,
+    onMenu,
+    onCursorRow,
+  }: Props = $props();
 
   let root: HTMLDivElement;
 
@@ -94,6 +127,79 @@
     const at = beyondAt;
     untrack(() => beyond?.onCursor(at));
   });
+
+  // Where a new file or folder is named: after the last row inside the
+  // folder it goes in, a step in from it, under a folder shown before it
+  // exists when there is one. A folder the tree draws as part of a longer
+  // row, or not at all, puts the field at the end, its path written before.
+  let placement = $derived.by(() => {
+    if (field === null || field.rename !== null) return null;
+    const host = field.pending ?? field.folder;
+    if (host === null) return { after: rows.length - 1, depth: 0, prefix: "", virtual: null };
+    let at = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const node = rows[i].node;
+      if (!node.dir) continue;
+      if (node.path === host || host.startsWith(`${node.path}/`)) {
+        if (at === -1 || node.path.length > rows[at].node.path.length) at = i;
+      }
+    }
+    if (at === -1) {
+      return field.pending === null
+        ? { after: rows.length - 1, depth: 0, prefix: `${host}/`, virtual: null }
+        : { after: rows.length - 1, depth: 1, prefix: "", virtual: { name: host, depth: 0 } };
+    }
+    const shown = rows[at];
+    let end = at + 1;
+    while (end < rows.length && rows[end].depth > shown.depth) end++;
+    if (shown.node.path === host) {
+      return { after: end - 1, depth: shown.depth + 1, prefix: "", virtual: null };
+    }
+    const rest = host.slice(shown.node.path.length + 1);
+    if (field.pending !== null && field.pending === host) {
+      return {
+        after: end - 1,
+        depth: shown.depth + 2,
+        prefix: "",
+        virtual: { name: rest, depth: shown.depth + 1 },
+      };
+    }
+    return { after: end - 1, depth: shown.depth + 1, prefix: `${rest}/`, virtual: null };
+  });
+
+  // Tells whoever asked where the cursor is, for where a new file goes.
+  $effect(() => {
+    const row = active;
+    untrack(() => onCursorRow?.(row === undefined ? null : { path: row.node.path, dir: row.node.dir }));
+  });
+
+  function menu(e: MouseEvent, row: Row | null) {
+    if (onMenu === undefined) return;
+    e.preventDefault();
+    if (row !== null) cursor = rows.indexOf(row);
+    root.focus();
+    onMenu(row?.node.path ?? null, row?.node.dir ?? true, e.clientX, e.clientY);
+  }
+
+  /** The field takes the keyboard as it opens, with the name selected up to
+      its extension, so typing replaces the name and keeps the kind. */
+  function takeKeys(node: HTMLInputElement) {
+    node.focus();
+    const dot = node.value.lastIndexOf(".");
+    node.setSelectionRange(0, dot > 0 ? dot : node.value.length);
+  }
+
+  function fieldKeys(e: KeyboardEvent) {
+    // Every key is the field's: the tree's arrows and Enter stand down.
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      field?.onCommit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      field?.onCancel();
+    }
+  }
 
   function rowId(row: Row) {
     return `tree-${row.node.path}`;
@@ -205,9 +311,51 @@
   onclick={(e) => {
     if (e.target === e.currentTarget) onBlank?.();
   }}
+  oncontextmenu={(e) => {
+    if (e.target === e.currentTarget) menu(e, null);
+  }}
   data-testid="file-tree"
 >
-  {#each rows as row (row.node.path)}
+  {#snippet nameInput(depth: number, prefix: string)}
+    <div class="row naming" style:padding-left="{8 + depth * 13}px" data-testid="name-row">
+      <span class="twist">{field?.folderIcon ? "▸" : "·"}</span>
+      <span class="field-box">
+        {#if prefix !== ""}<span class="prefix">{prefix}</span>{/if}
+        <input
+          value={field?.value ?? ""}
+          use:takeKeys
+          oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
+          onkeydown={fieldKeys}
+          onblur={() => field?.onCancel()}
+          aria-label={field?.label}
+          aria-invalid={field?.problem !== null}
+          spellcheck="false"
+          autocomplete="off"
+          data-testid="name-field"
+        />
+      </span>
+    </div>
+    {#if field?.problem}
+      <p class="problem" style:padding-left="{8 + depth * 13 + 20}px" role="alert" data-testid="name-problem">
+        {field.problem}
+      </p>
+    {/if}
+  {/snippet}
+  {#snippet placed()}
+    {#if placement !== null}
+      {#if placement.virtual !== null}
+        <div class="row dir pending" style:padding-left="{8 + placement.virtual.depth * 13}px" data-testid="pending-folder">
+          <span class="twist">▾</span>
+          <span class="name">{placement.virtual.name}</span>
+        </div>
+      {/if}
+      {@render nameInput(placement.depth, placement.prefix)}
+    {/if}
+  {/snippet}
+  {#if placement !== null && placement.after === -1}
+    {@render placed()}
+  {/if}
+  {#each rows as row, index (row.node.path)}
     {@const node = row.node}
     <!-- Keyboard handling belongs to the tree, not to each row: that is the
          ARIA tree pattern, and one tab stop is what keeps a few hundred rows
@@ -234,6 +382,7 @@
       ondblclick={() => {
         if (!node.dir) onDouble?.(node.path);
       }}
+      oncontextmenu={(e) => menu(e, row)}
     >
       {#if node.dir}
         <span class="twist">{isOpen(node) ? "▾" : "▸"}</span>
@@ -243,7 +392,25 @@
         </span>
       {/if}
 
-      <span class="name">{node.name}</span>
+      {#if field !== null && field.rename === node.path}
+        <span class="field-box">
+          <input
+            value={field.value}
+            use:takeKeys
+            oninput={(e) => field?.onInput((e.currentTarget as HTMLInputElement).value)}
+            onkeydown={fieldKeys}
+            onblur={() => field?.onCancel()}
+            onclick={(e) => e.stopPropagation()}
+            aria-label={field.label}
+            aria-invalid={field.problem !== null}
+            spellcheck="false"
+            autocomplete="off"
+            data-testid="name-field"
+          />
+        </span>
+      {:else}
+        <span class="name">{node.name}</span>
+      {/if}
 
       {#if !node.dir && unsaved?.(node.path)}
         <span class="unsaved" title="Unsaved" data-testid="tree-unsaved"></span>
@@ -254,6 +421,14 @@
         </span>
       {/if}
     </div>
+    {#if field !== null && field.rename === node.path && field.problem}
+      <p class="problem" style:padding-left="{8 + row.depth * 13 + 20}px" role="alert" data-testid="name-problem">
+        {field.problem}
+      </p>
+    {/if}
+    {#if placement !== null && placement.after === index}
+      {@render placed()}
+    {/if}
   {/each}
 </div>
 
@@ -345,6 +520,51 @@
 
   .stat {
     color: var(--ink-3);
+  }
+
+  /* The name field in place of a row's name: the row's height, ringed in
+     the accent. */
+  .row.naming,
+  .row.naming:hover {
+    background: none;
+  }
+
+  .field-box {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    grid-column: 2 / -1;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    background: var(--field-bg);
+    box-shadow: 0 0 0 1.5px var(--accent);
+  }
+
+  .field-box input {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--ink);
+    outline: none;
+  }
+
+  .prefix {
+    color: var(--ink-3);
+  }
+
+  .row.pending .name {
+    color: var(--ink-2);
+  }
+
+  .problem {
+    margin: 2px var(--row-inset) 4px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--del);
+    white-space: normal;
   }
 
   /* Edits not yet saved, where the counts stand. */

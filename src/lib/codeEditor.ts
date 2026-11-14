@@ -55,6 +55,7 @@ const theme = EditorView.theme({
   ".cm-content": {
     padding: "8px 0 40px",
     caretColor: "var(--accent)",
+    outline: "none",
   },
   ".cm-line": { padding: "0 24px 0 4px" },
   ".cm-gutters": {
