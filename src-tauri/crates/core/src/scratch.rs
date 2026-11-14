@@ -31,10 +31,19 @@ fn is_isolated(name: &str) -> bool {
 static ISOLATE: Once = Once::new();
 
 /// Cuts every git this process starts off from the caller's repository and
-/// config. It runs once, before the first scratch folder is made, so any test
-/// that runs git has had it done. Discovery cannot climb out of the temp
-/// folder, where every scratch folder lives.
-pub fn isolate_git() {
+/// config, and every shell off from the developer's own. It runs once, before
+/// the first scratch folder or test core is made, so any test that runs git,
+/// reads the environment or starts a shell has had it done. Discovery cannot
+/// climb out of the temp folder, where every scratch folder lives.
+///
+/// With no `SHELL`, the core asks no login shell for the environment and
+/// takes this process's own, and on Unix the shell it starts for a terminal
+/// is the system's `sh`, which reads no startup file while `ENV` names none.
+///
+/// The environment is read once for the whole process, so this has to come
+/// before the first core: a test makes its core after a scratch folder or
+/// through a helper that calls this, never bare.
+pub fn isolate() {
     ISOLATE.call_once(|| {
         for (name, _) in std::env::vars_os() {
             let name = name.to_string_lossy();
@@ -47,6 +56,8 @@ pub fn isolate_git() {
         std::env::set_var("GIT_CONFIG_SYSTEM", nothing);
         std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
         std::env::set_var("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
+        std::env::remove_var("SHELL");
+        std::env::remove_var("ENV");
     });
 }
 
@@ -67,7 +78,7 @@ impl Scratch {
     /// A name under the temp folder where nothing exists yet, for tests that
     /// look at a path that is not there or make it themselves.
     pub fn absent(label: &str) -> Scratch {
-        isolate_git();
+        isolate();
         let label: String = label
             .trim_start_matches("workbench-")
             .chars()

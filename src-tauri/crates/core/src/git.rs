@@ -610,11 +610,13 @@ fn merged_into_head(project: &Path, reference: &str) -> bool {
         .is_ok()
 }
 
-/// The worktrees the workbench has made for the project: those git knows
-/// about whose path is under `.claude/worktrees`, with enough about each
-/// to say whether it can go. A worktree the user made elsewhere is theirs
-/// and is not listed.
-pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
+/// A worktree as git lists it: its path, the commit it has checked out and
+/// the branch it is on.
+type Listed = (PathBuf, Option<String>, Option<String>);
+
+/// The worktrees git knows of whose path is under the project's
+/// `.claude/worktrees`, each with its path resolved.
+fn made_worktrees(project: &Path) -> Result<Vec<Listed>, String> {
     // Without a repository there are no worktrees, and saying so beats
     // whatever git makes of a directory that is not there.
     open(project)?;
@@ -623,7 +625,7 @@ pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     let listed = run(project, &["worktree", "list", "--porcelain"])?;
 
     // One entry per `worktree` line, the lines under it belonging to it.
-    let mut entries: Vec<(PathBuf, Option<String>, Option<String>)> = Vec::new();
+    let mut entries: Vec<Listed> = Vec::new();
     for line in listed.lines() {
         let line = line.trim_end();
         if let Some(path) = line.strip_prefix("worktree ") {
@@ -641,12 +643,29 @@ pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     }
 
     let base = canonical(&project.join(WORKTREES));
+    Ok(entries
+        .into_iter()
+        .map(|(path, head, branch)| (canonical(&path), head, branch))
+        .filter(|(path, _, _)| path.starts_with(&base))
+        .collect())
+}
+
+/// Where each of the worktrees the workbench has made for the project is,
+/// resolved, and nothing else about them.
+pub fn worktree_paths(project: &Path) -> Result<Vec<PathBuf>, String> {
+    Ok(made_worktrees(project)?
+        .into_iter()
+        .map(|(path, _, _)| path)
+        .collect())
+}
+
+/// The worktrees the workbench has made for the project: those git knows
+/// about whose path is under `.claude/worktrees`, with enough about each
+/// to say whether it can go. A worktree the user made elsewhere is theirs
+/// and is not listed.
+pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     let mut trees: Vec<Worktree> = Vec::new();
-    for (path, head, reference) in entries {
-        let path = canonical(&path);
-        if !path.starts_with(&base) {
-            continue;
-        }
+    for (path, head, reference) in made_worktrees(project)? {
         let Some(name) = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
