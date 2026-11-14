@@ -219,12 +219,16 @@ export interface IntegratedPlanStep {
 }
 
 /** One thing the agent asks. `multiple` when more than one option may be
-    picked; an answer of the user's own words is always allowed. */
+    picked; `secret` when the answer is one not to show, such as a
+    password, which no window is told; `other` when the user may answer in
+    words of their own rather than with an option. */
 export interface IntegratedQuestion {
   header: string | null;
   question: string;
   options: { label: string; description: string | null }[];
   multiple: boolean;
+  secret: boolean;
+  other: boolean;
 }
 
 /** A session's news, by `type`. Text, thinking, tool calls, plans and
@@ -353,13 +357,14 @@ export type IntegratedEventBody =
     }
   /** A permission or a question was answered, from this window or
       another: a permission with its choice, a question with `allow` and
-      the answers, or `deny` and none when declined. `message` is what
-      went to the agent with a denial. */
+      the answers, or `deny` and none when declined. A secret question's
+      answer is left out, as null in its place. `message` is what went to
+      the agent with a denial. */
   | {
       type: "answered";
       request: string;
       choice: PermissionChoice;
-      answers: string[][] | null;
+      answers: (string[] | null)[] | null;
       message: string | null;
     }
   /** The agent stopped waiting for that permission or question. */
@@ -1024,8 +1029,8 @@ export interface Core {
     choice: PermissionChoice,
     message?: string,
   ): Promise<void>;
-  /** Answers a question: per question, the labels picked or the user's own
-      words. Null declines to answer. */
+  /** Answers a question: per question, the labels picked or, where the
+      question takes them, the user's own words. Null declines to answer. */
   integratedReply(
     id: string,
     request: string,

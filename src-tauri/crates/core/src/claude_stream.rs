@@ -584,6 +584,10 @@ fn questions(input: &Value) -> Vec<Question> {
                     })
                     .collect(),
                 multiple: question["multiSelect"].as_bool().unwrap_or(false),
+                // The agent's question tool always takes words of the user's
+                // own, and asks for nothing secret.
+                secret: false,
+                other: true,
             })
         })
         .collect()
@@ -2515,6 +2519,10 @@ mod tests {
         assert_eq!(questions[0].header.as_deref(), Some("Colour"));
         assert_eq!(questions[0].options[1].label, "Blue");
         assert!(!questions[0].multiple && questions[1].multiple);
+        assert!(
+            questions.iter().all(|q| !q.secret && q.other),
+            "the agent's questions take the user's own words and keep nothing secret"
+        );
         assert!(
             stream.answer("q1", Choice::Allow, None).is_err(),
             "not a permission"

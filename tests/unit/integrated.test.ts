@@ -250,6 +250,37 @@ describe("the scripted integrated session", () => {
     expect(states(heard).at(-1)).toBe("working");
   });
 
+  it("tells no window a secret answer, and takes only options where it takes no words", () => {
+    const { fake, heard, id } = started();
+    fake.startTurn(id);
+    const request = fake.question(id, [
+      { header: null, question: "Password?", options: [], multiple: false, secret: true },
+      {
+        header: null,
+        question: "Go on?",
+        options: [
+          { label: "yes", description: null },
+          { label: "no", description: null },
+        ],
+        multiple: false,
+        other: false,
+      },
+    ]);
+    const asked = heard.find((event) => event.type === "questionAsked");
+    expect(asked).toMatchObject({
+      questions: [
+        { secret: true, other: true },
+        { secret: false, other: false },
+      ],
+    });
+    expect(() => fake.reply(id, request, [["hunter2"], ["maybe"]])).toThrow(/not one of the options/);
+    fake.reply(id, request, [["hunter2"], ["yes"]]);
+    expect(heard.find((event) => event.type === "answered")).toMatchObject({
+      answers: [null, ["yes"]],
+    });
+    expect(JSON.stringify(heard)).not.toContain("hunter2");
+  });
+
   it("ends a turn after an interrupt, withdraws what it asked, and closes open calls", async () => {
     const { fake, heard, id } = started();
     fake.send(id, M1, "go");

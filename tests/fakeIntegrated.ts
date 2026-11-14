@@ -114,8 +114,13 @@ export interface FakeIntegrated {
       call?: string | null;
     },
   ): string;
-  /** Asks questions; returns the request's id. */
-  question(id: string, questions: IntegratedQuestion[]): string;
+  /** Asks questions; returns the request's id. A question takes the
+      user's own words and is not secret unless it says otherwise. */
+  question(
+    id: string,
+    questions: (Omit<IntegratedQuestion, "secret" | "other"> &
+      Partial<Pick<IntegratedQuestion, "secret" | "other">>)[],
+  ): string;
   /** A tool call started; returns its id. */
   startTool(
     id: string,
@@ -380,13 +385,24 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           throw new Error(`${answers.length} answers for ${asked.questions.length} questions`);
         if (answers.some((answer) => !answer.some((part) => part.trim())))
           throw new Error("a question has no answer");
+        asked.questions.forEach((question, at) => {
+          if (question.other) return;
+          const labels = question.options.map((option) => option.label);
+          const own = answers[at].map((part) => part.trim()).find(
+            (part) => part && !labels.includes(part),
+          );
+          if (own !== undefined)
+            throw new Error(`"${own}" is not one of the options of "${question.question}"`);
+        });
       }
       fake.calls.push({ method: "reply", id, request, answers });
+      // No window is told a secret question's answer.
       fake.emit(id, {
         type: "answered",
         request,
         choice: answers ? "allow" : "deny",
-        answers,
+        answers:
+          answers?.map((answer, at) => (asked.questions[at]?.secret ? null : answer)) ?? null,
         message: null,
       });
     },
@@ -594,8 +610,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       return request;
     },
 
-    question(id, questions) {
+    question(id, asking) {
       const request = `request-${++requests}`;
+      const questions = asking.map((question) => ({ secret: false, other: true, ...question }));
       fake.emit(id, { type: "questionAsked", request, call: null, parent: null, questions });
       return request;
     },

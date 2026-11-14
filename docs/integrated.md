@@ -133,9 +133,12 @@ suggested.
 
 A question the agent asks the user is a request of its own, answered with
 a reply rather than a permission: each question with its options, whether
-more than one may be picked, and room for an answer in the user's own
-words. Asking to go ahead with a plan is a permission, which allowing
-grants; the plan itself arrives as a plan event first.
+more than one may be picked, whether the user may answer in words of their
+own, and whether the answer is a secret, such as a password, that is not
+to be shown. A reply to a question that takes no words of the user's own
+names only its options. Claude Code's questions all take the user's own
+words, and none is secret. Asking to go ahead with a plan is a permission,
+which allowing grants; the plan itself arrives as a plan event first.
 
 ## Events
 
@@ -172,8 +175,9 @@ naming the session and its kind:
   each time it changes; and **turn diff**: everything the turn has changed
   so far as one diff, for an agent that keeps one.
 - **permission asked** and **question asked**; **answered**, with the
-  choice, or for a question the answers, from whichever window answered;
-  and **withdrawn** when the agent stops waiting for either.
+  choice, or for a question the answers, from whichever window answered,
+  with a secret question's answer left out; and **withdrawn** when the
+  agent stops waiting for either.
 - **task started**, **task progress** and **task finished**, for subagents
   and background commands. A task the agent marks as housekeeping says so,
   and a window may leave it out. A task ends completed, failed, stopped,

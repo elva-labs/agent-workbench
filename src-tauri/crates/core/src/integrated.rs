@@ -271,8 +271,8 @@ pub enum Event {
         choices: Vec<Offer>,
     },
     /// The agent asks the user something, answered with `reply`: each
-    /// question with options to pick from, and room for an answer of the
-    /// user's own.
+    /// question with options to pick from, and, where it says so, room for
+    /// an answer of the user's own.
     QuestionAsked {
         request: String,
         call: Option<String>,
@@ -282,11 +282,12 @@ pub enum Event {
     /// A permission request or a question was answered, from this window
     /// or another: with `choice` for a permission, and for a question with
     /// `allow` and the `answers`, or `deny` with none when it was declined.
+    /// The answer to a secret question is left out, as null in its place.
     /// `message` is what went to the agent with a denial.
     Answered {
         request: String,
         choice: Choice,
-        answers: Option<Vec<Vec<String>>>,
+        answers: Option<Vec<Option<Vec<String>>>>,
         message: Option<String>,
     },
     /// The agent no longer waits for an answer to a permission request or
@@ -514,7 +515,10 @@ pub enum StepStatus {
 }
 
 /// One thing the agent asks the user. `header` is a short label for it;
-/// `multiple` whether more than one option may be picked.
+/// `multiple` whether more than one option may be picked; `secret` whether
+/// the answer is one not to show, such as a password, which no window is
+/// told; `other` whether the user may answer in words of their own rather
+/// than with an option.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Question {
@@ -522,6 +526,8 @@ pub struct Question {
     pub question: String,
     pub options: Vec<QuestionOption>,
     pub multiple: bool,
+    pub secret: bool,
+    pub other: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -841,7 +847,9 @@ struct Tracker {
     /// Every message id used, so none is used twice.
     used: BTreeSet<String>,
     turn: bool,
-    asking: BTreeSet<String>,
+    /// Permission requests and questions waiting for an answer, in the
+    /// order asked, each as it went out.
+    asking: Vec<Event>,
     /// Subagents at work, with the tool call that started each.
     subagents: BTreeMap<String, Option<String>>,
     /// Tool calls started and not finished, with the subagent call each
@@ -1007,10 +1015,11 @@ impl Tracker {
                 self.streamed.remove(call);
             }
             Event::PermissionAsked { request, .. } | Event::QuestionAsked { request, .. } => {
-                self.asking.insert(request.clone());
+                self.asking.retain(|asked| asked_by(asked) != Some(request));
+                self.asking.push(event.clone());
             }
             Event::Withdrawn { request } | Event::Answered { request, .. } => {
-                self.asking.remove(request);
+                self.asking.retain(|asked| asked_by(asked) != Some(request));
             }
             Event::TaskStarted {
                 task,
@@ -1071,6 +1080,18 @@ impl Tracker {
         }
     }
 
+    /// The questions of an open question request.
+    fn questions(&self, request: &str) -> Option<&[Question]> {
+        self.asking.iter().find_map(|asked| match asked {
+            Event::QuestionAsked {
+                request: asking,
+                questions,
+                ..
+            } if asking == request => Some(questions.as_slice()),
+            _ => None,
+        })
+    }
+
     /// The window asked for the running turn to stop while none runs: a
     /// report the session waits for may never come, and stops being
     /// waited for.
@@ -1094,8 +1115,12 @@ impl Tracker {
                 usage: None,
             });
         }
-        for request in std::mem::take(&mut self.asking) {
-            out.push(Event::Withdrawn { request });
+        for asked in std::mem::take(&mut self.asking) {
+            if let Some(request) = asked_by(&asked) {
+                out.push(Event::Withdrawn {
+                    request: request.to_string(),
+                });
+            }
         }
         for message in std::mem::take(&mut self.pending) {
             out.push(Event::message(
@@ -1107,6 +1132,16 @@ impl Tracker {
         self.subagents.clear();
         self.reporting = false;
         self.compacting = false;
+    }
+}
+
+/// The request a permission request or a question goes by.
+fn asked_by(event: &Event) -> Option<&str> {
+    match event {
+        Event::PermissionAsked { request, .. } | Event::QuestionAsked { request, .. } => {
+            Some(request)
+        }
+        _ => None,
     }
 }
 
@@ -1974,13 +2009,17 @@ pub fn answer(
         answers: None,
         message: said.map(str::to_string),
     };
-    settle(&live, answered, |driver| {
-        driver.answer(request, choice, message)
-    })
+    settle(
+        &live,
+        |_| Ok(answered),
+        |driver| driver.answer(request, choice, message),
+    )
 }
 
 /// Answers a question the agent asked: for each question, the labels the
-/// user picked or words of their own. None declines to answer.
+/// user picked or, where the question takes them, words of their own. None
+/// declines to answer. Every window is told the answers but those to a
+/// secret question.
 pub fn reply(
     sessions: &Sessions,
     id: &str,
@@ -1988,28 +2027,59 @@ pub fn reply(
     answers: Option<&[Vec<String>]>,
 ) -> Result<(), String> {
     let live = sessions.get(id)?;
-    let answered = Event::Answered {
-        request: request.to_string(),
-        choice: if answers.is_some() {
-            Choice::Allow
-        } else {
-            Choice::Deny
-        },
-        answers: answers.map(<[Vec<String>]>::to_vec),
-        message: None,
+    let answered = |tracker: &Tracker| {
+        let questions = tracker.questions(request).unwrap_or_default();
+        if let Some(answers) = answers {
+            for (question, answer) in questions.iter().zip(answers) {
+                if question.other {
+                    continue;
+                }
+                let labels: Vec<&str> = question.options.iter().map(|o| o.label.as_str()).collect();
+                if let Some(own) = answer
+                    .iter()
+                    .map(|picked| picked.trim())
+                    .find(|picked| !picked.is_empty() && !labels.contains(picked))
+                {
+                    return Err(format!(
+                        "{own:?} is not one of the options of {:?}",
+                        question.question
+                    ));
+                }
+            }
+        }
+        Ok(Event::Answered {
+            request: request.to_string(),
+            choice: if answers.is_some() {
+                Choice::Allow
+            } else {
+                Choice::Deny
+            },
+            answers: answers.map(|answers| {
+                answers
+                    .iter()
+                    .enumerate()
+                    .map(|(at, answer)| {
+                        let secret = questions.get(at).is_some_and(|question| question.secret);
+                        (!secret).then(|| answer.clone())
+                    })
+                    .collect()
+            }),
+            message: None,
+        })
     };
     settle(&live, answered, |driver| driver.reply(request, answers))
 }
 
 /// Writes the line that settles a request the agent is waiting on, and
-/// says it was answered.
+/// says it was answered, as `answered` tells it from what was asked.
 fn settle(
     live: &Live,
-    answered: Event,
+    answered: impl FnOnce(&Tracker) -> Result<Event, String>,
     line: impl FnOnce(&mut dyn Driver) -> Result<String, String>,
 ) -> Result<(), String> {
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
+        let answered = answered(&machine.tracker)?;
         let line = line(machine.driver.as_mut())?;
         let went = live.enqueue(line)?;
         let mut out = Vec::new();
@@ -2663,6 +2733,34 @@ mod tests {
                     MessageState::Dropped,
                     Some("refused".into()),
                 )],
+                (Some("question"), Some(request)) => vec![Event::QuestionAsked {
+                    request: request.to_string(),
+                    call: None,
+                    parent: None,
+                    questions: vec![
+                        Question {
+                            header: None,
+                            question: "Password?".into(),
+                            options: vec![],
+                            multiple: false,
+                            secret: true,
+                            other: true,
+                        },
+                        Question {
+                            header: None,
+                            question: "Go on?".into(),
+                            options: ["yes", "no"]
+                                .map(|label| QuestionOption {
+                                    label: label.into(),
+                                    description: None,
+                                })
+                                .into(),
+                            multiple: false,
+                            secret: false,
+                            other: false,
+                        },
+                    ],
+                }],
                 (Some("answer"), Some(key)) => {
                     return Reading {
                         replies: vec![(key.to_string(), Ok(Value::Null))],
@@ -2692,8 +2790,8 @@ mod tests {
             Err("nothing asked".into())
         }
 
-        fn reply(&mut self, _: &str, _: Option<&[Vec<String>]>) -> Result<String, String> {
-            Err("nothing asked".into())
+        fn reply(&mut self, request: &str, _: Option<&[Vec<String>]>) -> Result<String, String> {
+            Ok(format!("reply {request}"))
         }
 
         fn control(&mut self, control: &Control) -> Result<Sending, String> {
@@ -2939,6 +3037,44 @@ mod tests {
         // its id is free again.
         assert!(send(&bench.sessions, "int-bench", M1, "again", &[]).is_err());
         assert!(send(&bench.sessions, "int-bench", "not-a-uuid", "x", &[]).is_err());
+    }
+
+    #[test]
+    fn a_secret_answer_is_told_to_no_window_and_options_alone_take_no_own_words() {
+        let bench = Bench::new(fake());
+        bench.live.take("question q1");
+        let own = reply(
+            &bench.sessions,
+            "int-bench",
+            "q1",
+            Some(&[vec!["hunter2".into()], vec!["maybe".into()]]),
+        );
+        assert!(own.unwrap_err().contains("not one of the options"));
+        assert_eq!(bench.next(), None, "nothing goes to the agent");
+        reply(
+            &bench.sessions,
+            "int-bench",
+            "q1",
+            Some(&[vec!["hunter2".into()], vec!["yes".into()]]),
+        )
+        .unwrap();
+        assert_eq!(bench.next().as_deref(), Some("reply q1"));
+        let events = bench.events();
+        let asked = events
+            .iter()
+            .find(|event| event["type"] == "questionAsked")
+            .unwrap();
+        assert_eq!(asked["questions"][0]["secret"], true);
+        assert_eq!(asked["questions"][1]["other"], false);
+        let answered = events
+            .iter()
+            .find(|event| event["type"] == "answered")
+            .unwrap();
+        assert_eq!(answered["answers"], serde_json::json!([null, ["yes"]]));
+        assert!(
+            !serde_json::to_string(&events).unwrap().contains("hunter2"),
+            "the secret is in no event"
+        );
     }
 
     /// An agent that makes its own conversation ids, run as `cat`.
