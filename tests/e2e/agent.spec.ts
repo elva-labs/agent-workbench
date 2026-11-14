@@ -1264,16 +1264,25 @@ test.describe("several projects", () => {
 
     await expect(page.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Last used");
     expect(await top("one")).toBeLessThan(await top("two"));
-    // Picking two uses it, but nothing moves under the pointer or the
-    // keyboard: the order settles once both have left the pane.
+    // Picking two uses it, but nothing moves under the pointer: the order
+    // settles once it leaves the pane, though the click left the keyboard
+    // there.
     await page.locator(SESSIONS).getByText("two", { exact: true }).click();
     await expect(page.locator(`[data-row="project:${TWO}"]`)).toHaveClass(/on/);
     expect(await top("one")).toBeLessThan(await top("two"));
     const agent = (await page.locator(AGENT).boundingBox())!;
     await page.mouse.move(agent.x + agent.width / 2, agent.y + agent.height / 2);
-    expect(await top("one")).toBeLessThan(await top("two"));
-    await page.locator(AGENT).click();
     await expect.poll(async () => (await top("two")) < (await top("one"))).toBe(true);
+
+    // Walking the rows with the keyboard holds the order too, until the
+    // keyboard leaves the pane.
+    await page.keyboard.press(`${MOD}+1`);
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(`[data-row="project:${ONE}"]`)).toHaveClass(/on/);
+    expect(await top("two")).toBeLessThan(await top("one"));
+    await page.locator(AGENT).click();
+    await expect.poll(async () => (await top("one")) < (await top("two"))).toBe(true);
 
     await page.getByTestId("project-sort").click();
     const menu = page.getByTestId("project-sort-menu");

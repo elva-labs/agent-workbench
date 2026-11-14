@@ -104,10 +104,13 @@ goes when it is closed. The choice of order is kept there too, and Inactive
 is listed in the same order. The sessions inside a project are in the order they last
 changed, the latest first.
 
-While the pointer is over the pane or the keyboard is in it, the order
-holds still: what is under the pointer or the cursor stays where it is,
-rows still come and go, and the order settles once both have left. A
-change of sort applies at once.
+While the pointer is over the pane, or the keyboard is walking its rows,
+the order holds still: what is under the pointer or the cursor stays where
+it is, rows still come and go, and the order settles once both have
+stopped. The keyboard holds it once it moves the cursor or arrives by the
+pane's chord, and until it leaves the pane; a click that only leaves the
+keyboard in the pane does not, so the order settles as the pointer leaves.
+A change of sort applies at once.
 
 On the keyboard the order button and the menu are the first stops on the
 cursor path, before the field and the new-session button: Enter opens a

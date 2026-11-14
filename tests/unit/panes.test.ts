@@ -712,6 +712,38 @@ describe("SessionsPane", () => {
     expect(names()).toEqual(["a", "b"]);
   });
 
+  // A click leaves the keyboard in the pane, but it is the pointer that
+  // is there: the order settles as the pointer leaves. Walking the rows
+  // with the keyboard holds it again.
+  it("settles the order as the pointer leaves after a click", async () => {
+    workspace.open.push(repo("/a", "a"), repo("/b", "b"));
+    workspace.active = "/a";
+    touch("/a", Date.now() - 1000);
+    touch("/b", Date.now() - 5000);
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    const pane = document.querySelector<HTMLElement>('[data-pane="sessions"]')!;
+    const nav = screen.getByTestId("sessions-nav");
+    const header = document.querySelector<HTMLElement>('[data-row="project:/b"] .project-row')!;
+
+    await fireEvent.pointerEnter(pane);
+    await fireEvent.pointerDown(header);
+    header.focus();
+    await fireEvent.pointerUp(header);
+    await fireEvent.click(header);
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(nav.contains(document.activeElement)).toBe(true);
+    expect(names()).toEqual(["a", "b"]);
+    await fireEvent.pointerLeave(pane);
+    expect(names()).toEqual(["b", "a"]);
+
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    touch("/a");
+    await tick();
+    expect(names()).toEqual(["b", "a"]);
+  });
+
   // An agent at work moves no project: only the user's own use does.
   it("leaves the projects where they are while an agent works", async () => {
     workspace.open.push(repo("/a", "a"), repo("/b", "b"));

@@ -115,13 +115,30 @@
     return () => clearInterval(timer);
   });
 
-  /** Whether the pointer is over the pane, and whether the keyboard is in
-      it. While either is, the order holds still: what is under the
-      pointer or the cursor stays there, and the order settles once both
-      have left. Rows still come and go. */
+  /** Whether the pointer is over the pane, and whether the keyboard is
+      moving through it. While either is, the order holds still: what is
+      under the pointer or the cursor stays there, and the order settles
+      once both have stopped. Rows still come and go. The keyboard counts
+      once it walks the rows or arrives by a chord, not when a click has
+      only left it in the pane, so the pointer leaving after a click
+      settles the order. */
   let pointerIn = $state(false);
-  let keyboardIn = $state(false);
-  let holding = $derived(pointerIn || keyboardIn);
+  let walking = $state(false);
+  let holding = $derived(pointerIn || walking);
+
+  /** Whether a press of the pointer in the pane is under way, which is
+      how the keyboard arriving with a click is told from a chord. */
+  let pressing = false;
+
+  function onFocusin(e: FocusEvent) {
+    if (nav.contains(e.relatedTarget as Node | null)) return;
+    walking = !pressing;
+  }
+
+  function onFocusout(e: FocusEvent) {
+    if (nav.contains(e.relatedTarget as Node | null)) return;
+    walking = false;
+  }
 
   /** The orders last drawn: the projects, the inactive ones, and each
       project's rows by its path, and the sort they were drawn in. A new
@@ -652,6 +669,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    walking = true;
     if (
       (sortOpen && onSortKeydown(e)) ||
       (menuOpen && onMenuKeys(e)) ||
@@ -837,7 +855,9 @@
 
   // The pointer resting on the folded column peeks the pane over the agent
   // while reviewing, and leaving the pane puts it back, unless the keyboard
-  // is in it: then Escape, Enter or the focus chord put it back.
+  // is in it: then Escape, Enter or the focus chord put it back. A press in
+  // the pane is noted while it lasts, so the keyboard arriving with a click
+  // is not taken for the keyboard walking the rows.
   $effect(() => {
     const pane = nav?.closest<HTMLElement>('[data-pane="sessions"]');
     if (!pane) return;
@@ -854,6 +874,13 @@
       if (layout.mode !== "reviewing" || sessionsVisible() || layout.sessionsPeek) return;
       later(() => peekSessions(true), PEEK_AFTER);
     };
+    const press = () => {
+      pressing = true;
+      walking = false;
+    };
+    const release = () => {
+      setTimeout(() => (pressing = false));
+    };
     const leave = () => {
       pointerIn = false;
       if (timer !== null) {
@@ -865,10 +892,14 @@
     };
     pane.addEventListener("pointerenter", enter);
     pane.addEventListener("pointerleave", leave);
+    pane.addEventListener("pointerdown", press, true);
+    window.addEventListener("pointerup", release, true);
     return () => {
       if (timer !== null) clearTimeout(timer);
       pane.removeEventListener("pointerenter", enter);
       pane.removeEventListener("pointerleave", leave);
+      pane.removeEventListener("pointerdown", press, true);
+      window.removeEventListener("pointerup", release, true);
     };
   });
 
@@ -1418,8 +1449,8 @@
     bind:this={nav}
     onkeydown={onKeydown}
     onpointerdown={onPointerdown}
-    onfocusin={() => (keyboardIn = true)}
-    onfocusout={(e) => (keyboardIn = nav.contains(e.relatedTarget as Node | null))}
+    onfocusin={onFocusin}
+    onfocusout={onFocusout}
     data-testid="sessions-nav"
   >
   <!-- The way to any session or project, which is the palette, and a new
