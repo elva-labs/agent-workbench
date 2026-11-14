@@ -757,6 +757,10 @@ pub struct Reading {
     pub replies: Vec<(String, Result<Value, String>)>,
     /// Lines to write back at once.
     pub writes: Vec<String>,
+    /// The session cannot go on, such as when the agent refused to begin
+    /// or speaks a version the driver cannot: it is ended, with this said
+    /// once as an error after the events.
+    pub fatal: Option<(ErrorKind, String)>,
 }
 
 /// One session's side of an agent's protocol. It holds whatever the agent's
@@ -1439,7 +1443,23 @@ impl Live {
             }
             machine.tracker.observe(bounded(event), &mut out);
         }
-        self.release(machine, &mut out);
+        if let Some((kind, message)) = reading.fatal {
+            // Said once, as `abandon` does, and ended as `stop` ends it:
+            // stdin closes once what is queued has gone, and an agent still
+            // there a little later is asked to end. Nothing held is handed
+            // over any more.
+            if !self.stopping.swap(true, Ordering::SeqCst) {
+                out.push(Event::Error { kind, message });
+                self.writer.lock().expect("writer lock").take();
+                let kill = self.kill.lock().expect("kill lock").clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(STOP_GRACE);
+                    let _ = kill.send(());
+                });
+            }
+        } else {
+            self.release(machine, &mut out);
+        }
         self.emit(&out);
         // After the events, so whoever waits on a reply wakes to a stream
         // that already holds what the reply changed.
@@ -2815,7 +2835,7 @@ mod tests {
     /// lines of words: `start <ids>` begins a turn for the messages named,
     /// `end` ends it, `ack` is a reply that means nothing, `drop <id>`
     /// says a message will not be answered, `answer <key>` answers a
-    /// request. The line it sends a message with names the model it runs
+    /// request, `fatal` ends the turn and says the session cannot go on. The line it sends a message with names the model it runs
     /// on when it is sent. A model is settled without asking it; a mode or
     /// an effort is asked for with `ask <key>`.
     struct Fake {
@@ -2891,6 +2911,13 @@ mod tests {
                 (Some("answer"), Some(key)) => {
                     return Reading {
                         replies: vec![(key.to_string(), Ok(Value::Null))],
+                        ..Reading::default()
+                    }
+                }
+                (Some("fatal"), _) => {
+                    return Reading {
+                        events: vec![ended()],
+                        fatal: Some((ErrorKind::Protocol, "cannot go on".into())),
                         ..Reading::default()
                     }
                 }
@@ -3039,6 +3066,27 @@ mod tests {
                 .map(|(_, payload)| payload.clone())
                 .collect()
         }
+    }
+
+    #[test]
+    fn a_driver_that_cannot_go_on_ends_the_session_saying_why_once() {
+        let bench = Bench::new(fake());
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take("ack");
+        bench.send(M2, "two");
+        bench.live.take(&format!("start {M1}"));
+        bench.live.take("fatal");
+        bench.live.take("fatal");
+        assert_eq!(bench.next(), None, "nothing held is handed over");
+        let events = bench.events();
+        let errors: Vec<&Value> = events.iter().filter(|e| e["type"] == "error").collect();
+        assert_eq!(errors.len(), 1, "{events:?}");
+        assert_eq!(errors[0]["kind"], "protocol");
+        assert_eq!(errors[0]["message"], "cannot go on");
+        let at = |kind: &str| events.iter().position(|e| e["type"] == kind).unwrap();
+        assert!(at("turnEnded") < at("error"), "after the events");
+        assert!(bench.live.stopping.load(Ordering::SeqCst));
     }
 
     #[test]
