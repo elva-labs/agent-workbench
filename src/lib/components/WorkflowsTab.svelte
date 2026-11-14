@@ -12,6 +12,7 @@
    * said, and the window shows what is kept.
    */
   import { tick } from "svelte";
+  import UnreadEntries from "$lib/components/UnreadEntries.svelte";
   import type { WorkflowStep } from "$lib/core";
   import { instructionLines } from "$lib/workflowInstructions";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -332,6 +333,7 @@
       </button>
     </div>
 
+    <UnreadEntries field="workflows" />
     {#each workflows.unread as entry (entry.at)}
       <div class="unread" role="status" data-testid="workflow-unread" data-at={entry.at}>
         {#if dropping === entry.at}
