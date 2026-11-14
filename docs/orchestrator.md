@@ -151,7 +151,8 @@ from the one session running in its directory that was not told its id.
 Where that is not certain and a session running there follows a workflow,
 whether or not it was told its id, the call is refused rather than let
 through unchecked. So is a call naming a session the workbench does not
-run, while any session follows a workflow.
+run, or one that is no longer running and so cannot be calling, while any
+session follows a workflow.
 
 ## What is remembered
 

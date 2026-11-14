@@ -2097,6 +2097,15 @@ describe("starting in a workflow's shape", () => {
     expect(last().error).toBe(
       "The workbench runs no session made-up, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.",
     );
+    // Nor does one naming a session whose process has ended, which cannot
+    // be the one calling.
+    const gone = create(A, null, "claude-code", null, null, null, null, null);
+    started(gone.key, "pty-gone", "gone");
+    ended({ id: "pty-gone", code: 0, clean: true });
+    flushSync();
+    await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { session: "gone" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toContain("The workbench runs no session gone");
   });
 
   it("refuses a call naming no session from the directory of a workflow session told its id", async () => {

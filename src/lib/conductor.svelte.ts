@@ -1172,9 +1172,10 @@ function unknownCaller(id: string): string {
 }
 
 /** The workflow the caller follows, null for none, or why the call cannot
-    be held to one. A call naming a session the workbench does not run,
-    while a session follows a workflow, is refused: it could be that
-    session. One naming none is the one session running in its directory
+    be held to one. A call naming a session the workbench does not run, or
+    one whose process is not running and so cannot be calling, is refused
+    while a session follows a workflow: it could be that session. One
+    naming none is the one session running in its directory
     that was not told its id; where that is not certain and a session there
     follows a workflow, a session told its id among them, the call is
     refused rather than let through unchecked. */
@@ -1183,10 +1184,10 @@ function callerFlow(
 ): { workflow: Workflow | null } | { refusal: string } {
   if (request.session !== null) {
     const row = byId(request.session);
-    if (row !== null) return { workflow: row.workflow };
+    if (row !== null && isLive(row)) return { workflow: row.workflow };
     return sessions.all.some((session) => isLive(session) && session.workflow !== null)
       ? { refusal: unknownCaller(request.session) }
-      : { workflow: null };
+      : { workflow: row?.workflow ?? null };
   }
   const here = untoldHere(request.cwd);
   const following = liveHere(request.cwd).filter(
