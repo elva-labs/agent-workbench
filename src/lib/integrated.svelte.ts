@@ -47,6 +47,10 @@ export class Link {
   untrusted = $state(false);
   /** A start, a trust or an attach is on its way. */
   busy = $state(false);
+  /** What the user is writing, kept while another session is on screen. */
+  draft = $state("");
+  /** The images going with it. */
+  images = $state<IntegratedImage[]>([]);
   /** Why the model could not be changed, until it next is. */
   configureError = $state<string | null>(null);
   /** Events heard while a snapshot is on its way. */

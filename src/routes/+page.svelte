@@ -463,7 +463,11 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    const action = resolveAction(e, { focus: layout.focus, reviewing });
+    const action = resolveAction(e, {
+      focus: layout.focus,
+      reviewing,
+      integrated: activeSession()?.kind === "integrated",
+    });
     if (!action) return;
     // Opening the palette and the jump move the keyboard, so with a dialog up
     // they do nothing and the webview gets nothing from them either. The

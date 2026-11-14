@@ -26,15 +26,25 @@ export const drops = $state({
   over: null as string | null,
 });
 
+/** What takes a drop: a terminal pastes the paths, and a conversation's
+    composer takes the files themselves. */
+export interface Taker {
+  paste(text: string): void;
+  focus(): void;
+  /** Takes the dropped files as they are, in place of their paths typed. */
+  take?(paths: string[]): void;
+}
+
 interface Target {
   host: HTMLElement;
-  terminal: Terminal;
+  terminal: Taker | Terminal;
 }
 
 const targets = new Map<string, Target>();
 
-/** A terminal that can take a drop. Called by the view when it mounts. */
-export function register(id: string, host: HTMLElement, terminal: Terminal) {
+/** A terminal, or a composer, that can take a drop. Called by the view when
+    it mounts. */
+export function register(id: string, host: HTMLElement, terminal: Taker | Terminal) {
   targets.set(id, { host, terminal });
 }
 
@@ -47,9 +57,10 @@ export function unregister(id: string) {
     none there: dropping on the pane's header still means this pane. */
 export function targetAt(x: number, y: number): string | null {
   const element = document.elementFromPoint(x, y);
-  const host = element?.closest<HTMLElement>("[data-terminal]");
-  if (host?.dataset.terminal !== undefined && targets.has(host.dataset.terminal)) {
-    return host.dataset.terminal;
+  const host = element?.closest<HTMLElement>("[data-terminal], [data-drop]");
+  const named = host?.dataset.terminal ?? host?.dataset.drop;
+  if (named !== undefined && targets.has(named)) {
+    return named;
   }
   const focused = layout.focus === "terminal" ? terminals.active : sessions.active;
   return focused !== null && targets.has(focused) ? focused : null;
@@ -87,8 +98,10 @@ export function handle(event: DragEvent) {
   drops.over = null;
   if (id === null || event.paths.length === 0) return;
   const target = targets.get(id)!;
+  const taker = target.terminal as Taker;
+  if (taker.take !== undefined) taker.take(event.paths);
   // xterm's own paste: bracketed when the program asked for it, plain when not.
-  target.terminal.paste(pasteFor(event.paths));
+  else target.terminal.paste(pasteFor(event.paths));
   target.terminal.focus();
 }
 

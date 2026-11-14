@@ -28,6 +28,9 @@ export { isMac };
  * this function takes the context rather than leaving the caller to decide:
  * the whole model stays testable without a DOM. It belongs to whichever
  * terminal has focus, the agent's or a shell's, and to the chrome otherwise.
+ * An integrated session has no terminal: its composer stops a running turn
+ * on Escape and lets the key through when none runs, and then it closes the
+ * viewer while reviewing and does nothing else.
  */
 
 export type Action =
@@ -65,6 +68,9 @@ export interface KeyState {
 export interface KeyContext {
   focus: PaneId;
   reviewing: boolean;
+  /** Whether the agent pane holds an integrated session, which has no
+      terminal to own the keyboard. */
+  integrated?: boolean;
   /** Whether Cmd is the modifier. Defaults to what the browser reports. */
   mac?: boolean;
 }
@@ -130,6 +136,9 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
     // typing resumes.
     if (e.key === "Escape" && !isTerminal(ctx.focus)) {
       return ctx.reviewing ? { type: "exitReview" } : { type: "focus", pane: "agent" };
+    }
+    if (e.key === "Escape" && ctx.focus === "agent" && ctx.integrated && ctx.reviewing) {
+      return { type: "exitReview" };
     }
     return null;
   }

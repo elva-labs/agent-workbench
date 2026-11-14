@@ -5,6 +5,8 @@
   import { close, type Session } from "$lib/sessions.svelte";
   import { projectLabel } from "$lib/workspace.svelte";
   import { speaker } from "$lib/thread";
+  import type { Message } from "$lib/conversation.svelte";
+  import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
   import Icon from "./Icon.svelte";
   import Thread from "./Thread.svelte";
@@ -28,6 +30,34 @@
   let conversation = $derived(link.conversation);
   let agent = $derived(agentLabel(session.agent));
   let folder = $derived(session.startIn ?? session.project);
+
+  let dock = $state<Dock | null>(null);
+  let name = $derived(speaker(conversation, conversation.settings.model));
+
+  /** A message that never reached the agent goes back to be sent again. */
+  function putBack(message: Message) {
+    link.draft = link.draft.trim() === "" ? message.text : `${message.text}\n${link.draft}`;
+    link.images = [...message.images, ...link.images];
+    conversation.forget(message.id);
+  }
+
+  /** The keyboard on the dock, when something waits there. */
+  function toDock(): boolean {
+    if (conversation.open.length === 0 || dock === null) return false;
+    dock.focus();
+    return true;
+  }
+
+  /** Once an answer is on its way the keyboard goes back to the composer. */
+  function answered() {
+    queueMicrotask(() => {
+      const field = document.querySelector<HTMLTextAreaElement>(
+        `[data-session="${session.key}"] [data-testid="composer-input"]`,
+      );
+      if (conversation.open.length > 0) dock?.focus();
+      else field?.focus();
+    });
+  }
 
   let over = $derived(
     session.status === "exited" || session.status === "crashed" || session.status === "failed",
@@ -95,7 +125,7 @@
       </div>
     </div>
   {:else}
-    <Thread {conversation} root={folder} {intro} />
+    <Thread {conversation} root={folder} {intro} onPutBack={putBack} />
     <div class="foot">
       {#if over}
         <div class="ended" data-testid="session-ended">
@@ -105,7 +135,15 @@
           >
         </div>
       {:else}
-        <Dock {conversation} sessionKey={session.key} agent={speaker(conversation, conversation.settings.model)} root={folder} />
+        <Dock bind:this={dock} {conversation} sessionKey={session.key} agent={name} root={folder} onAnswered={answered} />
+        <Composer
+          sessionKey={session.key}
+          {conversation}
+          agent={name}
+          ready={session.status === "running" && link.handle !== null}
+          {active}
+          onDock={toDock}
+        />
       {/if}
     </div>
   {/if}
