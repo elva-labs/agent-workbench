@@ -2,7 +2,7 @@ import type { InactiveAfter, Settings } from "$lib/core";
 import type { ProjectSort } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { persist } from "$lib/persist";
-import { byKey, isLive, sessions, type Session } from "$lib/sessions.svelte";
+import { byKey, isLive, sessions, transcriptAt, type Session } from "$lib/sessions.svelte";
 
 /**
  * The projects as the sessions pane splits and orders them.
@@ -164,22 +164,29 @@ function drawnUnder(path: string): Session[] {
   return [...own, ...own.flatMap(drawing.childrenOf)];
 }
 
-/** When the project's newest transcript was written, in milliseconds, or
-    null when it has none. A transcript of a session that hangs under its
-    starter in another project is that project's, and not counted here. */
+/** When a transcript drawn under the project was last written, in
+    milliseconds, or null when it has none: its own, but for those of
+    sessions that hang under a starter in another project, and those of
+    sessions that hang under one of its rows from another project. */
 function written(path: string): number | null {
   const elsewhere = new Set(
     rowsOf(path)
-      .filter(
-        (session) => session.id !== null && drawing.parentOf(session) !== null,
-      )
+      .filter((session) => session.id !== null && drawnIn(session) !== path)
       .map((session) => session.id),
   );
   // Newest first, as the history is kept.
   const newest = (sessions.history[path] ?? []).find(
     (entry) => !elsewhere.has(entry.id),
   );
-  return newest === undefined ? null : newest.modified * 1000;
+  let latest = newest === undefined ? null : newest.modified * 1000;
+  for (const row of drawing.ownFor(path)) {
+    for (const kid of drawing.childrenOf(row)) {
+      if (kid.project === path || kid.id === null) continue;
+      const at = transcriptAt(kid.project, kid.id);
+      if (at !== null && (latest === null || at > latest)) latest = at;
+    }
+  }
+  return latest;
 }
 
 /** When the user last used the project, in milliseconds, which is what

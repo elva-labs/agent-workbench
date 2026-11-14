@@ -613,15 +613,32 @@ export function forProject(project: string): Session[] {
   return sessions.all.filter((session) => session.project === project);
 }
 
+/** When each project's transcripts were last written, in milliseconds,
+    by session id: the newest where one is listed twice. */
+const written = $derived.by(() => {
+  const index = new Map<string, Map<string, number>>();
+  for (const [project, entries] of Object.entries(sessions.history)) {
+    const byId = new Map<string, number>();
+    for (const entry of entries)
+      if (!byId.has(entry.id)) byId.set(entry.id, entry.modified * 1000);
+    index.set(project, byId);
+  }
+  return index;
+});
+
+/** When a session's transcript in a project was last written, in
+    milliseconds, or null when the project's history does not list it. */
+export function transcriptAt(project: string, id: string): number | null {
+  return written.get(project)?.get(id) ?? null;
+}
+
 /** When a row last changed what it says, in milliseconds. A row left from
     the last quit changed when its transcript was last written: the row
     itself was only drawn again at the start. */
 export function lastChanged(session: Session): number {
   if (session.status === "dormant" && session.id !== null) {
-    const transcript = (sessions.history[session.project] ?? []).find(
-      (entry) => entry.id === session.id,
-    );
-    if (transcript !== undefined) return transcript.modified * 1000;
+    const at = transcriptAt(session.project, session.id);
+    if (at !== null) return at;
   }
   return session.changedAt;
 }

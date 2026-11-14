@@ -267,6 +267,21 @@ describe("a session hanging under its starter", () => {
     expect(isActive("/there", null, NOW)).toBe(false);
   });
 
+  // Its transcript is written in the project it runs in, and counts
+  // toward the project it is drawn under.
+  it("counts its transcript toward the project it is drawn under", () => {
+    touch("/here", NOW - 60 * DAY);
+    touch("/there", NOW - 60 * DAY);
+    const { starter, kid } = hang("/there");
+    starter.status = "dormant";
+    kid.status = "dormant";
+    sessions.history["/there"] = [entry("kid-1", NOW - DAY)];
+    expect(lastActive("/here")).toBe(NOW - DAY);
+    expect(isActive("/here", null, NOW)).toBe(true);
+    expect(lastActive("/there")).toBe(NOW - 60 * DAY);
+    expect(isActive("/there", null, NOW)).toBe(false);
+  });
+
   // Picked, from the pane, the palette or the chord, it is on screen and
   // its starter's project is the one used, and the one the pane counts
   // as on screen.
