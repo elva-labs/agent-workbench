@@ -1212,6 +1212,12 @@ export const UNPLACED =
 export const NOWHERE =
   "The workbench runs no session in this directory that could be making this call, and a session follows a workflow, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.";
 
+/** What a call naming no session is told when several sessions the
+    workbench runs in its directory were not told their id, and so any of
+    them could be the caller, while a session follows a workflow. */
+export const AMBIGUOUS =
+  "The workbench cannot tell which of the sessions in this directory is calling, and a session follows a workflow, so it cannot tell what this call may do. Start sessions from a session in a directory of its own, such as a worktree.";
+
 /** Whether a running session follows a workflow. */
 function workflowRunning(): boolean {
   return sessions.all.some((session) => isLive(session) && session.workflow !== null);
@@ -1229,8 +1235,9 @@ function unknownCaller(id: string): string {
     naming none is the one session running in its directory that was not
     told its id. Where that is not certain and a session there follows a
     workflow, a session told its id among them, the call is refused rather
-    than let through unchecked, and so is one from a directory where no
-    such session runs, while any session follows a workflow. */
+    than let through unchecked. So is one from a directory where no such
+    session runs, and one from a directory where several do, while any
+    session follows a workflow. */
 function callerFlow(
   request: ConductRequest,
 ): { workflow: Workflow | null } | { refusal: string } {
@@ -1251,7 +1258,8 @@ function callerFlow(
   )
     return { workflow: here[0].workflow };
   if (following.length > 0) return { refusal: UNPLACED };
-  if (here.length === 0 && workflowRunning()) return { refusal: NOWHERE };
+  if (here.length !== 1 && workflowRunning())
+    return { refusal: here.length === 0 ? NOWHERE : AMBIGUOUS };
   return { workflow: null };
 }
 

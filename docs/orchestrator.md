@@ -163,7 +163,8 @@ whether or not it was told its id, the call is refused rather than let
 through unchecked. While any session follows a workflow, so is a call
 naming a session the workbench does not run, or one that is no longer
 running and so cannot be calling, and so is a call naming none from a
-directory where no session that was not told its id runs. A caller under a
+directory where no session that was not told its id runs, or where
+several do. A caller under a
 workflow is given no command but `/compact` in a line to any session it
 started, placed in the workflow or not.
 

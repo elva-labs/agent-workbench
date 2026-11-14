@@ -28,6 +28,7 @@ import {
   dismissRefusal,
   stopAll,
   typeWhole,
+  AMBIGUOUS,
   NOWHERE,
   UNPLACED,
   workflowTag,
@@ -2279,6 +2280,20 @@ describe("starting in a workflow's shape", () => {
     expect(conductor.asking).toBeNull();
     expect(last().error).toBe(NOWHERE);
     expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("refuses a call naming no session from a directory where several untold sessions run, while a workflow runs elsewhere", async () => {
+    orchestrating();
+    const one = create(B, null, "codex", null, null, null, null, null);
+    started(one.key, "pty-one", null);
+    const two = create(B, null, "codex", null, null, null, null, null);
+    started(two.key, "pty-two", null);
+    await handle(
+      call("start", { project: A, prompt: "/model opus", agent: "claude-code", model: "opus" }, { cwd: B }),
+    );
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(AMBIGUOUS);
+    expect(forProject(A)).toHaveLength(1);
   });
 
   it("asks about a call naming no session from anywhere as before, with no workflow running", async () => {
