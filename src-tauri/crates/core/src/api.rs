@@ -381,6 +381,20 @@ impl Core {
             },
             (Some(_), None) => return Err(NO_TOOLS.into()),
         };
+        // An agent that reads the instructions and the server from files is
+        // given files of the session's own, which go when the session does.
+        let mut files = SessionFiles::default();
+        let mut instructions_file = None;
+        let mut server_file = None;
+        if let (Some(text), Some(home), true) =
+            (instructions, self.home.as_deref(), adapter.reads_files())
+        {
+            instructions_file = Some(files.write(home, "md", text)?);
+            if let Some(daemon) = &server {
+                server_file =
+                    Some(files.write(home, "json", &adapter::claude_server_config(daemon))?);
+            }
+        }
         let ctx = LaunchCtx {
             project,
             env: &environment.vars,
@@ -390,8 +404,10 @@ impl Core {
             config_dir: expanded.as_deref(),
             orchestrator,
             instructions,
+            instructions_file: instructions_file.as_deref(),
             start_only: instructions.is_some() && start_only,
             server: server.as_deref(),
+            server_file: server_file.as_deref(),
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
@@ -416,6 +432,7 @@ impl Core {
             command,
             size(cols, rows),
             output,
+            files,
         )?;
         if let Some(plugins) = &self.plugins {
             plugins.session_started(&pty_id, session_id.as_deref(), &opened);
@@ -451,6 +468,7 @@ impl Core {
             command,
             size(cols, rows),
             output,
+            (),
         )
     }
 
@@ -769,6 +787,52 @@ fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Files a session reads while it runs, each made new and readable by its
+/// owner alone, and removed when the session is done with them: when its
+/// process ends, or when it never starts.
+#[derive(Default)]
+struct SessionFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl SessionFiles {
+    /// Writes a file of the session's own under the workbench's directory,
+    /// and answers with where it is.
+    fn write(&mut self, home: &Path, extension: &str, text: &str) -> Result<PathBuf, String> {
+        let dir = sessions_dir(home);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        let path = dir.join(format!("{}.{extension}", new_session_id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .map_err(|e| format!("could not create {}: {e}", path.display()))?;
+        self.paths.push(path.clone());
+        std::io::Write::write_all(&mut file, text.as_bytes())
+            .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+        Ok(path)
+    }
+}
+
+impl Drop for SessionFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Where the files sessions read while they run are kept.
+fn sessions_dir(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("sessions")
+}
+
 /// A terminal is a character grid, so a pty is sized in cells. The pixel
 /// fields matter only to programs drawing sixels, and xterm.js reports none.
 fn size(cols: u16, rows: u16) -> PtySize {
@@ -823,6 +887,63 @@ mod tests {
             |_| Box::new(|_: &[u8]| true),
         );
         assert_eq!(spawned.err().as_deref(), Some(NO_TOOLS));
+    }
+
+    #[test]
+    fn a_session_file_is_made_new_for_its_owner_alone_and_goes_with_the_session() {
+        let home = std::env::temp_dir().join("workbench-api-session-files");
+        std::fs::remove_dir_all(&home).ok();
+        let mut files = SessionFiles::default();
+        let told = files
+            .write(&home, "md", "1. Direct the work.\n2. Report.")
+            .unwrap();
+        assert_eq!(told.parent().unwrap(), sessions_dir(&home));
+        assert_eq!(
+            std::fs::read_to_string(&told).unwrap(),
+            "1. Direct the work.\n2. Report."
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&told).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let other = files.write(&home, "json", "{}").unwrap();
+        assert_ne!(told, other);
+        drop(files);
+        assert!(!told.exists() && !other.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_a_session_holds_goes_once_its_process_has_ended() {
+        let home = std::env::temp_dir().join("workbench-api-held");
+        std::fs::remove_dir_all(&home).ok();
+        let mut files = SessionFiles::default();
+        let told = files.write(&home, "md", "text").unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.args(["-c", "sleep 0.3"]);
+        pty::spawn(
+            recorder.clone(),
+            Arc::new(Sessions::default()),
+            command,
+            size(80, 24),
+            |_| Box::new(|_: &[u8]| true),
+            files,
+        )
+        .unwrap();
+        // There while the process runs, gone once it has ended.
+        assert!(told.exists());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while recorder.events.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            !recorder.events.lock().unwrap().is_empty(),
+            "the session ended"
+        );
+        assert!(!told.exists());
     }
 
     #[test]
