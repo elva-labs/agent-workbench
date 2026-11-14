@@ -6,6 +6,8 @@
   import BrowserView from "$lib/components/BrowserView.svelte";
   import SearchResults from "$lib/components/SearchResults.svelte";
   import EditorColumn from "$lib/components/EditorColumn.svelte";
+  import TabRow from "$lib/components/TabRow.svelte";
+  import { editor, keep as keepTab, keyOf, openFile, unsavedAt } from "$lib/editor.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import { onMount, untrack } from "svelte";
@@ -422,6 +424,10 @@
   }
 
   function openHit(path: string, line: number) {
+    if (editing) {
+      void openFile(path, { line });
+      return;
+    }
     void openAt(path, line);
     enterReview();
   }
@@ -484,9 +490,22 @@
       .catch((error) => (files.error = `Not watching for changes: ${String(error)}`));
   }
 
+  /** A file in the tree: in the viewer, or while editing as the preview
+      tab, with the keyboard left in the tree for the next file. */
   function open(path: string) {
+    if (editing) {
+      void openFile(path);
+      return;
+    }
     select(path);
     enterReview();
+  }
+
+  /** A double-click on a file while editing keeps its tab. */
+  function keepOpen(path: string) {
+    if (!editing || root === null) return;
+    void openFile(path, { keep: true });
+    keepTab(keyOf(root, path));
   }
 
   function resizeTree(dx: number) {
@@ -729,7 +748,11 @@
   }
 </script>
 
-<Pane id="changes" title={paneTitle} meta={paneMeta} {titleWidth}>
+{#snippet tabs()}
+  <TabRow />
+{/snippet}
+
+<Pane id="changes" title={paneTitle} meta={paneMeta} {titleWidth} head={titleWidth === null ? undefined : tabs}>
   {#if conducting !== null}
     <!-- The sessions an orchestrator started, in place of the tree. One tab
          stop with a cursor inside it, the sessions pane's pattern: the rows
@@ -888,7 +911,14 @@
            presented for the session on screen, a section of its own with a
            divider to drag, folded to its header when asked. -->
       {#if !fullView && treeColumn}
-        <div class="column" bind:clientHeight={columnHeight} data-testid="tree-column">
+        <!-- While editing, the keyboard anywhere in this column, the field
+             or the tree, is the tree's side of the pane. -->
+        <div
+          class="column"
+          bind:clientHeight={columnHeight}
+          onfocusin={() => (editor.target = "tree")}
+          data-testid="tree-column"
+        >
           {#if editing}
             {@render fieldRow()}
           {/if}
@@ -898,8 +928,10 @@
             {:else}
               <FileTree
                 onOpen={open}
+                onDouble={editing ? keepOpen : undefined}
                 onBlank={editing ? undefined : closeViewer}
-                focused={layout.focus === "changes"}
+                focused={layout.focus === "changes" && (!editing || editor.target === "tree")}
+                unsaved={editing ? unsavedAt : undefined}
                 {beyond}
               />
             {/if}

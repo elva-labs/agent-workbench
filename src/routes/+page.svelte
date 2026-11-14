@@ -31,7 +31,18 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
-  import { flipMode } from "$lib/editor.svelte";
+  import {
+    findInFile,
+    flipMode,
+    focusFiles,
+    followOwner,
+    leaveEditor,
+    loadEditorSize,
+    otherKindShown,
+    putAwayOther,
+    walkView,
+    zoomEditor,
+  } from "$lib/editor.svelte";
   import { watchProcesses } from "$lib/processes.svelte";
   import {
     stateChanged as pluginStateChanged,
@@ -123,12 +134,16 @@
   loadMedia();
   loadNotices();
   loadZoom();
+  loadEditorSize();
 
   // What is on screen, on record for the agent's tools and for the core
   // to watch where it is, and what runs under the sessions, for the
   // section under the tree.
   watchSelection();
   watchViewed();
+  // Each session's tabs in the editor, swapped in as the session on screen
+  // changes.
+  followOwner();
   watchProcesses();
   watchPluginUpdates();
   // Which projects are open, told to the core of each machine they are on,
@@ -529,6 +544,12 @@
           }
           peekSessions(true);
         } else if (action.pane === "sessions") unfoldSessions();
+        // The files pane while editing holds the tree and the editor: the
+        // chord goes to the editor, and from the editor to the tree.
+        if (action.pane === "changes" && editing) {
+          focusFiles(editorHasKeyboard() ? "tree" : "editor");
+          break;
+        }
         focusPane(action.pane);
         break;
       case "toggle":
@@ -546,16 +567,24 @@
         break;
       case "newFile":
       case "save":
+        break;
       case "findInFile":
+        findInFile();
         break;
       case "toEditor":
-        focusPane("changes");
+        // Escape from the panes around the editor: what took its place is
+        // put away, and the keyboard goes back to it.
+        if (otherKindShown()) putAwayOther();
+        focusFiles("editor");
         break;
       case "cycleTheme":
         cycleTheme();
         break;
       case "toggleReview":
-        if (reviewing) closeViewer();
+        // The editor has no viewer to open: the chord shows the file in
+        // front in the viewer, beside the agent, at the cursor's line.
+        if (editing) leaveEditor(true);
+        else if (reviewing) closeViewer();
         else {
           // Opening the viewer with nothing chosen shows the first file rather
           // than an empty pane; with nothing listed, the empty pane is honest.
@@ -567,7 +596,8 @@
         }
         break;
       case "toggleView":
-        toggleView();
+        if (editing) walkView();
+        else toggleView();
         break;
       case "toggleScope":
         toggleScope();
@@ -634,6 +664,10 @@
   /** Zooms the terminal the keyboard belongs to: the panel's shell when the
       panel has it, the agent on screen otherwise. */
   function zoomTerminal(step: 1 | -1 | 0) {
+    if (editing && editorHasKeyboard()) {
+      zoomEditor(step);
+      return;
+    }
     if (layout.focus === "terminal" && terminals.active !== null) {
       say(`${zoomed(terminals.active, null, step)} px`);
       return;

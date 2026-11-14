@@ -22,6 +22,10 @@
   interface Props {
     /** Called when a file row is activated. Folders are handled here. */
     onOpen: (path: string) => void;
+    /** A double-click on a file row. */
+    onDouble?: (path: string) => void;
+    /** Whether a file has edits not yet saved: its row carries a dot. */
+    unsaved?: (path: string) => boolean;
     /** A click on the tree itself, below the last row. */
     onBlank?: () => void;
     /** The pane has focus: the keyboard belongs on the tree, so the arrows
@@ -30,7 +34,7 @@
     beyond?: Beyond;
   }
 
-  let { onOpen, onBlank, focused = false, beyond }: Props = $props();
+  let { onOpen, onDouble, unsaved, onBlank, focused = false, beyond }: Props = $props();
 
   let root: HTMLDivElement;
 
@@ -42,8 +46,14 @@
     const active = document.activeElement;
     if (active === root || root.contains(active)) return;
     // Another control of the same pane, the filter field most of all, keeps
-    // the keyboard it was given; the tree takes it from anywhere else.
-    if (active !== null && root.closest("section[data-pane]")?.contains(active)) return;
+    // the keyboard it was given; the tree takes it from anywhere else, the
+    // editor beside it included.
+    if (
+      active !== null &&
+      active.closest(".cm-editor") === null &&
+      root.closest("section[data-pane]")?.contains(active)
+    )
+      return;
     root.focus();
   });
 
@@ -221,6 +231,9 @@
         cursor = rows.indexOf(row);
         activate(node);
       }}
+      ondblclick={() => {
+        if (!node.dir) onDouble?.(node.path);
+      }}
     >
       {#if node.dir}
         <span class="twist">{isOpen(node) ? "▾" : "▸"}</span>
@@ -232,7 +245,9 @@
 
       <span class="name">{node.name}</span>
 
-      {#if !node.dir && node.entry}
+      {#if !node.dir && unsaved?.(node.path)}
+        <span class="unsaved" title="Unsaved" data-testid="tree-unsaved"></span>
+      {:else if !node.dir && node.entry}
         <span class="stat">
           {#if node.entry.add}<span class="add">+{node.entry.add}</span>{/if}
           {#if node.entry.del}<span class="del">−{node.entry.del}</span>{/if}
@@ -330,6 +345,16 @@
 
   .stat {
     color: var(--ink-3);
+  }
+
+  /* Edits not yet saved, where the counts stand. */
+  .unsaved {
+    align-self: center;
+    justify-self: end;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ink-2);
   }
 
   .add {

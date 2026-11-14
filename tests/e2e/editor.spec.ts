@@ -251,3 +251,208 @@ test.describe("the agent across the flip", () => {
     expect(await resizes()).toBe(told + 2);
   });
 });
+
+const TREE = "[data-testid='file-tree']";
+const tab = (page: Page, path: string) => page.locator(`[data-testid='editor-tab'][data-path='${path}']`);
+const treeRow = (page: Page, name: string) => page.locator(TREE).getByText(name, { exact: true });
+
+/** The editor's text as it is drawn. */
+function editorText(page: Page) {
+  return page.locator(".cm-content").innerText();
+}
+
+test.describe("the editor and its tabs", () => {
+  test.beforeEach(async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+  });
+
+  test("says what to do with nothing open", async ({ page }) => {
+    await expect(page.getByTestId("editor-empty")).toContainText("No file open");
+    await expect(page.getByTestId("editor-empty")).toContainText("start a new one");
+  });
+
+  test("opens a file looked at in an italic tab, reused for the next", async ({ page }) => {
+    await treeRow(page, "README.md").click();
+    await expect(tab(page, "README.md")).toBeVisible();
+    await expect(tab(page, "README.md").locator(".name")).toHaveCSS("font-style", "italic");
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+    // The keyboard stays in the tree for the next file.
+    await expect(page.locator(TREE)).toBeFocused();
+
+    await treeRow(page, "Cargo.toml").click();
+    await expect(tab(page, "Cargo.toml")).toBeVisible();
+    await expect(tab(page, "README.md")).toHaveCount(0);
+
+    // A double-click on the tab keeps it, so the next file gets its own.
+    await tab(page, "Cargo.toml").dblclick();
+    await expect(tab(page, "Cargo.toml").locator(".name")).toHaveCSS("font-style", "normal");
+    await treeRow(page, "README.md").click();
+    await expect(page.getByTestId("editor-tab")).toHaveCount(2);
+  });
+
+  test("marks the tab and the tree's row once edited, and keeps the tab", async ({ page }) => {
+    await treeRow(page, "README.md").click();
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("more words");
+    await expect(page.getByTestId("editor-tab-dirty")).toBeVisible();
+    await expect(page.locator(`${TREE} [data-testid='tree-unsaved']`)).toBeVisible();
+    await expect(page.getByTestId("editor-state")).toContainText("Unsaved");
+    await expect(page.getByTestId("editor-position")).toHaveText(/Ln 4, Col 11/);
+    await expect(tab(page, "README.md").locator(".name")).toHaveCSS("font-style", "normal");
+    await expect(page.getByTestId("editor-foot")).toContainText("Markdown");
+  });
+
+  test("walks the views, and shows the diff and the rendering read only", async ({ page }) => {
+    await treeRow(page, "mod.rs").click();
+    await expect.poll(() => editorText(page)).toContain("// src/cache/mod.rs");
+    await expect(page.getByTestId("editor-view-preview")).toBeDisabled();
+    await page.getByTestId("editor-view-diff").click();
+    await expect(page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@")).toBeVisible();
+    await expect(page.getByTestId("editor-foot")).toContainText("Against HEAD, read only");
+    await page.keyboard.press(`${MOD}+e`);
+    await expect(page.locator(".cm-content")).toBeVisible();
+    await expect(page.getByTestId("editor-view-edit")).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("keeps each session's tabs", async ({ page }) => {
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await treeRow(page, "README.md").dblclick();
+    await expect(tab(page, "README.md")).toBeVisible();
+
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+    await treeRow(page, "Cargo.toml").click();
+    await expect(tab(page, "Cargo.toml")).toBeVisible();
+
+    await page.locator("[data-testid='session-row']").first().click();
+    await expect(tab(page, "README.md")).toBeVisible();
+    await expect(tab(page, "Cargo.toml")).toHaveCount(0);
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  });
+
+  test("puts the keyboard in the editor and the tree on the focus chord and Escape", async ({ page }) => {
+    await treeRow(page, "README.md").click();
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+    await page.keyboard.press(`${MOD}+2`);
+    await page.keyboard.press(`${MOD}+3`);
+    await expect(page.locator(".cm-content")).toBeFocused();
+    await page.keyboard.press(`${MOD}+3`);
+    await expect(page.locator(TREE)).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-content")).toBeFocused();
+    // Escape in the editor is the editor's.
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-content")).toBeFocused();
+  });
+
+  test("finds in the file on the find chord while the editor has the keyboard", async ({ page }) => {
+    await treeRow(page, "README.md").click();
+    await page.locator(".cm-content").click();
+    await page.keyboard.press(`${MOD}+f`);
+    await expect(page.locator(".cm-search input[name='search']")).toBeFocused();
+    await expect(page.getByTestId("search-field")).not.toBeFocused();
+  });
+
+  test("says why a file cannot be edited, and shows it as the viewer does", async ({ page }) => {
+    await page.evaluate(() => {
+      const w = window as unknown as { __fixture: { fixture: { files: string[] } } };
+      w.__fixture.fixture.files = [...w.__fixture.fixture.files, "huge.log"];
+      (window as unknown as { __gitChanged: () => void }).__gitChanged();
+    });
+    await treeRow(page, "huge.log").click();
+    await expect(page.getByTestId("editor-reason")).toContainText("larger than 4 MB");
+    await expect(page.getByTestId("viewer")).toContainText("// huge.log");
+    await expect(page.locator(".cm-content")).toHaveCount(0);
+  });
+});
+
+test.describe("from agent mode to the editor", () => {
+  test("goes to the editor at the file and line from the viewer's Edit button", async ({ page }) => {
+    await open(page, 1728);
+    await page.evaluate(() =>
+      (window as unknown as { __showRequest: (request: unknown) => void }).__showRequest({
+        path: "/home/ada/dev/demo/src/main.rs",
+        from: 3,
+        to: 3,
+        note: null,
+        cwd: "/home/ada/dev/demo",
+      }),
+    );
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await page.getByTestId("viewer-edit").click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(tab(page, "src/main.rs")).toBeVisible();
+    await expect(page.getByTestId("editor-position")).toHaveText(/Ln 3, Col 1/);
+    await expect(page.locator(".cm-content")).toBeFocused();
+    // Kept: the Edit button is meant for editing.
+    await expect(tab(page, "src/main.rs").locator(".name")).toHaveCSS("font-style", "normal");
+  });
+
+  test("shows the file in front in the viewer beside the agent on the viewer's chord", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await treeRow(page, "README.md").click();
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+    await page.keyboard.press(`${MOD}+d`);
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("viewer")).toContainText("// README.md");
+  });
+});
+
+test.describe("what a tool points at in editor mode", () => {
+  test.beforeEach(async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+  });
+
+  test("opens a file as a tab at its line, with the note", async ({ page }) => {
+    await page.evaluate(() =>
+      (window as unknown as { __showRequest: (request: unknown) => void }).__showRequest({
+        path: "/home/ada/dev/demo/src/main.rs",
+        from: 3,
+        to: 3,
+        note: "The entry point.",
+        cwd: "/home/ada/dev/demo",
+      }),
+    );
+    await expect(tab(page, "src/main.rs")).toBeVisible();
+    await expect(page.getByTestId("editor-note")).toHaveText("The entry point.");
+    await expect(page.getByTestId("editor-position")).toHaveText(/Ln 3/);
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  });
+
+  test("opens a diff as the tab's Diff view", async ({ page }) => {
+    await page.evaluate(() =>
+      (window as unknown as { __diffRequest: (request: unknown) => void }).__diffRequest({
+        path: "/home/ada/dev/demo/src/lib.rs",
+        note: "What I changed.",
+        cwd: "/home/ada/dev/demo",
+      }),
+    );
+    await expect(tab(page, "src/lib.rs")).toBeVisible();
+    await expect(page.getByTestId("editor-view-diff")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@")).toBeVisible();
+  });
+
+  test("shows what was presented in the editor's place, and gives the editor back", async ({ page }) => {
+    await treeRow(page, "README.md").click();
+    await page.evaluate(() =>
+      (window as unknown as { __presentRequest: (request: unknown) => void }).__presentRequest({
+        files: ["/tmp/shot.png"],
+        caption: "The screenshot.",
+        cwd: "/home/ada/dev/demo",
+        session: null,
+      }),
+    );
+    await expect(page.getByTestId("media-caption")).toHaveText("The screenshot.");
+    await expect(page.locator(".cm-content")).toHaveCount(0);
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await page.getByTestId("viewer").getByRole("button", { name: "Close the viewer" }).click();
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+  });
+});

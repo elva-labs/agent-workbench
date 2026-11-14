@@ -8,6 +8,9 @@
  * changes pane watches for it, the project or the worktree a session moved
  * into.
  *
+ * In editor mode the place opens in the editor instead: the file as a tab at
+ * its line, a diff as that tab's Diff view.
+ *
  * What an agent asks to open is for its own session's viewer. While the
  * user is looking at another session, the call is held on the agent's
  * session rather than opened over what the user is reading, and opens
@@ -22,8 +25,9 @@ import type {
   ShowRequest,
   TerminalRequest,
 } from "$lib/core";
+import { openFile } from "$lib/editor.svelte";
 import { showDiff, showRange } from "$lib/files.svelte";
-import { focusPane, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
+import { focusPane, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
 import { byKey, forProject, noted, sessions } from "$lib/sessions.svelte";
 import { create as createShell } from "$lib/terminals.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
@@ -75,6 +79,10 @@ async function openPlace(request: ShowRequest, project: string) {
   const relative =
     relativeTo(request.path, root) ?? relativeTo(request.path, project);
   if (relative === null) return;
+  if (layout.mode === "editing") {
+    await openFile(relative, { line: request.from, to: request.to, note: request.note });
+    return;
+  }
   await showRange(relative, request.from, request.to, request.note);
 }
 
@@ -89,6 +97,10 @@ export async function diffRequested(request: DiffRequest) {
     const relative =
       relativeTo(request.path, root) ?? relativeTo(request.path, project);
     if (relative === null) return;
+    if (layout.mode === "editing") {
+      await openFile(relative, { view: "diff", note: request.note });
+      return;
+    }
     await showDiff(relative, request.note);
   };
   if (held(request, project, open)) return;
