@@ -11,6 +11,16 @@ told once, in a word over the agent pane, what turning them on gives; its
 link opens the settings at the section, and the word goes for good when it
 is dismissed or when hooks are turned on.
 
+The projects the window opens with are checked together: the machine here
+is asked once whether its daemon is in place, and each account's agent state
+is read once for all of its projects. The projects on another machine are
+checked once they have all arrived, in a single request to that machine, so
+local projects never wait on a remote one. A project opened later is checked
+on its own. Installs and removals made by one app or daemon take turns
+writing the agents' per-project state, so several at once keep every
+project's entry; two programs writing that state at the same moment, such
+as two computers connected to one machine, do not take turns.
+
 ## What is installed
 
 For Claude Code, entries in the project's `.claude/settings.local.json`:
