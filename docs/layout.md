@@ -43,8 +43,8 @@ modes whatever the panes under them do. The right pane is the changes pane
 in agent mode and the agent while editing; the button and
 <kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is, and in a window
 too narrow to show it at all the status bar says so. On Windows and Linux
-the window controls the app draws come after them. Neither a click nor Tab
-on them moves the pane focus or the keyboard.
+the window controls the app draws come after them. A click on them leaves
+the keyboard where it was, and neither a click nor Tab moves the pane focus.
 
 ## What gives way, in order
 
