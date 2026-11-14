@@ -55,6 +55,7 @@ import {
   forProject,
   isLive,
   label,
+  nameTaken,
   liveCount,
   reset,
   select,
@@ -1856,5 +1857,20 @@ describe("a name the agent or a caller gave", () => {
     expect(label(row)).toBe("Young");
     const past = { id: "abc12345-0000", title: "you", modified: 0 } as Transcript;
     expect(historyLabel(past)).toBe("session from " + ago(0));
+  });
+});
+
+describe("telling two names apart", () => {
+  beforeEach(() => reset());
+
+  it("reads every look-alike of a letter as the same letter, in a name of one script too", () => {
+    const six = create("/p");
+    started(six.key, "pty-six", "sid-six");
+    six.title = "six";
+    // All Cyrillic: ѕ, і and х, which read as the Latin six.
+    expect(nameTaken("\u0455\u0456\u0445")).toBe(true);
+    expect(nameTaken("s\u0457x")).toBe(true);
+    expect(nameTaken("s\u03b9x")).toBe(true);
+    expect(nameTaken("sox")).toBe(false);
   });
 });

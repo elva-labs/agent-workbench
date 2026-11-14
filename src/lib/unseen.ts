@@ -42,6 +42,15 @@ const LOOKALIKE: Record<string, string> = {
   ı: "l", ℓ: "l", i: "l", "1": "l", "|": "l", "0": "o",
 };
 
+/** A character folded until it no longer changes, so every look-alike of
+    a letter ends in the same one: Cyrillic і reads as i, which reads as l. */
+function fold(char: string): string {
+  let folded = char;
+  for (let step = 0; step < 4 && LOOKALIKE[folded] !== undefined && LOOKALIKE[folded] !== folded; step++)
+    folded = LOOKALIKE[folded];
+  return folded;
+}
+
 /** A name as it reads, for telling two names apart: without anything
     unseen, any spaces, line breaks or tabs, the marks around it, accents
     or case, and with letters that look like Latin ones read as them, so
@@ -50,7 +59,7 @@ const LOOKALIKE: Record<string, string> = {
 export function bareName(name: string): string {
   return Array.from(name.normalize("NFKD").toLowerCase())
     .filter((char) => !UNSEEN.test(char) && !/\s/.test(char) && !/\p{M}/u.test(char))
-    .map((char) => LOOKALIKE[char] ?? char)
+    .map(fold)
     .join("")
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 }
