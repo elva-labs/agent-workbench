@@ -1,3 +1,4 @@
+export { revealed, shown } from "$lib/unseen";
 import { spoken } from "$lib/instructions";
 import type { IntegratedEventBody, IntegratedToolKind, PermissionChoice, PermissionOffer } from "$lib/core";
 import type { Conversation, Part, PlanPart, QuestionPart, TextPart, ToolCall } from "$lib/conversation.svelte";
@@ -563,39 +564,6 @@ export function tokens(count: number): string {
 /** A clock time as the thread shows it, in the user's own format. */
 export function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-/** Characters that change how text reads without being seen, by Unicode's
-    own categories: controls, format characters (the marks and overrides
-    that reorder text, joiners, the soft hyphen, tags), line and paragraph
-    separators, and every character Unicode says is drawn as nothing, such
-    as variation selectors and Hangul fillers. */
-const UNSEEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
-
-/** Text split so that every character that would change how it reads
-    without being seen stands as a visible marker of its own, such as
-    ⟨U+202E⟩. A line break and a tab stay as they are. */
-/** Text with every character that would change how it reads without being
-    seen written as its marker, for a label or a line of plain text. */
-export function shown(text: string): string {
-  return revealed(text)
-    .map((part) => part.text)
-    .join("");
-}
-
-export function revealed(text: string): { text: string; unseen: boolean }[] {
-  const out: { text: string; unseen: boolean }[] = [];
-  let plain = "";
-  for (const char of text) {
-    if (char !== "\n" && char !== "\t" && UNSEEN.test(char)) {
-      if (plain !== "") out.push({ text: plain, unseen: false });
-      plain = "";
-      const code = char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
-      out.push({ text: `⟨U+${code}⟩`, unseen: true });
-    } else plain += char;
-  }
-  if (plain !== "" || out.length === 0) out.push({ text: plain, unseen: false });
-  return out;
 }
 
 /** What the agent last said and did, as plain text for another agent to

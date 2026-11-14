@@ -17,6 +17,7 @@ import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { kindFor, type SessionKind } from "$lib/sessionKind.svelte";
+import { readsAsYou, shown } from "$lib/unseen";
 
 /**
  * Every session this window has, live or finished.
@@ -557,9 +558,9 @@ export function outsideFor(
  */
 export function historyLabel(transcript: Transcript): string {
   const known = sessions.names[transcript.id];
-  if (known !== undefined) return known;
-  if (transcript.title !== null && transcript.title !== "")
-    return transcript.title;
+  if (known !== undefined && !readsAsYou(known)) return shown(known);
+  if (transcript.title !== null && transcript.title !== "" && !readsAsYou(transcript.title))
+    return shown(transcript.title);
   return `session from ${ago(transcript.modified)}`;
 }
 
@@ -680,9 +681,12 @@ export function liveCount(project: string): number {
   return forProject(project).filter(isLive).length;
 }
 
-/** A short label for the row: the resumed id, or its number in the project. */
+/** A short label for the row: its name, the resumed id, or its number in
+    the project. A name is the agent's or a caller's text, so what it holds
+    that cannot be seen is written out; and a name that reads as "You",
+    which is the user's alone, is not taken. */
 export function label(session: Session): string {
-  if (session.title !== null) return session.title;
+  if (session.title !== null && !readsAsYou(session.title)) return shown(session.title);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
 }
@@ -1381,7 +1385,7 @@ export function viewed(key: string) {
 export function noted(key: string, text: string) {
   const session = byKey(key);
   if (session === null) return;
-  session.note = text;
+  session.note = shown(text);
   unseen(session);
 }
 
@@ -1445,7 +1449,7 @@ export function exact(
       session.needs = null;
       session.delegated = false;
       changed(session);
-      if (session.note === null && note !== null) session.note = note;
+      if (session.note === null && note !== null) session.note = shown(note);
       unseen(session);
       break;
     case "delegated": {
@@ -1457,7 +1461,7 @@ export function exact(
       session.needs = null;
       session.delegated = true;
       if (idle) changed(session);
-      if (session.note === null && note !== null) session.note = note;
+      if (session.note === null && note !== null) session.note = shown(note);
       break;
     }
     case "permission": {

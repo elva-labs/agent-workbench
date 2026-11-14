@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Plain from "./Plain.svelte";
+  import { shown } from "$lib/unseen";
   import type { IntegratedFileChange } from "$lib/core";
   import { shortPath } from "$lib/thread";
 
@@ -46,10 +48,10 @@
 <div class="change" data-testid="file-change">
   <div class="head">
     <span class="verb">{VERB[change.kind]}</span>
-    <span class="path" title={change.path}>{shortPath(change.path, root)}</span>
+    <span class="path" title={shown(change.path)}><Plain text={shortPath(change.path, root)} /></span>
     {#if change.to !== null}
       <span class="verb">to</span>
-      <span class="path" title={change.to}>{shortPath(change.to, root)}</span>
+      <span class="path" title={shown(change.to)}><Plain text={shortPath(change.to, root)} /></span>
     {/if}
     <span class="count">
       {#if added > 0}<span class="add">+{added}</span>{/if}
@@ -61,7 +63,7 @@
       {#each lines as line, at (at)}
         <div class="line {line.kind}"><span class="mark"
             >{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span
-          >{line.text}</div>
+          ><Plain text={line.text} /></div>
       {/each}
     </div>
   {/if}

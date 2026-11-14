@@ -124,7 +124,7 @@
               {#if part.tool !== "edit" || part.changes.length === 0}
                 <dl class="block fields" data-testid="step-input">
                   {#each input.fields as field (field.name)}
-                    <dt>{field.name}</dt>
+                    <dt><Plain text={field.name} /></dt>
                     <dd><Plain text={field.value} /></dd>
                   {/each}
                 </dl>
@@ -148,7 +148,7 @@
           {/if}
         {/if}
         {#if output !== "" && part.tool !== "edit"}
-          <pre class="block output" class:bad={part.error} data-testid="step-output">{output}</pre>
+          <pre class="block output" class:bad={part.error} data-testid="step-output"><Plain text={output} /></pre>
         {/if}
         {#if part.truncated || part.inputTruncated}
           <p class="cut">Some of this was cut short on its way to the window.</p>

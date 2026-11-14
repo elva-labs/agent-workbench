@@ -573,7 +573,7 @@
       </div>
     {/if}
     {#if request.error !== null}
-      <p class="error" data-testid="dock-error">{request.error}</p>
+      <p class="error" data-testid="dock-error"><Plain text={request.error} /></p>
     {/if}
   </div>
 {/if}

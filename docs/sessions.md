@@ -323,7 +323,9 @@ The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,
 asking the user or waiting for a permission. A session another session
 started is named by the name its start gave, or by the first line of its
-prompt. Under it is the thread. The user's words sit to the right in a
+prompt; a name that reads as You, in any case or with anything unseen
+around it, is never taken, since the thread says You for the user alone,
+and the start tool says so to its caller. Under it is the thread. The user's words sit to the right in a
 tinted bubble under You. What another session sent, the prompt it started
 the session with or a message it sent later, sits there in a plain bubble
 under that session's name, with a way to go to it. A message is known as
@@ -382,8 +384,20 @@ where it takes them; a secret answer is typed hidden. Requests are answered
 one at a time, the oldest first, and the dock says how many more wait. A
 permission the agent withdraws before it is answered says so on the step
 that asked for it, or in a note where no step is known, as a question that
-settles itself does. When the dock goes by itself while it has the
-keyboard, the keyboard goes back to the composer.
+settles itself does. When the dock goes by
+itself while it has the keyboard, the keyboard goes back to the composer.
+
+Every text that comes from an agent, a tool or a server is drawn by one
+rule, in the conversation and outside it: a command, a path, a URL, a
+tool's or a server's name, a subagent's description, a task, a question and
+its options, a note, an error, a field's name, a line of a change, and a
+session's or a model's name in the sessions pane, the palette, the header,
+a notification and an orchestrator's question. It is set apart left to
+right, so it cannot turn the words around it, and any character that
+changes how it reads without being seen shows as a marker such as
+⟨U+202E⟩. Those characters are taken from Unicode's own categories:
+controls, format characters and every character Unicode says is drawn as
+nothing, line breaks and tabs aside.
 
 The composer under the dock takes several lines, images dropped, pasted or
 picked, and any other dropped file as its path in the text; a message sent

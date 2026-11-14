@@ -11,6 +11,7 @@
   import Dock from "./Dock.svelte";
   import Icon from "./Icon.svelte";
   import Thread from "./Thread.svelte";
+  import Plain from "./Plain.svelte";
   import { tick, untrack } from "svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
 
@@ -176,7 +177,7 @@
     <div class="foot">
       {#if over}
         <div class="ended" data-testid="session-ended">
-          <span class="why">{why}</span>
+          <span class="why"><Plain text={why} /></span>
           <button class="primary" tabindex="0" disabled={link.busy} onclick={() => resume(session.key)} data-testid="resume-session"
             >{session.status === "failed" ? "Try again" : "Resume"}</button
           >

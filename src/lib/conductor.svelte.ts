@@ -47,6 +47,7 @@ import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrate
 import { lastRun } from "$lib/thread";
 import { OUTCOME_ASK } from "$lib/instructions";
 import { senderOf, startersFrom } from "$lib/senders.svelte";
+import { readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -605,8 +606,11 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     account,
   );
   conductor.startedBy[session.key] = caller;
-  // The name the caller gave is the row's, until the agent names it.
-  if (name !== null) session.title = oneLine(name);
+  // The name the caller gave is the row's, until the agent names it. One
+  // that reads as "You" is the user's alone and is not taken: the row is
+  // named by the prompt instead.
+  const called = name !== null && !readsAsYou(name) ? oneLine(name) : null;
+  if (called !== null) session.title = called;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 
   const id = await idFor(session.key);
@@ -623,12 +627,16 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     project,
     worktree: startIn,
     agent,
-    name: name === null ? null : oneLine(name),
+    name: called,
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
+  const notCalled =
+    name !== null && called === null
+      ? ` It is not called ${oneLine(name)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
+      : "";
   return said(
-    `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
+    `Started session ${id} in ${where}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
   );
 }
 

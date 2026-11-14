@@ -1833,3 +1833,28 @@ describe("the next session that needs you", () => {
     expect(nextNeedingYou()).toBeNull();
   });
 });
+
+describe("a name the agent or a caller gave", () => {
+  beforeEach(() => reset());
+
+  it("is drawn with what cannot be seen in it written out", () => {
+    // The reviewer's case: a name with a right-to-left override in it.
+    const row = create("/p");
+    row.title = "tidy \u202eeman";
+    expect(label(row)).toBe("tidy ⟨U+202E⟩eman");
+    noted(row.key, "done \u200b\u2066now");
+    expect(byKey(row.key)!.note).toBe("done ⟨U+200B⟩⟨U+2066⟩now");
+  });
+
+  it("is never You, which the thread keeps for the user", () => {
+    const row = create("/p");
+    for (const title of ["You", "you", " YOU ", "\u200byou\u200b", "“You”"]) {
+      row.title = title;
+      expect(label(row)).toBe(`session ${row.ordinal}`);
+    }
+    row.title = "Young";
+    expect(label(row)).toBe("Young");
+    const past = { id: "abc12345-0000", title: "you", modified: 0 } as Transcript;
+    expect(historyLabel(past)).toBe("session from " + ago(0));
+  });
+});

@@ -64,6 +64,7 @@
   import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
   import { otherKind } from "$lib/sessionKind.svelte";
+  import { shown } from "$lib/unseen";
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
@@ -1161,7 +1162,7 @@
       tabindex="-1"
       onclick={() => resume(path, transcript)}
       disabled={!isReady()}
-      title={transcript.title ?? transcript.id}
+      title={shown(transcript.title ?? transcript.id)}
       data-testid="past-session"
     >
       <span class="dot"></span>
@@ -2998,5 +2999,12 @@
 
   .dismiss:hover {
     color: var(--ink);
+  }
+
+  /* A session's name and its last line are the agent's or a caller's text:
+     set apart, so nothing in them turns the row around. */
+  .label,
+  .note {
+    unicode-bidi: isolate;
   }
 </style>

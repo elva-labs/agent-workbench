@@ -27,6 +27,7 @@ import {
   worktreeName,
 } from "$lib/conductor.svelte";
 import {
+  close,
   byKey,
   create,
   ended,
@@ -385,6 +386,19 @@ describe("starting a session", () => {
     );
     expect(row.title).toBe("Cache test flake");
     expect(worktrees).toEqual([[A, "cache-test-flake"]]);
+  });
+
+  it("does not call a session You, in any case or with hidden characters around it, and says so", async () => {
+    for (const name of ["You", "you", " YOU\u200b", "\u202eyou\u202c"]) {
+      const row = await startAllowed(
+        call("start", { project: A, prompt: "Fix the flaky test", name }, { session: "caller-1" }),
+        "pty-1",
+        "sid-new",
+      );
+      expect(row.title).toBeNull();
+      expect(last().content).toContain("a conversation shows the user's own words under that name");
+      close(row.key);
+    }
   });
 
   it("gives the session its prompt as one line, and asks it to say how it went", async () => {

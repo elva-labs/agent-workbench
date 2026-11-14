@@ -1435,3 +1435,82 @@ test("shows the user's own words as theirs when another session sent the same wo
   await expect(messages.nth(2)).not.toHaveAttribute("data-from");
   await expect(messages.nth(2).locator(".who")).toContainText("You");
 });
+
+test("writes out what an agent's name or line hides, wherever it is drawn", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("sessions-menu").click();
+  await page.getByTestId("menu-orchestrator").click();
+  await expect(page.getByTestId("conversation")).toBeVisible();
+  const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
+    page.evaluate(
+      ({ project, id, tool, args }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id,
+          tool,
+          arguments: args,
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT, id, tool, args },
+    );
+  // The reviewer's name, and a prompt that hides a character, asked about.
+  await conduct("o-1", "start", { project: PROJECT, prompt: "Count ​the files", name: "tidy ‮eman" });
+  await expect(page.getByTestId("conduct-ask")).toContainText("Count ⟨U+200B⟩the files");
+  await page.getByTestId("conduct-allow").click();
+  // The session's row, set apart from the words around it.
+  const row = page.getByTestId("started-session");
+  await expect(row).toContainText("tidy ⟨U+202E⟩eman");
+  expect(await row.locator(".label").evaluate((node) => getComputedStyle(node).unicodeBidi)).toBe("isolate");
+  // The palette's go to.
+  await page.getByTestId("go-to").click();
+  await page.getByTestId("palette-field").fill("tidy");
+  await expect(page.getByTestId("palette-label").first()).toHaveText("tidy ⟨U+202E⟩eman");
+  await page.keyboard.press("Escape");
+  // In its conversation: another session's message, a note, a step's
+  // field names, and the lines of a change.
+  await conduct("o-2", "send", { session: "integrated-session-2", text: "now ‮eht stset" });
+  await row.click();
+  const view = page.locator("[data-testid='conversation']:visible");
+  await expect(view.getByTestId("user-message").last().getByTestId("unseen-character")).toHaveText("⟨U+202E⟩");
+  await expect(page.locator(`${AGENT} > header`)).toContainText("tidy ⟨U+202E⟩eman");
+  await agent(
+    page,
+    String.raw`f.notice("int-2", "fell back ‮to‬ Sonnet", "warning");
+     f.startTurn("int-2");
+     f.tool("int-2", "Thing", { "na‮me": "value" }, "ok", { kind: "other" });
+     f.tool("int-2", "Edit", { file_path: "${PROJECT}/a.ts" }, "ok", { kind: "edit", changes: [{ path: "${PROJECT}/a.ts", kind: "update", to: null, content: null, truncated: false, hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-a", "+a‮b"] }] }] });
+     f.endTurn("int-2");`,
+  );
+  await expect(view.getByTestId("note").getByTestId("unseen-character")).toHaveText(["⟨U+202E⟩", "⟨U+202C⟩"]);
+  await view.getByTestId("work-line").last().click();
+  await view.getByTestId("step-row").first().click();
+  await expect(view.getByTestId("step-input").locator("dt").getByTestId("unseen-character")).toHaveText("⟨U+202E⟩");
+  await view.getByTestId("step-row").last().click();
+  await expect(view.getByTestId("step-detail").last().getByTestId("unseen-character")).toHaveText("⟨U+202E⟩");
+});
+
+test("does not call a session You, whatever the name it is started with", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("sessions-menu").click();
+  await page.getByTestId("menu-orchestrator").click();
+  await expect(page.getByTestId("conversation")).toBeVisible();
+  await page.evaluate(
+    (project) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id: "o-1",
+        tool: "start",
+        arguments: { project, prompt: "Count the files", name: " you​" },
+        cwd: project,
+        session: "integrated-session-1",
+      }),
+    PROJECT,
+  );
+  await page.getByTestId("conduct-allow").click();
+  const row = page.getByTestId("started-session");
+  await expect(row).toContainText("Count the files");
+  await expect(row.locator(".label")).not.toContainText(/you/i);
+  await row.click();
+  await expect(page.locator(`${AGENT} > header`)).toContainText("Count the files");
+});

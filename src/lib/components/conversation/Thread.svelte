@@ -337,13 +337,13 @@
             <p class="outcome" data-testid="turn-outcome">Interrupted</p>
           {:else if lastOfTurn.has(entry.key) && turn?.outcome === "failed"}
             <p class="outcome bad" data-testid="turn-outcome">
-              The turn failed{turn.error ? `: ${turn.error}` : "."}
+              The turn failed{#if turn.error}: <Plain text={turn.error} />{:else}.{/if}
             </p>
           {/if}
         </article>
       {:else if entry.kind === "note" && entry.key !== endedWith}
         <p class="note {entry.tone}" data-testid="note">
-          <Icon name={entry.tone === "info" ? "info" : "warn"} size={13} />{entry.text}
+          <Icon name={entry.tone === "info" ? "info" : "warn"} size={13} /><Plain text={entry.text} />
         </p>
       {:else if entry.kind === "compaction"}
         <div class="divider" data-testid="compaction">
@@ -402,7 +402,7 @@
           {/each}
         </div>
       {/if}
-      {#if words.text !== ""}<p>{words.text}</p>{/if}
+      {#if words.text !== ""}<p><Plain text={words.text} /></p>{/if}
     </div>
     {#if words.instructions !== null}
       <button
@@ -421,14 +421,14 @@
       <p class="state">Sending</p>
     {:else if said.state === "dropped"}
       <p class="state bad">
-        Not answered{said.error ? `: ${said.error}` : ""}
+        Not answered{#if said.error}: <Plain text={said.error} />{/if}
         {#if onPutBack}
           <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {:else if said.state === "failed"}
       <p class="state bad">
-        Not sent{said.error ? `: ${said.error}` : ""}
+        Not sent{#if said.error}: <Plain text={said.error} />{/if}
         {#if onPutBack}
           <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}

@@ -8,6 +8,7 @@
   import { modelName, offeredModel, tokens } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
+  import { shown } from "$lib/unseen";
 
   /**
    * Where the user writes to the agent. It takes several lines, files and
@@ -424,7 +425,7 @@
       </div>
     {/if}
     {#if link.configureError !== null}
-      <span class="error" title={link.configureError}>Not changed: {link.configureError}</span>
+      <span class="error" title={shown(link.configureError)}>Not changed: <Plain text={link.configureError} /></span>
     {/if}
     <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
     {#if running}
