@@ -225,10 +225,11 @@ background finishes while the session is idle. A turn the agent ends
 without having said it started is started first, so every end has a start.
 
 Where an agent takes no message while a turn runs, the core holds each one.
-It hands one over only when no turn runs and the agent has named the one
-handed over before, in a turn's start or as dropped, and makes the line for
-it then, so that it goes with the settings the session runs on at that
-moment.
+It hands one over only when the agent has said it is ready, no turn runs,
+and the agent has named the one handed over before, in a turn's start or as
+dropped, and makes the line for it then, so that it goes with the
+conversation the agent has started and the settings the session runs on
+at that moment.
 
 The state a session's row shows comes from the same events, never from
 timing or hooks:

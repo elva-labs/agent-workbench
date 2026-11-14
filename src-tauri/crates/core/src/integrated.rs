@@ -770,9 +770,9 @@ pub trait Driver: Send {
     fn read(&mut self, line: &str) -> Reading;
 
     /// Whether the agent takes a message while a turn runs. When it does
-    /// not, the core holds each message, and hands one over only when no
-    /// turn runs and the agent has named the last one handed over, in a
-    /// turn's start or as dropped. Its line is made then.
+    /// not, the core holds each message, and hands one over only when the
+    /// agent is ready, no turn runs and it has named the last one handed
+    /// over, in a turn's start or as dropped. Its line is made then.
     fn takes_while_busy(&self) -> bool;
 
     /// The line that sends the user's message, under the window's id. An
@@ -1388,16 +1388,16 @@ impl Live {
         }
     }
 
-    /// Hands the agent the next held message, once no turn runs and the
-    /// agent has named the one handed over before. One the driver cannot
-    /// make a line of is dropped, and the next one goes.
+    /// Hands the agent the next held message, once it is ready, no turn
+    /// runs and it has named the one handed over before. One the driver
+    /// cannot make a line of is dropped, and the next one goes.
     fn release(&self, machine: &mut Machine, out: &mut Vec<Event>) {
         if let Some(message) = &machine.handed {
             if !machine.tracker.pending.contains(message) {
                 machine.handed = None;
             }
         }
-        while !machine.tracker.turn && machine.handed.is_none() {
+        while machine.ready.is_none() && !machine.tracker.turn && machine.handed.is_none() {
             let Some(held) = machine.held.pop_front() else {
                 return;
             };
@@ -1941,9 +1941,14 @@ pub fn send(
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
         let queued = machine.tracker.send(message)?;
+        // An agent that takes no message mid-turn may have no conversation
+        // to take one into before it is ready, so it is held till then too.
         let holding = !machine.driver.takes_while_busy();
         let hold = holding
-            && (machine.tracker.turn || machine.handed.is_some() || !machine.held.is_empty());
+            && (machine.ready.is_some()
+                || machine.tracker.turn
+                || machine.handed.is_some()
+                || !machine.held.is_empty());
         let went = if hold {
             machine.held.push_back(Held {
                 message: message.to_string(),
@@ -2728,6 +2733,17 @@ mod tests {
                         .collect(),
                 }],
                 (Some("end"), _) => vec![ended()],
+                (Some("ready"), _) => vec![Event::Ready {
+                    session_id: "minted".into(),
+                    model: Some(self.model.clone()),
+                    mode: None,
+                    effort: None,
+                    version: None,
+                    models: vec![],
+                    modes: vec![],
+                    efforts: vec![],
+                    commands: vec![],
+                }],
                 (Some("drop"), Some(message)) => vec![Event::message(
                     message,
                     MessageState::Dropped,
@@ -2834,6 +2850,15 @@ mod tests {
 
     impl Bench {
         fn new(driver: Box<dyn Driver>) -> Self {
+            Self::with(driver, None)
+        }
+
+        /// A session whose agent has not said it is ready yet.
+        fn starting(driver: Box<dyn Driver>) -> Self {
+            Self::with(driver, Some(mpsc::channel().0))
+        }
+
+        fn with(driver: Box<dyn Driver>, ready: Option<Sender<()>>) -> Self {
             let recorder = Arc::new(crate::events::testing::Recorder::default());
             let outbox = Arc::new(Outbox::default());
             let (lines, queued) = mpsc::channel::<Line>();
@@ -2852,7 +2877,7 @@ mod tests {
             });
             let live = Arc::new(Live::new(
                 "int-bench".into(),
-                Machine::new(driver, None),
+                Machine::new(driver, ready),
                 outbox,
                 lines,
                 kill,
@@ -2972,6 +2997,26 @@ mod tests {
         assert_eq!(
             bench.live.machine.lock().unwrap().tracker.state(),
             SessionState::Idle
+        );
+    }
+
+    #[test]
+    fn an_agent_that_takes_no_message_mid_turn_gets_none_before_it_is_ready() {
+        let bench = Bench::starting(fake());
+        bench.send(M1, "one");
+        bench.send(M2, "two");
+        assert_eq!(bench.next(), None, "held until the agent is ready");
+        bench.live.take("ready");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(&*format!("send {M1} one on haiku"))
+        );
+        assert_eq!(bench.next(), None, "one at a time");
+        bench.live.take(&format!("start {M1}"));
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(&*format!("send {M2} two on haiku"))
         );
     }
 
