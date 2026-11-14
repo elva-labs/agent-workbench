@@ -84,7 +84,7 @@
   let col = $state<HTMLDivElement | null>(null);
   /** When the user last pressed or clicked in the thread: the thread
       growing then is a fold they opened, not something new to follow. */
-  let touched = 0;
+  let touched = Number.NEGATIVE_INFINITY;
 
   // Marks new content as come while the user is scrolled up.
   $effect(() => {
@@ -132,12 +132,23 @@
     ownTop = node.scrollTop;
   }
 
+  /** When the user last scrolled the thread themselves: the wheel, a
+      touch, a key that scrolls, or the scrollbar. */
+  let scrolledBy = Number.NEGATIVE_INFINITY;
+  const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+  function userScrolls() {
+    scrolledBy = performance.now();
+  }
+
   function onscroll() {
     if (scroller === null) return;
-    // The thread's own scroll to its foot can be heard after more has come,
-    // when it is no longer at the foot; it is not the user leaving it.
+    // Only the user decides whether the thread follows. The thread's own
+    // scroll to its foot can be heard after more has come, and the browser
+    // moves the view itself to keep its place while text is drawn again;
+    // neither is the user leaving the foot.
     if (Math.abs(scroller.scrollTop - ownTop) < 2) return;
-    ownTop = -1;
+    if (performance.now() - scrolledBy > 1000) return;
     pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 32;
     if (pinned) behind = false;
   }
@@ -178,8 +189,17 @@
   class="thread"
   bind:this={scroller}
   {onscroll}
-  onpointerdown={() => (touched = performance.now())}
-  onkeydown={() => (touched = performance.now())}
+  onpointerdown={(e) => {
+    touched = performance.now();
+    // A press on the scrollbar itself scrolls.
+    if (e.target === scroller) userScrolls();
+  }}
+  onkeydown={(e) => {
+    touched = performance.now();
+    if (SCROLL_KEYS.has(e.key)) userScrolls();
+  }}
+  onwheel={userScrolls}
+  ontouchmove={userScrolls}
   data-testid="thread"
   tabindex="-1"
 >

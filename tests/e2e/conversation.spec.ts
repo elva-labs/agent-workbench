@@ -404,7 +404,7 @@ test.describe("the composer", () => {
   test("shows the model and changes it", async ({ page }) => {
     await openIntegrated(page);
     const chip = page.getByTestId("model-chip");
-    await expect(chip).toHaveText("Sonnet");
+    await expect(chip).toHaveText("Default · Sonnet");
     await chip.click();
     await expect(page.getByTestId("model-option").locator(".name")).toHaveText(["Default (recommended)", "Haiku", "Sonnet"]);
     await page.getByTestId("model-option").filter({ hasText: "Haiku" }).click();
@@ -540,7 +540,8 @@ test("follows streaming text to its last line while at the foot", async ({ page 
 test("goes to the foot when the user sends while scrolled up", async ({ page }) => {
   await openIntegrated(page);
   await agent(page, `f.turn("${H}", Array.from({ length: 60 }, (_, at) => "Line " + at).join("\\n\\n"));`);
-  await page.getByTestId("thread").evaluate((node) => (node.scrollTop = 0));
+  await page.getByTestId("thread").hover();
+  await page.mouse.wheel(0, -5000);
   await expect.poll(() => fromFoot(page)).toBeGreaterThan(500);
   await page.getByTestId("composer-input").fill("Is this in sight?");
   await page.keyboard.press("Enter");
@@ -710,4 +711,80 @@ test.describe("how sessions run, in the settings", () => {
     await expect(page.locator("[data-testid='session-kind'][data-agent='codex'] [role='radiogroup']")).toBeVisible();
     await expect(page.getByTestId("session-kind-only")).toHaveCount(0);
   });
+});
+
+test.describe("the model and the mode", () => {
+  test("say which model the default is, and that one chosen during a turn is used from the next", async ({ page }) => {
+    await openIntegrated(page);
+    const chip = page.getByTestId("model-chip");
+    await expect(chip).toHaveText("Default · Sonnet");
+    await chip.click();
+    await expect(page.getByTestId("model-option").filter({ hasText: "Sonnet" }).last()).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("model-menu")).toHaveCount(0);
+    await page.getByTestId("composer-input").fill("go");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("${H}");`);
+    await chip.click();
+    await expect(page.getByTestId("model-menu")).toContainText("A model chosen now is used from the next turn.");
+    await page.getByTestId("model-option").filter({ hasText: "Haiku" }).click();
+    await expect(chip).toHaveText("Haiku");
+    await expect(page.getByTestId("model-after-turn")).toHaveText("Haiku from the next turn");
+    await agent(page, `f.emit("${H}", { type: "text", block: "x", parent: null, text: "Done.", done: true }); f.endTurn("${H}");`);
+    await expect(page.getByTestId("model-after-turn")).toHaveCount(0);
+    // The turn that ran said it ran on the model it began with.
+    await expect(page.getByTestId("agent-run").last().locator("header")).toContainText("Sonnet");
+  });
+
+  test("put the model's menu away on a press outside it", async ({ page }) => {
+    await openIntegrated(page);
+    await page.getByTestId("model-chip").click();
+    await expect(page.getByTestId("model-menu")).toBeVisible();
+    await page.getByTestId("thread").click({ position: { x: 20, y: 20 } });
+    await expect(page.getByTestId("model-menu")).toHaveCount(0);
+  });
+
+  test("start a session in the agent's safe mode, say which mode it runs in, and change it", async ({ page }) => {
+    await openIntegrated(page);
+    expect((await calls(page))[0]).toMatchObject({ method: "start", options: { mode: "default" } });
+    const chip = page.getByTestId("mode-chip");
+    await expect(chip).toHaveText("Default");
+    await chip.click();
+    await page.getByTestId("mode-option").filter({ hasText: "Plan" }).click();
+    await expect(chip).toHaveText("Plan");
+    expect((await calls(page)).find((call) => call.method === "configure")).toMatchObject({ settings: { mode: "plan" } });
+  });
+
+  test("show a mode the agent took from its own configuration as it is, and say it cannot be come back to", async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], agents: ["codex"], integrable: ["codex"], settings: { integrated: ["codex"] } });
+    await page.addInitScript(() => {
+      const w = window as unknown as { __integrated: { start: (options: Record<string, unknown>) => unknown } };
+      const start = w.__integrated.start;
+      // The agent keeps the mode its own configuration names.
+      w.__integrated.start = (options) => start({ ...options, mode: "untrusted, workspace-write" });
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    expect((await calls(page))[0]).toMatchObject({ method: "start" });
+    const chip = page.getByTestId("mode-chip");
+    await expect(chip).toHaveText("untrusted, workspace-write");
+    await chip.click();
+    await expect(page.getByTestId("mode-option").first()).toContainText("cannot be chosen again here");
+    await expect(page.getByTestId("mode-option").locator(".name")).toHaveText(["untrusted, workspace-write", "Read only", "Auto", "Full access"]);
+  });
+});
+
+test("stops following when the user scrolls up, and shows the way back", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", Array.from({ length: 40 }, (_, at) => "Line " + at).join("\\n\\n"));`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await page.getByTestId("thread").hover();
+  await page.mouse.wheel(0, -2000);
+  await expect.poll(() => fromFoot(page)).toBeGreaterThan(500);
+  const top = await page.getByTestId("thread").evaluate((node) => node.scrollTop);
+  await agent(page, `f.turn("${H}", "More, while the user reads above.");`);
+  await expect(page.getByTestId("jump-latest")).toBeVisible();
+  expect(await page.getByTestId("thread").evaluate((node) => node.scrollTop)).toBe(top);
+  await page.getByTestId("jump-latest").click();
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
 });
