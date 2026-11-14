@@ -222,10 +222,16 @@ said.image = ({ href, title, text }) => {
   return `<a href="${escapeAttribute(href)}" rel="noopener noreferrer">${escapeText(text || href)}</a>`;
 };
 
-/** Raw HTML in a document is shown as the text it is, never drawn. Marked
-    escapes everything else, code included, itself. */
+/** Raw HTML in a document is shown as the text it is, never drawn. Text is
+    always escaped here: marked leaves text unescaped once it believes a raw
+    block such as `<code>` has opened, and since raw HTML is never drawn, no
+    such block ever has. Code is escaped by marked itself. */
 renderer.html = ({ text }) => escapeText(text);
 said.html = ({ text }) => escapeText(text);
+renderer.text = (token) =>
+  "tokens" in token && token.tokens ? renderer.parser.parseInline(token.tokens) : escapeText(token.text);
+said.text = (token) =>
+  "tokens" in token && token.tokens ? said.parser.parseInline(token.tokens) : escapeText(token.text);
 
 function escapeText(text: string): string {
   return text

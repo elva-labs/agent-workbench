@@ -295,3 +295,43 @@ describe("code in Markdown", () => {
     }
   });
 });
+
+describe("what Markdown may draw", () => {
+  const ELEMENTS = new Set(
+    "P,BR,EM,STRONG,DEL,CODE,PRE,A,IMG,UL,OL,LI,BLOCKQUOTE,H1,H2,H3,H4,H5,H6,HR,TABLE,THEAD,TBODY,TR,TH,TD,INPUT".split(","),
+  );
+  const PAYLOADS = [
+    "x <code> <img/src=x onerror=alert(1)>",
+    "<pre> <svg/onload=alert(1)>",
+    "<kbd> <img/src=x onerror=1> </kbd>",
+    "<script> <iframe/src=javascript:1>",
+    "a <!-- x --> <img src=x onerror=1>",
+    "`x` <b onmouseover=1>y</b>",
+    "<details><summary>a</summary><img src=x onerror=1></details>",
+    "[a](javascript:alert(1)) ![b](javascript:alert(1))",
+    "* <code>\n* <img/src=x onerror=1>",
+    "> <pre>\n> <img/src=x onerror=1>",
+    "| <code> | <img/src=x onerror=1> |\n| --- | --- |\n| a | b |",
+  ];
+
+  it("draws nothing but Markdown's own elements, with no handlers and no scripted links", () => {
+    for (const markdown of PAYLOADS)
+      for (const html of [render(markdown), renderSaid(markdown)]) {
+        const box = document.createElement("div");
+        box.innerHTML = html;
+        for (const element of box.querySelectorAll("*")) {
+          expect(ELEMENTS.has(element.tagName), `${element.tagName} from ${markdown}`).toBe(true);
+          for (const attribute of element.attributes) {
+            expect(attribute.name.startsWith("on"), `${attribute.name} from ${markdown}`).toBe(false);
+            expect(/javascript:/i.test(attribute.value), `${attribute.value} from ${markdown}`).toBe(false);
+          }
+        }
+      }
+  });
+
+  it("escapes text once, after a raw tag as anywhere else", () => {
+    const box = document.createElement("div");
+    box.innerHTML = renderSaid("x <code> a & b < c");
+    expect(box.textContent?.trim()).toBe("x <code> a & b < c");
+  });
+});
