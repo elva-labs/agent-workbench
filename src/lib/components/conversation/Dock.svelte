@@ -3,7 +3,7 @@
   import type { Conversation, Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
   import { answer, reply } from "$lib/integrated.svelte";
-  import { asks, choiceLabel, choiceMeans, inputPath, shortPath } from "$lib/thread";
+  import { asks, choiceLabel, choiceMeans, inputPath } from "$lib/thread";
   import Icon from "./Icon.svelte";
 
   /**
@@ -56,7 +56,14 @@
   let words = $state("");
 
   $effect(() => {
-    void request?.request;
+    const asked = request?.asked;
+    // A command of several lines is shown whole from the start, so no line
+    // of it is out of sight when the choice is made.
+    shown =
+      asked?.type === "permissionAsked" &&
+      asked.tool === "Bash" &&
+      typeof (asked.input as Record<string, unknown> | null)?.command === "string" &&
+      ((asked.input as Record<string, string>).command.includes("\n"));
     pointed = 0;
     denying = null;
     words = "";
@@ -133,6 +140,22 @@
   }
 
   let shown = $state(false);
+
+  /** A path a request names, as the user must read it to decide: from the
+      project when it is plainly inside it, and whole otherwise, said to be
+      outside. Nothing is cut out of it. */
+  function where(path: string): { text: string; outside: boolean } {
+    const plain = !path.split("/").includes("..");
+    if (root !== null && plain && path.startsWith(`${root}/`))
+      return { text: path.slice(root.length + 1), outside: false };
+    return { text: path, outside: root !== null && path.startsWith("/") };
+  }
+
+  /** A command's first line, and how many lines follow it. */
+  function lines(command: string): { first: string; rest: number } {
+    const all = command.split("\n");
+    return { first: all[0], rest: all.length - 1 };
+  }
 
   // ---- questions ----
 
@@ -230,9 +253,15 @@
       <div class="what">
         <span class="ring"></span>
         <p>
-          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}<code
-              >{asked.tool === "Bash" ? what.object.split("\n")[0] : asked.path || inputPath(asked.input) ? shortPath(what.object, root) : what.object}</code
-            >{/if}
+          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if asked.tool === "Bash"}{@const command = lines(what.object)}<code
+                >{command.first}</code
+              >{#if command.rest > 0}<span class="also" data-testid="permission-more-lines"
+                  >{" "}and {command.rest} more {command.rest === 1 ? "line" : "lines"}</span
+                >{/if}{:else if asked.path || inputPath(asked.input)}{@const place = where(what.object)}<code
+                title={what.object}>{place.text}</code
+              >{#if place.outside}<span class="also" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code
+                >{what.object}</code
+              >{/if}{/if}
         </p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
@@ -445,6 +474,11 @@
     border-radius: var(--radius-sm);
     background: var(--surface-2);
     color: var(--ink);
+  }
+
+  .also {
+    color: var(--accent);
+    white-space: nowrap;
   }
 
   .description {
