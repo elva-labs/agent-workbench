@@ -41,6 +41,7 @@ function call(over: Partial<ToolCall> = {}): ToolCall {
     parts: [],
     tasks: [],
     answer: null,
+    plan: false,
     at: 0,
     until: 1000,
     ...over,
@@ -116,7 +117,7 @@ describe("the line a stretch of work folds into", () => {
         call({ tool: "web", name: "WebFetch" }),
         call({ tool: "mcp", name: "mcp__agent-workbench__start", result: "Started session s-1 in x." }),
         call({ tool: "mcp", name: "mcp__github__issues" }),
-        call({ tool: "other", name: "TodoWrite" }),
+        call({ tool: "other", name: "TodoWrite", plan: true }),
       ],
       0,
     );
@@ -166,7 +167,11 @@ describe("a step's title", () => {
       verb: "Read",
       object: "src/a.ts",
     });
-    expect(stepTitle(call({ tool: "edit", name: "Write", input: { file_path: "/x/y" } })).verb).toBe("Wrote");
+    expect(stepTitle(call({ tool: "edit", name: "anything", input: { file_path: "/x/y", content: "z" } })).verb).toBe("Wrote");
+    expect(
+      stepTitle(call({ tool: "edit", name: "anything", input: { file_path: "/x/y" }, changes: [{ path: "/x/y", kind: "create", to: null, hunks: [], content: "z", truncated: false }] })).verb,
+    ).toBe("Wrote");
+    expect(stepTitle(call({ tool: "edit", name: "Write", input: { file_path: "/x/y" } })).verb).toBe("Edited");
     expect(stepTitle(call({ tool: "search", name: "Grep", input: { pattern: "foo" } }))).toEqual({
       verb: "Searched for",
       object: "foo",
@@ -183,7 +188,8 @@ describe("a step's title", () => {
       verb: "Used github's",
       object: "list_issues",
     });
-    expect(stepTitle(call({ tool: "other", name: "TodoWrite" })).verb).toBe("Updated the plan");
+    expect(stepTitle(call({ tool: "other", name: "anything", plan: true })).verb).toBe("Updated the plan");
+    expect(stepTitle(call({ tool: "other", name: "TodoWrite" })).verb).toBe("Used");
     expect(stepTitle(call({ tool: "other", name: "Skill" }))).toEqual({ verb: "Used", object: "Skill" });
   });
 
@@ -251,9 +257,9 @@ describe("what the agent is doing now", () => {
 describe("whose run it is", () => {
   it("is the model's name, or the agent's own where the model is its default", () => {
     const c = new Conversation(() => 0);
-    expect(speaker(c, null)).toBe("Claude");
-    expect(speaker(c, "default")).toBe("Claude");
-    expect(speaker(c, "opus")).toBe("Opus");
+    expect(speaker(c, null, "Claude")).toBe("Claude");
+    expect(speaker(c, "default", "Claude")).toBe("Claude");
+    expect(speaker(c, "opus", "Claude")).toBe("Opus");
     c.apply({
       type: "ready",
       sessionId: "s",
@@ -266,7 +272,9 @@ describe("whose run it is", () => {
       efforts: [],
       commands: [],
     });
-    expect(speaker(c, "sonnet")).toBe("Sonnet 5.5");
+    expect(speaker(c, "sonnet", "Claude")).toBe("Sonnet 5.5");
+    expect(speaker(c, "claude-sonnet-5-5", "Claude")).toBe("Sonnet 5.5");
+    expect(speaker(c, "claude-unknown-9", "Claude")).toBe("Claude-unknown-9");
   });
 });
 
@@ -275,11 +283,12 @@ describe("the sessions a run started", () => {
     expect(
       startedIds([
         call({ tool: "mcp", name: "mcp__agent-workbench__start", result: "Started session abc-1 in demo. It has the prompt." }),
+        call({ tool: "mcp", name: "agent-workbench/start", result: "Started session abc-2 in demo. It has the prompt." }),
         call({ tool: "mcp", name: "mcp__agent-workbench__start", error: true, result: "Started session no in x. " }),
-        call({ tool: "mcp", name: "mcp__other__start", result: "Started session other in x. " }),
+        call({ tool: "command", name: "Bash", result: "Started session not-a-start in x. " }),
         call({ tool: "mcp", name: "mcp__agent-workbench__start", done: false }),
       ]),
-    ).toEqual(["abc-1"]);
+    ).toEqual(["abc-1", "abc-2"]);
   });
 });
 
@@ -298,14 +307,29 @@ describe("a permission request, in words", () => {
       choices: [],
     }) as Extract<IntegratedEventBody, { type: "permissionAsked" }>;
 
-  it("says what the agent asks to do, and to what", () => {
-    expect(asks(asked("Bash", { command: "cargo test" }))).toEqual({ verb: "run", object: "cargo test" });
-    expect(asks(asked("Edit", { file_path: "/a" }))).toEqual({ verb: "edit", object: "/a" });
-    expect(asks(asked("Write", {}, "/b"))).toEqual({ verb: "write", object: "/b" });
-    expect(asks(asked("WebFetch", { url: "https://x" }))).toEqual({ verb: "fetch", object: "https://x" });
-    expect(asks(asked("ExitPlanMode", {}))).toEqual({ verb: "go ahead with the plan", object: null });
-    expect(asks(asked("mcp__github__merge", {}))).toEqual({ verb: "use github's", object: "merge" });
-    expect(asks(asked("Skill", {}))).toEqual({ verb: "use", object: "Skill" });
+  it("says what the agent asks to do, and to what, by the call's kind and the shape of its input", () => {
+    expect(asks(asked("Bash", { command: "cargo test" }))).toEqual({ verb: "run", object: "cargo test", shape: "command" });
+    expect(asks(asked("commandExecution", { command: "/bin/zsh -lc 'touch made.txt'", cwd: "/r" }))).toEqual({
+      verb: "run",
+      object: "/bin/zsh -lc 'touch made.txt'",
+      shape: "command",
+    });
+    expect(asks(asked("Edit", { file_path: "/a", old_string: "x", new_string: "y" }))).toEqual({ verb: "edit", object: "/a", shape: "path" });
+    expect(asks(asked("Write", { file_path: "/b", content: "x" }))).toEqual({ verb: "write", object: "/b", shape: "path" });
+    expect(
+      asks(asked("fileChange", { changes: [{ path: "/r/a.ts", diff: "" }, { path: "/r/b.ts", diff: "" }] }, "/r"), call({ tool: "edit", name: "fileChange" })),
+    ).toEqual({ verb: "edit", object: "/r/a.ts and 1 more", shape: "path" });
+    expect(asks(asked("anything", { file_path: "/c" }), call({ tool: "read", name: "anything" }))).toEqual({ verb: "read", object: "/c", shape: "path" });
+    expect(asks(asked("WebFetch", { url: "https://x" }))).toEqual({ verb: "fetch", object: "https://x", shape: "name" });
+    expect(asks(asked("webSearch", { query: "q" }), call({ tool: "web", name: "webSearch" }))).toEqual({
+      verb: "search the web for",
+      object: "q",
+      shape: "name",
+    });
+    expect(asks(asked("anything", { plan: "1. do it" }), call({ plan: true }))).toEqual({ verb: "go ahead with the plan", object: null, shape: null });
+    expect(asks(asked("ExitPlanMode", { plan: "x" }))).toEqual({ verb: "use", object: "ExitPlanMode", shape: "name" });
+    expect(asks(asked("mcp__github__merge", {}))).toEqual({ verb: "use github's", object: "merge", shape: "name" });
+    expect(asks(asked("permissions", { network: true }))).toEqual({ verb: "use", object: "permissions", shape: "name" });
   });
 
   it("names each choice and what it remembers", () => {
@@ -360,5 +384,35 @@ describe("text the agent chose, as it reads", () => {
   it("leaves line breaks, tabs and ordinary text alone", () => {
     expect(revealed("a\tb\nc ü 日本")).toEqual([{ text: "a\tb\nc ü 日本", unseen: false }]);
     expect(revealed("")).toEqual([{ text: "", unseen: false }]);
+  });
+});
+
+describe("a Codex-shaped call", () => {
+  it("is titled by its kind and the shape of its input", () => {
+    expect(stepTitle(call({ name: "commandExecution", input: { command: "/bin/zsh -lc 'ls'", cwd: "/r" } }))).toEqual({
+      verb: "Ran",
+      object: "/bin/zsh -lc 'ls'",
+    });
+    expect(
+      stepTitle(
+        call({ tool: "edit", name: "fileChange", input: { changes: [{ path: "/r/a.ts" }, { path: "/r/b.ts" }] }, changes: [] }),
+        "/r",
+      ),
+    ).toEqual({ verb: "Edited", object: "a.ts and 1 more" });
+    expect(stepTitle(call({ tool: "agent", name: "spawnAgent", input: { prompt: "Look at the scan\nthen report" } }))).toEqual({
+      verb: "A subagent worked on",
+      object: "Look at the scan …",
+    });
+    expect(stepTitle(call({ tool: "read", name: "imageView", input: { path: "/r/shot.png" } }), "/r")).toEqual({
+      verb: "Read",
+      object: "shot.png",
+    });
+    expect(stepTitle(call({ tool: "web", name: "webSearch", input: { query: null } }))).toEqual({ verb: "Used", object: "webSearch" });
+  });
+
+  it("speaks under the agent's own name on its default model", () => {
+    const c = new Conversation(() => 0);
+    expect(speaker(c, null, "Codex")).toBe("Codex");
+    expect(speaker(c, "gpt-5-codex", "Codex")).toBe("Gpt-5-codex");
   });
 });

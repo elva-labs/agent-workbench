@@ -55,14 +55,13 @@ const times = (count: number) =>
 const plural = (count: number, one: string, many: string = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
-/** Whether a call is the workbench's own `start`, which starts a session. */
-export function startsSession(call: ToolCall): boolean {
-  return call.tool === "mcp" && /(^|__)start$/.test(call.name) && /workbench/.test(call.name);
-}
+/** What the workbench's own start tool answers when it has started a
+    session, whichever agent called it. */
+const STARTED = /^Started session (\S+?)[.,]?\s/;
 
-/** Calls that draw themselves elsewhere: the plan's own tools. */
-function planTool(call: ToolCall): boolean {
-  return call.name === "TodoWrite" || call.name === "ExitPlanMode";
+/** Whether a call started a session through the workbench's start tool. */
+export function startsSession(call: ToolCall): boolean {
+  return call.tool === "mcp" && call.done && !call.error && STARTED.test(`${call.result ?? ""} `);
 }
 
 /** A stretch of work in one line: how long, and what came of it. While it
@@ -84,7 +83,7 @@ export function workSummary(
   let tools = 0;
   let failed = 0;
   for (const part of parts) {
-    if (part.kind !== "tool" || planTool(part)) continue;
+    if (part.kind !== "tool" || part.plan) continue;
     if (part.done && part.error && part.answer?.choice !== "deny") failed += 1;
     if (part.changes.length > 0) for (const change of part.changes) files.add(change.to ?? change.path);
     else if (part.tool === "edit") {
@@ -136,7 +135,8 @@ export function workSummary(
   return { running, head, detail: said.join(", ") };
 }
 
-/** A path a tool's input names, in the shapes Claude Code's tools take. */
+/** The path a tool's input names: a field of its own, or the first of the
+    changes it lists. */
 export function inputPath(input: unknown): string | null {
   if (input === null || typeof input !== "object") return null;
   const fields = input as Record<string, unknown>;
@@ -144,7 +144,27 @@ export function inputPath(input: unknown): string | null {
     const value = fields[name];
     if (typeof value === "string" && value !== "") return value;
   }
+  const changes = fields.changes;
+  if (Array.isArray(changes)) {
+    const first = changes[0] as Record<string, unknown> | undefined;
+    if (typeof first?.path === "string" && first.path !== "") return first.path;
+  }
   return null;
+}
+
+/** How many files a tool's input lists as changes, when it lists them. */
+function changeCount(input: unknown): number {
+  if (input === null || typeof input !== "object") return 0;
+  const changes = (input as Record<string, unknown>).changes;
+  return Array.isArray(changes) ? changes.length : 0;
+}
+
+/** Whether an edit writes a file whole rather than changing part of it. */
+function writesWhole(call: ToolCall, input: unknown): boolean {
+  if (call.changes.length > 0) return call.changes.every((change) => change.kind === "create");
+  if (input === null || typeof input !== "object") return false;
+  const fields = input as Record<string, unknown>;
+  return typeof fields.content === "string" && fields.old_string === undefined;
 }
 
 function field(input: unknown, name: string): string | null {
@@ -180,15 +200,14 @@ export function stepTitle(
     verb: running ? now : then,
     object,
   });
-  if (call.name === "TodoWrite") return say("Updating the plan", "Updated the plan", null);
-  if (call.name === "ExitPlanMode") return say("Proposing the plan", "Proposed the plan", null);
+  if (call.plan) return say("Updating the plan", "Updated the plan", null);
+  const more = changeCount(input);
+  const many = shown !== null && more > 1 ? `${shown} and ${more - 1} more` : shown;
   switch (call.tool) {
     case "command":
       return say("Running", "Ran", firstLine(field(input, "command")));
     case "edit":
-      return call.name === "Write"
-        ? say("Writing", "Wrote", shown)
-        : say("Editing", "Edited", shown);
+      return writesWhole(call, input) ? say("Writing", "Wrote", many) : say("Editing", "Edited", many);
     case "read":
       return say("Reading", "Read", shown);
     case "search": {
@@ -198,10 +217,12 @@ export function stepTitle(
     case "web": {
       const url = field(input, "url");
       if (url !== null) return say("Fetching", "Fetched", url);
-      return say("Searching the web for", "Searched the web for", field(input, "query"));
+      const query = field(input, "query");
+      if (query !== null) return say("Searching the web for", "Searched the web for", query);
+      return say("Using", "Used", call.name);
     }
     case "agent": {
-      const description = field(input, "description");
+      const description = field(input, "description") ?? firstLine(field(input, "prompt"));
       return say("Working with a subagent on", "A subagent worked on", description);
     }
     case "mcp": {
@@ -280,13 +301,25 @@ export function nowDoing(conversation: Conversation, parts: Part[]): string | nu
 }
 
 /** The name the agent's runs go under: the model it ran on, or the agent's
-    own name where the model is its default. */
-export function speaker(conversation: Conversation, model: string | null): string {
-  if (model === null || model === "default") return "Claude";
-  const offered = conversation.ready?.models.find((option) => option.value === model);
-  const name = offered?.name ?? model;
-  const plain = name.replace(/\s*\(.*\)\s*$/, "").trim();
-  return plain === "" ? "Claude" : plain.charAt(0).toUpperCase() + plain.slice(1);
+    own name where no model is known or the model is its default. */
+export function speaker(conversation: Conversation, model: string | null, agent: string): string {
+  if (model === null || model === "default") return agent;
+  return modelName(conversation, model) ?? agent;
+}
+
+/** A model as the agent names it in what it offers, or as it is written,
+    its first letter raised; null for none. */
+export function modelName(conversation: Conversation, model: string | null): string | null {
+  if (model === null) return null;
+  // The agent reports the model it resolved to, which names the one it
+  // offered among its words: claude-sonnet-5-5 is the Sonnet it offers.
+  const words = model.toLowerCase().split(/[-_.\s]/);
+  const models = conversation.ready?.models ?? [];
+  const offered =
+    models.find((option) => option.value === model) ??
+    models.find((option) => option.value !== "default" && words.includes(option.value.toLowerCase()));
+  const name = (offered?.name ?? model).replace(/\s*\(.*\)\s*$/, "").trim();
+  return name === "" ? null : name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 /** The ids of the sessions a run started with the workbench's `start`
@@ -295,7 +328,7 @@ export function startedIds(parts: Part[]): string[] {
   const ids: string[] = [];
   for (const part of parts) {
     if (part.kind !== "tool" || !part.done || part.error || !startsSession(part)) continue;
-    const match = /Started session (\S+?)[.,]?\s/.exec(`${part.result ?? ""} `);
+    const match = STARTED.exec(`${part.result ?? ""} `);
     if (match !== null && !ids.includes(match[1])) ids.push(match[1]);
   }
   return ids;
@@ -304,33 +337,42 @@ export function startedIds(parts: Part[]): string[] {
 type Permission = Extract<IntegratedEventBody, { type: "permissionAsked" }>;
 
 /** What a permission request asks, in words: the verb, and the thing it is
-    for, drawn as code. */
-export function asks(asked: Permission): { verb: string; object: string | null } {
+    for, drawn as code, which is a command, a path or a name. It goes by the
+    kind of the call that asks, as its start said, and by the shape of what
+    it asks with, never by what an agent calls its tools. */
+export function asks(
+  asked: Permission,
+  call: ToolCall | null = null,
+): { verb: string; object: string | null; shape: "command" | "path" | "name" | null } {
   const input = asked.input;
-  const path = asked.path ?? inputPath(input);
-  switch (asked.tool) {
-    case "Bash":
-      return { verb: "run", object: field(input, "command") };
-    case "Edit":
-    case "MultiEdit":
-    case "NotebookEdit":
-      return { verb: "edit", object: path };
-    case "Write":
-      return { verb: "write", object: path };
-    case "Read":
-      return { verb: "read", object: path };
-    case "WebFetch":
-      return { verb: "fetch", object: field(input, "url") };
-    case "WebSearch":
-      return { verb: "search the web for", object: field(input, "query") };
-    case "ExitPlanMode":
-      return { verb: "go ahead with the plan", object: null };
-    default: {
-      const named = mcpName(asked.tool);
-      if (named !== null) return { verb: `use ${named.server}'s`, object: named.tool };
-      return { verb: "use", object: asked.tool };
-    }
+  if (call?.plan) return { verb: "go ahead with the plan", object: null, shape: null };
+  const command = field(input, "command");
+  if (command !== null) return { verb: "run", object: command, shape: "command" };
+  const kind = call?.tool ?? null;
+  const path = inputPath(input) ?? asked.path;
+  const more = changeCount(input);
+  const paths = path !== null && more > 1 ? `${path} and ${more - 1} more` : path;
+  const edits =
+    kind === "edit" ||
+    more > 0 ||
+    (input !== null && typeof input === "object" && ("old_string" in input || "content" in input));
+  if (edits) {
+    const whole = input !== null && typeof input === "object" && "content" in input && !("old_string" in input);
+    return { verb: whole ? "write" : "edit", object: paths, shape: path === null ? null : "path" };
   }
+  if (kind === "read" && path !== null) return { verb: "read", object: path, shape: "path" };
+  const url = field(input, "url");
+  if (url !== null) return { verb: "fetch", object: url, shape: "name" };
+  const query = field(input, "query");
+  if (kind === "web" && query !== null) return { verb: "search the web for", object: query, shape: "name" };
+  if (kind === "agent") {
+    const about = field(input, "description") ?? firstLine(field(input, "prompt"));
+    return { verb: "start a subagent for", object: about, shape: about === null ? null : "name" };
+  }
+  const named = mcpName(asked.tool);
+  if (named !== null) return { verb: `use ${named.server}'s`, object: named.tool, shape: "name" };
+  if (path !== null) return { verb: `use ${asked.tool} on`, object: path, shape: "path" };
+  return { verb: "use", object: asked.tool, shape: "name" };
 }
 
 /** A choice as its button says it. */

@@ -69,6 +69,9 @@ export async function installFakeCore(
     styles?: string;
     /** The agents the machine has, Claude Code alone unless said. */
     agents?: string[];
+    /** The agents the core can drive in messages, Claude Code alone unless
+        said. */
+    integrable?: string[];
     /** Past Claude Code sessions the core reports for the first project,
         each from the agent's own directory unless it names an account's. */
     transcripts?: {
@@ -86,7 +89,7 @@ export async function installFakeCore(
     `window.__integrated = (${fakeIntegrated.toString()})();`,
   );
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -404,7 +407,7 @@ export async function installFakeCore(
         detect: async (agent: string) => ({
           id: agent,
           path: agents.includes(agent) ? `/usr/local/bin/${agent}` : null,
-          caps: null,
+          caps: { resumable: true, titles: true, acp: false, integrated: integrable.includes(agent) },
           fromLoginShell: true,
         }),
         pickProject: async () => null,
@@ -1217,8 +1220,8 @@ export async function installFakeCore(
               if (!allowed[field].includes(value as string))
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
             } else if (field === "integrated") {
-              if (!Array.isArray(value) || value.some((agent) => agent !== "claude-code"))
-                throw new Error(`only claude-code can run integrated, not ${JSON.stringify(value)}`);
+              if (!Array.isArray(value) || value.some((agent) => !integrable.includes(agent)))
+                throw new Error(`only ${integrable.join(", ")} can run integrated, not ${JSON.stringify(value)}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
             } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
@@ -1282,6 +1285,7 @@ export async function installFakeCore(
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
       agents: options.agents ?? ["claude-code"],
+      integrable: options.integrable ?? ["claude-code"],
     },
   );
 }

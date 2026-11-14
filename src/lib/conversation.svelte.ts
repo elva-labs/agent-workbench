@@ -118,6 +118,9 @@ export interface ToolCall extends Timed {
   tasks: Task[];
   /** How the user answered a permission the call asked for. */
   answer: { choice: PermissionChoice; message: string | null } | null;
+  /** The call is how the agent keeps or proposes its plan: a plan event
+      named it. */
+  plan: boolean;
 }
 
 export interface PlanPart extends Timed {
@@ -370,6 +373,7 @@ export class Conversation {
           parts: [],
           tasks: [],
           answer: null,
+          plan: false,
           at: now,
           until: now,
         });
@@ -412,6 +416,10 @@ export class Conversation {
         break;
       }
       case "plan": {
+        if (event.call !== null) {
+          const call = this.#calls.get(event.call);
+          if (call !== undefined) call.plan = true;
+        }
         const parts = this.#container(event.parent, now);
         const plan = this.#planIn(parts);
         if (plan !== null) {

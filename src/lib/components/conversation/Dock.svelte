@@ -3,7 +3,7 @@
   import type { Conversation, Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
   import { answer, reply } from "$lib/integrated.svelte";
-  import { asks, choiceLabel, choiceMeans, inputPath } from "$lib/thread";
+  import { asks, choiceLabel, choiceMeans } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
 
@@ -60,11 +60,9 @@
     const asked = request?.asked;
     // A command of several lines is shown whole from the start, so no line
     // of it is out of sight when the choice is made.
-    shown =
-      asked?.type === "permissionAsked" &&
-      asked.tool === "Bash" &&
-      typeof (asked.input as Record<string, unknown> | null)?.command === "string" &&
-      ((asked.input as Record<string, string>).command.includes("\n"));
+    const command = (asked?.type === "permissionAsked" ? (asked.input as Record<string, unknown> | null) : null)
+      ?.command;
+    shown = typeof command === "string" && command.includes("\n");
     pointed = 0;
     denying = null;
     words = "";
@@ -118,25 +116,43 @@
     }
   }
 
-  /** What a permission is for, beyond its one line: an edit as the change
-      it makes, a long command whole, anything else as the agent gave it. */
-  function details(asked: Permission): { lines: { kind: "add" | "del" | "ctx"; text: string }[] } | { text: string } | null {
+  type Line = { kind: "add" | "del" | "ctx" | "head"; text: string };
+
+  /** What a permission is for, beyond its one line, by the shape of what it
+      asks with: a long command whole, a change as the lines it takes out
+      and puts in, anything else as the agent gave it. Null when the line
+      says it all. */
+  function details(asked: Permission): { change: boolean; lines: Line[] } | { text: string } | null {
     const input = asked.input as Record<string, unknown> | null;
+    if (asked.call !== null && conversation.call(asked.call)?.plan) return null;
     if (input === null || typeof input !== "object") return null;
-    if (asked.tool === "Bash") {
-      const command = typeof input.command === "string" ? input.command : "";
-      return command.includes("\n") || command.length > 90 ? { text: command } : null;
-    }
-    if (asked.tool === "Edit" && typeof input.old_string === "string" && typeof input.new_string === "string")
+    if (typeof input.command === "string")
+      return input.command.includes("\n") || input.command.length > 90 ? { text: input.command } : null;
+    if (typeof input.old_string === "string" && typeof input.new_string === "string")
       return {
+        change: true,
         lines: [
           ...input.old_string.split("\n").map((text) => ({ kind: "del" as const, text })),
           ...input.new_string.split("\n").map((text) => ({ kind: "add" as const, text })),
         ],
       };
-    if (asked.tool === "Write" && typeof input.content === "string")
-      return { lines: input.content.split("\n").map((text) => ({ kind: "add" as const, text })) };
-    if (asked.tool === "ExitPlanMode") return null;
+    if (typeof input.content === "string")
+      return { change: true, lines: input.content.split("\n").map((text) => ({ kind: "add" as const, text })) };
+    if (Array.isArray(input.changes)) {
+      const lines: Line[] = [];
+      for (const change of input.changes as Record<string, unknown>[]) {
+        if (typeof change?.path === "string") lines.push({ kind: "head", text: change.path });
+        const diff = typeof change?.diff === "string" ? change.diff : null;
+        for (const line of diff?.split("\n") ?? []) {
+          if (line.startsWith("+++") || line.startsWith("---")) continue;
+          if (line.startsWith("@@")) lines.push({ kind: "head", text: line });
+          else if (line.startsWith("+")) lines.push({ kind: "add", text: line.slice(1) });
+          else if (line.startsWith("-")) lines.push({ kind: "del", text: line.slice(1) });
+          else if (line !== "") lines.push({ kind: "ctx", text: line.replace(/^ /, "") });
+        }
+      }
+      if (lines.length > 0) return { change: true, lines };
+    }
     return { text: JSON.stringify(input, null, 2) };
   }
 
@@ -249,16 +265,16 @@
     data-testid={asked.type === "permissionAsked" ? "permission-dock" : "question-dock"}
   >
     {#if asked.type === "permissionAsked"}
-      {@const what = asks(asked)}
+      {@const what = asks(asked, asked.call === null ? null : conversation.call(asked.call))}
       {@const more_ = details(asked)}
       <div class="what">
         <span class="ring"></span>
         <p>
-          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if asked.tool === "Bash"}{@const command = lines(what.object)}<code
+          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const command = lines(what.object)}<code
                 class="exact"><Plain text={command.first} /></code
               >{#if command.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {command.rest} more {command.rest === 1 ? "line" : "lines"}</span
-                >{/if}{:else if asked.path || inputPath(asked.input)}{@const place = where(what.object)}<code
+                >{/if}{:else if what.shape === "path"}{@const place = where(what.object)}<code
                 class="exact"
                 title={what.object}><Plain text={place.text} /></code
               >{#if place.outside}<span class="also" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code class="exact"
@@ -272,7 +288,7 @@
       {/if}
       {#if more_ !== null}
         <button class="reveal" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-details">
-          <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>{asked.tool === "Edit" || asked.tool === "Write" ? "The change" : "Details"}
+          <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>{"change" in more_ && more_.change ? "The change" : "Details"}
         </button>
         {#if shown}
           {#if "text" in more_}
@@ -280,7 +296,9 @@
           {:else}
             <div class="details diff">
               {#each more_.lines as line, at (at)}
-                <div class="line {line.kind}"><Plain text={line.text} /></div>
+                <div class="line {line.kind}"><span class="sign" aria-hidden="true"
+                    >{line.kind === "add" ? "+" : line.kind === "del" ? "−" : ""}</span
+                  ><Plain text={line.text} /></div>
               {/each}
             </div>
           {/if}
@@ -544,6 +562,27 @@
 
   .line {
     padding: 0 10px;
+  }
+
+  .sign {
+    display: inline-block;
+    width: 18px;
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .line.add .sign {
+    color: var(--add);
+  }
+
+  .line.del .sign {
+    color: var(--del);
+  }
+
+  .line.head {
+    color: var(--ink-3);
+    padding-left: 28px;
   }
 
   .line.add {

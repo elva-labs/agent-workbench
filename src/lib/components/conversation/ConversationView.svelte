@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { agentLabel } from "$lib/agent.svelte";
+  import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
   import { linkFor, resume, trust } from "$lib/integrated.svelte";
   import { close, type Session } from "$lib/sessions.svelte";
   import { projectLabel } from "$lib/workspace.svelte";
-  import { speaker } from "$lib/thread";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
@@ -28,17 +27,26 @@
 
   let link = $derived(linkFor(session.key));
   let conversation = $derived(link.conversation);
-  let agent = $derived(agentLabel(session.agent));
+  let profile = $derived(agentProfile(session.agent));
+  let agent = $derived(profile.product);
   let folder = $derived(session.startIn ?? session.project);
 
   let dock = $state<Dock | null>(null);
-  let name = $derived(speaker(conversation, conversation.settings.model));
+  /** The agent's own name, as the one who speaks and asks. */
+  let name = $derived(profile.name);
 
-  /** A message that never reached the agent goes back to be sent again. */
+  /** A message that was not delivered goes back to be sent again. One the
+      agent dropped stays in the thread, where it happened; one that never
+      reached it leaves the thread for the composer. */
   function putBack(message: Message) {
     link.draft = link.draft.trim() === "" ? message.text : `${message.text}\n${link.draft}`;
     link.images = [...message.images, ...link.images];
-    conversation.forget(message.id);
+    if (!message.placed) conversation.forget(message.id);
+    queueMicrotask(() =>
+      document
+        .querySelector<HTMLTextAreaElement>(`[data-session="${session.key}"] [data-testid="composer-input"]`)
+        ?.focus(),
+    );
   }
 
   /** The keyboard on the dock, when something waits there. */
@@ -85,7 +93,7 @@
   /** How the user signs in, for an account of their own. */
   let signIn = $derived.by(() => {
     const dir = dirFor(session.account, session.agent);
-    return dir === undefined ? "claude" : `CLAUDE_CONFIG_DIR=${dir} claude`;
+    return dir === undefined ? profile.signIn : `${profile.configVar}=${dir} ${profile.signIn}`;
   });
 </script>
 
@@ -125,7 +133,7 @@
       </div>
     </div>
   {:else}
-    <Thread {conversation} root={folder} {intro} onPutBack={putBack} />
+    <Thread {conversation} root={folder} {intro} agent={name} onPutBack={putBack} />
     <div class="foot">
       {#if over}
         <div class="ended" data-testid="session-ended">

@@ -53,7 +53,7 @@ describe("a conversation, from the core's events", () => {
     expect(conversation.sessionId).toBe("integrated-session-1");
     expect(conversation.settings).toEqual({ model: "sonnet", mode: "default", effort: null });
     expect(conversation.efforts).toEqual(["low", "medium", "high"]);
-    expect(conversation.ready?.models.map((model) => model.value)).toEqual(["haiku", "sonnet"]);
+    expect(conversation.ready?.models.map((model) => model.value)).toEqual(["default", "haiku", "sonnet"]);
     expect(conversation.ready?.modes.map((mode) => mode.value)).toContain("plan");
     expect(conversation.state).toBe("idle");
     expect(conversation.entries).toEqual([]);

@@ -23,6 +23,7 @@ import {
   started,
 } from "$lib/sessions.svelte";
 import { reopen } from "$lib/reopen.svelte";
+import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { resetConductor } from "$lib/conductor.svelte";
 
@@ -46,7 +47,23 @@ vi.mock("$lib/core", () => ({
 
 const PROJECT = "/home/ada/dev/demo";
 
+/** The core says it can drive Claude Code in messages, and not Codex. */
+function detected() {
+  resetAgent();
+  for (const id of ["claude-code", "codex"])
+    applyDetect(
+      {
+        id,
+        path: `/usr/local/bin/${id}`,
+        caps: { resumable: true, titles: true, acp: false, integrated: id === "claude-code" },
+        fromLoginShell: true,
+      },
+      true,
+    );
+}
+
 beforeEach(() => {
+  detected();
   resetSessionKinds();
   resetSessions();
   resetWorkspace();
@@ -84,9 +101,23 @@ describe("how an agent's sessions run", () => {
     expect(sets).toEqual([{ integrated: ["claude-code"] }, { integrated: [] }]);
   });
 
-  it("takes the core's word, leaving out what cannot run integrated", () => {
+  it("can be integrated only for an agent the core says it can drive in messages", () => {
+    resetAgent();
+    expect(canIntegrate("claude-code")).toBe(false);
+    setKind("claude-code", "integrated");
+    expect(kindFor("claude-code")).toBe("terminal");
+    applyDetect(
+      { id: "codex", path: "/x/codex", caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
+      true,
+    );
+    expect(canIntegrate("codex")).toBe(true);
+    expect(otherKind("codex")).toBe("integrated");
+  });
+
+  it("takes the core's word, leaving out what is not an agent", () => {
     adoptSessionKinds(["codex", "claude-code", 7]);
-    expect(sessionKinds.integrated).toEqual(["claude-code"]);
+    expect(sessionKinds.integrated).toEqual(["claude-code", "codex"]);
+    expect(kindFor("codex")).toBe("terminal");
     adoptSessionKinds(undefined);
     expect(sessionKinds.integrated).toEqual([]);
     adoptSessionKinds("claude-code");

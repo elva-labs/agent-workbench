@@ -21,11 +21,13 @@
     root: string | null;
     /** What stands above a thread with nothing in it yet. */
     intro: string | null;
+    /** The agent's own name, for a run on its default model. */
+    agent: string;
     /** A message that failed to send is taken back into the composer. */
     onPutBack?: (message: Message) => void;
   }
 
-  let { conversation, root, intro, onPutBack }: Props = $props();
+  let { conversation, root, intro, agent, onPutBack }: Props = $props();
 
   let scroller = $state<HTMLDivElement | null>(null);
   /** Whether the thread is at its foot, and so follows what comes. */
@@ -200,7 +202,7 @@
         {@const doing = live ? nowDoing(conversation, entry.parts) : null}
         <article class="msg agent" data-testid="agent-run" data-turn={entry.turn}>
           <header class="who">
-            <i class="mark"></i><b>{speaker(conversation, turn?.model ?? null)}</b>
+            <i class="mark"></i><b>{speaker(conversation, turn?.model ?? null, agent)}</b>
             {#if entry.at !== null}<time class="num">{clock(entry.at)}</time>{/if}
           </header>
           <Parts parts={entry.parts} {root} />
@@ -273,7 +275,12 @@
     {:else if said.state === "sending"}
       <p class="state">Sending</p>
     {:else if said.state === "dropped"}
-      <p class="state bad">Not answered{said.error ? `: ${said.error}` : ""}</p>
+      <p class="state bad">
+        Not answered{said.error ? `: ${said.error}` : ""}
+        {#if onPutBack}
+          <button class="link" onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+        {/if}
+      </p>
     {:else if said.state === "failed"}
       <p class="state bad">
         Not sent{said.error ? `: ${said.error}` : ""}

@@ -52,7 +52,8 @@ test.describe("an integrated session", () => {
     const theirs = page.getByTestId("agent-run");
     await expect(mine).toContainText("You");
     await expect(mine).toContainText("Fix the slow start");
-    await expect(theirs).toContainText("Claude");
+    // Under the model it runs on, which the agent said it resolved to.
+    await expect(theirs.locator("header")).toContainText("Sonnet");
     await expect(theirs).toContainText("Fixed. The scan is shared now.");
     const thread = (await page.getByTestId("thread").boundingBox())!;
     const bubble = (await mine.locator(".bubble").boundingBox())!;
@@ -269,7 +270,8 @@ test.describe("what the agent waits on the user for", () => {
       page,
       `f.send("${H}", crypto.randomUUID(), "explore"); f.startTurn("${H}");
        const t = f.startTool("${H}", "Task", { description: "Explore the history scan", prompt: "look" }, { kind: "agent" });
-       f.emit("${H}", { type: "permissionAsked", request: "sub-1", call: null, parent: t, tool: "Read", input: { file_path: "${PROJECT}/src/a.ts" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }, { choice: "deny", remembers: null, message: false }] });
+       const r = f.startTool("${H}", "Read", { file_path: "${PROJECT}/src/a.ts" }, { kind: "read", parent: t });
+       f.emit("${H}", { type: "permissionAsked", request: "sub-1", call: r, parent: t, tool: "Read", input: { file_path: "${PROJECT}/src/a.ts" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }, { choice: "deny", remembers: null, message: false }] });
        f.ask("${H}", "Bash", { command: "ls" });`,
     );
     const dock = page.getByTestId("permission-dock");
@@ -402,14 +404,13 @@ test.describe("the composer", () => {
   test("shows the model and changes it", async ({ page }) => {
     await openIntegrated(page);
     const chip = page.getByTestId("model-chip");
-    await expect(chip).toHaveText("Default model");
-    await chip.click();
-    await expect(page.getByTestId("model-option")).toHaveText(["Haiku", "Sonnet"]);
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
     await expect(chip).toHaveText("Sonnet");
+    await chip.click();
+    await expect(page.getByTestId("model-option").locator(".name")).toHaveText(["Default (recommended)", "Haiku", "Sonnet"]);
+    await page.getByTestId("model-option").filter({ hasText: "Haiku" }).click();
+    await expect(chip).toHaveText("Haiku");
     expect((await calls(page)).find((call) => call.method === "configure")).toMatchObject({
-      settings: { model: "sonnet" },
+      settings: { model: "haiku" },
     });
     await expect(input(page)).toBeFocused();
   });
@@ -580,4 +581,133 @@ test("keeps following when its own scroll to the foot is heard after more has co
     node.dispatchEvent(new Event("scroll"));
   });
   await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+});
+
+test.describe("a session of an agent shaped as Codex is", () => {
+  async function openCodex(page: Page) {
+    await installFakeCore(page, {
+      open: [PROJECT],
+      agents: ["codex"],
+      integrable: ["codex"],
+      settings: { integrated: ["codex"] },
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+  }
+
+  test("asked about by what its request is, a command shown whole, under the agent's own name", async ({ page }) => {
+    await openCodex(page);
+    expect((await calls(page))[0]).toMatchObject({ method: "start", options: { agent: "codex" } });
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "make a file"); f.startTurn("${H}");
+       const c = f.startTool("${H}", "commandExecution", { command: "/bin/zsh -lc 'touch made.txt'", cwd: "${PROJECT}" }, { kind: "command" });
+       f.ask("${H}", "commandExecution", { command: "/bin/zsh -lc 'touch made.txt'", cwd: "${PROJECT}" }, { call: c, session: "/bin/zsh -lc 'touch made.txt' for the rest of this session" });`,
+    );
+    const dock = page.getByTestId("permission-dock");
+    await expect(dock.locator(".what")).toHaveText("Codex asks to run /bin/zsh -lc 'touch made.txt'");
+    await expect(page.getByTestId("permission-details")).toHaveCount(0);
+    await page.getByTestId("choice-allowSession").hover();
+    await expect(page.getByTestId("choice-means")).toContainText("/bin/zsh -lc 'touch made.txt' for the rest of this session");
+  });
+
+  test("drawn with a command's output only once it finishes", async ({ page }) => {
+    await openCodex(page);
+    await agent(page, `f.send("${H}", crypto.randomUUID(), "list"); f.startTurn("${H}"); f.startTool("${H}", "commandExecution", { command: "ls", cwd: "${PROJECT}" }, { kind: "command" });`);
+    await expect(page.getByTestId("now")).toHaveText("Running ls");
+    await page.getByTestId("work-line").click();
+    await page.getByTestId("step-row").click();
+    await expect(page.getByTestId("step-output")).toHaveCount(0);
+    await agent(page, `f.finishTool("${H}", "call-1", "a.ts\\nb.ts");`);
+    await expect(page.getByTestId("step-output")).toHaveText("a.ts\nb.ts");
+    await expect(page.getByTestId("step-row")).toContainText("Ran ls");
+  });
+
+  test("asked about a change to files it lists, with the change behind a fold", async ({ page }) => {
+    await openCodex(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "edit"); f.startTurn("${H}");
+       const c = f.startTool("${H}", "fileChange", { changes: [{ path: "${PROJECT}/src/a.ts", diff: "@@ -1 +1 @@\\n-old\\n+new" }] }, { kind: "edit" });
+       f.ask("${H}", "fileChange", { changes: [{ path: "${PROJECT}/src/a.ts", diff: "@@ -1 +1 @@\\n-old\\n+new" }] }, { call: c, path: "${PROJECT}" });`,
+    );
+    const dock = page.getByTestId("permission-dock");
+    await expect(dock.locator(".what")).toHaveText("Codex asks to edit src/a.ts");
+    await page.getByTestId("permission-details").click();
+    await expect(page.getByTestId("permission-details")).toHaveText("The change");
+    await expect(dock.locator(".line.del")).toHaveText("−old");
+    await expect(dock.locator(".line.add")).toHaveText("+new");
+  });
+
+  test("done waiting when a turn ends with a request no one answered", async ({ page }) => {
+    await openCodex(page);
+    await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.ask("${H}", "commandExecution", { command: "ls", cwd: "${PROJECT}" });`);
+    await expect(page.getByTestId("permission-dock")).toBeVisible();
+    await agent(page, `f.endTurn("${H}");`);
+    await expect(page.getByTestId("permission-dock")).toHaveCount(0);
+    await expect(page.locator(`${AGENT} header .meta`)).not.toHaveText("needs permission");
+    await expect(page.getByTestId("composer-input")).toBeEnabled();
+  });
+
+  test("done waiting on a question that resolves itself", async ({ page }) => {
+    await openCodex(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");
+       const q = f.question("${H}", [{ header: null, question: "Which branch?", options: [{ label: "main", description: null }], multiple: false }]);
+       window.__q = q;`,
+    );
+    await expect(page.getByTestId("question-dock")).toBeVisible();
+    await agent(page, `f.expire("${H}", window.__q);`);
+    await expect(page.getByTestId("question-dock")).toHaveCount(0);
+    await expect(page.getByTestId("asked")).toContainText("The agent stopped waiting for an answer.");
+  });
+
+  test("telling of a message it dropped, in its own words, which can be put back", async ({ page }) => {
+    await openCodex(page);
+    await page.getByTestId("composer-input").fill("Refactor the scan");
+    await page.keyboard.press("Enter");
+    await agent(page, `const m = f.calls.find((c) => c.method === "send").message; f.drop("${H}", m, "turn/start failed: the model is not available");`);
+    const said = page.getByTestId("user-message");
+    await expect(said).toHaveAttribute("data-state", "dropped");
+    await expect(said).toContainText("Not answered: turn/start failed: the model is not available");
+    await said.getByTestId("put-back").click();
+    await expect(page.getByTestId("composer-input")).toHaveValue("Refactor the scan");
+  });
+
+  test("signed in with the agent's own command", async ({ page }) => {
+    await openCodex(page);
+    await agent(page, `f.emit("${H}", { type: "error", kind: "notLoggedIn", message: "Not logged in" }); f.end("${H}", false);`);
+    await expect(page.getByTestId("login-gate")).toContainText("Codex is not signed in");
+    await expect(page.getByTestId("login-gate").locator("code")).toHaveText("codex login");
+  });
+});
+
+test.describe("how sessions run, in the settings", () => {
+  async function sessionsTab(page: Page) {
+    await expect(page.getByTestId("agent-status")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+,");
+    await page.getByTestId("settings-tab-sessions").click();
+  }
+
+  test("offers the choice for an agent the core can drive in messages, and says what is for one it cannot", async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], agents: ["claude-code", "codex"] });
+    await page.goto("/");
+    await sessionsTab(page);
+    const claude = page.locator("[data-testid='session-kind'][data-agent='claude-code']");
+    const codex = page.locator("[data-testid='session-kind'][data-agent='codex']");
+    await expect(claude.getByTestId("session-kind-terminal")).toHaveAttribute("aria-checked", "true");
+    await expect(codex.getByTestId("session-kind-only")).toHaveText("Codex sessions run in a terminal.");
+    await claude.getByTestId("session-kind-integrated").click();
+    await expect(claude.getByTestId("session-kind-integrated")).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("offers it for any agent the core says it can drive", async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], agents: ["claude-code", "codex"], integrable: ["claude-code", "codex"] });
+    await page.goto("/");
+    await sessionsTab(page);
+    await expect(page.locator("[data-testid='session-kind'][data-agent='codex'] [role='radiogroup']")).toBeVisible();
+    await expect(page.getByTestId("session-kind-only")).toHaveCount(0);
+  });
 });

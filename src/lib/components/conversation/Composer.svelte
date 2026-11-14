@@ -5,7 +5,7 @@
   import { register, unregister } from "$lib/drops.svelte";
   import { configure, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
-  import { tokens } from "$lib/thread";
+  import { modelName, tokens } from "$lib/thread";
   import Icon from "./Icon.svelte";
 
   /**
@@ -195,12 +195,7 @@
 
   let models = $derived(conversation.ready?.models ?? []);
   let current = $derived(conversation.settings.model);
-  let modelName = $derived.by(() => {
-    const value = current ?? "default";
-    const offered = models.find((model) => model.value === value);
-    const name = offered?.name ?? current ?? "Default model";
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  });
+  let modelLabel = $derived(modelName(conversation, current) ?? "Default model");
 
   function chooseModel(value: string) {
     menu = false;
@@ -290,7 +285,7 @@
         aria-haspopup="menu"
         aria-expanded={menu}
         title="The model the session runs on"
-        data-testid="model-chip">{modelName}<Icon name="down" size={12} /></button
+        data-testid="model-chip">{modelLabel}<Icon name="down" size={12} /></button
       >
       {#if menu}
         <!-- svelte-ignore a11y_interactive_supports_focus -->

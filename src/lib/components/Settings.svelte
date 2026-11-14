@@ -645,8 +645,9 @@
             <p class="note">
               In a terminal, a session is the agent's own interface. Integrated, the workbench draws
               the conversation and the agent works behind it, with the same login, settings, hooks
-              and tools. A session that is running keeps the way it started, and a single new one can
-              be started the other way from the agent pane.
+              and tools. An agent the workbench can drive this way offers the choice. A session that
+              is running keeps the way it started, and a single new one can be started the other way
+              from the agent pane.
             </p>
             <div class="projects kinds">
               {#each installed().length > 0 ? installed() : AGENTS as id (id)}
@@ -671,7 +672,7 @@
                     </div>
                   {:else}
                     <span class="note quiet only" data-testid="session-kind-only"
-                      >In a terminal. {agentLabel(id)} cannot run integrated yet.</span
+                      >{agentLabel(id)} sessions run in a terminal.</span
                     >
                   {/if}
                 </div>

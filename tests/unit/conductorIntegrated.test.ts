@@ -5,6 +5,7 @@ import { allow, conductor, handle, resetConductor, watchStops } from "$lib/condu
 import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated } from "$lib/integrated.svelte";
 import { byKey, create, forProject, reset as resetSessions, sessions } from "$lib/sessions.svelte";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
+import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 
@@ -41,6 +42,11 @@ beforeEach(async () => {
   resetConductor();
   resetWorkspace();
   resetSessionKinds();
+  resetAgent();
+  applyDetect(
+    { id: "claude-code", path: "/usr/local/bin/claude", caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
+    true,
+  );
   answers.length = 0;
   calls = 0;
   workspace.open.push({ path: A, name: "one", repository: A, isGit: true });
