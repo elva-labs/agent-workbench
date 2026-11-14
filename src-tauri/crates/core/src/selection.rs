@@ -68,11 +68,11 @@ pub fn read(home: &Path) -> Option<Selection> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn a_selection_written_is_read_back_and_cleared() {
-        let home = std::env::temp_dir().join("workbench-selection");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("selection");
         assert_eq!(read(&home), None);
         let selection = Selection {
             project: "/p".into(),

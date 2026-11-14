@@ -2351,6 +2351,7 @@ mod tests {
     #![allow(dead_code)]
     use super::*;
     use crate::events::testing::Recorder;
+    use crate::scratch::Scratch;
 
     fn vars() -> HashMap<String, String> {
         HashMap::from([(
@@ -2365,9 +2366,8 @@ mod tests {
         Plugins::with_known(home, sink, Vec::new())
     }
 
-    fn source_with(manifest: &str, name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-plugins-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn source_with(manifest: &str, name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("plugins-{name}"));
         std::fs::create_dir_all(dir.join("github")).unwrap();
         std::fs::write(dir.join("github/main.sh"), "#!/bin/sh\n").unwrap();
         std::fs::write(dir.join(MANIFEST), manifest).unwrap();
@@ -2492,8 +2492,7 @@ view = "wide"
             let error = read_manifest(&dir, &vars()).unwrap_err();
             assert!(error.contains(expected), "{manifest:?} gave {error:?}");
         }
-        let nothing = std::env::temp_dir().join("workbench-plugins-nothing");
-        let _ = std::fs::remove_dir_all(&nothing);
+        let nothing = Scratch::absent("plugins-nothing");
         let error = read_manifest(&nothing, &vars()).unwrap_err();
         assert!(error.contains("no workbench-plugins.toml"));
     }
@@ -2515,8 +2514,7 @@ view = "wide"
     #[cfg(unix)]
     #[test]
     fn adds_a_directory_runs_a_plugin_and_stops_it() {
-        let home = std::env::temp_dir().join("workbench-plugins-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-home");
         let dir = source_with(
             r#"
 [[plugin]]
@@ -2590,8 +2588,7 @@ tools = ["ping"]
     #[test]
     #[cfg(unix)]
     fn a_plugin_that_dies_before_greeting_says_why_and_is_left_alone_in_time() {
-        let home = std::env::temp_dir().join("workbench-plugins-home-dies");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-home-dies");
         let dir = source_with(
             r#"
 [[plugin]]
@@ -2657,8 +2654,7 @@ run = ["sh", "main.sh"]
         // An app and a daemon can share a home, and both tail the log. A
         // core answers only for the sources it holds, so the one that has
         // the plugin is the one that answers.
-        let home = std::env::temp_dir().join("workbench-plugins-other-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-other-home");
         let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let request = crate::show::ToolRequest {
             id: "call-1".into(),
@@ -2676,8 +2672,7 @@ run = ["sh", "main.sh"]
     #[cfg(unix)]
     #[test]
     fn publishes_a_running_plugin_s_tools_and_carries_a_call_to_it() {
-        let home = std::env::temp_dir().join("workbench-plugins-tools-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-tools-home");
         let dir = source_with(
             r#"
 [[plugin]]
@@ -2771,8 +2766,7 @@ done
     #[cfg(unix)]
     #[test]
     fn carries_a_plugin_s_rows_places_and_lines_and_takes_an_action_back() {
-        let home = std::env::temp_dir().join("workbench-plugins-rows-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-rows-home");
         let dir = source_with(
             r#"
 [[plugin]]
@@ -2909,8 +2903,7 @@ sections = ["Pull request"]
     #[cfg(unix)]
     #[test]
     fn shows_a_plugin_s_page_and_carries_what_goes_either_way() {
-        let home = std::env::temp_dir().join("workbench-plugins-view-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-view-home");
         let dir = source_with(
             r#"
 [[plugin]]
@@ -3169,8 +3162,7 @@ run = ["sh", "main.sh"]
 
     #[test]
     fn refuses_a_location_or_a_ref_that_git_would_read_as_an_option() {
-        let home = std::env::temp_dir().join("workbench-plugins-arguments-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-arguments-home");
         let plugins = plugins_at(&home, Arc::new(Recorder::default()));
         let root = home.join(".agent-workbench").join("plugins");
 
@@ -3196,7 +3188,7 @@ run = ["sh", "main.sh"]
 
     /// A repository with the manifest given in it, committed on main, for
     /// a source to be cloned from.
-    fn upstream_with(manifest: &str, name: &str) -> PathBuf {
+    fn upstream_with(manifest: &str, name: &str) -> Scratch {
         let dir = source_with(manifest, name);
         let g = |args: &[&str]| git(&dir, args).unwrap();
         g(&["init", "-q", "-b", "main"]);
@@ -3210,8 +3202,7 @@ run = ["sh", "main.sh"]
     #[test]
     #[cfg(unix)]
     fn offers_the_sources_it_knows_and_fetches_one_when_asked() {
-        let home = std::env::temp_dir().join("workbench-plugins-known-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-known-home");
         let upstream = upstream_with(GOOD, "known-upstream");
         let list = format!(
             "[[source]]\nid = \"labs\"\nrepository = \"file://{}\"\nref = \"main\"\n\n\
@@ -3276,8 +3267,7 @@ run = ["sh", "main.sh"]
     #[test]
     #[cfg(unix)]
     fn a_source_of_the_user_s_own_is_listed_beside_the_ones_offered() {
-        let home = std::env::temp_dir().join("workbench-plugins-known-own-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-known-own-home");
         let upstream = upstream_with(GOOD, "known-own-upstream");
         let list = "[[source]]\nid = \"labs\"\nrepository = \"https://example.com/labs.git\"\n\
                     ref = \"main\"\n[[source.plugin]]\nname = \"github\"\ndescription = \"Pull requests.\"\n";
@@ -3298,8 +3288,7 @@ run = ["sh", "main.sh"]
     #[test]
     #[cfg(unix)]
     fn adds_a_repository_by_cloning_it_and_checks_for_a_newer_commit() {
-        let home = std::env::temp_dir().join("workbench-plugins-clone-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-clone-home");
         let upstream = source_with(GOOD, "upstream");
         let g = |args: &[&str]| git(&upstream, args).unwrap();
         g(&["init", "-q", "-b", "main"]);
@@ -3374,10 +3363,9 @@ build = ["sh", "build.sh"]
     #[cfg(unix)]
     #[test]
     fn builds_a_plugin_before_it_runs_and_builds_it_again_when_the_source_moves() {
-        let home = std::env::temp_dir().join("workbench-plugins-build-home");
-        let _ = std::fs::remove_dir_all(&home);
-        let counter = std::env::temp_dir().join("workbench-plugins-builds.txt");
-        let _ = std::fs::remove_file(&counter);
+        let home = Scratch::absent("plugins-build-home");
+        let counter_dir = Scratch::new("plugins-builds");
+        let counter = counter_dir.join("builds.txt");
         let upstream = source_with(BUILDS, "builds");
         std::fs::write(upstream.join("github/greeter"), GREETER).unwrap();
         std::fs::write(
@@ -3449,8 +3437,7 @@ build = ["sh", "build.sh"]
     #[cfg(unix)]
     #[test]
     fn a_build_that_fails_says_so_on_the_row_and_starts_nothing() {
-        let home = std::env::temp_dir().join("workbench-plugins-build-fails-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-build-fails-home");
         let dir = source_with(BUILDS, "build-fails");
         std::fs::write(
             dir.join("github/build.sh"),
@@ -3505,8 +3492,7 @@ build = ["sh", "build.sh"]
     #[cfg(unix)]
     #[test]
     fn tells_a_plugin_the_app_the_projects_the_sessions_and_the_tree() {
-        let home = std::env::temp_dir().join("workbench-plugins-told-home");
-        let _ = std::fs::remove_dir_all(&home);
+        let home = Scratch::absent("plugins-told-home");
         let dir = source_with(
             r#"
 [[plugin]]

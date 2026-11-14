@@ -15,6 +15,7 @@ import { core, type Settings, type StoredSettings } from "$lib/core";
 import { adoptWorkflows, knowWorkflows, workflowsSettings } from "$lib/workflows.svelte";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptPastSessions, pastSessionsSettings } from "$lib/sessions.svelte";
+import { adoptInactiveAfter, inactiveAfterSettings } from "$lib/projects.svelte";
 import { adoptKeys, keysSettings } from "$lib/keys.svelte";
 import { adoptNotify, notifySettings } from "$lib/notify.svelte";
 import { flush, holdUntil, onRefused, onSettled, sending } from "$lib/persist";
@@ -33,6 +34,7 @@ export function currentSettings(): Settings {
     accounts: accountsSettings(),
     workflows: workflowsSettings(),
     ...pastSessionsSettings(),
+    ...inactiveAfterSettings(),
     userStyles: userStyles.on,
     ...notifySettings(),
   };
@@ -53,6 +55,7 @@ export function adopt(settings: Settings) {
   adoptUserStylesSetting(settings.userStyles);
   adoptNotify(settings);
   adoptPastSessions(settings.pastSessions);
+  adoptInactiveAfter(settings.inactiveAfter);
   // The accounts before the hooks: bringing a project to the hooks answer
   // writes into every account's agent state.
   adoptAccounts(settings.accounts);

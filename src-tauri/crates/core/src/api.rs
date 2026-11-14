@@ -114,7 +114,11 @@ impl Sink for Overheard {
 
 impl Core {
     pub fn new(sink: Arc<dyn Sink>) -> Self {
-        let home = home_directory();
+        Self::at_home(sink, home_directory())
+    }
+
+    /// A core whose home is the one given rather than the user's.
+    fn at_home(sink: Arc<dyn Sink>, home: Option<PathBuf>) -> Self {
         let plugins = home
             .as_deref()
             .map(|home| crate::plugins::Plugins::new(home, Arc::clone(&sink)));
@@ -366,6 +370,7 @@ impl Core {
         let opened = project.to_string_lossy().to_string();
         let instructions = instructions.filter(|text| !text.trim().is_empty());
         let orchestrator = instructions.is_some() || self.is_orchestrator(project);
+        self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
 
         // A resumed session's id is known, and a fresh one's when the agent
@@ -498,6 +503,7 @@ impl Core {
         let environment = env::environment();
         let opened = project.to_string_lossy().to_string();
         let orchestrator = self.is_orchestrator(project);
+        self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
         let resume = session.is_some();
         // The workbench chooses a fresh session's id for an agent that takes
@@ -872,11 +878,41 @@ impl Core {
         let path = git::worktree_add(project, name)?;
         // The agents ask about a directory they have not run in; a worktree
         // is the project under another path, and has the project's answer,
-        // under every account.
+        // under every account. It has the project's hooks too, so a session
+        // there reports its state as one in the project does; a session
+        // without them still runs, read off its output, so a failure to give
+        // them is logged rather than refused.
         if let Some(home) = &self.home {
             hook::trust_like(home, project, Path::new(&path), accounts)?;
+            if let Err(error) = hook::share(home, project, Path::new(&path), accounts) {
+                eprintln!("hooks for the worktree {path}: {error}");
+            }
         }
         Ok(path)
+    }
+
+    /// Gives a worktree a session is about to run in the hooks its project
+    /// has, when it lacks them: a worktree made before its project had them
+    /// gets them then. `cwd` is where the session runs, and nothing is done
+    /// when that is the project itself or not one of its worktrees. The
+    /// session runs either way, so a failure is logged rather than refused.
+    fn hooks_for(&self, agent: &str, project: &Path, cwd: Option<&Path>, config_dir: Option<&str>) {
+        let (Some(home), Some(cwd)) = (&self.home, cwd) else {
+            return;
+        };
+        if cwd == project {
+            return;
+        }
+        let dir = config_dir
+            .filter(|dir| !dir.trim().is_empty())
+            .map(str::to_string);
+        let accounts = [account::Dirs {
+            claude: dir.clone().filter(|_| agent == "claude-code"),
+            codex: dir.filter(|_| agent == "codex"),
+        }];
+        if let Err(error) = hook::share(home, project, cwd, &accounts) {
+            eprintln!("hooks for the worktree {}: {error}", cwd.display());
+        }
     }
 
     /// The worktrees the workbench has made for the project, each saying
@@ -887,9 +923,24 @@ impl Core {
     }
 
     /// Takes one of those worktrees away, and its branch with it. Refuses
-    /// one that still holds work.
-    pub fn worktree_remove(&self, project: &Path, name: &str) -> Result<(), String> {
-        git::worktree_remove(project, name)
+    /// one that still holds work. The hooks' files go with the tree; what
+    /// they put in the agents' own state for it goes too.
+    pub fn worktree_remove(
+        &self,
+        project: &Path,
+        name: &str,
+        accounts: &[account::Dirs],
+    ) -> Result<(), String> {
+        let tree = project.join(git::WORKTREES).join(name);
+        let tree = dunce::canonicalize(&tree).unwrap_or(tree);
+        git::worktree_remove(project, name)?;
+        // The tree is gone, which is what the call is for. A state file
+        // that cannot be read keeps the entry rather than turn the removal
+        // into an error.
+        if let Some(home) = &self.home {
+            let _ = hook::forget(home, &tree, accounts);
+        }
+        Ok(())
     }
 
     /// Starts watching a worktree, replacing whatever was being watched
@@ -1149,6 +1200,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 mod tests {
     use super::*;
     use crate::events::testing::Recorder;
+    use crate::scratch::Scratch;
 
     fn core() -> Core {
         Core::new(Arc::new(Recorder::default()))
@@ -1171,9 +1223,7 @@ mod tests {
 
     #[test]
     fn a_session_under_a_workflow_is_refused_where_no_tool_server_can_reach_it() {
-        let home = std::env::temp_dir().join("workbench-api-no-tools");
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
+        let home = Scratch::new("api-no-tools");
         let spawned = core_at(&home).spawn(
             "claude-code",
             &home,
@@ -1194,8 +1244,7 @@ mod tests {
 
     #[test]
     fn a_session_file_is_made_new_for_its_owner_alone_and_goes_with_the_session() {
-        let home = std::env::temp_dir().join("workbench-api-session-files");
-        std::fs::remove_dir_all(&home).ok();
+        let home = Scratch::new("api-session-files");
         let mut files = SessionFiles::default();
         let told = files
             .write(&home, "md", "1. Direct the work.\n2. Report.")
@@ -1222,8 +1271,7 @@ mod tests {
 
     #[test]
     fn what_a_process_that_is_gone_left_is_swept_and_nothing_else() {
-        let home = std::env::temp_dir().join("workbench-api-sweep");
-        std::fs::remove_dir_all(&home).ok();
+        let home = Scratch::new("api-sweep");
         let root = sessions_dir(&home);
         std::fs::create_dir_all(&root).unwrap();
         let long_ago = std::time::SystemTime::now() - 2 * LOCK_SETTLES;
@@ -1262,8 +1310,7 @@ mod tests {
 
     #[test]
     fn a_filesystem_that_cannot_lock_still_starts_sessions_and_sweeps_nothing() {
-        let home = std::env::temp_dir().join("workbench-api-no-lock");
-        std::fs::remove_dir_all(&home).ok();
+        let home = Scratch::new("api-no-lock");
         let root = sessions_dir(&home);
         std::fs::create_dir_all(&root).unwrap();
         // What looks left behind, which a process that cannot lock cannot
@@ -1293,8 +1340,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn what_a_session_holds_goes_once_its_process_has_ended() {
-        let home = std::env::temp_dir().join("workbench-api-held");
-        std::fs::remove_dir_all(&home).ok();
+        let home = Scratch::new("api-held");
         let mut files = SessionFiles::default();
         let told = files.write(&home, "md", "text").unwrap();
         let recorder = Arc::new(Recorder::default());
@@ -1320,6 +1366,139 @@ mod tests {
             "the session ended"
         );
         assert!(!told.exists());
+    }
+
+    // A session started on a worktree runs with the hooks its project
+    // has, and the worktree's clean-up takes them away again.
+    #[test]
+    fn a_worktree_made_for_a_session_has_the_project_s_hooks_until_it_goes() {
+        let base = Scratch::new("api-worktree-hooks");
+        let (home, project) = (base.join("home"), base.join("project"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let git = |args: &[&str]| {
+            let done = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&project)
+                .output()
+                .expect("git should be installed");
+            assert!(done.status.success(), "git {args:?}: {done:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(project.join("a.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "first"]);
+        let daemon = hook::daemon_path(&home);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+
+        let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
+        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+
+        // Hooks off: the worktree gets none.
+        let bare = PathBuf::from(core.worktree_add(&project, "bare", &[]).unwrap());
+        assert!(!hooked(&bare));
+        assert!(!bare.join(".claude").join("settings.local.json").exists());
+        core.worktree_remove(&project, "bare", &[]).unwrap();
+
+        // Hooks on: the worktree has them before anything runs in it, and
+        // its checkout shows nothing new.
+        core.hook_install(&project, &[]).unwrap();
+        let tree = PathBuf::from(core.worktree_add(&project, "fix", &[]).unwrap());
+        assert!(hooked(&tree));
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .current_dir(&tree)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+
+        core.worktree_remove(&project, "fix", &[]).unwrap();
+        assert!(!tree.exists());
+        let state = std::fs::read_to_string(account::claude_json(&home, None)).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+        let key = tree.to_string_lossy().to_string();
+        assert!(state["projects"][&key]["mcpServers"]
+            .get("agent-workbench")
+            .is_none());
+        assert!(hooked(&project), "the project keeps its own");
+    }
+
+    /// A repository with one commit, and a home with the daemon in place,
+    /// both under a scratch folder that lives as long as the first value.
+    fn hooked_repository(name: &str, files: &[(&str, &str)]) -> (Scratch, PathBuf, PathBuf) {
+        let base = Scratch::new(&format!("api-{name}"));
+        let (home, project) = (base.join("home"), base.join("project"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let git = |args: &[&str]| {
+            let done = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&project)
+                .output()
+                .expect("git should be installed");
+            assert!(done.status.success(), "git {args:?}: {done:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(project.join("a.txt"), "one\n").unwrap();
+        for (file, text) in files {
+            std::fs::write(project.join(file), text).unwrap();
+        }
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "first"]);
+        let daemon = hook::daemon_path(&home);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+        (base, home, project)
+    }
+
+    // The session works without the hooks, read off its output, so their
+    // failing is no reason to refuse it a worktree that was made.
+    #[test]
+    fn a_worktree_is_made_when_its_hooks_cannot_be_written() {
+        // A file where Codex keeps its folder: the tree cannot have one.
+        let (_base, home, project) = hooked_repository("worktree-hooks-fail", &[(".codex", "x\n")]);
+        let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
+        // The project's hooks are Claude Code's file, as a project without
+        // that file of Codex's would have them.
+        let donor = home.join("donor");
+        std::fs::create_dir_all(&donor).unwrap();
+        hook::install(&home, &donor, &[]).unwrap();
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::copy(
+            donor.join(".claude").join("settings.local.json"),
+            project.join(".claude").join("settings.local.json"),
+        )
+        .unwrap();
+
+        let tree = core.worktree_add(&project, "fix", &[]).unwrap();
+        assert!(Path::new(&tree).join(".git").exists());
+    }
+
+    // A worktree made before its project had the hooks gets them when a
+    // session starts or resumes in it.
+    #[test]
+    fn a_session_in_a_worktree_without_the_hooks_brings_them() {
+        let (_base, home, project) = hooked_repository("worktree-hooks-later", &[]);
+        let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
+        core.hook_install(&project, &[]).unwrap();
+        // A tree made without them, as one from before they were shared.
+        let tree = PathBuf::from(git::worktree_add(&project, "old").unwrap());
+        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+        assert!(!hooked(&tree));
+
+        core.hooks_for("claude-code", &project, Some(&tree), None);
+        assert!(hooked(&tree));
+
+        // A folder that is not one of the project's worktrees is left alone.
+        let other = home.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        core.hooks_for("claude-code", &project, Some(&other), None);
+        assert!(!other.join(".claude").exists());
     }
 
     #[test]
@@ -1360,8 +1539,7 @@ mod tests {
 
     #[test]
     fn lists_the_directories_under_a_path_and_skips_the_hidden() {
-        let dir = std::env::temp_dir().join("workbench-api-dirs");
-        std::fs::remove_dir_all(&dir).ok();
+        let dir = Scratch::absent("api-dirs");
         std::fs::create_dir_all(dir.join("beta")).unwrap();
         std::fs::create_dir_all(dir.join("Alpha")).unwrap();
         std::fs::create_dir_all(dir.join(".hidden")).unwrap();

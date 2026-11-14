@@ -113,6 +113,15 @@ export async function installFakeCore(
       title: string | null;
       configDir?: string;
     }[];
+    /** The project in front when the window last closed; the first open
+        one unless said. */
+    active?: string;
+    /** How long ago the user last used each project, in milliseconds. A
+        project left out was used a moment ago, unless none is given. */
+    used?: Record<string, number>;
+    /** Projects whose description waits until the test answers for them
+        with `__describe(path)`, as a machine that is slow to answer does. */
+    held?: string[];
   } = {},
 ) {
   // The scripted integrated session, as `window.__integrated`, for a test
@@ -121,7 +130,7 @@ export async function installFakeCore(
     `window.__integrated = (${fakeIntegrated.toString()})();`,
   );
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, buildAndReview }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, active, used, held, buildAndReview }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -129,11 +138,31 @@ export async function installFakeCore(
       if (open.length > 0) {
         localStorage.setItem(
           "workbench.workspace",
-          JSON.stringify({ open, active: open[0] }),
+          JSON.stringify({ open, active: active ?? open[0] }),
         );
       } else {
         localStorage.removeItem("workbench.workspace");
       }
+      // The projects on record were in use a moment ago, so none of them
+      // starts folded under Inactive unless a test says when it was used.
+      if (localStorage.getItem("workbench.used") === null) {
+        const ago = (path: string) => (used === null ? 0 : (used[path] ?? null));
+        localStorage.setItem(
+          "workbench.used",
+          JSON.stringify(
+            Object.fromEntries(
+              open
+                .filter((path) => ago(path) !== null)
+                .map((path) => [path, Date.now() - ago(path)!]),
+            ),
+          ),
+        );
+      }
+      const answers = new Map<string, () => void>();
+      (window as unknown as Record<string, unknown>).__describe = (path: string) => {
+        answers.get(path)?.();
+        answers.delete(path);
+      };
       // A workspace on record with no hooks choice reads as a setup from
       // before the choice, which is told about hooks once: taken as read
       // here, unless a test or the app has said, so the word does not sit
@@ -381,6 +410,7 @@ export async function installFakeCore(
         // A fresh install: the shipped workflow, followed by nothing.
         workflows: { list: [buildAndReview], default: null, overrides: {} },
         pastSessions: "forever",
+        inactiveAfter: "week",
         themes: {},
         userStyles: false,
         notifications: true,
@@ -393,6 +423,7 @@ export async function installFakeCore(
         terminalFont: ["system", "plex", "jetbrains"],
         interfaceFont: ["system", "plex", "inter"],
         pastSessions: ["forever", "month", "week", "day"],
+        inactiveAfter: ["day", "week", "month", "never"],
       };
       const readSettings = (): Record<string, unknown> | null => {
         const raw = localStorage.getItem(settingsFile);
@@ -417,12 +448,16 @@ export async function installFakeCore(
           fromLoginShell: true,
         }),
         pickProject: async () => null,
-        projectInfo: async (path: string) => ({
-          path,
-          name: path.split("/").filter(Boolean).pop() ?? path,
-          repository: path,
-          isGit: true,
-        }),
+        projectInfo: async (path: string) => {
+          if (held.includes(path))
+            await new Promise<void>((resolve) => answers.set(path, resolve));
+          return {
+            path,
+            name: path.split("/").filter(Boolean).pop() ?? path,
+            repository: path,
+            isGit: true,
+          };
+        },
         setWindowTitle: async () => {},
         openUrl: async () => {},
         windowControl: async (action: string) => {
@@ -1117,12 +1152,15 @@ export async function installFakeCore(
           projects: string[],
           agent: string,
           configDir?: string,
-        ) =>
-          projects.map((project) =>
+        ) => {
+          const w = window as unknown as { __historyReads?: string[][] };
+          (w.__historyReads ??= []).push(projects);
+          return projects.map((project) =>
             project === open[0] && agent === "claude-code"
               ? transcripts.filter((transcript) => transcript.configDir === configDir)
               : [],
-          ),
+          );
+        },
         sessionTitle: async () => null,
         hookStatus: async () => ({
           installed: false,
@@ -1287,6 +1325,9 @@ export async function installFakeCore(
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
       agents: options.agents ?? ["claude-code"],
+      active: options.active ?? null,
+      used: options.used ?? null,
+      held: options.held ?? [],
       buildAndReview: BUILD_AND_REVIEW,
     },
   );

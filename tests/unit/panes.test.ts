@@ -43,6 +43,8 @@ const fake = {
   hookInstalled: false,
   picked: 0,
   controls: [] as string[],
+  /** The projects each history request asked for, in order. */
+  read: [] as string[][],
 };
 
 vi.mock("$lib/core", () => ({
@@ -77,10 +79,12 @@ vi.mock("$lib/core", () => ({
     kill: async () => {},
     transcripts: async (_project: string, agent: string) =>
       agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
-    transcriptsMany: async (projects: string[], agent: string) =>
-      projects.map(() =>
+    transcriptsMany: async (projects: string[], agent: string) => {
+      fake.read.push(projects);
+      return projects.map(() =>
         agent === "claude-code" ? fake.transcripts : fake.codexTranscripts,
-      ),
+      );
+    },
     hookStatus: async () => ({
       installed: fake.hookInstalled,
       settings: "",
@@ -103,7 +107,13 @@ vi.mock("$lib/core", () => ({
     }),
   }),
 }));
-import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
+// The pane starts a session through the same call as the palette, which is
+// watched here while it does what it always does.
+vi.mock("$lib/workspace.svelte", async (original) => {
+  const actual = await original<typeof import("$lib/workspace.svelte")>();
+  return { ...actual, startSession: vi.fn(actual.startSession) };
+});
+import { workspace, reset as resetWorkspace, startSession } from "$lib/workspace.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import {
   reset as resetSessions,
@@ -111,16 +121,24 @@ import {
   loadRemembered,
   started,
   sessions,
+  reopened,
   close as closeStore,
 } from "$lib/sessions.svelte";
 import { reset as resetHook } from "$lib/hook.svelte";
 import { remote, resetRemote } from "$lib/remote.svelte";
 import { offered, pickResume, resetResume, resume } from "$lib/resume.svelte";
+import { projects, resetProjects, touch } from "$lib/projects.svelte";
+import { palette, resetPalette } from "$lib/palette.svelte";
+import { settings } from "$lib/settings.svelte";
+import { conductor, resetConductor } from "$lib/conductor.svelte";
+import { chordFor, describe as describeChord } from "$lib/keys.svelte";
+
 import { reset as resetWorkflows } from "$lib/workflows.svelte";
 
 beforeEach(() => {
   // A session follows no workflow here unless a test gives it one.
   resetWorkflows();
+  vi.mocked(startSession).mockClear();
   resetRemote();
   resetResume();
   layout.sessions = DEFAULT.sessions;
@@ -136,7 +154,11 @@ beforeEach(() => {
   layout.mode = "working";
   layout.focus = "agent";
   layout.width = 1600;
-  layout.sessionsView = "project";
+  layout.projectSort = "used";
+  resetProjects();
+  resetConductor();
+  resetPalette();
+  settings.open = false;
 
   files.scope = "changed";
   files.view = "diff";
@@ -156,6 +178,7 @@ beforeEach(() => {
   fake.transcripts = [];
   fake.codexTranscripts = [];
   fake.hookInstalled = false;
+  fake.read = [];
   resetHook();
   fake.fileList = [
     "Cargo.toml",
@@ -224,7 +247,7 @@ describe("SessionsPane", () => {
   it("asks for a project when none is open", () => {
     render(SessionsPane);
     expect(screen.getByTestId("no-project")).toBeInTheDocument();
-    expect(screen.getByTestId("open-project")).toBeInTheDocument();
+    expect(screen.getByTestId("open-first-project")).toBeInTheDocument();
   });
 
   it("lists open projects with their sessions", () => {
@@ -236,7 +259,12 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     expect(screen.getByText("one")).toBeInTheDocument();
     expect(screen.getByText("session 1")).toBeInTheDocument();
-    expect(screen.getByText("running")).toBeInTheDocument();
+    // Nothing left for the row: one line, and the dot says what it is
+    // doing, in words only for a screen reader.
+    const row = screen.getByTestId("session-row");
+    expect(row).not.toHaveClass("two");
+    expect(row.querySelector(".second")).toBeNull();
+    expect(row.querySelector(".state.told")).toHaveTextContent("running");
   });
 
   // The right pane is entirely git-based, so say so rather than sit there empty.
@@ -248,8 +276,9 @@ describe("SessionsPane", () => {
     expect(screen.getByText("no git")).toBeInTheDocument();
   });
 
-  // With codex installed too, every row says whose it is, the new-session
-  // row offers the choice, and each agent's outside sessions fold apart.
+  // With codex installed too, the new-session row offers the choice, and
+  // every agent's outside sessions are one row of earlier sessions. No row
+  // says whose agent it is.
   it("offers both agents and tells their sessions apart", async () => {
     applyDetect(
       {
@@ -272,10 +301,10 @@ describe("SessionsPane", () => {
     ];
 
     render(SessionsPane);
-    expect(screen.getByTestId("agent-tag")).toHaveTextContent("claude");
-    // The new-session row opens, in place, into one row per agent.
-    await fireEvent.click(screen.getByTestId("new-session"));
-    expect(screen.queryByTestId("new-session")).toBeNull();
+    expect(screen.queryByTestId("agent-tag")).toBeNull();
+    // The project's own new session opens the choice under its name, a row
+    // per agent.
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     const options = screen.getAllByTestId("agent-option");
     expect(options.map((option) => option.dataset.agent)).toEqual([
       "claude-code",
@@ -285,11 +314,8 @@ describe("SessionsPane", () => {
     expect(options[1]).toHaveTextContent("Codex");
 
     await waitFor(() =>
-      expect(screen.getAllByTestId("outside-fold")).toHaveLength(2),
+      expect(screen.getByTestId("earlier-sessions")).toHaveTextContent("2 earlier sessions"),
     );
-    const folds = screen.getAllByTestId("outside-fold");
-    expect(folds[0]).toHaveTextContent("1 claude session to resume");
-    expect(folds[1]).toHaveTextContent("1 codex session to resume");
 
     await fireEvent.click(options[1]);
     expect(sessions.all.at(-1)?.agent).toBe("codex");
@@ -297,11 +323,12 @@ describe("SessionsPane", () => {
     expect(screen.queryByTestId("agent-choice")).toBeNull();
     expect(screen.getByTestId("new-session")).toBeInTheDocument();
 
-    // The fold opens the list to resume from, for that agent.
-    await fireEvent.click(folds[1]);
+    // The row opens the list to resume from, every agent's together.
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     expect(resume.open).toBe(true);
-    expect(resume.agent).toBe("codex");
-    pickResume(offered()[0]);
+    expect(resume.agent).toBeNull();
+    expect(offered().map((entry) => entry.id)).toEqual(["c1", "x1"]);
+    pickResume(offered()[1]);
     const resumed = sessions.all.at(-1)!;
     expect(resumed.agent).toBe("codex");
     expect(resumed.resumedFrom).toBe("x1");
@@ -325,21 +352,35 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    // The new-session button is the fourth stop: the sort and the menu on
+    // the title's row, then the field and the button beside it. It asks in
+    // the palette, which knows the project with one open and asks for the
+    // agent.
+    await fireEvent.keyDown(nav, { key: "Home" });
+    for (let step = 0; step < 3; step += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("new-session")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
-    // Open, with the cursor on the project's default.
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("new");
+    expect(palette.steps).toEqual([{ kind: "project", path: "/repo" }]);
+    expect(screen.queryByTestId("agent-choice")).toBeNull();
+    resetPalette();
+
+    // The project's own button opens the choice under its name, with the
+    // cursor on its default.
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     let options = screen.getAllByTestId("agent-option");
     expect(options[0]).toHaveClass("cursor");
     expect(sessions.all).toHaveLength(0);
+    const head = screen.getByTestId("project-head").getBoundingClientRect();
+    expect(screen.getByTestId("agent-choice").getBoundingClientRect().top).toBeGreaterThanOrEqual(head.top);
 
-    // Escape closes it and puts the cursor back on the row.
+    // Escape closes it and puts the cursor on the project it opened under.
     await fireEvent.keyDown(nav, { key: "Escape" });
     expect(screen.queryByTestId("agent-choice")).toBeNull();
-    expect(screen.getByTestId("new-session").closest(".new-row")).toHaveClass(
-      "cursor",
-    );
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
 
-    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     options = screen.getAllByTestId("agent-option");
     expect(options[1]).toHaveClass("cursor");
@@ -347,7 +388,7 @@ describe("SessionsPane", () => {
     expect(sessions.all[0].agent).toBe("codex");
     // The choice sticks: the next choice opens on it, and it is marked.
     expect(sessions.preferred["/repo"]).toBe("codex");
-    await fireEvent.click(screen.getByTestId("new-session"));
+    await fireEvent.click(screen.getByTestId("project-new-session"));
     options = screen.getAllByTestId("agent-option");
     expect(options[1]).toHaveClass("cursor");
     expect(options[1]).toHaveTextContent("last used");
@@ -364,11 +405,12 @@ describe("SessionsPane", () => {
     done.unread = true;
 
     render(SessionsPane);
-    const rows = screen.getAllByTestId("session-row");
-    expect(rows[0].querySelector(".dot")).toHaveClass("working");
-    expect(rows[0]).toHaveTextContent("working");
-    expect(rows[1].querySelector(".dot")).toHaveClass("unread");
-    expect(rows[1]).toHaveTextContent("waiting for you");
+    const row = (key: string) =>
+      document.querySelector<HTMLElement>(`[data-row="session:${key}"] [data-testid="session-row"]`)!;
+    expect(row(busy.key).querySelector(".dot")).toHaveClass("working");
+    expect(row(busy.key)).toHaveTextContent("working");
+    expect(row(done.key).querySelector(".dot")).toHaveClass("unread");
+    expect(row(done.key)).toHaveTextContent("waiting for you");
   });
 
   // A session under another project is that project's work: picking it
@@ -383,10 +425,134 @@ describe("SessionsPane", () => {
     sessions.active = mine.key;
 
     render(SessionsPane);
-    await fireEvent.click(screen.getAllByTestId("session-row")[1]);
+    await fireEvent.click(
+      document.querySelector<HTMLElement>(`[data-row="session:${theirs.key}"] [data-testid="session-row"]`)!,
+    );
     expect(workspace.active).toBe("/two");
     expect(sessions.active).toBe(theirs.key);
     expect(layout.focus).toBe("agent");
+  });
+
+  // A session started by another hangs under its starter. Picking it goes
+  // to the session, and the starter's project is the one used and drawn
+  // on screen: the project it runs in, with nothing else under it, stays
+  // under Inactive rather than coming up as an empty header.
+  it("keeps a started session's own project under Inactive when it is picked", async () => {
+    workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"), repo("/other", "other"));
+    workspace.active = "/other";
+    const own = create("/other");
+    started(own.key, "pty-1", "own-1");
+    const starter = create("/starter");
+    started(starter.key, "pty-2", "starter-1");
+    const kid = create("/kid");
+    started(kid.key, "pty-3", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    sessions.active = own.key;
+    touch("/other", Date.now() - 1000);
+    touch("/starter", Date.now() - 5000);
+    touch("/kid", Date.now() - 30 * 24 * 3600 * 1000);
+
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project"));
+    expect(names()).toEqual(["other", "starter"]);
+
+    await fireEvent.click(screen.getByTestId("started-session"));
+    expect(sessions.active).toBe(kid.key);
+    expect(workspace.active).toBe("/kid");
+    expect(Date.now() - projects.used["/starter"]).toBeLessThan(1000);
+    expect(Date.now() - projects.used["/kid"]).toBeGreaterThan(24 * 3600 * 1000);
+    await tick();
+    expect(names()).toEqual(["starter", "other"]);
+    expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project");
+    expect(document.querySelector(`[data-row="session:${kid.key}"]`)).toHaveClass("on");
+  });
+
+  // A project whose only session hangs under a starter elsewhere has no
+  // session drawn under it. A click on its header shows it with none, as
+  // the project on screen with its past sessions, and does not bring up the
+  // started session, which would leave it an empty header while the
+  // starter's project is the one on screen.
+  it("shows a project whose only session hangs elsewhere with none when its header is clicked", async () => {
+    workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"));
+    workspace.active = "/starter";
+    const old = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+    fake.transcripts = [{ id: "gone-1", title: "earlier work", modified: old, size: 400 }];
+    const gone = create("/kid");
+    started(gone.key, "pty-0", "gone-1");
+    closeStore(gone.key);
+    const starter = create("/starter");
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create("/kid");
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    sessions.active = starter.key;
+    touch("/starter", Date.now() - 5000);
+    touch("/kid", Date.now() - 1000);
+
+    render(SessionsPane);
+    const head = () => document.querySelector<HTMLElement>('[data-row="project:/kid"]')!;
+    await waitFor(() => expect(head()).not.toBeNull());
+    await fireEvent.click(head().querySelector<HTMLElement>("button.project-row")!);
+    expect(workspace.active).toBe("/kid");
+    expect(sessions.active).toBeNull();
+    await tick();
+    expect(head()).toHaveClass("on");
+    expect(document.querySelector('[data-row="project:/starter"]')).not.toHaveClass("on");
+    await waitFor(() => expect(within(head().closest("section")!).getByTestId("past-session")).toHaveTextContent("earlier work"));
+  });
+
+  // With that started session on screen, everything that follows the
+  // project on screen follows the starter's: its header is marked, and its
+  // past sessions and its row of earlier ones stand under it. Its own +
+  // opens the choice there, where it is drawn, and starts in it.
+  it("follows the starter's project as the one on screen while its started session is", async () => {
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"), repo("/other", "other"));
+    workspace.active = "/other";
+    // Every project reads the same history here, so it is old enough to
+    // leave the project the started session runs in under Inactive.
+    const old = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+    fake.transcripts = [
+      { id: "gone-1", title: "earlier work", modified: old, size: 400 },
+      { id: "c1", title: "from a terminal", modified: old - 60, size: 400 },
+    ];
+    const gone = create("/starter");
+    started(gone.key, "pty-0", "gone-1");
+    closeStore(gone.key);
+    const own = create("/other");
+    started(own.key, "pty-1", "own-1");
+    const starter = create("/starter");
+    started(starter.key, "pty-2", "starter-1");
+    const kid = create("/kid");
+    started(kid.key, "pty-3", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    sessions.active = own.key;
+    touch("/other", Date.now() - 1000);
+    touch("/starter", Date.now() - 5000);
+    touch("/kid", Date.now() - 30 * 24 * 3600 * 1000);
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project"));
+    await fireEvent.click(screen.getByTestId("started-session"));
+    expect(workspace.active).toBe("/kid");
+    await tick();
+
+    const section = (path: string) =>
+      document.querySelector<HTMLElement>(`[data-row="project:${path}"]`)!.closest("section")!;
+    expect(section("/starter").querySelector("[data-testid='project-head']")).toHaveClass("on");
+    expect(section("/other").querySelector("[data-testid='project-head']")).not.toHaveClass("on");
+    await waitFor(() => expect(within(section("/starter")).getByTestId("past-session")).toHaveTextContent("earlier work"));
+    expect(within(section("/starter")).getByTestId("earlier-sessions")).toHaveTextContent("1 earlier session");
+    expect(screen.getAllByTestId("past-session")).toHaveLength(1);
+
+    await fireEvent.click(within(section("/starter")).getByTestId("project-new-session"));
+    const choice = within(section("/starter")).getByTestId("agent-choice");
+    expect(within(choice).getAllByTestId("agent-option")[0]).toHaveClass("cursor");
+    await fireEvent.click(within(choice).getAllByTestId("agent-option")[1]);
+    expect(sessions.all.at(-1)?.project).toBe("/starter");
+    expect(sessions.all.at(-1)?.agent).toBe("codex");
   });
 
   // Cmd+1, Down, Enter, type: the pane is one tab stop with a cursor in it.
@@ -397,21 +563,23 @@ describe("SessionsPane", () => {
     started(first.key, "pty-1", "session-1");
     const second = create("/repo");
     started(second.key, "pty-2", "session-2");
+    first.changedAt = second.changedAt - 1000;
     layout.focus = "sessions";
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
 
-    // The cursor starts on the session you are in.
-    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    // The cursor starts on the session you are in, the latest change on
+    // top, and the first is under it.
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(sessions.active).toBe(first.key);
     expect(layout.focus).toBe("agent");
   });
 
-  // Down goes through the rows in the order the pane shows them: the new
-  // session row sits between the sessions and the fold.
+  // Down goes through the rows in the order the pane shows them: the
+  // sessions, then the row of earlier ones.
   it("walks the rows in the order they are shown", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
@@ -425,15 +593,12 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
 
+    expect(screen.getByTestId("session-row").closest("[data-row]")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
-      "cursor",
-    );
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(resume.open).toBe(true);
   });
@@ -452,11 +617,10 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(resume.open).toBe(true);
 
@@ -465,11 +629,9 @@ describe("SessionsPane", () => {
     expect(document.activeElement).toBe(document.body);
     returnFocus();
     await waitFor(() => expect(document.activeElement).toBe(nav));
-    expect(screen.getByTestId("outside-fold")).toHaveClass("cursor");
+    expect(screen.getByTestId("earlier-sessions")).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "ArrowUp" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
-      "cursor",
-    );
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
   });
 
   // Coming in from another pane is different: the cursor starts over from
@@ -484,10 +646,8 @@ describe("SessionsPane", () => {
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("new-session").closest("[data-row]")).toHaveClass(
-      "cursor",
-    );
+    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    expect(screen.getByTestId("project-head")).toHaveClass("cursor");
 
     focusPane("agent");
     nav.blur();
@@ -499,9 +659,10 @@ describe("SessionsPane", () => {
     );
   });
 
-  // Nothing in the pane needs the mouse: the way in sits on the same
-  // cursor as the rows, and Delete does what the × on a row does.
-  it("reaches Open project and the menu from the keyboard, and closes with Delete", async () => {
+  // Nothing in the pane needs the mouse: the head and the Projects line
+  // sit on the same cursor as the rows, the menus are walked with the
+  // arrows, and Delete does what the × on a row does.
+  it("reaches the title's tools, the head and the menus from the keyboard, and closes with Delete", async () => {
     workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
     workspace.active = "/repo";
     layout.focus = "sessions";
@@ -509,141 +670,402 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
-    // The cursor starts on the project you are in, not on the way in.
-    expect(screen.getByTestId("open-project")).not.toHaveClass("cursor");
+    // The cursor starts on the project you are in, not on the head.
+    expect(screen.getByTestId("go-to")).not.toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Home" });
-    expect(screen.getByTestId("open-project")).toHaveClass("cursor");
+    expect(screen.getByTestId("project-sort")).toHaveClass("cursor");
+
+    // The sort menu: Enter opens it, the arrows walk it and Enter picks,
+    // which closes it.
     await fireEvent.keyDown(nav, { key: "Enter" });
-    expect(fake.picked).toBe(1);
+    expect(screen.getByTestId("project-sort-menu")).toBeInTheDocument();
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(layout.projectSort).toBe("name");
+    expect(screen.queryByTestId("project-sort-menu")).toBeNull();
+
+    // The menu beside it holds the ways to open a project, and the
+    // settings with their chord.
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(screen.getByTestId("sessions-menu")).toHaveClass("cursor");
-    // Enter opens the menu, and what it holds is a click away.
     await fireEvent.keyDown(nav, { key: "Enter" });
-    await fireEvent.click(screen.getByTestId("open-remote"));
-    expect(remote.open).toBe(true);
+    expect(screen.getByTestId("open-project")).toHaveClass("at");
+    expect(screen.getByTestId("menu-settings")).toHaveTextContent("Settings…");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(fake.picked).toBe(1);
     expect(screen.queryByTestId("sessions-menu-items")).toBeNull();
-
-    // The view switch is next, and Right and Left flip it in place.
+    await fireEvent.keyDown(nav, { key: "Enter" });
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("view-switch")).toHaveClass("cursor");
-    await fireEvent.keyDown(nav, { key: "ArrowRight" });
-    expect(layout.sessionsView).toBe("status");
-    await fireEvent.keyDown(nav, { key: "ArrowLeft" });
-    expect(layout.sessionsView).toBe("project");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(remote.open).toBe(true);
+    // A click does the same.
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.click(screen.getByTestId("open-project"));
+    expect(fake.picked).toBe(2);
 
+    // Then the field and the new-session button, then the projects.
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("go-to")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("new-session")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getAllByTestId("project-head")[0]).toHaveClass("cursor");
     await fireEvent.keyDown(nav, { key: "Delete" });
-    expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
+    expect(workspace.open).toHaveLength(1);
   });
 
-  // By status, every session is one list across the projects: the ones
-  // that need you first, then the working, then the rest, each with its
-  // project under the name, and the projects themselves under the groups.
-  it("lists sessions by status across projects, each saying where it belongs", async () => {
-    workspace.open.push(repo("/work/app", "app"), repo("/spike/app", "app"));
-    workspace.active = "/work/app";
-    const idle = create("/work/app");
-    started(idle.key, "pty-1", "session-1");
-    const busy = create("/spike/app");
-    started(busy.key, "pty-2", "session-2");
-    busy.working = true;
-    busy.changedAt = idle.changedAt + 1;
-    const asking = create("/spike/app");
-    started(asking.key, "pty-3", "session-3");
-    asking.needs = "permission";
-    asking.unread = true;
-    asking.note = "Allow npm test?";
-    asking.changedAt = idle.changedAt + 2;
-    fake.transcripts = [{ id: "old-1", title: "yesterday", modified: 1000, size: 10 }];
-    localStorage.setItem("workbench.mine", JSON.stringify({ "/work/app": ["old-1"] }));
-    loadRemembered();
-    layout.sessionsView = "status";
+  // Closing a project is in its own menu, behind the ⋯ on its header or a
+  // right click, never one slip from the + that starts a session.
+  it("closes a project from its own menu, not from beside the +", async () => {
+    workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
+    workspace.active = "/repo";
+    render(SessionsPane);
+    const head = document.querySelector<HTMLElement>('[data-row="project:/repo"]')!;
+    expect(within(head).queryByTestId("close-project")).toBeNull();
+    await fireEvent.click(within(head).getByTestId("project-more"));
+    const menu = within(head).getByTestId("project-menu");
+    // Close, which stops everything running in the project, stands apart
+    // below a separator, marked as what it is.
+    const close = within(head).getByTestId("close-project");
+    expect(close.previousElementSibling).toHaveAttribute("role", "separator");
+    expect(close).toHaveClass("destructive");
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(1);
+    expect(within(head).getByTestId("project-menu-new")).not.toHaveClass("destructive");
+    await fireEvent.click(close);
+    expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
+
+    // A right click opens it as well, and Escape closes it.
+    const other = document.querySelector<HTMLElement>('[data-row="project:/other"] .project-row')!;
+    await fireEvent.contextMenu(other);
+    expect(screen.getByTestId("project-menu")).toBeInTheDocument();
+    await fireEvent.keyDown(screen.getByTestId("sessions-nav"), { key: "Escape" });
+    expect(screen.queryByTestId("project-menu")).toBeNull();
+  });
+
+  // Projects split by themselves: the one on screen, one with a live
+  // session and one used within the span are in use; the rest fold under
+  // Inactive at the foot, closed, each with when it was last used.
+  it("folds the projects nobody has used lately under Inactive", async () => {
+    const now = Date.now();
+    workspace.open.push(
+      repo("/here", "here"),
+      repo("/live", "live"),
+      repo("/lately", "lately"),
+      repo("/old", "old"),
+      repo("/older", "older"),
+    );
+    workspace.active = "/here";
+    const live = create("/live");
+    started(live.key, "pty-1", "session-1");
+    sessions.active = live.key;
+    touch("/here", now - 3600 * 1000);
+    touch("/lately", now - 2 * 24 * 3600 * 1000);
+    touch("/old", now - 9 * 24 * 3600 * 1000);
+    touch("/older", now - 21 * 24 * 3600 * 1000);
 
     render(SessionsPane);
-    await waitFor(() => expect(screen.getByTestId("past-session")).toBeInTheDocument());
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    // Ordered by the user's own use: a project only an agent has been at
+    // work in comes after the ones the user picked.
+    expect(names()).toEqual(["here", "lately", "live"]);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 2 projects"));
+    expect(screen.queryByTestId("inactive-project")).toBeNull();
 
-    const groups = screen.getAllByTestId("status-group");
-    expect(groups.map((group) => group.dataset.group)).toEqual(["needs", "working", "active"]);
-    expect(groups[0]).toHaveTextContent("Needs you 1");
-    expect(groups[0]).toHaveClass("hot");
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    const idle = screen.getAllByTestId("inactive-project");
+    expect(idle.map((row) => row.querySelector(".name")!.textContent)).toEqual(["old", "older"]);
+    expect(screen.getAllByTestId("inactive-when").map((when) => when.textContent)).toEqual(["1w", "3w"]);
 
-    const rows = screen.getAllByTestId("session-row");
-    expect(rows.map((row) => row.querySelector(".label")!.textContent)).toEqual([
-      "session 2",
-      "session 1",
-      "session 1",
-    ]);
-    const crumbs = screen.getAllByTestId("session-crumb");
-    expect(crumbs[0]).toHaveTextContent(/^spike\/app\s*·\s*Allow npm test\?$/);
-    expect(crumbs[1]).toHaveTextContent("spike/app");
-    expect(crumbs[2]).toHaveTextContent("work/app");
-    expect(rows[0].querySelector(".dot")).toHaveClass("permission");
-    expect(screen.getAllByTestId("session-when")[0]).toHaveTextContent("just now");
+    // Picking one brings it forward, and it is in use again.
+    await fireEvent.click(idle[0]);
+    expect(workspace.active).toBe("/old");
+    expect(names()).toContain("old");
+    expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project");
 
-    // The projects follow, and only the one you are looking at opens.
-    expect(screen.getByTestId("projects-group")).toHaveTextContent("Projects 2");
-    expect(screen.getByTestId("new-session")).toBeInTheDocument();
-    expect(screen.getByTestId("past-session")).toHaveTextContent("yesterday");
-    const names = screen.getAllByText(/app$/, { selector: ".name" });
-    expect(names.map((name) => name.textContent)).toEqual(["work/app", "spike/app"]);
-
-    // Picking a row under the other project brings that project forward.
-    await fireEvent.click(rows[0]);
-    expect(workspace.active).toBe("/spike/app");
-    expect(sessions.active).toBe(asking.key);
+    // With the span at never, nothing folds.
+    projects.inactiveAfter = "never";
+    await tick();
+    expect(screen.queryByTestId("inactive-fold")).toBeNull();
+    expect(names()).toHaveLength(5);
   });
 
-  it("walks the status view in the order drawn, groups first and the projects after", async () => {
-    workspace.open.push(repo("/one", "one"), repo("/two", "two"));
-    workspace.active = "/one";
-    const mine = create("/one");
-    started(mine.key, "pty-1", "session-1");
-    const theirs = create("/two");
-    started(theirs.key, "pty-2", "session-2");
-    theirs.unread = true;
-    theirs.changedAt = mine.changedAt + 1;
-    layout.sessionsView = "status";
+  // What the user is pointing at, or walking with the keyboard, stays
+  // where it is: the order the user asked for settles once both leave.
+  it("holds the order still while the pointer or the keyboard is in the pane", async () => {
+    workspace.open.push(repo("/a", "a"), repo("/b", "b"));
+    workspace.active = "/a";
+    touch("/a", Date.now() - 1000);
+    touch("/b", Date.now() - 5000);
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    expect(names()).toEqual(["a", "b"]);
+    const pane = document.querySelector<HTMLElement>('[data-pane="sessions"]')!;
+
+    await fireEvent.pointerEnter(pane);
+    await fireEvent.click(screen.getByText("b"));
+    expect(workspace.active).toBe("/b");
+    expect(names()).toEqual(["a", "b"]);
+    await fireEvent.pointerLeave(pane);
+    expect(names()).toEqual(["b", "a"]);
+
+    // The keyboard in the pane holds it the same way.
+    screen.getByTestId("sessions-nav").focus();
+    touch("/a");
+    await tick();
+    expect(names()).toEqual(["b", "a"]);
+    screen.getByTestId("sessions-nav").blur();
+    await tick();
+    expect(names()).toEqual(["a", "b"]);
+  });
+
+  // A click leaves the keyboard in the pane, but it is the pointer that
+  // is there: the order settles as the pointer leaves. Walking the rows
+  // with the keyboard holds it again.
+  it("settles the order as the pointer leaves after a click", async () => {
+    workspace.open.push(repo("/a", "a"), repo("/b", "b"));
+    workspace.active = "/a";
+    touch("/a", Date.now() - 1000);
+    touch("/b", Date.now() - 5000);
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    const pane = document.querySelector<HTMLElement>('[data-pane="sessions"]')!;
+    const nav = screen.getByTestId("sessions-nav");
+    const header = document.querySelector<HTMLElement>('[data-row="project:/b"] .project-row')!;
+
+    await fireEvent.pointerEnter(pane);
+    await fireEvent.pointerDown(header);
+    header.focus();
+    await fireEvent.pointerUp(header);
+    await fireEvent.click(header);
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(nav.contains(document.activeElement)).toBe(true);
+    expect(names()).toEqual(["a", "b"]);
+    await fireEvent.pointerLeave(pane);
+    expect(names()).toEqual(["b", "a"]);
+
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    touch("/a");
+    await tick();
+    expect(names()).toEqual(["b", "a"]);
+  });
+
+  // An agent at work moves no project: only the user's own use does.
+  it("leaves the projects where they are while an agent works", async () => {
+    workspace.open.push(repo("/a", "a"), repo("/b", "b"));
+    workspace.active = "/a";
+    touch("/a", Date.now() - 1000);
+    touch("/b", Date.now() - 5000);
+    const busy = create("/b");
+    started(busy.key, "pty-1", "session-1");
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    expect(names()).toEqual(["a", "b"]);
+    busy.working = true;
+    busy.changedAt = Date.now() + 1000;
+    await tick();
+    expect(names()).toEqual(["a", "b"]);
+  });
+
+  // Picked under Inactive, a project comes forward among the active ones,
+  // and the pane goes to where it landed with the cursor on its header.
+  it("scrolls to an inactive project picked, where it lands", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
+    touch("/here");
+    touch("/old", Date.now() - 30 * 24 * 3600 * 1000);
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    const scrolled = vi.mocked(Element.prototype.scrollIntoView);
+    scrolled.mockClear();
+    await fireEvent.click(screen.getByTestId("inactive-project"));
+    const head = document.querySelector<HTMLElement>('[data-row="project:/old"]')!;
+    await waitFor(() => expect(scrolled.mock.contexts).toContain(head.closest("section")));
+    expect(head).toHaveClass("cursor");
+  });
+
+  // The clock that keeps histories fresh passes over inactive projects,
+  // so one that comes back is read again on the way out.
+  it("reads an inactive project's history again when it leaves Inactive", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
+    touch("/here");
+    touch("/old", Date.now() - 30 * 24 * 3600 * 1000);
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
+    fake.read = [];
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    await fireEvent.click(screen.getByTestId("inactive-project"));
+    await waitFor(() => expect(fake.read.flat()).toContain("/old"));
+    expect(fake.read.flat()).not.toContain("/here");
+  });
+
+  it("starts a session in an inactive project from its own button", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
+    await fireEvent.click(screen.getByTestId("inactive-fold"));
+    const idle = document.querySelector<HTMLElement>('[data-row="idle:/old"]')!;
+    await fireEvent.click(within(idle).getByTestId("project-more"));
+    await fireEvent.click(within(idle).getByTestId("project-menu-new"));
+    expect(workspace.active).toBe("/old");
+    expect(sessions.all.map((session) => session.project)).toEqual(["/old"]);
+    // The project left behind was never used, and takes the other's place
+    // under the fold, which stays open.
+    expect(screen.getByTestId("inactive-project")).toHaveTextContent("here");
+  });
+
+  it("orders the projects by last used or by name, from the sort menu", async () => {
+    const now = Date.now();
+    workspace.open.push(repo("/b", "beta"), repo("/a", "alpha"), repo("/c", "gamma"));
+    workspace.active = "/c";
+    touch("/b", now - 1000);
+    touch("/a", now - 5000);
+    touch("/c", now - 9000);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+
+    render(SessionsPane);
+    expect(screen.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Last used");
+    expect(names()).toEqual(["beta", "alpha", "gamma"]);
+
+    await fireEvent.click(screen.getByTestId("project-sort"));
+    expect(screen.getByTestId("project-sort-used")).toHaveAttribute("aria-checked", "true");
+    await fireEvent.click(screen.getByTestId("project-sort-name"));
+    expect(screen.queryByTestId("project-sort-menu")).toBeNull();
+    expect(screen.getByTestId("project-sort")).toHaveAttribute("aria-label", "Sort projects: Name");
+    expect(names()).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  // The fold and what it lets out are on the cursor path like any row,
+  // and Delete on an inactive project closes it.
+  it("walks the Inactive fold with the keyboard", async () => {
+    workspace.open.push(repo("/here", "here"), repo("/old", "old"));
+    workspace.active = "/here";
     layout.focus = "sessions";
 
     render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
-
     const at = () => nav.querySelector(".cursor")?.getAttribute("data-row");
-    await fireEvent.keyDown(nav, { key: "Home" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("view");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe(`session:${theirs.key}`);
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe(`session:${mine.key}`);
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("project:/one");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("new:/one");
-    await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(at()).toBe("project:/two");
+
     await fireEvent.keyDown(nav, { key: "End" });
-    expect(at()).toBe("project:/two");
+    expect(at()).toBe("inactive");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(at()).toBe("idle:/old");
+    await fireEvent.keyDown(nav, { key: "Delete" });
+    expect(workspace.open.map((project) => project.path)).toEqual(["/here"]);
+    expect(screen.queryByTestId("inactive-fold")).toBeNull();
   });
 
-  it("switches the view with a click, and the tree comes back as it was", async () => {
+  // A live row: the name and when it last changed, then the line the
+  // agent left and the model. A row left from the last quit: one line
+  // with its time, and nothing else.
+  it("draws a live session on two lines and a row left from the last quit on one", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
-    const only = create("/repo");
-    started(only.key, "pty-1", "session-1");
+    const live = create("/repo", null, "claude-code", null, null, "claude-opus-4-1");
+    started(live.key, "pty-1", "session-1");
+    live.note = "Tests green, ready to merge.";
+    const left = reopened("/repo", "t-1", "claude-code", null, "sonnet", null);
+    fake.transcripts = [{ id: "t-1", title: "yesterday's work", modified: Math.floor(Date.now() / 1000) - 3 * 86_400, size: 1 }];
 
     render(SessionsPane);
-    expect(screen.queryByTestId("status-group")).toBeNull();
-    await fireEvent.click(screen.getByTestId("view-status"));
-    expect(screen.getByTestId("view-status")).toHaveAttribute("aria-checked", "true");
-    expect(screen.getAllByTestId("status-group")).toHaveLength(1);
-    expect(screen.getByTestId("session-crumb")).toHaveTextContent("repo");
-    await fireEvent.click(screen.getByTestId("view-project"));
-    expect(screen.queryByTestId("status-group")).toBeNull();
-    expect(screen.queryByTestId("session-crumb")).toBeNull();
-    expect(screen.getByTestId("session-row")).toHaveTextContent("session 1");
+    const row = (key: string) =>
+      document.querySelector<HTMLElement>(`[data-row="session:${key}"] [data-testid="session-row"]`)!;
+    await waitFor(() => expect(row(left.key).querySelector(".when")!.textContent).not.toBe("now"));
+    expect(row(live.key).querySelector(".label")).toHaveTextContent("session 1");
+    expect(row(live.key).querySelector(".when")).toHaveTextContent("now");
+    expect(within(row(live.key)).getByTestId("session-note")).toHaveTextContent("Tests green, ready to merge.");
+    expect(within(row(live.key)).getByTestId("session-model")).toHaveTextContent("Opus 4.1");
+    expect(row(live.key)).toHaveClass("two");
+
+    expect(row(left.key)).not.toHaveClass("two");
+    expect(row(left.key).querySelector(".dot")).toHaveClass("dormant");
+    expect(row(left.key).querySelector(".when")!.textContent).toMatch(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/);
+    expect(within(row(left.key)).queryByTestId("session-model")).toBeNull();
+    expect(screen.queryByTestId("agent-tag")).toBeNull();
+
+    // A session asking for a permission says so in the accent.
+    live.needs = "permission";
+    await tick();
+    expect(within(row(live.key)).getByTestId("session-note")).toHaveClass("asking");
+  });
+
+  // A session that started others says what they are doing on its
+  // second line. Folded, that line says it once in words, with a dot for
+  // each beside it, and the chevron at its end lets them out again.
+  it("folds the sessions a session started into words and dots, behind a chevron", async () => {
+    workspace.open.push(repo("/repo", "repo"), repo("/other", "other"));
+    workspace.active = "/repo";
+    const starter = create("/repo", null, "claude-code", null, null, "claude-opus-4-1");
+    started(starter.key, "pty-1", "starter-1");
+    const here = create("/repo", null, "claude-code", null, null, "sonnet");
+    started(here.key, "pty-2", "kid-1");
+    const there = create("/other", null, "claude-code", null, null, "sonnet");
+    started(there.key, "pty-3", "kid-2");
+    const done = create("/repo", null, "claude-code", null, null, "sonnet");
+    started(done.key, "pty-4", "kid-3");
+    for (const kid of [here, there, done]) conductor.startedBy[kid.key] = "starter-1";
+    there.needs = "permission";
+    done.status = "exited";
+
+    render(SessionsPane);
+    const row = () => document.querySelector<HTMLElement>(`[data-row="session:${starter.key}"]`)!;
+    const kids = screen.getAllByTestId("started-session");
+    expect(kids).toHaveLength(3);
+    // Its own name first, then the project it runs in, which gives way first.
+    const elsewhere = kids.find((kid) => kid.querySelector(".where") !== null)!;
+    expect(elsewhere.querySelector(".label")!.nextElementSibling).toHaveClass("where");
+    expect(elsewhere.querySelector(".where")).toHaveTextContent("other");
+    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("1 running, 1 asking, 1 done");
+    expect(within(row()).getByTestId("session-model")).toHaveTextContent("Opus 4.1");
+
+    const chevron = within(row()).getByTestId("collapse-started");
+    expect(chevron).toHaveAttribute("aria-expanded", "true");
+    await fireEvent.click(chevron);
+    expect(screen.queryAllByTestId("started-session")).toHaveLength(0);
+    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("1 running, 1 asking, 1 done");
+    const dots = within(row()).getByTestId("started-dots");
+    expect(dots.querySelectorAll(".dot")).toHaveLength(3);
+    expect(dots).toHaveTextContent(/^$/);
+    expect(within(row()).queryByTestId("session-model")).toBeNull();
+    expect(within(row()).getByTestId("collapse-started")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  // More than a few rows with nothing running fold their tail into one row
+  // that counts them, on the cursor path like the rest.
+  it("folds the tail of the quiet rows into one row that counts them", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const day = 86_400;
+    const at = Math.floor(Date.now() / 1000);
+    fake.transcripts = [1, 2, 3, 4, 5].map((n) => ({ id: `t-${n}`, title: `work ${n}`, modified: at - n * day, size: 1 }));
+    for (const n of [1, 2, 3, 4, 5]) reopened("/repo", `t-${n}`, "claude-code", null, null, null);
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    // Each row's time is its transcript's, once the history is read.
+    await waitFor(() => expect(screen.getByTestId("quiet-more")).toHaveTextContent("3 more from this week"));
+    const labels = () => screen.getAllByTestId("session-row").map((row) => row.querySelector(".label")!.textContent);
+    expect(labels()).toHaveLength(2);
+
+    const nav = screen.getByTestId("sessions-nav");
+    await waitFor(() => expect(document.activeElement).toBe(nav));
+    await fireEvent.keyDown(nav, { key: "Home" });
+    for (let i = 0; i < 7; i += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("quiet-more")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(screen.queryByTestId("quiet-more")).toBeNull();
+    expect(labels()).toHaveLength(5);
   });
 
   // A live row's × sits over its end and stops the session, which leaves
@@ -668,8 +1090,8 @@ describe("SessionsPane", () => {
       expect(screen.getByTestId("past-session")).toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "1 claude session to resume",
+      expect(screen.getByTestId("earlier-sessions")).toHaveTextContent(
+        "1 earlier session",
       ),
     );
 
@@ -678,8 +1100,8 @@ describe("SessionsPane", () => {
       expect(screen.queryByTestId("past-session")).not.toBeInTheDocument(),
     );
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-        "2 claude sessions to resume",
+      expect(screen.getByTestId("earlier-sessions")).toHaveTextContent(
+        "2 earlier sessions",
       ),
     );
 
@@ -714,8 +1136,9 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     const nav = screen.getByTestId("sessions-nav");
-    // The last row is the new-session row.
-    await fireEvent.keyDown(nav, { key: "End" });
+    // The head's button, after the title's tools and the field.
+    await fireEvent.keyDown(nav, { key: "Home" });
+    for (let step = 0; step < 3; step += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
     await fireEvent.keyDown(nav, { key: "Enter" });
     expect(sessions.all).toHaveLength(1);
     expect(layout.focus).toBe("agent");
@@ -731,7 +1154,9 @@ describe("SessionsPane", () => {
     started(second.key, "pty-2", "session-2");
 
     render(SessionsPane);
-    await fireEvent.click(screen.getAllByTestId("session-row")[0]);
+    await fireEvent.click(
+      document.querySelector<HTMLElement>(`[data-row="session:${first.key}"] [data-testid="session-row"]`)!,
+    );
 
     expect(sessions.active).toBe(first.key);
     expect(second.status).toBe("running");
@@ -759,7 +1184,7 @@ describe("SessionsPane", () => {
     await waitFor(() =>
       expect(screen.getByText("rename the token cache")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("earlier-sessions")).not.toBeInTheDocument();
   });
 
   // Transcripts from Claude Code run in a plain terminal share the directory.
@@ -774,14 +1199,16 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("outside-fold")).toHaveTextContent(
-      "2 claude sessions to resume",
-    );
+    // It opens a dialog rather than opening in place: a glyph of its own,
+    // not the chevron, and an ellipsis.
+    expect(screen.getByTestId("earlier-sessions").textContent!.trim()).toBe("2 earlier sessions…");
+    expect(screen.getByTestId("earlier-sessions").querySelector(".history")).not.toBeNull();
+    expect(screen.getByTestId("earlier-sessions").querySelector(".chev:not(.history)")).toBeNull();
     expect(screen.queryByTestId("past-session")).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     expect(resume.open).toBe(true);
     expect(offered().map((entry) => entry.id)).toEqual(["abc-123", "def-456"]);
   });
@@ -795,9 +1222,9 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     pickResume(offered()[0]);
 
     expect(sessions.all).toHaveLength(1);
@@ -813,13 +1240,13 @@ describe("SessionsPane", () => {
 
     render(SessionsPane);
     await waitFor(() =>
-      expect(screen.getByTestId("outside-fold")).toBeInTheDocument(),
+      expect(screen.getByTestId("earlier-sessions")).toBeInTheDocument(),
     );
-    await fireEvent.click(screen.getByTestId("outside-fold"));
+    await fireEvent.click(screen.getByTestId("earlier-sessions"));
     pickResume(offered()[0]);
 
     await waitFor(() =>
-      expect(screen.queryByTestId("outside-fold")).not.toBeInTheDocument(),
+      expect(screen.queryByTestId("earlier-sessions")).not.toBeInTheDocument(),
     );
   });
 
@@ -849,12 +1276,117 @@ describe("SessionsPane", () => {
     expect(screen.getByTestId("new-session")).toBeDisabled();
   });
 
-  it("only offers a new session in the project you are looking at", () => {
+  // One new-session button in the head, which asks in the palette which
+  // project, and one in each project's header, which brings that project
+  // forward first.
+  it("offers a new session from the head and from each project's header", async () => {
     workspace.open.push(repo("/one", "one"), repo("/two", "two"));
     workspace.active = "/one";
+    touch("/two");
 
     render(SessionsPane);
     expect(screen.getAllByTestId("new-session")).toHaveLength(1);
+    await fireEvent.click(screen.getByTestId("new-session"));
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("new");
+    expect(palette.steps).toEqual([]);
+    expect(sessions.all).toHaveLength(0);
+    resetPalette();
+
+    const heads = screen.getAllByTestId("project-new-session");
+    expect(heads).toHaveLength(2);
+    await fireEvent.click(
+      document.querySelector<HTMLElement>('[data-row="project:/two"] [data-testid="project-new-session"]')!,
+    );
+    expect(workspace.active).toBe("/two");
+    expect(sessions.all.map((session) => session.project)).toEqual(["/two"]);
+  });
+
+  // A project's + with nothing to choose, and the choice of agent, start
+  // the session through the palette's own call, so the two cannot drift.
+  it("starts a session the way the palette does", async () => {
+    workspace.open.push(repo("/one", "one"), repo("/two", "two"));
+    workspace.active = "/one";
+    touch("/one");
+    touch("/two");
+
+    render(SessionsPane);
+    const plus = (path: string) =>
+      document.querySelector<HTMLElement>(`[data-row="project:${path}"] [data-testid="project-new-session"]`)!;
+    await fireEvent.click(plus("/two"));
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(startSession).toHaveBeenLastCalledWith("/two");
+    expect(Date.now() - projects.used["/two"]).toBeLessThan(1000);
+
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    await tick();
+    await fireEvent.click(plus("/one"));
+    expect(startSession).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getAllByTestId("agent-option")[1]);
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(startSession).toHaveBeenLastCalledWith("/one", "codex", null);
+    expect(sessions.all.map((session) => [session.project, session.agent])).toEqual([
+      ["/two", "claude-code"],
+      ["/one", "codex"],
+    ]);
+  });
+
+  // Two projects of one name each show the part of the path that tells
+  // them apart, dimmed in front of the name.
+  it("dims the path that tells two projects of one name apart", () => {
+    workspace.open.push(repo("/work/app", "app"), repo("/spike/app", "app"));
+    workspace.active = "/work/app";
+    touch("/spike/app", Date.now() - 1000);
+    touch("/work/app");
+
+    render(SessionsPane);
+    const names = screen.getAllByTestId("project-head").map((head) => head.querySelector(".name")!);
+    expect(names.map((name) => name.textContent)).toEqual(["work/app", "spike/app"]);
+    expect(names.map((name) => name.querySelector(".prefix")?.textContent)).toEqual(["work/", "spike/"]);
+  });
+
+  // The field at the top opens go to and shows its chord, by a click and
+  // from the keyboard. With no accounts there is nothing for a foot to say:
+  // the settings are in the menu, and under their chord.
+  it("opens go to from the field and the settings from the menu, with no foot", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    layout.focus = "sessions";
+
+    render(SessionsPane);
+    expect(screen.getByTestId("go-to")).toHaveTextContent("Go to session or project");
+    expect(screen.getByTestId("go-to").querySelector("kbd")).toHaveTextContent(describeChord(chordFor("goto")));
+    expect(describeChord(chordFor("goto"))).not.toBe(describeChord(chordFor("palette")));
+    await fireEvent.click(screen.getByTestId("go-to"));
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("goto");
+    resetPalette();
+    const nav = screen.getByTestId("sessions-nav");
+    await fireEvent.keyDown(nav, { key: "Home" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(screen.getByTestId("go-to")).toHaveClass("cursor");
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(palette.open).toBe(true);
+    expect(palette.mode).toBe("goto");
+    expect(document.querySelector(".foot")).toBeNull();
+    expect(screen.queryByTestId("pane-settings")).toBeNull();
+    await fireEvent.click(screen.getByTestId("sessions-menu"));
+    await fireEvent.click(screen.getByTestId("menu-settings"));
+    expect(settings.open).toBe(true);
+  });
+
+  // The sort and the menu sit on the pane's title row; the head under it
+  // is the field and the new-session button, and nothing more.
+  it("puts the sort and the menu on the title's row", () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    render(SessionsPane);
+    const header = document.querySelector<HTMLElement>('[data-pane="sessions"] > header')!;
+    expect(within(header).getByTestId("project-sort")).toBeInTheDocument();
+    expect(within(header).getByTestId("sessions-menu")).toBeInTheDocument();
+    expect(document.querySelector(".sortbar")).toBeNull();
+    expect(screen.queryByText("Projects", { exact: true })).toBeNull();
   });
 });
 

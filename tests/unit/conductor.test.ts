@@ -42,9 +42,13 @@ import {
   exact,
   failed,
   forProject,
+  output,
+  QUIET_MS,
   reset as resetSessions,
   sessions,
   started,
+  WORK_BYTES,
+  WORK_WINDOWS,
 } from "$lib/sessions.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -906,6 +910,64 @@ describe("a session the caller did not start", () => {
     await handle(call("sessions"));
     expect(last().error).toBeNull();
     expect(last().content).toBe("You have started no sessions.");
+  });
+});
+
+/** A second of more than a redraw on a session's terminal, `windows`
+    times running, as an agent at work draws. */
+function streams(key: string, windows: number) {
+  for (let at = 0; at < windows; at += 1) {
+    if (at > 0) vi.advanceTimersByTime(1010);
+    output(key, WORK_BYTES);
+  }
+}
+
+describe("a started session nobody looks at", () => {
+  // Its state is read off its output, which flows whether or not its
+  // terminal was ever on screen; the prompt it was started with is what
+  // it is at work on.
+  it("is working while it draws, and a wait answers when it goes quiet", async () => {
+    const caller = live(A, "pty-0", "caller-1");
+    sessions.active = caller.key;
+    const row = await startAllowed(
+      call(
+        "start",
+        { project: A, prompt: "Fix the flaky test", worktree: true },
+        { session: "caller-1" },
+      ),
+      "pty-1",
+      "sid-1",
+    );
+    expect(sessions.active).toBe(caller.key);
+    streams(row.key, WORK_WINDOWS);
+    flushSync();
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).toContain("working");
+
+    const answering = handle(
+      call("wait", { session: "sid-1" }, { session: "caller-1" }),
+    );
+    await settle();
+    // Still at work: the wait holds.
+    streams(row.key, WORK_WINDOWS);
+    flushSync();
+    await settle();
+    expect(answers).toHaveLength(2);
+    vi.advanceTimersByTime(QUIET_MS + 10);
+    flushSync();
+    await answering;
+    expect(last().content).toContain("Session sid-1 stopped working.");
+  });
+
+  it("is spoken to by a line the caller sends it", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    streams(row.key, WORK_WINDOWS);
+    expect(row.working).toBe(false);
+    const sending = handle(call("send", { session: "sid-1", text: "go on" }));
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await sending;
+    streams(row.key, WORK_WINDOWS);
+    expect(row.working).toBe(true);
   });
 });
 

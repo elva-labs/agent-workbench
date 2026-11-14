@@ -573,11 +573,13 @@ fn merged_into_head(project: &Path, reference: &str) -> bool {
         .is_ok()
 }
 
-/// The worktrees the workbench has made for the project: those git knows
-/// about whose path is under `.claude/worktrees`, with enough about each
-/// to say whether it can go. A worktree the user made elsewhere is theirs
-/// and is not listed.
-pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
+/// A worktree as git lists it: its path, the commit it has checked out and
+/// the branch it is on.
+type Listed = (PathBuf, Option<String>, Option<String>);
+
+/// The worktrees git knows of whose path is under the project's
+/// `.claude/worktrees`, each with its path resolved.
+fn made_worktrees(project: &Path) -> Result<Vec<Listed>, String> {
     // Without a repository there are no worktrees, and saying so beats
     // whatever git makes of a directory that is not there.
     open(project)?;
@@ -586,7 +588,7 @@ pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     let listed = run(project, &["worktree", "list", "--porcelain"])?;
 
     // One entry per `worktree` line, the lines under it belonging to it.
-    let mut entries: Vec<(PathBuf, Option<String>, Option<String>)> = Vec::new();
+    let mut entries: Vec<Listed> = Vec::new();
     for line in listed.lines() {
         let line = line.trim_end();
         if let Some(path) = line.strip_prefix("worktree ") {
@@ -604,12 +606,29 @@ pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     }
 
     let base = canonical(&project.join(WORKTREES));
+    Ok(entries
+        .into_iter()
+        .map(|(path, head, branch)| (canonical(&path), head, branch))
+        .filter(|(path, _, _)| path.starts_with(&base))
+        .collect())
+}
+
+/// Where each of the worktrees the workbench has made for the project is,
+/// resolved, and nothing else about them.
+pub fn worktree_paths(project: &Path) -> Result<Vec<PathBuf>, String> {
+    Ok(made_worktrees(project)?
+        .into_iter()
+        .map(|(path, _, _)| path)
+        .collect())
+}
+
+/// The worktrees the workbench has made for the project: those git knows
+/// about whose path is under `.claude/worktrees`, with enough about each
+/// to say whether it can go. A worktree the user made elsewhere is theirs
+/// and is not listed.
+pub fn worktrees(project: &Path) -> Result<Vec<Worktree>, String> {
     let mut trees: Vec<Worktree> = Vec::new();
-    for (path, head, reference) in entries {
-        let path = canonical(&path);
-        if !path.starts_with(&base) {
-            continue;
-        }
+    for (path, head, reference) in made_worktrees(project)? {
         let Some(name) = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -673,15 +692,14 @@ pub fn worktree_remove(project: &Path, name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
     use std::process::Command;
 
     /// A throwaway repository. Shelling out to git rather than building one
     /// through the API keeps the fixtures readable and matches what a user's
     /// tree actually looks like.
-    fn repo(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-git-{name}"));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+    fn repo(name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("git-{name}"));
 
         let run = |args: &[&str]| {
             Command::new("git")
@@ -945,8 +963,7 @@ mod tests {
 
     #[test]
     fn says_plainly_when_there_is_no_repository() {
-        let dir = std::env::temp_dir().join("workbench-git-none");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("git-none");
         // A temp directory can sit inside someone's repository, so only assert
         // on the error when discovery genuinely finds nothing.
         if let Err(message) = status(&dir) {
@@ -1054,9 +1071,7 @@ mod tests {
 
     #[test]
     fn a_directory_that_is_no_repository_says_so() {
-        let dir = std::env::temp_dir().join("workbench-git-worktree-bare");
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("git-worktree-bare");
         let refused = worktree_add(&dir, "review").unwrap_err();
         assert!(refused.contains("not a git repository"), "{refused}");
     }

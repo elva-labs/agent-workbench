@@ -239,6 +239,7 @@ pub fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn activity_reads_complete_turns_and_ignores_redraw_unrelated_events() {
@@ -320,10 +321,8 @@ mod tests {
         assert_eq!(fresh.poll(&home), Some("prompt"));
     }
 
-    fn codex_home(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-codex-{name}"));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
+    fn codex_home(name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("codex-{name}"));
         dir
     }
 

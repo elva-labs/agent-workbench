@@ -52,6 +52,9 @@ pub const INTERFACE_FONTS: &[&str] = &["system", "plex", "inter"];
 /// How long a past session stays listed under its project before it goes
 /// behind the fold with the rest of the history.
 pub const PAST_SESSIONS: &[&str] = &["forever", "month", "week", "day"];
+/// How long a project goes unused before the sessions pane folds it under
+/// Inactive. Never keeps every project in the list.
+pub const INACTIVE_AFTER: &[&str] = &["day", "week", "month", "never"];
 
 /// How many chords the table may hold, and how long a key or an action's
 /// name may be: far past what the app has, and short of what a file can
@@ -206,6 +209,8 @@ pub struct Settings {
     pub workflows: Workflows,
     /// How long a past session stays listed under its project.
     pub past_sessions: String,
+    /// How long a project goes unused before the sessions pane folds it.
+    pub inactive_after: String,
     /// The user's own themes, by name. A palette may name one.
     pub themes: BTreeMap<String, Theme>,
     /// Whether the user's own stylesheet is laid over the app's.
@@ -236,6 +241,7 @@ impl Default for Settings {
             accounts: Accounts::default(),
             workflows: Workflows::default(),
             past_sessions: "forever".into(),
+            inactive_after: "week".into(),
             themes: BTreeMap::new(),
             user_styles: false,
             notifications: true,
@@ -816,6 +822,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             mend(&before, settings, "workflows");
         }
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
+        "inactiveAfter" => settings.inactive_after = one_of(field, value, INACTIVE_AFTER)?,
         other => return Err(format!("there is no setting called {other}")),
     }
     Ok(())
@@ -1508,13 +1515,12 @@ fn concerns(event: &notify::Result<notify::Event>, path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::events::testing::Recorder;
+    use crate::scratch::Scratch;
     use serde_json::json;
     use std::time::{Duration, Instant};
 
-    fn home(name: &str) -> PathBuf {
-        let home = std::env::temp_dir().join(format!("workbench-settings-{name}"));
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
+    fn home(name: &str) -> Scratch {
+        let home = Scratch::new(&format!("settings-{name}"));
         home
     }
 
@@ -1684,6 +1690,20 @@ mod tests {
     }
 
     #[test]
+    fn how_long_a_project_stays_active_is_one_of_a_few_spans() {
+        let settings = Settings::default();
+        assert_eq!(settings.inactive_after, "week");
+        let next = apply(&settings, &json!({ "inactiveAfter": "never" })).unwrap();
+        assert_eq!(next.inactive_after, "never");
+        let error = apply(&settings, &json!({ "inactiveAfter": "fortnight" })).unwrap_err();
+        assert!(error.contains("day, week, month, never"), "{error}");
+        assert_eq!(
+            parse(r#"{ "inactiveAfter": 7 }"#).unwrap().inactive_after,
+            "week"
+        );
+    }
+
+    #[test]
     fn a_fresh_machine_has_the_default_workflow_and_no_workflow_for_new_sessions() {
         let home = home("workflows-fresh");
         let store = Store::new(&home, Arc::new(Recorder::default()));
@@ -1818,6 +1838,52 @@ mod tests {
             parse(r#"{ "pastSessions": 7 }"#).unwrap().past_sessions,
             "forever"
         );
+    }
+
+    #[test]
+    fn a_span_the_file_holds_that_is_not_used_is_kept_through_saves_and_hand_overs() {
+        let dir = home("bad-spans");
+        put(
+            &dir,
+            r#"{ "pastSessions": "fortnight", "inactiveAfter": "fortnight" }"#,
+        );
+        let store = Store::new(&dir, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.past_sessions, "forever");
+        assert_eq!(loaded.inactive_after, "week");
+        let fields: Vec<_> = loaded
+            .unread_entries
+            .iter()
+            .map(|u| u.field.as_str())
+            .collect();
+        assert_eq!(fields, ["inactiveAfter", "pastSessions"]);
+        assert!(loaded.unread_entries[0]
+            .reason
+            .contains("day, week, month, never"));
+
+        store.set(&json!({ "appearance": "dark" })).unwrap();
+        let file = file_of(&dir);
+        assert_eq!(file["inactiveAfter"], "fortnight");
+        assert_eq!(file["pastSessions"], "fortnight");
+
+        // Choosing the span replaces the one the file held.
+        store.set(&json!({ "inactiveAfter": "never" })).unwrap();
+        let file = file_of(&dir);
+        assert_eq!(file["inactiveAfter"], "never");
+        assert_eq!(file["pastSessions"], "fortnight");
+
+        let home = home("bad-spans-hand-over");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let mut held = serde_json::to_value(Settings::default()).unwrap();
+        held["inactiveAfter"] = json!("fortnight");
+        let stored = store.hand_over(&held).unwrap();
+        assert_eq!(stored.settings.inactive_after, "week");
+        assert!(stored
+            .settings
+            .unread_entries
+            .iter()
+            .any(|entry| entry.field == "inactiveAfter" && entry.entry == json!("fortnight")));
+        assert_eq!(file_of(&home)["inactiveAfter"], "fortnight");
     }
 
     #[test]
@@ -2406,7 +2472,7 @@ mod tests {
         store.set(&json!({ "palette": "rose" })).unwrap();
     }
 
-    fn home_of(name: &str) -> PathBuf {
+    fn home_of(name: &str) -> Scratch {
         home(name)
     }
 

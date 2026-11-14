@@ -32,6 +32,7 @@
   import { referenced } from "$lib/show.svelte";
   import { conductor, dismissRefusal, workflowTag } from "$lib/conductor.svelte";
   import { workspace } from "$lib/workspace.svelte";
+  import { touch } from "$lib/projects.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
   let current = $derived(activeSession());
@@ -100,14 +101,20 @@
     });
   });
 
+  /** Starting a session uses its project. */
   function startAnother() {
     if (installed().length > 1) choosing = true;
-    else if (workspace.active !== null) create(workspace.active);
+    else if (workspace.active !== null) {
+      touch(workspace.active);
+      create(workspace.active);
+    }
   }
 
   function startWith(id: AgentId) {
     choosing = false;
-    if (workspace.active !== null) create(workspace.active, null, id);
+    if (workspace.active === null) return;
+    touch(workspace.active);
+    create(workspace.active, null, id);
   }
 
   /** Escape backs out of the choice while one of its buttons has focus.

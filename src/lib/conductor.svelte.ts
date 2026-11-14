@@ -45,6 +45,7 @@ import {
   onForgotten,
   sessions,
   statusMessage,
+  typed,
   type Session,
 } from "$lib/sessions.svelte";
 import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
@@ -140,7 +141,8 @@ export async function typeWhole(
 }
 
 /** Types a line into a session the way a person does: the text, whole, and
-    then Enter on its own. */
+    then Enter on its own. The agent has been spoken to, as by a line typed
+    into its terminal. */
 export async function typeLine(
   key: string,
   ptyId: string,
@@ -149,6 +151,7 @@ export async function typeLine(
   const wait = await typeWhole(key, ptyId, line);
   await pause(wait);
   await core().write(ptyId, "\r");
+  typed(ptyId, "\r");
 }
 
 /** Stops a session another session started, and files it away: it was
@@ -487,12 +490,20 @@ function forget(caller: string, id: string) {
   saveStarted();
 }
 
+/** The caller of each remembered session, by the session's id: the first
+    caller listed where two remember one. */
+const owners = $derived.by(() => {
+  const index = new Map<string, string>();
+  for (const [caller, entries] of Object.entries(conductor.started))
+    for (const entry of entries)
+      if (!index.has(entry.id)) index.set(entry.id, caller);
+  return index;
+});
+
 /** The caller that started a session, by its id, when one is remembered. */
 function ownerOf(id: string | null): string | null {
   if (id === null) return null;
-  for (const [caller, entries] of Object.entries(conductor.started))
-    if (entries.some((entry) => entry.id === id)) return caller;
-  return null;
+  return owners.get(id) ?? null;
 }
 
 /** A caller's remembered session, by id, when it is one. */

@@ -1319,11 +1319,10 @@ pub fn describe_selection(selection: Option<&crate::selection::Selection>, cwd: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn home(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("workbench-mcp-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+    fn home(name: &str) -> Scratch {
+        let dir = Scratch::new(&format!("mcp-{name}"));
         dir
     }
 
@@ -1542,6 +1541,7 @@ mod tests {
             "hooks",
             "accounts",
             "pastSessions",
+            "inactiveAfter",
             "notifications",
             "chime",
         ] {
@@ -2271,7 +2271,7 @@ mod tests {
     fn a_cancelled_wait_stops_waiting_and_tells_the_window() {
         let home = home("conduct-wait-cancelled");
         let waiting = {
-            let home = home.clone();
+            let home = home.to_path_buf();
             std::thread::spawn(move || {
                 handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":"cancel-me","method":"tools/call","params":{"name":"wait","arguments":{"seconds":30}}}"#, Waits::default()).unwrap()
             })
