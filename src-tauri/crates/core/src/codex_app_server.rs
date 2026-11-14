@@ -649,6 +649,8 @@ struct AppServer {
     /// A message whose turn Codex named in its answer, until that turn
     /// starts: the turn's id, where the answer gave one, and the message.
     awaited: Option<(Option<String>, String)>,
+    /// The turn that ended last, which an answer that comes late may name.
+    ended: Option<String>,
     interrupt_wanted: bool,
     compact_asked: bool,
     /// Why the running turn failed, as the agent said before it ended.
@@ -997,6 +999,7 @@ impl AppServer {
             turn: None,
             starting: None,
             awaited: None,
+            ended: None,
             interrupt_wanted: false,
             compact_asked: false,
             failure: None,
@@ -1335,6 +1338,12 @@ impl AppServer {
                     messages: vec![message],
                 });
             }
+            // Its turn has begun and ended already: the message was taken
+            // into it.
+            (Some(turn), None) if self.ended.as_deref() == Some(turn.as_str()) => {
+                out.events
+                    .push(Event::message(&message, MessageState::Taken, None));
+            }
             (Some(turn), None) => self.begin(&turn, vec![message], out),
             // Another turn runs, or the answer named none: its own start
             // names it.
@@ -1407,7 +1416,7 @@ impl AppServer {
                 .push(json!({ "id": asked.id, "result": asked.refusal() }).to_string());
             out.events.push(Event::Withdrawn { request: key });
         }
-        self.turn = None;
+        self.ended = self.turn.take().or(text(&turn["id"]));
         self.failure = None;
         self.told_signed_out = false;
         self.interrupt_wanted = false;

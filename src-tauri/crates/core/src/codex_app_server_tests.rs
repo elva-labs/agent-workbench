@@ -421,6 +421,31 @@ fn a_message_is_a_turn_named_by_the_message_whichever_comes_first() {
 }
 
 #[test]
+fn an_answer_that_comes_after_its_turn_has_ended_names_the_message_taken() {
+    let mut driver = ready();
+    let line: Value = serde_json::from_str(&driver.message(M1, "go", &[]).unwrap()).unwrap();
+    let out = events(
+        &mut driver,
+        &[
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-1"}}),
+            ),
+            completed("failed"),
+            json!({"id": line["id"], "result": {"turn": {"id": "turn-1"}}}),
+        ],
+    );
+    assert!(
+        matches!(out.as_slice(), [
+            Event::TurnStarted { messages },
+            Event::TurnEnded { .. },
+            last,
+        ] if messages.is_empty() && *last == Event::message(M1, MessageState::Taken, None)),
+        "no turn is begun again: {out:?}"
+    );
+}
+
+#[test]
 fn a_message_s_turn_is_the_one_its_answer_names_not_the_next_to_start() {
     let mut driver = ready();
     let line: Value = serde_json::from_str(&driver.message(M1, "go", &[]).unwrap()).unwrap();
