@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -214,14 +215,36 @@ impl Default for Settings {
     }
 }
 
-/// The settings, and whether a file held them. None held means the window
-/// has not handed over what it kept before there was a file.
+/// What the settings file holds, as one look at it found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Found {
+    /// There is no file.
+    Missing,
+    /// The file is whole: a JSON object, read leniently.
+    Whole(Box<Settings>),
+    /// There is a file and it is not a JSON object: empty, cut short, or
+    /// not settings at all. The defaults are not what it holds.
+    Unreadable,
+}
+
+/// The settings, and what the file held. `stored` is false when there is
+/// no file, which means the window has not handed over what it kept before
+/// there was a file. `unreadable` is true when there is a file that does
+/// not parse; `settings` is then the defaults and says nothing about the
+/// file, and a window keeps what it has.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Stored {
     pub stored: bool,
+    pub unreadable: bool,
     pub settings: Settings,
 }
+
+/// How many times a save looks at a file that does not parse before it
+/// refuses, and how long it waits between looks. A writer that empties the
+/// file first is usually done within a few milliseconds.
+const MOST_LOOKS: usize = 5;
+const BETWEEN_LOOKS: Duration = Duration::from_millis(40);
 
 fn one_of(field: &str, value: &Value, allowed: &[&str]) -> Result<String, String> {
     match value.as_str() {
@@ -571,15 +594,23 @@ fn render(settings: &Settings) -> String {
 }
 
 /// Writes the file whole and moves it into place, so a reader finds the
-/// old settings or the new, never half of either.
+/// old settings or the new, never half of either. The text goes to a
+/// temporary file beside the settings file and is on disk before the move.
 fn write(path: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
     let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, text)
-        .map_err(|e| format!("could not write {}: {e}", temporary.display()))?;
+    let written = std::fs::File::create(&temporary).and_then(|mut file| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
+    });
+    written.map_err(|e| {
+        let _ = std::fs::remove_file(&temporary);
+        format!("could not write {}: {e}", temporary.display())
+    })?;
     std::fs::rename(&temporary, path).map_err(|e| {
         let _ = std::fs::remove_file(&temporary);
         format!("could not write {}: {e}", path.display())
@@ -652,25 +683,89 @@ impl Store {
         &self.path
     }
 
-    /// The settings as they are, and whether a file held them.
-    pub fn load(&self) -> Stored {
+    /// One look at the file.
+    fn look(&self) -> Found {
         match std::fs::read_to_string(&self.path) {
-            Ok(text) => Stored {
+            Ok(text) => parse(&text).map_or(Found::Unreadable, |s| Found::Whole(Box::new(s))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Found::Missing,
+            Err(_) => Found::Unreadable,
+        }
+    }
+
+    /// Looks until the file is whole or missing, up to `MOST_LOOKS` times, and
+    /// calls `between` before each look after the first.
+    fn look_settled(&self, between: &mut dyn FnMut()) -> Found {
+        let mut found = self.look();
+        for _ in 1..MOST_LOOKS {
+            if found != Found::Unreadable {
+                break;
+            }
+            between();
+            found = self.look();
+        }
+        found
+    }
+
+    /// The settings as they are, and what the file held. A file that does
+    /// not parse is answered as unreadable, not as the defaults, and the
+    /// next look the watcher takes at a whole file is announced even when
+    /// it matches what was announced before.
+    pub fn load(&self) -> Stored {
+        match self.look() {
+            Found::Whole(settings) => Stored {
                 stored: true,
-                settings: parse(&text).unwrap_or_default(),
+                unreadable: false,
+                settings: *settings,
             },
-            Err(_) => Stored {
+            Found::Missing => Stored {
                 stored: false,
+                unreadable: false,
                 settings: Settings::default(),
             },
+            Found::Unreadable => {
+                self.forget_announced();
+                Stored {
+                    stored: true,
+                    unreadable: true,
+                    settings: Settings::default(),
+                }
+            }
+        }
+    }
+
+    /// Forgets what was last announced, so the next whole file is news.
+    fn forget_announced(&self) {
+        if let Ok(mut announced) = self.announced.lock() {
+            *announced = None;
         }
     }
 
     /// Lays a change over the settings, writes them and announces them.
-    /// Answers with the settings as they now are.
+    /// Answers with the settings as they now are. A file that does not
+    /// parse is looked at again a few times; if it still does not, nothing
+    /// is written and the answer says so.
     pub fn set(&self, change: &Value) -> Result<Settings, String> {
+        self.set_between_looks(change, &mut || std::thread::sleep(BETWEEN_LOOKS))
+    }
+
+    fn set_between_looks(
+        &self,
+        change: &Value,
+        between: &mut dyn FnMut(),
+    ) -> Result<Settings, String> {
         let _writing = self.writing.lock().map_err(|_| "the settings are stuck")?;
-        let next = apply(&self.load().settings, change)?;
+        let current = match self.look_settled(between) {
+            Found::Whole(settings) => *settings,
+            Found::Missing => Settings::default(),
+            Found::Unreadable => {
+                self.forget_announced();
+                return Err(format!(
+                    "the settings file could not be read, so nothing was saved: it is empty or not valid settings, perhaps because something is writing it. Try again in a moment, or mend or remove {}",
+                    self.path.display()
+                ));
+            }
+        };
+        let next = apply(&current, change)?;
         write(&self.path, &render(&next))?;
         self.announce(&next);
         Ok(next)
@@ -688,19 +783,20 @@ impl Store {
     }
 
     /// Reads the file again after something touched it, and announces what
-    /// it holds if that is news. A file that is gone or not an object is
-    /// left alone: the windows keep what they have. The read and the
-    /// announcement happen under the write lock, so what is announced is
-    /// never older than a change the store has already announced.
+    /// it holds if that is news. A file that is gone is left alone, and so
+    /// is one that does not parse: the windows keep what they have, and
+    /// the next whole file is announced even when it matches what was last
+    /// announced. The read and the announcement happen under the write
+    /// lock, so what is announced is never older than a change the store
+    /// has already announced.
     fn reread(&self) {
         let Ok(_writing) = self.writing.lock() else {
             return;
         };
-        let Ok(text) = std::fs::read_to_string(&self.path) else {
-            return;
-        };
-        if let Some(settings) = parse(&text) {
-            self.announce(&settings);
+        match self.look() {
+            Found::Whole(settings) => self.announce(&settings),
+            Found::Unreadable => self.forget_announced(),
+            Found::Missing => {}
         }
     }
 
@@ -714,7 +810,11 @@ impl Store {
         std::fs::create_dir_all(directory)
             .map_err(|e| format!("could not create {}: {e}", directory.display()))?;
         if let Ok(mut announced) = self.announced.lock() {
-            *announced = Some(self.load().settings);
+            *announced = match self.look() {
+                Found::Whole(settings) => Some(*settings),
+                Found::Missing => Some(Settings::default()),
+                Found::Unreadable => None,
+            };
         }
         if let Ok(mut announced) = self.styles_announced.lock() {
             *announced = Some(self.styles());
@@ -1224,17 +1324,197 @@ mod tests {
         assert_eq!(settings.palette, "teal");
     }
 
+    fn put(home: &Path, text: &str) {
+        std::fs::create_dir_all(settings_path(home).parent().unwrap()).unwrap();
+        std::fs::write(settings_path(home), text).unwrap();
+    }
+
+    fn whole_text() -> String {
+        render(&Settings {
+            palette: "rose".into(),
+            look: "terminal".into(),
+            ..Settings::default()
+        })
+    }
+
     #[test]
-    fn a_broken_file_reads_as_the_defaults_and_is_mended_by_the_next_change() {
-        let home = home("broken");
-        std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
-        std::fs::write(settings_path(&home), "{ half").unwrap();
+    fn the_file_is_missing_whole_or_unreadable_and_a_read_says_which() {
+        let home = home("three-states");
         let store = Store::new(&home, Arc::new(Recorder::default()));
+        assert_eq!(store.look(), Found::Missing);
         let loaded = store.load();
-        assert!(loaded.stored);
-        assert_eq!(loaded.settings, Settings::default());
-        store.set(&json!({ "appearance": "dark" })).unwrap();
-        assert_eq!(store.load().settings.appearance, "dark");
+        assert!(!loaded.stored && !loaded.unreadable);
+
+        put(&home, &whole_text());
+        assert!(matches!(store.look(), Found::Whole(s) if s.palette == "rose"));
+        let loaded = store.load();
+        assert!(loaded.stored && !loaded.unreadable);
+        assert_eq!(loaded.settings.palette, "rose");
+
+        for broken in ["", "   \n", "{ half", "[]", "null"] {
+            put(&home, broken);
+            assert_eq!(store.look(), Found::Unreadable, "{broken:?}");
+            let loaded = store.load();
+            assert!(loaded.stored && loaded.unreadable, "{broken:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_object_is_whole_and_a_file_with_one_bad_workflow_still_loads() {
+        let home = home("lenient-whole");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        put(&home, "{}");
+        assert!(matches!(store.look(), Found::Whole(_)));
+        put(
+            &home,
+            r#"{ "palette": "mono", "workflows": { "list": [ { "name": "" } ], "default": null, "overrides": {} } }"#,
+        );
+        let loaded = store.load();
+        assert!(!loaded.unreadable);
+        assert_eq!(loaded.settings.palette, "mono");
+    }
+
+    #[test]
+    fn a_save_against_an_empty_or_cut_short_file_is_refused_and_leaves_it_alone() {
+        for (name, broken) in [("empty", ""), ("cut", "{ \"palette\": \"ro")] {
+            let home = home(&format!("refused-{name}"));
+            put(&home, broken);
+            let recorder = Arc::new(Recorder::default());
+            let store = Store::new(&home, recorder.clone());
+            let mut looks = 0;
+            let error = store
+                .set_between_looks(&json!({ "appearance": "dark" }), &mut || looks += 1)
+                .unwrap_err();
+            assert!(error.contains("could not be read"), "{error}");
+            assert!(error.contains("nothing was saved"), "{error}");
+            assert_eq!(looks, MOST_LOOKS - 1, "it looked again before refusing");
+            assert_eq!(
+                std::fs::read_to_string(settings_path(&home)).unwrap(),
+                broken,
+                "the file is untouched"
+            );
+            assert!(changes(&recorder).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_save_that_finds_the_file_whole_on_the_second_look_builds_on_it() {
+        let home = home("second-look");
+        put(&home, "");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let whole = whole_text();
+        let mut looks = 0;
+        let next = store
+            .set_between_looks(&json!({ "appearance": "dark" }), &mut || {
+                looks += 1;
+                put(&home, &whole);
+            })
+            .unwrap();
+        assert_eq!(looks, 1);
+        assert_eq!(next.appearance, "dark");
+        assert_eq!(next.palette, "rose", "the other settings are kept");
+        assert_eq!(next.look, "terminal");
+        let loaded = store.load().settings;
+        assert_eq!(loaded.palette, "rose");
+        assert_eq!(loaded.appearance, "dark");
+    }
+
+    #[test]
+    fn a_missing_file_is_built_on_as_the_defaults() {
+        let home = home("save-missing");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let next = store.set(&json!({ "appearance": "dark" })).unwrap();
+        assert_eq!(next.palette, Settings::default().palette);
+        assert!(store.load().stored);
+    }
+
+    #[test]
+    fn a_reader_never_sees_the_cores_own_write_half_done() {
+        let home = home("whole-writes");
+        let path = settings_path(&home);
+        let short = format!("{{ \"padding\": \"{}\" }}\n", "x".repeat(10));
+        let long = format!("{{ \"padding\": \"{}\" }}\n", "x".repeat(8_000_000));
+        write(&path, &short).unwrap();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let done = Arc::clone(&done);
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                    let text = std::fs::read_to_string(&path).expect("the file is always there");
+                    assert!(
+                        parse(&text).is_some(),
+                        "half a file of {} bytes",
+                        text.len()
+                    );
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        for n in 0..40 {
+            write(&path, if n % 2 == 0 { &long } else { &short }).unwrap();
+        }
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(reader.join().unwrap() > 0);
+    }
+
+    #[test]
+    fn a_whole_file_after_an_unreadable_look_is_announced_even_when_it_matches_what_was() {
+        let home = home("after-unreadable");
+        let recorder = Arc::new(Recorder::default());
+        let store = Arc::new(Store::new(&home, recorder.clone()));
+        put(&home, &whole_text());
+        store.watch().unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            changes(&recorder).is_empty(),
+            "the file as it began is not news"
+        );
+
+        // The same content written again, emptied first: a look that
+        // catches it empty is not news, and the whole file after it is.
+        put(&home, "");
+        let until = Instant::now() + Duration::from_secs(10);
+        while store.announced.lock().unwrap().is_some() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            store.announced.lock().unwrap().is_none(),
+            "the empty look was seen"
+        );
+        assert!(
+            changes(&recorder).is_empty(),
+            "an unreadable file is not announced"
+        );
+        put(&home, &whole_text());
+        let until = Instant::now() + Duration::from_secs(10);
+        while changes(&recorder).is_empty() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let announced = changes(&recorder);
+        assert_eq!(announced.len(), 1, "{announced:?}");
+        assert_eq!(announced[0]["palette"], "rose");
+    }
+
+    #[test]
+    fn a_window_s_read_that_catches_the_file_empty_lets_the_next_whole_look_through() {
+        let home = home("read-unreadable");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        put(&home, &whole_text());
+        let settings = match store.look() {
+            Found::Whole(s) => s,
+            other => panic!("{other:?}"),
+        };
+        store.announce(&settings);
+        let before = changes(&recorder).len();
+        put(&home, "");
+        assert!(store.load().unreadable);
+        put(&home, &whole_text());
+        store.reread();
+        assert_eq!(changes(&recorder).len(), before + 1);
     }
 
     #[test]
