@@ -369,35 +369,59 @@ window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
 reaches an open window at once. A value in the file that the app does not
-know is passed over and the default stands for it, and a workflow that breaks
-a rule is set aside as [workflows](#workflows) describes; neither makes the
-file unreadable.
+know is passed over and the default stands for it.
+
+The keys, the hooks, the accounts, the themes and the workflows are read one
+entry at a time. An entry that does not read, a chord that is not a key, a
+choice that is neither on nor off, an account with a directory that is not a
+path, a workflow that breaks a rule, is not used and costs nothing else. The
+file keeps it as written through every save, until a change names that entry
+again or replaces the whole setting it belongs to. The tab of the setting
+says which entry is not used and the rule it breaks: the keys tab for a
+chord, live updates for a hook choice, accounts for an account. Workflows say
+so in their own tab, as [workflows](#workflows) describes. A setting that is
+not the shape it should be at all is kept whole in the same way.
 
 A read finds the file in one of three states: there is none, it is whole, or
 it is there and is not a JSON object, because it is empty, cut short or not
 settings at all. A file that is not there is the defaults, and the window
-hands over the copy it keeps. A file that is not readable is not the defaults:
-the window keeps the settings it has, hands nothing over, and takes the file
-once a whole one is announced. A whole file is announced when it differs from
-what was last announced, and also when the look before it found the file
-unreadable, so the same content written again after the file was emptied
-still reaches the window. The window's first read is passed over only when
-it has already taken settings that are as new or newer, from news or from the
-answer to a change of its own. News that arrives while a change of its own is
-on its way is not taken, and does not count.
+hands over the copy it keeps. A file that was there and is gone while the app
+runs is told to every window, which hands over what it holds in the same way,
+so the next change is laid over the settings the window shows and not over the
+defaults. A file that is not readable is not the defaults: the window keeps
+the settings it has, hands nothing over, and takes the file once a whole one
+is announced. A whole file is announced when it differs from what was last
+announced, and also when the look before it found the file unreadable, so the
+same content written again after the file was emptied still reaches the
+window. The window's first read is passed over only when it has already taken
+settings that are as new or newer, from news or from the answer to a change of
+its own. News that arrives while a change of its own is on its way is not
+taken then; it is kept, and taken if that change is refused.
 
 A change builds on the file as it is. If the file is not readable, the save
 looks again a few times, forty milliseconds apart, since whatever writes a
 file by emptying it first is usually done within moments. If the file is whole
 by then, the change is laid over it. If it is still not readable, nothing is
 written, the file is left as it is, and the change is refused with a reason
-that says the file could not be read and where it is, so a hand edit under
-way is never written over with the defaults. The window then shows the change
-it made and keeps the reason, as for any change the file refuses.
+that says the file could not be read, where it is, and that it needs mending,
+so a hand edit under way is never written over with the defaults. A change
+that finds the file gone is refused as well, and the windows are told it is
+gone. Just before the new text is moved into place the file is looked at
+again, and a file that was edited since it was read is read again and the
+change laid over it, so a hand edit saved during a write is kept.
+
+A refused change is shown over the window, wherever it was made, with the
+reason, until another change is kept or it is dismissed. The window goes back
+to what is stored: the file when it can be read, and otherwise what the window
+last took from it. A change an agent asked for waits for this, and the agent
+is told when the core refused it. Turning custom styles off from the app's
+menu shows a failure in a dialog.
 
 The app writes the file whole: the text goes to a temporary file beside it,
 is flushed to disk and is moved over the settings file, so anything reading
 the file, the app's own watcher included, finds the old settings or the new.
+A settings file that is a link stays a link: the write goes to the file it
+points at.
 
 The window keeps a copy of its own as well, so the first frame of a start is
 painted as the last one was before the file has been read. On a machine
