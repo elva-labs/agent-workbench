@@ -569,9 +569,13 @@ test.describe("the layout", () => {
 
   test("decides beside or under from the window, never from how many steps there are", async ({ page }) => {
     await open(page);
+    // Nothing until both are laid out: a resize redraws them, and a poll
+    // waits through that rather than end on it.
     const beside = async () => {
       const canvas = await box(page, "workflow-canvas");
-      return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
+      const settings = await box(page, "step-settings");
+      if (canvas === null || settings === null) return null;
+      return settings.x >= canvas.x + canvas.width;
     };
     // Measured once the dialog has laid itself out, as the last check is.
     await expect.poll(beside).toBe(true);
