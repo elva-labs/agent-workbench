@@ -312,6 +312,12 @@ describe("what Markdown may draw", () => {
     "* <code>\n* <img/src=x onerror=1>",
     "> <pre>\n> <img/src=x onerror=1>",
     "| <code> | <img/src=x onerror=1> |\n| --- | --- |\n| a | b |",
+    // Entities that spell markup, before a raw tag and anywhere else.
+    "&lt;img src=x onerror=alert(1)&gt;",
+    "&#60;script&#62;alert(1)&#60;/script&#62;",
+    "&#x3C;svg/onload=1&#x3E; <code> &lt;b onmouseover=1&gt;",
+    "[a](&#106;avascript:alert(1)) [b](java&#115;cript:1)",
+    "&amp;lt;img src=x onerror=1&amp;gt;",
   ];
 
   it("draws nothing but Markdown's own elements, with no handlers and no scripted links", () => {
@@ -327,6 +333,24 @@ describe("what Markdown may draw", () => {
           }
         }
       }
+  });
+
+  it("draws an entity as its character, and markup an entity spells as its letters", () => {
+    for (const html of [render("AT&T &copy; &mdash; a&nbsp;b &amp;"), renderSaid("AT&T &copy; &mdash; a&nbsp;b &amp;")]) {
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.textContent?.trim()).toBe("AT&T © — a\u00a0b &");
+    }
+    for (const html of [render("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;"), renderSaid("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;")]) {
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.querySelector("b, i")).toBeNull();
+      expect(box.textContent?.trim()).toBe("<b>x</b> <i>");
+    }
+    // In code an entity is the letters it is.
+    const box = document.createElement("div");
+    box.innerHTML = renderSaid("`&copy;`");
+    expect(box.querySelector("code")?.textContent).toBe("&copy;");
   });
 
   it("escapes text once, after a raw tag as anywhere else", () => {

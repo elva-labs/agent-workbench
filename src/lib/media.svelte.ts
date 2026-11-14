@@ -233,15 +233,24 @@ renderer.text = (token) =>
 said.text = (token) =>
   "tokens" in token && token.tokens ? said.parser.parseInline(token.tokens) : escapeText(token.text);
 
+/** Text as HTML that draws it as text: `<` and `>` always escaped, and
+    `&` escaped unless it starts an entity, which then draws as its
+    character, as Markdown means it to. An entity can only ever be text: it
+    is decoded after the markup is read, so `&lt;b&gt;` is the letters,
+    never a tag. */
 function escapeText(text: string): string {
   return text
-    .replace(/&/g, "&amp;")
+    .replace(/&(?!(?:#\d{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,31});)/gi, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
 function escapeAttribute(text: string): string {
-  return escapeText(text).replace(/"/g, "&quot;");
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /** Markdown rendered for the viewer. Raw HTML in the document is shown as
