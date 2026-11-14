@@ -10,6 +10,7 @@ use workbench_core::scratch::Scratch;
 /// The variables the test points at the decoy, which its own git clears.
 const VARIABLES: &[&str] = &[
     "GIT_COMMON_DIR",
+    "GIT_CONFIG_PARAMETERS",
     "GIT_DIR",
     "GIT_INDEX_FILE",
     "GIT_NAMESPACE",
@@ -111,16 +112,32 @@ fn variables_naming_another_repository_do_not_misdirect_the_core() {
     std::env::set_var("GIT_COMMON_DIR", &dot);
     std::env::set_var("GIT_OBJECT_DIRECTORY", dot.join("objects"));
     std::env::set_var("GIT_NAMESPACE", "decoy");
+    // What `git -c core.worktree=... -c core.excludesFile=... rebase --exec`
+    // leaves behind. Git ignores a work tree named this way, so the exclude
+    // file is what makes the variable's absence observable: it would hide an
+    // untracked file from the core's search.
+    let excludes = Scratch::new("inherited-excludes");
+    std::fs::write(excludes.join("ignore"), "found.txt\n").unwrap();
+    std::env::set_var(
+        "GIT_CONFIG_PARAMETERS",
+        format!(
+            "'core.worktree={}' 'core.excludesFile={}'",
+            decoy.display(),
+            excludes.join("ignore").display()
+        ),
+    );
 
     // An uncommitted change that only the project has, and a file only the
     // project's own exclude list leaves out of a search.
     std::fs::write(project.join("project.txt"), "project needle\nmore\n").unwrap();
     std::fs::write(project.join("excluded.txt"), "excluded needle\n").unwrap();
+    std::fs::write(project.join("found.txt"), "found needle\n").unwrap();
     std::fs::write(project.join(".git/info/exclude"), "excluded.txt\n").unwrap();
 
     let changed = workbench_core::git::status(&project).unwrap();
-    assert_eq!(changed.len(), 1);
-    assert_eq!(changed[0].path, "project.txt");
+    let mut paths: Vec<_> = changed.iter().map(|change| change.path.as_str()).collect();
+    paths.sort();
+    assert_eq!(paths, ["found.txt", "project.txt"]);
     assert!(!workbench_core::git::diff(&project, "project.txt")
         .unwrap()
         .lines
@@ -128,7 +145,7 @@ fn variables_naming_another_repository_do_not_misdirect_the_core() {
 
     let found = workbench_core::git::grep(&project, "needle", None).unwrap();
     let paths: Vec<_> = found.hits.iter().map(|hit| hit.path.as_str()).collect();
-    assert_eq!(paths, ["project.txt"]);
+    assert_eq!(paths, ["found.txt", "project.txt"]);
 
     let tree = workbench_core::git::worktree_add(&project, "review").unwrap();
     assert!(Path::new(&tree).join("project.txt").exists());
