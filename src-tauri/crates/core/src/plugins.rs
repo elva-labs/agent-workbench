@@ -1609,32 +1609,64 @@ impl Inner {
             let mut greeted = false;
             for line in reader.lines() {
                 let Ok(line) = line else { break };
-                let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
-                    continue;
-                };
-                let kind = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                if kind == "hello" && !greeted {
-                    greeted = true;
-                    let hello: Option<Hello> = serde_json::from_value(message.clone()).ok();
-                    {
-                        let mut running = plugins.running.lock().expect("plugins lock");
-                        if let Some(live) = running.get_mut(&(source_id.clone(), plugin.clone())) {
-                            live.state = State::Running;
-                            live.failures = 0;
-                            live.hello = hello.clone();
-                            live.detail = None;
-                        }
-                    }
-                    plugins.publish();
-                    plugins.tell(&source_id, &plugin, State::Running, None, hello);
-                } else if kind == "result" {
-                    plugins.answered(&source_id, &plugin, &message);
-                } else {
-                    plugins.said(&source_id, &plugin, kind, &message);
+                if !plugins.heard(&source_id, &plugin, launch, &mut greeted, &line) {
+                    break;
                 }
             }
             plugins.exited(&source_id, &plugin, launch, greeted);
         });
+    }
+
+    /// One line a plugin's process wrote, as its reader takes it: the
+    /// greeting, an answer, or something the plugin says of its own accord.
+    /// A reader speaks only for the process it reads. Once another process
+    /// is under the key, what the earlier one wrote is nobody's news, and
+    /// false tells its reader to stop. An answer is the exception: it goes
+    /// to whoever asked, whichever process was asked.
+    fn heard(
+        self: &Arc<Self>,
+        source_id: &str,
+        name: &str,
+        launch: u64,
+        greeted: &mut bool,
+        line: &str,
+    ) -> bool {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+            return true;
+        };
+        let key: Key = (source_id.to_string(), name.to_string());
+        let kind = message.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if kind == "result" {
+            self.answered(source_id, name, &message);
+            return true;
+        }
+        if kind == "hello" && !*greeted {
+            *greeted = true;
+            let hello: Option<Hello> = serde_json::from_value(message.clone()).ok();
+            {
+                let mut running = self.running.lock().expect("plugins lock");
+                let Some(live) = running.get_mut(&key).filter(|live| live.launch == launch) else {
+                    return false;
+                };
+                live.state = State::Running;
+                live.failures = 0;
+                live.hello = hello.clone();
+                live.detail = None;
+            }
+            self.publish();
+            self.tell(source_id, name, State::Running, None, hello);
+            return true;
+        }
+        let mine = self
+            .running
+            .lock()
+            .expect("plugins lock")
+            .get(&key)
+            .is_some_and(|live| live.launch == launch);
+        if mine {
+            self.said(source_id, name, kind, &message);
+        }
+        mine
     }
 
     /// The process is gone: said so, and started again after a pause when
@@ -2642,7 +2674,29 @@ tools = ["ping"]
         let second = launch().unwrap();
         assert_ne!(first, second);
 
-        // The first process's reader, getting to its end only now.
+        // The first process's reader, getting to what it wrote only now: a
+        // greeting and a section are not the second process's, and tell the
+        // reader to stop.
+        let mut greeted = false;
+        assert!(!plugins.inner.heard(
+            &added.id,
+            "echo",
+            first,
+            &mut greeted,
+            r#"{"type":"hello","name":"echo","version":"0.0.1"}"#,
+        ));
+        assert!(!plugins.inner.heard(
+            &added.id,
+            "echo",
+            first,
+            &mut greeted,
+            r#"{"type":"section","id":"checks","title":"Checks","project":"/tmp","rows":[]}"#,
+        ));
+        let hello = plugins.inner.greeting(&added.id, "echo").unwrap();
+        assert_eq!(hello.version, "1.0.0");
+        assert!(plugins.inner.sections.lock().unwrap().is_empty());
+
+        // And getting to its end.
         plugins.inner.exited(&added.id, "echo", first, true);
         assert_eq!(launch(), Some(second));
         assert_eq!(plugins.list()[0].plugins[0].state, State::Running);
