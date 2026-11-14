@@ -1656,8 +1656,7 @@ fn a_completed_item_too_long_to_read_finishes_its_call_as_cut_short() {
 
 #[test]
 fn the_command_runs_the_app_server_under_the_account_s_home() {
-    let dir = std::env::temp_dir().join(format!("workbench-codex-command-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = crate::scratch::Scratch::new("codex-command");
     let codex = dir.join(if cfg!(windows) { "codex.exe" } else { "codex" });
     std::fs::write(&codex, b"#!/bin/sh\n").unwrap();
     #[cfg(unix)]
@@ -2263,20 +2262,21 @@ struct Schema {
 
 impl Schema {
     fn generate(codex: &Path) -> Self {
-        let out = std::env::temp_dir().join(format!(
-            "workbench-codex-schema-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
+        let out = crate::scratch::Scratch::absent("codex-schema");
+        // Codex keeps files in its home even for this, so it runs under one
+        // of its own rather than the developer's.
+        let codex_home = crate::scratch::Scratch::new("codex-schema-home");
         let status = crate::adapter::process(codex, &std::env::vars().collect())
+            .env("CODEX_HOME", codex_home.path())
             .args(["app-server", "generate-json-schema", "--out"])
-            .arg(&out)
+            .arg(out.path())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
             .unwrap();
         assert!(status.success(), "codex could not generate its schema");
         let mut files = Vec::new();
-        let mut folders = vec![out.clone()];
+        let mut folders = vec![out.to_path_buf()];
         while let Some(folder) = folders.pop() {
             for entry in std::fs::read_dir(&folder).unwrap().flatten() {
                 let path = entry.path();
@@ -2291,7 +2291,7 @@ impl Schema {
             let name = path.file_name().unwrap().to_string_lossy();
             let tier = if name.ends_with(".v2.schemas.json") {
                 0
-            } else if path.parent() == Some(out.as_path()) {
+            } else if path.parent() == Some(out.path()) {
                 1
             } else {
                 2
@@ -2311,7 +2311,6 @@ impl Schema {
             }
             definitions.entry(stem).or_insert(schema);
         }
-        std::fs::remove_dir_all(&out).ok();
         Self { definitions }
     }
 
@@ -2834,10 +2833,7 @@ fn an_mcp_approval_names_its_own_call_or_none() {
 
 #[test]
 fn trust_is_read_and_written_in_the_home_the_codex_process_runs_with() {
-    let base = std::env::temp_dir().join(format!(
-        "workbench-codex-trust-home-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let base = crate::scratch::Scratch::new("codex-trust-home");
     let home = base.join("home");
     let shell = base.join("shell-codex");
     let folder = base.join("work");
@@ -2877,5 +2873,4 @@ fn trust_is_read_and_written_in_the_home_the_codex_process_runs_with() {
     let account = base.join("account");
     std::fs::create_dir_all(&account).unwrap();
     assert!(!CODEX_APP_SERVER.trusted(&home, Some(&account), &HashMap::new(), &folder));
-    std::fs::remove_dir_all(&base).ok();
 }

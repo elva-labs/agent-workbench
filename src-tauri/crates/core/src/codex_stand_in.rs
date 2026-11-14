@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use super::*;
 use crate::codex_app_server::CODEX_APP_SERVER;
 use crate::events::testing::Recorder;
+use crate::scratch::Scratch;
 
 const STAND_IN: &str = r#"#!/bin/sh
 dir=$(dirname "$FAKE_CODEX_SCENARIO")
@@ -110,7 +111,7 @@ fn done(turn: &str, status: &str) -> String {
 }
 
 struct Harness {
-    dir: PathBuf,
+    dir: Arc<Scratch>,
     sessions: Arc<Sessions>,
     recorder: Arc<Recorder>,
     id: String,
@@ -122,9 +123,7 @@ fn start(name: &str, scenario: &str) -> Harness {
 
 fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> Harness {
     use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!("workbench-codex-{name}-{}", std::process::id()));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = Arc::new(Scratch::new(&format!("codex-{name}")));
     let codex = dir.join("codex");
     std::fs::write(&codex, STAND_IN).unwrap();
     std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1132,8 +1131,7 @@ done
 fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     use std::os::unix::fs::PermissionsExt;
     let port = model::serve();
-    let base = std::env::temp_dir().join(format!("workbench-real-codex-{}", std::process::id()));
-    std::fs::remove_dir_all(&base).ok();
+    let base = Arc::new(Scratch::new("real-codex"));
     let home = base.join("home");
     let work = base.join("work");
     std::fs::create_dir_all(&home).unwrap();
@@ -1175,7 +1173,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         )
         .unwrap();
         Harness {
-            dir: base.clone(),
+            dir: Arc::clone(&base),
             sessions: Arc::clone(&sessions),
             recorder,
             id: started.id,

@@ -1482,7 +1482,7 @@ mod tests {
         );
 
         // A project the user has not trusted lends nothing.
-        let other = project.parent().unwrap().join("other");
+        let other = Scratch::new("hook-trust-other");
         let tree = other.join("tree");
         std::fs::create_dir_all(&tree).unwrap();
         trust_like(&home, &other, &tree, &[]).unwrap();
