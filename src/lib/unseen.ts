@@ -31,12 +31,15 @@ export function shown(text: string): string {
     .join("");
 }
 
-/** Letters of other scripts that read as Latin ones, folded to them. */
+/** Letters of other scripts that read as Latin ones, folded to them, and
+    the digits and letters that read as each other, folded to one. This is
+    the look-alikes a name is likeliest to be made of, not Unicode's whole
+    table of them; a name that mixes scripts is refused outright besides. */
 const LOOKALIKE: Record<string, string> = {
   а: "a", в: "b", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t", у: "y", х: "x",
   ѕ: "s", і: "i", ї: "i", ј: "j", ԁ: "d", ӏ: "l", ԛ: "q", ԝ: "w", ү: "y", һ: "h", п: "n", г: "r",
   α: "a", β: "b", ε: "e", η: "n", ι: "i", κ: "k", ν: "v", ο: "o", ρ: "p", τ: "t", υ: "u", χ: "x", ω: "w",
-  ı: "i", ℓ: "l",
+  ı: "l", ℓ: "l", i: "l", "1": "l", "|": "l", "0": "o",
 };
 
 /** A name as it reads, for telling two names apart: without anything
