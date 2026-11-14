@@ -222,6 +222,11 @@ said.image = ({ href, title, text }) => {
   return `<a href="${escapeAttribute(href)}" rel="noopener noreferrer">${escapeText(text || href)}</a>`;
 };
 
+/** Raw HTML in a document is shown as the text it is, never drawn. Marked
+    escapes everything else, code included, itself. */
+renderer.html = ({ text }) => escapeText(text);
+said.html = ({ text }) => escapeText(text);
+
 function escapeText(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -238,15 +243,13 @@ function escapeAttribute(text: string): string {
     `IMAGE` allow, since the document is the agent's and the window is the
     app's. */
 export function render(markdown: string): string {
-  const escaped = markdown.replace(/</g, "&lt;");
-  return marked.parse(escaped, { async: false, gfm: true, renderer }) as string;
+  return marked.parse(markdown, { async: false, gfm: true, renderer }) as string;
 }
 
 /** Markdown an agent wrote in a conversation, rendered as `render` does,
     with an image from anywhere but the text itself shown as a link. */
 export function renderSaid(markdown: string): string {
-  const escaped = markdown.replace(/</g, "&lt;");
-  return marked.parse(escaped, { async: false, gfm: true, renderer: said }) as string;
+  return marked.parse(markdown, { async: false, gfm: true, renderer: said }) as string;
 }
 
 function decode(base64: string): string {

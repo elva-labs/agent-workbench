@@ -269,3 +269,29 @@ describe("what an agent says in a conversation", () => {
     expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
   });
 });
+
+describe("code in Markdown", () => {
+  it("shows a less-than sign as itself, in fenced code, in inline code and in text", () => {
+    const md = "If `a < b` then:\n\n```ts\nif (a < b && c > d) { return `<b>${a}</b>`; }\n```\n\nand 1 < 2.";
+    for (const html of [renderSaid(md), render(md)]) {
+      expect(html).not.toContain("&amp;lt;");
+      expect(html).toContain("<code>a &lt; b</code>");
+      expect(html).toContain("if (a &lt; b &amp;&amp; c &gt; d) { return `&lt;b&gt;${a}&lt;/b&gt;`; }");
+      expect(html).toContain("1 &lt; 2");
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.querySelector("pre code")?.textContent).toBe("if (a < b && c > d) { return `<b>${a}</b>`; }\n");
+      expect(box.querySelector("p code")?.textContent).toBe("a < b");
+    }
+  });
+
+  it("still draws raw HTML as its text, inline and as a block", () => {
+    for (const html of [renderSaid("Hi <b>there</b>\n\n<div onclick=x>block</div>"), render("Hi <b>there</b>\n\n<div onclick=x>block</div>")]) {
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.querySelector("b, div")).toBeNull();
+      expect(box.textContent).toContain("<b>there</b>");
+      expect(box.textContent).toContain("<div onclick=x>block</div>");
+    }
+  });
+});
