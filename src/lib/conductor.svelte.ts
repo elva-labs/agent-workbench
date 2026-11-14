@@ -69,10 +69,19 @@ export const OUTCOME_ASK =
     a newline in it rather than a send. */
 export const ENTER_AFTER = 150;
 
+/** The length from which a line is pasted rather than typed. An agent's
+    input takes typed characters at a limited rate and drops the start of a
+    long run of them, while a paste is taken whole. */
+export const PASTE_FROM = 200;
+
 /** Types a line into a session the way a person does: the text, and then
-    Enter on its own. */
+    Enter on its own. A long line goes in as a bracketed paste, which both
+    agents take whole, and its Enter is still a keypress after the paste. */
 export async function typeLine(ptyId: string, line: string): Promise<void> {
-  await core().write(ptyId, line);
+  await core().write(
+    ptyId,
+    line.length < PASTE_FROM ? line : `\x1b[200~${line}\x1b[201~`,
+  );
   await pause(ENTER_AFTER);
   await core().write(ptyId, "\r");
 }

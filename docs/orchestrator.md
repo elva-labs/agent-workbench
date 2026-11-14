@@ -37,7 +37,9 @@ asked for permission without the caller having been told says so beside
 what it is doing, and listing it counts as telling. `start` starts a
 session in a project with a first prompt, on a worktree of its own if it
 asks for one, and answers with the new session's id. `send` types a line
-into a running session, and Enter after it on its own, as a person does.
+into a running session, and Enter after it on its own, as a person does. A
+long line goes in as a paste, which the agent takes whole, and its Enter
+still follows on its own.
 `wait` sits until a session stops working, asks for permission or ends, or
 until the seconds it was given run out. A stop is told once: the wait that
 answers with it and a listing that shows it each count, so a session that

@@ -5,6 +5,7 @@ import {
   CAP,
   cancelled,
   ENTER_AFTER,
+  PASTE_FROM,
   OUTCOME_ASK,
   allow,
   allowedProjects,
@@ -657,6 +658,30 @@ describe("sending and stopping", () => {
       ["pty-1", "\r"],
     ]);
     expect(last().error).toBeNull();
+  });
+
+  it("pastes a long line whole, and sends it with Enter on its own after the paste", async () => {
+    own(A, "pty-1", "sid-1");
+    const long = "word ".repeat(1000).trim();
+    const answering = handle(call("send", { session: "sid-1", text: long }));
+    await settle();
+    expect(written).toEqual([["pty-1", `\x1b[200~${long}\x1b[201~`]]);
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await answering;
+    expect(written).toEqual([
+      ["pty-1", `\x1b[200~${long}\x1b[201~`],
+      ["pty-1", "\r"],
+    ]);
+  });
+
+  it("types a line just under the paste length as it is", async () => {
+    own(A, "pty-1", "sid-1");
+    const line = "x".repeat(PASTE_FROM - 1);
+    const answering = handle(call("send", { session: "sid-1", text: line }));
+    await settle();
+    expect(written).toEqual([["pty-1", line]]);
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await answering;
   });
 
   it("refuses a session the workbench does not have", async () => {
