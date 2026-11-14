@@ -498,3 +498,21 @@ test("keeps the thread's text clear of the edges in a narrow agent pane", async 
   expect(composer.x - pane.x).toBeLessThanOrEqual(16);
   expect(pane.x + pane.width - (composer.x + composer.width)).toBeLessThanOrEqual(16);
 });
+
+test("puts the keyboard in the composer of the session switched to by chord", async ({ page }) => {
+  await openIntegrated(page);
+  await page.getByTestId("composer-input").waitFor();
+  await page.keyboard.type("typed in one");
+  await page.getByTestId("new-session").click();
+  await expect(page.getByTestId("conversation").nth(1)).toBeVisible();
+  await page.keyboard.type("typed in two");
+  await page.keyboard.press("Shift+ControlOrMeta+ArrowUp");
+  await expect(page.locator("[data-session='s1'] [data-testid='composer-input']")).toBeFocused();
+  await page.keyboard.type(" and more");
+  await expect(page.locator("[data-session='s1'] [data-testid='composer-input']")).toHaveValue("typed in one and more");
+  await expect(page.locator("[data-session='s2'] [data-testid='composer-input']")).toHaveValue("typed in two");
+  await page.keyboard.press("Shift+ControlOrMeta+ArrowDown");
+  await page.keyboard.type("X");
+  await expect(page.locator("[data-session='s2'] [data-testid='composer-input']")).toHaveValue("typed in twoX");
+  await expect(page.locator("[data-session='s1'] [data-testid='composer-input']")).toHaveValue("typed in one and more");
+});

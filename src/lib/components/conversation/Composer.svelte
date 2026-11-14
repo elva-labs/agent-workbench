@@ -164,8 +164,9 @@
     return () => unregister(key);
   });
 
-  // Focusing the agent pane puts the keyboard here, unless another control
-  // of the pane has it, the dock most of all, or a dialog holds it.
+  // Focusing the agent pane, or this session coming on screen in it, puts
+  // the keyboard here, unless another control of this same session has it
+  // or a dialog holds it. A control of a session now hidden does not count.
   $effect(() => {
     layout.focusRequest;
     const focused = layout.focus === "agent";
@@ -173,9 +174,20 @@
     untrack(() => {
       if (overlayHoldsKeyboard()) return;
       const owner = document.activeElement;
-      const pane = field!.closest("section[data-pane]");
-      if (owner !== null && owner !== document.body && owner !== field && pane?.contains(owner)) return;
+      const own = field!.closest("[data-session]");
+      if (owner !== null && owner !== document.body && owner !== field && own?.contains(owner)) return;
       field!.focus();
+    });
+  });
+
+  // A session going off screen lets the keyboard go, so nothing typed
+  // lands in it unseen.
+  $effect(() => {
+    if (active || field === null) return;
+    untrack(() => {
+      const own = field!.closest("[data-session]");
+      const owner = document.activeElement as HTMLElement | null;
+      if (owner !== null && own?.contains(owner)) owner.blur();
     });
   });
 
