@@ -361,19 +361,16 @@ lines is shown whole from the start. A path is read against the folder the
 request runs in, and is taken as inside the project only when it plainly
 resolves into it: one that climbs out, or a folder the request runs in that
 is elsewhere, is marked outside, and one that starts at a home folder,
-names a variable or a glob is marked as not plainly in the project. Every
-such path the request names is listed. A link inside the project that leads
-out of it cannot be seen from the window. The whole request, with the tool
-it names, is a fold away wherever the line does not say all of it.
-
-Every text in the dock and the steps that comes from the agent, a tool or a
-server, a command, a path, a URL, a tool's or a server's name, a subagent's
-description, a task, a question and its options, a session's or a model's
-name, is set apart left to right, so it cannot turn the words around it, and
-any character that changes how it reads without being seen shows as a
-marker such as ⟨U+202E⟩. Those characters are taken from Unicode's own
-categories: controls, format characters and every character Unicode says is
-drawn as nothing, line breaks and tabs aside. The first allows the call once and remembers
+names a variable or a glob is marked as not plainly in the project. The
+mark comes before the path, as in "asks to write a path outside the
+project: ~/.ssh/authorized_keys", so no path can push it out of sight.
+Every such path the request names is listed. A link inside the project that
+leads out of it cannot be seen from the window. A command, path or address
+longer than the line holds is cut, with its whole a fold away that opens
+in place. The whole request, with the tool it names, is a fold away
+wherever the line does not say all of it. What the request holds scrolls
+between its line and its choices, which stay in sight whatever it holds.
+The first allows the call once and remembers
 nothing; the others allow it for the session or always, saying what each
 keeps, deny it, with words for the agent if the user wants, or deny it and
 stop the turn. A line under the choices says what the one in focus or under

@@ -357,9 +357,9 @@ test.describe("a permission that could be misread", () => {
     await page.keyboard.press("Enter");
     await agent(page, `f.ask("${H}", "Edit", { file_path: "${PROJECT}/../other/.bashrc" }, { path: "${PROJECT}/../other/.bashrc" });`);
     // With no call to say what kind it is, the tool is named before the path.
-    await expect(dock).toContainText(`Claude asks to use Edit on ${PROJECT}/../other/.bashrc`);
+    await expect(dock).toContainText(`Claude asks to use Edit on a path outside the project: ${PROJECT}/../other/.bashrc`);
     await expect(dock.locator("code").last()).toHaveText(`${PROJECT}/../other/.bashrc`);
-    await expect(page.getByTestId("permission-outside")).toHaveText("outside the project");
+    await expect(page.getByTestId("permission-outside")).toHaveText("a path outside the project:");
   });
 });
 
@@ -1247,10 +1247,10 @@ test.describe("a permission cannot be disguised", () => {
     await openIntegrated(page);
     const outside = page.getByTestId("permission-outside");
     await agent(page, `f.startTurn("${H}"); f.ask("${H}", "Write", { file_path: "~/.ssh/authorized_keys", content: "k" });`);
-    await expect(outside).toHaveText(" not plainly in the project");
+    await expect(outside).toHaveText("a path not plainly in the project:");
     await page.getByTestId("choice-allow").click();
     await agent(page, `f.ask("${H}", "Write", { file_path: "../../.zshrc", content: "x" });`);
-    await expect(outside).toHaveText(" outside the project");
+    await expect(outside).toHaveText("a path outside the project:");
     await page.getByTestId("choice-allow").click();
     // A Codex command run from the root of the disk.
     await agent(
@@ -1346,4 +1346,56 @@ test("shows a message another session sent under that session, and never the wor
   await messages.first().getByTestId("message-sender-go").click();
   await expect(page.locator(".session.kid")).not.toHaveClass(/(^|\s)on(\s|$)/);
   await expect(page.locator("[data-testid='conversation']:visible").getByTestId("user-message")).toHaveCount(0);
+});
+
+test.describe("a request too long for its line", () => {
+  /** Whether an element sits wholly inside the dock's box, in sight. */
+  const inSight = (page: Page, testid: string) =>
+    page.evaluate((testid) => {
+      const dock = document.querySelector("[data-testid='permission-dock']")!.getBoundingClientRect();
+      const box = document.querySelector(`[data-testid='${testid}']`)!.getBoundingClientRect();
+      return box.height > 0 && box.top >= dock.top - 1 && box.bottom <= dock.bottom + 1;
+    }, testid);
+
+  test("says a path is outside before the path, cuts it, and keeps the choices in sight", async ({ page }) => {
+    await openIntegrated(page);
+    // The reviewer's case: a path of 3,600 characters that resolves outside.
+    const path = `${PROJECT}/../${"deep/".repeat(720)}x.txt`;
+    await agent(page, `f.startTurn("${H}"); f.ask("${H}", "Write", { file_path: ${JSON.stringify(path)}, content: "x" });`);
+    const mark = page.getByTestId("permission-outside");
+    await expect(mark).toHaveText("a path outside the project:");
+    expect(await inSight(page, "permission-outside")).toBe(true);
+    expect(await inSight(page, "choice-allow")).toBe(true);
+    // The mark comes first, then the path, cut.
+    const head = page.getByTestId("permission-dock").locator(".what p");
+    const said = (await head.textContent())!;
+    expect(said.indexOf("a path outside the project:")).toBeLessThan(said.indexOf(PROJECT));
+    expect(said.length).toBeLessThan(260);
+    // Its whole is a fold away, and opened the choices stay in sight.
+    await page.getByTestId("permission-long").click();
+    await expect(page.getByTestId("permission-long-text")).toHaveText(path);
+    await page.getByTestId("permission-whole").click();
+    expect(await inSight(page, "choice-allow")).toBe(true);
+    expect(await inSight(page, "permission-outside")).toBe(true);
+  });
+
+  test("cuts a long command and a long address, each a fold away", async ({ page }) => {
+    await openIntegrated(page);
+    const command = `echo ${"a".repeat(3000)}`;
+    await agent(
+      page,
+      `f.startTurn("${H}"); const c = f.startTool("${H}", "Bash", { command: ${JSON.stringify(command)} }, { kind: "command" }); f.ask("${H}", "Bash", { command: ${JSON.stringify(command)} }, { call: c });`,
+    );
+    expect(((await page.getByTestId("permission-dock").locator(".what p").textContent()) ?? "").length).toBeLessThan(260);
+    expect(await inSight(page, "choice-allow")).toBe(true);
+    await page.getByTestId("permission-command").click();
+    expect(await inSight(page, "choice-allow")).toBe(true);
+    await page.getByTestId("choice-allow").click();
+    const url = `https://example.com/${"b".repeat(3000)}`;
+    await agent(page, `f.ask("${H}", "WebFetch", { url: "${url}" });`);
+    expect(((await page.getByTestId("permission-dock").locator(".what p").textContent()) ?? "").length).toBeLessThan(260);
+    await page.getByTestId("permission-long").click();
+    await expect(page.getByTestId("permission-long-text")).toHaveText(url);
+    expect(await inSight(page, "choice-allow")).toBe(true);
+  });
 });

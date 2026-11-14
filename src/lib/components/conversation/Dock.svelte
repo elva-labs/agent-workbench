@@ -45,7 +45,7 @@
     const call = conversation.call(parent);
     const input = call?.input as Record<string, unknown> | null | undefined;
     const description = typeof input?.description === "string" ? input.description : null;
-    return description === null ? [`A subagent of ${agent}'s`] : ["The subagent for “", { name: description }, "”"];
+    return description === null ? [`A subagent of ${agent}'s`] : ["The subagent for “", { name: cut(description) }, "”"];
   }
 
   /** Who asks, as a label, with what cannot be seen in it written out. */
@@ -93,6 +93,7 @@
     shown = typeof command === "string" && command.includes("\n");
     showChange = false;
     showWhole = false;
+    showLong = false;
     pointed = 0;
     denying = null;
     words = "";
@@ -230,6 +231,7 @@
   let shown = $state(false);
   let showChange = $state(false);
   let showWhole = $state(false);
+  let showLong = $state(false);
 
   /** A path a request names, as the user must read it to decide: from the
       project when it is plainly inside it, and whole otherwise, said to be
@@ -238,7 +240,23 @@
     return place(path, root, requestCwd(asked));
   }
 
-  const AWAY = { outside: "outside the project", unknown: "not plainly in the project" } as const;
+  /** Said before a path that is not plainly in the project, so the path
+      can never push it out of sight. */
+  const AWAY = { outside: "a path outside the project:", unknown: "a path not plainly in the project:" } as const;
+
+  /** How much of a command, path or name the line shows; the rest is a
+      fold away. */
+  const LONG = 160;
+
+  /** Text cut to what the line shows, by characters. */
+  function cut(text: string): string {
+    const chars = Array.from(text);
+    return chars.length > LONG ? `${chars.slice(0, LONG).join("")}…` : text;
+  }
+
+  function long(text: string): boolean {
+    return Array.from(text).length > LONG;
+  }
   const KINDS = ["outside", "unknown"] as const;
 
   /** A command's first line, and how many lines follow it. */
@@ -344,22 +362,26 @@
       {@const full = whole(asked, what)}
       {@const away = outside(asked)}
       {@const headAway = what.shape === "path" && what.object !== null && where(asked, what.object).where !== "inside"}
+      {@const cutHead = what.object !== null && what.shape !== "command" && long(what.object)}
       <div class="what">
         <span class="ring"></span>
         <p>
           <b>{@render pieces(asker(asked.parent))}</b> asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
-                class="exact"><Plain text={parts.first} /></code
+                class="exact"><Plain text={cut(parts.first)} /></code
               >{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
-                >{/if}{:else if what.shape === "path"}{@const at = where(asked, what.object)}<code
-                class="exact"
-                title={markers(what.object)}><Plain text={at.text} /></code
-              >{#if at.where !== "inside"}<span class="warn" data-testid="permission-outside">{" "}{AWAY[at.where]}</span>{/if}{:else}<code class="exact"
-                ><Plain text={what.object} /></code
+                >{/if}{:else if what.shape === "path"}{@const at = where(asked, what.object)}{#if at.where !== "inside"}<span
+                  class="warn"
+                  data-testid="permission-outside">{AWAY[at.where]}</span
+                >{" "}{/if}<code class="exact"><Plain text={cut(at.text)} /></code>{:else}<code class="exact"
+                ><Plain text={cut(what.object)} /></code
               >{/if}{/if}
         </p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
+      <!-- What the request holds scrolls under its line; the line and the
+           choices stay in sight whatever it holds. -->
+      <div class="body">
       {#if asked.description}
         <p class="description"><Plain text={asked.description} /></p>
       {/if}
@@ -368,16 +390,23 @@
         {#if these.length > 0}
           <p class="away" data-testid="permission-outside-list">
             <span class="warn">{kind === "outside" ? "Outside the project:" : "Not plainly in the project:"}</span>
-            {#each these as each, at (each.path)}{#if at > 0},{" "}{/if}<code class="exact"><Plain text={each.path} /></code
+            {#each these as each, at (each.path)}{#if at > 0},{" "}{/if}<code class="exact"><Plain text={cut(each.path)} /></code
               >{/each}
           </p>
         {/if}
       {/each}
-      {#if command !== null || lines_ !== null || full !== null}
+      {#if command !== null || cutHead || lines_ !== null || full !== null}
         <div class="folds">
           {#if command !== null}
             <button class="reveal" tabindex="0" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-command">
               <span class="chev" class:open={shown}><Icon name="chev" size={11} /></span>The whole command
+            </button>
+          {/if}
+          {#if cutHead}
+            <button class="reveal" tabindex="0" onclick={() => (showLong = !showLong)} aria-expanded={showLong} data-testid="permission-long">
+              <span class="chev" class:open={showLong}><Icon name="chev" size={11} /></span>{what.shape === "path"
+                ? "The whole path"
+                : "All of it"}
             </button>
           {/if}
           {#if lines_ !== null}
@@ -394,6 +423,9 @@
         {#if command !== null && shown}
           <pre class="details exact"><Plain text={command} /></pre>
         {/if}
+        {#if cutHead && showLong && what.object !== null}
+          <pre class="details exact" data-testid="permission-long-text"><Plain text={what.object} /></pre>
+        {/if}
         {#if lines_ !== null && showChange}
           <div class="details diff">
             {#each lines_ as line, at (at)}
@@ -407,6 +439,7 @@
           <pre class="details exact" data-testid="permission-whole-text"><Plain text={full} /></pre>
         {/if}
       {/if}
+      </div>
       {#if denying !== null}
         <div class="deny">
           <input
@@ -450,6 +483,7 @@
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="questions" onkeydown={(e) => onQuestionKey(e, questions)}>
+        <div class="body">
         {#each questions as question, at (at)}
           <div class="question" data-testid="question">
             <p class="ask">
@@ -521,6 +555,7 @@
             {/if}
           </div>
         {/each}
+        </div>
         <div class="actions">
           {#if !direct(questions) || (own[0] ?? "").trim() !== ""}
             <button
@@ -563,7 +598,29 @@
     font-size: var(--conv-small);
     color: var(--ink-2);
     max-height: 55vh;
+    overflow: hidden;
+  }
+
+  .body {
+    flex: 0 1 auto;
+    min-height: 0;
     overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .body:empty {
+    display: none;
+  }
+
+  .what,
+  .choices,
+  .means,
+  .deny,
+  .actions,
+  .error {
+    flex: none;
   }
 
   .what {
@@ -828,6 +885,11 @@
   .questions {
     display: flex;
     flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  .questions > .body {
     gap: 10px;
   }
 
