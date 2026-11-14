@@ -1,4 +1,5 @@
 import { flushSync } from "svelte";
+import type { SpawnOptions } from "$lib/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import { reopen } from "$lib/reopen.svelte";
@@ -12,6 +13,8 @@ import {
   reset as resetSessions,
   select,
   sessions,
+  launch,
+  loadRemembered,
   started,
   statusLabel,
   wake,
@@ -28,8 +31,14 @@ const host = vi.hoisted(() => ({
   release: (_ok: boolean) => {},
 }));
 
+const spawned: SpawnOptions[] = [];
+
 vi.mock("$lib/core", () => ({
   core: () => ({
+    spawn: async (options: SpawnOptions) => {
+      spawned.push(options);
+      return { ptyId: `pty-${spawned.length + 10}`, sessionId: options.session ?? null };
+    },
     kill: async () => {},
     setWindowTitle: async () => {},
     projectInfo: async (path: string) => {
@@ -124,33 +133,31 @@ describe("keeping the record", () => {
       startIn: "/home/ada/dev/one/tree",
       model: "opus",
       account: null,
-      workflow: null,
     });
   });
 
-  it("keeps the workflow a session follows, which comes back with it after a quit", () => {
+  it("brings a session that follows a workflow back on that workflow after a quit", async () => {
     adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
     stop = reopen();
     const session = create(A);
     started(session.key, "pty-1", "one");
     flushSync();
-    expect(record().open[0]).toMatchObject({
-      id: "one",
-      agent: "claude-code",
-      model: "fable",
-      workflow: defaultWorkflow(),
-    });
+    expect(record().open[0]).toMatchObject({ id: "one", agent: "claude-code", model: "fable" });
     stop();
 
-    // The settings change, and the app starts again: the session follows
-    // the workflow it started with, not the project's of the day.
+    // The app starts again with the workflow deleted meanwhile: the session
+    // follows the copy it kept, and says it is one.
     resetSessions();
+    loadRemembered();
     adoptWorkflows({ list: [], default: null, overrides: {} });
     stop = reopen();
     flushSync();
-    const back = sessions.all.find((row) => row.id === "one");
-    expect(back?.workflow).toEqual(defaultWorkflow());
-    expect(back?.model).toBe("fable");
+    const back = sessions.all.find((row) => row.id === "one")!;
+    wake(back.key);
+    await launch(back.key, 80, 24, () => {});
+    expect(back.workflow).toEqual(defaultWorkflow());
+    expect(back.workflowGone).toBe(true);
+    expect(spawned.at(-1)).toMatchObject({ session: "one", model: "fable" });
   });
 });
 

@@ -77,6 +77,10 @@ pub struct LaunchCtx<'a> {
     /// A file naming the same server, for an agent that reads its server
     /// configuration from one.
     pub server_file: Option<&'a Path>,
+    /// For a resumed session, whether the instructions differ from those
+    /// its conversation was first given. Claude Code records what it was
+    /// first told and gives that on every resume until told otherwise.
+    pub afresh: bool,
 }
 
 /// The tools Claude Code hands work to agents the user cannot see with: its
@@ -241,6 +245,9 @@ fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
     if let Some(file) = ctx.instructions_file {
         args.push("--append-system-prompt-file".to_string());
         args.push(file.to_string_lossy().to_string());
+        if ctx.afresh {
+            args.extend(["--system-prompt-snapshot", "off"].map(str::to_string));
+        }
     }
     args
 }
@@ -498,6 +505,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -545,6 +553,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -599,6 +608,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
         assert_eq!(claude.get_env(CLAUDE_CONFIG_VAR), Some(own.as_os_str()));
@@ -643,6 +653,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -721,6 +732,7 @@ mod tests {
             start_only: true,
             server: Some(server),
             server_file: Some(named),
+            afresh: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -832,6 +844,27 @@ mod tests {
                 r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#
             ]
         );
+        // Resumed with instructions other than those it was first given,
+        // Claude Code is told to read them rather than the record it keeps.
+        let changed = LaunchCtx {
+            afresh: true,
+            ..ctx
+        };
+        assert_eq!(
+            argv(ClaudeCode.resume(&changed, "abc").unwrap())[1..],
+            [
+                "--resume",
+                "abc",
+                "--append-system-prompt-file",
+                "/home/ada/.agent-workbench/sessions/abc.md",
+                "--system-prompt-snapshot",
+                "off"
+            ]
+        );
+        let ctx = LaunchCtx {
+            afresh: false,
+            ..changed
+        };
         // A session with no workflow starts on Windows as anywhere.
         let plain = LaunchCtx {
             instructions: None,
@@ -896,6 +929,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
         assert_eq!(
@@ -917,6 +951,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
@@ -950,6 +985,7 @@ mod tests {
                 server: None,
                 instructions_file: None,
                 server_file: None,
+                afresh: false,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
             command
@@ -983,6 +1019,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -1006,6 +1043,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -1035,6 +1073,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -1070,6 +1109,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -1102,6 +1142,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -1129,6 +1170,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

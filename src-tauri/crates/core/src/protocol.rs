@@ -110,6 +110,8 @@ struct SpawnParams {
     instructions: Option<String>,
     #[serde(default)]
     start_only: bool,
+    #[serde(default)]
+    afresh: bool,
     cols: u16,
     rows: u16,
 }
@@ -336,6 +338,7 @@ pub fn dispatch(
                 p.config_dir.as_deref(),
                 p.instructions.as_deref(),
                 p.start_only,
+                p.afresh,
                 p.cols,
                 p.rows,
                 make_output,

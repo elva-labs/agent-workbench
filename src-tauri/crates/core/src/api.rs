@@ -325,7 +325,8 @@ impl Core {
     /// `instructions` are a workflow's, for a session that follows one: it
     /// directs the others, has the workbench's tools whatever its project
     /// was told about live updates, and, with `start_only`, delegates only
-    /// through them.
+    /// through them. `afresh` says a resumed session's instructions differ
+    /// from those its conversation was first given.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -338,6 +339,7 @@ impl Core {
         config_dir: Option<&str>,
         instructions: Option<&str>,
         start_only: bool,
+        afresh: bool,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -408,6 +410,7 @@ impl Core {
             start_only: instructions.is_some() && start_only,
             server: server.as_deref(),
             server_file: server_file.as_deref(),
+            afresh: instructions.is_some() && afresh,
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
@@ -882,6 +885,7 @@ mod tests {
             None,
             Some("1. Direct the work."),
             true,
+            false,
             80,
             24,
             |_| Box::new(|_: &[u8]| true),

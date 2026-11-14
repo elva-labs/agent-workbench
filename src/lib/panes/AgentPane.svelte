@@ -23,6 +23,7 @@
     rang,
     sessions,
     statusLabel,
+    resumeWithout,
     statusMessage,
     titled,
     wake,
@@ -180,6 +181,13 @@
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{statusMessage(current)}</p>
+        {#if current.workflowLost !== null}
+          <!-- The workflow this session followed is gone with its copy:
+               going on without one is the user's to say. -->
+          <button class="without" onclick={() => resumeWithout(current!.key)} data-testid="resume-without-workflow"
+            >Resume without a workflow</button
+          >
+        {/if}
         {#if current.status !== "starting"}
           {@render starters()}
         {/if}

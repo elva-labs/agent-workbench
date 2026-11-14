@@ -42,6 +42,7 @@ import {
   isLive,
   label,
   onDirected,
+  onForgotten,
   sessions,
   statusMessage,
   type Session,
@@ -1427,6 +1428,12 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+
+// A session gone from its project goes from what its workflow ran too.
+onForgotten((ids) => {
+  for (const id of ids) delete conductor.runs[id];
+  saveRuns();
+});
 
 /** The rows a session started, running or not. */
 export function startedBy(sessionId: string): Session[] {

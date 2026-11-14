@@ -68,6 +68,20 @@ export const workflows = $state({
   refused: null as string | null,
 });
 
+let known: () => void = () => {};
+let knowing = new Promise<void>((settle) => (known = settle));
+
+/** Settles once the window has the machine's workflows, or knows it keeps
+    only its own: what a resumed session follows is read after that. */
+export function workflowsKnown(): Promise<void> {
+  return knowing;
+}
+
+/** The window has the workflows it will go on with. */
+export function knowWorkflows() {
+  known();
+}
+
 /** What the core holds the settings to. */
 export const MOST_WORKFLOWS = 16;
 export const MOST_STEPS = 12;
@@ -94,6 +108,7 @@ export function workflowsSettings(): Settings["workflows"] {
     with new sessions following none. A choice naming a workflow the list
     does not hold is dropped. */
 export function adoptWorkflows(settings: Settings["workflows"] | undefined) {
+  knowWorkflows();
   if (settings === undefined || !Array.isArray(settings.list)) {
     const fresh = defaultWorkflow();
     workflows.list = [fresh];
@@ -848,6 +863,7 @@ function save(): Promise<string | null> {
 
 /** Test seam. */
 export function reset() {
+  knowing = Promise.resolve();
   workflows.list = [];
   workflows.default = null;
   workflows.overrides = {};

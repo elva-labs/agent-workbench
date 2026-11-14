@@ -11,7 +11,7 @@
 
 import { adoptAccounts, accountsSettings } from "$lib/accounts.svelte";
 import { core, type Settings } from "$lib/core";
-import { adoptWorkflows, workflowsSettings } from "$lib/workflows.svelte";
+import { adoptWorkflows, knowWorkflows, workflowsSettings } from "$lib/workflows.svelte";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptPastSessions, pastSessionsSettings } from "$lib/sessions.svelte";
 import { adoptKeys, keys } from "$lib/keys.svelte";
@@ -58,6 +58,15 @@ export function adopt(settings: Settings) {
  * window on its own copy.
  */
 export async function followSettings(): Promise<() => void> {
+  try {
+    return await follow();
+  } finally {
+    // Whatever the core said, the window goes on with the workflows it has.
+    knowWorkflows();
+  }
+}
+
+async function follow(): Promise<() => void> {
   onSettled(adopt);
   let stop = () => {};
   const stopStyles = await followStyles();

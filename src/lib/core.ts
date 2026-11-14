@@ -123,6 +123,10 @@ export interface SpawnOptions {
   /** With instructions, whether the agent's own subagent tools are taken
       away so that it delegates only through the start tool. */
   startOnly?: boolean;
+  /** With instructions, for a resumed session, whether they differ from
+      those its conversation was first given, so an agent that records the
+      first is told to read them afresh. */
+  afresh?: boolean;
   cols: number;
   rows: number;
 }

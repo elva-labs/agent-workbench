@@ -61,6 +61,8 @@ import {
   sessions,
   started,
   statusLabel,
+  onForgotten,
+  resumeWithout,
   statusMessage,
   disown,
   HISTORY_EVERY,
@@ -1921,30 +1923,93 @@ describe("following a workflow", () => {
     expect(spawned.at(-1)?.model).toBeUndefined();
   });
 
-  it("keeps the workflow a session started with when the settings change, and when it is resumed", async () => {
+  it("keeps its workflow while it runs, and resumed takes the workflow's version of the day, told afresh", async () => {
     adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
     const session = create(P);
     await launch(session.key, 80, 24, () => {});
-    // The workflow is changed in the settings while the session runs.
+    // The workflow is changed in the settings while the session runs: its
+    // orchestrator's model, and the model its work runs on.
     const changed = { ...defaultWorkflow(), orchestrator: { agent: "claude-code" as const, model: "haiku" } };
+    changed.steps = structuredClone(changed.steps);
+    changed.steps[0].models = [{ agent: "claude-code", model: "haiku" }];
     adoptWorkflows({ list: [changed], default: "Build and review", overrides: {} });
     expect(byKey(session.key)?.workflow?.orchestrator.model).toBe("fable");
     close(session.key);
 
-    // Resumed from the past sessions, after a restart, it follows the one
-    // it started with.
+    // Resumed from the past sessions after a restart, it follows the
+    // workflow by name as it is now, though the project follows none.
     reset();
     adoptWorkflows({ list: [changed], default: null, overrides: {} });
     loadRemembered();
     const resumed = create(P, "sid-1", "claude-code");
-    expect(resumed.workflow).toEqual(defaultWorkflow());
-    expect(resumed.model).toBe("fable");
     await launch(resumed.key, 80, 24, () => {});
+    expect(byKey(resumed.key)?.workflow).toEqual(changed);
+    expect(byKey(resumed.key)?.workflowGone).toBe(false);
     expect(spawned.at(-1)).toMatchObject({
       session: "sid-1",
-      model: "fable",
-      instructions: orchestratorPrompt(defaultWorkflow()),
+      model: "haiku",
+      instructions: orchestratorPrompt(changed),
+      afresh: true,
     });
+    // What it was first told stays what its conversation was first told.
+    expect(sessions.workflows["sid-1"].told).toBe(orchestratorPrompt(defaultWorkflow()));
+
+    // Resumed again with the workflow as the conversation was first told
+    // it, nothing is told afresh.
+    close(resumed.key);
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+    const again = create(P, "sid-1", "claude-code");
+    await launch(again.key, 80, 24, () => {});
+    expect(spawned.at(-1)).not.toHaveProperty("afresh");
+  });
+
+  it("follows the copy it kept of a workflow deleted since, and says so", async () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(P);
+    await launch(session.key, 80, 24, () => {});
+    close(session.key);
+    adoptWorkflows({ list: [], default: null, overrides: {} });
+    const resumed = create(P, "sid-1", "claude-code");
+    await launch(resumed.key, 80, 24, () => {});
+    expect(byKey(resumed.key)?.workflow).toEqual(defaultWorkflow());
+    expect(byKey(resumed.key)?.workflowGone).toBe(true);
+    expect(spawned.at(-1)?.instructions).toBe(orchestratorPrompt(defaultWorkflow()));
+  });
+
+  it("asks the user when the workflow is gone and its copy no longer reads, and resumes without one on their word", async () => {
+    sessions.workflows["old"] = {
+      workflow: { name: "Gone", orchestrator: { agent: "claude-code", model: "fable" }, steps: [] },
+      told: "1. Direct the work.",
+      project: P,
+    };
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const resumed = create(P, "old", "claude-code");
+    expect(await launch(resumed.key, 80, 24, () => {})).toBe(false);
+    expect(spawned).toHaveLength(0);
+    const row = byKey(resumed.key)!;
+    expect(row.status).toBe("failed");
+    expect(row.workflowLost).toBe("Gone");
+    expect(statusMessage(row)).toContain('followed the workflow "Gone", which is gone');
+    const without = resumeWithout(row.key)!;
+    expect(byKey(row.key)).toBeNull();
+    await launch(without.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "old" });
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
+  });
+
+  it("lets go of what is kept for a session gone from its project's history", async () => {
+    sessions.workflows["gone"] = { workflow: defaultWorkflow(), told: null, project: P };
+    sessions.workflows["here"] = { workflow: defaultWorkflow(), told: null, project: P };
+    sessions.workflows["elsewhere"] = { workflow: defaultWorkflow(), told: null, project: "/other" };
+    historyAnswer = [{ id: "here", title: "Still here", modified: 1, size: 100, cwd: null }];
+    const heard: string[][] = [];
+    onForgotten((ids) => heard.push(ids));
+    await loadHistory(P);
+    onForgotten(null);
+    expect(Object.keys(sessions.workflows).sort()).toEqual(["elsewhere", "here"]);
+    // What its workflow ran is let go of with it.
+    expect(heard).toEqual([["gone"]]);
+    expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
   });
 
   it("gives a session started with no workflow none, whatever its project follows", () => {
