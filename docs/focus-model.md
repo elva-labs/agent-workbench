@@ -9,6 +9,10 @@ it can. The middle pane is a real TUI, not a text field. Claude Code binds
 <kbd>Shift+Tab</kbd>, and a shortcut that silently eats one of them turns
 into a bug report about the agent.
 
+This holds for a terminal session. An integrated session has no terminal:
+the pane is the app's own conversation, and what it takes from the keyboard
+is under [an integrated session](#an-integrated-session).
+
 ## What the app claims
 
 Only <kbd>Cmd</kbd> chords (<kbd>Ctrl</kbd> on Windows and Linux). The
@@ -128,7 +132,8 @@ the pane that has the focus.
   <kbd>Ctrl</kbd>, so the bound chords are taken from the terminal there,
   and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them.
 - **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
-  it, and so does a shell in the panel. A pane that owns focus may use it: the
+  it, and so does a shell in the panel. An integrated session's composer
+  takes it to stop a running turn. A pane that owns focus may use it: the
   file viewer closes on it and leaves the keyboard in the tree, and a list
   pane hands the keyboard back to the agent. This is the one key whose meaning
   depends on context, so the resolution takes the focus state and lives in one
@@ -140,10 +145,42 @@ the pane that has the focus.
 - **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** The
   terminal would send the same carriage return as for <kbd>Enter</kbd>, so
   the app sends Meta+Enter, which Claude Code takes as a newline. A shell in
-  the panel gets the plain return.
+  the panel gets the plain return, and an integrated session's composer
+  breaks the line.
 - **A click in a terminal is the program's.** Links open on
   <kbd>Cmd</kbd>+click (<kbd>Ctrl</kbd> elsewhere), bare URLs and links the
   program marked up alike. A plain click is left to the TUI.
+
+## An integrated session
+
+The agent pane of an integrated session is a composer, a thread and, while
+the agent waits on the user, a dock between them; see
+[sessions](sessions.md#integrated-sessions). Focusing the pane by key or by
+picking the session puts the keyboard in the composer, unless another
+control of the pane has it.
+
+| Keys | Does |
+| --- | --- |
+| <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
+| <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
+| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing and does nothing else |
+| <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
+| <kbd>Tab</kbd> | Moves between the pane's controls, as on any page |
+
+The dock's choices are one stop for the keyboard. The arrow keys move
+between them, <kbd>Home</kbd> and <kbd>End</kbd> jump, <kbd>Enter</kbd> or a
+digit picks one, and the first is the choice that allows the call once and
+remembers nothing. The dock never takes the keyboard by itself, so nothing
+typed for something else answers it. A question's options move the same
+way; where one pick answers the question, picking it answers. A denial that
+asks for words takes them in a field where <kbd>Enter</kbd> denies and
+<kbd>Esc</kbd> goes back to the choices. Once an answer is on its way the
+keyboard goes to the next request, or back to the composer. The model's menu
+opens from its button and is walked with the arrows, <kbd>Enter</kbd>
+picking and <kbd>Esc</kbd> closing it.
+
+Every chord the app claims works from the composer as from anywhere else.
+<kbd>Cmd</kbd><kbd>F</kbd> stays the page's, as it is a terminal's.
 
 ## A page in the browser
 

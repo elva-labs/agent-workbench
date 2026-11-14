@@ -1,7 +1,10 @@
 # Sessions
 
-A session is one agent process in one project, in a pty of its own with its
-own terminal and scrollback. A project holds as many as you start, several
+A session is one agent process in one project. In a terminal session it runs
+in a pty of its own with its own terminal and scrollback; an integrated
+session has no terminal, and the window draws its conversation instead, as
+[integrated sessions](#integrated-sessions) describes. A project holds as
+many as you start, several
 projects can be open at once, and switching between any of them stops
 nothing. The sessions you are not looking at are hidden rather than
 unmounted, and hidden in a way that keeps their box in layout, so a
@@ -215,6 +218,82 @@ are the ones to review. Switching to another session switches back. This
 relies on the agent changing its process directory when it enters a
 worktree.
 
+## Integrated sessions
+
+How an agent's sessions run is a setting per agent, a terminal to begin
+with; see [settings](settings.md#sessions). Claude Code can run integrated,
+and Codex always runs in a terminal. With no session on screen, the agent
+pane offers a single new session the other way beside its New session
+button. An integrated session is driven through the core in messages, as
+[integrated](integrated.md) describes, and is a row like any other: it is
+listed, stopped with its ×, brought back after a restart and resumed the
+same way.
+
+The agent pane's header names the session, its project and the branch the
+folder has checked out. Under it is the thread. The user's words sit to the
+right in a tinted bubble under You; the agent's run on the left under its
+name, which is the model it runs on or Claude for the agent's default, with
+the time, down a quiet line at the side. What the agent wrote is drawn as
+Markdown, its code and tables included, and grows in place while it streams,
+with a caret where the next words come. An image the agent names by an
+address is shown as a link to it rather than fetched. The thread stays at
+its foot while new content comes, and where the user scrolled to otherwise,
+with a button back down.
+
+What the agent did between two things it said folds into one line, such as
+Worked for 3m, changed 3 files, ran 1 command, which opens into the steps:
+each tool call with what it did to what, its input, a command's output as it
+came, the files it changed as diffs, and a subagent's own run under the call
+that started it. The changes pane stays the place to review changes. While a
+turn runs, a line at its foot says what the agent is doing now: running a
+command, reading a file, thinking, waiting for an answer. A plan is drawn
+where it came and changed in place, a question the user answered with the
+answer, a secret one without it, and a compaction, a notice or an error
+where it happened. The sessions an agent started with the workbench's start
+tool show under its run as rows, each with its state, name and model and a
+way to open it.
+
+A permission the agent asks for docks over the composer rather than in the
+thread: who asks, the agent or one of its subagents, and what for, a
+command shown whole and a path outside the project marked as such, with the
+choices the core offers. The first allows the call once and remembers
+nothing; the others allow it for the session or always, saying what each
+keeps, deny it, with words for the agent if the user wants, or deny it and
+stop the turn. A line under the choices says what the one in focus or under
+the pointer does. A question docks the same way with its options, answered by
+picking one where one is all it takes, with room for the user's own words
+where it takes them; a secret answer is typed hidden. Requests are answered
+one at a time, the oldest first, and the dock says how many more wait.
+
+The composer under the dock takes several lines, images dropped, pasted or
+picked, and any other dropped file as its path in the text. It shows the
+model the session runs on, which a click changes, and how much of the
+context window the conversation takes. While the agent works its Send button
+is a Stop button, and a message sent meanwhile stands under the thread,
+marked as waiting, until the turn that takes it. A message that never
+reached the agent can be put back in the composer. What is being written
+stays with its session while another is on screen. The keys are in
+[focus](focus-model.md#an-integrated-session).
+
+The row's id is the conversation's id as the agent says it once ready, so
+the agent's own tools find the row. Its state, working, asking or idle,
+comes from the session's events, never from the hooks or from output; the
+hooks still fire for it and are left alone. When it stops working or asking
+while nobody looks, the line under its name is the first line of what the
+agent last said, unless the agent left a line of its own. A row with no name
+yet takes the first line of its first message.
+
+Before a session can run it may need the user. In a folder the agent has
+not been told to trust, the pane asks whether to trust it, and on a yes the
+trust is recorded where the agent's own question records it and the session
+starts. Under an account that is not signed in, the pane says so and gives
+the command to sign in with in a terminal; the workbench never signs in. A
+session that ended or could not start says why, and Resume starts it again
+on the same conversation, the thread drawn so far staying above what comes.
+A resumed session's earlier messages are in its transcript and are not drawn.
+A window reloaded while the core still runs a session takes it up where it
+is, its open requests and waiting messages included.
+
 ## Dropping files
 
 A file dropped on a terminal is its path, typed there with spaces and shell
@@ -223,7 +302,9 @@ the window, it goes to the terminal the keyboard is in. Claude Code reads a
 pasted path and shows an image file as an attachment, so a screenshot
 dragged in arrives the way it would in a plain terminal. The webview never
 sees the drag: the window takes it and reports paths with a position, and
-the terminal under a drag shows an accent inset while it lasts.
+the terminal under a drag shows an accent inset while it lasts. Dropped on
+an integrated session, an image goes with the next message and any other
+file is its path in the text.
 
 ## Past sessions
 

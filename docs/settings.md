@@ -100,6 +100,14 @@ tools they bring the agent, is in [hooks](hooks.md).
 
 ## Sessions
 
+How each agent's sessions run: in a terminal, the agent's own interface, or
+integrated, the conversation drawn by the window, a terminal to begin with.
+Only Claude Code can run integrated, and the tab says so for Codex. A
+session that is running keeps the way it started, and a single new one can
+be started the other way from the agent pane. What an integrated session is
+like is in [sessions](sessions.md#integrated-sessions). It is the user's to
+change, and an agent's settings tools refuse it.
+
 How long a past session stays listed under its project: forever, 30 days,
 7 days or 1 day, forever to begin with. A session this app ran is listed
 under its project, greyed, ready to resume, as [sessions](sessions.md#past-sessions)
