@@ -1,14 +1,42 @@
 #!/bin/sh
 #
 # Prints the Homebrew formula for the daemon of a published release,
-# checksums included, to put in the organisation's tap as
-# Formula/agent-workbench-remote.rb. A machine then gets the daemon with
-# `brew install elva-labs/elva/agent-workbench-remote`.
+# checksums included, to put in the organisation's tap. The channel is
+# stable, which is Formula/agent-workbench-remote.rb, or beta, which is
+# Formula/agent-workbench-remote-beta.rb: a formula's name cannot carry
+# the @beta a cask's can. Both install the same binary, so each names the
+# other as a conflict. The beta channel takes any version, a stable one
+# too; the stable channel refuses a pre-release. A machine gets the daemon
+# with `brew install elva-labs/elva/agent-workbench-remote`.
 #
 #   scripts/formula.sh 0.1.1 > ../homebrew-elva/Formula/agent-workbench-remote.rb
+#   scripts/formula.sh 1.0.0-beta.1 beta > ../homebrew-elva/Formula/agent-workbench-remote-beta.rb
 set -eu
 
 version="${1:?a version, as 0.1.1}"
+channel="${2:-stable}"
+
+case "$channel" in
+  stable)
+    case "$version" in
+      *-*)
+        echo "$version is a pre-release, which goes on the beta channel: scripts/formula.sh $version beta" >&2
+        exit 1
+        ;;
+    esac
+    class="AgentWorkbenchRemote"
+    other="agent-workbench-remote-beta"
+    ;;
+  beta)
+    class="AgentWorkbenchRemoteBeta"
+    other="agent-workbench-remote"
+    ;;
+  *)
+    echo "a channel is stable or beta, not $channel" >&2
+    exit 1
+    ;;
+esac
+
 base="https://github.com/elva-labs/agent-workbench/releases/download/v$version"
 
 sum() {
@@ -24,11 +52,11 @@ cat <<FORMULA
 # typed: false
 # frozen_string_literal: true
 
-class AgentWorkbenchRemote < Formula
+class $class < Formula
   desc "Agent Workbench on another machine: the daemon a desktop reaches over ssh"
   homepage "https://github.com/elva-labs/agent-workbench"
-  license "MIT"
   version "$version"
+  license "MIT"
 
   on_macos do
     on_arm do
@@ -51,6 +79,8 @@ class AgentWorkbenchRemote < Formula
       sha256 "$linux_intel"
     end
   end
+
+  conflicts_with "elva-labs/elva/$other", because: "both install agent-workbench-remote"
 
   def install
     binary = Dir["agent-workbench-remote-*"].first
