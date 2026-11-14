@@ -21,6 +21,7 @@ import {
   refuse,
   resetConductor,
   revoke,
+  mayChangeModel,
   startedBy,
   startedFor,
   dismissRefusal,
@@ -2000,6 +2001,100 @@ describe("starting in a workflow's shape", () => {
     // A session outside any workflow has no tag.
     const plain = create(A, null, "claude-code", null, null, null, null, null);
     expect(workflowTag(plain)).toBeNull();
+  });
+
+  it("counts the round of a review resumed with no prompt on the first line it is sent", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    // Its second round, which is as many as the limit gives.
+    expect((await sent("r1", "Look again")).content).toContain("round 2");
+    reviewed(review);
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    // Stopped and brought back with no prompt, it waits for a line: no
+    // round yet, and it has not worked since.
+    ended({ id: "pty-r1", code: 0, clean: true });
+    flushSync();
+    const back = await resumed(call("start", { session: "r1" }, { session: "orch" }), "pty-r1b");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(placeOf(back.key)?.round).toBe(2);
+    // The line it is sent is the next round, which is the user's to allow.
+    const answering = handle(call("send", { session: "r1", text: "Review it once more" }, { session: "orch" }));
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", done: 2 });
+    refuse();
+    await answering;
+    expect(last().error).toContain("the user did not allow another");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(0);
+  });
+
+  it("counts that round once, and lets the user allow it", async () => {
+    const workflow = defaultWorkflow();
+    orchestrating(workflow);
+    await begun({ step: "Work" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    ended({ id: "pty-r1", code: 0, clean: true });
+    flushSync();
+    const back = await resumed(call("start", { session: "r1" }, { session: "orch" }), "pty-r1b");
+    expect((await sent("r1", "Look again")).content).toContain("round 2");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(placeOf(back.key)?.round).toBe(2);
+    // A second line before it works is the same round.
+    await sent("r1", "And the tests");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+  });
+
+  it("refuses to resume a session whose step the workflow no longer has, naming the steps there are", async () => {
+    const orch = orchestrating();
+    await begun({ step: "Work" }, "w1");
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    // The step is renamed in the settings, and the caller resumed takes
+    // the workflow as it is now.
+    const renamed = defaultWorkflow();
+    renamed.steps[0].name = "Build";
+    const review = renamed.steps[1];
+    if (review.kind === "review") review.backTo = "Build";
+    byKey(orch.key)!.workflow = renamed;
+    const rows = sessions.all.length;
+    expect(await refusedWith({ session: "w1", agent: "claude-code", model: "opus", prompt: "/model opus" })).toBe(
+      'Session w1 ran for the step "Work", which the workflow "Build and review" no longer has. The steps are "Build" (work) and "Review" (review). Start a new session for the step its work is in now.',
+    );
+    expect(sessions.all.length).toBe(rows);
+    // A step named in other letters' case is the same step.
+    renamed.steps[0].name = "work";
+    byKey(orch.key)!.workflow = { ...renamed };
+    const back = await resumed(from({ session: "w1" }), "pty-w1b");
+    expect(back.model).toBe("sonnet");
+  });
+
+  it("refuses a call naming a session the workbench does not run, while one follows a workflow", async () => {
+    orchestrating();
+    await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { session: "made-up" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(
+      "The workbench runs no session made-up, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.",
+    );
+  });
+
+  it("refuses a call naming no session from the directory of a workflow session told its id", async () => {
+    // The orchestrator was told its id, so a call from it names it; a call
+    // from its directory that names none could still be it.
+    orchestrating();
+    await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(UNPLACED);
+  });
+
+  it("reads a line as a command after characters that draw nothing, and a wide slash as a slash", () => {
+    expect(mayChangeModel("\u200b/model opus")).toBe(true);
+    expect(mayChangeModel("\ufeff /model opus")).toBe(true);
+    expect(mayChangeModel("\uff0fmodel opus")).toBe(true);
+    expect(mayChangeModel("/compact")).toBe(false);
+    expect(mayChangeModel("Look at /src/x.ts")).toBe(false);
   });
 
   it("keeps a refused start where the user can see it, until a start goes through", async () => {
