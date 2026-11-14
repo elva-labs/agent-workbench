@@ -41,7 +41,9 @@ into a running session, and Enter after it on its own, as a person does. A
 long line goes in as a paste when the session's terminal has asked for
 paste, and in small pieces a moment apart when it has not, so the agent
 takes it whole either way. Its Enter follows on its own, later the longer
-the line is.
+the line is. A session that runs integrated is sent the text as a message,
+whole, as the user's own is, and one sent while it works waits for its
+turn.
 `wait` sits until a session stops working, asks for permission or ends, or
 until the seconds it was given run out. A stop is told once: the wait that
 answers with it and a listing that shows it each count, so a session that
@@ -52,8 +54,14 @@ told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
 telling anything. `read` answers with the last lines on a session's screen,
-as you see them. `stop` stops a session and files it with the sessions to
+as you see them; for an integrated session, which has no screen, with what
+its agent last said and did, a line for each step, and what it is doing or
+waiting for now. `stop` stops a session and files it with the sessions to
 resume, behind the fold, rather than leaving a row of it under the project.
+A session `start` starts runs in a terminal or integrated as the
+agent's own setting says, and every tool acts on it either way; what an
+integrated session cannot do when it is not running, such as take a
+message, the answer says, with the way to start it again.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.

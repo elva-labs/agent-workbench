@@ -42,6 +42,8 @@ import {
 } from "$lib/sessions.svelte";
 import type { AgentId } from "$lib/core";
 import { screen, takesPaste } from "$lib/screens";
+import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
+import { lastRun } from "$lib/thread";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -738,6 +740,22 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   const session = byId(id);
   if (session === null) return refused(`The workbench has no session ${id}.`);
   if (!mine(request, session)) return notMine(id);
+  // An integrated session takes the message whole, as the user's own; one
+  // sent while it works waits for its turn.
+  if (session.kind === "integrated") {
+    if (session.status !== "running" || handleOf(session.key) === null)
+      return refused(
+        `Session ${id} is an integrated session and is ${stateOf(session)}, so it takes no message now. Start it again with start, naming session ${id}, then send.`,
+      );
+    const working = session.working;
+    if (sendIntegrated(session.key, line) === null)
+      return refused(`Session ${id} is an integrated session and took no message: there was nothing to send.`);
+    return said(
+      working
+        ? `Sent to session ${id}. It is at work, so the message waits for its turn. Call wait to hear what it does next.`
+        : `Sent to session ${id}. Call wait to hear what it does next.`,
+    );
+  }
   if (session.status !== "running" || session.ptyId === null)
     return refused(`Session ${id} is not running.`);
   await typeLine(session.key, session.ptyId, oneLine(line));
@@ -879,6 +897,14 @@ function readSession(request: ConductRequest): Answered {
   if (session === null) return refused(`The workbench has no session ${id}.`);
   if (!mine(request, session)) return notMine(id);
   const lines = number(request, "lines", LINES, LINES_MAX);
+  // An integrated session has no screen: what its agent last said and did
+  // is read from its conversation instead.
+  if (session.kind === "integrated") {
+    const run = lastRun(conversationOf(session.key), lines);
+    if (run === "")
+      return said(`Session ${id} is an integrated session and has said nothing yet. ${lastLine(session)}`);
+    return said(`Session ${id}, what its agent last said and did:\n${run}`);
+  }
   const drawn = screen(session.key, lines);
   if (drawn === null || drawn === "") {
     return said(`Session ${id} has drawn nothing yet. ${lastLine(session)}`);

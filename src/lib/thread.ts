@@ -439,3 +439,87 @@ export function revealed(text: string): { text: string; unseen: boolean }[] {
   if (plain !== "" || out.length === 0) out.push({ text: plain, unseen: false });
   return out;
 }
+
+/** What the agent last said and did, as plain text for another agent to
+    read: its last run with the messages it answered, a line per step, and
+    what it is doing or waiting for now. At most `lines` lines, the latest
+    kept. */
+export function lastRun(conversation: Conversation, lines: number): string {
+  const out: string[] = [];
+  const entries = conversation.entries;
+  let at = entries.length - 1;
+  while (at >= 0 && entries[at].kind !== "agent") at--;
+  let from = at;
+  while (from > 0 && entries[from - 1].kind === "user") from--;
+  for (let index = Math.max(0, from); index >= 0 && index <= at; index++) {
+    const entry = entries[index];
+    if (entry.kind === "user") {
+      const message = conversation.messages[entry.message];
+      if (message !== undefined) out.push(`The user said: ${message.text}`);
+    } else if (entry.kind === "agent") {
+      for (const part of entry.parts) out.push(...partLines(part));
+      const turn = conversation.turns[entry.turn];
+      if (turn?.outcome === "interrupted") out.push("The turn was interrupted.");
+      else if (turn?.outcome === "failed")
+        out.push(`The turn failed${turn.error ? `: ${turn.error}` : "."}`);
+    }
+  }
+  for (const request of conversation.open) {
+    const asked = request.asked;
+    if (asked.type === "permissionAsked") {
+      const what = asks(asked);
+      out.push(
+        `It is waiting for the user to allow it to ${what.verb}${what.object === null ? "" : ` ${what.object}`}.`,
+      );
+    } else
+      out.push(
+        `It is waiting for the user to answer: ${asked.questions.map((question) => question.question).join(" ")}`,
+      );
+  }
+  if (conversation.open.length === 0 && conversation.current !== null) {
+    const run = entries[at];
+    const doing = run?.kind === "agent" ? nowDoing(conversation, run.parts) : null;
+    out.push(`It is at work${doing === null ? "" : `: ${doing}`}.`);
+  }
+  for (const message of conversation.waiting)
+    if (message.state === "queued" || message.state === "sending")
+      out.push(`A message waits for the turn: ${message.text}`);
+  return out.slice(-lines).join("\n");
+}
+
+function partLines(part: Part): string[] {
+  switch (part.kind) {
+    case "text":
+      return part.text.split("\n");
+    case "thinking":
+      return [];
+    case "plan":
+      return part.steps.length > 0
+        ? [
+            "Its plan:",
+            ...part.steps.map(
+              (step) =>
+                `  [${step.status === "done" ? "x" : step.status === "active" ? ">" : " "}] ${step.text}`,
+            ),
+          ]
+        : (part.text ?? "").split("\n");
+    case "question":
+      return part.questions.map((question, at) => {
+        const answer = part.answers?.[at];
+        return part.outcome === "answered"
+          ? `It asked: ${question.question} The user answered${answer ? `: ${answer.join(", ")}` : ", and the answer is not shown."}`
+          : `It asked: ${question.question} No answer was given.`;
+      });
+    case "tool": {
+      const { verb, object } = stepTitle(part);
+      const how = !part.done
+        ? " (running)"
+        : part.answer?.choice === "deny" || part.answer?.choice === "cancel"
+          ? " (denied)"
+          : part.error
+            ? " (failed)"
+            : "";
+      return [`- ${verb}${object === null ? "" : ` ${object}`}${how}`];
+    }
+  }
+}
