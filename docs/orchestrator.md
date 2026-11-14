@@ -70,18 +70,19 @@ can name another account, by the name it has in the settings; one that
 names an account there is not is refused with the names there are. A start
 that names none runs under the project's account when the caller's cannot
 be handed on. That is so when the workbench cannot tell which session is
-calling, as with a Codex session that has not been resumed or an agent run
-outside the workbench; when the project is on another machine than the
-caller, where the caller's login is not; and when the caller's account has
-no directory for the agent being started, or is no longer in the settings.
+calling, as with an agent run outside the workbench, or a Codex session
+that has not been resumed, whose id is learned after its tools have
+started; when the project is on another machine than the caller, where the
+caller's login may not be; and when the caller's account has no directory
+for the agent being started, or is no longer in the settings.
 A session resumed comes back under the account it ran under.
 
 ## What is remembered
 
 What a session started is written down by session id, with the project,
 the worktree, the agent, the name and the account, and kept between runs
-beside the
-sessions the app knows as its own. An orchestrator closed and resumed
+beside the sessions the app knows as its own. An orchestrator closed and
+resumed
 keeps its id, so the sessions it started are still its own: the ones
 still running answer to its tools as before, and a row with one of its
 ids, resumed from the pane by hand, is folded under it all the same. When
@@ -112,8 +113,10 @@ whatever it has been told to do by something it read.
 The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. An allowed
-caller is remembered for that project for as long as the app runs. A
-refusal is an answer the agent reads, not an error. Bringing back a
+caller is remembered for that project for as long as the app runs. When
+the session would run under an account other than the project's own, the
+question names the account, and so does the answer the caller gets to its
+start. A refusal is an answer the agent reads, not an error. Bringing back a
 session it already started is never asked about: the consent was given
 when the session was, and the resumed session is that one going on.
 

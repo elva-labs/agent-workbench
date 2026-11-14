@@ -70,8 +70,8 @@ export interface Session {
       turn. Null for the agent's own default. */
   model: string | null;
   /** The account the session runs under, by name: the project's unless
-      one was chosen for the session. Null for the agents' own
-      directories. */
+      one was chosen for the session, or the session that started it
+      handed its own on. Null for the agents' own directories. */
   account: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */

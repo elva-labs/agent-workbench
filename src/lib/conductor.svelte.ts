@@ -24,6 +24,7 @@
  */
 
 import {
+  accountLabel,
   accountOf,
   accounts,
   dirFor,
@@ -174,6 +175,9 @@ export interface Ask {
   /** The prompt's first line. */
   prompt: string;
   worktree: boolean;
+  /** The account the session would run under, as it is shown, when that
+      is not the project's own. Null when it is the project's. */
+  account: string | null;
 }
 
 /** What the user answered: allowed from now on, allowed this once, or no. */
@@ -569,7 +573,10 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   if (room !== null) return room;
 
   const wants = flag(request, "worktree");
-  if ((await askUser(request, project, prompt, wants)) === "no")
+  // An account that is not the project's own is said, to the user in the
+  // question and to the caller in the answer.
+  const other = account === accountOf(project) ? null : accountLabel(account);
+  if ((await askUser(request, project, prompt, wants, other)) === "no")
     return refused("The user did not allow the session to be started.");
 
   let startIn: string | null = null;
@@ -623,8 +630,9 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
+  const under = other === null ? "" : `, under the ${other} account`;
   return said(
-    `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
+    `Started session ${id} in ${where}${under}. It has the prompt. Call wait to hear how it goes.`,
   );
 }
 
@@ -633,8 +641,8 @@ async function startSession(request: ConductRequest): Promise<Answered> {
  * the agents' own included, whatever the project is set to. The project's
  * when the caller's cannot be handed on: the window has no row for the
  * caller, the project is on another machine than the caller, where the
- * caller's login is not, or the caller's account holds no directory for
- * the agent to run, which is also how one the settings no longer hold
+ * caller's login may not be, or the caller's account holds no directory
+ * for the agent to run, which is also how one the settings no longer hold
  * reads.
  */
 function handedOn(
@@ -1004,6 +1012,7 @@ function askUser(
   project: string,
   prompt: string,
   worktree: boolean,
+  account: string | null,
 ): Promise<Choice> {
   const caller = callerOf(request);
   if (allowed.has(`${caller}\n${project}`)) return Promise.resolve("allow");
@@ -1014,6 +1023,7 @@ function askUser(
     project,
     prompt: prompt.split("\n")[0],
     worktree,
+    account,
   };
   return new Promise<Choice>((settle) => {
     queue.push({ ask, settle });

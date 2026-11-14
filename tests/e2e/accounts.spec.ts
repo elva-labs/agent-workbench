@@ -306,13 +306,31 @@ test.describe("a session started by a session under another account", () => {
         }),
       PROJECT,
     );
-    await expect(page.getByTestId("conduct-ask")).toBeVisible();
+    // The question says the account, since it is not the project's own.
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask.getByTestId("conduct-account")).toHaveText(
+      "Under the Work account, not the project's own.",
+    );
     await page.getByTestId("conduct-allow").click();
-    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+    await expect(ask).toHaveCount(0);
 
-    // The new session's agent is pointed at the same account's directory.
+    // The new session's agent is pointed at the same account's directory,
+    // and the caller is told the account too.
     await expect.poll(() => spawns(page)).toHaveLength(2);
     expect((await spawns(page))[1].prompt).toContain("Fix the flaky test");
     expect((await spawns(page))[1].configDir).toBe("~/.claude-work");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __conductAnswers?: { id: string; content: string | null }[];
+              }
+            ).__conductAnswers?.find((answer) => answer.id === "c-1")?.content ?? null,
+        ),
+      )
+      .toContain("under the Work account");
   });
 });

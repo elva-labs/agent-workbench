@@ -540,7 +540,10 @@ describe("starting a session", () => {
 describe("the account a started session runs under", () => {
   const REMOTE = "ssh://ada@box/home/ada/dev/three";
 
+  let begun = 0;
+
   beforeEach(() => {
+    begun = 0;
     accounts.list = {
       Work: { claude: "~/.claude-work", codex: null },
       Home: { claude: "~/.claude-home", codex: "~/.codex-home" },
@@ -553,8 +556,6 @@ describe("the account a started session runs under", () => {
     started(row.key, "pty-caller", "caller-1");
     return row;
   }
-
-  let begun = 0;
 
   /** A start that names no account unless the arguments do. */
   function start(
@@ -637,6 +638,51 @@ describe("the account a started session runs under", () => {
     delete accounts.list.Work;
     const row = await start();
     expect(row.account).toBe("Home");
+  });
+
+  it("is named in the question and in the answer when it is not the project's own", async () => {
+    caller(A, "Work");
+    const answering = handle(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking?.account).toBe("Work");
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().content).toContain(`Started session sid-1 in ${A}, under the Work account.`);
+  });
+
+  it("is named as Default when the agents' own is handed into a project set to another", async () => {
+    accounts.overrides[A] = "Work";
+    caller(B, null);
+    const answering = handle(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking?.account).toBe("Default");
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().content).toContain("under the Default account");
+  });
+
+  it("goes unsaid when it is the project's own", async () => {
+    accounts.overrides[A] = "Work";
+    caller(A, "Work");
+    const answering = handle(
+      call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
+    );
+    expect(conductor.asking).not.toBeNull();
+    expect(conductor.asking?.account).toBeNull();
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(last().content).toContain(`Started session sid-1 in ${A}. It has the prompt.`);
   });
 
   it("is the one it ran under for a session resumed, whatever the caller's", async () => {
