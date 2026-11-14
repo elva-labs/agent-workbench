@@ -600,9 +600,13 @@ test.describe("the layout", () => {
 
   test("decides beside or under from the window, never from how many steps there are", async ({ page }) => {
     await open(page);
+    // Null while the settings are being moved between beside and under,
+    // which the poll waits out.
     const beside = async () => {
-      const canvas = await box(page, "workflow-canvas");
-      return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
+      const canvas = await page.getByTestId("workflow-canvas").boundingBox();
+      const settings = await page.getByTestId("step-settings").boundingBox();
+      if (canvas === null || settings === null) return null;
+      return settings.x >= canvas.x + canvas.width;
     };
     // The layout follows the editor's measured width, which settles a
     // frame after what changed it.
