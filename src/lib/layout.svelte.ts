@@ -167,6 +167,11 @@ export const layout = $state({
   editAgent: defaultEditAgent(),
   /** Whether the user dragged the agent's width while editing. */
   editAgentDragged: false,
+  /** The tree column and the agent as drawn while editing: the widths
+      chosen, or less where the window squeezes them. A squeeze never
+      replaces the width chosen, which comes back once there is room. */
+  editTreeDrawn: DEFAULT.editTree as number,
+  editAgentDrawn: defaultEditAgent(),
   sessionsChosen: true,
   changesChosen: true,
   terminalChosen: false,
@@ -471,16 +476,16 @@ function resolveEditing(width: number) {
   const beside = width - folded;
 
   layout.agentHidden = beside - SPLITTER - MIN.agent < MIN.editor;
-  if (!layout.agentHidden) {
-    layout.editAgent = clamp(layout.editAgent, MIN.agent, beside - SPLITTER - MIN.editor);
-  }
-  const agent = agentVisible() ? SPLITTER + layout.editAgent : 0;
+  layout.editAgentDrawn = layout.agentHidden
+    ? layout.editAgent
+    : clamp(layout.editAgent, MIN.agent, beside - SPLITTER - MIN.editor);
+  const agent = agentVisible() ? SPLITTER + layout.editAgentDrawn : 0;
 
   layout.editTreeForced = beside - agent - SPLITTER - MIN.tree < MIN.editor;
-  if (!layout.editTreeForced) {
-    layout.editTree = clamp(layout.editTree, MIN.tree, beside - agent - SPLITTER - MIN.editor);
-  }
-  const tree = layout.editTreeForced ? 0 : layout.editTree + SPLITTER;
+  layout.editTreeDrawn = layout.editTreeForced
+    ? layout.editTree
+    : clamp(layout.editTree, MIN.tree, beside - agent - SPLITTER - MIN.editor);
+  const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + SPLITTER;
 
   layout.sessionsForced = width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
   layout.sessionsPeek &&= !sessionsVisible() && layout.sessionsForced;
@@ -495,21 +500,22 @@ function sessionsColumn() {
   return (sessionsVisible() ? layout.sessions : FOLDED) + SPLITTER;
 }
 
-/** Drags the agent pane's edge while editing. The editor keeps its room
+/** Drags the agent pane's edge while editing, from where it is drawn: the
+    width the drag ends at is the one chosen. The editor keeps its room
     with the panes as they are: a drag never folds or hides one. */
 export function resizeEditAgent(dx: number) {
-  const tree = editTreeVisible() ? layout.editTree + SPLITTER : 0;
+  const tree = editTreeVisible() ? layout.editTreeDrawn + SPLITTER : 0;
   const most = layout.width - sessionsColumn() - tree - SPLITTER - MIN.editor;
-  layout.editAgent = clamp(layout.editAgent - dx, MIN.agent, most);
+  layout.editAgent = clamp(layout.editAgentDrawn - dx, MIN.agent, most);
   layout.editAgentDragged = true;
   applyLayout(layout.width);
 }
 
 /** Drags the tree column's edge while editing, on the same terms. */
 export function resizeEditTree(dx: number) {
-  const agent = agentVisible() ? SPLITTER + layout.editAgent : 0;
+  const agent = agentVisible() ? SPLITTER + layout.editAgentDrawn : 0;
   const most = layout.width - sessionsColumn() - agent - SPLITTER - MIN.editor;
-  layout.editTree = clamp(layout.editTree + dx, MIN.tree, most);
+  layout.editTree = clamp(layout.editTreeDrawn + dx, MIN.tree, most);
   applyLayout(layout.width);
 }
 

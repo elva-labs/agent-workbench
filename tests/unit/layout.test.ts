@@ -1131,3 +1131,45 @@ describe("the changes pane's least width", () => {
     }
   });
 });
+
+describe("a width the window squeezes while editing", () => {
+  it("never replaces the tree column's width chosen, which comes back with room", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditTree(40);
+    const chosen = layout.editTree;
+    expect(layout.editTreeDrawn).toBe(chosen);
+    applyLayout(1340);
+    expect(editTreeVisible()).toBe(true);
+    expect(layout.editTreeDrawn).toBeLessThan(chosen);
+    expect(layout.editTree).toBe(chosen);
+    saveLayout();
+    applyLayout(1728);
+    expect(layout.editTreeDrawn).toBe(chosen);
+    reset();
+    loadLayout();
+    expect(layout.editTree).toBe(chosen);
+  });
+
+  it("never replaces the agent's either", () => {
+    applyLayout(1728);
+    setEditing(true);
+    const chosen = layout.editAgent;
+    applyLayout(1100);
+    expect(agentVisible()).toBe(true);
+    expect(layout.editAgentDrawn).toBeLessThan(chosen);
+    expect(layout.editAgent).toBe(chosen);
+    applyLayout(1728);
+    expect(layout.editAgentDrawn).toBe(chosen);
+  });
+
+  it("is where a drag starts, and the width a drag ends at is the one chosen", () => {
+    applyLayout(1340);
+    setEditing(true);
+    const drawn = layout.editTreeDrawn;
+    expect(drawn).toBeLessThan(DEFAULT.editTree);
+    resizeEditTree(-10);
+    expect(layout.editTree).toBe(drawn - 10);
+    expect(layout.editTreeDrawn).toBe(drawn - 10);
+  });
+});

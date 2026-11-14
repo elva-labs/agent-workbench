@@ -448,7 +448,7 @@
       tree stands beside it. */
   let peekWidth = $derived(
     editing && editTreeVisible()
-      ? `max(${layout.sessions}px, calc(${FOLDED + layout.editTree}px + var(--splitter-w) * 2))`
+      ? `max(${layout.sessions}px, calc(${FOLDED + layout.editTreeDrawn}px + var(--splitter-w) * 2))`
       : `${layout.sessions}px`,
   );
 
@@ -491,7 +491,7 @@
     // a width of its own.
     if (editing) {
       cols.push("1fr");
-      if (agentVisible()) cols.push("var(--splitter-w)", `${layout.editAgent}px`);
+      if (agentVisible()) cols.push("var(--splitter-w)", `${layout.editAgentDrawn}px`);
       return cols.join(" ");
     }
     if (agentVisible()) cols.push("1fr");

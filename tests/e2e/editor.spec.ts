@@ -415,6 +415,35 @@ for (const linux of [false, true]) {
     });
   });
 
+  test.describe(`the tree column squeezed by the window, ${platform}`, () => {
+    test("comes back to its width when the window has room again, and across a restart", async ({ page }) => {
+      if (linux) await asLinux(page);
+      await open(page, 1728);
+      await page.getByTestId("mode-editor").click();
+      await settled(page);
+      const chosen = Math.round((await box(page, "[data-testid='tree-column']")).width);
+      // A window that narrows the tree but keeps it: the agent beside it is
+      // wider by the platform's step.
+      const squeezing = 1340 + (await controlsRoom(page));
+      await page.setViewportSize({ width: squeezing, height: 900 });
+      await settled(page);
+      expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBeLessThan(chosen);
+      await page.setViewportSize({ width: 1728, height: 900 });
+      await settled(page);
+      expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBe(chosen);
+      // Squeezed, saved and started again in a window with room: the width
+      // chosen, not the squeeze.
+      await page.setViewportSize({ width: squeezing, height: 900 });
+      await settled(page);
+      await page.getByTestId("toggle-right").click();
+      await page.getByTestId("toggle-right").click();
+      await page.setViewportSize({ width: 1728, height: 900 });
+      await page.reload();
+      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await settled(page);
+      expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBe(chosen);
+    });
+  });
 }
 
 test.describe("the flip back onto what was presented", () => {

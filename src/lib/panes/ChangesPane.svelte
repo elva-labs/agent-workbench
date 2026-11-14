@@ -608,7 +608,7 @@
     if (!editing || conducting !== null) return null;
     // The cell's edge stands on the splitter's line, which is drawn in the
     // middle of its track.
-    return editTreeVisible() ? `calc(${layout.editTree}px + var(--splitter-w) / 2 + 0.5px)` : "auto";
+    return editTreeVisible() ? `calc(${layout.editTreeDrawn}px + var(--splitter-w) / 2 + 0.5px)` : "auto";
   });
 
   let startedOpen = $state(true);
@@ -994,7 +994,7 @@
       class:editing
       class:treeless={editing && !editTreeVisible()}
       class:full={fullView}
-      style:--tree-w="{editing ? layout.editTree : layout.tree}px"
+      style:--tree-w="{editing ? layout.editTreeDrawn : layout.tree}px"
     >
       <!-- The tree's column: the tree, and beneath it what the agent
            presented for the session on screen, a section of its own with a

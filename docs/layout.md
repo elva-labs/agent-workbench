@@ -122,8 +122,10 @@ A pane can be folded or missing for two reasons, and they are kept apart:
 
 Without the distinction, one stint in split-screen would permanently forget
 that you like the sessions pane open. The same holds for the tree column and
-the agent while editing: hidden by the window, they come back when it grows;
-the agent hidden with its toggle stays hidden until asked for.
+the agent while editing: hidden by the window, they come back when it grows,
+and narrowed by it, they widen again to the width chosen, which a squeeze
+never replaces; the agent hidden with its toggle stays hidden until asked
+for.
 
 ## Hiding is free, resizing is not
 
