@@ -83,6 +83,11 @@ export function knowWorkflows() {
   known();
 }
 
+/** Test seam: the window has not heard what the workflows are. */
+export function unknowWorkflows() {
+  knowing = new Promise<void>((settle) => (known = settle));
+}
+
 /** What the core holds the settings to. */
 export const MOST_WORKFLOWS = 16;
 export const MOST_STEPS = 12;
