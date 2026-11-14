@@ -65,12 +65,15 @@ beforeEach(() => {
   refusal = null;
   stored = null;
   adoptWorkflows(undefined);
+  // The tests below start from the shipped workflow turned on.
+  workflows.default = NAME;
 });
 
 describe("a fresh window", () => {
-  it("has the default workflow, marked for new sessions", () => {
+  it("has the default workflow, with new sessions following none", () => {
+    adoptWorkflows(undefined);
     expect(workflows.list).toEqual([defaultWorkflow()]);
-    expect(workflows.default).toBe(NAME);
+    expect(workflows.default).toBeNull();
     const workflow = workflows.list[0];
     expect(workflow.orchestrator).toEqual({ agent: "claude-code", model: "fable" });
     expect(workflow.steps.map((step) => step.kind)).toEqual(["work", "review"]);

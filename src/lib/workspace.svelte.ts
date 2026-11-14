@@ -1,5 +1,5 @@
 import { untrack } from "svelte";
-import { core, type AgentId, type ProjectInfo } from "$lib/core";
+import { core, type AgentId, type ProjectInfo, type Workflow } from "$lib/core";
 import { closeOwner } from "$lib/browser.svelte";
 import { lastSegment } from "$lib/paths";
 import { accountOf } from "$lib/accounts.svelte";
@@ -9,7 +9,6 @@ import {
   byKey,
   closeProject,
   create,
-  defaultAgent,
   forProject,
   select,
   sessions,
@@ -156,15 +155,27 @@ export function goTo(key: string): boolean {
 }
 
 /** Starts a session in a project, brought forward, and gives it the
-    keyboard. The agent is the one the project used last and the account the
-    one it runs under, unless named. */
+    keyboard. A workflow named starts under it; an agent named, with no
+    workflow, starts alone; with neither, the session runs the way a plain
+    new session does. The account is the one the project runs under unless
+    named. */
 export function startSession(
   path: string,
-  agent: AgentId = defaultAgent(path),
+  agent?: AgentId,
   account: string | null = accountOf(path),
+  workflow?: Workflow | null,
 ) {
   if (workspace.active !== path) activate(path);
-  create(path, null, agent, null, null, null, account);
+  create(
+    path,
+    null,
+    agent,
+    null,
+    null,
+    null,
+    account,
+    workflow !== undefined ? workflow : agent === undefined ? undefined : null,
+  );
   focusPane("agent");
 }
 

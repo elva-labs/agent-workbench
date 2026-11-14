@@ -1839,10 +1839,12 @@ describe("following a workflow", () => {
     startOnly: false,
   });
 
-  it("starts a new session on the project's workflow, its orchestrator's agent and model, told the workflow", async () => {
+  const codexToo = () =>
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+
+  it("starts a plain new session on the project's workflow, its orchestrator's agent and model, told the workflow", async () => {
     adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: "Build and review", overrides: {} });
-    // Whatever agent was asked for, the workflow's orchestrator is what runs.
-    const session = create(P, null, "codex");
+    const session = create(P);
     expect(session.workflow).toEqual(defaultWorkflow());
     expect(session.agent).toBe("claude-code");
     expect(session.model).toBe("fable");
@@ -1856,7 +1858,50 @@ describe("following a workflow", () => {
     expect(workflowFor("sid-1")).toEqual(defaultWorkflow());
   });
 
+  it("starts the one agent installed on the project's workflow, there being nothing to pick", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(create(P, null, "claude-code").workflow?.name).toBe("Build and review");
+  });
+
+  it("starts an agent picked from several alone, whatever the project follows", async () => {
+    codexToo();
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(P, null, "codex");
+    expect(session.workflow).toBeNull();
+    expect(session.agent).toBe("codex");
+    expect(defaultAgent(P)).toBe("codex");
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)?.agent).toBe("codex");
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
+    // Picked as Claude Code, it is Claude Code alone, on no model.
+    const claude = create(P, null, "claude-code");
+    expect(claude.workflow).toBeNull();
+    expect(claude.model).toBeNull();
+  });
+
+  it("starts the workflow given, and none when given none", () => {
+    codexToo();
+    adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: null, overrides: {} });
+    expect(create(P, null, undefined, null, null, null, null, codexRun()).agent).toBe("codex");
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(create(P, null, undefined, null, null, null, null, null).workflow).toBeNull();
+  });
+
+  it("refuses a workflow whose orchestrator's agent is not installed, and starts nothing", async () => {
+    adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: null, overrides: { [P]: "Codex run" } });
+    const session = create(P);
+    expect(session.status).toBe("failed");
+    expect(statusMessage(session)).toBe(
+      'The workflow "Codex run" runs its orchestrator on Codex, which is not installed here. Pick an agent to start one alone, or choose another workflow for this project in the settings.',
+    );
+    expect(await launch(session.key, 80, 24, () => {})).toBe(false);
+    expect(spawned).toHaveLength(0);
+    // What the project used last is not what failed to start.
+    expect(sessions.preferred[P]).toBeUndefined();
+  });
+
   it("starts Codex's orchestrator on its own default, keeping its subagents when the workflow says so", async () => {
+    codexToo();
     adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: null, overrides: { [P]: "Codex run" } });
     const session = create(P);
     expect(session.agent).toBe("codex");

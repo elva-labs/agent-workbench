@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 const MOD = "ControlOrMeta";
 const AGENT = "section[data-pane='agent']";
@@ -10,8 +10,10 @@ const file = (page: Page) =>
 const step = (page: Page, name: string) =>
   page.locator(`[data-testid="workflow-step"][data-step="${name}"]`);
 
+/** Opens the tab. Without settings of its own, the shipped workflow is
+    there and turned on for new sessions. */
 async function open(page: Page, settings?: Record<string, unknown>, agents?: string[]) {
-  await installFakeCore(page, { open: [PROJECT], settings, agents });
+  await installFakeCore(page, { open: [PROJECT], settings: settings ?? WITH_WORKFLOW, agents });
   await page.goto("/");
   await expect(page.locator(AGENT)).toBeVisible();
   await page.keyboard.press(`${MOD}+,`);
@@ -20,6 +22,15 @@ async function open(page: Page, settings?: Record<string, unknown>, agents?: str
 }
 
 test.describe("the workflows tab", () => {
+  test("has the shipped workflow on a fresh install, with new sessions following none", async ({ page }) => {
+    await open(page, {});
+    const chip = page.locator('[data-testid="workflow-chip"][data-workflow="Build and review"]');
+    await expect(chip).toBeVisible();
+    await expect(page.getByTestId("workflow-default-tag")).toHaveCount(0);
+    await expect(page.getByTestId("workflow-default")).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByTestId("workflow-default-line")).toHaveText("New sessions start with no workflow.");
+  });
+
   test("lists the default workflow, marked, with the orchestrator as the frame and the steps in it", async ({
     page,
   }) => {
@@ -978,7 +989,7 @@ test.describe("what the step's settings say", () => {
   test("say where new sessions stand beside the switch, pointing at project choices only where there are some", async ({
     page,
   }) => {
-    await installFakeCore(page, { open: [] });
+    await installFakeCore(page, { open: [], settings: WITH_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.keyboard.press(`${MOD}+,`);

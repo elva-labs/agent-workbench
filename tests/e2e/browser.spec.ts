@@ -266,9 +266,7 @@ test("an orchestrator's question hides the native view until it is answered", as
       (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
         id: "c-1",
         tool: "start",
-        // The session follows the default workflow, so the start names
-        // its step.
-        arguments: { project, prompt: "Fix the flaky test", step: "Work" },
+        arguments: { project, prompt: "Fix the flaky test" },
         cwd: project,
         session: "session-1",
       }),

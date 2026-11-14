@@ -55,8 +55,9 @@ export const workflows = $state({
   /** The workflows in the order they are shown. A window that has heard
       nothing yet has the one a fresh install has. */
   list: [defaultWorkflow()] as Workflow[],
-  /** The one new sessions start with; null is none. */
-  default: defaultWorkflow().name as string | null,
+  /** The one new sessions start with; null is none, which is what a
+      fresh install has. */
+  default: null as string | null,
   /** The projects with a word of their own: a workflow's name, or null
       for none, whatever the default. */
   overrides: {} as Record<string, string | null>,
@@ -89,13 +90,14 @@ export function workflowsSettings(): Settings["workflows"] {
 }
 
 /** Takes the core's word for the workflows, which is the machine's. A
-    settings object from before workflows existed gets the default one. A
-    choice naming a workflow the list does not hold is dropped. */
+    settings object from before workflows existed gets the default one,
+    with new sessions following none. A choice naming a workflow the list
+    does not hold is dropped. */
 export function adoptWorkflows(settings: Settings["workflows"] | undefined) {
   if (settings === undefined || !Array.isArray(settings.list)) {
     const fresh = defaultWorkflow();
     workflows.list = [fresh];
-    workflows.default = fresh.name;
+    workflows.default = null;
     workflows.overrides = {};
     workflows.unread = [];
     return;

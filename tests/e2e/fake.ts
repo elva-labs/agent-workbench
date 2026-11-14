@@ -50,14 +50,43 @@ export const DEFAULT_FIXTURE: GitFixture = {
   ],
 };
 
-/** Where the fake keeps the settings file the core would keep, in the
-    page's storage so a reload finds it the way a restart finds the file. */
-/** A settings file whose new sessions follow no workflow, for tests of
-    starting and directing sessions as a session with none does. */
+/** The workflow a fresh install has. */
+export const BUILD_AND_REVIEW = {
+  name: "Build and review",
+  orchestrator: { agent: "claude-code", model: "fable" },
+  steps: [
+    {
+      kind: "work",
+      name: "Work",
+      models: [{ agent: "claude-code", model: "sonnet" }],
+      parallel: 1,
+    },
+    {
+      kind: "review",
+      name: "Review",
+      models: [{ agent: "claude-code", model: "opus" }],
+      reviewerApproves: true,
+      orchestratorAgrees: true,
+      backTo: "Work",
+      limit: 3,
+    },
+  ],
+};
+
+/** A settings file with no workflows at all, for tests of starting and
+    directing sessions as a session with none does. */
 export const NO_WORKFLOW = {
   workflows: { list: [], default: null, overrides: {} },
 };
 
+/** A settings file whose new sessions follow the workflow a fresh install
+    has, turned on. */
+export const WITH_WORKFLOW = {
+  workflows: { list: [BUILD_AND_REVIEW], default: "Build and review", overrides: {} },
+};
+
+/** Where the fake keeps the settings file the core would keep, in the
+    page's storage so a reload finds it the way a restart finds the file. */
 export const SETTINGS_FILE = "fake.settings";
 /** Where the fake keeps the user's stylesheet the same way. */
 export const STYLES_FILE = "fake.userStyles";
@@ -86,7 +115,7 @@ export async function installFakeCore(
   } = {},
 ) {
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, buildAndReview }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -339,33 +368,8 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
-        workflows: {
-          list: [
-            {
-              name: "Build and review",
-              orchestrator: { agent: "claude-code", model: "fable" },
-              steps: [
-                {
-                  kind: "work",
-                  name: "Work",
-                  models: [{ agent: "claude-code", model: "sonnet" }],
-                  parallel: 1,
-                },
-                {
-                  kind: "review",
-                  name: "Review",
-                  models: [{ agent: "claude-code", model: "opus" }],
-                  reviewerApproves: true,
-                  orchestratorAgrees: true,
-                  backTo: "Work",
-                  limit: 3,
-                },
-              ],
-            },
-          ],
-          default: "Build and review",
-          overrides: {},
-        },
+        // A fresh install: the shipped workflow, followed by nothing.
+        workflows: { list: [buildAndReview], default: null, overrides: {} },
         pastSessions: "forever",
         themes: {},
         userStyles: false,
@@ -1234,6 +1238,7 @@ export async function installFakeCore(
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
       agents: options.agents ?? ["claude-code"],
+      buildAndReview: BUILD_AND_REVIEW,
     },
   );
 }

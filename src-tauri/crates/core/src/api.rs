@@ -44,6 +44,10 @@ pub struct Spawned {
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
 
+/// Why a session that follows a workflow is not started: it would have no
+/// start tool to hand its work out with.
+pub const NO_TOOLS: &str = "This session follows a workflow, which hands out its work with the workbench's tools, and this machine has no tool server to give it them. Pick an agent to start one alone instead.";
+
 /// An agent that mints its own ids has written one down.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -365,9 +369,17 @@ impl Core {
             std::fs::create_dir_all(dir)
                 .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
+        // A session that follows a workflow hands its work out with the
+        // workbench's start tool, so it is not started where no tool server
+        // can reach it.
         let server = match (instructions, self.home.as_deref()) {
-            (Some(_), Some(home)) => hook::server_pending(home, project, agent, config_dir),
-            _ => None,
+            (None, _) => None,
+            (Some(_), Some(home)) => match hook::tool_server(home, project, agent, config_dir) {
+                hook::ToolServer::Configured => None,
+                hook::ToolServer::Named(daemon) => Some(daemon),
+                hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
+            },
+            (Some(_), None) => return Err(NO_TOOLS.into()),
         };
         let ctx = LaunchCtx {
             project,
@@ -775,6 +787,42 @@ mod tests {
 
     fn core() -> Core {
         Core::new(Arc::new(Recorder::default()))
+    }
+
+    /// A core whose home is the given directory, with no plugins and no
+    /// settings.
+    fn core_at(home: &Path) -> Core {
+        Core {
+            sessions: Arc::new(Sessions::default()),
+            processes: crate::processes::Processes::default(),
+            watchers: Arc::new(Watchers::default()),
+            sink: Arc::new(Recorder::default()),
+            home: Some(home.to_path_buf()),
+            plugins: None,
+            settings: None,
+        }
+    }
+
+    #[test]
+    fn a_session_under_a_workflow_is_refused_where_no_tool_server_can_reach_it() {
+        let home = std::env::temp_dir().join("workbench-api-no-tools");
+        std::fs::remove_dir_all(&home).ok();
+        std::fs::create_dir_all(&home).unwrap();
+        let spawned = core_at(&home).spawn(
+            "claude-code",
+            &home,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("1. Direct the work."),
+            true,
+            80,
+            24,
+            |_| Box::new(|_: &[u8]| true),
+        );
+        assert_eq!(spawned.err().as_deref(), Some(NO_TOOLS));
     }
 
     #[test]

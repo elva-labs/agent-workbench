@@ -87,20 +87,26 @@ fn codex_config_path(project: &Path) -> PathBuf {
     project.join(".codex").join("config.toml")
 }
 
-/// The tool server for a session that needs the tools named on its own
-/// command line: the daemon, when there is one here and the agent's own
-/// configuration for the directory it runs in does not already point at
-/// it. `config_dir` is the account's directory for the agent, spelled as
-/// the settings spell it.
-pub fn server_pending(
-    home: &Path,
-    dir: &Path,
-    agent: &str,
-    config_dir: Option<&str>,
-) -> Option<PathBuf> {
+/// Where a session that needs the workbench's tools finds the tool server.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ToolServer {
+    /// The agent's own configuration for the directory points at it.
+    Configured,
+    /// The daemon is here and the agent is not pointed at it, so it is
+    /// named on the session's own command line.
+    Named(PathBuf),
+    /// There is no daemon on this machine to serve the tools.
+    Missing,
+}
+
+/// Where a session in `dir` finds the tool server: the daemon, when there is
+/// one here, named on the command line unless the agent's own configuration
+/// for the directory already points at it. `config_dir` is the account's
+/// directory for the agent, spelled as the settings spell it.
+pub fn tool_server(home: &Path, dir: &Path, agent: &str, config_dir: Option<&str>) -> ToolServer {
     let daemon = daemon_path(home);
     if !daemon.is_file() {
-        return None;
+        return ToolServer::Missing;
     }
     let command = daemon.to_string_lossy().to_string();
     let installed = match agent {
@@ -131,7 +137,11 @@ pub fn server_pending(
             }),
         _ => true,
     };
-    (!installed).then_some(daemon)
+    if installed {
+        ToolServer::Configured
+    } else {
+        ToolServer::Named(daemon)
+    }
 }
 
 fn settings_path(project: &Path) -> PathBuf {
@@ -738,29 +748,33 @@ mod tests {
     fn the_server_goes_on_the_command_line_only_where_the_agent_lacks_it() {
         let (home, project) = fixture("server-pending");
         for agent in ["claude-code", "codex"] {
-            assert_eq!(server_pending(&home, &project, agent, None), None);
+            assert_eq!(
+                tool_server(&home, &project, agent, None),
+                ToolServer::Missing,
+                "{agent}"
+            );
         }
         with_daemon(&home);
         for agent in ["claude-code", "codex"] {
             assert_eq!(
-                server_pending(&home, &project, agent, None),
-                Some(daemon_path(&home)),
+                tool_server(&home, &project, agent, None),
+                ToolServer::Named(daemon_path(&home)),
                 "{agent}"
             );
         }
         install(&home, &project, &[]).unwrap();
         for agent in ["claude-code", "codex"] {
             assert_eq!(
-                server_pending(&home, &project, agent, None),
-                None,
+                tool_server(&home, &project, agent, None),
+                ToolServer::Configured,
                 "{agent}"
             );
         }
         // Another account's Claude Code state was not written, so a session
         // under it still needs the server named.
         assert_eq!(
-            server_pending(&home, &project, "claude-code", Some("~/.claude-work")),
-            Some(daemon_path(&home))
+            tool_server(&home, &project, "claude-code", Some("~/.claude-work")),
+            ToolServer::Named(daemon_path(&home))
         );
     }
 

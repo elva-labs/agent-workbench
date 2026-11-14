@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, NO_WORKFLOW, installFakeCore } from "./fake";
+import { PROJECT, NO_WORKFLOW, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 /**
  * One session directing another, driven by a fake core.
@@ -334,9 +334,8 @@ test.describe("the conductor", () => {
 
 test.describe("a session that follows a workflow", () => {
   test.beforeEach(async ({ page }) => {
-    // The settings a fresh install has: new sessions follow Build and
-    // review.
-    await installFakeCore(page);
+    // New sessions follow the shipped workflow, turned on.
+    await installFakeCore(page, { settings: WITH_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();

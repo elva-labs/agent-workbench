@@ -17,7 +17,9 @@ import {
   names,
 } from "$lib/accounts.svelte";
 import { agentLabel, installed, isReady } from "$lib/agent.svelte";
-import type { AgentId } from "$lib/core";
+import type { AgentId, Workflow, WorkflowModel } from "$lib/core";
+import { modelLabel } from "$lib/models";
+import { workflowNamed, workflowOf, workflows } from "$lib/workflows.svelte";
 import {
   defaultAgent,
   label,
@@ -50,10 +52,10 @@ import { reduced } from "$lib/motion";
  * palette is opened for most.
  *
  * A new session is asked for in steps in the same field: the project, then
- * the account when accounts are named, then how it runs, which is the agent
- * when more than one is installed. Each answer becomes a chip, and a step
- * with nothing to choose is not asked. The session starts on the last
- * answer.
+ * the account when accounts are named, then how it runs: under one of the
+ * workflows, the project's own first, or as one agent with no workflow.
+ * Each answer becomes a chip, and a step with nothing to choose is not
+ * asked. The session starts on the last answer.
  */
 
 export type Mode = "goto" | "commands" | "new";
@@ -64,7 +66,8 @@ export type CommandId = "new" | "newHere" | "open" | "remote";
 export type Step =
   | { kind: "project"; path: string }
   | { kind: "account"; account: string | null }
-  | { kind: "agent"; agent: AgentId };
+  | { kind: "agent"; agent: AgentId }
+  | { kind: "workflow"; workflow: string };
 
 export type StepKind = Step["kind"];
 
@@ -109,6 +112,8 @@ export type PaletteItem =
       label: string;
       group: string;
       step: Step;
+      /** A line beside the label: what a workflow does. */
+      detail: string;
       end: string;
     }
   | {
@@ -364,12 +369,15 @@ export function commandItems(query: string): PaletteItem[] {
 }
 
 /** The question a new session asks next given the answers so far, or null
-    when it has all it needs. */
+    when it has all it needs. How it runs is asked as "agent", and answered
+    by an agent or a workflow; it is asked when there is a workflow, or more
+    than one agent, to pick between. */
 export function nextStep(steps: Step[]): StepKind | null {
   const has = (kind: StepKind) => steps.some((step) => step.kind === kind);
   if (!has("project")) return "project";
   if (hasAccounts() && !has("account")) return "account";
-  if (installed().length > 1 && !has("agent")) return "agent";
+  const how = installed().length > 1 || workflows.list.length > 0;
+  if (how && !has("agent") && !has("workflow")) return "agent";
   return null;
 }
 
@@ -384,7 +392,7 @@ export function stepsLeft(steps: Step[]): StepKind[] {
         ? { kind, path: "" }
         : kind === "account"
           ? { kind, account: null }
-          : { kind, agent: "claude-code" },
+          : { kind: "agent", agent: "claude-code" },
     );
   }
   return left;
@@ -405,28 +413,65 @@ export function chipOf(step: Step): string {
       return accountLabel(step.account);
     case "agent":
       return agentLabel(step.agent);
+    case "workflow":
+      return step.workflow;
   }
 }
 
+export const WORKFLOWS = "Workflows";
+export const ALONE = "One agent, no workflow";
+
 /** What the last question offers, as titled lists drawn in order: the
-    agents to run, one model with no workflow. */
+    workflows, the project's own first, then the agents to run alone. */
 function runSections(
   project: string,
 ): { title: string; items: PaletteItem[] }[] {
-  const title = "Agent";
-  return [
+  const own = workflowOf(project);
+  const ordered =
+    own === null
+      ? workflows.list
+      : [own, ...workflows.list.filter((workflow) => workflow.name !== own.name)];
+  const sections = [
     {
-      title,
+      title: WORKFLOWS,
+      items: ordered.map((workflow): PaletteItem => ({
+        kind: "choice",
+        id: `workflow:${workflow.name}`,
+        label: workflow.name,
+        group: WORKFLOWS,
+        step: { kind: "workflow", workflow: workflow.name },
+        detail: workflowGist(workflow),
+        end: workflow.name === own?.name ? "project default" : "",
+      })),
+    },
+    {
+      title: ALONE,
       items: installed().map((agent): PaletteItem => ({
         kind: "choice",
         id: `agent:${agent}`,
         label: agentLabel(agent),
-        group: title,
+        group: ALONE,
         step: { kind: "agent", agent },
+        detail: "",
         end: sessions.preferred[project] === agent ? "last used" : "",
       })),
     },
   ];
+  return sections.filter((section) => section.items.length > 0);
+}
+
+/** A workflow in a few words: the model each part runs on first, and what
+    it does. "Fable directs, Sonnet works, Opus reviews". */
+export function workflowGist(workflow: Workflow): string {
+  const label = (model: WorkflowModel | undefined) =>
+    model === undefined ? "Any model" : modelLabel(model.agent, model.model);
+  return [
+    `${label(workflow.orchestrator)} directs`,
+    ...workflow.steps.map(
+      (step) =>
+        `${label(step.models[0])} ${step.kind === "work" ? "works" : "reviews"}`,
+    ),
+  ].join(", ");
 }
 
 /** The projects a new session can go in: the one on screen first, then
@@ -445,6 +490,7 @@ function projectChoices(): PaletteItem[] {
     label: projectLabel(path),
     group,
     step: { kind: "project", path },
+    detail: "",
     end: standing(path),
   }));
 }
@@ -460,6 +506,7 @@ function accountChoices(project: string): PaletteItem[] {
     label: accountLabel(account),
     group,
     step: { kind: "account", account },
+    detail: "",
     end: account === own ? "this project's" : "",
   }));
 }
@@ -518,7 +565,10 @@ export function startingId(): string | null {
   if (project === null) return null;
   const asking = nextStep(palette.steps);
   if (asking === "account") return `account:${accountOf(project) ?? ""}`;
-  if (asking === "agent") return `agent:${defaultAgent(project)}`;
+  if (asking === "agent") {
+    const own = workflowOf(project);
+    return own === null ? `agent:${defaultAgent(project)}` : `workflow:${own.name}`;
+  }
   return null;
 }
 
@@ -527,18 +577,21 @@ function isOpen(path: string): boolean {
   return workspace.open.some((project) => project.path === path);
 }
 
-/** Starts a session on the answers given: the project's account and the
-    agent it used last stand in for a question that was not asked. A project
-    that has closed meanwhile gets none. */
+/** Starts a session on the answers given: under the workflow picked, or
+    the agent picked alone. The project's account stands in for a question
+    that was not asked, and a session not asked how to run runs as a plain
+    new one does. A project that has closed meanwhile gets none. */
 function startOn(steps: Step[]) {
   const path = projectOfSteps(steps);
   if (path === null || !isOpen(path)) return;
   const account = steps.find((step) => step.kind === "account");
   const agent = steps.find((step) => step.kind === "agent");
+  const workflow = steps.find((step) => step.kind === "workflow");
   startSession(
     path,
     agent?.agent,
     account === undefined ? undefined : account.account,
+    workflow === undefined ? undefined : (workflowNamed(workflow.workflow) ?? undefined),
   );
 }
 

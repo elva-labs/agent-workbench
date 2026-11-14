@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { BUILD_AND_REVIEW } from "./fake";
 
 /**
  * Sessions, driven by a fake core.
@@ -32,10 +33,13 @@ interface FakeOptions {
   failSpawn?: string | null;
   /** How long a spawn takes to answer, in milliseconds. */
   spawnDelay?: number;
-  /** A machine whose settings start new sessions on no workflow, where the
-      agent picked is the one that runs. Without it the machine keeps no
-      settings and the window's own copy holds. */
-  noWorkflow?: boolean;
+  /** A machine whose settings start new sessions on the shipped workflow.
+      Without it the machine keeps no settings and the window's own copy
+      holds, which has new sessions following none. */
+  withWorkflow?: boolean;
+  /** A machine whose settings hold no workflows at all, so a new session
+      has nothing to ask about how it runs where one agent is installed. */
+  noWorkflows?: boolean;
 }
 
 declare global {
@@ -49,6 +53,8 @@ declare global {
         project: string;
         session?: string;
         cols?: number;
+        model?: string;
+        instructions?: string;
       }[];
       killed: string[];
       titles: string[];
@@ -100,7 +106,7 @@ declare global {
 
 async function installFakeCore(page: Page, options: FakeOptions = {}) {
   await page.addInitScript(
-    ({ open, binary, failSpawn, codex, codexTranscripts, spawnDelay, noWorkflow }) => {
+    ({ open, binary, failSpawn, codex, codexTranscripts, spawnDelay, withWorkflow, noWorkflows, workflow }) => {
       const read = (term: any) => {
         if (!term) return "";
         const active = term.buffer.active;
@@ -280,10 +286,14 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         settingsAnswer: async () => {},
         // A machine that keeps no settings: the window's own copy holds.
         settingsGet: async () => {
-          if (noWorkflow)
+          if (noWorkflows)
+            return { stored: true, settings: { workflows: { list: [], default: null, overrides: {} } } };
+          if (withWorkflow)
             return {
               stored: true,
-              settings: { workflows: { list: [], default: null, overrides: {} } },
+              settings: {
+                workflows: { list: [workflow], default: "Build and review", overrides: {} },
+              },
             };
           throw new Error("no settings here");
         },
@@ -365,7 +375,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
       codex: options.codex,
       codexTranscripts: options.codexTranscripts,
       spawnDelay: options.spawnDelay,
-      noWorkflow: options.noWorkflow ?? false,
+      withWorkflow: options.withWorkflow ?? false,
+      noWorkflows: options.noWorkflows ?? false,
+      workflow: BUILD_AND_REVIEW,
     },
   );
 }
@@ -1246,7 +1258,8 @@ test.describe("several projects", () => {
 
 test.describe("with codex installed too", () => {
   test.beforeEach(async ({ page }) => {
-    await open(page, { open: [ONE], codex: "/usr/local/bin/codex", noWorkflow: true });
+    // New sessions follow a workflow, which an agent picked does not.
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex", withWorkflow: true });
   });
 
   test("Codex breathes only during a reported turn, even with continuous redraws", async ({ page }) => {
@@ -1293,6 +1306,7 @@ test.describe("with codex installed too", () => {
     await options.nth(1).click();
     await expect.poll(() => spawns(page)).toHaveLength(1);
     expect((await spawns(page))[0].agent).toBe("codex");
+    expect((await spawns(page))[0].instructions).toBeUndefined();
     expect((await spawns(page))[0].project).toBe(
       "/home/ada/.agent-workbench/orchestrator",
     );
@@ -1311,7 +1325,21 @@ test.describe("with codex installed too", () => {
 
     await page.getByTestId("start-agent-codex").click();
     await expect.poll(() => spawns(page)).toHaveLength(1);
-    expect((await spawns(page))[0].agent).toBe("codex");
+    // The agent picked is what starts, alone, though the project follows a
+    // workflow whose orchestrator is Claude Code's.
+    expect((await spawns(page))[0]).toMatchObject({ agent: "codex" });
+    expect((await spawns(page))[0].instructions).toBeUndefined();
+    await expect(page.getByTestId("agent-status")).toHaveCount(0);
+  });
+
+  test("starts Claude Code picked from the pane's row alone, on no model", async ({ page }) => {
+    await page.getByTestId("new-session").first().click();
+    await page.locator('[data-testid="agent-option"][data-agent="claude-code"]').click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    const [spawn] = await spawns(page);
+    expect(spawn.agent).toBe("claude-code");
+    expect(spawn.model).toBeUndefined();
+    expect(spawn.instructions).toBeUndefined();
   });
 
   test("keeps the agent pane's buttons against its right edge", async ({ page }) => {
@@ -2176,7 +2204,7 @@ test.describe("a new session from the palette", () => {
   test("starts in the project on screen from the keyboard alone, with the keyboard in the new agent", async ({
     page,
   }) => {
-    await open(page, { open: [ONE, TWO] });
+    await open(page, { open: [ONE, TWO], noWorkflows: true });
     await page.keyboard.press(COMMANDS);
     await page.keyboard.type("new session");
     await expect(chosen(page)).toContainText("New session");
@@ -2211,7 +2239,7 @@ test.describe("a new session from the palette", () => {
   });
 
   test("starts in another project that is typed", async ({ page }) => {
-    await open(page, { open: [ONE, TWO] });
+    await open(page, { open: [ONE, TWO], noWorkflows: true });
     await page.keyboard.press(COMMANDS);
     await page.keyboard.type("new session");
     await page.keyboard.press("Enter");
@@ -2226,7 +2254,7 @@ test.describe("a new session from the palette", () => {
   });
 
   test("starts in the project on screen from its own command", async ({ page }) => {
-    await open(page, { open: [ONE, TWO] });
+    await open(page, { open: [ONE, TWO], noWorkflows: true });
     await page.keyboard.press(COMMANDS);
     await page.keyboard.type("new session in");
     await expect(entries(page)).toHaveCount(1);
@@ -2238,7 +2266,7 @@ test.describe("a new session from the palette", () => {
   });
 
   test("starts from go to with the modifier and Enter on a project", async ({ page }) => {
-    await open(page, { open: [ONE, TWO] });
+    await open(page, { open: [ONE, TWO], noWorkflows: true });
     await page.keyboard.press(GOTO);
     await page.keyboard.type("tw");
     await expect(entries(page)).toHaveCount(1);
@@ -2250,7 +2278,7 @@ test.describe("a new session from the palette", () => {
   });
 
   test("starts from go to with the modifier and Enter on a session, in its project", async ({ page }) => {
-    await open(page, { open: [ONE, TWO] });
+    await open(page, { open: [ONE, TWO], noWorkflows: true });
     await running(page);
     await page.keyboard.press(`${MOD}+Shift+P`);
     await page.keyboard.type("go to");
@@ -2267,7 +2295,7 @@ test.describe("a new session from the palette", () => {
   test("asks which agent where more than one is installed, and Backspace on an empty field steps back", async ({
     page,
   }) => {
-    await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex" });
+    await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex", noWorkflows: true });
     await page.keyboard.press(COMMANDS);
     await page.keyboard.type("new session");
     await page.keyboard.press("Enter");
@@ -2309,6 +2337,41 @@ test.describe("a new session from the palette", () => {
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   });
 
+  test("offers the workflows above the agents, the project's own first, and starts what is picked", async ({
+    page,
+  }) => {
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex", withWorkflow: true });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await expect(field(page)).toHaveAttribute("placeholder", "How should it run");
+    await expect(page.getByTestId("palette-group")).toHaveText(["Workflows", "One agent, no workflow"]);
+    await expect(entries(page)).toHaveCount(3);
+    const flow = entries(page).first();
+    await expect(flow).toContainText("Build and review");
+    await expect(flow).toContainText("Fable directs, Sonnet works, Opus reviews");
+    await expect(flow).toContainText("project default");
+    // The workflows sit above the agents, and the cursor starts on the
+    // project's own.
+    const agentRow = (await entries(page).nth(1).boundingBox())!;
+    expect((await flow.boundingBox())!.y).toBeLessThan(agentRow.y);
+    await expect(chosen(page)).toContainText("Build and review");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0]).toMatchObject({ agent: "claude-code", model: "fable" });
+    expect((await spawns(page))[0].instructions).toContain('workflow "Build and review"');
+
+    // Codex picked is Codex alone.
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("codex");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawnCount(page)).toBe(2);
+    expect((await spawns(page))[1].agent).toBe("codex");
+    expect((await spawns(page))[1].instructions).toBeUndefined();
+  });
+
   test("puts the agent last started in the project under the cursor", async ({ page }) => {
     await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
     await page.keyboard.press(COMMANDS);
@@ -2325,7 +2388,7 @@ test.describe("a new session from the palette", () => {
   });
 
   test("Escape closes it from any step and the keyboard goes back", async ({ page }) => {
-    await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex" });
+    await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex", noWorkflows: true });
     await page.getByTestId("new-session").click();
     await page.getByTestId("agent-option").first().click();
     await expect(page.locator(AGENT)).toContainText("running");

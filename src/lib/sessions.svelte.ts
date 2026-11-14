@@ -14,7 +14,7 @@ import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { readWorkflow, startsOnly, workflowOf } from "$lib/workflows.svelte";
 import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
-import { AGENTS, installed } from "$lib/agent.svelte";
+import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
@@ -813,16 +813,19 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * the pane has something to render while it comes up, and so a failure to
  * start has somewhere to be reported.
  *
- * Left out, `workflow` is the session's own: for a new session the one its
- * project follows, and for a resumed one the one it followed before. A new
- * session that follows one starts on the workflow's orchestrator, its agent
- * and model, whatever agent was asked for; a resumed one keeps its agent and
- * runs on the orchestrator's model where that is the same agent's.
+ * A session runs one of two ways: under a workflow, on the workflow's
+ * orchestrator, or as one agent with no workflow. What was picked is what
+ * starts. A workflow given starts under it; null starts the agent alone.
+ * Left out, a resumed session follows the workflow it followed before, and a
+ * new one follows its project's workflow when nothing was picked: the agent
+ * left out, or nothing there to pick between, one agent installed and no
+ * accounts. An agent picked from several starts alone. A workflow whose
+ * orchestrator runs on an agent that is not installed is refused on the row.
  */
 export function create(
   project: string,
   resumedFrom: string | null = null,
-  agent: AgentId = defaultAgent(project),
+  agent?: AgentId,
   startIn: string | null = null,
   prompt: string | null = null,
   model: string | null = null,
@@ -832,30 +835,44 @@ export function create(
   const following =
     workflow !== undefined
       ? workflow
-      : resumedFrom === null
-        ? workflowOf(project)
-        : workflowFor(resumedFrom);
+      : resumedFrom !== null
+        ? workflowFor(resumedFrom)
+        : agent === undefined || nothingToPick()
+          ? workflowOf(project)
+          : null;
+  let runs: AgentId = agent ?? defaultAgent(project);
   if (following !== null) {
-    if (resumedFrom === null) agent = following.orchestrator.agent;
-    if (model === null && agent === following.orchestrator.agent)
+    if (resumedFrom === null) runs = following.orchestrator.agent;
+    if (model === null && runs === following.orchestrator.agent)
       model = orchestratorModel(following);
   }
-  prefer(project, agent);
+  const missing =
+    following !== null && resumedFrom === null && !installed().includes(runs)
+      ? `The workflow "${following.name}" runs its orchestrator on ${agentLabel(runs)}, which is not installed here. Pick an agent to start one alone, or choose another workflow for this project in the settings.`
+      : null;
+  if (missing === null) prefer(project, runs);
   const live = added(
     row(
       project,
       resumedFrom,
-      agent,
+      runs,
       startIn,
       prompt,
       model,
       account,
-      "starting",
+      missing === null ? "starting" : "failed",
       following,
     ),
   );
+  if (missing !== null) live.error = missing;
   sessions.active = live.key;
   return live;
+}
+
+/** Whether a new session has nothing to pick between: one agent to run
+    and no accounts to run it under. */
+function nothingToPick(): boolean {
+  return installed().length <= 1 && names().length === 0;
 }
 
 /**
@@ -960,7 +977,8 @@ export async function launch(
   onOutput: (bytes: Uint8Array) => void,
 ): Promise<boolean> {
   const session = byKey(key);
-  if (session === null) return false;
+  // A row refused before it started has no process to start.
+  if (session === null || session.status !== "starting") return false;
   try {
     const { ptyId, sessionId } = await core().spawn(
       {

@@ -460,6 +460,11 @@ describe("the user's stylesheet", () => {
 });
 
 describe("workflows", () => {
+  // The shipped workflow, turned on for new sessions.
+  beforeEach(() => {
+    workflows.default = "Build and review";
+  });
+
   const quick = {
     name: "Quick fix",
     orchestrator: { agent: "claude-code", model: "opus" },
