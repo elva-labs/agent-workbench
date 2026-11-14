@@ -132,13 +132,15 @@
       while (out.some((other) => other.level === level && other.to <= index && to <= other.from)) {
         level += 1;
       }
-      const rounds = step.limit === 1 ? "1 round" : `${step.limit} rounds`;
+      // How often the work goes back, as the step's settings say it; a
+      // review sending it back that often reviews a piece once more.
+      const times = step.limit === 1 ? "once" : `${step.limit} times`;
       out.push({
         from: index,
         to,
         level,
         arrive: 0,
-        text: `${step.name}: back to ${step.backTo} ${until(step)}, ${rounds} at most`,
+        text: `${step.name}: back to ${step.backTo} ${until(step)}, at most ${times}`,
       });
     });
     for (const loop of out) {

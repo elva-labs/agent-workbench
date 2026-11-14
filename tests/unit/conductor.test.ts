@@ -52,7 +52,7 @@ import {
 } from "$lib/sessions.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
-import { defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import { defaultWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import type { Workflow } from "$lib/core";
@@ -2093,6 +2093,7 @@ describe("starting in a workflow's shape", () => {
       "Models it may use: Opus.",
       "The work passes when the reviewer approves and the orchestrator agrees.",
       "Otherwise: go back to Work at most 3 times, then ask me.",
+      "A piece is reviewed 4 times at most before that.",
     ]);
     for (const line of tag.rules) expect(line).not.toMatch(/\byou\b|`/i);
     // A deleted workflow followed by its kept copy says so by its name.
@@ -2322,6 +2323,31 @@ describe("starting in a workflow's shape", () => {
     expect(mayChangeModel("\uff0fmodel opus")).toBe(true);
     expect(mayChangeModel("/compact")).toBe(false);
     expect(mayChangeModel("Look at /src/x.ts")).toBe(false);
+  });
+
+  it("says the same of a review's limit on the tag, in the question and in the count", async () => {
+    // A review that sends the work back at most twice reviews a piece three
+    // times; the third is as many as it allows, and the fourth is asked.
+    const workflow = defaultWorkflow();
+    const review = workflow.steps[1];
+    if (review.kind === "review") review.limit = 2;
+    orchestrating(workflow);
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    for (const round of [1, 2, 3]) {
+      await begun({ step: "Review", work: "w1" }, `r${round}`);
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    expect(stepFacts(review)).toContain("Otherwise: go back to Work at most 2 times, then ask me.");
+    expect(stepFacts(review)).toContain("A piece is reviewed 3 times at most before that.");
+    const asked = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(roundQuestion(conductor.asking!.round!)).toBe(
+      "Review has run 3 times on Fix the cache, as many times as the workflow allows. Allow another round?",
+    );
+    refuse();
+    await asked;
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
   });
 
   it("asks about a round past the limit in words, however many rounds there were", () => {

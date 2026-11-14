@@ -214,7 +214,10 @@ draws a line under the row from itself to the step it repeats, lines that
 arrive at one step standing side by side so they do not cross, and under all
 the lines a label names the review and says where the work goes back to,
 until when (the reviewer approves, the orchestrator agrees, or both approve)
-and how many rounds at most. The steps share the width there is; where even
+and how many times at most, as the step's settings say it. A review that
+sends the work back at most three times reviews a piece four times at most;
+the round counted on a review's header and in the question past the limit
+count reviews the same way. The steps share the width there is; where even
 the narrowest steps do not fit, the row scrolls sideways under the
 orchestrator's head, which stays in place, with the hidden edge faded, and
 the step picked is scrolled into view.

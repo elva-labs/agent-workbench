@@ -70,7 +70,7 @@ test.describe("the workflows tab", () => {
     expect(Math.abs(line.x + line.width - (review.x + review.width / 2))).toBeLessThan(2);
     expect(line.y).toBeGreaterThanOrEqual(Math.max(work.y + work.height, review.y + review.height) - 2);
     const label = page.getByTestId("workflow-loop-label");
-    await expect(label).toHaveText("Review: back to Work until both approve, 3 rounds at most");
+    await expect(label).toHaveText("Review: back to Work until both approve, at most 3 times");
     const text = (await label.boundingBox())!;
     expect(text.y).toBeGreaterThan(line.y);
   });
@@ -250,7 +250,7 @@ test.describe("the workflows tab", () => {
     expect(Math.abs(line.x - (plan.x + plan.width / 2))).toBeLessThan(2);
     expect(Math.abs(line.x + line.width - (check.x + check.width / 2))).toBeLessThan(2);
     await expect(page.getByTestId("workflow-loop-label")).toHaveText(
-      "Check: back to Plan until the reviewer approves, 2 rounds at most",
+      "Check: back to Plan until the reviewer approves, at most 2 times",
     );
   });
 
@@ -372,7 +372,7 @@ test.describe("the settings of a step", () => {
     await page.getByTestId("step-limit").fill("5");
     await page.getByTestId("step-limit").press("Enter");
     await expect(page.getByTestId("workflow-loop-label")).toHaveText(
-      "Review: back to Work 2 until the orchestrator agrees, 5 rounds at most",
+      "Review: back to Work 2 until the orchestrator agrees, at most 5 times",
     );
     // A review goes back only to a work step before it.
     const options = await page.getByTestId("step-back-to").locator("option").allTextContents();
@@ -701,8 +701,8 @@ test.describe("the lines of reviews", () => {
     await open(page, fourSteps);
     const labels = page.getByTestId("workflow-loop-label");
     await expect(labels).toHaveText([
-      "Check: back to Plan until the orchestrator agrees, 2 rounds at most",
-      "Final review: back to Build until both approve, 3 rounds at most",
+      "Check: back to Plan until the orchestrator agrees, at most 2 times",
+      "Final review: back to Build until both approve, at most 3 times",
     ]);
     const lines = await Promise.all(
       (await page.getByTestId("workflow-loop").all()).map(async (line) => (await line.boundingBox())!),
@@ -750,8 +750,8 @@ test.describe("the lines of reviews", () => {
       },
     });
     await expect(page.getByTestId("workflow-loop-label")).toHaveText([
-      "First look: back to Work until both approve, 3 rounds at most",
-      "Second look: back to Work until the reviewer approves, 2 rounds at most",
+      "First look: back to Work until both approve, at most 3 times",
+      "Second look: back to Work until the reviewer approves, at most 2 times",
     ]);
     const inner = (await page.locator('[data-testid="workflow-loop"][data-from="First look"]').boundingBox())!;
     const outer = (await page.locator('[data-testid="workflow-loop"][data-from="Second look"]').boundingBox())!;

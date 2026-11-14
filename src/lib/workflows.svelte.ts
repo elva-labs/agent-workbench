@@ -733,6 +733,7 @@ export function stepFacts(step: WorkflowStep, work: string | null = null): strin
     `Models it may use: ${models}.`,
     `The work passes when ${passesText(step)}.`,
     `Otherwise: go back to ${step.backTo} at most ${times}, then ask me.`,
+    `A piece is reviewed ${step.limit + 1} times at most before that.`,
   ];
 }
 
