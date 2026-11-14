@@ -1306,6 +1306,136 @@ test.describe("the session question from the keyboard", () => {
   });
 });
 
+/** Where a question's three buttons stand: the destructive one, Cancel and
+    the way out, in the order they come. */
+async function threeButtons(page: Page, testid: string) {
+  return Promise.all(["confirm", "cancel", "alternative"].map((part) => box(page, `[data-testid='${testid}-${part}']`)));
+}
+
+/** Whether the three stand on one line. */
+async function oneLine(page: Page, testid: string) {
+  const [quiet, cancel, save] = await threeButtons(page, testid);
+  return Math.round(quiet.y) === Math.round(cancel.y) && Math.round(cancel.y) === Math.round(save.y);
+}
+
+test.describe("the question's three buttons", () => {
+  test("stand as one column in the narrow sessions pane, and on one line once it is wide enough", async ({ page }) => {
+    await open(page, 2000);
+    await flip(page);
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.keyboard.press(`${MOD}+1`);
+    await page.keyboard.press("Delete");
+    await expect(page.getByTestId("close-owner")).toBeVisible();
+
+    // One column, in the order they stand in a row, each as wide as the others.
+    const [quiet, cancel, save] = await threeButtons(page, "close-owner");
+    expect(Math.round(cancel.x)).toBe(Math.round(quiet.x));
+    expect(Math.round(save.x)).toBe(Math.round(quiet.x));
+    expect(Math.round(cancel.width)).toBe(Math.round(quiet.width));
+    expect(Math.round(save.width)).toBe(Math.round(quiet.width));
+    expect(cancel.y).toBeGreaterThanOrEqual(quiet.y + quiet.height);
+    expect(save.y).toBeGreaterThanOrEqual(cancel.y + cancel.height);
+
+    // The pane dragged wider has room for the three on one line.
+    const splitter = page.getByRole("separator", { name: "Resize projects and sessions" });
+    const handle = await splitter.boundingBox();
+    if (!handle) throw new Error("no splitter");
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 400);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 180, handle.y + 400, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(() => oneLine(page, "close-owner")).toBe(true);
+  });
+
+  test("stand on one line over the editor", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await tab(page, "README.md").hover();
+    await tab(page, "README.md").getByRole("button").click();
+    await expect(page.getByTestId("close-unsaved")).toBeVisible();
+    expect(await oneLine(page, "close-unsaved")).toBe(true);
+  });
+});
+
+test.describe("closing what the pane folds away or hangs under another", () => {
+  test("asks before Delete closes an inactive project", async ({ page }) => {
+    const TWO = "/home/ada/dev/two";
+    await page.setViewportSize({ width: 1728, height: 1000 });
+    await page.clock.install();
+    await installFakeCore(page, { open: [PROJECT, TWO] });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    // Unsaved edits beside demo itself, with no session, then two in front.
+    await page.locator(SESSIONS).getByText("demo", { exact: true }).click();
+    await flip(page);
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.locator(SESSIONS).getByText("two", { exact: true }).click();
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+
+    // Eight days on, nothing has happened in demo and it folds under Inactive.
+    await page.clock.fastForward(8 * 24 * 3600 * 1000);
+    await page.getByTestId("inactive-fold").click();
+    await expect(page.getByTestId("inactive-project")).toContainText("demo");
+    await page.keyboard.press(`${MOD}+1`);
+    await page.keyboard.press("End");
+    await page.keyboard.press("Delete");
+    const strip = page.getByTestId("close-owner");
+    await expect(strip).toContainText("Close demo with unsaved edits?");
+    await expect(strip).toContainText("README.md");
+    await expect(page.getByTestId("close-owner-cancel")).toBeFocused();
+    await page.getByTestId("close-owner-confirm").click();
+    await expect(strip).toHaveCount(0);
+    await expect(page.locator(`${SESSIONS} [data-row="idle:${PROJECT}"]`)).toHaveCount(0);
+    await expect(page.locator(`${SESSIONS} [data-row="project:${PROJECT}"]`)).toHaveCount(0);
+  });
+
+  test("asks before the × on a started session stops it, naming its project where the name repeats", async ({ page }) => {
+    await open(page, 1728);
+    // The orchestrator's own session 1, which starts a session 1 in demo.
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await page.evaluate(
+      (project) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id: "o-1",
+          tool: "start",
+          arguments: { project, prompt: "Bump the client" },
+          cwd: project,
+          session: "session-1",
+        }),
+      PROJECT,
+    );
+    await page.getByTestId("conduct-allow").click();
+    const started = page.locator(`${SESSIONS} .session.kid`);
+    await expect(started).toContainText("session 1");
+    await expect(started).toContainText("demo");
+
+    // Unsaved edits beside the started session, in editor mode.
+    await started.getByTestId("started-session").click();
+    await flip(page);
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+
+    await started.hover();
+    await started.getByTestId("close-session").click();
+    const strip = page.getByTestId("close-owner");
+    await expect(strip).toContainText("Close session 1 in demo with unsaved edits?");
+    await expect(strip).toContainText("README.md");
+    await expect(page.getByTestId("close-owner-cancel")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(strip).toHaveCount(0);
+    await expect(started).toHaveCount(1);
+    await expect(tab(page, "README.md")).toHaveClass(/dirty/);
+  });
+});
+
 test.describe("the File menu's items", () => {
   test("say which can act", async ({ page }) => {
     await open(page, 1728);
