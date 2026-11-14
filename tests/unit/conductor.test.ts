@@ -34,6 +34,7 @@ import {
 } from "$lib/sessions.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { reset as resetWorkflows } from "$lib/workflows.svelte";
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
@@ -167,6 +168,8 @@ async function startAllowed(
 let unwatch: () => void;
 
 beforeEach(() => {
+  // A session follows no workflow here unless a test gives it one.
+  resetWorkflows();
   vi.useFakeTimers();
   unwatch = watchStops();
   resetWorkspace();

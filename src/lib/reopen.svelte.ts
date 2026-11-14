@@ -1,10 +1,12 @@
-import type { AgentId } from "$lib/core";
+import type { AgentId, Workflow } from "$lib/core";
 import { startedFor } from "$lib/conductor.svelte";
 import {
   activeSession,
   forProject,
   reopened,
   sessions,
+  storedWorkflow,
+  workflowFor,
   type Session,
 } from "$lib/sessions.svelte";
 import {
@@ -38,6 +40,9 @@ interface Open {
   /** The account it ran under, by name; null for the agents' own. A record
       from before there were accounts has none, which reads as null. */
   account?: string | null;
+  /** The workflow it follows, as it was when it first started; null for
+      none. A record from before there were workflows has none. */
+  workflow?: Workflow | null;
 }
 
 function onRecord(session: Session): boolean {
@@ -115,6 +120,7 @@ export function reopen(
       entry.startIn,
       entry.model,
       entry.account ?? null,
+      storedWorkflow(entry.workflow) ?? workflowFor(entry.id),
     );
   };
   // The session on screen at the quit, when its project is the one in front
@@ -170,6 +176,7 @@ export function reopen(
             startIn: session.startIn,
             model: session.model,
             account: session.account,
+            workflow: session.workflow,
           })),
           ...held,
         ],

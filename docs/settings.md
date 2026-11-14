@@ -161,6 +161,22 @@ valid choice. A project can choose another, or none, whatever the default
 is. Deleting a workflow that was the default leaves new sessions with none,
 and a project that chose it follows the default again.
 
+A workflow also says whether its orchestrator delegates only through the
+workbench, which it does unless the workflow says otherwise. Its own
+subagent tools are then taken away, so every piece it hands out is a
+session of its own on the sessions pane, started with the `start` tool;
+with the setting off it keeps them, and their work does not show as
+sessions. The settings file writes the setting only when it is off.
+
+A session started in a project follows the project's workflow: its own
+choice, else the one for new sessions, else none. It starts on the
+workflow's orchestrator, its agent and its model, told the workflow's
+instructions, and keeps the workflow as it was when it started: a
+change in the settings, or a resume after a restart, does not change
+the workflow a session already follows. A session another session
+started follows none. How a workflow's session directs the others is in
+[orchestrator](orchestrator.md).
+
 The tab lists the workflows across the top, with the default tagged, and
 New workflow after them. The picked one has its name above the diagram,
 with Duplicate. The diagram draws the orchestrator as the frame, since it is
@@ -208,12 +224,13 @@ be written, is said at the top of the tab, and the window shows what is
 stored. Every control can be reached with the keyboard, and the two kinds
 are a radio group the arrow keys move through.
 
-Under the diagram, What the orchestrator is told unfolds into the
-instructions the workflow comes to: a short numbered list. The first tells
-the orchestrator to direct the work rather than do it, and to delegate by
-starting sessions with the workbench's `start` tool, not with its own
-subagents, giving the agent and the model each step names and no model for
-Codex's own default. Then each step has a sentence naming the step, what a
+Under the diagram, a box says whether the orchestrator delegates only
+through start, with a line on what that means. What the orchestrator is
+told unfolds into the instructions the workflow comes to: a short numbered
+list. The first tells the orchestrator to direct the work rather than do
+it, and to delegate by starting sessions with the workbench's `start` tool,
+not with its own subagents, giving the agent and the model each step names
+and no model for Codex's own default. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
 first as the one to use, how many sessions may run at once, or for a review
 when the work passes, where it goes back, which steps the piece is taken

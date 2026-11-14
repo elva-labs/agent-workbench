@@ -318,6 +318,10 @@ impl Core {
     /// a worktree under it that a resumed session belongs to. `config_dir`
     /// is where the agent keeps its configuration when the session runs
     /// under an account of the user's own, spelled with `~` for the home.
+    /// `instructions` are a workflow's, for a session that follows one: it
+    /// directs the others, has the workbench's tools whatever its project
+    /// was told about live updates, and, with `start_only`, delegates only
+    /// through them.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -328,6 +332,8 @@ impl Core {
         prompt: Option<&str>,
         model: Option<&str>,
         config_dir: Option<&str>,
+        instructions: Option<&str>,
+        start_only: bool,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -338,7 +344,8 @@ impl Core {
         // is what the plugins know it by, and not the worktree under it
         // the agent may run in.
         let opened = project.to_string_lossy().to_string();
-        let orchestrator = self.is_orchestrator(project);
+        let instructions = instructions.filter(|text| !text.trim().is_empty());
+        let orchestrator = instructions.is_some() || self.is_orchestrator(project);
         let project = cwd.unwrap_or(project);
 
         // A resumed session's id is known, and a fresh one's when the
@@ -358,6 +365,10 @@ impl Core {
             std::fs::create_dir_all(dir)
                 .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
+        let server = match (instructions, self.home.as_deref()) {
+            (Some(_), Some(home)) => hook::server_pending(home, project, agent, config_dir),
+            _ => None,
+        };
         let ctx = LaunchCtx {
             project,
             env: &environment.vars,
@@ -366,6 +377,9 @@ impl Core {
             model: model.filter(|model| !model.trim().is_empty()),
             config_dir: expanded.as_deref(),
             orchestrator,
+            instructions,
+            start_only: instructions.is_some() && start_only,
+            server: server.as_deref(),
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,

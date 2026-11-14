@@ -93,6 +93,19 @@ pub struct Workflow {
     pub name: String,
     pub orchestrator: Model,
     pub steps: Vec<Step>,
+    /// Whether the orchestrator delegates only through the workbench's
+    /// start tool, with the agent's own subagent tools taken away. On
+    /// unless the workflow says otherwise, and written only when off.
+    #[serde(rename = "startOnly", default = "on", skip_serializing_if = "is_on")]
+    pub start_only: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+fn is_on(value: &bool) -> bool {
+    *value
 }
 
 /// The user's workflows in the order they are shown, the one new sessions
@@ -166,6 +179,7 @@ impl Default for Workflows {
                         limit: 3,
                     },
                 ],
+                start_only: true,
             }],
             default: Some(DEFAULT_NAME.into()),
             overrides: BTreeMap::new(),
@@ -319,6 +333,7 @@ fn missing_words(field: &str) -> String {
         "name" => "name".into(),
         "orchestrator" => "orchestrator".into(),
         "steps" => "steps".into(),
+        "startOnly" => "word on whether it delegates only through start".into(),
         "kind" => "kind, work or review, for one of its steps".into(),
         "parallel" => "number of sessions at once for one of its work steps".into(),
         "reviewerApproves" | "orchestratorAgrees" => {
@@ -540,6 +555,20 @@ mod tests {
         assert_eq!(value["list"][0]["steps"][0]["parallel"], 1);
         assert_eq!(value["list"][0]["orchestrator"]["agent"], "claude-code");
         assert_eq!(read(&value).unwrap(), Workflows::default());
+    }
+
+    #[test]
+    fn delegating_only_through_start_is_on_unless_a_workflow_says_otherwise() {
+        let value = serde_json::to_value(Workflows::default()).unwrap();
+        assert!(value["list"][0].get("startOnly").is_none());
+        assert!(read(&value).unwrap().list[0].start_only);
+        let off = with(|value| value["list"][0]["startOnly"] = json!(false)).unwrap();
+        assert!(!off.list[0].start_only);
+        assert_eq!(
+            serde_json::to_value(&off).unwrap()["list"][0]["startOnly"],
+            false
+        );
+        assert!(with(|value| value["list"][0]["startOnly"] = json!("no")).is_err());
     }
 
     fn with(change: impl FnOnce(&mut serde_json::Value)) -> Result<Workflows, String> {

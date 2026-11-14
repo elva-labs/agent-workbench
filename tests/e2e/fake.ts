@@ -52,6 +52,12 @@ export const DEFAULT_FIXTURE: GitFixture = {
 
 /** Where the fake keeps the settings file the core would keep, in the
     page's storage so a reload finds it the way a restart finds the file. */
+/** A settings file whose new sessions follow no workflow, for tests of
+    starting and directing sessions as a session with none does. */
+export const NO_WORKFLOW = {
+  workflows: { list: [], default: null, overrides: {} },
+};
+
 export const SETTINGS_FILE = "fake.settings";
 /** Where the fake keeps the user's stylesheet the same way. */
 export const STYLES_FILE = "fake.userStyles";

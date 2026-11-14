@@ -21,6 +21,7 @@ import {
   restore,
   workspace,
 } from "$lib/workspace.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
 /** The answer a host gives for a project on it, held until released. */
 const host = vi.hoisted(() => ({
@@ -52,6 +53,8 @@ const repo = (path: string) => ({ path, name: path, repository: path, isGit: tru
 let stop: () => void = () => {};
 
 beforeEach(() => {
+  // A session follows no workflow here unless a test gives it one.
+  resetWorkflows();
   resetSessions();
   resetWorkspace();
   resetConductor();
@@ -121,7 +124,33 @@ describe("keeping the record", () => {
       startIn: "/home/ada/dev/one/tree",
       model: "opus",
       account: null,
+      workflow: null,
     });
+  });
+
+  it("keeps the workflow a session follows, which comes back with it after a quit", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    stop = reopen();
+    const session = create(A);
+    started(session.key, "pty-1", "one");
+    flushSync();
+    expect(record().open[0]).toMatchObject({
+      id: "one",
+      agent: "claude-code",
+      model: "fable",
+      workflow: defaultWorkflow(),
+    });
+    stop();
+
+    // The settings change, and the app starts again: the session follows
+    // the workflow it started with, not the project's of the day.
+    resetSessions();
+    adoptWorkflows({ list: [], default: null, overrides: {} });
+    stop = reopen();
+    flushSync();
+    const back = sessions.all.find((row) => row.id === "one");
+    expect(back?.workflow).toEqual(defaultWorkflow());
+    expect(back?.model).toBe("fable");
   });
 });
 

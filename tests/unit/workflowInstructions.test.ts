@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewStep, Workflow, WorkflowStep } from "$lib/core";
-import { instructionLines, instructions, modelText } from "$lib/workflowInstructions";
+import { instructionLines, instructions, modelText, orchestratorPrompt } from "$lib/workflowInstructions";
 import { defaultWorkflow } from "$lib/workflows.svelte";
 
 const work = (name: string, parallel = 1): WorkflowStep => ({ kind: "work", name, models: [], parallel });
@@ -32,6 +32,12 @@ describe("what an orchestrator is told", () => {
     expect(first).toContain("never with your own subagents");
     expect(first).toContain("do not edit files");
     expect(first).toContain("leave the model out where it says no model");
+  });
+
+  it("tells a session which workflow it follows, before the numbered list", () => {
+    const lines = orchestratorPrompt(defaultWorkflow()).split("\n");
+    expect(lines[0]).toBe('You are the orchestrator of the Agent Workbench workflow "Build and review". Follow it:');
+    expect(lines.slice(1).join("\n")).toBe(instructions(defaultWorkflow()));
   });
 
   it("writes the default workflow as numbered sentences, one per step", () => {

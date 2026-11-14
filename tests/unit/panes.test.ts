@@ -116,8 +116,11 @@ import {
 import { reset as resetHook } from "$lib/hook.svelte";
 import { remote, resetRemote } from "$lib/remote.svelte";
 import { offered, pickResume, resetResume, resume } from "$lib/resume.svelte";
+import { reset as resetWorkflows } from "$lib/workflows.svelte";
 
 beforeEach(() => {
+  // A session follows no workflow here unless a test gives it one.
+  resetWorkflows();
   resetRemote();
   resetResume();
   layout.sessions = DEFAULT.sessions;

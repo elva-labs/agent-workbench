@@ -27,6 +27,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
+use crate::adapter::{CODEX_SERVER_KEY, SERVER_NAME};
 
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
@@ -74,8 +75,52 @@ fn codex_config_path(project: &Path) -> PathBuf {
     project.join(".codex").join("config.toml")
 }
 
-const SERVER_NAME: &str = "agent-workbench";
-const CODEX_SERVER_KEY: &str = "agent_workbench";
+/// The tool server for a session that needs the tools named on its own
+/// command line: the daemon, when there is one here and the agent's own
+/// configuration for the directory it runs in does not already point at
+/// it. `config_dir` is the account's directory for the agent, spelled as
+/// the settings spell it.
+pub fn server_pending(
+    home: &Path,
+    dir: &Path,
+    agent: &str,
+    config_dir: Option<&str>,
+) -> Option<PathBuf> {
+    let daemon = daemon_path(home);
+    if !daemon.is_file() {
+        return None;
+    }
+    let command = daemon.to_string_lossy().to_string();
+    let installed = match agent {
+        "claude-code" => {
+            let key = dunce::canonicalize(dir)
+                .unwrap_or_else(|_| dir.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            read_settings(&account::claude_json(home, config_dir))
+                .get("projects")
+                .and_then(|projects| projects.get(&key))
+                .and_then(|project| project.get("mcpServers"))
+                .and_then(|servers| servers.get(SERVER_NAME))
+                .and_then(|server| server.get("command"))
+                .and_then(Value::as_str)
+                == Some(command.as_str())
+        }
+        "codex" => std::fs::read_to_string(codex_config_path(dir))
+            .ok()
+            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
+            .is_some_and(|document| {
+                document
+                    .get("mcp_servers")
+                    .and_then(|servers| servers.get(CODEX_SERVER_KEY))
+                    .and_then(|server| server.get("command"))
+                    .and_then(|command| command.as_str())
+                    == Some(command.as_str())
+            }),
+        _ => true,
+    };
+    (!installed).then_some(daemon)
+}
 
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
@@ -632,6 +677,36 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         (home, project)
+    }
+
+    #[test]
+    fn the_server_goes_on_the_command_line_only_where_the_agent_lacks_it() {
+        let (home, project) = fixture("server-pending");
+        for agent in ["claude-code", "codex"] {
+            assert_eq!(server_pending(&home, &project, agent, None), None);
+        }
+        with_daemon(&home);
+        for agent in ["claude-code", "codex"] {
+            assert_eq!(
+                server_pending(&home, &project, agent, None),
+                Some(daemon_path(&home)),
+                "{agent}"
+            );
+        }
+        install(&home, &project, &[]).unwrap();
+        for agent in ["claude-code", "codex"] {
+            assert_eq!(
+                server_pending(&home, &project, agent, None),
+                None,
+                "{agent}"
+            );
+        }
+        // Another account's Claude Code state was not written, so a session
+        // under it still needs the server named.
+        assert_eq!(
+            server_pending(&home, &project, "claude-code", Some("~/.claude-work")),
+            Some(daemon_path(&home))
+        );
     }
 
     #[test]

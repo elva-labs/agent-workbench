@@ -32,6 +32,10 @@ interface FakeOptions {
   failSpawn?: string | null;
   /** How long a spawn takes to answer, in milliseconds. */
   spawnDelay?: number;
+  /** A machine whose settings start new sessions on no workflow, where the
+      agent picked is the one that runs. Without it the machine keeps no
+      settings and the window's own copy holds. */
+  noWorkflow?: boolean;
 }
 
 declare global {
@@ -96,7 +100,7 @@ declare global {
 
 async function installFakeCore(page: Page, options: FakeOptions = {}) {
   await page.addInitScript(
-    ({ open, binary, failSpawn, codex, codexTranscripts, spawnDelay }) => {
+    ({ open, binary, failSpawn, codex, codexTranscripts, spawnDelay, noWorkflow }) => {
       const read = (term: any) => {
         if (!term) return "";
         const active = term.buffer.active;
@@ -276,6 +280,11 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         settingsAnswer: async () => {},
         // A machine that keeps no settings: the window's own copy holds.
         settingsGet: async () => {
+          if (noWorkflow)
+            return {
+              stored: true,
+              settings: { workflows: { list: [], default: null, overrides: {} } },
+            };
           throw new Error("no settings here");
         },
         settingsSet: async () => {
@@ -354,6 +363,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
       codex: options.codex,
       codexTranscripts: options.codexTranscripts,
       spawnDelay: options.spawnDelay,
+      noWorkflow: options.noWorkflow ?? false,
     },
   );
 }
@@ -1208,7 +1218,7 @@ test.describe("several projects", () => {
 
 test.describe("with codex installed too", () => {
   test.beforeEach(async ({ page }) => {
-    await open(page, { open: [ONE], codex: "/usr/local/bin/codex" });
+    await open(page, { open: [ONE], codex: "/usr/local/bin/codex", noWorkflow: true });
   });
 
   test("Codex breathes only during a reported turn, even with continuous redraws", async ({ page }) => {

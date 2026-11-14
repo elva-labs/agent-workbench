@@ -6,8 +6,12 @@ import {
   type PastSessions,
   type Settings,
   type Transcript,
+  type Workflow,
 } from "$lib/core";
 import { accountOf, dirFor, names } from "$lib/accounts.svelte";
+import { CODEX_DEFAULT } from "$lib/models";
+import { orchestratorPrompt } from "$lib/workflowInstructions";
+import { readWorkflow, startsOnly, workflowOf } from "$lib/workflows.svelte";
 import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
 import { AGENTS, installed } from "$lib/agent.svelte";
@@ -73,6 +77,10 @@ export interface Session {
       one was chosen for the session. Null for the agents' own
       directories. */
   account: string | null;
+  /** The workflow the session follows, as it was when the session first
+      started: it directs the others by it. Null for none. A later change
+      to the settings does not reach a session already following one. */
+  workflow: Workflow | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -116,6 +124,7 @@ export interface Session {
 const MINE_KEY = "workbench.mine";
 const NAMES_KEY = "workbench.names";
 const PREFERRED_KEY = "workbench.agents";
+const WORKFLOWS_KEY = "workbench.workflows";
 
 /** A past session, whose it is, and the account it ran under: the name
     of the account whose directory holds it, or null for the agents' own.
@@ -148,6 +157,10 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
+  /** The workflow each session follows, by session id, as it was when the
+      session first started, kept so a session resumed later follows the
+      same one. A session that follows none is not here. */
+  workflows: {} as Record<string, Workflow>,
   /** How long a past session stays listed under its project. Older than
       that, it goes behind the fold with the rest of the history, where it
       is still there to resume and to search. */
@@ -479,6 +492,22 @@ export function loadRemembered() {
     // Nothing is named, then.
   }
   try {
+    const raw = localStorage.getItem(WORKFLOWS_KEY);
+    if (raw !== null) {
+      const stored: unknown = JSON.parse(raw);
+      if (typeof stored === "object" && stored !== null) {
+        const kept: Record<string, Workflow> = {};
+        for (const [id, workflow] of Object.entries(stored)) {
+          const read = storedWorkflow(workflow);
+          if (read !== null) kept[id] = read;
+        }
+        sessions.workflows = kept;
+      }
+    }
+  } catch {
+    // No session follows a workflow, then.
+  }
+  try {
     const raw = localStorage.getItem(PREFERRED_KEY);
     if (raw !== null) {
       const stored: unknown = JSON.parse(raw);
@@ -494,6 +523,40 @@ export function loadRemembered() {
   } catch {
     // No preference, then.
   }
+}
+
+/** A workflow as it was kept, or null when it no longer reads. */
+export function storedWorkflow(value: unknown): Workflow | null {
+  if (value === null || value === undefined) return null;
+  try {
+    return readWorkflow(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the workflow a session follows by its id, now that it has one. */
+function rememberWorkflow(session: Session) {
+  if (session.id === null || session.workflow === null) return;
+  if (sessions.workflows[session.id] !== undefined) return;
+  sessions.workflows[session.id] = $state.snapshot(session.workflow) as Workflow;
+  try {
+    localStorage.setItem(WORKFLOWS_KEY, JSON.stringify(sessions.workflows));
+  } catch {
+    // Non-fatal: a resumed session follows the project's workflow of the day.
+  }
+}
+
+/** The workflow a session with this id follows, when one is kept. */
+export function workflowFor(id: string): Workflow | null {
+  return sessions.workflows[id] ?? null;
+}
+
+/** The model a workflow's orchestrator runs on, as the agent's command
+    line takes it: none for Codex's own default. */
+function orchestratorModel(workflow: Workflow): string | null {
+  const { agent, model } = workflow.orchestrator;
+  return agent === "codex" && model === CODEX_DEFAULT ? null : model;
 }
 
 function rememberName(id: string, name: string) {
@@ -632,6 +695,7 @@ export function identified(
   session.id = sessionId;
   identifiedZoom(session.key, sessionId);
   adopt(session.project, sessionId);
+  rememberWorkflow(session);
   replayActivity(sessionId);
   if (title !== null) named(session.key, title);
 }
@@ -748,6 +812,12 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * Adds a session row and starts it. The row exists before the process does so
  * the pane has something to render while it comes up, and so a failure to
  * start has somewhere to be reported.
+ *
+ * Left out, `workflow` is the session's own: for a new session the one its
+ * project follows, and for a resumed one the one it followed before. A new
+ * session that follows one starts on the workflow's orchestrator, its agent
+ * and model, whatever agent was asked for; a resumed one keeps its agent and
+ * runs on the orchestrator's model where that is the same agent's.
  */
 export function create(
   project: string,
@@ -757,7 +827,19 @@ export function create(
   prompt: string | null = null,
   model: string | null = null,
   account: string | null = accountOf(project),
+  workflow?: Workflow | null,
 ): Session {
+  const following =
+    workflow !== undefined
+      ? workflow
+      : resumedFrom === null
+        ? workflowOf(project)
+        : workflowFor(resumedFrom);
+  if (following !== null) {
+    if (resumedFrom === null) agent = following.orchestrator.agent;
+    if (model === null && agent === following.orchestrator.agent)
+      model = orchestratorModel(following);
+  }
   prefer(project, agent);
   const live = added(
     row(
@@ -769,6 +851,7 @@ export function create(
       model,
       account,
       "starting",
+      following,
     ),
   );
   sessions.active = live.key;
@@ -788,9 +871,10 @@ export function reopened(
   startIn: string | null,
   model: string | null,
   account: string | null,
+  workflow: Workflow | null = workflowFor(id),
 ): Session {
   return added(
-    row(project, id, agent, startIn, null, model, account, "dormant"),
+    row(project, id, agent, startIn, null, model, account, "dormant", workflow),
   );
 }
 
@@ -812,6 +896,7 @@ function row(
   model: string | null,
   account: string | null,
   status: SessionStatus,
+  workflow: Workflow | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
@@ -830,6 +915,8 @@ function row(
     prompt,
     model,
     account,
+    workflow:
+      workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow),
     worktree: null,
     working: false,
     engaged: false,
@@ -884,6 +971,12 @@ export async function launch(
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
         configDir: dirFor(session.account, session.agent),
+        ...(session.workflow === null
+          ? {}
+          : {
+              instructions: orchestratorPrompt(session.workflow),
+              startOnly: startsOnly(session.workflow),
+            }),
         cols,
         rows,
       },
@@ -925,6 +1018,7 @@ export function started(
     session.id = sessionId;
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
+    rememberWorkflow(session);
     replayActivity(sessionId);
   }
 
@@ -1463,6 +1557,7 @@ export function reset() {
   loading.clear();
   sessions.mine = {};
   sessions.names = {};
+  sessions.workflows = {};
   sessions.preferred = {};
   sessions.pastSessions = "forever";
   counter = 0;

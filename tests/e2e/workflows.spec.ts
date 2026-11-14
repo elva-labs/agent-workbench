@@ -75,6 +75,26 @@ test.describe("the workflows tab", () => {
     await expect(list).toContainText("at most 3 times");
   });
 
+  test("says the orchestrator delegates only through start, and lets it keep its subagents", async ({
+    page,
+  }) => {
+    await open(page);
+    const box = page.getByTestId("workflow-start-only");
+    const row = page.getByTestId("workflow-start-only-row");
+    await expect(box).toBeChecked();
+    await expect(row).toContainText("every piece it hands out is a session you can see");
+    // It sits above what the orchestrator is told, inside the tab.
+    const told = (await page.getByTestId("workflow-told").boundingBox())!;
+    const own = (await row.boundingBox())!;
+    expect(own.y + own.height).toBeLessThanOrEqual(told.y + 1);
+    await row.click();
+    await expect(box).not.toBeChecked();
+    await expect(row).toContainText("keeps its own subagents");
+    await expect.poll(async () => (await file(page)).workflows.list[0].startOnly).toBe(false);
+    await row.click();
+    await expect.poll(async () => (await file(page)).workflows.list[0].startOnly).toBeUndefined();
+  });
+
   test("changes the orchestrator's model at once and keeps it", async ({ page }) => {
     await open(page);
     await page.getByTestId("workflow-orchestrator-model").selectOption("claude-code:opus");

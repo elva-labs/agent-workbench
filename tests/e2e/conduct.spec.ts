@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, NO_WORKFLOW, installFakeCore } from "./fake";
 
 /**
  * One session directing another, driven by a fake core.
@@ -83,7 +83,7 @@ const drawn = (page: Page, text: string) =>
 
 test.describe("the conductor", () => {
   test.beforeEach(async ({ page }) => {
-    await installFakeCore(page);
+    await installFakeCore(page, { settings: NO_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     // One session of the user's own, which is the caller below.

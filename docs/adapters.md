@@ -13,6 +13,7 @@ above it sees a session with an agent id, a project, and an id to resume by.
 | Past sessions | Its transcripts under its configuration directory                  | Its SQLite index under its home                          |
 | Account       | `CLAUDE_CONFIG_DIR`, its configuration directory                   | `CODEX_HOME`, its home                                   |
 | Session name  | The terminal title, stripped of the glyph and the agent's own name | The thread's name, else its title, else the first prompt |
+| Workflow      | `--append-system-prompt`, `--disallowedTools Agent Workflow`       | `-c developer_instructions=…`, `-c features.multi_agent=false` |
 
 ## Accounts
 
@@ -24,6 +25,23 @@ variable set, so the agent logs in, reads its settings and files its
 transcript there. The past sessions a project lists are read from the same
 directory. The core is given directories rather than names, so a session on
 a remote machine runs under directories on that machine.
+
+## Under a workflow
+
+A session that follows a workflow is told the workflow's instructions on
+its command line, on every start and every resume, since neither agent
+keeps them with the conversation. Claude Code adds them to its own system
+prompt; Codex takes them as developer instructions, the nearest setting it
+has. Where the workflow delegates only through the workbench, Claude Code
+is started without its subagent tools, `Agent` and `Workflow`, and Codex
+with its multi-agent feature off, so the session hands work out with the
+`start` tool and nothing else.
+
+Such a session has the workbench's tools whatever its project was told
+about live updates. Where the agent's configuration for the directory does
+not already point at the tool server, the server is named on the command
+line as well: to Claude Code as an MCP configuration, to Codex as one of its
+servers. A session with no workflow starts as the table above says.
 
 ## Detection
 

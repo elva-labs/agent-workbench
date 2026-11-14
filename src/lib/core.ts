@@ -94,6 +94,10 @@ export interface Workflow {
   name: string;
   orchestrator: WorkflowModel;
   steps: WorkflowStep[];
+  /** Whether the orchestrator delegates only through the workbench's start
+      tool, with the agent's own subagent tools taken away. On when left
+      out, which is how the settings file keeps it on. */
+  startOnly?: boolean;
 }
 
 export interface SpawnOptions {
@@ -112,6 +116,13 @@ export interface SpawnOptions {
       runs under an account of the user's own. The agent's own directory
       when left out. */
   configDir?: string;
+  /** A workflow's instructions, for a session that follows one: added to
+      what the agent tells itself, and the session has the workbench's
+      tools whatever its project was told about live updates. */
+  instructions?: string;
+  /** With instructions, whether the agent's own subagent tools are taken
+      away so that it delegates only through the start tool. */
+  startOnly?: boolean;
   cols: number;
   rows: number;
 }

@@ -225,6 +225,22 @@ export function setProblem(set: Settings["workflows"]): string | null {
   return null;
 }
 
+/** Whether a workflow's orchestrator delegates only through the start
+    tool, its own subagent tools taken away. */
+export function startsOnly(workflow: Workflow): boolean {
+  return workflow.startOnly !== false;
+}
+
+/** Turns a workflow's own subagents off, so start is the one way it
+    delegates, or back on. */
+export function setStartOnly(name: string, on: boolean): string | null {
+  return edit(name, (draft) => {
+    if (on) delete draft.startOnly;
+    else draft.startOnly = false;
+    return null;
+  });
+}
+
 export function workflowNamed(name: string | null | undefined): Workflow | undefined {
   return name === null || name === undefined
     ? undefined
@@ -617,7 +633,10 @@ export function readWorkflow(value: unknown): Workflow {
   if (!isObject(value)) {
     throw new Error("A workflow is an object of a name, an orchestrator and steps.");
   }
-  only(value, ["name", "orchestrator", "steps"], "A workflow");
+  only(value, ["name", "orchestrator", "steps", "startOnly"], "A workflow");
+  if (value.startOnly !== undefined && typeof value.startOnly !== "boolean") {
+    throw new Error("A workflow's startOnly is true or false.");
+  }
   if (typeof value.name !== "string") throw new Error("A workflow has a name.");
   if (!Array.isArray(value.steps)) throw new Error("A workflow's steps are an array.");
   const steps = value.steps.map((raw, at): WorkflowStep => {
@@ -655,6 +674,9 @@ export function readWorkflow(value: unknown): Workflow {
     name: value.name.trim(),
     orchestrator: readModel(value.orchestrator, "The orchestrator"),
     steps,
+    // On is what a workflow is without the field, which is how the
+    // settings file keeps it.
+    ...(value.startOnly === false ? { startOnly: false } : {}),
   };
   const problem = workflowProblem(workflow);
   if (problem !== null) throw new Error(problem);
@@ -684,7 +706,8 @@ export function describeWorkflow(workflow: Workflow): string {
       ? `${step.name} (${modelsText(step.models)}, ${step.parallel} at once)`
       : `${step.name} (${modelsText(step.models)}, passes when ${passesText(step)}, else back to ${step.backTo} ${step.limit} times at most)`,
   );
-  return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}`;
+  const own = startsOnly(workflow) ? "" : ", keeping its own subagents";
+  return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}${own}`;
 }
 
 /** What an agent's change does to the workflows: one written whole,

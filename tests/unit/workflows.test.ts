@@ -27,6 +27,9 @@ import {
   workflowProblem,
   workflows,
   workflowsSettings,
+  describeWorkflow,
+  setStartOnly,
+  startsOnly,
 } from "$lib/workflows.svelte";
 import rules from "../fixtures/workflow-rules.json";
 
@@ -168,6 +171,26 @@ describe("a project's choice", () => {
   it("will not name a workflow there is not", () => {
     setOverride(A, "Gone");
     expect(workflows.overrides).toEqual({});
+  });
+});
+
+describe("delegating only through start", () => {
+  it("is on unless the workflow says otherwise, and is kept only when off", () => {
+    expect(startsOnly(workflows.list[0])).toBe(true);
+    expect(setStartOnly(NAME, false)).toBeNull();
+    expect(workflows.list[0].startOnly).toBe(false);
+    expect(describeWorkflow(workflows.list[0])).toContain("keeping its own subagents");
+    expect(sent.at(-1)).toMatchObject({ workflows: { list: [{ startOnly: false }] } });
+    expect(setStartOnly(NAME, true)).toBeNull();
+    expect(workflows.list[0]).not.toHaveProperty("startOnly");
+    expect(describeWorkflow(workflows.list[0])).not.toContain("subagents");
+  });
+
+  it("is read from what an agent writes as true or false, and nothing else", () => {
+    const written = (startOnly: unknown) => ({ ...defaultWorkflow(), startOnly });
+    expect(readWorkflow(written(false)).startOnly).toBe(false);
+    expect(readWorkflow(written(true))).not.toHaveProperty("startOnly");
+    expect(() => readWorkflow(written("no"))).toThrow("startOnly");
   });
 });
 

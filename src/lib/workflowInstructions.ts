@@ -89,6 +89,12 @@ export function instructionLines(workflow: Workflow): string[] {
   return lines;
 }
 
+/** What a session that follows a workflow is told when it starts: which
+    workflow it follows, then the instructions. */
+export function orchestratorPrompt(workflow: Workflow): string {
+  return `You are the orchestrator of the Agent Workbench workflow ${quoted(workflow.name)}. Follow it:\n${instructions(workflow)}`;
+}
+
 /** The instructions as plain text, numbered. */
 export function instructions(workflow: Workflow): string {
   return instructionLines(workflow)

@@ -106,6 +106,10 @@ struct SpawnParams {
     model: Option<String>,
     #[serde(default)]
     config_dir: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
+    #[serde(default)]
+    start_only: bool,
     cols: u16,
     rows: u16,
 }
@@ -323,6 +327,8 @@ pub fn dispatch(
                 p.prompt.as_deref(),
                 p.model.as_deref(),
                 p.config_dir.as_deref(),
+                p.instructions.as_deref(),
+                p.start_only,
                 p.cols,
                 p.rows,
                 make_output,
