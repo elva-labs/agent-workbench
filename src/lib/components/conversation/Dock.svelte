@@ -161,14 +161,23 @@
   /** The whole request as the agent made it: the tool it names and all
       of its input, so nothing the line leaves out goes unseen. Null when
       the line already says all of it. */
-  function whole(asked: Permission): string | null {
+  function whole(asked: Permission, what: { object: string | null; shape: string | null }): string | null {
     const input = asked.input;
     if (input === null || input === undefined) return null;
     if (typeof input === "object" && !Array.isArray(input)) {
       const keys = Object.keys(input);
       if (keys.length === 0) return null;
+      // Left out only where the line shows the input whole: a command of
+      // one line it reads as running, and nothing else.
       const command = (input as Record<string, unknown>).command;
-      if (keys.length === 1 && typeof command === "string" && !command.includes("\n") && command.length <= 90)
+      if (
+        keys.length === 1 &&
+        typeof command === "string" &&
+        what.shape === "command" &&
+        what.object === command &&
+        !command.includes("\n") &&
+        command.length <= 90
+      )
         return null;
     }
     return `Tool: ${asked.tool}\n${JSON.stringify(input, null, 2)}`;
@@ -295,7 +304,7 @@
       {@const what = asks(asked, asked.call === null ? null : conversation.call(asked.call))}
       {@const command = wholeCommand(asked, what.shape)}
       {@const lines_ = change(asked)}
-      {@const full = whole(asked)}
+      {@const full = whole(asked, what)}
       {@const away = outside(asked)}
       {@const headAway = what.shape === "path" && what.object !== null && where(what.object).outside}
       <div class="what">

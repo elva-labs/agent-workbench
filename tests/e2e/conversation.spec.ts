@@ -820,3 +820,11 @@ test.describe("a permission is shown whole", () => {
     await expect(page.getByTestId("permission-whole-text")).toContainText('"target": "production"');
   });
 });
+
+test("offers the whole request when a tool that is not a command carries a command", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.send("${H}", crypto.randomUUID(), "deploy"); f.startTurn("${H}"); f.ask("${H}", "mcp__deploy__run", { command: "rm -rf /srv" });`);
+  await expect(page.getByTestId("permission-dock").locator(".what")).toHaveText("Claude asks to use deploy's run");
+  await page.getByTestId("permission-whole").click();
+  await expect(page.getByTestId("permission-whole-text")).toContainText('"command": "rm -rf /srv"');
+});
