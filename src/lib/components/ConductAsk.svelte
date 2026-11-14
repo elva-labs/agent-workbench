@@ -1,8 +1,16 @@
 <script lang="ts">
   import { coversBrowser } from "$lib/browser.svelte";
   import { allow, conductor, once, refuse } from "$lib/conductor.svelte";
+  import { returnFocus } from "$lib/layout.svelte";
 
   let ask = $derived(conductor.asking);
+
+  /** The buttons go with the question, and with them the keyboard the click
+      gave them: the pane that has the focus state takes it back. */
+  function answer(choose: () => void) {
+    choose();
+    returnFocus();
+  }
 </script>
 
 {#if ask !== null}
@@ -13,9 +21,9 @@
     </p>
     <p class="prompt">{ask.prompt}</p>
     <div class="actions">
-      <button class="go" onclick={allow} data-testid="conduct-allow">Allow this session</button>
-      <button class="later" onclick={once} data-testid="conduct-once">Once</button>
-      <button class="later" onclick={refuse} data-testid="conduct-no">No</button>
+      <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>
+      <button class="later" onclick={() => answer(once)} data-testid="conduct-once">Once</button>
+      <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">No</button>
     </div>
   </div>
 {/if}
