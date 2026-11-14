@@ -362,6 +362,40 @@ test.describe("the right pane's default widths, as Linux", () => {
   });
 });
 
+test.describe("the flip back onto what was presented", () => {
+  test("lands in reviewing in one step, the viewer's column at its width at once", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await page.evaluate(() =>
+      (window as unknown as { __presentRequest: (request: unknown) => void }).__presentRequest({
+        files: ["/tmp/shot.png"],
+        caption: "The screenshot.",
+        cwd: "/home/ada/dev/demo",
+        session: null,
+      }),
+    );
+    await expect(page.getByTestId("media-caption")).toBeVisible();
+    // The changes pane's width on every frame for a while after the click.
+    const widths = await page.evaluate(
+      () =>
+        new Promise<number[]>((resolve) => {
+          const out: number[] = [];
+          const width = () => document.querySelector("section[data-pane='changes']")!.getBoundingClientRect().width;
+          document.querySelector<HTMLElement>("[data-testid='mode-agent']")!.click();
+          const start = performance.now();
+          const sample = () => {
+            out.push(width());
+            if (performance.now() - start < 400) requestAnimationFrame(sample);
+            else resolve(out);
+          };
+          requestAnimationFrame(sample);
+        }),
+    );
+    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(1);
+  });
+});
+
 test.describe("the agent across the flip", () => {
   test("is told one new size per flip", async ({ page }) => {
     await open(page, 1728);

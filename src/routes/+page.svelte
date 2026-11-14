@@ -429,13 +429,14 @@
 
   // The changes column eases between its working and reviewing widths on the
   // same curve as the sessions column, so the agent between them moves
-  // steadily from its old width to its new one and never below either.
+  // steadily from its old width to its new one and never below either. A
+  // flip, onto the viewer included, lands in one step.
   let changesWasMode = untrack(() => layout.mode);
   $effect.pre(() => {
     const width = changesWidth();
     const mode = layout.mode;
     untrack(() => {
-      const moved = mode !== changesWasMode;
+      const moved = mode !== changesWasMode && !flipped(changesWasMode, mode);
       changesWasMode = mode;
       void changesSpan.set(width, { duration: easing(moved), easing: cubicOut });
     });
