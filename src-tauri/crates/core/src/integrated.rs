@@ -2126,7 +2126,8 @@ pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value
 }
 
 /// Sends a control request and waits for the agent's reply, for as long
-/// as a request may and no later than `by`.
+/// as a request may and no later than `by`. Nothing is sent once `by` has
+/// passed, so that no change is made after its caller was told it failed.
 fn request(
     sessions: &Sessions,
     id: &str,
@@ -2134,6 +2135,9 @@ fn request(
     by: std::time::Instant,
 ) -> Result<Value, String> {
     let live = sessions.get(id)?;
+    if std::time::Instant::now() >= by {
+        return Err("no time was left to ask the agent".into());
+    }
     let (went, waiting) = {
         let mut machine = live.machine.lock().expect("machine lock");
         let sending = machine.driver.control(control)?;
@@ -3069,6 +3073,19 @@ mod tests {
             took < CONFIGURE_TIMEOUT + Duration::from_millis(500),
             "{took:?}"
         );
+    }
+
+    #[test]
+    fn a_request_past_its_deadline_is_not_sent() {
+        let bench = Bench::new(fake());
+        let late = request(
+            &bench.sessions,
+            "int-bench",
+            &Control::SetMode("plan".into()),
+            std::time::Instant::now(),
+        );
+        assert!(late.is_err(), "{late:?}");
+        assert_eq!(bench.next(), None, "nothing goes to the agent");
     }
 
     #[test]
