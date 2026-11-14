@@ -249,7 +249,10 @@ Claude Code says which tasks run in the background as a whole list, in no
 promised order with the start and the end of each. A task the list leaves
 out is lost only if it is still left out, with no word of its end, when the
 turn ends or the agent says it is idle; a word that comes later is dropped.
-A subagent the main turn waited on is over with that turn.
+A subagent that reports in a turn of its own may be told of after the turn
+ends, so it is judged only when the agent says it is idle: one that leaves
+the list with no word of its end keeps the session working until then. A
+subagent the main turn waited on is over with that turn.
 
 A tool call the agent leaves without a finish is finished by the core, as
 failed with no output: those of the main conversation when the turn ends,

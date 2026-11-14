@@ -1194,9 +1194,6 @@ impl Stream {
                     reports: known.as_ref().is_some_and(Task::reports),
                 });
             }
-            // The agent's own word that its work is over, its subagents'
-            // reports included: no task it has not finished, other than
-            // what it still lists in the background, is running.
             Some("notification") => {
                 let level = match line["priority"].as_str() {
                     Some("high" | "immediate") => NoticeLevel::Warning,
@@ -1224,6 +1221,9 @@ impl Stream {
                 });
                 self.notice(NoticeLevel::Warning, message, out);
             }
+            // The agent's own word that its work is over, its subagents'
+            // reports included: no task it has not finished, other than
+            // what it still lists in the background, is running.
             Some("session_state_changed") if line["state"] == "idle" => {
                 self.lose(out, |task| !task.background || task.unlisted);
             }
@@ -1249,9 +1249,11 @@ impl Stream {
     fn result(&mut self, line: &Value, out: &mut Reading) {
         self.begin(out);
         // A task of the main conversation that its call waited on is over
-        // with the turn, and so is one gone from the background.
+        // with the turn, and so is one gone from the background that has no
+        // report to come. One that reports may still be told of after the
+        // result, so it is left for the agent's word that it is idle.
         self.lose(out, |task| {
-            (!task.background && !task.nested) || task.unlisted
+            (!task.background && !task.nested) || (task.unlisted && !task.reports())
         });
         let failed = line["is_error"].as_bool().unwrap_or(false);
         // The agent names an abort as the reason its loop ended; an older
@@ -3024,7 +3026,7 @@ mod tests {
             &mut stream,
             &[
                 init(),
-                background_agent("a1", "t1"),
+                json!({"type":"system","subtype":"task_started","task_id":"a1","tool_use_id":"t1","description":"look","task_type":"local_agent","is_backgrounded":true,"awaited":true}),
                 listed(&["a1"]),
                 listed(&[]),
             ],
@@ -3038,6 +3040,35 @@ mod tests {
         );
         let out = events(&mut stream, &[notified("a1", "completed")]);
         assert!(finished(&out).is_empty(), "a late word of it is dropped");
+    }
+
+    #[test]
+    fn a_subagent_that_reports_is_left_for_idle_when_the_list_drops_it_mid_turn() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                background_agent("a1", "t1"),
+                listed(&["a1"]),
+                listed(&[]),
+                result(),
+                notified("a1", "completed"),
+            ],
+        );
+        assert_eq!(
+            finished(&out),
+            [("a1".to_string(), TaskStatus::Completed)],
+            "its own word, not lost at the result"
+        );
+        // With no word of it by the time the agent is idle, it is lost.
+        let out = events(
+            &mut stream,
+            &[init(), background_agent("a2", "t2"), listed(&[]), result()],
+        );
+        assert!(finished(&out).is_empty(), "{out:?}");
+        let out = events(&mut stream, &[idle()]);
+        assert_eq!(finished(&out), [("a2".to_string(), TaskStatus::Lost)]);
     }
 
     fn foreground_agent(task: &str, call: &str) -> Value {
