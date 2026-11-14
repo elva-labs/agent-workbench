@@ -37,6 +37,9 @@ interface FakeOptions {
       Without it the machine keeps no settings and the window's own copy
       holds, which has new sessions following none. */
   withWorkflow?: boolean;
+  /** A machine whose settings put the shipped workflow on another project
+      alone, with new sessions following none. */
+  workflowElsewhere?: boolean;
   /** A machine whose settings hold no workflows at all, so a new session
       has nothing to ask about how it runs where one agent is installed. */
   noWorkflows?: boolean;
@@ -106,7 +109,18 @@ declare global {
 
 async function installFakeCore(page: Page, options: FakeOptions = {}) {
   await page.addInitScript(
-    ({ open, binary, failSpawn, codex, codexTranscripts, spawnDelay, withWorkflow, noWorkflows, workflow }) => {
+    ({
+      open,
+      binary,
+      failSpawn,
+      codex,
+      codexTranscripts,
+      spawnDelay,
+      withWorkflow,
+      workflowElsewhere,
+      noWorkflows,
+      workflow,
+    }) => {
       const read = (term: any) => {
         if (!term) return "";
         const active = term.buffer.active;
@@ -288,6 +302,13 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         settingsGet: async () => {
           if (noWorkflows)
             return { stored: true, settings: { workflows: { list: [], default: null, overrides: {} } } };
+          if (workflowElsewhere)
+            return {
+              stored: true,
+              settings: {
+                workflows: { list: [workflow], default: null, overrides: { "/home/ada/dev/two": "Build and review" } },
+              },
+            };
           if (withWorkflow)
             return {
               stored: true,
@@ -379,6 +400,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
       codexTranscripts: options.codexTranscripts,
       spawnDelay: options.spawnDelay,
       withWorkflow: options.withWorkflow ?? false,
+      workflowElsewhere: options.workflowElsewhere ?? false,
       noWorkflows: options.noWorkflows ?? false,
       workflow: BUILD_AND_REVIEW,
     },
@@ -2344,6 +2366,17 @@ test.describe("a new session from the palette", () => {
     // A fresh install: the shipped workflow is there, and nothing follows
     // it.
     await open(page, { open: [ONE] });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0]).toMatchObject({ project: ONE, agent: "claude-code" });
+    expect((await spawns(page))[0].instructions).toBeUndefined();
+  });
+
+  test("starts at once with one agent where only another project follows a workflow", async ({ page }) => {
+    await open(page, { open: [ONE], workflowElsewhere: true });
     await page.keyboard.press(COMMANDS);
     await page.keyboard.type("new session in");
     await page.keyboard.press("Enter");

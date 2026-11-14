@@ -274,16 +274,6 @@ export function workflowOf(project: string): Workflow | null {
   return workflowNamed(chosen) ?? null;
 }
 
-/** Whether the user has turned a workflow on, as the default for new
-    sessions or for a project. Until then a new session is never asked
-    whether to follow one. */
-export function workflowTurnedOn(): boolean {
-  return (
-    workflowNamed(workflows.default) !== undefined ||
-    Object.values(workflows.overrides).some((name) => workflowNamed(name) !== undefined)
-  );
-}
-
 /** A project's own word: a name, null for none, or undefined when it
     follows the default. */
 export function overrideOf(project: string): string | null | undefined {

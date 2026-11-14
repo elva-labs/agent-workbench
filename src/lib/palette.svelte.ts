@@ -24,7 +24,6 @@ import {
   workflowNamed,
   workflowOf,
   workflows,
-  workflowTurnedOn,
 } from "$lib/workflows.svelte";
 import {
   defaultAgent,
@@ -60,8 +59,8 @@ import { reduced } from "$lib/motion";
  * A new session is asked for in steps in the same field: the project, then
  * the account when accounts are named, then how it runs: under one of the
  * workflows, the project's own first, or as one agent with no workflow.
- * The workflows are offered once the user has turned one on, for new
- * sessions or for a project. Each answer becomes a chip, and a step with
+ * The workflows are offered where the project follows one, by its own
+ * choice or by the default for new sessions. Each answer becomes a chip, and a step with
  * nothing to choose is not asked. The session starts on the last answer.
  */
 
@@ -378,12 +377,13 @@ export function commandItems(query: string): PaletteItem[] {
 /** The question a new session asks next given the answers so far, or null
     when it has all it needs. How it runs is asked as "agent", and answered
     by an agent or a workflow; it is asked when there is more than one
-    agent, or a workflow on offer, to pick between. */
+    agent, or a workflow on offer in the project, to pick between. */
 export function nextStep(steps: Step[]): StepKind | null {
   const has = (kind: StepKind) => steps.some((step) => step.kind === kind);
   if (!has("project")) return "project";
   if (hasAccounts() && !has("account")) return "account";
-  const how = installed().length > 1 || offered().length > 0;
+  const project = projectOfSteps(steps);
+  const how = installed().length > 1 || (project !== null && offered(project).length > 0);
   if (how && !has("agent") && !has("workflow")) return "agent";
   return null;
 }
@@ -428,10 +428,10 @@ export function chipOf(step: Step): string {
 export const WORKFLOWS = "Workflows";
 export const ALONE = "One agent, no workflow";
 
-/** The workflows a new session is offered: none until the user has turned
-    one on. */
-function offered() {
-  return workflowTurnedOn() ? workflows.list : [];
+/** The workflows a new session in a project is offered: none unless the
+    project follows one, by its own choice or by the default. */
+function offered(project: string) {
+  return workflowOf(project) === null ? [] : workflows.list;
 }
 
 /** What the last question offers, as titled lists drawn in order: the
@@ -443,7 +443,7 @@ function runSections(
 ): { title: string; items: PaletteItem[] }[] {
   const own = workflowOf(project);
   const ownEnd = overrideOf(project) === undefined ? "default" : "project's workflow";
-  const list = offered();
+  const list = offered(project);
   const ordered =
     own === null || list.length === 0
       ? list

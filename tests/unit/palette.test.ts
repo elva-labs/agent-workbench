@@ -457,8 +457,20 @@ describe("how a new session runs", () => {
     expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null, model: null });
   });
 
-  it("offers the workflows above the agents once one is turned on, even with one agent installed", () => {
+  it("asks nothing more in a project that follows no workflow, whatever another project chose", () => {
     adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: { "/elsewhere": "Build and review" } });
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+    const outcome = beginNew(A);
+    if (outcome.type === "close") outcome.then();
+    expect(outcome.type).toBe("close");
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null });
+    // Nor where the project chose none over the default.
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: { [A]: null } });
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+  });
+
+  it("offers the workflows above the agents where the project follows one, even with one agent installed", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
     expect(stepsLeft([{ kind: "project", path: A }])).toEqual(["agent"]);
     beginNew(A);
     const items = stepItems("");
@@ -468,12 +480,10 @@ describe("how a new session runs", () => {
     ]);
     const [flow] = items;
     expect(flow.kind === "choice" && flow.detail).toBe("Fable directs, Sonnet works, Opus reviews");
-    expect(flow.kind === "choice" && flow.end).toBe("");
-    // The project follows none, so the cursor starts on the agent.
-    expect(startingId()).toBe("agent:claude-code");
-    // Picked, the one agent starts alone, though nothing else was there
-    // to pick between.
-    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(flow.kind === "choice" && flow.end).toBe("default");
+    expect(startingId()).toBe("workflow:Build and review");
+    // Picked, the one agent starts alone, though the project follows a
+    // workflow.
     const outcome = choose("Claude Code");
     if (outcome.type === "close") outcome.then();
     expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null, model: null });

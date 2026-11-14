@@ -173,13 +173,13 @@ subagents, and their work does not show as sessions. The settings file
 writes the setting only when it is off.
 
 A project's workflow is its own choice, else the one for new sessions, else
-none. A plain new session, where there is nothing to pick, follows it. Once
-a workflow has been turned on, for new sessions or for any project, the
+none. A plain new session, where there is nothing to pick, follows it. In a
+project that follows a workflow, by its own choice or by the default, the
 palette's new session offers every workflow, the project's first, marked as
-the project's workflow or as the default, beside the agents to run alone;
-until then it asks nothing it did not ask before workflows, and with one
-agent installed it starts that agent at once. An agent picked anywhere
-starts alone. A
+the project's workflow or as the default, beside the agents to run alone.
+In a project that follows none it asks nothing it did not ask before
+workflows, whatever other projects chose, and with one agent installed it
+starts that agent at once. An agent picked anywhere starts alone. A
 session under a workflow starts on the workflow's orchestrator, its agent
 and its model, told the workflow's instructions, and keeps the workflow as
 it was for as long as it runs, whatever changes in the settings. Resumed,
