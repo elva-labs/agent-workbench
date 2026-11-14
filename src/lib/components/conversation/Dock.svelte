@@ -257,6 +257,23 @@
   function long(text: string): boolean {
     return Array.from(text).length > LONG;
   }
+
+  /** How many characters a cut leaves out, said on the line in the warning
+      colour, so what is cut off can never pass unseen. */
+  function leftOut(text: string): number {
+    return Math.max(0, Array.from(text).length - LONG);
+  }
+
+  /** The host an address goes to, said on its own: the start of an address
+      can look like one host and lead to another. */
+  function hostOf(text: string): string | null {
+    if (!/^https?:\/\//i.test(text)) return null;
+    try {
+      return new URL(text).host;
+    } catch {
+      return null;
+    }
+  }
   const KINDS = ["outside", "unknown"] as const;
 
   /** A command's first line, and how many lines follow it. */
@@ -368,14 +385,16 @@
         <p>
           <b>{@render pieces(asker(asked.parent))}</b> asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
                 class="exact"><Plain text={cut(parts.first)} /></code
-              >{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
+              >{@render cutOff(parts.first)}{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
                 >{/if}{:else if what.shape === "path"}{@const at = where(asked, what.object)}{#if at.where !== "inside"}<span
                   class="warn"
                   data-testid="permission-outside">{AWAY[at.where]}</span
-                >{" "}{/if}<code class="exact"><Plain text={cut(at.text)} /></code>{:else}<code class="exact"
-                ><Plain text={cut(what.object)} /></code
-              >{/if}{/if}
+                >{" "}{/if}<code class="exact"><Plain text={cut(at.text)} /></code>{@render cutOff(at.text)}{:else}<code
+                class="exact"><Plain text={cut(what.object)} /></code
+              >{@render cutOff(what.object)}{#if hostOf(what.object) !== null}<span data-testid="permission-host"
+                  >{" "}on <code class="exact"><Plain text={hostOf(what.object) ?? ""} /></code></span
+                >{/if}{/if}{/if}
         </p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
@@ -577,6 +596,11 @@
     {/if}
   </div>
 {/if}
+
+<!-- What a cut leaves out, counted on the line. -->
+{#snippet cutOff(text: string)}{#if leftOut(text) > 0}<span class="warn" data-testid="permission-cut"
+      >{" "}and {leftOut(text)} more {leftOut(text) === 1 ? "character" : "characters"}</span
+    >{/if}{/snippet}
 
 <!-- Words the app says, and names the agent or a server gave, drawn as
      they are. -->

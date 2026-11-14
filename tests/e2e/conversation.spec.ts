@@ -1379,6 +1379,22 @@ test.describe("a request too long for its line", () => {
     expect(await inSight(page, "permission-outside")).toBe(true);
   });
 
+  test("says how much a cut leaves out, so a tail can never pass unseen", async ({ page }) => {
+    await openIntegrated(page);
+    // A harmless start padded out, with what matters at its end.
+    const command = `echo ${"a".repeat(200)}; rm -rf ~`;
+    await agent(
+      page,
+      `f.startTurn("${H}"); const c = f.startTool("${H}", "Bash", { command: ${JSON.stringify(command)} }, { kind: "command" }); f.ask("${H}", "Bash", { command: ${JSON.stringify(command)} }, { call: c });`,
+    );
+    await expect(page.getByTestId("permission-cut")).toHaveText(`and ${command.length - 160} more characters`);
+    expect(await inSight(page, "permission-cut")).toBe(true);
+    await page.getByTestId("choice-allow").click();
+    // An address that starts like one host and goes to another.
+    await agent(page, `f.ask("${H}", "WebFetch", { url: "https://github.com@evil.example/x" });`);
+    await expect(page.getByTestId("permission-host")).toHaveText("on evil.example");
+  });
+
   test("cuts a long command and a long address, each a fold away", async ({ page }) => {
     await openIntegrated(page);
     const command = `echo ${"a".repeat(3000)}`;

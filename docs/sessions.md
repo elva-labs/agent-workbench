@@ -371,7 +371,9 @@ project: ~/.ssh/authorized_keys", so no path can push it out of sight.
 Every such path the request names is listed. A link inside the project that
 leads out of it cannot be seen from the window. A command, path or address
 longer than the line holds is cut, with its whole a fold away that opens
-in place. The whole request, with the tool it names, is a fold away
+in place, and the line says in the warning colour how many characters the
+cut leaves out. An address also names the host it goes to, since its start
+can look like another. The whole request, with the tool it names, is a fold away
 wherever the line does not say all of it. What the request holds scrolls
 between its line and its choices, which stay in sight whatever it holds.
 The first allows the call once and remembers
