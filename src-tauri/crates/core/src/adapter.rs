@@ -773,8 +773,7 @@ mod tests {
 
     #[test]
     fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
-        let dir = std::env::temp_dir().join("workbench-adapter-workflow");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = Scratch::new("adapter-workflow");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
             std::fs::write(&bin, "#!/bin/sh\n").unwrap();
@@ -968,15 +967,12 @@ mod tests {
         let Some(codex) = find_on_path(&vars, "codex") else {
             return;
         };
-        let home =
-            std::env::temp_dir().join(format!("workbench-codex-home-{}", std::process::id()));
-        std::fs::remove_dir_all(&home).ok();
-        std::fs::create_dir_all(&home).unwrap();
+        let home = Scratch::new("codex-home");
         let input = |settings: &[&str]| {
             let mut command = std::process::Command::new(&codex);
             command
                 .args(["debug", "prompt-input"])
-                .env(CODEX_HOME_VAR, &home)
+                .env(CODEX_HOME_VAR, home.path())
                 .current_dir(&home);
             for setting in settings {
                 command.args(["-c", setting]);
@@ -987,7 +983,6 @@ mod tests {
         let tools = ["spawn_agent", "send_message", "wait_agent", "list_agents"];
         let with = input(&[]);
         let without = input(CODEX_NO_SUBAGENTS);
-        std::fs::remove_dir_all(&home).ok();
         assert!(!with.is_empty(), "codex debug prompt-input answered");
         assert!(!without.is_empty(), "codex debug prompt-input answered");
         for tool in tools {
