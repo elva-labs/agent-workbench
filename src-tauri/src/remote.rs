@@ -750,7 +750,8 @@ mod tests {
 
     #[test]
     fn the_test_transport_is_whatever_the_variable_names() {
-        let files = ssh::Files::new(&std::env::temp_dir().join("workbench-remote-none"));
+        let home = workbench_core::scratch::Scratch::absent("remote-none");
+        let files = ssh::Files::new(&home);
         std::env::set_var("WORKBENCH_REMOTE_COMMAND", "/bin/echo hello {host}");
         let command = transport("lab", &files, None).unwrap();
         std::env::remove_var("WORKBENCH_REMOTE_COMMAND");

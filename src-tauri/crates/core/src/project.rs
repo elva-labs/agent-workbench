@@ -68,19 +68,19 @@ fn project_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp(name: &str) -> Scratch {
+        Scratch::new(name)
     }
 
     #[test]
     fn names_a_plain_directory() {
-        let dir = temp("workbench-project-plain");
+        let scratch = temp("workbench-project-plain");
+        let dir = scratch.join("plain-project");
+        std::fs::create_dir_all(&dir).unwrap();
         let info = describe(&dir).unwrap();
-        assert_eq!(info.name, "workbench-project-plain");
+        assert_eq!(info.name, "plain-project");
         assert!(!info.is_git);
         assert_eq!(info.repository, None);
     }
