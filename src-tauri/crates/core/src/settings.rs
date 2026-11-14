@@ -2401,7 +2401,7 @@ mod tests {
         store.set(&json!({ "palette": "rose" })).unwrap();
     }
 
-    fn home_of(name: &str) -> PathBuf {
+    fn home_of(name: &str) -> Scratch {
         home(name)
     }
 
