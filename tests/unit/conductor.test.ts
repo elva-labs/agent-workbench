@@ -28,6 +28,7 @@ import {
   dismissRefusal,
   stopAll,
   typeWhole,
+  NOWHERE,
   UNPLACED,
   workflowTag,
   watchStops,
@@ -1707,7 +1708,7 @@ describe("starting in a workflow's shape", () => {
     refuse();
     await asked;
     expect(last().error).toBe(
-      'The work of session w1 has had 3 rounds of "Review", as many as the workflow gives a piece, and the user did not allow another. Ask the user how to go on.',
+      '"Fix the cache", the work of session w1, has had 3 rounds of "Review", as many as the workflow gives a piece, and the user did not allow another. Ask the user how to go on.',
     );
     expect(roundsOf("orch", "Review", "w1")).toBe(3);
 
@@ -1754,7 +1755,13 @@ describe("starting in a workflow's shape", () => {
     expect(conductor.asking?.round?.done).toBe(3);
     refuse();
     await next;
-    expect(last().error).toContain("the user did not allow another");
+    // Past the limit already, the count is said against the rounds the
+    // workflow gives, and the user's own answer is not put back to them
+    // over the orchestrator's terminal as a refused start.
+    expect(last().error).toContain(
+      'has had 3 rounds of "Review", more than the 2 the workflow gives a piece, and the user did not allow another.',
+    );
+    expect(Object.keys(conductor.refusals)).toEqual([]);
   });
 
   it("counts the rounds of a piece carried on by a later work step under the piece", async () => {
@@ -2115,6 +2122,99 @@ describe("starting in a workflow's shape", () => {
     await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }));
     expect(conductor.asking).toBeNull();
     expect(last().error).toBe(UNPLACED);
+  });
+
+  it("refuses to resume, under a workflow, a session a plain session in its directory started", async () => {
+    // A plain Codex session, untold of its id, starts two sessions.
+    const plain = create(A, null, "codex", null, null, null, null, null);
+    started(plain.key, "pty-plain", null);
+    await startAllowed(call("start", { project: B, prompt: "Go", agent: "codex" }), "pty-p1", "p1");
+    await startAllowed(call("start", { project: B, prompt: "Go too", agent: "codex" }), "pty-p2", "p2");
+    ended({ id: "pty-p1", code: 0, clean: true });
+    ended({ id: "pty-plain", code: 0, clean: true });
+    close(plain.key);
+    flushSync();
+    // A Codex orchestrator under a workflow comes up in the same directory,
+    // and is keyed by it as the plain one was.
+    const codex = create(A, null, "codex", null, null, null, null, defaultWorkflow());
+    started(codex.key, "pty-codex", null);
+    flushSync();
+    const rows = sessions.all.length;
+    await handle(
+      call("start", { session: "p1", agent: "claude-code", model: "opus", prompt: "/model opus" }),
+    );
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(
+      'Session p1 was not started for a step of the workflow "Build and review", so it cannot be held to it, and you follow that workflow. Start a new session for a step instead.',
+    );
+    expect(sessions.all.length).toBe(rows);
+    // The one still running is not given a command either.
+    await handle(call("send", { session: "p2", text: "/model opus" }));
+    expect(last().error).toContain("You follow a workflow, so the workbench gives the sessions you reach no command but /compact");
+    expect(written).toEqual([]);
+    const words = handle(call("send", { session: "p2", text: "Tell me how it goes" }));
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await words;
+    expect(last().error).toBeNull();
+  });
+
+  it("holds the step's room and the review's rounds when the steps are re-cased", async () => {
+    const orch = orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    for (const round of [1, 2]) {
+      await begun({ step: "Review", work: "w1" }, `r${round}`);
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    // The user re-cases the steps, and the orchestrator goes on with the
+    // workflow as it is now.
+    const recased = limitOne();
+    recased.steps[0].name = "work";
+    const review = recased.steps[1];
+    review.name = "review";
+    if (review.kind === "review") review.backTo = "work";
+    byKey(orch.key)!.workflow = recased;
+    expect(await refusedWith({ step: "work" })).toBe(
+      'The step "work" runs one session at once, and session w1 is running for it. Stop one once its work is done, before starting another; a stopped session can be resumed.',
+    );
+    const asked = handle(from({ step: "review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "review", done: 2, limit: 1 });
+    refuse();
+    await asked;
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(roundsOf("orch", "review", "w1")).toBe(2);
+  });
+
+  it("reads rounds kept under a step's name in any case as one count", () => {
+    localStorage.setItem(
+      "workbench.runs",
+      JSON.stringify({ orch: { places: {}, rounds: { "Review\nw1": 2, "review\nw1": 1 } } }),
+    );
+    loadStarted();
+    expect(roundsOf("orch", "REVIEW", "w1")).toBe(3);
+  });
+
+  it("refuses a call naming no session from a directory where none runs, while a workflow runs", async () => {
+    orchestrating();
+    await handle(
+      call("start", { project: B, prompt: "/model opus", agent: "claude-code", model: "opus" }, { cwd: "/tmp/elsewhere" }),
+    );
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(NOWHERE);
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("asks about a call naming no session from anywhere as before, with no workflow running", async () => {
+    const answering = handle(
+      call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { cwd: "/tmp/elsewhere" }),
+    );
+    await settle();
+    expect(conductor.asking?.project).toBe(B);
+    refuse();
+    await answering;
+    expect(last().error).toBe("The user did not allow the session to be started.");
   });
 
   it("honours an account for a step, and resumes the session under it", async () => {

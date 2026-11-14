@@ -263,6 +263,11 @@ export const conductor = $state({
 /** Reads what callers started in earlier runs. A corrupt entry reads as
     nothing remembered rather than a broken pane. */
 export function loadStarted() {
+  loadStartedList();
+  loadRuns();
+}
+
+function loadStartedList() {
   try {
     const raw = localStorage.getItem(STARTED_KEY);
     if (raw === null) return;
@@ -278,6 +283,9 @@ export function loadStarted() {
   } catch {
     // Nothing was started, then.
   }
+}
+
+function loadRuns() {
   try {
     const raw = localStorage.getItem(RUNS_KEY);
     if (raw === null) return;
@@ -290,11 +298,16 @@ export function loadStarted() {
       const kept: Run = { places: {}, rounds: {} };
       for (const [id, place] of Object.entries(isRecord(places) ? places : {}))
         if (isPlace(place)) kept.places[id] = place;
-      for (const [piece, count] of Object.entries(
+      for (const [key, count] of Object.entries(
         isRecord(rounds) ? rounds : {},
-      ))
-        if (typeof count === "number" && Number.isInteger(count) && count > 0)
-          kept.rounds[piece] = count;
+      )) {
+        if (typeof count !== "number" || !Number.isInteger(count) || count <= 0)
+          continue;
+        const cut = key.indexOf("\n");
+        if (cut === -1) continue;
+        const counted = roundKey(key.slice(0, cut), key.slice(cut + 1));
+        kept.rounds[counted] = (kept.rounds[counted] ?? 0) + count;
+      }
       runs[caller] = kept;
     }
     conductor.runs = runs;
@@ -364,8 +377,9 @@ function saveRuns() {
 const runOf = (caller: string): Run =>
   (conductor.runs[caller] ??= { places: {}, rounds: {} });
 
-/** What the rounds of a review of a piece are counted under. */
-const roundKey = (step: string, piece: string) => `${step}\n${piece}`;
+/** What the rounds of a review of a piece are counted under: the step's
+    name in any case, as the workflows compare names. */
+const roundKey = (step: string, piece: string) => `${asciiLower(step)}\n${piece}`;
 
 /** How many rounds of a review a piece has had. */
 export function roundsOf(caller: string, step: string, piece: string): number {
@@ -393,7 +407,7 @@ function uncountRound(caller: string, step: string, piece: string) {
     by the caller and the step. A start takes its place before it awaits
     anything, so two at once cannot both find room. */
 const reserved = new Map<string, number>();
-const slotKey = (caller: string, step: string) => `${caller}\n${step}`;
+const slotKey = (caller: string, step: string) => `${caller}\n${asciiLower(step)}`;
 
 /** Takes a place in a work step, and answers with what gives it back. */
 function reserveSlot(caller: string, step: string): () => void {
@@ -414,7 +428,10 @@ function reserveSlot(caller: string, step: string): () => void {
 function runningFor(caller: string, step: string): { sessions: Session[]; held: number } {
   return {
     sessions: startedBy(caller).filter(
-      (session) => isLive(session) && placeOf(session.key)?.step === step,
+      (session) => {
+        const at = isLive(session) ? placeOf(session.key) : null;
+        return at !== null && sameName(at.step, step);
+      },
     ),
     held: reserved.get(slotKey(caller, step)) ?? 0,
   };
@@ -497,6 +514,9 @@ let pending: ((choice: Choice) => void) | null = null;
 interface Answered {
   content: string | null;
   error: string | null;
+  /** The refusal is the user's own answer to the question, which they
+      need not be shown again. */
+  byUser?: boolean;
 }
 
 /** The waits being held, by call, each with what ends it unanswered. */
@@ -538,7 +558,8 @@ export async function handle(request: ConductRequest): Promise<void> {
   } catch (error) {
     answered = refused(String(error));
   }
-  if (request.tool === "start") noteRefusal(request, answered.error);
+  if (request.tool === "start" && answered.byUser !== true)
+    noteRefusal(request, answered.error);
   if (given.delete(request.id)) return;
   await core()
     .conductAnswer(request.id, request.cwd, answered.content, answered.error)
@@ -884,11 +905,14 @@ async function startFitted(
   const wants = flag(request, "worktree");
   const beyond = fit?.beyond ?? null;
   if ((await askUser(request, project, prompt, wants, beyond)) === "no")
-    return refused(
-      beyond === null
-        ? "The user did not allow the session to be started."
-        : notAllowed(beyond),
-    );
+    return {
+      ...refused(
+        beyond === null
+          ? "The user did not allow the session to be started."
+          : notAllowed(beyond),
+      ),
+      byUser: true,
+    };
 
   let startIn: string | null = null;
   if (wants) {
@@ -1109,7 +1133,12 @@ export function roundQuestion(beyond: Beyond): string {
 /** What a caller is told when the user did not allow a round past the
     limit. */
 function notAllowed(beyond: Beyond): string {
-  return `The work of session ${beyond.work} has had ${beyond.done} rounds of ${quoted(beyond.step)}, as many as the workflow gives a piece, and the user did not allow another. Ask the user how to go on.`;
+  const most = beyond.limit + 1;
+  const against =
+    beyond.done === most
+      ? "as many as the workflow gives a piece"
+      : `more than the ${most} the workflow gives a piece`;
+  return `${quoted(beyond.name)}, the work of session ${beyond.work}, has had ${beyond.done} rounds of ${quoted(beyond.step)}, ${against}, and the user did not allow another. Ask the user how to go on.`;
 }
 
 /** The agent and model a step runs a start on: the first the step allows
@@ -1166,6 +1195,17 @@ function untoldHere(cwd: string): Session[] {
 export const UNPLACED =
   "The workbench cannot tell which session in this directory is calling, and a session here follows a workflow, so it cannot hold this call to the workflow. Start sessions from a session in a directory of its own, such as a worktree.";
 
+/** What a call naming no session is told when no session the workbench
+    runs in its directory can be the caller, while a session follows a
+    workflow. */
+export const NOWHERE =
+  "The workbench runs no session in this directory that could be making this call, and a session follows a workflow, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.";
+
+/** Whether a running session follows a workflow. */
+function workflowRunning(): boolean {
+  return sessions.all.some((session) => isLive(session) && session.workflow !== null);
+}
+
 /** What a call is told that names a session the workbench does not run. */
 function unknownCaller(id: string): string {
   return `The workbench runs no session ${id}, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.`;
@@ -1175,17 +1215,18 @@ function unknownCaller(id: string): string {
     be held to one. A call naming a session the workbench does not run, or
     one whose process is not running and so cannot be calling, is refused
     while a session follows a workflow: it could be that session. One
-    naming none is the one session running in its directory
-    that was not told its id; where that is not certain and a session there
-    follows a workflow, a session told its id among them, the call is
-    refused rather than let through unchecked. */
+    naming none is the one session running in its directory that was not
+    told its id. Where that is not certain and a session there follows a
+    workflow, a session told its id among them, the call is refused rather
+    than let through unchecked, and so is one from a directory where no
+    such session runs, while any session follows a workflow. */
 function callerFlow(
   request: ConductRequest,
 ): { workflow: Workflow | null } | { refusal: string } {
   if (request.session !== null) {
     const row = byId(request.session);
     if (row !== null && isLive(row)) return { workflow: row.workflow };
-    return sessions.all.some((session) => isLive(session) && session.workflow !== null)
+    return workflowRunning()
       ? { refusal: unknownCaller(request.session) }
       : { workflow: row?.workflow ?? null };
   }
@@ -1199,6 +1240,7 @@ function callerFlow(
   )
     return { workflow: here[0].workflow };
   if (following.length > 0) return { refusal: UNPLACED };
+  if (here.length === 0 && workflowRunning()) return { refusal: NOWHERE };
   return { workflow: null };
 }
 
@@ -1259,6 +1301,13 @@ async function resumeSession(
     at === null
       ? undefined
       : flow.workflow?.steps.find((candidate) => sameName(candidate.name, at.step));
+  // A caller under a workflow runs every session in its shape, so one
+  // started outside it, such as by a plain session in the same directory,
+  // is not brought back under it.
+  if (at === null && flow.workflow !== null)
+    return refused(
+      `Session ${id} was not started for a step of the workflow ${quoted(flow.workflow.name)}, so it cannot be held to it, and you follow that workflow. Start a new session for a step instead.`,
+    );
   // A session whose step the workflow no longer has has nothing to be held
   // to, so it is not brought back.
   if (at !== null && flow.workflow !== null && step === undefined)
@@ -1306,7 +1355,7 @@ async function resumeSession(
       beyond !== null &&
       (await askUser(request, project, prompt ?? "", false, beyond)) === "no"
     )
-      return refused(notAllowed(beyond));
+      return { ...refused(notAllowed(beyond)), byUser: true };
     if (worktree !== null && !(await treeStands(project, worktree)))
       return refused(
         `Session ${id} ran in the worktree ${worktree}, which is gone. Start a new session for the work instead.`,
@@ -1396,11 +1445,16 @@ async function sendText(request: ConductRequest): Promise<Answered> {
     return refused(`Session ${id} is not running.`);
   const typed = oneLine(line);
   const at = placeOf(session.key);
-  // A session started for a step stays on the model the step gave it.
-  if (at !== null && mayChangeModel(typed))
-    return refused(keepsItsModel(id, at));
   const flow = callerFlow(request);
   if ("refusal" in flow) return refused(flow.refusal);
+  // A session started for a step stays on the model the step gave it, and a
+  // caller under a workflow changes the model of none it reaches.
+  if ((at !== null || flow.workflow !== null) && mayChangeModel(typed))
+    return refused(
+      at !== null
+        ? keepsItsModel(id, at)
+        : `You follow a workflow, so the workbench gives the sessions you reach no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.`,
+    );
   // A line to a review that has finished its round asks it for another
   // look, which is another round of the piece.
   let round: Place | null = null;
