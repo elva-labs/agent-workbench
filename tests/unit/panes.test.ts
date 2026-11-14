@@ -447,6 +447,58 @@ describe("SessionsPane", () => {
     expect(document.querySelector(`[data-row="session:${kid.key}"]`)).toHaveClass("on");
   });
 
+  // With that started session on screen, everything that follows the
+  // project on screen follows the starter's: its header is marked, its past
+  // sessions and its row of earlier ones stand under it, and the head's +
+  // opens its choice there, where it is drawn.
+  it("follows the starter's project as the one on screen while its started session is", async () => {
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+    workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"), repo("/other", "other"));
+    workspace.active = "/other";
+    // Every project reads the same history here, so it is old enough to
+    // leave the project the started session runs in under Inactive.
+    const old = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+    fake.transcripts = [
+      { id: "gone-1", title: "earlier work", modified: old, size: 400 },
+      { id: "c1", title: "from a terminal", modified: old - 60, size: 400 },
+    ];
+    const gone = create("/starter");
+    started(gone.key, "pty-0", "gone-1");
+    closeStore(gone.key);
+    const own = create("/other");
+    started(own.key, "pty-1", "own-1");
+    const starter = create("/starter");
+    started(starter.key, "pty-2", "starter-1");
+    const kid = create("/kid");
+    started(kid.key, "pty-3", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    sessions.active = own.key;
+    touch("/other", Date.now() - 1000);
+    touch("/starter", Date.now() - 5000);
+    touch("/kid", Date.now() - 30 * 24 * 3600 * 1000);
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project"));
+    await fireEvent.click(screen.getByTestId("started-session"));
+    expect(workspace.active).toBe("/kid");
+    await tick();
+
+    const section = (path: string) =>
+      document.querySelector<HTMLElement>(`[data-row="project:${path}"]`)!.closest("section")!;
+    expect(section("/starter").querySelector("[data-testid='project-head']")).toHaveClass("on");
+    expect(section("/other").querySelector("[data-testid='project-head']")).not.toHaveClass("on");
+    await waitFor(() => expect(within(section("/starter")).getByTestId("past-session")).toHaveTextContent("earlier work"));
+    expect(within(section("/starter")).getByTestId("earlier-sessions")).toHaveTextContent("1 earlier session");
+    expect(screen.getAllByTestId("past-session")).toHaveLength(1);
+
+    await fireEvent.click(screen.getByTestId("new-session"));
+    const choice = within(section("/starter")).getByTestId("agent-choice");
+    expect(within(choice).getAllByTestId("agent-option")[0]).toHaveClass("cursor");
+    await fireEvent.click(within(choice).getAllByTestId("agent-option")[1]);
+    expect(sessions.all.at(-1)?.project).toBe("/starter");
+    expect(sessions.all.at(-1)?.agent).toBe("codex");
+  });
+
   // Cmd+1, Down, Enter, type: the pane is one tab stop with a cursor in it.
   it("walks the rows with the keyboard and confirms with Enter", async () => {
     workspace.open.push(repo("/repo", "repo"));

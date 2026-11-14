@@ -163,6 +163,12 @@
     return a.length === b.length && a.every((item, at) => item === b[at]);
   }
 
+  /** The project on screen as the pane draws it: while the session on
+      screen hangs under its starter in another project, the starter's.
+      Everything here that follows the project on screen follows this one,
+      so the project the session runs in is not drawn as on screen. */
+  let screenProject = $derived(onScreen(workspace.active));
+
   /** The projects under the orchestrator's own: opening the directory it
       runs in is opening the project already pinned above them, and it is
       drawn once. They are split into the ones in use and the ones folded
@@ -173,7 +179,7 @@
     const byPath = new Map(
       workspace.open.filter((project) => project.path !== orchestrator.dir).map((project) => [project.path, project]),
     );
-    const { active, inactive } = splitProjects([...byPath.keys()], onScreen(workspace.active), layout.projectSort, now);
+    const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
     const nextActive = resorted ? active : held(shownActive, active);
@@ -379,7 +385,7 @@
 
   /** A new session in the project on screen, as its own button would. */
   function newHere() {
-    if (workspace.active !== null) offer(workspace.active);
+    if (screenProject !== null) offer(screenProject);
   }
 
   /** The button beside the go-to field. */
@@ -426,7 +432,7 @@
     // Active counts too: choosing the agent for the first one happens
     // under the project's own row, which has to be there to hold it.
     const shows =
-      conductors().length > 0 || historyFor(dir).length > 0 || workspace.active === dir;
+      conductors().length > 0 || historyFor(dir).length > 0 || screenProject === dir;
     return shows ? dir : null;
   });
 
@@ -481,7 +487,7 @@
     );
     const quiet: Entry[] = [
       ...own.filter((entry) => !running(entry)),
-      ...(workspace.active === path ? historyFor(path) : []).map(
+      ...(screenProject === path ? historyFor(path) : []).map(
         (transcript): Entry => ({ kind: "past", id: `past:${transcript.id}`, transcript, at: transcript.modified * 1000 }),
       ),
     ].sort((a, b) => b.at - a.at);
@@ -630,7 +636,7 @@
     }
     const more = `more:${path}`;
     if (hidden.length > 0) out.push({ id: more, run: () => toggle(more) });
-    if (workspace.active !== path) return out;
+    if (screenProject !== path) return out;
     if (path !== orchestrator.dir && outsideFor(path).length > 0) {
       out.push({ id: `earlier:${path}`, run: () => openResume(path) });
     }
@@ -655,7 +661,7 @@
     if (cursor !== null && rows.some((row) => row.id === cursor)) return cursor;
     const active = sessions.active === null ? null : `session:${sessions.active}`;
     if (active !== null && rows.some((row) => row.id === active)) return active;
-    const project = workspace.active === null ? null : `project:${workspace.active}`;
+    const project = screenProject === null ? null : `project:${screenProject}`;
     if (project !== null && rows.some((row) => row.id === project)) return project;
     return rows[0]?.id ?? null;
   });
@@ -677,8 +683,8 @@
       // stops it.
       const key = id.slice("session:".length);
       if (startedFor(key) === null) closeSession(key);
-    } else if (id.startsWith("past:") && workspace.active !== null) {
-      disown(workspace.active, id.slice("past:".length));
+    } else if (id.startsWith("past:") && screenProject !== null) {
+      disown(screenProject, id.slice("past:".length));
     }
   }
 
@@ -1227,7 +1233,7 @@
 {#snippet projectRow(project: { path: string; isGit: boolean })}
   <div
     class="project"
-    class:on={workspace.active === project.path}
+    class:on={screenProject === project.path}
     class:menu-open={projectMenu?.path === project.path}
     class:cursor={current === `project:${project.path}`}
     data-row="project:{project.path}"
@@ -1266,7 +1272,7 @@
 {#snippet pinnedRow(dir: string)}
   <div
     class="project"
-    class:on={workspace.active === dir}
+    class:on={screenProject === dir}
     class:cursor={current === `project:${dir}`}
     data-row="project:{dir}"
     data-testid="project-head"
@@ -1317,7 +1323,7 @@
     </button>
   {/if}
 
-  {#if workspace.active === path}
+  {#if screenProject === path}
     <!-- Every session the agents ran here and this window does not list,
          from a plain terminal most of all: one row that counts them and
          opens the dialog to resume from. It opens something else rather
@@ -1531,7 +1537,7 @@
       class:cursor={current === "new"}
       tabindex="-1"
       onclick={newFromHead}
-      disabled={workspace.active === null || !isReady()}
+      disabled={screenProject === null || !isReady()}
       aria-label="New session"
       title="New session"
       data-row="new"
