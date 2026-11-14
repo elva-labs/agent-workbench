@@ -611,9 +611,11 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // that reads as "You" is the user's alone, and one another live session
   // has is that session's: neither is taken, and the row is named by the
   // prompt instead.
-  const you = name !== null && readsAsYou(name);
-  const taken = name !== null && !you && nameTaken(name, session.key);
-  const called = name !== null && !you && !taken ? oneLine(name) : null;
+  // Weighed as it would be stored.
+  const candidate = name === null ? null : oneLine(name);
+  const you = candidate !== null && readsAsYou(candidate);
+  const taken = candidate !== null && !you && nameTaken(candidate, session.key);
+  const called = candidate !== null && !you && !taken ? candidate : null;
   if (called !== null) session.title = called;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 

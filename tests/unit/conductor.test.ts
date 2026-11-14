@@ -406,7 +406,7 @@ describe("starting a session", () => {
     const other = create(A);
     started(other.key, "pty-0", "sid-0");
     expect(other.title).toBeNull();
-    for (const name of ["Session 1", "session\u200b 1"]) {
+    for (const name of ["Session 1", "session\u200b 1", "Session\n1", "Session\t1"]) {
       const row = await startAllowed(
         call("start", { project: A, prompt: "Fix the flaky test", name }, { session: "caller-1" }),
         "pty-1",

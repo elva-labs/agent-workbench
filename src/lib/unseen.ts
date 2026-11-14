@@ -32,13 +32,13 @@ export function shown(text: string): string {
 }
 
 /** A name as it reads, for telling two names apart: without anything
-    unseen, the spaces and marks around it, or case. */
+    unseen, any spaces, line breaks or tabs, the marks around it, or case,
+    so "Session 1", "Session1" and "session\n1" are one name. */
 export function bareName(name: string): string {
   return Array.from(name)
-    .filter((char) => !UNSEEN.test(char))
+    .filter((char) => !UNSEEN.test(char) && !/\s/.test(char))
     .join("")
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
-    .replace(/\s+/g, " ")
     .toLowerCase();
 }
 

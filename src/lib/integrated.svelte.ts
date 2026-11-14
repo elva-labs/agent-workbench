@@ -436,8 +436,8 @@ export function send(
     const line = spoken(text).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
-    if (line !== undefined && !nameTaken(line, key) && !readsAsYou(line))
-      named(key, line.length > 60 ? `${line.slice(0, 59)}…` : line);
+    const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
+    if (title !== null && !nameTaken(title, key) && !readsAsYou(title)) named(key, title);
   }
   core()
     .integratedSend(link.handle, id, text, images)
