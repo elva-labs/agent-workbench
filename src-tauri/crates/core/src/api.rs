@@ -110,7 +110,11 @@ impl Sink for Overheard {
 
 impl Core {
     pub fn new(sink: Arc<dyn Sink>) -> Self {
-        let home = home_directory();
+        Self::at_home(sink, home_directory())
+    }
+
+    /// A core whose home is the one given rather than the user's.
+    fn at_home(sink: Arc<dyn Sink>, home: Option<PathBuf>) -> Self {
         let plugins = home
             .as_deref()
             .map(|home| crate::plugins::Plugins::new(home, Arc::clone(&sink)));
@@ -814,9 +818,11 @@ impl Core {
         let path = git::worktree_add(project, name)?;
         // The agents ask about a directory they have not run in; a worktree
         // is the project under another path, and has the project's answer,
-        // under every account.
+        // under every account. It has the project's hooks too, so a session
+        // there reports its state as one in the project does.
         if let Some(home) = &self.home {
             hook::trust_like(home, project, Path::new(&path), accounts)?;
+            hook::share(home, project, Path::new(&path), accounts)?;
         }
         Ok(path)
     }
@@ -829,9 +835,24 @@ impl Core {
     }
 
     /// Takes one of those worktrees away, and its branch with it. Refuses
-    /// one that still holds work.
-    pub fn worktree_remove(&self, project: &Path, name: &str) -> Result<(), String> {
-        git::worktree_remove(project, name)
+    /// one that still holds work. The hooks' files go with the tree; what
+    /// they put in the agents' own state for it goes too.
+    pub fn worktree_remove(
+        &self,
+        project: &Path,
+        name: &str,
+        accounts: &[account::Dirs],
+    ) -> Result<(), String> {
+        let tree = project.join(git::WORKTREES).join(name);
+        let tree = dunce::canonicalize(&tree).unwrap_or(tree);
+        git::worktree_remove(project, name)?;
+        // The tree is gone, which is what the call is for. A state file
+        // that cannot be read keeps the entry rather than turn the removal
+        // into an error.
+        if let Some(home) = &self.home {
+            let _ = hook::forget(home, &tree, accounts);
+        }
+        Ok(())
     }
 
     /// Starts watching a worktree, replacing whatever was being watched
@@ -951,6 +972,65 @@ mod tests {
 
     fn core() -> Core {
         Core::new(Arc::new(Recorder::default()))
+    }
+
+    // A session started on a worktree runs with the hooks its project
+    // has, and the worktree's clean-up takes them away again.
+    #[test]
+    fn a_worktree_made_for_a_session_has_the_project_s_hooks_until_it_goes() {
+        let base = std::env::temp_dir().join("workbench-api-worktree-hooks");
+        std::fs::remove_dir_all(&base).ok();
+        let (home, project) = (base.join("home"), base.join("project"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let git = |args: &[&str]| {
+            let done = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&project)
+                .output()
+                .expect("git should be installed");
+            assert!(done.status.success(), "git {args:?}: {done:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(project.join("a.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "first"]);
+        let daemon = hook::daemon_path(&home);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+
+        let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
+        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+
+        // Hooks off: the worktree gets none.
+        let bare = PathBuf::from(core.worktree_add(&project, "bare", &[]).unwrap());
+        assert!(!hooked(&bare));
+        assert!(!bare.join(".claude").join("settings.local.json").exists());
+        core.worktree_remove(&project, "bare", &[]).unwrap();
+
+        // Hooks on: the worktree has them before anything runs in it, and
+        // its checkout shows nothing new.
+        core.hook_install(&project, &[]).unwrap();
+        let tree = PathBuf::from(core.worktree_add(&project, "fix", &[]).unwrap());
+        assert!(hooked(&tree));
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .current_dir(&tree)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+
+        core.worktree_remove(&project, "fix", &[]).unwrap();
+        assert!(!tree.exists());
+        let state = std::fs::read_to_string(account::claude_json(&home, None)).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&state).unwrap();
+        let key = tree.to_string_lossy().to_string();
+        assert!(state["projects"][&key]["mcpServers"]
+            .get("agent-workbench")
+            .is_none());
+        assert!(hooked(&project), "the project keeps its own");
     }
 
     #[test]

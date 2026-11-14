@@ -39,6 +39,18 @@ file the first time it writes one; the app does it in case it gets there
 first, and for the Codex file, which Codex leaves alone. The two lines stay
 in the exclude list when the hooks are turned off, where they do nothing.
 
+A worktree the workbench makes for a session is a checkout of its own, and
+each agent reads its local settings from the directory it runs in, so the
+project's files do not reach a session there. When the project has the
+hooks, the worktree is given the same entries, and the same pointer to the
+tool server, before the agent starts. The exclude list covers its files as
+it does the project's, so the worktree's checkout shows nothing new, and a
+file the worktree's checkout tracks is left as it is: a project that
+commits its Codex config keeps it unchanged there, and Codex in that
+worktree has the hooks without the tools. When the project has no hooks,
+nothing is written. Turning the hooks on or off for the project later does
+the same in each of the worktrees the workbench made for it.
+
 ## What they give
 
 The changes pane hears the moment a tool finishes, and hears what the agent
@@ -169,6 +181,8 @@ other sessions: what they do and what the user is asked is in
 
 ## Removing them
 
-Turning hooks off for a project removes the app's entries and nothing else.
-A Codex hooks file the app created and emptied is deleted with them. On a
-remote project the same is done on that machine.
+Turning hooks off for a project removes the app's entries and nothing else,
+in the project and in its worktrees. A Codex hooks file the app created and
+emptied is deleted with them. Cleaning up a worktree takes its files with
+it, and the tool server's entry for it in each account's Claude Code state
+goes too. On a remote project the same is done on that machine.

@@ -282,4 +282,5 @@ the row its exact state, as above. They are off until asked for, because
 they write into your configuration, and nothing should edit that because you
 opened a folder. They go where the agent keeps local, uncommitted settings,
 so they never turn up in a diff, and turning them off removes only what was
-added.
+added. A worktree the workbench makes for a session gets them too, as
+[hooks](hooks.md) describes.
