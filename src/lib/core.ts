@@ -1276,9 +1276,14 @@ export interface Core {
   orchestratorDir(): Promise<string>;
   /** The worktrees the app made under a project, with what is in them. */
   worktrees(project: string): Promise<Worktree[]>;
-  /** Removes one of those and its branch. Refused for a tree with
-      uncommitted work or a branch with commits the project lacks. */
-  worktreeRemove(project: string, name: string): Promise<void>;
+  /** Removes one of those and its branch, and what the hooks put in each
+      account's agent state for it. Refused for a tree with uncommitted
+      work or a branch with commits the project lacks. */
+  worktreeRemove(
+    project: string,
+    name: string,
+    accounts: AccountDirs[],
+  ): Promise<void>;
   /** Puts what the user is looking at on record on the project's machine,
       or clears it there with null. */
   setSelection(project: string, selection: Selection | null): Promise<void>;
@@ -1688,8 +1693,8 @@ const tauriCore: Core = {
     invoke<string>("worktree_add", { project, name, accounts }),
   orchestratorDir: () => invoke<string>("orchestrator_dir"),
   worktrees: (project) => invoke<Worktree[]>("worktrees", { project }),
-  worktreeRemove: (project, name) =>
-    invoke<void>("worktree_remove", { project, name }),
+  worktreeRemove: (project, name, accounts) =>
+    invoke<void>("worktree_remove", { project, name, accounts }),
 
   async onOpenSettings(handler) {
     return listen("open_settings", () => handler());
