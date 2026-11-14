@@ -46,6 +46,10 @@ static ISOLATE: Once = Once::new();
 /// With no `SHELL`, the core asks no login shell for the environment and
 /// takes this process's own, and on Unix the shell it starts for a terminal
 /// is the system's `sh`, which reads no startup file while `ENV` names none.
+///
+/// The environment is read once for the whole process, so this has to come
+/// before the first core: a test makes its core after a scratch folder or
+/// through a helper that calls this, never bare.
 pub fn isolate() {
     ISOLATE.call_once(|| {
         for (name, _) in std::env::vars_os() {
