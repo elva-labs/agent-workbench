@@ -1088,8 +1088,8 @@ mod model {
             )
         } else if prompt.contains("ESCALATE") {
             run("touch made.txt", true)
-        } else if prompt.contains("SLEEP") {
-            run("sleep 37", false)
+        } else if let Some(seconds) = prompt.split("SLEEP ").nth(1) {
+            run(&format!("sleep {}", seconds.trim()), false)
         } else if prompt.contains("MCP") {
             match tools.iter().find(|(_, name)| name.contains("echo")) {
                 Some((namespace, name)) => {
@@ -1270,14 +1270,47 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     assert_eq!(call["error"], false);
     assert!(!events.iter().any(|e| e["type"] == "permissionAsked"));
 
-    // An interrupt while a command runs.
+    // An interrupt while a command runs. The command sleeps for a time no
+    // other process asks for, so that it alone is found by it.
+    let command = format!(
+        "sleep 37.{:09}",
+        uuid::Uuid::new_v4().as_u128() % 1_000_000_000
+    );
+    let sleeping = || {
+        std::process::Command::new("pgrep")
+            .args(["-f", &command])
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    let processes = || {
+        let ps = std::process::Command::new("ps")
+            .args(["-o", "pid,pgid,ppid,command", "-ax"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+            .unwrap_or_default();
+        ps.lines()
+            .filter(|l| l.contains(&command))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    // Until it holds, or panics with the processes there are.
+    let wait_for = |what: &str, holds: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !holds() {
+            assert!(Instant::now() < deadline, "{what}: {:#?}", processes());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
     let before = h.events().len();
-    h.send("SLEEP");
+    h.send(&format!("SLEEP {}", &command["sleep ".len()..]));
+    // The interrupt waits for both Codex's word that the call started and
+    // the command itself, which come in no fixed order.
     h.until(|_| {
         h.events()[before..]
             .iter()
             .any(|e| e["type"] == "toolStarted" && e["kind"] == "command")
     });
+    wait_for("the command never ran", &sleeping);
     control(&sessions, &h.id, &Control::Interrupt).unwrap();
     let events = h.until_nth("turnEnded", 5);
     assert_eq!(
@@ -1285,29 +1318,15 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         "interrupted",
         "{events:#?}"
     );
-    let sleeping = || {
-        std::process::Command::new("pgrep")
-            .args(["-f", "sleep 37"])
-            .output()
-            .is_ok_and(|out| out.status.success())
-    };
     // The interrupt ends the turn and leaves the command running; the end
     // of the session takes it.
-    assert!(sleeping(), "the command outlives the interrupt");
+    assert!(
+        sleeping(),
+        "the command outlives the interrupt: {:#?}",
+        processes()
+    );
     assert_eq!(h.stop()["clean"], true);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while sleeping() {
-        if Instant::now() >= deadline {
-            let ps = std::process::Command::new("ps")
-                .args(["-o", "pid,pgid,ppid,command", "-ax"])
-                .output()
-                .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
-                .unwrap_or_default();
-            let left: Vec<&str> = ps.lines().filter(|l| l.contains("sleep 37")).collect();
-            panic!("the command outlived the session: {left:#?}");
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for("the command outlived the session", &|| !sleeping());
 
     // The thread resumes, and the tool server is told whose it is.
     let h = begin(Some(&thread));
