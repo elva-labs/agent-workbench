@@ -215,15 +215,21 @@ export function setTheme(choice: ThemeChoice) {
   persist({ appearance: choice });
 }
 
-/** Keeps a new set of the user's own themes, and the palette with them:
-    one change, so a theme and the choice of it arrive together. A palette
-    naming a theme the set no longer has goes back to the default. */
+/** Keeps a new set of the user's own themes, and the palette with them
+    when it moves: one change, so a theme and the choice of it arrive
+    together. A palette naming a theme the set no longer has goes back to
+    the default. */
 export function setThemes(themes: Record<string, CustomTheme>, palette = theme.palette) {
+  const was = theme.palette;
   theme.themes = validThemes(themes);
   theme.palette = isPalette(palette) ? palette : "teal";
   rememberAll();
   applyTheme();
-  persist({ themes: { ...theme.themes }, palette: theme.palette });
+  persist(
+    theme.palette === was
+      ? { themes: { ...theme.themes } }
+      : { themes: { ...theme.themes }, palette: theme.palette },
+  );
 }
 
 /** Takes one of the user's own themes away. */

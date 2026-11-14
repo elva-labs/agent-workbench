@@ -23,6 +23,7 @@
  * refused with a word saying they are the user's, in the settings.
  */
 
+import { noteSent } from "$lib/persist";
 import { core, type SettingsRequest, type UnreadWorkflow } from "$lib/core";
 import {
   COLOUR_TOKENS,
@@ -707,17 +708,44 @@ async function change(
       asked = { next: now.next, changes: now.changes, theme: now.theme, css: now.css };
       if (JSON.stringify(now.changes) === JSON.stringify(question.changes)) break;
     }
-    const undo = await take(asked.next);
-    offerUndo({ caller, changes: asked.changes }, undo);
-    const made = asked.changes.map((change) => `${change.label} is now ${change.to}`).join("; ");
-    return said(`The user allowed the change. ${made}. They can undo it for a short while.`);
+    const { undo, notSaved } = await take(asked.next);
+    const kept = asked.changes.filter((change) => !notSaved.has(storedAs(change.field)));
+    const lost = asked.changes.filter((change) => notSaved.has(storedAs(change.field)));
+    if (kept.length === 0) {
+      return refused(
+        `The user allowed the change, but it could not be saved: ${reasonsOf(lost, notSaved)}. Nothing changed.`,
+      );
+    }
+    offerUndo({ caller, changes: kept }, undo);
+    const made = kept.map((change) => `${change.label} is now ${change.to}`).join("; ");
+    if (lost.length === 0) {
+      return said(`The user allowed the change. ${made}. They can undo it for a short while.`);
+    }
+    const unmade = lost.map((change) => `${change.label} to ${change.to}`).join("; ");
+    return said(
+      `The user allowed the change, and only part of it was saved. ${made}. Not saved: ${unmade}, because ${reasonsOf(lost, notSaved)}. They can undo what was saved for a short while.`,
+    );
   });
 }
 
-/** Makes a change, and answers with what puts things back as they were.
-    A stylesheet or workflows the core refuses after all are the change's
-    reason for not being made, and nothing else is touched. */
-async function take(next: Next): Promise<() => void> {
+/** The setting of the file a line of a change is kept in. */
+function storedAs(field: string): string {
+  if (field === "keyPreset" || field.startsWith("keys.")) return "keys";
+  if (field === "theme") return "themes";
+  return field;
+}
+
+/** The reasons the lines were not saved, each once. */
+function reasonsOf(lines: Change[], notSaved: Map<string, string>): string {
+  const reasons = new Set(lines.map((change) => notSaved.get(storedAs(change.field))!));
+  return [...reasons].map((reason) => reason.replace(/\.$/, "")).join("; and ");
+}
+
+/** Makes a change, and answers with what puts back what it made, and the
+    settings the core refused to save, each with its reason; those the
+    window has gone back on. A stylesheet or workflows the core refuses are
+    the change's reason for not being made, and nothing else is touched. */
+async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<string, string> }> {
   const sheet = userStyles.css;
   if (next.css !== undefined) await core().stylesSet(next.css);
   let workflowsBack: (() => void) | null = null;
@@ -742,6 +770,7 @@ async function take(next: Next): Promise<() => void> {
     themes: { ...theme.themes },
     userStyles: userStyles.on,
   };
+  const answered = noteSent();
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
   if (next.themes !== undefined) setThemes(next.themes, next.palette);
@@ -750,18 +779,27 @@ async function take(next: Next): Promise<() => void> {
   if (next.interfaceFont !== undefined) setSans(next.interfaceFont);
   if (next.keys !== undefined) setBindings(next.keys);
   if (next.userStyles !== undefined) setUserStyles(next.userStyles);
-  return () => {
+  // The settings are changed in the window first and sent after. The agent
+  // is told what the core did with each, not what the window shows.
+  const notSaved = new Map<string, string>();
+  for (const { fields, reason } of await answered()) {
+    if (reason !== null) for (const field of fields) notSaved.set(field, reason);
+  }
+  const made = (field: string) => !notSaved.has(field);
+  const undo = () => {
     if (next.css !== undefined) void core().stylesSet(sheet).catch(() => {});
-    if (next.userStyles !== undefined) setUserStyles(before.userStyles);
-    if (next.appearance !== undefined) setTheme(before.appearance);
-    if (next.look !== undefined) setLook(before.look);
-    if (next.themes !== undefined) setThemes(before.themes, before.palette);
-    else if (next.palette !== undefined) setPalette(before.palette);
-    if (next.terminalFont !== undefined) setMono(before.terminalFont);
-    if (next.interfaceFont !== undefined) setSans(before.interfaceFont);
-    if (next.keys !== undefined) setBindings(before.keys);
+    if (next.userStyles !== undefined && made("userStyles")) setUserStyles(before.userStyles);
+    if (next.appearance !== undefined && made("appearance")) setTheme(before.appearance);
+    if (next.look !== undefined && made("look")) setLook(before.look);
+    if (next.themes !== undefined) {
+      if (made("themes")) setThemes(before.themes, before.palette);
+    } else if (next.palette !== undefined && made("palette")) setPalette(before.palette);
+    if (next.terminalFont !== undefined && made("terminalFont")) setMono(before.terminalFont);
+    if (next.interfaceFont !== undefined && made("interfaceFont")) setSans(before.interfaceFont);
+    if (next.keys !== undefined && made("keys")) setBindings(before.keys);
     workflowsBack?.();
   };
+  return { undo, notSaved };
 }
 
 function answerAsk(choice: Choice) {

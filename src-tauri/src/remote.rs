@@ -380,6 +380,7 @@ fn open_at(
                 integrated_heard(&name, &payload);
                 let _ = app.emit(event, payload);
             } else if event == workbench_core::settings::SETTINGS_CHANGED
+                || event == workbench_core::settings::SETTINGS_MISSING
                 || event == workbench_core::styles::USER_STYLES_CHANGED
             {
                 // The window follows the settings of the machine it runs on,
