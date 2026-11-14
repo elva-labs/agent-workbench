@@ -124,14 +124,35 @@ fn sandbox_name(sandbox: &Value) -> Option<String> {
     )
 }
 
-/// The sandbox as `turn/start` takes it.
-fn sandbox_policy(sandbox: &str) -> Value {
-    let kind = match sandbox {
-        "read-only" => "readOnly",
-        "workspace-write" => "workspaceWrite",
-        _ => "dangerFullAccess",
-    };
-    json!({ "type": kind })
+/// The sandbox as `turn/start` takes it. Writing in the workspace keeps
+/// the writable roots and the network access the user gave it, where they
+/// are known; a name this side does not know is read only.
+fn sandbox_policy(sandbox: &str, workspace: Option<&Value>) -> Value {
+    match sandbox {
+        "workspace-write" => workspace
+            .cloned()
+            .unwrap_or_else(|| json!({ "type": "workspaceWrite" })),
+        "danger-full-access" => json!({ "type": "dangerFullAccess" }),
+        _ => json!({ "type": "readOnly" }),
+    }
+}
+
+/// The workspace sandbox the user's configuration sets up, as `turn/start`
+/// takes it, from the `sandbox_workspace_write` table `config/read` gives.
+fn configured_workspace(config: &Value) -> Option<Value> {
+    let table = config["sandbox_workspace_write"].as_object()?;
+    let mut policy = json!({ "type": "workspaceWrite" });
+    for (from, to) in [
+        ("writable_roots", "writableRoots"),
+        ("network_access", "networkAccess"),
+        ("exclude_tmpdir_env_var", "excludeTmpdirEnvVar"),
+        ("exclude_slash_tmp", "excludeSlashTmp"),
+    ] {
+        if let Some(value) = table.get(from).filter(|value| !value.is_null()) {
+            policy[to] = value.clone();
+        }
+    }
+    Some(policy)
 }
 
 /// The mode an approval policy and a sandbox make: one of the modes when
@@ -222,9 +243,11 @@ enum Sent {
     Initialize,
     Account,
     Models,
+    /// The user's own configuration, for the sandbox settings a mode keeps.
+    Config,
     Thread,
-    /// The turn a message starts.
-    Turn(String),
+    /// The turn a message starts, with the changes of settings it carries.
+    Turn(String, Next),
     /// An interrupt whose answer the window waits for.
     Interrupt,
     /// An interrupt asked for before the turn had an id, sent once it did.
@@ -251,12 +274,34 @@ enum Asking {
     },
     Question {
         ids: Vec<String>,
+        /// For each question that takes its options alone, their labels.
+        options: Vec<Option<Vec<String>>>,
     },
     Mcp {
         server: String,
         tool: String,
         persist: Vec<String>,
     },
+}
+
+/// Changes of settings settled here that go with the next turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Next {
+    model: Option<String>,
+    effort: Option<String>,
+    mode: Option<String>,
+}
+
+impl Next {
+    /// Keeps what is set here, and takes what is not from `older`: a
+    /// change made since wins over the one it would bring back.
+    fn or(self, older: Next) -> Next {
+        Next {
+            model: self.model.or(older.model),
+            effort: self.effort.or(older.effort),
+            mode: self.mode.or(older.mode),
+        }
+    }
 }
 
 /// A request from the server waiting for an answer.
@@ -408,13 +453,112 @@ impl Asked {
 
     /// The answer that lets the server go on when nobody will answer: no.
     fn refusal(&self) -> Value {
-        match &self.asking {
-            Asking::Command { .. } | Asking::File { .. } => json!({ "decision": "decline" }),
-            Asking::Permissions { .. } => json!({ "permissions": {}, "scope": "turn" }),
-            Asking::Question { .. } => json!({ "answers": {} }),
-            Asking::Mcp { .. } => json!({ "action": "decline", "content": null }),
+        let method = match &self.asking {
+            Asking::Command { .. } => "item/commandExecution/requestApproval",
+            Asking::File { .. } => "item/fileChange/requestApproval",
+            Asking::Permissions { .. } => "item/permissions/requestApproval",
+            Asking::Question { .. } => "item/tool/requestUserInput",
+            Asking::Mcp { .. } => "mcpServer/elicitation/request",
+        };
+        refusal(method).expect("a request this side asks of the user")
+    }
+}
+
+/// The answer that says no to a request of the method given, for one this
+/// side handles.
+fn refusal(method: &str) -> Option<Value> {
+    Some(match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+            json!({ "decision": "decline" })
+        }
+        "item/permissions/requestApproval" => json!({ "permissions": {}, "scope": "turn" }),
+        "item/tool/requestUserInput" => json!({ "answers": {} }),
+        "mcpServer/elicitation/request" => json!({ "action": "decline", "content": null }),
+        _ => return None,
+    })
+}
+
+/// The line that turns a request down: no, for one this side handles, and
+/// an error that says so for one it does not.
+fn turned_down(id: &Value, method: &str) -> String {
+    match refusal(method) {
+        Some(result) => json!({ "id": id, "result": result }),
+        None => json!({
+            "id": id,
+            "error": { "code": -32601, "message": "not handled by Agent Workbench" },
+        }),
+    }
+    .to_string()
+}
+
+/// The id and the method of a request from the head of its line, where the
+/// head holds both at the top level of the message.
+fn head_request(head: &str) -> Option<(Value, String)> {
+    let bytes = head.as_bytes();
+    // The end of the string that starts at `at`, past its closing quote.
+    let string_end = |at: usize| -> Option<usize> {
+        let mut i = at + 1;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => i += 2,
+                b'"' => return Some(i + 1),
+                _ => i += 1,
+            }
+        }
+        None
+    };
+    let skip_space = |mut i: usize| {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        i
+    };
+    let (mut id, mut method) = (None, None);
+    let (mut depth, mut i) = (0usize, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' | b'[' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' | b']' => {
+                depth = depth.checked_sub(1)?;
+                i += 1;
+            }
+            b'"' => {
+                let end = string_end(i)?;
+                let after = skip_space(end);
+                if depth == 1 && bytes.get(after) == Some(&b':') {
+                    let key: String = serde_json::from_str(&head[i..end]).ok()?;
+                    let at = skip_space(after + 1);
+                    let value = match bytes.get(at) {
+                        Some(b'"') => {
+                            let end = string_end(at)?;
+                            serde_json::from_str::<Value>(&head[at..end]).ok()
+                        }
+                        _ => {
+                            let digits = head[at..]
+                                .bytes()
+                                .take_while(|b| b.is_ascii_digit() || *b == b'-')
+                                .count();
+                            head[at..at + digits].parse::<i64>().ok().map(Value::from)
+                        }
+                    };
+                    match key.as_str() {
+                        "id" => id = value,
+                        "method" => method = value.and_then(|v| text(&v)),
+                        _ => {}
+                    }
+                    if let (Some(id), Some(method)) = (&id, &method) {
+                        return Some((id.clone(), method.clone()));
+                    }
+                }
+                i = end;
+            }
+            _ => i += 1,
         }
     }
+    None
 }
 
 /// The tokens one request or a running total took, as Codex counts them.
@@ -471,12 +615,12 @@ impl Tokens {
 /// A tool call as an item began it, until it completes.
 #[derive(Debug, Clone)]
 struct Call {
+    /// The agent's name for the tool, as the tool started event gives it.
+    name: String,
     kind: ToolKind,
     /// What the call was started with, which a permission request for it
     /// shows.
     input: Value,
-    /// The server of an MCP call, which an approval of it names.
-    server: Option<String>,
 }
 
 /// One session's reading of the app-server's lines.
@@ -507,17 +651,21 @@ struct AppServer {
     effort: Option<String>,
     /// The models offered, with the effort each defaults to.
     models: Vec<(ModelInfo, Option<String>)>,
-    /// Changes settled here that go with the next turn, until one takes
-    /// them.
-    next_model: Option<String>,
-    next_effort: Option<String>,
-    next_mode: Option<String>,
+    /// Changes settled here that go with the next turn, until a request
+    /// for one takes them.
+    changes: Next,
+    config_known: bool,
+    /// The sandbox the auto mode runs in, with the writable roots and the
+    /// network access the user configured.
+    workspace: Option<Value>,
 
     /// The turn running, once its id is known.
     turn: Option<String>,
-    /// The request that starts a turn for a message, until the turn is
-    /// known, and whether its start has been told.
-    starting: Option<(i64, String, bool)>,
+    /// The request that starts a turn for a message, until it is answered.
+    starting: Option<i64>,
+    /// A message whose turn Codex named in its answer, until that turn
+    /// starts: the turn's id, where the answer gave one, and the message.
+    awaited: Option<(Option<String>, String)>,
     interrupt_wanted: bool,
     compact_asked: bool,
     /// Why the running turn failed, as the agent said before it ended.
@@ -860,11 +1008,12 @@ impl AppServer {
             mode: None,
             effort: None,
             models: Vec::new(),
-            next_model: None,
-            next_effort: None,
-            next_mode: None,
+            changes: Next::default(),
+            config_known: false,
+            workspace: None,
             turn: None,
             starting: None,
+            awaited: None,
             interrupt_wanted: false,
             compact_asked: false,
             failure: None,
@@ -970,7 +1119,7 @@ impl AppServer {
     /// Says the session is ready, once the thread is there and the account
     /// and the models are known.
     fn introduce(&mut self, out: &mut Reading) {
-        if self.ready || !self.account_known || !self.models_known {
+        if self.ready || !self.account_known || !self.models_known || !self.config_known {
             return;
         }
         let Some(started) = self.started.take() else {
@@ -988,6 +1137,9 @@ impl AppServer {
             return;
         };
         self.thread = Some(thread.clone());
+        if started["sandbox"]["type"] == "workspaceWrite" {
+            self.workspace = Some(started["sandbox"].clone());
+        }
         self.model = text(&started["model"]).or_else(|| self.start_model.clone());
         self.effort = text(&started["reasoningEffort"]).or_else(|| self.start_effort.clone());
         self.mode =
@@ -1058,8 +1210,13 @@ impl AppServer {
                         json!({ "refreshToken": false }),
                     );
                     let (models, _) = self.request(Sent::Models, "model/list", json!({}));
+                    let (config, _) = self.request(
+                        Sent::Config,
+                        "config/read",
+                        json!({ "cwd": self.project.to_string_lossy(), "includeLayers": false }),
+                    );
                     let thread = self.thread_request();
-                    out.writes.extend([account, models, thread]);
+                    out.writes.extend([account, models, config, thread]);
                 }
                 Err(error) => {
                     out.fatal = Some((
@@ -1109,6 +1266,15 @@ impl AppServer {
                 self.models_known = true;
                 self.introduce(out);
             }
+            Sent::Config => {
+                if let Ok(result) = &reply {
+                    if self.workspace.is_none() {
+                        self.workspace = configured_workspace(&result["config"]);
+                    }
+                }
+                self.config_known = true;
+                self.introduce(out);
+            }
             Sent::Thread => match reply {
                 Ok(result) => {
                     self.started = Some(result);
@@ -1122,33 +1288,24 @@ impl AppServer {
                     out.fatal = Some((ErrorKind::Agent, format!("{what}: {error}")));
                 }
             },
-            Sent::Turn(message) => {
-                let told =
-                    matches!(&self.starting, Some((request, _, told)) if *request == id && *told);
-                if self
-                    .starting
-                    .as_ref()
-                    .is_some_and(|(request, ..)| *request == id)
-                {
+            Sent::Turn(message, carried) => {
+                if self.starting == Some(id) {
                     self.starting = None;
                 }
                 match reply {
-                    Ok(result) => {
-                        // The settings it carried are the thread's now.
-                        self.next_model = None;
-                        self.next_effort = None;
-                        self.next_mode = None;
-                        if !told {
-                            if let Some(turn) = text(&result["turn"]["id"]) {
-                                self.begin(&turn, vec![message], out);
-                            }
-                        }
+                    Ok(result) => self.turn_answered(text(&result["turn"]["id"]), message, out),
+                    Err(error) => {
+                        // What it carried goes with the next one, unless
+                        // changed again since; and an interrupt meant for
+                        // the turn it would have started has none to stop.
+                        self.changes = std::mem::take(&mut self.changes).or(carried);
+                        self.interrupt_wanted = false;
+                        out.events.push(Event::message(
+                            &message,
+                            MessageState::Dropped,
+                            Some(error),
+                        ));
                     }
-                    Err(error) => out.events.push(Event::message(
-                        &message,
-                        MessageState::Dropped,
-                        Some(error),
-                    )),
                 }
             }
             Sent::Interrupt => out.replies.push((id.to_string(), reply)),
@@ -1184,6 +1341,24 @@ impl AppServer {
         }
     }
 
+    /// Codex took a message, as the turn named, where it named one.
+    fn turn_answered(&mut self, turn: Option<String>, message: String, out: &mut Reading) {
+        match (turn, self.turn.clone()) {
+            // Its turn began before the answer came, naming nothing then:
+            // a second start names it, and the core takes it as taken into
+            // the turn that runs.
+            (Some(turn), Some(running)) if turn == running => {
+                out.events.push(Event::TurnStarted {
+                    messages: vec![message],
+                });
+            }
+            (Some(turn), None) => self.begin(&turn, vec![message], out),
+            // Another turn runs, or the answer named none: its own start
+            // names it.
+            (turn, _) => self.awaited = Some((turn, message)),
+        }
+    }
+
     fn turn_started(&mut self, params: &Value, out: &mut Reading) {
         let Some(turn) = params["turn"]["id"].as_str() else {
             return;
@@ -1191,12 +1366,12 @@ impl AppServer {
         if self.turn.as_deref() == Some(turn) {
             return;
         }
-        // The turn a message started, if one is on its way; else one the
-        // agent began by itself, such as to compact.
-        let messages = match &mut self.starting {
-            Some((_, message, told)) if !*told => {
-                *told = true;
-                vec![message.clone()]
+        // The turn Codex said a message starts; any other is one it began
+        // by itself, such as to compact, or one whose message's answer has
+        // not come yet.
+        let messages = match &self.awaited {
+            Some((awaited, _)) if awaited.as_deref().is_none_or(|awaited| awaited == turn) => {
+                vec![self.awaited.take().expect("matched above").1]
             }
             _ => vec![],
         };
@@ -1205,6 +1380,13 @@ impl AppServer {
 
     fn turn_completed(&mut self, params: &Value, out: &mut Reading) {
         let turn = &params["turn"];
+        if let (None, Some(ended)) = (&self.turn, turn["id"].as_str()) {
+            // The end of a message's turn never seen to start.
+            if matches!(&self.awaited, Some((Some(awaited), _)) if awaited == ended) {
+                let message = self.awaited.take().expect("matched above").1;
+                self.begin(ended, vec![message], out);
+            }
+        }
         let outcome = match turn["status"].as_str() {
             Some("completed") => Outcome::Done,
             Some("interrupted") => Outcome::Interrupted,
@@ -1260,7 +1442,7 @@ impl AppServer {
 
     /// The tool call an item is, with the agent's name for it, its kind and
     /// its input. None for an item that is no tool call.
-    fn call_of(item: &Value) -> Option<(String, ToolKind, Value, Option<String>)> {
+    fn call_of(item: &Value) -> Option<(String, ToolKind, Value)> {
         let kind = item["type"].as_str()?;
         Some(match kind {
             "commandExecution" => (
@@ -1271,13 +1453,11 @@ impl AppServer {
                     "cwd": item["cwd"],
                     "actions": item["commandActions"],
                 }),
-                None,
             ),
             "fileChange" => (
                 kind.to_string(),
                 ToolKind::Edit,
                 json!({ "changes": item["changes"] }),
-                None,
             ),
             "mcpToolCall" => {
                 let server = item["server"].as_str().unwrap_or_default();
@@ -1286,32 +1466,27 @@ impl AppServer {
                     format!("mcp__{server}__{tool}"),
                     ToolKind::Mcp,
                     item["arguments"].clone(),
-                    Some(server.to_string()),
                 )
             }
             "dynamicToolCall" => (
                 text(&item["tool"]).unwrap_or_else(|| kind.to_string()),
                 ToolKind::Other,
                 item["arguments"].clone(),
-                None,
             ),
             "collabAgentToolCall" => (
                 text(&item["tool"]).unwrap_or_else(|| kind.to_string()),
                 ToolKind::Agent,
                 json!({ "prompt": item["prompt"], "model": item["model"] }),
-                None,
             ),
             "webSearch" => (
                 kind.to_string(),
                 ToolKind::Web,
                 json!({ "query": item["query"], "action": item["action"] }),
-                None,
             ),
             "imageView" => (
                 kind.to_string(),
                 ToolKind::Read,
                 json!({ "path": item["path"] }),
-                None,
             ),
             _ => return None,
         })
@@ -1322,13 +1497,13 @@ impl AppServer {
         if self.calls.contains_key(id) {
             return true;
         }
-        let Some((name, kind, input, server)) = Self::call_of(item) else {
+        let Some((name, kind, input)) = Self::call_of(item) else {
             return false;
         };
         out.events.push(Event::ToolStarted {
             call: id.to_string(),
             parent: None,
-            name,
+            name: name.clone(),
             kind,
         });
         out.events.push(Event::ToolInput {
@@ -1338,14 +1513,8 @@ impl AppServer {
             input: Some(input.clone()),
             truncated: false,
         });
-        self.calls.insert(
-            id.to_string(),
-            Call {
-                kind,
-                input,
-                server,
-            },
-        );
+        self.calls
+            .insert(id.to_string(), Call { name, kind, input });
         true
     }
 
@@ -1621,10 +1790,13 @@ impl AppServer {
             "thread/settings/updated" => {
                 let settings = &params["threadSettings"];
                 let mut changed = false;
-                let model = text(&settings["model"]).filter(|_| self.next_model.is_none());
-                let effort = text(&settings["effort"]).filter(|_| self.next_effort.is_none());
+                if settings["sandboxPolicy"]["type"] == "workspaceWrite" {
+                    self.workspace = Some(settings["sandboxPolicy"].clone());
+                }
+                let model = text(&settings["model"]).filter(|_| self.changes.model.is_none());
+                let effort = text(&settings["effort"]).filter(|_| self.changes.effort.is_none());
                 let mode = mode_of(&settings["approvalPolicy"], &settings["sandboxPolicy"])
-                    .filter(|_| self.next_mode.is_none());
+                    .filter(|_| self.changes.mode.is_none());
                 for (now, new) in [
                     (&mut self.model, model),
                     (&mut self.effort, effort),
@@ -1789,6 +1961,18 @@ impl AppServer {
             }
             "item/tool/requestUserInput" => {
                 let (questions, ids) = questions(params);
+                let options = questions
+                    .iter()
+                    .map(|question| {
+                        (!question.other).then(|| {
+                            question
+                                .options
+                                .iter()
+                                .map(|option| option.label.clone())
+                                .collect()
+                        })
+                    })
+                    .collect();
                 out.events.push(Event::QuestionAsked {
                     request: key.clone(),
                     call,
@@ -1800,7 +1984,7 @@ impl AppServer {
                     Asked {
                         id: id.clone(),
                         turn,
-                        asking: Asking::Question { ids },
+                        asking: Asking::Question { ids, options },
                     },
                 );
                 return;
@@ -1816,13 +2000,30 @@ impl AppServer {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
-                // The call it is for: the open MCP call of the same server.
-                let call = self
+                let input = params["_meta"]["tool_params"].clone();
+                // The call it is for: the one open call of that tool, or of
+                // those the one with these arguments. None where that does
+                // not tell one call from another.
+                let name = format!("mcp__{server}__{tool}");
+                let named: Vec<(&String, &Call)> = self
                     .calls
                     .iter()
-                    .find(|(_, open)| open.server.as_deref() == Some(server.as_str()))
-                    .map(|(call, _)| call.clone());
-                let input = params["_meta"]["tool_params"].clone();
+                    .filter(|(_, open)| open.kind == ToolKind::Mcp && open.name == name)
+                    .collect();
+                let call = match named.as_slice() {
+                    [(call, _)] => Some((*call).clone()),
+                    _ => {
+                        let same: Vec<&String> = named
+                            .iter()
+                            .filter(|(_, open)| open.input == input)
+                            .map(|(call, _)| *call)
+                            .collect();
+                        match same.as_slice() {
+                            [call] => Some((*call).clone()),
+                            _ => None,
+                        }
+                    }
+                };
                 let persist = params["_meta"]["persist"]
                     .as_array()
                     .into_iter()
@@ -1870,13 +2071,7 @@ impl AppServer {
                 return;
             }
             _ => {
-                out.writes.push(
-                    json!({
-                        "id": id,
-                        "error": { "code": -32601, "message": "not handled by Agent Workbench" },
-                    })
-                    .to_string(),
-                );
+                out.writes.push(turned_down(id, method));
                 return;
             }
         };
@@ -1897,6 +2092,23 @@ impl AppServer {
             choices: asked.offers(),
         });
         self.asked.insert(key, asked);
+    }
+
+    /// The thread this session holds, once Codex has said which.
+    fn own_thread(&self) -> Option<&str> {
+        self.thread
+            .as_deref()
+            .or_else(|| self.started.as_ref()?["thread"]["id"].as_str())
+            .or(self.resume.as_deref())
+    }
+
+    /// Whether a message names a thread other than this session's, as a
+    /// sub-agent's notifications and requests do.
+    fn another_thread(&self, params: &Value) -> bool {
+        match (params["threadId"].as_str(), self.own_thread()) {
+            (Some(named), Some(own)) => named != own,
+            _ => false,
+        }
     }
 
     /// Whether a model is one the agent offers, where it said which.
@@ -1928,13 +2140,18 @@ impl Driver for AppServer {
             return out;
         };
         let method = value["method"].as_str();
+        let elsewhere = self.another_thread(&value["params"]);
         match (value.get("id"), method) {
+            // Another thread's request, such as a sub-agent's, is not this
+            // session's to ask; it is told no rather than left waiting.
+            (Some(id), Some(method)) if elsewhere => out.writes.push(turned_down(id, method)),
             (Some(id), Some(method)) => self.asked_of(id, method, &value["params"], &mut out),
             (Some(id), None) => {
                 if let Some(id) = id.as_i64() {
                     self.answered(id, &value, &mut out);
                 }
             }
+            (None, Some(_)) if elsewhere => {}
             (None, Some(method)) => self.notified(method, &value["params"], &mut out),
             (None, None) => {}
         }
@@ -1977,18 +2194,27 @@ impl Driver for AppServer {
             "input": input,
             "clientUserMessageId": message,
         });
-        if let Some(model) = &self.next_model {
+        // The changes go with this turn, and come back if it fails.
+        let carried = std::mem::take(&mut self.changes);
+        if let Some(model) = &carried.model {
             params["model"] = json!(model);
         }
-        if let Some(effort) = &self.next_effort {
+        if let Some(effort) = &carried.effort {
             params["effort"] = json!(effort);
         }
-        if let Some(mode) = self.next_mode.as_deref().and_then(mode) {
+        if let Some(mode) = carried.mode.as_deref().and_then(mode) {
             params["approvalPolicy"] = json!(mode.approval);
-            params["sandboxPolicy"] = sandbox_policy(mode.sandbox);
+            params["sandboxPolicy"] = sandbox_policy(mode.sandbox, self.workspace.as_ref());
         }
-        let (line, id) = self.request(Sent::Turn(message.to_string()), "turn/start", params);
-        self.starting = Some((id, message.to_string(), false));
+        let (line, id) = self.request(
+            Sent::Turn(message.to_string(), carried),
+            "turn/start",
+            params,
+        );
+        self.starting = Some(id);
+        // The core hands a message over only once the one before it has its
+        // turn or is dropped, so an interrupt still waiting was for neither.
+        self.interrupt_wanted = false;
         Ok(line)
     }
 
@@ -2013,7 +2239,7 @@ impl Driver for AppServer {
             .asked
             .get(request)
             .ok_or("the agent is not waiting on that question")?;
-        let Asking::Question { ids } = &asked.asking else {
+        let Asking::Question { ids, options } = &asked.asking else {
             return Err("that request is a permission, answered with a choice".into());
         };
         let mut by_question = Map::new();
@@ -2025,7 +2251,7 @@ impl Driver for AppServer {
                     ids.len()
                 ));
             }
-            for (id, answer) in ids.iter().zip(answers) {
+            for ((id, answer), options) in ids.iter().zip(answers).zip(options) {
                 let answer: Vec<&str> = answer
                     .iter()
                     .map(|a| a.trim())
@@ -2033,6 +2259,13 @@ impl Driver for AppServer {
                     .collect();
                 if answer.is_empty() {
                     return Err(format!("no answer to question {id}"));
+                }
+                if let Some(options) = options {
+                    if let Some(other) = answer.iter().find(|a| !options.iter().any(|o| o == *a)) {
+                        return Err(format!(
+                            "{other:?} is not one of the options of question {id}"
+                        ));
+                    }
                 }
                 by_question.insert(id.clone(), json!({ "answers": answer }));
             }
@@ -2056,7 +2289,7 @@ impl Driver for AppServer {
                 }
                 _ => {
                     // A turn on its way is stopped once it has an id.
-                    self.interrupt_wanted = self.starting.is_some();
+                    self.interrupt_wanted = self.starting.is_some() || self.awaited.is_some();
                     local(Value::Null, vec![])
                 }
             },
@@ -2085,7 +2318,7 @@ impl Driver for AppServer {
                     return Err(format!("Codex does not offer the model {model:?}"));
                 }
                 self.model = Some(model.to_string());
-                self.next_model = Some(model.to_string());
+                self.changes.model = Some(model.to_string());
                 // An effort the model does not take gives way to the one it
                 // takes by default.
                 let efforts = self.efforts_of(Some(model));
@@ -2099,7 +2332,7 @@ impl Driver for AppServer {
                         .filter(|default| efforts.contains(default))
                         .or_else(|| efforts.first().cloned());
                     self.effort = default.clone();
-                    self.next_effort = default;
+                    self.changes.effort = default;
                 }
                 local(json!({ "model": model }), vec![self.configured()])
             }
@@ -2115,7 +2348,7 @@ impl Driver for AppServer {
                     return Err(format!("the model takes no {effort:?} effort"));
                 }
                 self.effort = Some(effort.to_string());
-                self.next_effort = Some(effort.to_string());
+                self.changes.effort = Some(effort.to_string());
                 local(json!({ "effort": effort }), vec![self.configured()])
             }
             Control::SetMode(value) => {
@@ -2125,7 +2358,7 @@ impl Driver for AppServer {
                 let found = mode(value.trim())
                     .ok_or_else(|| format!("{value:?} is not a mode Codex runs in"))?;
                 self.mode = Some(found.value.to_string());
-                self.next_mode = Some(found.value.to_string());
+                self.changes.mode = Some(found.value.to_string());
                 local(json!({ "mode": found.value }), vec![self.configured()])
             }
         }
@@ -2145,11 +2378,18 @@ impl Driver for AppServer {
             .extend_from_slice(&bytes[..bytes.len().min(room)]);
     }
 
-    /// A completed item too long to read finishes its call as cut short,
-    /// with no output, so the call does not wait for the end of the turn.
+    /// A request too long to read is told no, and a completed item too long
+    /// to read finishes its call as cut short, with no output, so neither
+    /// waits for the end of the turn.
     fn skipped(&mut self) -> Reading {
         let mut out = Reading::default();
         let head = String::from_utf8_lossy(&std::mem::take(&mut self.skipped_head)).to_string();
+        // A request nobody can read is told no, so the turn does not wait on
+        // it.
+        if let Some((id, method)) = head_request(&head) {
+            out.writes.push(turned_down(&id, &method));
+            return out;
+        }
         if !head.contains(r#""method":"item/completed""#) {
             return out;
         }

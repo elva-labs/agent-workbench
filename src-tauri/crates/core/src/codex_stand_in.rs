@@ -63,6 +63,8 @@ fn opening(account: &str) -> String {
         &format!(r#"reply {{"id":@ID@,"result":{account}}}"#),
         r#"expect "method":"model/list""#,
         r#"reply {"id":@ID@,"result":{"data":[{"id":"gpt-a","model":"gpt-a","displayName":"GPT A","hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":""},{"reasoningEffort":"medium","description":""}]},{"id":"gpt-b","model":"gpt-b","displayName":"GPT B","hidden":false,"defaultReasoningEffort":"high","supportedReasoningEfforts":[{"reasoningEffort":"high","description":""}]}]}}"#,
+        r#"expect "method":"config/read""#,
+        r#"reply {"id":@ID@,"result":{"config":{},"origins":{}}}"#,
         r#"expect "method":"thread/"#,
         &format!(
             r#"reply {{"id":@ID@,"result":{{"thread":{{"id":"{THREAD}","preview":"","turns":[]}},"model":"gpt-a","modelProvider":"openai","reasoningEffort":"medium","approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{{"type":"workspaceWrite"}},"cwd":"/w"}}}}"#

@@ -78,9 +78,27 @@ fn thread_started() -> Value {
     })
 }
 
+/// What `config/read` answers: the user's own workspace sandbox settings
+/// among the rest.
+fn config() -> Value {
+    json!({"config": {"model": "gpt-a", "sandbox_mode": null,
+        "sandbox_workspace_write": {"writable_roots": ["/work/shared"], "network_access": true,
+                                    "exclude_tmpdir_env_var": false, "exclude_slash_tmp": false}},
+        "origins": {}})
+}
+
 /// Plays the handshake, answering the opening requests in the order given,
 /// and hands back what was written and the events.
 fn handshake(driver: &mut AppServer, account: Value) -> (Vec<Value>, Vec<Event>) {
+    handshake_with(driver, account, thread_started())
+}
+
+/// The handshake, with the thread started as given.
+fn handshake_with(
+    driver: &mut AppServer,
+    account: Value,
+    started: Value,
+) -> (Vec<Value>, Vec<Event>) {
     let opening = written(&driver.opening());
     assert_eq!(opening[0]["method"], "initialize");
     let mut lines = opening.clone();
@@ -106,9 +124,10 @@ fn handshake(driver: &mut AppServer, account: Value) -> (Vec<Value>, Vec<Event>)
         .clone();
     let mut out = Vec::new();
     // Out of order: the server answers as each is done.
-    out.extend(read(driver, json!({"id": thread, "result": thread_started()})).events);
+    out.extend(read(driver, json!({"id": thread, "result": started})).events);
     out.extend(read(driver, json!({"id": id("model/list"), "result": models()})).events);
     out.extend(read(driver, json!({"id": id("account/read"), "result": account})).events);
+    out.extend(read(driver, json!({"id": id("config/read"), "result": config()})).events);
     (lines, out)
 }
 
@@ -133,24 +152,20 @@ fn item(method: &str, item: Value) -> Value {
     )
 }
 
-/// Sends a message, and plays the turn's start and its answer.
+/// Sends a message, and plays its answer and the turn's start, in the
+/// order Codex sends them.
 fn turn(driver: &mut AppServer, message: &str) -> Vec<Event> {
     let line: Value = serde_json::from_str(&driver.message(message, "go", &[]).unwrap()).unwrap();
-    let mut out = events(
+    events(
         driver,
-        &[notification(
-            "turn/started",
-            json!({"threadId": THREAD, "turn": {"id": "turn-1", "status": "inProgress", "items": []}}),
-        )],
-    );
-    out.extend(
-        read(
-            driver,
+        &[
             json!({"id": line["id"], "result": {"turn": {"id": "turn-1", "status": "inProgress", "items": []}}}),
-        )
-        .events,
-    );
-    out
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-1", "status": "inProgress", "items": []}}),
+            ),
+        ],
+    )
 }
 
 fn completed(status: &str) -> Value {
@@ -184,13 +199,18 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
             "initialized",
             "account/read",
             "model/list",
+            "config/read",
             "thread/start"
         ]
     );
     assert_eq!(lines[0]["params"]["clientInfo"]["name"], "agent-workbench");
     assert_eq!(lines[0]["params"]["capabilities"]["experimentalApi"], false);
     assert!(lines[1].get("id").is_none(), "a notification");
-    let start = &lines[4]["params"];
+    assert_eq!(
+        lines[4]["params"],
+        json!({"cwd": "/work/demo", "includeLayers": false})
+    );
+    let start = &lines[5]["params"];
     assert_eq!(start["cwd"], "/work/demo");
     assert_eq!(start["model"], "gpt-b");
     assert_eq!(start["approvalsReviewer"], "user");
@@ -204,7 +224,7 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     assert_eq!(tool["env"], json!({"WORKBENCH_ROLE": "orchestrator"}));
     assert!(start.get("threadId").is_none());
 
-    // Ready waits for all three answers, and says the thread's id.
+    // Ready waits for all four answers, and says the thread's id.
     assert_eq!(out.len(), 1, "{out:?}");
     let Event::Ready {
         session_id,
@@ -364,13 +384,28 @@ fn a_message_is_a_turn_named_by_the_message_whichever_comes_first() {
     );
     events(&mut driver, &[completed("completed")]);
 
-    // The notification first, then the answer.
-    let out = turn(&mut driver, M2);
+    // The notification first, then the answer: the turn names nothing
+    // until the answer says it is the message's, and then names it again,
+    // which the core takes as the message taken into the running turn.
+    let line: Value = serde_json::from_str(&driver.message(M2, "go", &[]).unwrap()).unwrap();
+    let out = events(
+        &mut driver,
+        &[
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-2"}}),
+            ),
+            json!({"id": line["id"], "result": {"turn": {"id": "turn-2"}}}),
+        ],
+    );
     assert_eq!(
         out,
-        [Event::TurnStarted {
-            messages: vec![M2.into()]
-        }]
+        [
+            Event::TurnStarted { messages: vec![] },
+            Event::TurnStarted {
+                messages: vec![M2.into()]
+            }
+        ]
     );
 
     // A turn the agent began itself names nothing.
@@ -379,10 +414,50 @@ fn a_message_is_a_turn_named_by_the_message_whichever_comes_first() {
         &mut driver,
         &[notification(
             "turn/started",
-            json!({"threadId": THREAD, "turn": {"id": "turn-2"}}),
+            json!({"threadId": THREAD, "turn": {"id": "turn-3"}}),
         )],
     );
     assert_eq!(out, [Event::TurnStarted { messages: vec![] }]);
+}
+
+#[test]
+fn a_message_s_turn_is_the_one_its_answer_names_not_the_next_to_start() {
+    let mut driver = ready();
+    let line: Value = serde_json::from_str(&driver.message(M1, "go", &[]).unwrap()).unwrap();
+    let compaction = |status: &str| {
+        notification(
+            &format!("turn/{status}"),
+            json!({"threadId": THREAD, "turn": {"id": "turn-c", "status": "completed"}}),
+        )
+    };
+    // A compaction turn starts just as the message goes; its answer names
+    // another turn, which starts once the compaction is over.
+    let out = events(
+        &mut driver,
+        &[
+            compaction("started"),
+            json!({"id": line["id"], "result": {"turn": {"id": "turn-m"}}}),
+            compaction("completed"),
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-m"}}),
+            ),
+        ],
+    );
+    let started: Vec<&Event> = out
+        .iter()
+        .filter(|e| matches!(e, Event::TurnStarted { .. }))
+        .collect();
+    assert_eq!(
+        started,
+        [
+            &Event::TurnStarted { messages: vec![] },
+            &Event::TurnStarted {
+                messages: vec![M1.into()]
+            }
+        ],
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -1021,6 +1096,13 @@ fn a_question_takes_options_words_and_secrets_and_a_reply_by_id() {
         "a reply, not a permission"
     );
     assert!(driver.reply("5", Some(&[vec!["Red".into()]])).is_err());
+    let error = driver
+        .reply(
+            "5",
+            Some(&[vec!["Green".into()], vec!["x".into()], vec!["y".into()]]),
+        )
+        .unwrap_err();
+    assert!(error.contains("not one of the options"), "{error}");
     let line: Value = serde_json::from_str(
         &driver
             .reply(
@@ -1745,5 +1827,311 @@ fn the_protocol_copy_matches_the_installed_codex() {
          WORKBENCH_CODEX_PROTOCOL_WRITE=1 cargo test -p workbench-core the_protocol_copy",
         copy["version"].as_str().unwrap_or("?"),
         moved.join("\n")
+    );
+}
+
+#[test]
+fn another_thread_s_notifications_and_requests_are_not_this_session_s() {
+    let mut driver = ready();
+    turn(&mut driver, M1);
+    let sub = |method: &str, params: Value| {
+        let mut params = params;
+        params["threadId"] = json!("thread-sub");
+        notification(method, params)
+    };
+    let reading = |driver: &mut AppServer, lines: &[Value]| -> (Vec<Event>, Vec<String>) {
+        let mut out = (vec![], vec![]);
+        for line in lines {
+            let reading = read(driver, line.clone());
+            out.0.extend(reading.events);
+            out.1.extend(reading.writes);
+        }
+        out
+    };
+    let (out, writes) = reading(
+        &mut driver,
+        &[
+            sub("turn/started", json!({"turn": {"id": "sub-1"}})),
+            sub(
+                "item/started",
+                json!({"turnId": "sub-1", "item": {"type": "commandExecution", "id": "c-sub", "command": "ls"}}),
+            ),
+            sub(
+                "item/agentMessage/delta",
+                json!({"itemId": "m-sub", "delta": "hi"}),
+            ),
+            sub(
+                "error",
+                json!({"error": {"message": "boom"}, "willRetry": false}),
+            ),
+            sub(
+                "turn/completed",
+                json!({"turn": {"id": "sub-1", "status": "completed"}}),
+            ),
+            json!({"id": 40, "method": "item/commandExecution/requestApproval",
+                   "params": {"threadId": "thread-sub", "turnId": "sub-1", "itemId": "c-sub", "command": "ls"}}),
+        ],
+    );
+    assert_eq!(
+        out,
+        [],
+        "nothing of the sub-agent's thread is this session's"
+    );
+    assert_eq!(
+        written(&writes),
+        [json!({"id": 40, "result": {"decision": "decline"}})],
+        "its request is told no rather than left waiting"
+    );
+    // The session's own turn still runs, and is the one that ends.
+    let out = events(&mut driver, &[completed("completed")]);
+    assert!(
+        matches!(
+            out.as_slice(),
+            [Event::TurnEnded {
+                outcome: Outcome::Done,
+                ..
+            }]
+        ),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn an_interrupt_for_a_turn_that_never_began_stops_no_later_one() {
+    let mut driver = ready();
+    // The message's turn/start fails after an interrupt asked for its turn.
+    let line: Value = serde_json::from_str(&driver.message(M1, "go", &[]).unwrap()).unwrap();
+    driver.control(&Control::Interrupt).unwrap();
+    read(
+        &mut driver,
+        json!({"id": line["id"], "error": {"code": -32600, "message": "busy"}}),
+    );
+    // A turn the agent begins by itself is not interrupted for it.
+    let reading = read(
+        &mut driver,
+        notification(
+            "turn/started",
+            json!({"threadId": THREAD, "turn": {"id": "turn-own"}}),
+        ),
+    );
+    assert!(reading.writes.is_empty(), "{:?}", reading.writes);
+    read(
+        &mut driver,
+        notification(
+            "turn/completed",
+            json!({"threadId": THREAD, "turn": {"id": "turn-own", "status": "completed"}}),
+        ),
+    );
+
+    // A message whose turn/start is never answered, and is given up on:
+    // the next message's turn is not interrupted either.
+    driver.message(M1, "go", &[]).unwrap();
+    driver.control(&Control::Interrupt).unwrap();
+    let line: Value = serde_json::from_str(&driver.message(M2, "go", &[]).unwrap()).unwrap();
+    let reading = read(
+        &mut driver,
+        json!({"id": line["id"], "result": {"turn": {"id": "turn-2"}}}),
+    );
+    assert!(reading.writes.is_empty(), "{:?}", reading.writes);
+}
+
+#[test]
+fn a_change_made_while_a_turn_start_is_on_its_way_is_kept() {
+    let mut driver = ready();
+    let settings = |line: &str| -> Value {
+        let line: Value = serde_json::from_str(line).unwrap();
+        line
+    };
+    // Changed while the request is out: it goes with the next one.
+    let line = settings(&driver.message(M1, "go", &[]).unwrap());
+    assert!(line["params"].get("model").is_none());
+    driver.control(&Control::SetModel("gpt-b".into())).unwrap();
+    events(
+        &mut driver,
+        &[
+            json!({"id": line["id"], "result": {"turn": {"id": "turn-1"}}}),
+            completed("completed"),
+        ],
+    );
+    let line = settings(&driver.message(M2, "go", &[]).unwrap());
+    assert_eq!(line["params"]["model"], "gpt-b");
+    events(
+        &mut driver,
+        &[
+            json!({"id": line["id"], "result": {"turn": {"id": "turn-1"}}}),
+            completed("completed"),
+        ],
+    );
+
+    // Carried by a request that fails: it goes again with the next, unless
+    // changed again since.
+    driver
+        .control(&Control::SetMode("full-access".into()))
+        .unwrap();
+    driver
+        .control(&Control::SetEffort("minimal".into()))
+        .unwrap();
+    let line = settings(&driver.message(M1, "go", &[]).unwrap());
+    assert_eq!(line["params"]["approvalPolicy"], "never");
+    assert_eq!(line["params"]["effort"], "minimal");
+    driver
+        .control(&Control::SetMode("read-only".into()))
+        .unwrap();
+    read(
+        &mut driver,
+        json!({"id": line["id"], "error": {"code": -32600, "message": "busy"}}),
+    );
+    let line = settings(&driver.message(M2, "go", &[]).unwrap());
+    assert_eq!(line["params"]["effort"], "minimal", "brought back");
+    assert_eq!(line["params"]["sandboxPolicy"], json!({"type": "readOnly"}));
+    assert_eq!(
+        line["params"]["approvalPolicy"], "on-request",
+        "the newer one"
+    );
+}
+
+#[test]
+fn a_mode_change_keeps_the_user_s_own_sandbox_settings() {
+    // Started read only: the workspace settings come from the
+    // configuration.
+    let mut driver = fresh();
+    let mut started = thread_started();
+    started["sandbox"] = json!({"type": "readOnly", "networkAccess": false});
+    handshake_with(
+        &mut driver,
+        json!({"account": null, "requiresOpenaiAuth": false}),
+        started,
+    );
+    driver.control(&Control::SetMode("auto".into())).unwrap();
+    let line: Value = serde_json::from_str(&driver.message(M1, "go", &[]).unwrap()).unwrap();
+    assert_eq!(
+        line["params"]["sandboxPolicy"],
+        json!({"type": "workspaceWrite", "writableRoots": ["/work/shared"], "networkAccess": true,
+               "excludeTmpdirEnvVar": false, "excludeSlashTmp": false})
+    );
+
+    // Started in the workspace: Codex's own account of it is kept.
+    let mut driver = fresh();
+    let mut started = thread_started();
+    let own = json!({"type": "workspaceWrite", "writableRoots": ["/work/demo/out"],
+                     "networkAccess": true, "excludeTmpdirEnvVar": true, "excludeSlashTmp": false});
+    started["sandbox"] = own.clone();
+    handshake_with(
+        &mut driver,
+        json!({"account": null, "requiresOpenaiAuth": false}),
+        started,
+    );
+    driver
+        .control(&Control::SetMode("read-only".into()))
+        .unwrap();
+    driver.control(&Control::SetMode("auto".into())).unwrap();
+    let line: Value = serde_json::from_str(&driver.message(M1, "go", &[]).unwrap()).unwrap();
+    assert_eq!(line["params"]["sandboxPolicy"], own);
+
+    // Nothing known: Codex's defaults; and a name not known is read only.
+    assert_eq!(
+        sandbox_policy("workspace-write", None),
+        json!({"type": "workspaceWrite"})
+    );
+    assert_eq!(
+        sandbox_policy("something-new", None),
+        json!({"type": "readOnly"})
+    );
+    assert_eq!(
+        configured_workspace(&json!({"sandbox_workspace_write": null})),
+        None
+    );
+}
+
+#[test]
+fn a_request_too_long_to_read_is_told_no() {
+    let mut driver = ready();
+    turn(&mut driver, M1);
+    let refused = |driver: &mut AppServer, head: &str| -> Vec<Value> {
+        driver.skipping(head.as_bytes());
+        driver.skipping(&[b'x'; 10_000]);
+        written(&driver.skipped().writes)
+    };
+    assert_eq!(
+        refused(
+            &mut driver,
+            r#"{"id":7,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-1","_meta":{"tool_params":{"text":"xxx"#,
+        ),
+        [json!({"id": 7, "result": {"action": "decline", "content": null}})]
+    );
+    assert_eq!(
+        refused(
+            &mut driver,
+            r#"{"method": "item/permissions/requestApproval", "id": "s-2", "params": {"permissions": {"x": "xx"#,
+        ),
+        [json!({"id": "s-2", "result": {"permissions": {}, "scope": "turn"}})]
+    );
+    assert_eq!(
+        refused(
+            &mut driver,
+            r#"{"id":8,"method":"item/tool/call","params":{"arguments":"xx"#
+        ),
+        [json!({"id": 8, "error": {"code": -32601, "message": "not handled by Agent Workbench"}})]
+    );
+    // An id inside the params is not the request's.
+    assert_eq!(
+        refused(
+            &mut driver,
+            r#"{"method":"item/commandExecution/requestApproval","params":{"id":3,"command":"xx"#
+        ),
+        Vec::<Value>::new()
+    );
+}
+
+#[test]
+fn an_mcp_approval_names_its_own_call_or_none() {
+    let mut driver = ready();
+    turn(&mut driver, M1);
+    let call = |id: &str, tool: &str, arguments: Value| {
+        item(
+            "item/started",
+            json!({"type": "mcpToolCall", "id": id, "server": "docs", "tool": tool,
+                   "arguments": arguments, "status": "inProgress"}),
+        )
+    };
+    events(
+        &mut driver,
+        &[
+            call("call_a", "search", json!({"q": "a"})),
+            call("call_b", "search", json!({"q": "b"})),
+            call("call_c", "fetch", json!({"url": "x"})),
+        ],
+    );
+    let asked = |driver: &mut AppServer, id: i64, tool: &str, params: Value| -> Option<String> {
+        let out = events(
+            driver,
+            &[server_request(
+                id,
+                "mcpServer/elicitation/request",
+                json!({"threadId": THREAD, "turnId": "turn-1", "serverName": "docs", "mode": "form",
+                       "message": "?", "requestedSchema": {"type": "object", "properties": {}},
+                       "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_name": tool,
+                                 "tool_params": params}}),
+            )],
+        );
+        match &out[..] {
+            [Event::PermissionAsked { call, .. }] => call.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(
+        asked(&mut driver, 1, "fetch", json!({"url": "x"})).as_deref(),
+        Some("call_c"),
+        "the one call of that tool"
+    );
+    assert_eq!(
+        asked(&mut driver, 2, "search", json!({"q": "b"})).as_deref(),
+        Some("call_b"),
+        "of two, the one with these arguments"
+    );
+    assert_eq!(
+        asked(&mut driver, 3, "search", json!({"q": "z"})),
+        None,
+        "nothing tells them apart"
     );
 }
