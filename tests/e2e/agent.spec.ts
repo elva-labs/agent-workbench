@@ -322,6 +322,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           settings: "",
           events: "",
         }),
+        hookStatusMany: async (projects: string[]) =>
+          projects.map(() => ({ installed: false, settings: "", events: "" })),
         hookInstall: async () => ({
           installed: true,
           settings: "",

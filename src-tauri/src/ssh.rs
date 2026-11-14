@@ -474,6 +474,43 @@ pub fn ensure_local_daemon(home: &Path, resources: Option<&Path>) -> Result<(), 
     Ok(())
 }
 
+/// Whether this app's daemon build is known to be in place on this machine.
+/// Asking costs a subprocess, so a first answer stands until something says
+/// the daemon may have changed: an install, or a call that failed.
+#[derive(Default)]
+pub struct LocalDaemon {
+    checked: std::sync::Mutex<bool>,
+}
+
+impl LocalDaemon {
+    /// Runs `check` unless the daemon was already found in place. Callers
+    /// that arrive while it runs wait for its answer rather than asking
+    /// again. A check that fails is asked again next time.
+    pub fn ensure(&self, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        let mut checked = self.checked.lock().unwrap_or_else(|e| e.into_inner());
+        if *checked {
+            return Ok(());
+        }
+        let result = check();
+        *checked = result.is_ok();
+        result
+    }
+
+    /// Runs `check` whether or not the daemon was found in place, for an
+    /// install, which is what puts it there.
+    pub fn ensure_again(&self, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        let mut checked = self.checked.lock().unwrap_or_else(|e| e.into_inner());
+        let result = check();
+        *checked = result.is_ok();
+        result
+    }
+
+    /// Something went wrong: the next `ensure` asks again.
+    pub fn forget(&self) {
+        *self.checked.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+}
+
 /// Runs a command on a host the user's own ssh reaches, and gives back what
 /// it printed.
 pub fn run(target: &str, script: &str, stdin: Option<&[u8]>) -> Result<String, String> {
@@ -548,6 +585,66 @@ pub fn ensure_daemon(target: &str, resources: Option<&Path>) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    // The check is a subprocess; thirty projects asking is one.
+    #[test]
+    fn the_local_daemon_is_asked_after_once_however_many_projects_ask() {
+        let daemon = LocalDaemon::default();
+        let asked = Cell::new(0);
+        for _ in 0..30 {
+            daemon
+                .ensure(|| {
+                    asked.set(asked.get() + 1);
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(asked.get(), 1);
+    }
+
+    #[test]
+    fn an_install_a_failure_or_a_forgetting_asks_again() {
+        let daemon = LocalDaemon::default();
+        let asked = Cell::new(0);
+        let count = || {
+            asked.set(asked.get() + 1);
+            Ok(())
+        };
+        daemon.ensure(count).unwrap();
+        daemon.ensure_again(count).unwrap();
+        assert_eq!(asked.get(), 2);
+        daemon.ensure(count).unwrap();
+        assert_eq!(asked.get(), 2);
+
+        daemon.forget();
+        daemon.ensure(count).unwrap();
+        assert_eq!(asked.get(), 3);
+
+        let failing = DaemonFailure::default();
+        let daemon = LocalDaemon::default();
+        assert!(daemon.ensure(|| failing.run()).is_err());
+        assert!(daemon.ensure(|| failing.run()).is_ok());
+        daemon.ensure(|| failing.run()).unwrap();
+        assert_eq!(failing.runs.get(), 2);
+    }
+
+    /// Fails the first time it is run and works after.
+    #[derive(Default)]
+    struct DaemonFailure {
+        runs: Cell<usize>,
+    }
+
+    impl DaemonFailure {
+        fn run(&self) -> Result<(), String> {
+            self.runs.set(self.runs.get() + 1);
+            if self.runs.get() == 1 {
+                Err("could not copy the daemon".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
 
     fn token(host: &str, port: u16, host_key: &str) -> String {
         Pairing {

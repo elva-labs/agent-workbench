@@ -129,7 +129,8 @@
   // so the plugins running there know them.
   watchPluginProjects();
 
-  // Every project opened is brought to the hooks answer, once.
+  // Every project opened after the start is brought to the hooks answer,
+  // once; the ones the window opened with are asked about together.
   $effect(() => {
     for (const project of workspace.open) ensureHooks(project.path);
   });
