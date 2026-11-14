@@ -6,7 +6,7 @@
 //! path or id, results and events come back with the host put back on, and
 //! a connection opens the first time a host is named.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,6 +22,66 @@ pub const SCHEME: &str = "ssh://";
 
 /// A connection went away: `{ host, reason }`.
 pub const REMOTE_CLOSED: &str = "remote_closed";
+
+/// The integrated sessions on each machine, by their ids with the host on:
+/// those running, so that a connection that goes away ends them for the
+/// window, and those that ended, so that a start answered after its
+/// session already ended does not count it as running again.
+#[derive(Default)]
+struct Machine {
+    running: BTreeSet<String>,
+    ended: BTreeSet<String>,
+}
+
+static INTEGRATED: Mutex<BTreeMap<String, Machine>> = Mutex::new(BTreeMap::new());
+
+/// An integrated session started on a machine, by its id with the host on.
+/// Its events can come before this, its end among them.
+pub fn integrated_started(host: &str, id: &str) {
+    let mut machines = INTEGRATED.lock().expect("integrated lock");
+    let machine = machines.entry(host.to_string()).or_default();
+    if !machine.ended.contains(id) {
+        machine.running.insert(id.to_string());
+    }
+}
+
+/// Keeps the record of a machine's integrated sessions as their events
+/// pass, by the payload with the host already on: a session is running
+/// from its first event until its end.
+fn integrated_heard(host: &str, payload: &Value) {
+    let Some(id) = payload["id"].as_str() else {
+        return;
+    };
+    let mut machines = INTEGRATED.lock().expect("integrated lock");
+    let machine = machines.entry(host.to_string()).or_default();
+    if payload["type"] == "ended" {
+        machine.running.remove(id);
+        machine.ended.insert(id.to_string());
+    } else if !machine.ended.contains(id) {
+        machine.running.insert(id.to_string());
+    }
+}
+
+/// The events that end a machine's integrated sessions for the window once
+/// the connection to it is gone, since none of their own will come.
+fn integrated_lost(host: &str, reason: &Value) -> Vec<Value> {
+    let ids = INTEGRATED
+        .lock()
+        .expect("integrated lock")
+        .remove(host)
+        .unwrap_or_default()
+        .running;
+    let why = reason.as_str().unwrap_or("the connection closed");
+    ids.into_iter()
+        .flat_map(|id| {
+            [
+                json!({ "id": id, "type": "error", "kind": "process",
+                        "message": format!("the connection to {host} closed: {why}") }),
+                json!({ "id": id, "type": "ended", "code": null, "clean": false }),
+            ]
+        })
+        .collect()
+}
 
 /// How long the first exchange may take: ssh connecting, the daemon
 /// starting, one answer. Past this the machine or the daemon is not there.
@@ -66,6 +126,21 @@ fn put_back(payload: &mut Value, key: &str, qualify: impl Fn(&str) -> String) {
     }
 }
 
+/// An integrated session's snapshot from a remote core, with the host put
+/// back on the paths its requests name, as on the events they were.
+pub fn snapshot_homeward(host: &str, mut snapshot: Value) -> Value {
+    if let Some(requests) = snapshot.get_mut("requests").and_then(Value::as_array_mut) {
+        for request in requests {
+            *request = homeward(
+                host,
+                workbench_core::integrated::INTEGRATED_EVENT,
+                request.take(),
+            );
+        }
+    }
+    snapshot
+}
+
 /// An event from a remote core, with the host put back on whatever names
 /// a pty or a path.
 pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
@@ -75,6 +150,16 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         }
         workbench_core::SESSION_IDENTIFIED => {
             put_back(&mut payload, "ptyId", |id| with_host_id(host, id))
+        }
+        workbench_core::integrated::INTEGRATED_EVENT => {
+            put_back(&mut payload, "id", |id| with_host_id(host, id));
+            put_back(&mut payload, "path", |path| with_host(host, path));
+            if let Some(changes) = payload.get_mut("changes").and_then(Value::as_array_mut) {
+                for change in changes {
+                    put_back(change, "path", |path| with_host(host, path));
+                    put_back(change, "to", |path| with_host(host, path));
+                }
+            }
         }
         workbench_core::watch::GIT_CHANGED => {
             if let Some(root) = payload.as_str() {
@@ -286,7 +371,14 @@ fn open_at(
         &mut command,
         Box::new(move |event, payload| {
             if event == CLOSED {
+                for lost in integrated_lost(&name, &payload) {
+                    let _ = app.emit(workbench_core::integrated::INTEGRATED_EVENT, lost);
+                }
                 let _ = app.emit(REMOTE_CLOSED, json!({ "host": name, "reason": payload }));
+            } else if event == workbench_core::integrated::INTEGRATED_EVENT {
+                let payload = homeward(&name, event, payload);
+                integrated_heard(&name, &payload);
+                let _ = app.emit(event, payload);
             } else if event == workbench_core::settings::SETTINGS_CHANGED
                 || event == workbench_core::settings::SETTINGS_MISSING
                 || event == workbench_core::styles::USER_STYLES_CHANGED
@@ -445,6 +537,58 @@ mod tests {
             homeward("lab", "shown_changed", json!(["/tmp/a.md", "/tmp/b.png"])),
             json!(["ssh://lab/tmp/a.md", "ssh://lab/tmp/b.png"])
         );
+        let integrated = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-1", "type": "toolFinished", "changes": [
+                {"path": "/srv/a.rs", "kind": "update", "to": null},
+                {"path": "/srv/b.rs", "kind": "move", "to": "/srv/c.rs"},
+            ]}),
+        );
+        assert_eq!(integrated["id"], "ssh://lab#int-1");
+        assert_eq!(integrated["changes"][0]["path"], "ssh://lab/srv/a.rs");
+        assert_eq!(integrated["changes"][0]["to"], Value::Null);
+        assert_eq!(integrated["changes"][1]["to"], "ssh://lab/srv/c.rs");
+        let asked = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-1", "type": "permissionAsked", "path": "/srv/b.rs"}),
+        );
+        assert_eq!(asked["path"], "ssh://lab/srv/b.rs");
+        let snapshot = snapshot_homeward(
+            "lab",
+            json!({"state": "asking", "requests": [
+                {"type": "permissionAsked", "request": "r1", "path": "/srv/b.rs"},
+                {"type": "questionAsked", "request": "r2"},
+            ]}),
+        );
+        assert_eq!(snapshot["requests"][0]["path"], "ssh://lab/srv/b.rs");
+        assert_eq!(snapshot["requests"][1]["request"], "r2");
+        assert!(snapshot["requests"][1].get("id").is_none());
+        let text = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-1", "type": "text", "changes": null}),
+        );
+        assert_eq!(text["changes"], Value::Null);
+        integrated_started("gone", "ssh://gone#int-1");
+        integrated_started("gone", "ssh://gone#int-2");
+        integrated_heard("gone", &json!({"id": "ssh://gone#int-2", "type": "ended"}));
+        let lost = integrated_lost("gone", &json!("broken pipe"));
+        assert_eq!(lost.len(), 2, "only the one still running: {lost:?}");
+        assert_eq!(lost[0]["id"], "ssh://gone#int-1");
+        assert_eq!(lost[0]["type"], "error");
+        assert_eq!(lost[1]["type"], "ended");
+        assert_eq!(lost[1]["clean"], false);
+        assert!(integrated_lost("gone", &Value::Null).is_empty());
+        // A session whose process died at once ended before its start
+        // answered: the connection going later ends it no second time.
+        integrated_heard("fast", &json!({"id": "ssh://fast#int-1", "type": "ended"}));
+        integrated_started("fast", "ssh://fast#int-1");
+        assert!(integrated_lost("fast", &Value::Null).is_empty());
+        // One that has said something but not yet been answered for ends.
+        integrated_heard("slow", &json!({"id": "ssh://slow#int-1", "type": "ready"}));
+        assert_eq!(integrated_lost("slow", &Value::Null).len(), 2);
         let other = homeward(
             "lab",
             "session_event",
