@@ -268,7 +268,8 @@ switches it for this one session, and the next choice starts on the
 project's account again. A session another session starts runs under
 the account the start names, else under the starter's when that was
 chosen for the starter, else under its project's, as the
-[orchestrator](orchestrator.md#the-tools) describes. A session resumed
+[orchestrator](orchestrator.md#the-tools) describes; its row under the
+starter names the account when it is not its project's. A session resumed
 runs under the account it ran under. The status bar names the account the
 active session runs under, Default included, as long as there are
 accounts to tell apart.

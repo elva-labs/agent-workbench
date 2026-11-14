@@ -503,8 +503,8 @@ test.describe("a started session in a project of its own", () => {
 });
 
 // Short of room, a started row cuts its project first, then drops its
-// model whole, and cuts its name last; its time and the accent's asking
-// always stand in full.
+// model whole, then its account, and cuts its name last; its time and the
+// accent's asking always stand in full.
 for (const width of [300, 240, 180]) {
   test(`fits a started row into a pane ${width} pixels wide`, async ({ page }) => {
     const OTHER = "/home/ada/dev/other-project";
@@ -513,25 +513,46 @@ for (const width of [300, 240, 180]) {
     }, width);
     // Rows that move or fade in are measured where they end up.
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await installFakeCore(page, { open: [PROJECT, OTHER] });
+    await installFakeCore(page, {
+      open: [PROJECT, OTHER],
+      settings: {
+        accounts: {
+          list: { Work: { claude: "~/.claude-work", codex: null } },
+          everywhere: null,
+          overrides: {},
+        },
+      },
+    });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("sessions-menu").click();
     await page.getByTestId("menu-orchestrator").click();
+    // With accounts there is a choice to make, which starts on the
+    // project's own.
+    await page.getByTestId("agent-option").click();
     await expect(page.locator(AGENT)).toContainText("running");
-    const start = async (id: string, project: string, name: string) => {
+    const start = async (id: string, project: string, name: string, account?: string) => {
       await push(page, {
         id,
         tool: "start",
-        arguments: { project, prompt: "Go", name, agent: "claude-code", model: "sonnet" },
+        arguments: {
+          project,
+          prompt: "Go",
+          name,
+          agent: "claude-code",
+          model: "sonnet",
+          ...(account === undefined ? {} : { account }),
+        },
         session: "session-1",
       });
       const allow = page.getByTestId("conduct-allow");
-      if (await allow.isVisible()) await allow.click();
+      await expect(allow).toBeVisible();
+      await allow.click();
       await expect.poll(() => answerTo(page, id)).not.toBeNull();
     };
-    await start("o-1", OTHER, "Startup history scan");
+    await start("o-1", OTHER, "Startup history scan", "Work");
     await start("o-2", PROJECT, "Palette check");
+    await start("o-3", PROJECT, "Notes", "Work");
     await page.evaluate(() =>
       (
         window as unknown as { __sessionEvent: (event: { sessionId: string; kind: string }) => void }
@@ -560,6 +581,14 @@ for (const width of [300, 240, 180]) {
       // The model whole or not at all, never cut.
       const model = await shown("[data-testid='started-model']");
       if (model !== null) await whole("[data-testid='started-model']");
+      // The account whole or not at all too, and it stands until the model
+      // and the project have gone.
+      const account = await shown("[data-testid='started-account']");
+      if (account !== null) await whole("[data-testid='started-account']");
+      if ((await started.getByTestId("started-account").count()) > 0 && account === null) {
+        expect(model).toBeNull();
+        expect(await shown(".where")).toBeNull();
+      }
       // The name always shows, and is cut only once the rest has gone.
       const name = (await shown(".label"))!;
       expect(name).not.toBeNull();
@@ -567,13 +596,20 @@ for (const width of [300, 240, 180]) {
       if (cut) {
         expect(model).toBeNull();
         expect(await shown(".where")).toBeNull();
+        expect(account).toBeNull();
       }
       // The project, when it shows, keeps a few letters.
       const where = await shown(".where");
       if (where !== null) expect((await where.boundingBox())!.width).toBeGreaterThan(14);
     }
-    // At the default width there is room for the short one's model.
+    // At the default width a short one keeps its account and its model.
     if (width === 300) {
+      const notes = page.getByTestId("started-session").filter({ hasText: "Notes" });
+      const line = (await notes.locator(".fit").boundingBox())!;
+      for (const part of ["started-account", "started-model"]) {
+        const box = (await notes.getByTestId(part).boundingBox())!;
+        expect(box.y).toBeLessThan(line.y + line.height - 1);
+      }
       const short = page.getByTestId("started-session").filter({ hasText: "Palette check" });
       const model = (await short.getByTestId("started-model").boundingBox())!;
       const fit = (await short.locator(".fit").boundingBox())!;

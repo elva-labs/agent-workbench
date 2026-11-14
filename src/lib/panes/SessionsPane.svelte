@@ -464,6 +464,12 @@
     collapsed[key] = !collapsed[key];
   }
 
+  /** Whether a session runs under another account than its project's,
+      once there are accounts to tell apart. */
+  function otherAccount(session: Session): boolean {
+    return hasAccounts() && session.account !== accountOf(session.project);
+  }
+
   /** A row under a project's name: a session, live or left from the last
       quit, or a past session of the project on screen, with when it
       changed. */
@@ -1072,12 +1078,13 @@
 {/snippet}
 
 <!-- The sessions a session started, hanging under it on a rail from its
-     dot, one line each: the state, the name, the project it runs in when
-     that is another, the model or, in the accent, that it is asking for a
+     dot, one line each: the state, the name, the account it runs under
+     when that is not its project's, the project it runs in when that is
+     another, the model or, in the accent, that it is asking for a
      permission, and when it last changed. Short of room, the project is
-     cut first, then the model goes whole and the project with it, and the
-     name gives way last; the time and asking always stand. Delete does
-     nothing on these rows; their own × stops them. -->
+     cut first, then the model goes whole and the project with it, then the
+     account, and the name gives way last; the time and asking always
+     stand. Delete does nothing on these rows; their own × stops them. -->
 {#snippet rail(parent: Session)}
   {@const kids = childrenOf(parent)}
   {#if kids.length > 0 && !collapsed[parent.key]}
@@ -1106,6 +1113,11 @@
             ></span>
             <span class="fit">
               <span class="label" class:unread={kid.unread || isAsking(kid)}>{label(kid)}</span>
+              {#if otherAccount(kid)}<span
+                  class="account"
+                  title="Runs under the {accountLabel(kid.account)} account"
+                  data-testid="started-account">as {accountLabel(kid.account)}</span
+                >{/if}
               {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
                   >{projectLabel(kid.project)}</span
                 >{/if}
@@ -2779,10 +2791,11 @@
     margin-right: 8px;
   }
 
-  /* The name, the project and the model share one line that wraps what
-     does not fit onto a second one out of sight, so what goes, goes whole:
-     the project is cut down to a few letters first, then the model goes,
-     then the project, and the name alone is cut last. */
+  /* The name, the account, the project and the model share one line that
+     wraps what does not fit onto a second one out of sight, so what goes,
+     goes whole: the project is cut down to a few letters first, then the
+     model goes, then the project, then the account, and the name alone is
+     cut last. */
   .kid-row .fit {
     flex: 1;
     min-width: 0;
@@ -2801,6 +2814,16 @@
     flex: 1 1 4ch;
     max-width: max-content;
     min-width: 0;
+    margin-left: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-3);
+  }
+
+  .kid-row .account {
+    flex: none;
+    max-width: 12ch;
     margin-left: 6px;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -156,10 +156,12 @@ may have more than eight running at a time.
 
 The sessions a session started hang directly under it, one line each,
 joined to its dot by a thin rail: the state dot, the name, the model it was
-started on and when it last changed. One that runs in another project than
-its starter names that project after its own name. Short of room, the
-project is cut first, then the model is left out and the project with it,
-and the name is cut last; the time always stands. The line speaks
+started on and when it last changed. One that runs under another account
+than its project's names the account after its own name, as in `as Work`,
+and one that runs in another project than its starter names that project
+next. Short of room, the project is cut first, then the model is left out
+and the project with it, then the account, and the name is cut last; the
+time always stands. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
 a permission, which only you can grant. Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the

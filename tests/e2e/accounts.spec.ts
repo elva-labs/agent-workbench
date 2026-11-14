@@ -349,6 +349,8 @@ test.describe("a session started by a session under another account", () => {
       .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
       .toContain(`in ${PROJECT}, under the Work account.`);
 
+    // Its row, under the session that started it, says the account too.
+    await expect(page.getByTestId("started-account")).toHaveText("as Work");
   });
 
   test("names the project's account when it cannot tell which session asks", async ({
@@ -370,5 +372,60 @@ test.describe("a session started by a session under another account", () => {
     await expect
       .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
       .toContain(`in ${PROJECT}, under the project's account, Work.`);
+  });
+});
+
+test.describe("a started session's row", () => {
+  test.beforeEach(async ({ page }) => {
+    // Rows that fade in are measured where they end up.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { accounts: { ...WORK, overrides: {} } },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    // An orchestrator, under the account its project follows: session-1.
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await page.getByTestId("agent-option").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+  });
+
+  test("names its account after its name when it is not the project's", async ({ page }) => {
+    const start = async (id: string, name: string, account?: string) => {
+      await startCall(
+        page,
+        id,
+        { project: PROJECT, prompt: "Go", name, agent: "claude-code", model: "sonnet", ...(account ? { account } : {}) },
+        "session-1",
+      );
+      const allow = page.getByTestId("conduct-allow");
+      await expect(allow).toBeVisible();
+      await allow.click();
+      await expect.poll(() => answerTo(page, id)).not.toBeNull();
+    };
+    await start("o-1", "Bump the client", "Work");
+    await start("o-2", "Check the palette");
+
+    const work = page.getByTestId("started-session").filter({ hasText: "Bump the client" });
+    const own = page.getByTestId("started-session").filter({ hasText: "Check the palette" });
+    await expect(work.getByTestId("started-account")).toHaveText("as Work");
+    await expect(work.getByTestId("started-account")).toBeVisible();
+    // The project's own account goes unsaid.
+    await expect(own).toBeVisible();
+    await expect(own.getByTestId("started-account")).toHaveCount(0);
+
+    // On the row's one line, after the name and before the model, in the
+    // quiet ink the model has.
+    const name = (await work.locator(".label").boundingBox())!;
+    const tag = (await work.getByTestId("started-account").boundingBox())!;
+    const model = (await work.getByTestId("started-model").boundingBox())!;
+    expect(tag.x).toBeGreaterThanOrEqual(name.x + name.width - 1);
+    expect(model.x).toBeGreaterThanOrEqual(tag.x + tag.width - 1);
+    expect(Math.abs(tag.y + tag.height / 2 - (name.y + name.height / 2))).toBeLessThan(3);
+    const ink = (testid: string) =>
+      work.getByTestId(testid).evaluate((el) => getComputedStyle(el).color);
+    expect(await ink("started-account")).toBe(await ink("started-model"));
   });
 });
