@@ -62,12 +62,21 @@ export async function followSettings(): Promise<() => void> {
   let stop = () => {};
   const stopStyles = await followStyles();
   try {
+    // The core announces every change to the file from the moment the
+    // window listens, so news heard by the time the first read answers is
+    // as new as that answer or newer: the file may have changed after it
+    // was read, with the news of it arriving first. The read is then
+    // passed over.
+    let heard = false;
     stop = await core().onSettingsChanged((settings) => {
+      heard = true;
       if (!sending()) adopt(settings);
     });
     const found = await core().settingsGet();
-    if (found.stored) adopt(found.settings);
-    else adopt(await core().settingsSet(currentSettings()));
+    if (!heard) {
+      if (found.stored) adopt(found.settings);
+      else adopt(await core().settingsSet(currentSettings()));
+    }
   } catch {
     // No core to keep them: the window's copy holds for this run.
   }

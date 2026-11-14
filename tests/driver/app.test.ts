@@ -1060,17 +1060,35 @@ describe("the real app", () => {
       until.elementLocated(By.css("[data-testid='project-account']")),
       15_000,
     );
+    // Which page answered, by when it was loaded, and what the choice held:
+    // what a missing account option is read against.
+    const scene = () =>
+      driver.executeScript(() =>
+        [
+          `page ${performance.timeOrigin}`,
+          `tag ${document.querySelector("[data-testid='project-account']")?.textContent ?? "none"}`,
+          `choice ${document.querySelector("[data-testid='agent-choice']") !== null}`,
+          `accounts ${document.querySelectorAll("[data-testid='account-option']").length}`,
+          `agents ${document.querySelectorAll("[data-testid='agent-option']").length}`,
+        ].join(", "),
+      ) as Promise<string>;
+    const tagged = await scene();
     try {
       const choice = By.css("[data-testid='agent-option']");
       const opened = async () =>
         (await driver.findElements(choice)).length === 2;
       await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
+      const chose = await scene();
       // The choice starts on the project's account.
-      expect(
-        await (
-          await located(driver, "[data-testid='account-option'][data-account='Work']")
-        ).getAttribute("aria-checked"),
-      ).toBe("true");
+      const work = await located(
+        driver,
+        "[data-testid='account-option'][data-account='Work']",
+      ).catch(async (error: Error) => {
+        throw new Error(
+          `${error.message}\nwith the tag: ${tagged}\nwith the choice: ${chose}\nnow: ${await scene()}`,
+        );
+      });
+      expect(await work.getAttribute("aria-checked")).toBe("true");
       const options = await driver.findElements(choice);
       await options[1].click();
       // Codex was pointed at the account's home, which exists by the time

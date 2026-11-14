@@ -7,6 +7,9 @@ const state = {
   /** Holds each change's answer until the test lets it go. */
   holding: false,
   held: [] as (() => void)[],
+  /** Holds the answer to the first read until the test lets it go. */
+  holdingRead: false,
+  heldRead: null as (() => void) | null,
   changed: null as ((settings: Settings) => void) | null,
   noCore: false,
   refuse: null as string | null,
@@ -34,9 +37,13 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     async settingsGet(): Promise<StoredSettings> {
       if (state.noCore) throw new Error("no core");
-      return state.stored === null
-        ? { stored: false, settings: DEFAULTS }
-        : { stored: true, settings: state.stored };
+      // Answered with the file as it was when it was read.
+      const answer: StoredSettings =
+        state.stored === null
+          ? { stored: false, settings: DEFAULTS }
+          : { stored: true, settings: state.stored };
+      if (!state.holdingRead) return answer;
+      return new Promise((resolve) => (state.heldRead = () => resolve(answer)));
     },
     settingsSet(change: Partial<Settings>): Promise<Settings> {
       if (state.noCore) return Promise.reject(new Error("no core"));
@@ -74,6 +81,7 @@ vi.mock("$lib/core", () => ({
 import { hook, loadHooks, reset as resetHooks, setEverywhere } from "$lib/hook.svelte";
 import { PRESETS, applyPreset, keys, resetKeys, setBinding } from "$lib/keys.svelte";
 import { resetPersist } from "$lib/persist";
+import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { adopt, currentSettings, followSettings } from "$lib/preferences.svelte";
 import { loadTheme, setLook, setPalette, theme } from "$lib/theme.svelte";
 import { notify, resetNotify, setChime, setNotifications } from "$lib/notify.svelte";
@@ -86,6 +94,8 @@ beforeEach(() => {
   state.sets = [];
   state.holding = false;
   state.held = [];
+  state.holdingRead = false;
+  state.heldRead = null;
   state.changed = null;
   state.noCore = false;
   state.refuse = null;
@@ -95,6 +105,7 @@ beforeEach(() => {
   resetKeys();
   resetHooks();
   resetNotify();
+  resetAccounts();
   theme.choice = "system";
   theme.palette = "teal";
   theme.look = "modern";
@@ -188,6 +199,29 @@ describe("followSettings", () => {
     expect(theme.palette).toBe("indigo");
     expect(theme.look).toBe("terminal");
     expect(document.documentElement.dataset.palette).toBe("indigo");
+  });
+
+  it("keeps news that overtakes the answer to its first read", async () => {
+    state.stored = { ...DEFAULTS };
+    state.holdingRead = true;
+    const following = followSettings();
+    await vi.waitFor(() => expect(state.heldRead).not.toBeNull());
+    // The file changed after the core read it for the answer, and the news
+    // of the change reached the window before the answer did.
+    state.changed?.({
+      ...DEFAULTS,
+      palette: "indigo",
+      accounts: {
+        list: { Work: { claude: null, codex: "~/.codex-work" } },
+        everywhere: null,
+        overrides: { "/p": "Work" },
+      },
+    });
+    state.heldRead?.();
+    await following;
+    expect(theme.palette).toBe("indigo");
+    expect(Object.keys(accounts.list)).toEqual(["Work"]);
+    expect(accounts.overrides).toEqual({ "/p": "Work" });
   });
 
   it("stops listening when told to", async () => {
