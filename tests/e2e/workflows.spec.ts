@@ -573,13 +573,14 @@ test.describe("the layout", () => {
       const canvas = await box(page, "workflow-canvas");
       return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
     };
-    expect(await beside()).toBe(true);
+    // Measured once the dialog has laid itself out, as the last check is.
+    await expect.poll(beside).toBe(true);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
     await page.getByTestId("workflow-add-work").click();
     await page.locator('[data-testid="workflow-add"][data-at="2"]').click();
     await page.getByTestId("workflow-add-work").click();
     await expect(step(page, "Work 3")).toBeVisible();
-    expect(await beside()).toBe(true);
+    await expect.poll(beside).toBe(true);
     await page.setViewportSize({ width: 1024, height: 768 });
     await expect.poll(beside).toBe(false);
   });

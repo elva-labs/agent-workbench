@@ -30,6 +30,9 @@ type Frame = {
  * after moving, so no frame of the motion can fall between two samples.
  */
 async function toggle(page: Page): Promise<Frame[]> {
+  await page.evaluate(() => {
+    (window as unknown as { __sampled?: boolean }).__sampled = false;
+  });
   const recording = page.evaluate(
     () =>
       new Promise<Frame[]>((resolve) => {
@@ -45,6 +48,7 @@ async function toggle(page: Page): Promise<Frame[]> {
             __WORKBENCH_TERMINALS__?: Record<string, { cols: number }>;
             __resizes?: unknown[];
           };
+          (window as unknown as { __sampled?: boolean }).__sampled = true;
           frames.push({
             slotWidth: slot.width,
             slotRight: slot.right - left,
@@ -63,6 +67,9 @@ async function toggle(page: Page): Promise<Frame[]> {
         requestAnimationFrame(sample);
       }),
   );
+  // The first frame is the column before the toggle: the key goes only
+  // once it has been taken.
+  await page.waitForFunction(() => (window as unknown as { __sampled?: boolean }).__sampled === true);
   await page.keyboard.press("ControlOrMeta+b");
   return recording;
 }
