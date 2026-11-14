@@ -9,6 +9,7 @@ import {
   launch,
   linkFor,
   listenIntegrated,
+  startMode,
   reattach,
   reply,
   resetIntegrated,
@@ -358,5 +359,27 @@ describe("the last words of a run", () => {
         { kind: "note", key: "n", tone: "info", text: "x", at: 0 },
       ]),
     ).toBe("Done. The tests pass.");
+  });
+});
+
+describe("the mode a session starts in", () => {
+  it("is the agent's safe one, never left to its own configuration", async () => {
+    const { session } = await started();
+    expect(fake.calls[0]).toMatchObject({ method: "start", options: { mode: "default" } });
+    const codex = create(PROJECT, null, "codex", null, null, null, null, "integrated");
+    await launch(codex.key);
+    expect(fake.calls.filter((call) => call.method === "start")[1]).toMatchObject({ options: { agent: "codex", mode: "read-only" } });
+    expect(session.kind).toBe("integrated");
+  });
+
+  it("is the one the user chose when the session starts again, and the safe one for a mode the agent does not offer", async () => {
+    const { session, handle } = await started();
+    await configure(session.key, { mode: "plan" });
+    expect(startMode(session, linkFor(session.key))).toBe("plan");
+    fake.end(handle, true);
+    await resume(session.key);
+    expect(fake.calls.filter((call) => call.method === "start").at(-1)).toMatchObject({ options: { mode: "plan" } });
+    linkFor(session.key).conversation.settings.mode = "untrusted, workspace-write";
+    expect(startMode(session, linkFor(session.key))).toBe("default");
   });
 });

@@ -307,18 +307,28 @@ export function speaker(conversation: Conversation, model: string | null, agent:
   return modelName(conversation, model) ?? agent;
 }
 
+/** The model the agent offered that a model it reports is: the same, or
+    for the model it resolved one to, the one named among its words, as
+    claude-sonnet-5-5 is the Sonnet it offers. */
+export function offeredModel(
+  conversation: Conversation,
+  model: string | null,
+): NonNullable<Conversation["ready"]>["models"][number] | null {
+  if (model === null) return null;
+  const words = model.toLowerCase().split(/[-_.\s]/);
+  const models = conversation.ready?.models ?? [];
+  return (
+    models.find((option) => option.value === model) ??
+    models.find((option) => option.value !== "default" && words.includes(option.value.toLowerCase())) ??
+    null
+  );
+}
+
 /** A model as the agent names it in what it offers, or as it is written,
     its first letter raised; null for none. */
 export function modelName(conversation: Conversation, model: string | null): string | null {
   if (model === null) return null;
-  // The agent reports the model it resolved to, which names the one it
-  // offered among its words: claude-sonnet-5-5 is the Sonnet it offers.
-  const words = model.toLowerCase().split(/[-_.\s]/);
-  const models = conversation.ready?.models ?? [];
-  const offered =
-    models.find((option) => option.value === model) ??
-    models.find((option) => option.value !== "default" && words.includes(option.value.toLowerCase()));
-  const name = (offered?.name ?? model).replace(/\s*\(.*\)\s*$/, "").trim();
+  const name = (offeredModel(conversation, model)?.name ?? model).replace(/\s*\(.*\)\s*$/, "").trim();
   return name === "" ? null : name.charAt(0).toUpperCase() + name.slice(1);
 }
 

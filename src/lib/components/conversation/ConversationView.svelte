@@ -151,6 +151,7 @@
           ready={session.status === "running" && link.handle !== null}
           {active}
           onDock={toDock}
+          defaultModel={session.model === null}
         />
       {/if}
     </div>

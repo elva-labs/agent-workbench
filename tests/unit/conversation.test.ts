@@ -541,3 +541,18 @@ describe("a conversation a window comes to late", () => {
     expect(outline(other.entries)).toEqual([`you:${M1}`, "agent:1:text"]);
   });
 });
+
+describe("a model changed during a turn", () => {
+  it("is the one the next turn runs on, said only while the turn it was changed in runs", () => {
+    const { fake, conversation, id, send } = played();
+    send(M1, "go");
+    fake.startTurn(id);
+    fake.configure(id, { model: "haiku" });
+    expect(conversation.settings.model).toBe("haiku");
+    expect(conversation.modelAfterTurn).toBe("haiku");
+    fake.endTurn(id);
+    expect(conversation.modelAfterTurn).toBeNull();
+    fake.configure(id, { model: "sonnet" });
+    expect(conversation.modelAfterTurn).toBeNull();
+  });
+});

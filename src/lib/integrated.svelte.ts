@@ -1,4 +1,5 @@
 import { dirFor } from "$lib/accounts.svelte";
+import { agentProfile } from "$lib/agent.svelte";
 import {
   core,
   isUntrusted,
@@ -262,6 +263,7 @@ export async function launch(key: string): Promise<void> {
       cwd: session.startIn ?? undefined,
       session: session.resumedFrom ?? undefined,
       model: session.model ?? undefined,
+      mode: startMode(session, link),
       configDir: dirFor(session.account, session.agent),
     });
     link.busy = false;
@@ -295,6 +297,15 @@ export async function launch(key: string): Promise<void> {
       failed(key, "The folder is not trusted yet.");
     } else failed(key, message(error));
   }
+}
+
+/** The mode a session starts in: the one it ran in, when the user chose
+    one the agent offers, and otherwise the agent's safe one, which asks
+    before it acts. The agent's own configuration never decides it. */
+export function startMode(session: Session, link: Link): string {
+  const mode = link.conversation.settings.mode;
+  const offered = link.conversation.ready?.modes.some((known) => known.value === mode) ?? false;
+  return mode !== null && offered ? mode : agentProfile(session.agent).safeMode;
 }
 
 /** The user trusts the folder: recorded where the agent's own question

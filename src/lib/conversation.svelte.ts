@@ -233,6 +233,8 @@ export class Conversation {
   late = $state(false);
   /** How many messages this window has sent. */
   sentHere = $state(0);
+  /** A model chosen while a turn ran, which the turn after it runs on. */
+  nextModel = $state<{ model: string | null; turn: number } | null>(null);
 
   #clock: () => number;
   #blocks = new Map<string, TextPart>();
@@ -243,6 +245,13 @@ export class Conversation {
 
   constructor(clock: () => number = Date.now) {
     this.#clock = clock;
+  }
+
+  /** The model the session goes on to once the running turn ends, when it
+      was changed during the turn; null otherwise. */
+  get modelAfterTurn(): string | null {
+    const next = this.nextModel;
+    return next !== null && this.current === next.turn ? next.model : null;
   }
 
   get turn(): Turn | null {
@@ -333,6 +342,8 @@ export class Conversation {
         this.efforts = [...event.efforts];
         break;
       case "configured":
+        if (this.current !== null && event.model !== this.settings.model)
+          this.nextModel = { model: event.model, turn: this.current };
         this.settings = { model: event.model, mode: event.mode, effort: event.effort };
         this.efforts = [...event.efforts];
         break;
