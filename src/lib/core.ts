@@ -1021,6 +1021,19 @@ export interface Settings {
     /** The workflows in the file that are not used, carried as written. */
     unread?: UnreadWorkflow[];
   };
+  /** What the file holds and the app does not use, each with the rule it
+      breaks: an entry of the keys, the hooks, the accounts or the themes, a
+      choice of account that names one, a value of a setting, or a field
+      that is not a setting. The core writes it back as it was. */
+  unreadEntries?: {
+    /** The field of the file it is in, as the file spells it. */
+    field: string;
+    section: string;
+    name: string;
+    reason: string;
+    /** The entry as the file holds it. */
+    entry?: unknown;
+  }[];
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
   pastSessions: PastSessions;
@@ -1051,9 +1064,12 @@ export interface UserStyles {
 }
 
 /** The settings, and whether a file held them: none held means the window
-    has not yet handed over what it kept before there was a file. */
+    has not yet handed over what it kept before there was a file. A file
+    that is there and does not parse, empty or cut short, is `unreadable`,
+    and its settings are the defaults and say nothing about the file. */
 export interface StoredSettings {
   stored: boolean;
+  unreadable?: boolean;
   settings: Settings;
 }
 
@@ -1278,9 +1294,17 @@ export interface Core {
       do, and then nothing changes. Answers with the settings as they now
       are. */
   settingsSet(change: Partial<Settings>): Promise<Settings>;
+  /** Hands over the settings the window holds, for a machine whose file is
+      not there. They are written only if it is still not there when the
+      core comes to write; a file that is there by then stands, and is what
+      the answer holds. */
+  settingsHandOver(held: Settings): Promise<StoredSettings>;
   /** The settings changed, by this window, another, or an edit to the
       file. */
   onSettingsChanged(handler: (settings: Settings) => void): Promise<() => void>;
+  /** The settings file was there and is gone: the window hands over the
+      settings it holds. A core that cannot say leaves it out. */
+  onSettingsMissing?(handler: () => void): Promise<() => void>;
   /** The user's own stylesheet on the machine the window runs on. */
   stylesGet(): Promise<UserStyles>;
   /** Writes it, once it passes; rejects with the reason when it does not.
@@ -1672,10 +1696,14 @@ const tauriCore: Core = {
   },
   settingsGet: () => invoke<StoredSettings>("settings_get"),
   settingsSet: (change) => invoke<Settings>("settings_set", { change }),
+  settingsHandOver: (held) => invoke<StoredSettings>("settings_hand_over", { held }),
   async onSettingsChanged(handler) {
     return listen<Settings>("settings_changed", (event) =>
       handler(event.payload),
     );
+  },
+  async onSettingsMissing(handler) {
+    return listen("settings_missing", () => handler());
   },
   stylesGet: () => invoke<UserStyles>("styles_get"),
   stylesSet: (css) => invoke<UserStyles>("styles_set", { css }),
@@ -1963,6 +1991,9 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async settingsSet() {
+    throw new Error("no core");
+  },
+  async settingsHandOver() {
     throw new Error("no core");
   },
   async onSettingsChanged() {
