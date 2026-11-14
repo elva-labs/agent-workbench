@@ -111,7 +111,16 @@
     return conversation.messages[id] ?? null;
   }
 
+  /** The error a session ended with is said where it offers to resume,
+      and not again at the foot of the thread. */
+  let endedWith = $derived.by(() => {
+    if (conversation.ended === null) return null;
+    const last = conversation.entries[conversation.entries.length - 1];
+    return last?.kind === "note" && last.tone === "error" ? last.key : null;
+  });
+
   function visible(entry: Entry): boolean {
+    if (entry.key === endedWith) return false;
     if (entry.kind !== "agent") return true;
     if (entry.parts.length > 0 || entry.key === liveKey) return true;
     const turn = conversation.turns[entry.turn];
@@ -157,7 +166,7 @@
             </p>
           {/if}
         </article>
-      {:else if entry.kind === "note"}
+      {:else if entry.kind === "note" && entry.key !== endedWith}
         <p class="note {entry.tone}" data-testid="note">
           <Icon name={entry.tone === "info" ? "info" : "warn"} size={13} />{entry.text}
         </p>

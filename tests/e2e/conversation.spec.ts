@@ -156,6 +156,8 @@ test.describe("an integrated session", () => {
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.turn("${H}", "first answer"); f.end("${H}", false);`);
     const ended = page.getByTestId("session-ended");
     await expect(ended).toContainText("The session stopped: claude ended with code 1.");
+    // Said there, and not again in the thread.
+    await expect(page.getByTestId("note")).toHaveCount(0);
     await page.getByTestId("resume-session").click();
     await expect(ended).toHaveCount(0);
     await expect(page.getByTestId("agent-text")).toHaveText("first answer");
@@ -167,6 +169,7 @@ test.describe("an integrated session", () => {
     await openIntegrated(page, { untrusted: true });
     const gate = page.getByTestId("trust-gate");
     await expect(gate).toContainText("Trust this folder?");
+    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("asks to trust the folder");
     await expect(gate).toContainText(PROJECT);
     await page.getByTestId("trust-folder").click();
     await expect(gate).toHaveCount(0);

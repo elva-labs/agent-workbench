@@ -33,7 +33,7 @@
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
   import { otherKind, type SessionKind } from "$lib/sessionKind.svelte";
-  import { handleOf, launch as launchIntegrated } from "$lib/integrated.svelte";
+  import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
@@ -65,6 +65,17 @@
         ? label(current)
         : `Agent · ${agentLabel(current.agent)}`,
   );
+
+  /** What the header says of the session: for an integrated one waiting
+      on the user before it can run, what it waits for. */
+  let meta = $derived.by(() => {
+    if (current !== null && current.kind === "integrated") {
+      const link = linkFor(current.key);
+      if (link.untrusted) return "asks to trust the folder";
+      if (link.conversation.notLoggedIn) return "not signed in";
+    }
+    return statusLabel(current);
+  });
 
   let branch = $state<string | null>(null);
   $effect(() => {
@@ -214,7 +225,7 @@
   {/if}
 {/snippet}
 
-<Pane id="agent" {title} meta={statusLabel(current)} head={integrated ? where : undefined}>
+<Pane id="agent" {title} meta={meta} head={integrated ? where : undefined}>
   <div class="wrap" bind:this={wrap}>
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
