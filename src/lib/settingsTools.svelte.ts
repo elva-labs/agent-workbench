@@ -150,6 +150,7 @@ const USERS_OWN = new Set([
   "accounts",
   "account",
   "pastSessions",
+  "inactiveAfter",
   "notifications",
   "chime",
   "workflowOverrides",
