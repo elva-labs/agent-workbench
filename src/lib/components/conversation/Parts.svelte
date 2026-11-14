@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Plain from "./Plain.svelte";
   import type { Part } from "$lib/conversation.svelte";
   import { segments } from "$lib/thread";
   import Icon from "./Icon.svelte";
@@ -43,7 +44,7 @@
             {#each segment.part.steps as step, at (at)}
               <li class={step.status}>
                 <span class="mark">{#if STEP[step.status]}<Icon name={STEP[step.status]} size={12} />{/if}</span>
-                <span>{step.text}</span>
+                <span><Plain text={step.text} /></span>
               </li>
             {/each}
           </ol>
@@ -56,13 +57,13 @@
       {@const part = segment.part}
       <div class="asked" data-testid="asked">
         {#each part.questions as question, at (at)}
-          <p class="question"><span class="label">Asked</span>{question.question}</p>
+          <p class="question"><span class="label">Asked</span><Plain text={question.question} /></p>
           {#if part.outcome === "answered"}
             {@const answer = part.answers?.[at] ?? null}
             <p class="answer">
               <span class="label">You</span>{#if answer === null}<span class="quiet"
                   >answered. The answer is not shown.</span
-                >{:else}{answer.join(", ")}{/if}
+                >{:else}<Plain text={answer.join(", ")} />{/if}
             </p>
           {/if}
         {/each}

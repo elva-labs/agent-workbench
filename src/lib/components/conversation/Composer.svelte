@@ -7,6 +7,7 @@
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import { modelName, offeredModel, tokens } from "$lib/thread";
   import Icon from "./Icon.svelte";
+  import Plain from "./Plain.svelte";
 
   /**
    * Where the user writes to the agent. It takes several lines, files and
@@ -365,7 +366,7 @@
         aria-haspopup="menu"
         aria-expanded={menu === "model"}
         title={defaultModel ? "The agent's default model, which the session runs on" : "The model the session runs on"}
-        data-testid="model-chip">{modelLabel}<Icon name="down" size={12} /></button
+        data-testid="model-chip"><Plain text={modelLabel} /><Icon name="down" size={12} /></button
       >
       {#if menu === "model"}
         <!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -373,8 +374,8 @@
           {#each models as model (model.value)}
             {@const on = model.value === (currentOffered ?? current)}
             <button role="menuitemradio" aria-checked={on} class:on onclick={() => chooseModel(model.value)} data-testid="model-option">
-              <span class="name">{model.name ?? model.value}</span>
-              {#if model.description}<span class="about">{model.description}</span>{/if}
+              <span class="name"><Plain text={model.name ?? model.value} /></span>
+              {#if model.description}<span class="about"><Plain text={model.description} /></span>{/if}
               {#if on}<span class="tick"><Icon name="check" size={12} /></span>{/if}
             </button>
           {/each}
@@ -385,7 +386,7 @@
       {/if}
     </div>
     {#if after !== null}
-      <span class="after" data-testid="model-after-turn">{modelName(conversation, after) ?? after} from the next turn</span>
+      <span class="after" data-testid="model-after-turn"><Plain text={modelName(conversation, after) ?? after} /> from the next turn</span>
     {/if}
     {#if mode !== null}
       <div class="picker">
@@ -396,14 +397,14 @@
           aria-haspopup="menu"
           aria-expanded={menu === "mode"}
           title="What the agent may do without asking"
-          data-testid="mode-chip">{modeLabel}<Icon name="down" size={12} /></button
+          data-testid="mode-chip"><Plain text={modeLabel} /><Icon name="down" size={12} /></button
         >
         {#if menu === "mode"}
           <!-- svelte-ignore a11y_interactive_supports_focus -->
           <div class="menu" role="menu" aria-label="Mode" onkeydown={onMenuKey} data-testid="mode-menu">
             {#if ownMode !== null}
               <button role="menuitemradio" aria-checked="true" class="on" onclick={() => (menu = null)} data-testid="mode-option">
-                <span class="name">{ownMode}</span>
+                <span class="name"><Plain text={ownMode} /></span>
                 <span class="about">From the agent's own configuration. Once another mode is chosen, this one cannot be chosen again here.</span>
                 <span class="tick"><Icon name="check" size={12} /></span>
               </button>
@@ -411,8 +412,8 @@
             {#each modes as known (known.value)}
               {@const on = known.value === mode}
               <button role="menuitemradio" aria-checked={on} class:on onclick={() => chooseMode(known.value)} data-testid="mode-option">
-                <span class="name">{known.name}</span>
-                {#if known.description}<span class="about">{known.description}</span>{/if}
+                <span class="name"><Plain text={known.name} /></span>
+                {#if known.description}<span class="about"><Plain text={known.description} /></span>{/if}
                 {#if on}<span class="tick"><Icon name="check" size={12} /></span>{/if}
               </button>
             {/each}

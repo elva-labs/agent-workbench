@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { shown } from "$lib/thread";
   import HooksNotice from "$lib/components/HooksNotice.svelte";
   import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
@@ -63,7 +64,7 @@
     current === null
       ? "Agent"
       : integrated
-        ? label(current)
+        ? shown(label(current))
         : `Agent · ${agentLabel(current.agent)}`,
   );
 

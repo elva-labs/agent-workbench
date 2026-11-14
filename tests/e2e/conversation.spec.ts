@@ -279,7 +279,8 @@ test.describe("what the agent waits on the user for", () => {
        const t = f.startTool("${H}", "Task", { description: "Explore the history scan", prompt: "look" }, { kind: "agent" });
        const r = f.startTool("${H}", "Read", { file_path: "${PROJECT}/src/a.ts" }, { kind: "read", parent: t });
        f.emit("${H}", { type: "permissionAsked", request: "sub-1", call: r, parent: t, tool: "Read", input: { file_path: "${PROJECT}/src/a.ts" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }, { choice: "deny", remembers: null, message: false }] });
-       f.ask("${H}", "Bash", { command: "ls" });`,
+       const b = f.startTool("${H}", "Bash", { command: "ls" }, { kind: "command" });
+       f.ask("${H}", "Bash", { command: "ls" }, { call: b });`,
     );
     const dock = page.getByTestId("permission-dock");
     await expect(dock).toContainText("The subagent for “Explore the history scan” asks to read src/a.ts");
@@ -355,7 +356,9 @@ test.describe("a permission that could be misread", () => {
     await page.getByTestId("choice-deny").click();
     await page.keyboard.press("Enter");
     await agent(page, `f.ask("${H}", "Edit", { file_path: "${PROJECT}/../other/.bashrc" }, { path: "${PROJECT}/../other/.bashrc" });`);
-    await expect(dock.locator("code")).toHaveText(`${PROJECT}/../other/.bashrc`);
+    // With no call to say what kind it is, the tool is named before the path.
+    await expect(dock).toContainText(`Claude asks to use Edit on ${PROJECT}/../other/.bashrc`);
+    await expect(dock.locator("code").last()).toHaveText(`${PROJECT}/../other/.bashrc`);
     await expect(page.getByTestId("permission-outside")).toHaveText("outside the project");
   });
 });
@@ -568,7 +571,7 @@ test("stays put when the user opens a fold at the foot", async ({ page }) => {
 
 test("shows the characters that would disguise a command, and draws it left to right", async ({ page }) => {
   await openIntegrated(page);
-  await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.ask("${H}", "Bash", { command: "echo safe \\u202efr- mr\\u202c && ls" });`);
+  await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); const c = f.startTool("${H}", "Bash", { command: "echo safe \\u202efr- mr\\u202c && ls" }, { kind: "command" }); f.ask("${H}", "Bash", { command: "echo safe \\u202efr- mr\\u202c && ls" }, { call: c });`);
   const code = page.getByTestId("permission-dock").locator("code").first();
   await expect(code).toHaveText("echo safe ⟨U+202E⟩fr- mr⟨U+202C⟩ && ls");
   await expect(code.getByTestId("unseen-character")).toHaveCount(2);
@@ -1018,12 +1021,14 @@ test("takes up a session the core still runs when the window is reloaded", async
   await page.getByTestId("start-agent").click();
   await page.getByTestId("composer-input").fill("Run the tests");
   await page.keyboard.press("Enter");
-  await agent(page, `f.startTurn("${H}"); f.emit("${H}", { type: "text", block: "b", parent: null, text: "Running them now", done: false }); f.ask("${H}", "Bash", { command: "npm test" });`);
+  await agent(page, `f.startTurn("${H}"); f.emit("${H}", { type: "text", block: "b", parent: null, text: "Running them now", done: false }); const c = f.startTool("${H}", "Bash", { command: "npm test" }, { kind: "command" }); f.ask("${H}", "Bash", { command: "npm test" }, { call: c });`);
   await expect(page.getByTestId("permission-dock")).toBeVisible();
   await page.reload();
   // The core's session goes on: the window takes it up from its snapshot,
   // the request it asked still open, and starts nothing.
-  await expect(page.getByTestId("permission-dock")).toContainText("Claude asks to run npm test");
+  // The call that asked is not in the snapshot, so its kind is not known
+  // and the tool is named.
+  await expect(page.getByTestId("permission-dock")).toContainText("Claude asks to use Bash to run npm test");
   await expect(page.getByTestId("thread-intro")).toContainText("Earlier messages of this session are in its transcript");
   await expect(page.locator(`${AGENT} header .meta`)).toHaveText("waits for permission");
   expect((await calls(page)).map((call) => call.method)).toEqual(["snapshot"]);
@@ -1150,5 +1155,77 @@ test.describe("in the sessions pane, an integrated session", () => {
     await page.getByTestId("inactive-project").click();
     await page.clock.fastForward(8 * 24 * 60 * 60 * 1000);
     await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
+  });
+});
+
+test.describe("a permission cannot be disguised", () => {
+  const dock = (page: Page) => page.getByTestId("permission-dock");
+  const marks = (page: Page) => dock(page).getByTestId("unseen-character");
+
+  test("by a server's name that turns the words around", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, String.raw`f.startTurn("${H}"); f.ask("${H}", "mcp__git‮buh__push", {});`);
+    await expect(dock(page)).toContainText("asks to use git⟨U+202E⟩buh's push");
+    await expect(marks(page)).toHaveText(["⟨U+202E⟩"]);
+    await page.getByTestId("choice-allow").click();
+    await agent(page, String.raw`f.tool("${H}", "mcp__git‮buh__push", {}, "ok", { kind: "mcp" }); f.endTurn("${H}");`);
+    await page.getByTestId("work-line").last().click();
+    await expect(page.getByTestId("step-row").last()).toContainText("Used git⟨U+202E⟩buh's push");
+  });
+
+  test("by a subagent's description", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      String.raw`f.startTurn("${H}");
+       const c = f.startTool("${H}", "Task", { description: "tidy ‮/ fr- mr‬ up" }, { kind: "agent" });
+       f.emit("${H}", { type: "permissionAsked", request: "sub-1", call: null, parent: c, tool: "Bash", input: { command: "ls" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }] });`,
+    );
+    await expect(dock(page)).toContainText("The subagent for “tidy ⟨U+202E⟩/ fr- mr⟨U+202C⟩ up” asks to");
+    await expect(marks(page)).toHaveText(["⟨U+202E⟩", "⟨U+202C⟩"]);
+  });
+
+  test("by characters that are drawn as nothing", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      String.raw`f.startTurn("${H}");
+       const a = f.startTool("${H}", "Bash", { command: "ls\u{E0020}\u{E0072}\u{E006D}" }, { kind: "command" });
+       f.ask("${H}", "Bash", { command: "ls\u{E0020}\u{E0072}\u{E006D}" }, { call: a });`,
+    );
+    await expect(marks(page)).toHaveText(["⟨U+E0020⟩", "⟨U+E0072⟩", "⟨U+E006D⟩"]);
+    await page.getByTestId("choice-allow").click();
+    await agent(
+      page,
+      String.raw`const b = f.startTool("${H}", "Bash", { command: "c­url x️ㅤ" }, { kind: "command" });
+       f.ask("${H}", "Bash", { command: "c­url x️ㅤ" }, { call: b });`,
+    );
+    await expect(marks(page)).toHaveText(["⟨U+00AD⟩", "⟨U+FE0F⟩", "⟨U+3164⟩"]);
+  });
+
+  test("by a path that leaves the project without saying so", async ({ page }) => {
+    await openIntegrated(page);
+    const outside = page.getByTestId("permission-outside");
+    await agent(page, `f.startTurn("${H}"); f.ask("${H}", "Write", { file_path: "~/.ssh/authorized_keys", content: "k" });`);
+    await expect(outside).toHaveText(" not plainly in the project");
+    await page.getByTestId("choice-allow").click();
+    await agent(page, `f.ask("${H}", "Write", { file_path: "../../.zshrc", content: "x" });`);
+    await expect(outside).toHaveText(" outside the project");
+    await page.getByTestId("choice-allow").click();
+    // A Codex command run from the root of the disk.
+    await agent(
+      page,
+      `const c = f.startTool("${H}", "commandExecution", { command: "ls", cwd: "/" }, { kind: "command" });
+       f.ask("${H}", "commandExecution", { command: "ls", cwd: "/" }, { call: c });`,
+    );
+    await expect(page.getByTestId("permission-outside-list")).toHaveText("Outside the project: /");
+  });
+
+  test("by a tool that is not a command carrying one, with no call to say which", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, `f.startTurn("${H}"); f.ask("${H}", "DeleteRepository", { command: "ls" });`);
+    await expect(dock(page)).toContainText("asks to use DeleteRepository to run ls");
+    await page.getByTestId("permission-whole").click();
+    await expect(page.getByTestId("permission-whole-text")).toContainText("Tool: DeleteRepository");
   });
 });

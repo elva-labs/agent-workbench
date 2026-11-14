@@ -129,7 +129,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     fake.ask(core, "Bash", { command: "rm -rf build" });
     const asking = call("read", { session: id, lines: 2 });
     await handle(asking);
-    expect(answerTo(asking)?.content?.split("\n").at(-1)).toBe("It is waiting for the user to allow it to run rm -rf build.");
+    expect(answerTo(asking)?.content?.split("\n").at(-1)).toBe("It is waiting for the user to allow it to use Bash to run rm -rf build.");
     expect(conversationOf(key).open).toHaveLength(1);
   });
 

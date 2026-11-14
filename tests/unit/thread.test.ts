@@ -9,6 +9,8 @@ import {
   mcpName,
   requestPaths,
   revealed,
+  place,
+  phraseText,
   nowDoing,
   runningCall,
   segments,
@@ -161,37 +163,35 @@ describe("a span of time", () => {
 
 describe("a step's title", () => {
   it("says what it does while it runs and what it did once done", () => {
-    expect(stepTitle(call({ done: false }))).toEqual({ verb: "Running", object: "npm test" });
-    expect(stepTitle(call())).toEqual({ verb: "Ran", object: "npm test" });
+    expect(stepTitle(call({ done: false }))).toEqual({ lead: ["Running"], object: "npm test" });
+    expect(stepTitle(call())).toEqual({ lead: ["Ran"], object: "npm test" });
     expect(stepTitle(call({ input: { command: "a\nb" } })).object).toBe("a …");
     expect(stepTitle(call({ tool: "read", name: "Read", input: { file_path: "/repo/src/a.ts" } }), "/repo")).toEqual({
-      verb: "Read",
+      lead: ["Read"],
       object: "src/a.ts",
     });
-    expect(stepTitle(call({ tool: "edit", name: "anything", input: { file_path: "/x/y", content: "z" } })).verb).toBe("Wrote");
+    expect(stepTitle(call({ tool: "edit", name: "anything", input: { file_path: "/x/y", content: "z" } })).lead).toEqual(["Wrote"]);
     expect(
-      stepTitle(call({ tool: "edit", name: "anything", input: { file_path: "/x/y" }, changes: [{ path: "/x/y", kind: "create", to: null, hunks: [], content: "z", truncated: false }] })).verb,
-    ).toBe("Wrote");
-    expect(stepTitle(call({ tool: "edit", name: "Write", input: { file_path: "/x/y" } })).verb).toBe("Edited");
+      stepTitle(call({ tool: "edit", name: "anything", input: { file_path: "/x/y" }, changes: [{ path: "/x/y", kind: "create", to: null, hunks: [], content: "z", truncated: false }] })).lead,
+    ).toEqual(["Wrote"]);
+    expect(stepTitle(call({ tool: "edit", name: "Write", input: { file_path: "/x/y" } })).lead).toEqual(["Edited"]);
     expect(stepTitle(call({ tool: "search", name: "Grep", input: { pattern: "foo" } }))).toEqual({
-      verb: "Searched for",
+      lead: ["Searched for"],
       object: "foo",
     });
-    expect(stepTitle(call({ tool: "web", name: "WebFetch", input: { url: "https://a.b" } })).verb).toBe("Fetched");
-    expect(stepTitle(call({ tool: "web", name: "WebSearch", input: { query: "q" } })).verb).toBe(
-      "Searched the web for",
-    );
+    expect(stepTitle(call({ tool: "web", name: "WebFetch", input: { url: "https://a.b" } })).lead).toEqual(["Fetched"]);
+    expect(stepTitle(call({ tool: "web", name: "WebSearch", input: { query: "q" } })).lead).toEqual(["Searched the web for"]);
     expect(stepTitle(call({ tool: "agent", name: "Task", input: { description: "Explore" } }))).toEqual({
-      verb: "A subagent worked on",
+      lead: ["A subagent worked on"],
       object: "Explore",
     });
     expect(stepTitle(call({ tool: "mcp", name: "mcp__github__list_issues" }))).toEqual({
-      verb: "Used github's",
+      lead: ["Used ", { name: "github" }, "'s"],
       object: "list_issues",
     });
-    expect(stepTitle(call({ tool: "other", name: "anything", plan: true })).verb).toBe("Updated the plan");
-    expect(stepTitle(call({ tool: "other", name: "TodoWrite" })).verb).toBe("Used");
-    expect(stepTitle(call({ tool: "other", name: "Skill" }))).toEqual({ verb: "Used", object: "Skill" });
+    expect(stepTitle(call({ tool: "other", name: "anything", plan: true })).lead).toEqual(["Updated the plan"]);
+    expect(stepTitle(call({ tool: "other", name: "TodoWrite" })).lead).toEqual(["Used"]);
+    expect(stepTitle(call({ tool: "other", name: "Skill" }))).toEqual({ lead: ["Used"], object: "Skill" });
   });
 
   it("reads what has come of an input that is still streaming", () => {
@@ -199,12 +199,12 @@ describe("a step's title", () => {
       stepTitle(
         call({ done: false, inputDone: false, input: null, inputText: '{"command":"cargo te' }),
       ),
-    ).toEqual({ verb: "Running", object: null });
+    ).toEqual({ lead: ["Running"], object: null });
     expect(
       stepTitle(
         call({ done: false, inputDone: false, input: null, inputText: '{"command":"cargo test","timeout":' }),
       ),
-    ).toEqual({ verb: "Running", object: "cargo test" });
+    ).toEqual({ lead: ["Running"], object: "cargo test" });
   });
 });
 
@@ -309,28 +309,29 @@ describe("a permission request, in words", () => {
     }) as Extract<IntegratedEventBody, { type: "permissionAsked" }>;
 
   it("says what the agent asks to do, and to what, by the call's kind and the shape of its input", () => {
-    expect(asks(asked("Bash", { command: "cargo test" }))).toEqual({ verb: "run", object: "cargo test", shape: "command" });
-    expect(asks(asked("commandExecution", { command: "/bin/zsh -lc 'touch made.txt'", cwd: "/r" }))).toEqual({
-      verb: "run",
+    const command = call({ tool: "command" });
+    expect(asks(asked("Bash", { command: "cargo test" }), command)).toEqual({ lead: ["run"], object: "cargo test", shape: "command" });
+    expect(asks(asked("commandExecution", { command: "/bin/zsh -lc 'touch made.txt'", cwd: "/r" }), command)).toEqual({
+      lead: ["run"],
       object: "/bin/zsh -lc 'touch made.txt'",
       shape: "command",
     });
-    expect(asks(asked("Edit", { file_path: "/a", old_string: "x", new_string: "y" }))).toEqual({ verb: "edit", object: "/a", shape: "path" });
-    expect(asks(asked("Write", { file_path: "/b", content: "x" }))).toEqual({ verb: "write", object: "/b", shape: "path" });
+    expect(asks(asked("Edit", { file_path: "/a", old_string: "x", new_string: "y" }))).toEqual({ lead: ["edit"], object: "/a", shape: "path" });
+    expect(asks(asked("Write", { file_path: "/b", content: "x" }))).toEqual({ lead: ["write"], object: "/b", shape: "path" });
     expect(
       asks(asked("fileChange", { changes: [{ path: "/r/a.ts", diff: "" }, { path: "/r/b.ts", diff: "" }] }, "/r"), call({ tool: "edit", name: "fileChange" })),
-    ).toEqual({ verb: "edit", object: "/r/a.ts and 1 more", shape: "path" });
-    expect(asks(asked("anything", { file_path: "/c" }), call({ tool: "read", name: "anything" }))).toEqual({ verb: "read", object: "/c", shape: "path" });
-    expect(asks(asked("WebFetch", { url: "https://x" }))).toEqual({ verb: "fetch", object: "https://x", shape: "name" });
+    ).toEqual({ lead: ["edit"], object: "/r/a.ts and 1 more", shape: "path" });
+    expect(asks(asked("anything", { file_path: "/c" }), call({ tool: "read", name: "anything" }))).toEqual({ lead: ["read"], object: "/c", shape: "path" });
+    expect(asks(asked("WebFetch", { url: "https://x" }))).toEqual({ lead: ["fetch"], object: "https://x", shape: "name" });
     expect(asks(asked("webSearch", { query: "q" }), call({ tool: "web", name: "webSearch" }))).toEqual({
-      verb: "search the web for",
+      lead: ["search the web for"],
       object: "q",
       shape: "name",
     });
-    expect(asks(asked("anything", { plan: "1. do it" }), call({ plan: true }))).toEqual({ verb: "go ahead with the plan", object: null, shape: null });
-    expect(asks(asked("ExitPlanMode", { plan: "x" }))).toEqual({ verb: "use", object: "ExitPlanMode", shape: "name" });
-    expect(asks(asked("mcp__github__merge", {}))).toEqual({ verb: "use github's", object: "merge", shape: "name" });
-    expect(asks(asked("permissions", { network: true }))).toEqual({ verb: "use", object: "permissions", shape: "name" });
+    expect(asks(asked("anything", { plan: "1. do it" }), call({ plan: true }))).toEqual({ lead: ["go ahead with the plan"], object: null, shape: null });
+    expect(asks(asked("ExitPlanMode", { plan: "x" }))).toEqual({ lead: ["use"], object: "ExitPlanMode", shape: "name" });
+    expect(asks(asked("mcp__github__merge", {}))).toEqual({ lead: ["use ", { name: "github" }, "'s"], object: "merge", shape: "name" });
+    expect(asks(asked("permissions", { network: true }))).toEqual({ lead: ["use"], object: "permissions", shape: "name" });
   });
 
   it("names each choice and what it remembers", () => {
@@ -382,6 +383,20 @@ describe("text the agent chose, as it reads", () => {
     expect(revealed(all)).toHaveLength(14);
   });
 
+  it("takes the hidden characters from Unicode's own categories", () => {
+    const unseen = (text: string) => revealed(text).filter((part) => part.unseen).map((part) => part.text);
+    // Tag characters after ls, which read as plain ls.
+    expect(unseen("ls\u{E0020}\u{E0072}\u{E006D}\u{E007F}")).toEqual(["⟨U+E0020⟩", "⟨U+E0072⟩", "⟨U+E006D⟩", "⟨U+E007F⟩"]);
+    // A soft hyphen in curl.
+    expect(unseen("c\u00adurl")).toEqual(["⟨U+00AD⟩"]);
+    // Variation selectors, and the Hangul fillers.
+    expect(unseen("a\ufe0fb\ufe00\u{E0100}")).toEqual(["⟨U+FE0F⟩", "⟨U+FE00⟩", "⟨U+E0100⟩"]);
+    expect(unseen("\u115f\u1160\u3164\uffa0")).toEqual(["⟨U+115F⟩", "⟨U+1160⟩", "⟨U+3164⟩", "⟨U+FFA0⟩"]);
+    // The combining grapheme joiner, Mongolian vowel separator, and the
+    // line and paragraph separators.
+    expect(unseen("\u034f\u180e\u2028\u2029")).toHaveLength(4);
+  });
+
   it("leaves line breaks, tabs and ordinary text alone", () => {
     expect(revealed("a\tb\nc ü 日本")).toEqual([{ text: "a\tb\nc ü 日本", unseen: false }]);
     expect(revealed("")).toEqual([{ text: "", unseen: false }]);
@@ -391,7 +406,7 @@ describe("text the agent chose, as it reads", () => {
 describe("a Codex-shaped call", () => {
   it("is titled by its kind and the shape of its input", () => {
     expect(stepTitle(call({ name: "commandExecution", input: { command: "/bin/zsh -lc 'ls'", cwd: "/r" } }))).toEqual({
-      verb: "Ran",
+      lead: ["Ran"],
       object: "/bin/zsh -lc 'ls'",
     });
     expect(
@@ -399,16 +414,16 @@ describe("a Codex-shaped call", () => {
         call({ tool: "edit", name: "fileChange", input: { changes: [{ path: "/r/a.ts" }, { path: "/r/b.ts" }] }, changes: [] }),
         "/r",
       ),
-    ).toEqual({ verb: "Edited", object: "a.ts and 1 more" });
+    ).toEqual({ lead: ["Edited"], object: "a.ts and 1 more" });
     expect(stepTitle(call({ tool: "agent", name: "spawnAgent", input: { prompt: "Look at the scan\nthen report" } }))).toEqual({
-      verb: "A subagent worked on",
+      lead: ["A subagent worked on"],
       object: "Look at the scan …",
     });
     expect(stepTitle(call({ tool: "read", name: "imageView", input: { path: "/r/shot.png" } }), "/r")).toEqual({
-      verb: "Read",
+      lead: ["Read"],
       object: "shot.png",
     });
-    expect(stepTitle(call({ tool: "web", name: "webSearch", input: { query: null } }))).toEqual({ verb: "Used", object: "webSearch" });
+    expect(stepTitle(call({ tool: "web", name: "webSearch", input: { query: null } }))).toEqual({ lead: ["Used"], object: "webSearch" });
   });
 
   it("speaks under the agent's own name on its default model", () => {
@@ -434,21 +449,28 @@ describe("a permission request that could be read as something else", () => {
     }) as Extract<IntegratedEventBody, { type: "permissionAsked" }>;
 
   it("names a tool of an MCP server as one, whatever its input holds", () => {
-    expect(asks(asked("mcp__deploy__run", { command: "ls" }))).toEqual({ verb: "use deploy's", object: "run", shape: "name" });
+    expect(asks(asked("mcp__deploy__run", { command: "ls" }))).toEqual({ lead: ["use ", { name: "deploy" }, "'s"], object: "run", shape: "name" });
   });
 
-  it("says run only for a call that runs a command, or one whose kind is not known", () => {
+  it("says run only for a call known to run a command, and names the tool of one whose kind is not known", () => {
+    // The reviewer's case: no call id, so no kind, and a tool that is not a
+    // command carrying a command field.
+    expect(asks(asked("DeleteRepository", { command: "ls" }))).toEqual({
+      lead: ["use ", { name: "DeleteRepository" }, " to run"],
+      object: "ls",
+      shape: "command",
+    });
     expect(asks(asked("Edit", { command: "ls", file_path: "/r/a" }), call({ tool: "edit", name: "Edit" }))).toEqual({
-      verb: "edit",
+      lead: ["edit"],
       object: "/r/a",
       shape: "path",
     });
     expect(asks(asked("Thing", { command: "ls" }), call({ tool: "other", name: "Thing" }))).toEqual({
-      verb: "use",
+      lead: ["use"],
       object: "Thing",
       shape: "name",
     });
-    expect(asks(asked("Bash", { command: "ls" }), call({ tool: "command" })).verb).toBe("run");
+    expect(asks(asked("Bash", { command: "ls" }), call({ tool: "command" })).lead).toEqual(["run"]);
   });
 
   it("names every path it touches, each change's and a place the core says", () => {
@@ -458,5 +480,55 @@ describe("a permission request that could be read as something else", () => {
       ),
     ).toEqual(["/r/a.ts", "/etc/hosts", "/tmp/x", "/r"]);
     expect(requestPaths(asked("commandExecution", { command: "curl x" }, "example.com"))).toEqual([]);
+    // The folder a command runs in is one of the paths it touches.
+    expect(requestPaths(asked("commandExecution", { command: "ls", cwd: "/" }))).toEqual(["/"]);
+  });
+});
+
+describe("where a path lies", () => {
+  const ROOT = "/home/ada/src/demo";
+  it("is inside only when it plainly resolves into the project", () => {
+    expect(place(`${ROOT}/src/a.ts`, ROOT)).toEqual({ text: "src/a.ts", where: "inside" });
+    expect(place("src/a.ts", ROOT)).toEqual({ text: "src/a.ts", where: "inside" });
+    expect(place(`${ROOT}/src/../b.ts`, ROOT)).toEqual({ text: `${ROOT}/src/../b.ts`, where: "inside" });
+    expect(place(ROOT, ROOT).where).toBe("inside");
+  });
+
+  it("marks what climbs out, starts at a home folder, or runs elsewhere", () => {
+    // The reviewer's cases.
+    expect(place("~/.ssh/authorized_keys", ROOT).where).toBe("unknown");
+    expect(place("../../.zshrc", ROOT)).toEqual({ text: "../../.zshrc", where: "outside" });
+    expect(place("/", ROOT).where).toBe("outside");
+    expect(place("a.txt", ROOT, "/")).toEqual({ text: "a.txt", where: "outside" });
+    expect(place(`${ROOT}/../other/x`, ROOT).where).toBe("outside");
+    expect(place(`${ROOT}-evil/x`, ROOT).where).toBe("outside");
+    expect(place("$HOME/.zshrc", ROOT).where).toBe("unknown");
+    expect(place("src/*.ts", ROOT).where).toBe("unknown");
+    expect(place("a.txt", ROOT, "~/elsewhere").where).toBe("unknown");
+    expect(place("src/a.ts", null).where).toBe("unknown");
+  });
+});
+
+describe("a name an MCP server gave", () => {
+  const asked = (tool: string, input: unknown) =>
+    ({
+      type: "permissionAsked",
+      request: "r",
+      call: null,
+      parent: null,
+      tool,
+      input,
+      truncated: false,
+      description: null,
+      path: null,
+      choices: [],
+    }) as Extract<IntegratedEventBody, { type: "permissionAsked" }>;
+
+  it("stands apart from the words around it", () => {
+    const server = "git\u202ebuh";
+    const what = asks(asked("mcp__" + server + "__push", {}));
+    expect(what.lead).toEqual(["use ", { name: server }, "'s"]);
+    expect(stepTitle(call({ tool: "mcp", name: "mcp__" + server + "__push" })).lead).toEqual(["Used ", { name: server }, "'s"]);
+    expect(phraseText(what)).toBe(`use ${server}'s push`);
   });
 });

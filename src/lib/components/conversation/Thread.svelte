@@ -4,6 +4,7 @@
   import { clock, nowDoing, speaker, startedIds, tokens } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Parts from "./Parts.svelte";
+  import Plain from "./Plain.svelte";
   import Started from "./Started.svelte";
 
   /**
@@ -222,13 +223,13 @@
         {@const doing = live ? nowDoing(conversation, entry.parts) : null}
         <article class="msg agent" data-testid="agent-run" data-turn={entry.turn}>
           <header class="who">
-            <i class="mark"></i><b>{speaker(conversation, turn?.model ?? null, agent)}</b>
+            <i class="mark"></i><b><Plain text={speaker(conversation, turn?.model ?? null, agent)} /></b>
             {#if entry.at !== null}<time class="num">{clock(entry.at)}</time>{/if}
           </header>
           <Parts parts={entry.parts} {root} />
           <Started ids={startedIds(entry.parts)} />
           {#if live && doing !== null}
-            <p class="now" data-testid="now"><span class="caret"></span>{doing}</p>
+            <p class="now" data-testid="now"><span class="caret"></span><Plain text={doing} /></p>
           {/if}
           {#if lastOfTurn.has(entry.key) && turn?.outcome === "interrupted"}
             <p class="outcome" data-testid="turn-outcome">Interrupted</p>

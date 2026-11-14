@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Plain from "./Plain.svelte";
   import { agentLabel } from "$lib/agent.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { modelLabel } from "$lib/models";
@@ -36,11 +37,11 @@
           class:dormant={session.status === "dormant"}
           title={statusLabel(session)}
         ></span>
-        <span class="name">{label(session)}</span>
+        <span class="name"><Plain text={label(session)} /></span>
         <span class="state" class:asking={session.needs === "permission"}>
           {session.needs === "permission" ? "asking" : statusLabel(session)}
         </span>
-        <span class="model">{session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)}</span>
+        <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)} /></span>
         <button class="open" onclick={() => open(session)} data-testid="open-started">Open</button>
       </div>
     {/each}

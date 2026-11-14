@@ -25,7 +25,7 @@
   let title = $derived(
     part.kind === "tool"
       ? stepTitle(part, root)
-      : { verb: part.done ? "Thought" : "Thinking", object: null },
+      : { lead: [part.done ? "Thought" : "Thinking"], object: null },
   );
 
   let status = $derived.by((): { text: string; tone: "run" | "bad" | "quiet" } | null => {
@@ -79,7 +79,9 @@
     <span class="chev"><Icon name="chev" size={12} /></span>
     <span class="glyph"><Icon name={glyph(part.kind === "tool" ? part.tool : "thinking")} size={13} /></span>
     <span class="title">
-      <span class="verb">{title.verb}</span>
+      <span class="verb"
+        >{#each title.lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<Plain text={piece.name} />{/if}{/each}</span
+      >
       {#if title.object !== null}<code class="object"><Plain text={title.object} /></code>{/if}
     </span>
     {#if status !== null}
@@ -97,9 +99,9 @@
             <ul class="tasks">
               {#each tasks as task (task.task)}
                 <li class={task.status}>
-                  <span class="dot"></span>{task.description ?? "Task"}
+                  <span class="dot"></span>{#if task.description}<Plain text={task.description} />{:else}Task{/if}
                   <span class="task-state"
-                    >{task.status === "running" ? (task.tool ? `using ${task.tool}` : "running") : task.status}</span
+                    >{#if task.status === "running"}{#if task.tool}using <Plain text={task.tool} />{:else}running{/if}{:else}{task.status}{/if}</span
                   >
                 </li>
               {/each}
@@ -125,7 +127,7 @@
                 </dl>
               {/if}
             {:else}
-              <pre class="block input">{input.json}</pre>
+              <pre class="block input"><Plain text={input.json} /></pre>
             {/if}
           {/if}
           {#each part.changes as change (change.path)}
@@ -135,7 +137,7 @@
             <ul class="tasks">
               {#each tasks as task (task.task)}
                 <li class={task.status}>
-                  <span class="dot"></span>{task.description ?? "Background task"}
+                  <span class="dot"></span>{#if task.description}<Plain text={task.description} />{:else}Background task{/if}
                   <span class="task-state">{task.status === "running" ? "in the background" : task.status}</span>
                 </li>
               {/each}

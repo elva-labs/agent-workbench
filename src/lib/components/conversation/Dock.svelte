@@ -3,7 +3,7 @@
   import type { Conversation, Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
   import { answer, reply } from "$lib/integrated.svelte";
-  import { asks, choiceLabel, choiceMeans, requestPaths } from "$lib/thread";
+  import { asks, choiceLabel, choiceMeans, place, requestCwd, requestPaths, shown as markers, type Piece } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
 
@@ -38,13 +38,21 @@
 
   let dock = $state<HTMLDivElement | null>(null);
 
-  /** Who asks: the agent, or a subagent of it, by what it was asked to do. */
-  function asker(parent: string | null): string {
-    if (parent === null) return agent;
+  /** Who asks: the agent, or a subagent of it, by what it was asked to do,
+      which is the agent's text and drawn as it is. */
+  function asker(parent: string | null): Piece[] {
+    if (parent === null) return [agent];
     const call = conversation.call(parent);
     const input = call?.input as Record<string, unknown> | null | undefined;
     const description = typeof input?.description === "string" ? input.description : null;
-    return description === null ? `A subagent of ${agent}'s` : `The subagent for “${description}”`;
+    return description === null ? [`A subagent of ${agent}'s`] : ["The subagent for “", { name: description }, "”"];
+  }
+
+  /** Who asks, as a label, with what cannot be seen in it written out. */
+  function askerLabel(parent: string | null): string {
+    return asker(parent)
+      .map((piece) => (typeof piece === "string" ? piece : markers(piece.name)))
+      .join("");
   }
 
   // ---- permissions ----
@@ -161,17 +169,19 @@
   /** The whole request as the agent made it: the tool it names and all
       of its input, so nothing the line leaves out goes unseen. Null when
       the line already says all of it. */
-  function whole(asked: Permission, what: { object: string | null; shape: string | null }): string | null {
+  function whole(asked: Permission, what: { lead: Piece[]; object: string | null; shape: string | null }): string | null {
     const input = asked.input;
     if (input === null || input === undefined) return null;
     if (typeof input === "object" && !Array.isArray(input)) {
       const keys = Object.keys(input);
       if (keys.length === 0) return null;
       // Left out only where the line shows the input whole: a command of
-      // one line it reads as running, and nothing else.
+      // one line, of a call known to be a command, and nothing else.
       const command = (input as Record<string, unknown>).command;
       if (
         keys.length === 1 &&
+        what.lead.length === 1 &&
+        what.lead[0] === "run" &&
         typeof command === "string" &&
         what.shape === "command" &&
         what.object === command &&
@@ -183,9 +193,16 @@
     return `Tool: ${asked.tool}\n${JSON.stringify(input, null, 2)}`;
   }
 
-  /** The paths a request names that lie outside the project. */
-  function outside(asked: Permission): string[] {
-    return requestPaths(asked).filter((path) => where(path).outside);
+  /** The paths a request names that are not plainly in the project: those
+      outside it, and those it cannot be told of. */
+  function outside(asked: Permission): { path: string; where: "outside" | "unknown" }[] {
+    const cwd = requestCwd(asked);
+    const out: { path: string; where: "outside" | "unknown" }[] = [];
+    for (const path of requestPaths(asked)) {
+      const at = place(path, root, path === cwd ? null : cwd).where;
+      if (at !== "inside") out.push({ path, where: at });
+    }
+    return out;
   }
 
   /** Which of a request's folds are open: the whole command, the change,
@@ -196,13 +213,13 @@
 
   /** A path a request names, as the user must read it to decide: from the
       project when it is plainly inside it, and whole otherwise, said to be
-      outside. Nothing is cut out of it. */
-  function where(path: string): { text: string; outside: boolean } {
-    const plain = !path.split("/").includes("..");
-    if (root !== null && plain && path.startsWith(`${root}/`))
-      return { text: path.slice(root.length + 1), outside: false };
-    return { text: path, outside: root !== null && path.startsWith("/") };
+      outside or not known to be inside. Nothing is cut out of it. */
+  function where(asked: Permission, path: string) {
+    return place(path, root, requestCwd(asked));
   }
+
+  const AWAY = { outside: "outside the project", unknown: "not plainly in the project" } as const;
+  const KINDS = ["outside", "unknown"] as const;
 
   /** A command's first line, and how many lines follow it. */
   function lines(command: string): { first: string; rest: number } {
@@ -297,7 +314,7 @@
     class="dock"
     bind:this={dock}
     role="group"
-    aria-label="{asker(asked.parent)} is waiting for you"
+    aria-label="{askerLabel(asked.parent)} is waiting for you"
     data-testid={asked.type === "permissionAsked" ? "permission-dock" : "question-dock"}
   >
     {#if asked.type === "permissionAsked"}
@@ -306,18 +323,18 @@
       {@const lines_ = change(asked)}
       {@const full = whole(asked, what)}
       {@const away = outside(asked)}
-      {@const headAway = what.shape === "path" && what.object !== null && where(what.object).outside}
+      {@const headAway = what.shape === "path" && what.object !== null && where(asked, what.object).where !== "inside"}
       <div class="what">
         <span class="ring"></span>
         <p>
-          <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
+          <b>{@render pieces(asker(asked.parent))}</b> asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
                 class="exact"><Plain text={parts.first} /></code
               >{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
-                >{/if}{:else if what.shape === "path"}{@const place = where(what.object)}<code
+                >{/if}{:else if what.shape === "path"}{@const at = where(asked, what.object)}<code
                 class="exact"
-                title={what.object}><Plain text={place.text} /></code
-              >{#if place.outside}<span class="warn" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code class="exact"
+                title={markers(what.object)}><Plain text={at.text} /></code
+              >{#if at.where !== "inside"}<span class="warn" data-testid="permission-outside">{" "}{AWAY[at.where]}</span>{/if}{:else}<code class="exact"
                 ><Plain text={what.object} /></code
               >{/if}{/if}
         </p>
@@ -326,12 +343,16 @@
       {#if asked.description}
         <p class="description"><Plain text={asked.description} /></p>
       {/if}
-      {#if away.length > (headAway ? 1 : 0)}
-        <p class="away" data-testid="permission-outside-list">
-          <span class="warn">Outside the project:</span>
-          {#each away as path, at (path)}{#if at > 0},{" "}{/if}<code class="exact"><Plain text={path} /></code>{/each}
-        </p>
-      {/if}
+      {#each KINDS as kind (kind)}
+        {@const these = away.filter((each) => each.where === kind && !(headAway && each.path === what.object))}
+        {#if these.length > 0}
+          <p class="away" data-testid="permission-outside-list">
+            <span class="warn">{kind === "outside" ? "Outside the project:" : "Not plainly in the project:"}</span>
+            {#each these as each, at (each.path)}{#if at > 0},{" "}{/if}<code class="exact"><Plain text={each.path} /></code
+              >{/each}
+          </p>
+        {/if}
+      {/each}
       {#if command !== null || lines_ !== null || full !== null}
         <div class="folds">
           {#if command !== null}
@@ -404,7 +425,7 @@
       {@const questions = asked.questions}
       <div class="what">
         <span class="ring"></span>
-        <p><b>{asker(asked.parent)}</b> asks you</p>
+        <p><b>{@render pieces(asker(asked.parent))}</b> asks you</p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -412,7 +433,9 @@
         {#each questions as question, at (at)}
           <div class="question" data-testid="question">
             <p class="ask">
-              {#if question.header}<span class="chip">{question.header}</span>{/if}{question.question}
+              {#if question.header}<span class="chip"><Plain text={question.header} /></span>{/if}<Plain
+                text={question.question}
+              />
             </p>
             {#if question.options.length > 0}
               <!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -420,7 +443,7 @@
               <div
                 class="options"
                 role={now ? "group" : question.multiple ? "group" : "radiogroup"}
-                aria-label={question.question}
+                aria-label={markers(question.question)}
                 onkeydown={onOptionsKey}
               >
                 {#each question.options as option, index (option.label)}
@@ -435,8 +458,8 @@
                       onclick={() => pick(at, option.label, false, questions)}
                     >
                       <span class="key">{index + 1}</span>
-                      <span class="label">{option.label}</span>
-                      {#if option.description}<span class="hint">{option.description}</span>{/if}
+                      <span class="label"><Plain text={option.label} /></span>
+                      {#if option.description}<span class="hint"><Plain text={option.description} /></span>{/if}
                     </button>
                   {:else}
                     <button
@@ -451,8 +474,8 @@
                       onclick={() => pick(at, option.label, question.multiple, questions)}
                     >
                       <span class="box" class:round={!question.multiple}>{#if on}<Icon name="check" size={10} />{/if}</span>
-                      <span class="label">{option.label}</span>
-                      {#if option.description}<span class="hint">{option.description}</span>{/if}
+                      <span class="label"><Plain text={option.label} /></span>
+                      {#if option.description}<span class="hint"><Plain text={option.description} /></span>{/if}
                     </button>
                   {/if}
                 {/each}
@@ -465,14 +488,14 @@
                 spellcheck="false"
                 bind:value={own[at]}
                 placeholder="Type the answer; it is not shown"
-                aria-label={question.question}
+                aria-label={markers(question.question)}
                 data-testid="question-secret"
               />
             {:else if question.other}
               <input
                 bind:value={own[at]}
                 placeholder={question.options.length > 0 ? "Or answer in your own words" : "Your answer"}
-                aria-label={question.question}
+                aria-label={markers(question.question)}
                 data-testid="question-words"
               />
             {/if}
@@ -498,6 +521,12 @@
     {/if}
   </div>
 {/if}
+
+<!-- Words the app says, and names the agent or a server gave, drawn as
+     they are. -->
+{#snippet pieces(lead: Piece[])}{#each lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<code
+        class="exact name"><Plain text={piece.name} /></code
+      >{/if}{/each}{/snippet}
 
 <style>
   .dock {

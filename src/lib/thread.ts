@@ -186,20 +186,39 @@ export function mcpName(name: string): { server: string; tool: string } | null {
   return match === null ? null : { server: match[1], tool: match[2] };
 }
 
+/** What a call or a request is, in words: the verb, then whose it is when
+    an MCP server's or a tool's own name says so, then the thing it is for.
+    The owner and the thing are the agent's text, drawn as they are and
+    never as part of the words around them. */
+export interface Phrase {
+  /** The words before the thing: the app's own as strings, and a name the
+      agent or a server gave as `{ name }`, which is drawn as it is. */
+  lead: Piece[];
+  object: string | null;
+}
+
+export type Piece = string | { name: string };
+
+/** A phrase as one line of plain text. */
+export function phraseText(phrase: Phrase): string {
+  const lead = phrase.lead.map((piece) => (typeof piece === "string" ? piece : piece.name)).join("");
+  return phrase.object === null ? lead : `${lead} ${phrase.object}`;
+}
+
 /** What a call is, as a step in the work: what it did, and the thing it
     did it to, which is drawn as code. Present tense while it runs. */
 export function stepTitle(
   call: ToolCall,
   root: string | null = null,
-): { verb: string; object: string | null } {
+): Phrase {
   const running = !call.done;
   const input = call.inputDone ? call.input : partialInput(call.inputText);
   const path = inputPath(input);
   const shown = path === null ? null : shortPath(path, root);
-  const say = (now: string, then: string, object: string | null) => ({
-    verb: running ? now : then,
-    object,
-  });
+  const say = (now: string, then: string, object: string | null, owner: string | null = null): Phrase => {
+    const verb = running ? now : then;
+    return { lead: owner === null ? [verb] : [`${verb} `, { name: owner }, "'s"], object };
+  };
   if (call.plan) return say("Updating the plan", "Updated the plan", null);
   const more = changeCount(input);
   const many = shown !== null && more > 1 ? `${shown} and ${more - 1} more` : shown;
@@ -228,7 +247,7 @@ export function stepTitle(
     case "mcp": {
       const named = mcpName(call.name);
       if (named === null) return say("Using", "Used", call.name);
-      return say(`Using ${named.server}'s`, `Used ${named.server}'s`, named.tool);
+      return say("Using", "Used", named.tool, named.server);
     }
     default:
       return say("Using", "Used", call.name);
@@ -283,10 +302,7 @@ export function nowDoing(conversation: Conversation, parts: Part[]): string | nu
     return `Retrying after an error${which}: ${message}`;
   }
   const call = runningCall(parts);
-  if (call !== null) {
-    const { verb, object } = stepTitle(call);
-    return object === null ? verb : `${verb} ${object}`;
-  }
+  if (call !== null) return phraseText(stepTitle(call));
   const last = parts[parts.length - 1];
   if (last !== undefined && last.kind === "thinking" && !last.done) return "Thinking";
   if (last !== undefined && last.kind === "text" && !last.done) return null;
@@ -347,7 +363,7 @@ export function startedIds(parts: Part[]): string[] {
 type Permission = Extract<IntegratedEventBody, { type: "permissionAsked" }>;
 
 /** Every path a permission request names: its own fields, each change it
-    lists, and the place the core says it is for when that is a path. */
+    lists, the folder it runs in, and the place the core says it is for. */
 export function requestPaths(asked: Permission): string[] {
   const out: string[] = [];
   const add = (path: unknown) => {
@@ -356,34 +372,89 @@ export function requestPaths(asked: Permission): string[] {
   const input = asked.input;
   if (input !== null && typeof input === "object") {
     const fields = input as Record<string, unknown>;
-    for (const name of ["file_path", "notebook_path", "path"]) add(fields[name]);
+    for (const name of ["file_path", "notebook_path", "path", "cwd"]) add(fields[name]);
     if (Array.isArray(fields.changes))
       for (const change of fields.changes as Record<string, unknown>[]) {
         add(change?.path);
         add(change?.move_path);
       }
   }
-  if (asked.path !== null && /^(\/|~|[A-Za-z]:[\\/])/.test(asked.path)) add(asked.path);
+  if (asked.path !== null && /^(\/|~|\.{1,2}(\/|$)|[A-Za-z]:[\\/])/.test(asked.path)) add(asked.path);
   return out;
 }
 
-/** What a permission request asks, in words: the verb, and the thing it is
-    for, drawn as code, which is a command, a path or a name. It goes by the
-    kind of the call that asks, as its start said, and only where that is
-    not known by the shape of what it asks with; never by what an agent
-    calls its tools. A tool of an MCP server is always named as one. */
-export function asks(
-  asked: Permission,
-  call: ToolCall | null = null,
-): { verb: string; object: string | null; shape: "command" | "path" | "name" | null } {
+/** The folder a request runs in, when it says. */
+export function requestCwd(asked: Permission): string | null {
+  return field(asked.input, "cwd");
+}
+
+/** Where a path a request names lies: inside the project, outside it, or
+    not known. Only a path that plainly resolves into the project is
+    inside: one that starts at a home folder, names a variable or a glob,
+    or has no project to be read against is not known, and a relative path
+    is read from the folder the request runs in. A link inside the project
+    that leads out of it cannot be seen from here. The text is the path
+    from the project when it is inside, and whole otherwise. */
+export function place(
+  path: string,
+  root: string | null,
+  cwd: string | null = null,
+): { text: string; where: "inside" | "outside" | "unknown" } {
+  const unknown = { text: path, where: "unknown" as const };
+  if (root === null || !absolute(root)) return unknown;
+  if (/^~|[$`%*?{}\[\]]/.test(path) || (cwd !== null && /^~|[$`%*?{}\[\]]/.test(cwd))) return unknown;
+  const windows = root.includes("\\");
+  const slashes = (text: string) => (windows ? text.replace(/\\/g, "/") : text);
+  let full = slashes(path);
+  if (!absolute(path)) {
+    const base = cwd === null ? root : absolute(cwd) ? cwd : `${root}/${cwd}`;
+    full = `${slashes(base)}/${full}`;
+  }
+  const resolved = normal(full);
+  const home = normal(slashes(root));
+  if (resolved === home) return { text: ".", where: "inside" };
+  if (resolved.startsWith(`${home}/`)) {
+    // Shown from the project only when the path says no more than that.
+    const given = slashes(path);
+    const plain = given.startsWith(`${home}/`) && normal(given) === given;
+    return { text: plain ? given.slice(home.length + 1) : path, where: "inside" };
+  }
+  return { text: path, where: "outside" };
+}
+
+function absolute(path: string): boolean {
+  return /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(path);
+}
+
+/** A path with its `.` and `..` read and its doubled slashes made one. */
+function normal(path: string): string {
+  const drive = /^[A-Za-z]:/.exec(path)?.[0] ?? "";
+  const parts: string[] = [];
+  for (const part of path.slice(drive.length).split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `${drive.toLowerCase()}/${parts.join("/")}`;
+}
+
+/** What a permission request asks, in words: the lead, and the thing it
+    is for, drawn as code, which is a command, a path or a name. It goes by
+    the kind of the call that asks, as its start said, and only where that
+    is not known by the shape of what it asks with; never by what an agent
+    calls its tools. It says "run" only for a call known to be a command,
+    and a tool of an MCP server is always named as one. Every name in it is
+    the agent's or a server's, drawn as it is. */
+export function asks(asked: Permission, call: ToolCall | null = null): Phrase & { shape: "command" | "path" | "name" | null } {
   const input = asked.input;
-  if (call?.plan) return { verb: "go ahead with the plan", object: null, shape: null };
+  if (call?.plan) return { lead: ["go ahead with the plan"], object: null, shape: null };
   const named = mcpName(asked.tool);
-  if (named !== null) return { verb: `use ${named.server}'s`, object: named.tool, shape: "name" };
+  if (named !== null) return { lead: ["use ", { name: named.server }, "'s"], object: named.tool, shape: "name" };
   const kind = call?.tool ?? null;
   const command = field(input, "command");
-  if (command !== null && (kind === "command" || kind === null))
-    return { verb: "run", object: command, shape: "command" };
+  if (command !== null && kind === "command") return { lead: ["run"], object: command, shape: "command" };
+  if (command !== null && kind === null)
+    return { lead: ["use ", { name: asked.tool }, " to run"], object: command, shape: "command" };
   const path = inputPath(input) ?? (requestPaths(asked)[0] ?? null);
   const more = changeCount(input);
   const paths = path !== null && more > 1 ? `${path} and ${more - 1} more` : path;
@@ -391,21 +462,21 @@ export function asks(
     more > 0 || (input !== null && typeof input === "object" && ("old_string" in input || "content" in input));
   if (kind === "edit" || (kind === null && shaped)) {
     const whole = input !== null && typeof input === "object" && "content" in input && !("old_string" in input);
-    return { verb: whole ? "write" : "edit", object: paths, shape: path === null ? null : "path" };
+    return { lead: [whole ? "write" : "edit"], object: paths, shape: path === null ? null : "path" };
   }
-  if (kind === "read" && path !== null) return { verb: "read", object: path, shape: "path" };
+  if (kind === "read" && path !== null) return { lead: ["read"], object: path, shape: "path" };
   if (kind === "web" || kind === null) {
     const url = field(input, "url");
-    if (url !== null) return { verb: "fetch", object: url, shape: "name" };
+    if (url !== null) return { lead: ["fetch"], object: url, shape: "name" };
     const query = field(input, "query");
-    if (kind === "web" && query !== null) return { verb: "search the web for", object: query, shape: "name" };
+    if (kind === "web" && query !== null) return { lead: ["search the web for"], object: query, shape: "name" };
   }
   if (kind === "agent") {
     const about = field(input, "description") ?? firstLine(field(input, "prompt"));
-    return { verb: "start a subagent for", object: about, shape: about === null ? null : "name" };
+    return { lead: ["start a subagent for"], object: about, shape: about === null ? null : "name" };
   }
-  if (path !== null) return { verb: `use ${asked.tool} on`, object: path, shape: "path" };
-  return { verb: "use", object: asked.tool, shape: "name" };
+  if (path !== null) return { lead: ["use ", { name: asked.tool }, " on"], object: path, shape: "path" };
+  return { lead: ["use"], object: asked.tool, shape: "name" };
 }
 
 /** A choice as its button says it. */
@@ -493,18 +564,29 @@ export function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Characters that change how text reads without being seen: controls,
-    marks and overrides that reorder text, and characters of no width. */
-const UNSEEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+/** Characters that change how text reads without being seen, by Unicode's
+    own categories: controls, format characters (the marks and overrides
+    that reorder text, joiners, the soft hyphen, tags), line and paragraph
+    separators, and every character Unicode says is drawn as nothing, such
+    as variation selectors and Hangul fillers. */
+const UNSEEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
 
 /** Text split so that every character that would change how it reads
     without being seen stands as a visible marker of its own, such as
     ⟨U+202E⟩. A line break and a tab stay as they are. */
+/** Text with every character that would change how it reads without being
+    seen written as its marker, for a label or a line of plain text. */
+export function shown(text: string): string {
+  return revealed(text)
+    .map((part) => part.text)
+    .join("");
+}
+
 export function revealed(text: string): { text: string; unseen: boolean }[] {
   const out: { text: string; unseen: boolean }[] = [];
   let plain = "";
   for (const char of text) {
-    if (UNSEEN.test(char)) {
+    if (char !== "\n" && char !== "\t" && UNSEEN.test(char)) {
       if (plain !== "") out.push({ text: plain, unseen: false });
       plain = "";
       const code = char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
@@ -542,10 +624,7 @@ export function lastRun(conversation: Conversation, lines: number): string {
   for (const request of conversation.open) {
     const asked = request.asked;
     if (asked.type === "permissionAsked") {
-      const what = asks(asked);
-      out.push(
-        `It is waiting for the user to allow it to ${what.verb}${what.object === null ? "" : ` ${what.object}`}.`,
-      );
+      out.push(`It is waiting for the user to allow it to ${phraseText(asks(asked))}.`);
     } else
       out.push(
         `It is waiting for the user to answer: ${asked.questions.map((question) => question.question).join(" ")}`,
@@ -586,7 +665,7 @@ function partLines(part: Part): string[] {
           : `It asked: ${question.question} No answer was given.`;
       });
     case "tool": {
-      const { verb, object } = stepTitle(part);
+      const title = phraseText(stepTitle(part));
       const how = !part.done
         ? " (running)"
         : part.answer?.choice === "deny" || part.answer?.choice === "cancel"
@@ -594,7 +673,7 @@ function partLines(part: Part): string[] {
           : part.error
             ? " (failed)"
             : "";
-      return [`- ${verb}${object === null ? "" : ` ${object}`}${how}`];
+      return [`- ${title}${how}`];
     }
   }
 }

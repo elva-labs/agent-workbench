@@ -349,12 +349,25 @@ way to open it.
 
 A permission the agent asks for docks over the composer rather than in the
 thread: who asks, the agent or one of its subagents, and what for, with the
-choices the core offers. A command of several lines is shown whole from the
-start, a path outside the project is marked as such, every other path the
-request names outside the project is listed, and any character that would
-change how the text reads without being seen, a control or a mark that
-reorders text, shows as a marker. The whole request, with the tool it names,
-is a fold away wherever the line does not say all of it. The first allows the call once and remembers
+choices the core offers. It says the agent asks to run a command only for a
+call known to be one; otherwise it names the tool. A command of several
+lines is shown whole from the start. A path is read against the folder the
+request runs in, and is taken as inside the project only when it plainly
+resolves into it: one that climbs out, or a folder the request runs in that
+is elsewhere, is marked outside, and one that starts at a home folder,
+names a variable or a glob is marked as not plainly in the project. Every
+such path the request names is listed. A link inside the project that leads
+out of it cannot be seen from the window. The whole request, with the tool
+it names, is a fold away wherever the line does not say all of it.
+
+Every text in the dock and the steps that comes from the agent, a tool or a
+server, a command, a path, a URL, a tool's or a server's name, a subagent's
+description, a task, a question and its options, a session's or a model's
+name, is set apart left to right, so it cannot turn the words around it, and
+any character that changes how it reads without being seen shows as a
+marker such as ⟨U+202E⟩. Those characters are taken from Unicode's own
+categories: controls, format characters and every character Unicode says is
+drawn as nothing, line breaks and tabs aside. The first allows the call once and remembers
 nothing; the others allow it for the session or always, saying what each
 keeps, deny it, with words for the agent if the user wants, or deny it and
 stop the turn. A line under the choices says what the one in focus or under

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { revealed } from "$lib/thread";
 
-  /** Text the agent chose, drawn so it reads as it is: every character
-      that would change how it reads without being seen, a control, a mark
-      that reorders text or one of no width, shows as a marker. */
+  /** Text the agent, a tool or a server chose, drawn so it reads as it is:
+      every character that would change how it reads without being seen
+      shows as a marker, and the text is set apart left to right, so
+      nothing in it reorders the words around it. */
   interface Props {
     text: string;
   }
@@ -13,11 +14,16 @@
   let parts = $derived(revealed(text));
 </script>
 
-{#each parts as part, at (at)}{#if part.unseen}<span class="unseen" data-testid="unseen-character"
+<span class="plain">{#each parts as part, at (at)}{#if part.unseen}<span class="unseen" data-testid="unseen-character"
       >{part.text}</span
-    >{:else}{part.text}{/if}{/each}
+    >{:else}{part.text}{/if}{/each}</span>
 
 <style>
+  .plain {
+    unicode-bidi: isolate;
+    direction: ltr;
+  }
+
   .unseen {
     padding: 0 2px;
     border-radius: 3px;
