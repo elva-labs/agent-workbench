@@ -25,46 +25,47 @@ type Frame = {
 };
 
 /**
- * Every frame of one toggle of the sessions pane: recording starts before the
- * key is pressed and ends once the column has held still for a few frames
- * after moving, so no frame of the motion can fall between two samples.
+ * Every frame of one toggle of the sessions pane: recording takes its first
+ * sample before the key is pressed and ends once the column has held still
+ * for a few frames after moving, so no frame of the motion can fall between
+ * two samples.
  */
 async function toggle(page: Page): Promise<Frame[]> {
-  const recording = page.evaluate(
-    () =>
-      new Promise<Frame[]>((resolve) => {
-        const frames: Frame[] = [];
-        // A toggle that never moves the column still ends the recording.
-        const deadline = performance.now() + 5000;
-        const sample = () => {
-          const slot = document.querySelector(".sessions-slot")!.getBoundingClientRect();
-          const agent = document.querySelector("section[data-pane='agent']")!;
-          const name = document.querySelector("section[data-pane='sessions'] .project-row .name")!;
-          const left = document.querySelector(".shell")!.getBoundingClientRect().left;
-          const w = window as unknown as {
-            __WORKBENCH_TERMINALS__?: Record<string, { cols: number }>;
-            __resizes?: unknown[];
-          };
-          frames.push({
-            slotWidth: slot.width,
-            slotRight: slot.right - left,
-            agentLeft: agent.getBoundingClientRect().left - left,
-            nameLeft: name.getBoundingClientRect().left,
-            nameTop: name.getBoundingClientRect().top,
-            cols: w.__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
-            resizes: w.__resizes?.length ?? 0,
-          });
-          const widths = frames.map((f) => f.slotWidth);
-          const moved = widths.some((width) => width !== widths[0]);
-          const still = widths.length > 3 && widths.slice(-4).every((width) => width === widths.at(-1));
-          if ((moved && still) || performance.now() > deadline) resolve(frames);
-          else requestAnimationFrame(sample);
+  await page.evaluate(() => {
+    const recorder = window as unknown as { __recording?: Promise<Frame[]> };
+    recorder.__recording = new Promise<Frame[]>((resolve) => {
+      const frames: Frame[] = [];
+      // A toggle that never moves the column still ends the recording.
+      const deadline = performance.now() + 5000;
+      const sample = () => {
+        const slot = document.querySelector(".sessions-slot")!.getBoundingClientRect();
+        const agent = document.querySelector("section[data-pane='agent']")!;
+        const name = document.querySelector("section[data-pane='sessions'] .project-row .name")!;
+        const left = document.querySelector(".shell")!.getBoundingClientRect().left;
+        const w = window as unknown as {
+          __WORKBENCH_TERMINALS__?: Record<string, { cols: number }>;
+          __resizes?: unknown[];
         };
-        requestAnimationFrame(sample);
-      }),
-  );
+        frames.push({
+          slotWidth: slot.width,
+          slotRight: slot.right - left,
+          agentLeft: agent.getBoundingClientRect().left - left,
+          nameLeft: name.getBoundingClientRect().left,
+          nameTop: name.getBoundingClientRect().top,
+          cols: w.__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+          resizes: w.__resizes?.length ?? 0,
+        });
+        const widths = frames.map((f) => f.slotWidth);
+        const moved = widths.some((width) => width !== widths[0]);
+        const still = widths.length > 3 && widths.slice(-4).every((width) => width === widths.at(-1));
+        if ((moved && still) || performance.now() > deadline) resolve(frames);
+        else requestAnimationFrame(sample);
+      };
+      sample();
+    });
+  });
   await page.keyboard.press("ControlOrMeta+b");
-  return recording;
+  return page.evaluate(() => (window as unknown as { __recording: Promise<Frame[]> }).__recording);
 }
 
 test.describe("the sessions pane's motion", () => {

@@ -630,6 +630,36 @@ test.describe("what the file holds that is not used", () => {
     await expect(entries.nth(1)).toContainText("The palette in the file is not used: it is dusk");
   });
 
+  test("names a span the file holds that is not used beside each span setting", async ({
+    page,
+  }) => {
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-sessions").click();
+    await expect(page.getByTestId("unread-entry")).toHaveCount(0);
+    await page.evaluate(() => {
+      const w = window as unknown as { __settingsChanged?: (settings: unknown) => void };
+      w.__settingsChanged?.({
+        unreadEntries: [
+          { field: "pastSessions", section: "", name: "", reason: "it is fortnight, not forever, month, week or day" },
+          { field: "inactiveAfter", section: "", name: "", reason: "it is fortnight, not day, week, month or never" },
+        ],
+      });
+    });
+    const entries = page.getByTestId("unread-entry");
+    await expect(entries).toHaveCount(2);
+    await expect(entries.first()).toContainText(
+      "The span past sessions stay listed in the file is not used",
+    );
+    await expect(entries.nth(1)).toContainText(
+      "The span a project stays active in the file is not used: it is fortnight",
+    );
+    const heading = page.getByRole("heading", { name: "Inactive projects" });
+    const box = await heading.boundingBox();
+    const notice = await entries.nth(1).boundingBox();
+    expect(notice!.y).toBeGreaterThan(box!.y);
+    expect(notice!.y).toBeLessThan((await page.getByTestId("inactive-after-day").boundingBox())!.y);
+  });
+
   test("is named on the keys tab with the rule it breaks", async ({ page }) => {
     await page.keyboard.press(`${MOD}+,`);
     await page.getByTestId("settings-tab-keys").click();

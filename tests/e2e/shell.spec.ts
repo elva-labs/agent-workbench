@@ -68,6 +68,14 @@ function row(page: Page, name: string) {
 }
 
 /** Scope and view live in the pane's menu: open it, pick, it closes. */
+/** The row of the session with this name, wherever the order puts it: the
+    latest change is on top. */
+function sessionRow(page: Page, name: string) {
+  return page
+    .locator("[data-testid='session-row']")
+    .filter({ has: page.locator(".label", { hasText: new RegExp(`^${name}$`) }) });
+}
+
 async function chooseAll(page: Page) {
   await page.getByTestId("changes-menu").click();
   await page.getByTestId("menu-scope-all").click();
@@ -537,7 +545,7 @@ test.describe("the file viewer", () => {
     );
     const note = page.getByTestId("session-note");
     await expect(note).toHaveText("Tests green, ready to merge.");
-    const first = page.locator("[data-testid='session-row']").first();
+    const first = sessionRow(page, "session 1");
     await expect(first.locator(".dot")).toHaveClass(/unread/);
     await first.click();
     await expect(note).toHaveCount(0);
@@ -569,7 +577,7 @@ test.describe("the file viewer", () => {
     await expect(page.locator(SESSIONS)).toBeVisible();
 
     // Back to the first: its diff is where it was, and the viewer is open.
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(hunk).toBeVisible();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
@@ -586,7 +594,7 @@ test.describe("the file viewer", () => {
     await expect(page.locator(AGENT)).toContainText("running");
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await page.locator(TREE).focus();
     await page.keyboard.press("ArrowDown");
@@ -597,12 +605,12 @@ test.describe("the file viewer", () => {
     await expect(hunk).toBeVisible();
 
     await page.keyboard.press(`${MOD}+1`);
-    await page.locator("[data-testid='session-row']").nth(1).click();
+    await sessionRow(page, "session 2").click();
     await expect(page.locator(".session.on")).toContainText("session 2");
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await expect(hunk).toHaveCount(0);
 
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(hunk).toBeVisible();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
@@ -617,7 +625,7 @@ test.describe("the file viewer", () => {
     await expect(page.locator(AGENT)).toContainText("running");
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await page.evaluate(
       (project) =>
@@ -672,7 +680,7 @@ test.describe("the file viewer", () => {
     await expect(page.locator(CHANGES)).not.toContainText("worktree feature");
     await expect(hunk).toHaveCount(0);
 
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(hunk).toBeVisible();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
@@ -697,7 +705,7 @@ test.describe("the file viewer", () => {
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
 
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(hunk).toBeVisible();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
   });
@@ -727,7 +735,7 @@ test.describe("the file viewer", () => {
     );
     await expect(page.getByTestId("mode-readout")).not.toHaveText("reviewing");
     await expect(page.getByTestId("viewer-note")).toHaveCount(0);
-    await page.locator("[data-testid='session-row']").first().click();
+    await sessionRow(page, "session 1").click();
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
     await expect(page.getByTestId("viewer-note")).toHaveText(
       "The entry point.",
@@ -766,7 +774,7 @@ test.describe("the file viewer", () => {
     await event("stop", "Tests green, ready to merge.");
     const note = page.getByTestId("session-note");
     await expect(note).toHaveText("Tests green, ready to merge.");
-    const first = page.locator("[data-testid='session-row']").first();
+    const first = sessionRow(page, "session 1");
     await expect(first.locator(".dot")).toHaveClass(/unread/);
     await first.click();
     await expect(note).toHaveCount(0);
@@ -1953,6 +1961,8 @@ test.describe("the file viewer", () => {
 
   test("resizes the whole pane against the agent", async ({ page }) => {
     await row(page, "mod.rs").click();
+    // The viewer opening widens the pane; it is measured once that is done.
+    await settled(page);
     const before = await widthOf(page, CHANGES);
 
     const handle = page.getByRole("separator", { name: "Resize the viewer" });
@@ -1964,8 +1974,9 @@ test.describe("the file viewer", () => {
     });
     await page.mouse.up();
 
-    expect(await widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
-    expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
+    await settled(page);
+    await expect.poll(() => widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
+    await expect.poll(() => widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
   test("widens the scope and falls back to content for an unchanged file", async ({
