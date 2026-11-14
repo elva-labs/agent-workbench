@@ -63,6 +63,7 @@
   } from "$lib/layout.svelte";
   import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
+  import { otherKind } from "$lib/sessionKind.svelte";
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
@@ -336,8 +337,24 @@
   let projectItems = $derived.by((): MenuItem[] => {
     if (projectMenu === null) return [];
     const path = projectMenu.path;
+    const agent = defaultAgent(path);
+    const other = otherKind(agent);
     return [
       { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
+      // One session the way the agent's setting does not run them.
+      ...(other === null
+        ? []
+        : [
+            {
+              id: "project-menu-other",
+              label: other === "integrated" ? "New integrated session" : "New session in a terminal",
+              disabled: !isReady(),
+              run: () => {
+                wake(path);
+                startSession(path, agent, accountOf(path), other);
+              },
+            },
+          ]),
       {
         id: "close-project",
         label: "Close project",

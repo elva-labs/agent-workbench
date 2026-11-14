@@ -187,6 +187,7 @@
     choosing = false;
     const project = workspace.active;
     if (project === null || firstAgent === null) return;
+    touch(project);
     create(project, null, firstAgent, null, null, null, accountOf(project), kind);
   }
 

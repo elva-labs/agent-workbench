@@ -105,7 +105,8 @@ integrated, the conversation drawn by the window, a terminal to begin with.
 An agent the core says it can drive in messages offers the choice, and the
 tab says an agent that runs only in a terminal does. A
 session that is running keeps the way it started, and a single new one can
-be started the other way from the agent pane. What an integrated session is
+be started the other way from a project's ⋯ menu, the palette or the
+agent pane. What an integrated session is
 like is in [sessions](sessions.md#integrated-sessions). It is the user's to
 change, and an agent's settings tools refuse it.
 

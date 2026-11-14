@@ -1,3 +1,4 @@
+import { kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 import { untrack } from "svelte";
 import { core, type AgentId, type ProjectInfo } from "$lib/core";
 import { closeOwner } from "$lib/browser.svelte";
@@ -196,16 +197,18 @@ export function goTo(key: string): boolean {
 
 /** Starts a session in a project, brought forward, and gives it the
     keyboard. The agent is the one the project used last and the account the
-    one it runs under, unless named. Starting one is the user using the
+    one it runs under, unless named; it runs the way the agent's setting
+    says, unless started the other way. Starting one is the user using the
     project, so it counts as used. */
 export function startSession(
   path: string,
   agent: AgentId = defaultAgent(path),
   account: string | null = accountOf(path),
+  kind: SessionKind = kindFor(agent),
 ) {
   if (workspace.active !== path) activate(path);
   touch(path);
-  create(path, null, agent, null, null, null, account);
+  create(path, null, agent, null, null, null, account, kind);
   focusPane("agent");
 }
 

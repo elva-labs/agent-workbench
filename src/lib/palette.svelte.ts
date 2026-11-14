@@ -1,3 +1,4 @@
+import { otherKind } from "$lib/sessionKind.svelte";
 import { tick } from "svelte";
 import { ACTIONS, chordFor, describe, type ActionKey } from "$lib/keys.svelte";
 import { actionFor, type Action } from "$lib/keymap";
@@ -59,7 +60,7 @@ import { reduced } from "$lib/motion";
 
 export type Mode = "goto" | "commands" | "new";
 
-export type CommandId = "new" | "newHere" | "open" | "remote";
+export type CommandId = "new" | "newHere" | "newOther" | "open" | "remote";
 
 /** An answer to one of the questions a new session asks. */
 export type Step =
@@ -334,11 +335,24 @@ export function commandItems(query: string): PaletteItem[] {
     chord: "",
   });
   const here = onScreen();
+  const other = here === null ? null : otherKind(defaultAgent(here));
   const commands: PaletteItem[] = [
     ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
     ...(here === null
       ? []
       : [command("newHere", `New session in ${projectLabel(here)}`)]),
+    // The way the agent's setting does not run sessions, for one session
+    // in the project on screen.
+    ...(other === null
+      ? []
+      : [
+          command(
+            "newOther",
+            other === "integrated"
+              ? `New integrated session in ${projectLabel(here!)}`
+              : `New session in a terminal in ${projectLabel(here!)}`,
+          ),
+        ]),
     command("open", "Open project"),
     command("remote", "Open remote project"),
   ];
@@ -494,7 +508,7 @@ export function paletteItems(): PaletteItem[] {
 export function pickable(item: PaletteItem): boolean {
   if (item.kind === "attention") return item.waiting > 0;
   if (item.kind === "command")
-    return isReady() || (item.command !== "new" && item.command !== "newHere");
+    return isReady() || (item.command !== "new" && item.command !== "newHere" && item.command !== "newOther");
   return true;
 }
 
@@ -620,6 +634,14 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
           return beginNew(null);
         case "newHere":
           return beginNew(onScreen());
+        case "newOther": {
+          const here = onScreen();
+          if (here === null) return { type: "stay" };
+          const agent = defaultAgent(here);
+          const kind = otherKind(agent);
+          if (kind === null) return { type: "stay" };
+          return { type: "close", then: () => startSession(here, agent, accountOf(here), kind) };
+        }
         case "open":
           return { type: "close", then: () => void pick() };
         case "remote":

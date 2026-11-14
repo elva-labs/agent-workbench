@@ -1052,3 +1052,103 @@ test("lays out the composer's bar in a narrow pane with nothing drawn over anoth
   const composer = (await page.getByTestId("composer").boundingBox())!;
   for (const box of all) expect(box.x + box.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
 });
+
+test.describe("in the sessions pane, an integrated session", () => {
+  test("has a row like any session: its dot and words, its time, unread when done, and go to", async ({ page }) => {
+    await openIntegrated(page);
+    const own = page.getByTestId("session-row").filter({ hasText: "session 1" });
+    await expect(own.locator(".dot")).toHaveClass(/live/);
+    await expect(own.locator(".state")).toHaveText("running");
+    await agent(page, `f.startTurn("${H}");`);
+    await expect(own.locator(".dot")).toHaveClass(/working/);
+    await expect(own.locator(".state")).toHaveText("working");
+
+    // A terminal session, started from the project's menu, comes on screen,
+    // and the integrated one finishes its turn behind it: its row says it
+    // waits for the user.
+    await page.locator(`[data-row="project:${PROJECT}"]`).hover();
+    await page.getByTestId("project-more").click();
+    await expect(page.getByTestId("project-menu-other")).toHaveText("New session in a terminal");
+    await page.getByTestId("project-menu-other").click();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
+    await agent(page, `f.turn("${H}", "Done.");`);
+    await expect(own.locator(".dot")).toHaveClass(/unread/);
+    await expect(own.locator(".label")).toHaveClass(/unread/);
+    await expect(own.locator(".state")).toHaveText("waiting for you");
+    await expect(own.getByTestId("session-when")).toHaveText("now");
+
+    // Go to finds it by its name and brings its conversation back.
+    await page.getByTestId("go-to").click();
+    await page.getByTestId("palette-field").fill("session 1");
+    await expect(page.getByTestId("palette-row").first()).toContainText("session 1");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(own.locator(".dot")).not.toHaveClass(/unread/);
+  });
+
+  test("starts the other way from the palette, for the project on screen", async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT] });
+    await page.goto("/");
+    await page.getByTestId("go-to").click();
+    await page.getByTestId("palette-field").fill(">new");
+    const rows = page.getByTestId("palette-label");
+    await expect(rows.filter({ hasText: "New integrated session in demo" })).toHaveCount(1);
+    await rows.filter({ hasText: "New integrated session in demo" }).click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.getByTestId("session-row")).toHaveCount(1);
+  });
+
+  test("hangs under the session that started it", async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+    await page.goto("/");
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await page.evaluate(
+      (project) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id: "o-1",
+          tool: "start",
+          arguments: { project, prompt: "Bump the client" },
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      PROJECT,
+    );
+    await page.getByTestId("conduct-allow").click();
+    const started = page.getByTestId("started-session");
+    await expect(started).toHaveCount(1);
+    await expect(started).toContainText("demo");
+    await expect(page.getByTestId("orchestrator-summary")).toHaveText("1 running");
+    await started.click();
+    await expect(page.locator(".session.kid")).toHaveClass(/on/);
+    await expect(page.locator("[data-testid='conversation']:visible")).toHaveCount(1);
+    await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
+  });
+
+  test("keeps its project out of Inactive while it runs, and lets it fold once over", async ({ page }) => {
+    const OTHER = "/home/ada/src/other";
+    await page.clock.install();
+    await installFakeCore(page, { open: [PROJECT, OTHER], settings: { integrated: ["claude-code"] } });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await agent(page, `f.turn("${H}", "Done.");`);
+    // Another project on screen, and eight days with nothing done.
+    await page.locator(`[data-row="project:${OTHER}"] .project-row`).click();
+    await page.clock.fastForward(8 * 24 * 60 * 60 * 1000);
+    await expect(page.getByTestId("inactive-fold")).toHaveCount(0);
+    // Over while off screen, it waits to be read, and its end is something
+    // done in the project; read, and eight days on, the project folds.
+    await agent(page, `f.end("${H}");`);
+    const own = page.getByTestId("session-row").filter({ hasText: "session 1" });
+    await expect(own.locator(".dot")).toHaveClass(/unread/);
+    await expect(page.getByTestId("inactive-fold")).toHaveCount(0);
+    await own.click();
+    await expect(page.getByTestId("session-ended")).toBeVisible();
+    // The other project went unused as long, so it is the one folded now.
+    await page.getByTestId("inactive-fold").click();
+    await page.getByTestId("inactive-project").click();
+    await page.clock.fastForward(8 * 24 * 60 * 60 * 1000);
+    await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
+  });
+});
