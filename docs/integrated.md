@@ -116,11 +116,14 @@ workbench makes gets the entry when its project has one. Nothing is made
 for the session, not even the account's folder, before the folder is
 trusted.
 
-Codex keeps the same answer in its configuration, as a `trust_level` of
-`trusted` for the folder, or for a folder above it such as the repository,
-in the `config.toml` of the account's home. A Codex start checks that
-record instead, and the trust command writes it there, leaving the rest of
-the file as the user wrote it.
+Codex keeps the same answer in its configuration, as a `trust_level` for
+a folder in the `config.toml` of the account's home, and a Codex start
+reads it the way Codex does. The folder's own record decides when there is
+one, and only `trusted` is a yes. A folder with no record of its own takes
+the record of the repository it is in, which for a worktree is its main
+repository's; a folder between the two counts for nothing. The trust
+command writes the folder's own record, leaving the rest of the file as
+the user wrote it.
 
 Running agents, the user's own terminal sessions among them, read and
 rewrite the same state file. The workbench reads it right before it
