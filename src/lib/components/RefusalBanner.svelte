@@ -1,10 +1,19 @@
 <script lang="ts">
   import { refusal, showRefusal } from "$lib/refusal.svelte";
+
+  /** What the window shows after the refusal, when it is known. */
+  let shown = $derived(
+    refusal.shows === "stored"
+      ? " The window shows what is stored."
+      : refusal.shows === "last"
+        ? " The window shows the last settings that could be read."
+        : "",
+  );
 </script>
 
 {#if refusal.reason !== null}
   <div class="refused" role="alert" data-testid="settings-refused">
-    <p>The change was not saved: {refusal.reason}. The window shows what is stored.</p>
+    <p>{refusal.lead}: {refusal.reason}.{shown}</p>
     <button type="button" onclick={() => showRefusal(null)} data-testid="settings-refused-dismiss"
       >Dismiss</button
     >

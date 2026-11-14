@@ -138,13 +138,15 @@ pub struct Hooks {
     pub overrides: BTreeMap<String, bool>,
 }
 
-/// An entry of the keys, the hooks or the accounts that the file holds and
-/// the app does not use, with the rule it breaks. It is written back where
-/// it stood by every save, until a change names the entry again or replaces
-/// the field it belongs to.
+/// What the file holds and the app does not use, with the rule it breaks: an
+/// entry of the keys, the hooks, the accounts or the themes, a choice of
+/// account that names one, a value of a setting, or a field that is not a
+/// setting. It is written back where it stood by every save, until a change
+/// names the entry again, sets the choice to something else, sets the
+/// setting, or replaces the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnreadEntry {
-    /// `keys`, `hooks` or `accounts`.
+    /// The field of the file it is in, as the file spells it.
     pub field: String,
     /// The part of the field it sits in: empty for the field's own entries.
     #[serde(default)]
@@ -213,8 +215,7 @@ pub struct Settings {
     pub notifications: bool,
     /// Whether it says so with a chime as well.
     pub chime: bool,
-    /// What the file holds in the keys, hooks and accounts that is not
-    /// used. Not a setting: it is read from the file and written back to it.
+    /// What the file holds that is not used. Not a setting: it is read from the file and written back to it.
     #[serde(default)]
     pub unread_entries: Vec<UnreadEntry>,
 }
@@ -254,6 +255,9 @@ pub enum Found {
     /// There is a file and it is not a JSON object: empty, cut short, or
     /// not settings at all. The defaults are not what it holds.
     Unreadable,
+    /// There is a file and the app may not read it, or the system would
+    /// not hand it over; the text says which.
+    Denied(String),
 }
 
 /// The settings, and what the file held. `stored` is false when there is
@@ -274,6 +278,14 @@ pub struct Stored {
 /// file first is usually done within a few milliseconds.
 const MOST_LOOKS: usize = 5;
 const BETWEEN_LOOKS: Duration = Duration::from_millis(40);
+
+/// How long the watcher waits before it looks again at a file it found
+/// missing, and only then tells the windows it is gone. An editor that saves
+/// by moving the old file aside writes the new one within moments.
+const BEFORE_GONE: Duration = Duration::from_millis(250);
+
+const GONE: &str = "the settings file is gone. The window is putting its settings back, and the change can be made again";
+const KEEPS_CHANGING: &str = "the settings file keeps changing. Try again in a moment";
 
 fn one_of(field: &str, value: &Value, allowed: &[&str]) -> Result<String, String> {
     match value.as_str() {
@@ -481,22 +493,41 @@ fn account(name: &str, value: &Value) -> Result<Account, String> {
     Ok(account)
 }
 
+/// The settings that are tables of entries, read one entry at a time. The
+/// rest are single values.
+const TABLES: &[&str] = &["keys", "hooks", "accounts", "themes", "workflows"];
+
+/// Whether the settings hold again the entry an unread one stands for. A
+/// whole field that was not the shape it should be is held by any value of
+/// that field.
+fn holds(settings: &Settings, entry: &UnreadEntry) -> bool {
+    let name = &entry.name;
+    match (entry.field.as_str(), entry.section.as_str()) {
+        ("keys", "") if !name.is_empty() => settings.keys.contains_key(name),
+        ("themes", "") if !name.is_empty() => settings.themes.contains_key(name),
+        ("hooks", "overrides") => settings.hooks.overrides.contains_key(name),
+        ("accounts", "list") => settings.accounts.list.contains_key(name),
+        ("accounts", "overrides") => settings.accounts.overrides.contains_key(name),
+        _ => true,
+    }
+}
+
 /// Drops the unread entries a change to `field` has mended: the field's own
-/// shape when it is replaced whole, and an entry the change names again.
-fn mend(settings: &mut Settings, field: &str) {
-    let keys = settings.keys.clone();
-    let hooks = settings.hooks.overrides.clone();
-    let accounts = settings.accounts.clone();
+/// shape when it is replaced whole, an entry the change names again, and a
+/// choice of every project's the change sets to something other than it
+/// was. `before` is the settings the change was laid over.
+fn mend(before: &Settings, settings: &mut Settings, field: &str) {
+    let after = settings.clone();
     settings.unread_entries.retain(|entry| {
         if entry.field != field {
             return true;
         }
-        match (field, entry.section.as_str()) {
-            ("keys", _) => !entry.name.is_empty() && !keys.contains_key(&entry.name),
-            ("hooks", "overrides") => !hooks.contains_key(&entry.name),
-            ("accounts", "list") => !accounts.list.contains_key(&entry.name),
-            ("accounts", "overrides") => !accounts.overrides.contains_key(&entry.name),
-            _ => false,
+        match (field, entry.section.as_str(), entry.name.as_str()) {
+            ("hooks", "", "everywhere") => before.hooks.everywhere == after.hooks.everywhere,
+            ("accounts", "", "everywhere") => {
+                before.accounts.everywhere == after.accounts.everywhere
+            }
+            _ => !holds(&after, entry),
         }
     });
 }
@@ -690,25 +721,41 @@ fn theme(name: &str, value: &Value) -> Result<Theme, String> {
 }
 
 /// The themes a value holds: all of them, or the reason one will not do.
-/// Read leniently, the ones that will not do are left out instead.
-fn themes(value: &Value, lenient: bool) -> Result<BTreeMap<String, Theme>, String> {
+fn themes(value: &Value) -> Result<BTreeMap<String, Theme>, String> {
     let table = value
         .as_object()
         .ok_or("themes is a table of themes by name")?;
     if table.len() > MOST_THEMES {
         return Err(format!("the settings hold {MOST_THEMES} themes at most"));
     }
+    table
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), theme(name, value)?)))
+        .collect()
+}
+
+/// The themes that read, each entry on its own; the rest are unread.
+fn themes_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<String, Theme> {
     let mut themes = BTreeMap::new();
+    let Some(table) = value.as_object() else {
+        let reason = "themes is a table of themes by name".to_string();
+        unused(unread, "themes", "", "", reason, value);
+        return themes;
+    };
     for (name, value) in table {
-        match theme(name, value) {
+        let read = if themes.len() >= MOST_THEMES {
+            Err(format!("the settings hold {MOST_THEMES} themes at most"))
+        } else {
+            theme(name, value)
+        };
+        match read {
             Ok(theme) => {
                 themes.insert(name.clone(), theme);
             }
-            Err(_) if lenient => {}
-            Err(error) => return Err(error),
+            Err(reason) => unused(unread, "themes", "", name, reason, value),
         }
     }
-    Ok(themes)
+    themes
 }
 
 /// Sets one field from a value, or says why the value will not do. A name
@@ -716,6 +763,11 @@ fn themes(value: &Value, lenient: bool) -> Result<BTreeMap<String, Theme>, Strin
 /// A palette is checked against the themes the settings hold, so it is set
 /// after them.
 fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), String> {
+    if !TABLES.contains(&field) {
+        // A value of this setting the file holds and the app does not use
+        // stays until a change sets the setting.
+        settings.unread_entries.retain(|entry| entry.field != field);
+    }
     match field {
         "appearance" => settings.appearance = one_of(field, value, APPEARANCES)?,
         "look" => settings.look = one_of(field, value, LOOKS)?,
@@ -729,7 +781,11 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
                 settings.palette = named.to_string();
             }
         }
-        "themes" => settings.themes = themes(value, false)?,
+        "themes" => {
+            let before = settings.clone();
+            settings.themes = themes(value)?;
+            mend(&before, settings, "themes");
+        }
         "userStyles" => {
             settings.user_styles = value.as_bool().ok_or("userStyles is true or false")?;
         }
@@ -740,18 +796,25 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => {
+            let before = settings.clone();
             settings.keys = keys(value)?;
-            mend(settings, "keys");
+            mend(&before, settings, "keys");
         }
         "hooks" => {
+            let before = settings.clone();
             settings.hooks = hooks(value)?;
-            mend(settings, "hooks");
+            mend(&before, settings, "hooks");
         }
         "accounts" => {
+            let before = settings.clone();
             settings.accounts = accounts(value)?;
-            mend(settings, "accounts");
+            mend(&before, settings, "accounts");
         }
-        "workflows" => settings.workflows = workflow::read(value)?,
+        "workflows" => {
+            let before = settings.clone();
+            settings.workflows = workflow::read(value)?;
+            mend(&before, settings, "workflows");
+        }
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
         other => return Err(format!("there is no setting called {other}")),
     }
@@ -769,7 +832,24 @@ fn in_order(fields: &Map<String, Value>) -> impl Iterator<Item = (&String, &Valu
 }
 
 /// A palette that names a theme the settings no longer hold is the default.
+/// A palette the file names and that was set aside while its theme did not
+/// read is the palette again once the settings hold that theme.
 fn settle_palette(settings: &mut Settings) {
+    let set_aside = settings
+        .unread_entries
+        .iter()
+        .position(|entry| entry.field == "palette")
+        .and_then(|at| {
+            let named = settings.unread_entries[at].entry.as_str()?;
+            settings
+                .themes
+                .contains_key(named)
+                .then(|| (at, named.to_string()))
+        });
+    if let Some((at, named)) = set_aside {
+        settings.unread_entries.remove(at);
+        settings.palette = named;
+    }
     if !PALETTES.contains(&settings.palette.as_str())
         && !settings.themes.contains_key(&settings.palette)
     {
@@ -777,10 +857,12 @@ fn settle_palette(settings: &mut Settings) {
     }
 }
 
-/// The settings a file's text holds, each field that does not read left at
-/// its default, each theme or workflow that does not read left out, and each
-/// key, hook or account entry that does not read set aside. None when the
-/// text is not a JSON object at all.
+/// The settings a file's text holds. Each value that does not read is left
+/// at its default and set aside with the rule it breaks, as is each key,
+/// hook, account or theme entry that does not read, each choice of account
+/// that names one, and each field that is not a setting; each workflow that
+/// does not read is left out and kept by the workflows. None when the text
+/// is not a JSON object at all.
 pub fn parse(text: &str) -> Option<Settings> {
     let fields: Map<String, Value> = serde_json::from_str(text).ok()?;
     let mut settings = Settings::default();
@@ -793,11 +875,31 @@ pub fn parse(text: &str) -> Option<Settings> {
         } else if field == "accounts" {
             settings.accounts = accounts_lenient(value, &mut unread);
         } else if field == "themes" {
-            settings.themes = themes(value, true).unwrap_or_default();
+            settings.themes = themes_lenient(value, &mut unread);
         } else if field == "workflows" {
-            settings.workflows = workflow::read_lenient(value);
-        } else {
-            let _ = set_field(&mut settings, field, value);
+            if value.is_object() && value.get("list").is_none_or(Value::is_array) {
+                settings.workflows = workflow::read_lenient(value);
+            } else {
+                let reason =
+                    "workflows is a list of workflows, the default and the projects' choices"
+                        .into();
+                unused(&mut unread, "workflows", "", "", reason, value);
+            }
+        } else if let Err(reason) = set_field(&mut settings, field, value) {
+            // A value the app does not use, or a setting it does not have,
+            // is kept as written. A palette naming a theme that did not read
+            // says so.
+            let named = value.as_str().unwrap_or_default();
+            let reason = if field == "palette"
+                && unread
+                    .iter()
+                    .any(|entry| entry.field == "themes" && entry.name == named)
+            {
+                format!("it is {named}, a theme that is not used")
+            } else {
+                reason
+            };
+            unused(&mut unread, field, "", "", reason, value);
         }
     }
     settings.unread_entries = unread;
@@ -817,6 +919,34 @@ pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     }
     settle_palette(&mut next);
     Ok(next)
+}
+
+/// The settings a window hands over for a file that is not there: what it
+/// holds laid over the defaults, with the entries it knows the file held and
+/// did not use, less any it holds again.
+fn handed_over(held: &Value) -> Result<Settings, String> {
+    let mut fields = held
+        .as_object()
+        .ok_or("the settings handed over are an object of settings by name")?
+        .clone();
+    let unread = fields.remove("unreadEntries");
+    let mut settings = apply(&Settings::default(), &Value::Object(fields))?;
+    if let Some(Value::Array(entries)) = unread {
+        settings.unread_entries = entries
+            .into_iter()
+            .filter_map(|entry| serde_json::from_value::<UnreadEntry>(entry).ok())
+            .filter(|entry| !holds(&settings, entry) || is_choice(entry))
+            .collect();
+    }
+    Ok(settings)
+}
+
+/// Whether an unread entry is a single value, or a choice of every
+/// project's, which a window that could not read it holds only as the
+/// default.
+fn is_choice(entry: &UnreadEntry) -> bool {
+    entry.section.is_empty()
+        && (entry.name == "everywhere" || !TABLES.contains(&entry.field.as_str()))
 }
 
 /// Writes an unread entry back where the file had it.
@@ -893,6 +1023,28 @@ fn commit(temporary: &Path, path: &Path) -> Result<(), String> {
     })
 }
 
+/// Puts the staged file in place of one that is not there, and never over
+/// one that is: a file written there meanwhile stands, and the answer is
+/// false. A file system without links, or a link at the place, takes the
+/// move instead.
+fn commit_new(temporary: &Path, path: &Path) -> Result<bool, String> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    if is_link {
+        return commit(temporary, path).map(|()| true);
+    }
+    match std::fs::hard_link(temporary, path) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(temporary);
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(temporary);
+            Ok(false)
+        }
+        Err(_) => commit(temporary, path).map(|()| true),
+    }
+}
+
 /// Writes the file whole and moves it into place, so a reader finds the
 /// old settings or the new, never half of either. The text goes to a
 /// temporary file beside the settings file and is on disk before the move.
@@ -921,6 +1073,9 @@ pub struct Store {
     /// Whether the file was there when last looked at, so its going missing
     /// is told to the windows once.
     existed: AtomicBool,
+    /// Whether the windows were told the file is gone and none has handed
+    /// its settings over yet. A change is not laid over the defaults then.
+    gone: AtomicBool,
 }
 
 impl Store {
@@ -933,6 +1088,7 @@ impl Store {
             styles_announced: Mutex::new(None),
             writing: Mutex::new(()),
             existed: AtomicBool::new(false),
+            gone: AtomicBool::new(false),
         }
     }
 
@@ -977,14 +1133,21 @@ impl Store {
     fn look_at(&self) -> (Found, Option<String>) {
         match std::fs::read_to_string(&self.path) {
             Ok(text) => {
-                self.existed.store(true, Ordering::SeqCst);
+                self.found_there();
                 let found = parse(&text).map_or(Found::Unreadable, |s| Found::Whole(Box::new(s)));
                 (found, Some(text))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Found::Missing, None),
-            Err(_) => {
-                self.existed.store(true, Ordering::SeqCst);
-                (Found::Unreadable, None)
+            Err(e) => {
+                self.found_there();
+                let found = match e.kind() {
+                    std::io::ErrorKind::InvalidData => Found::Unreadable,
+                    std::io::ErrorKind::PermissionDenied => {
+                        Found::Denied("the app is not allowed to read the settings file".into())
+                    }
+                    _ => Found::Denied(format!("the settings file could not be read: {e}")),
+                };
+                (found, None)
             }
         }
     }
@@ -993,18 +1156,49 @@ impl Store {
         self.look_at().0
     }
 
-    /// Looks until the file is whole or missing, up to `MOST_LOOKS` times, and
-    /// calls `between` before each look after the first.
+    /// Notes that the file is there.
+    fn found_there(&self) {
+        self.existed.store(true, Ordering::SeqCst);
+        self.gone.store(false, Ordering::SeqCst);
+    }
+
+    /// Whether a look found the file in a state that may pass in a moment:
+    /// not readable, or gone after it was there, as an editor that saves by
+    /// moving the old file aside leaves it until the new one is written.
+    fn passing(&self, found: &Found) -> bool {
+        match found {
+            Found::Whole(_) => false,
+            Found::Missing => self.existed.load(Ordering::SeqCst),
+            Found::Unreadable | Found::Denied(_) => true,
+        }
+    }
+
+    /// Looks until the file is whole, or missing when it never was there, up
+    /// to `MOST_LOOKS` times, and calls `between` before each look after the
+    /// first.
     fn look_settled(&self, between: &mut dyn FnMut()) -> (Found, Option<String>) {
         let mut found = self.look_at();
         for _ in 1..MOST_LOOKS {
-            if found.0 != Found::Unreadable {
+            if !self.passing(&found.0) {
                 break;
             }
             between();
             found = self.look_at();
         }
         found
+    }
+
+    /// Why a change was not saved over a file that could not be read.
+    fn unreadable_reason(&self, found: &Found) -> String {
+        let path = self.path.display();
+        match found {
+            Found::Denied(why) => {
+                format!("{why}. Check that the app may read and write {path}")
+            }
+            _ => format!(
+                "the settings file is empty or not valid settings, perhaps because something is writing it. Try again in a moment, or mend {path}"
+            ),
+        }
     }
 
     /// The settings as they are, and what the file held. A file that does
@@ -1026,7 +1220,7 @@ impl Store {
                 unreadable: false,
                 settings: Settings::default(),
             },
-            Found::Unreadable => {
+            Found::Unreadable | Found::Denied(_) => {
                 self.forget_announced();
                 Stored {
                     stored: true,
@@ -1047,6 +1241,7 @@ impl Store {
     /// Tells the windows the file that was there is gone, once.
     fn note_missing(&self) {
         if self.existed.swap(false, Ordering::SeqCst) {
+            self.gone.store(true, Ordering::SeqCst);
             self.forget_announced();
             events::emit(&self.sink, SETTINGS_MISSING, &Value::Null);
         }
@@ -1054,8 +1249,9 @@ impl Store {
 
     /// Lays a change over the settings, writes them and announces them.
     /// Answers with the settings as they now are. A file that does not
-    /// parse is looked at again a few times; if it still does not, nothing
-    /// is written and the answer says so.
+    /// parse, or that is gone after it was there, is looked at again a few
+    /// times; if it still is not whole, nothing is written and the answer
+    /// says why.
     pub fn set(&self, change: &Value) -> Result<Settings, String> {
         self.set_between(
             change,
@@ -1064,9 +1260,9 @@ impl Store {
         )
     }
 
-    /// `between` runs before each further look at a file that does not
-    /// parse, and `before_move` once the new text is staged and before it
-    /// is moved into place.
+    /// `between` runs before each further look at a file that is not whole,
+    /// and `before_move` once the new text is staged and before it is moved
+    /// into place.
     fn set_between(
         &self,
         change: &Value,
@@ -1074,40 +1270,110 @@ impl Store {
         before_move: &mut dyn FnMut(),
     ) -> Result<Settings, String> {
         let _writing = self.writing.lock().map_err(|_| "the settings are stuck")?;
-        // A file that changed between the read and the move was edited
-        // meanwhile: the change is laid over what is there now instead.
         for _ in 0..MOST_LOOKS {
             let (found, seen) = self.look_settled(between);
             let current = match found {
                 Found::Whole(settings) => *settings,
-                Found::Missing if self.existed.load(Ordering::SeqCst) => {
+                Found::Missing
+                    if self.existed.load(Ordering::SeqCst) || self.gone.load(Ordering::SeqCst) =>
+                {
                     self.note_missing();
-                    return Err("the settings file is gone, so nothing was saved: the window is putting its settings back, and the change can be made again".into());
+                    return Err(GONE.into());
                 }
                 Found::Missing => Settings::default(),
-                Found::Unreadable => {
+                unreadable => {
                     self.forget_announced();
-                    return Err(format!(
-                        "the settings file could not be read, so nothing was saved: it is empty or not valid settings, perhaps because something is writing it. Try again in a moment, or mend {}",
-                        self.path.display()
-                    ));
+                    return Err(self.unreadable_reason(&unreadable));
                 }
             };
             let next = apply(&current, change)?;
-            let path = target_of(&self.path);
-            let staged = stage(&path, &render(&next))?;
-            before_move();
-            let now = std::fs::read_to_string(&self.path).ok();
-            if now != seen {
-                let _ = std::fs::remove_file(&staged);
-                continue;
+            if self.put_in_place(&next, &seen, before_move)? {
+                return Ok(next);
             }
-            commit(&staged, &path)?;
-            self.existed.store(true, Ordering::SeqCst);
-            self.announce(&next);
-            return Ok(next);
         }
-        Err("the settings file keeps changing, so nothing was saved: try again in a moment".into())
+        Err(KEEPS_CHANGING.into())
+    }
+
+    /// Hands over the settings a window holds, for a file that is not
+    /// there: they are written only if the file is still missing once the
+    /// write lock is held, and still missing just before they are moved into
+    /// place. A file that is there by then, written by an editor that saves
+    /// by moving the old file aside, by another window, or put back by hand,
+    /// is what stands: it is announced and nothing is written. A file that
+    /// is there and cannot be read is left alone too, and the window keeps
+    /// what it has. Answers with what is stored now.
+    pub fn hand_over(&self, held: &Value) -> Result<Stored, String> {
+        self.hand_over_between(held, &mut || std::thread::sleep(BETWEEN_LOOKS), &mut || {})
+    }
+
+    fn hand_over_between(
+        &self,
+        held: &Value,
+        between: &mut dyn FnMut(),
+        before_move: &mut dyn FnMut(),
+    ) -> Result<Stored, String> {
+        let held = handed_over(held)?;
+        let _writing = self.writing.lock().map_err(|_| "the settings are stuck")?;
+        for _ in 0..MOST_LOOKS {
+            let (found, seen) = self.look_settled(between);
+            match found {
+                Found::Whole(settings) => {
+                    self.announce(&settings);
+                    return Ok(Stored {
+                        stored: true,
+                        unreadable: false,
+                        settings: *settings,
+                    });
+                }
+                Found::Unreadable | Found::Denied(_) => {
+                    self.forget_announced();
+                    return Ok(Stored {
+                        stored: true,
+                        unreadable: true,
+                        settings: Settings::default(),
+                    });
+                }
+                Found::Missing => {}
+            }
+            if self.put_in_place(&held, &seen, before_move)? {
+                return Ok(Stored {
+                    stored: true,
+                    unreadable: false,
+                    settings: held,
+                });
+            }
+        }
+        Err(KEEPS_CHANGING.into())
+    }
+
+    /// Writes the settings and moves them into place if the file is still
+    /// as `seen` found it, and announces them. Answers false, having written
+    /// nothing, when the file changed since: it was edited meanwhile, and
+    /// what is there now is to be read again.
+    fn put_in_place(
+        &self,
+        next: &Settings,
+        seen: &Option<String>,
+        before_move: &mut dyn FnMut(),
+    ) -> Result<bool, String> {
+        let path = target_of(&self.path);
+        let staged = stage(&path, &render(next))?;
+        before_move();
+        let now = std::fs::read_to_string(&self.path).ok();
+        if now != *seen {
+            let _ = std::fs::remove_file(&staged);
+            return Ok(false);
+        }
+        if seen.is_none() {
+            if !commit_new(&staged, &path)? {
+                return Ok(false);
+            }
+        } else {
+            commit(&staged, &path)?;
+        }
+        self.found_there();
+        self.announce(next);
+        Ok(true)
     }
 
     fn announce(&self, settings: &Settings) {
@@ -1125,18 +1391,39 @@ impl Store {
     /// it holds if that is news. A file that does not parse is left alone:
     /// the windows keep what they have, and the next whole file is
     /// announced even when it matches what was last announced. A file that
-    /// is gone is told to the windows, which hand over what they hold. The read and the announcement happen under the write
-    /// lock, so what is announced is never older than a change the store
-    /// has already announced.
+    /// is missing is looked at again after a moment, since an editor that
+    /// saves by moving the old file aside leaves it missing until the new
+    /// one is written; if it is still missing, the windows are told it is
+    /// gone and hand over what they hold. Each look and what follows from it
+    /// happen under the write lock, so what is announced is never older than
+    /// a change the store has already announced.
     fn reread(&self) {
-        let Ok(_writing) = self.writing.lock() else {
+        self.reread_between(&mut || std::thread::sleep(BEFORE_GONE));
+    }
+
+    /// `wait` runs, with the write lock let go, between a look that finds
+    /// the file missing and the look that decides it is gone.
+    fn reread_between(&self, wait: &mut dyn FnMut()) {
+        if self.reread_once(false) {
             return;
+        }
+        wait();
+        self.reread_once(true);
+    }
+
+    /// One look of the watcher's. Answers false when the file was missing
+    /// and `last` is false, having told no one.
+    fn reread_once(&self, last: bool) -> bool {
+        let Ok(_writing) = self.writing.lock() else {
+            return true;
         };
         match self.look() {
             Found::Whole(settings) => self.announce(&settings),
-            Found::Unreadable => self.forget_announced(),
+            Found::Unreadable | Found::Denied(_) => self.forget_announced(),
+            Found::Missing if !last => return false,
             Found::Missing => self.note_missing(),
         }
+        true
     }
 
     /// Watches the file for the life of the core. The directory is what is
@@ -1152,7 +1439,7 @@ impl Store {
             *announced = match self.look() {
                 Found::Whole(settings) => Some(*settings),
                 Found::Missing => Some(Settings::default()),
-                Found::Unreadable => None,
+                Found::Unreadable | Found::Denied(_) => None,
             };
         }
         if let Ok(mut announced) = self.styles_announced.lock() {
@@ -1728,8 +2015,11 @@ mod tests {
                     &mut || {},
                 )
                 .unwrap_err();
-            assert!(error.contains("could not be read"), "{error}");
-            assert!(error.contains("nothing was saved"), "{error}");
+            assert!(error.contains("empty or not valid settings"), "{error}");
+            assert!(
+                !error.contains("saved"),
+                "the window says the change was not saved: {error}"
+            );
             assert_eq!(looks, MOST_LOOKS - 1, "it looked again before refusing");
             assert_eq!(
                 std::fs::read_to_string(settings_path(&home)).unwrap(),
@@ -2061,12 +2351,28 @@ mod tests {
         };
         store.set(&json!({ "palette": "rose" })).unwrap();
         std::fs::remove_file(settings_path(&home)).unwrap();
-        store.reread();
-        store.reread();
+        store.reread_between(&mut || {});
+        store.reread_between(&mut || {});
         assert_eq!(count(&recorder), 1);
 
+        // Until a window hands its settings over, a change is not laid over
+        // the defaults.
+        let error = store.set(&json!({ "look": "terminal" })).unwrap_err();
+        assert!(error.contains("is gone"), "{error}");
+        assert!(!settings_path(&home).exists(), "nothing was written");
+        assert_eq!(count(&recorder), 1);
+        let held = serde_json::to_value(Settings {
+            palette: "rose".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        store.hand_over(&held).unwrap();
+        assert_eq!(
+            store.set(&json!({ "look": "terminal" })).unwrap().palette,
+            "rose"
+        );
+
         // A save that finds it gone before the watcher did refuses, and tells.
-        store.set(&json!({ "palette": "rose" })).unwrap();
         std::fs::remove_file(settings_path(&home)).unwrap();
         let error = store.set(&json!({ "look": "terminal" })).unwrap_err();
         assert!(error.contains("is gone"), "{error}");
@@ -2157,5 +2463,338 @@ mod tests {
         assert!(!reader.is_finished(), "the load holds the write lock");
         drop(held);
         assert!(reader.join().unwrap().stored);
+    }
+
+    fn missing_told(recorder: &Recorder) -> usize {
+        recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, _)| name == SETTINGS_MISSING)
+            .count()
+    }
+
+    fn file_of(home: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(settings_path(home)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_hand_over_after_the_file_went_missing_leaves_a_new_file_standing() {
+        let home = home("hand-over-after-editor");
+        put(&home, &whole_text());
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        assert!(store.load().stored);
+        // An editor moves the old file aside; the watcher looks twice and
+        // tells the windows it is gone.
+        std::fs::remove_file(settings_path(&home)).unwrap();
+        store.reread_between(&mut || {});
+        assert_eq!(missing_told(&recorder), 1);
+        // The editor writes the new file before the window's copy arrives.
+        let edited = render(&Settings {
+            palette: "mono".into(),
+            appearance: "dark".into(),
+            ..Settings::default()
+        });
+        put(&home, &edited);
+        let held = serde_json::to_value(Settings {
+            palette: "amber".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        let stored = store
+            .hand_over_between(&held, &mut || {}, &mut || {})
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&home)).unwrap(),
+            edited,
+            "the hand edit stands"
+        );
+        assert!(stored.stored && !stored.unreadable);
+        assert_eq!(stored.settings.palette, "mono");
+        let announced = changes(&recorder);
+        assert_eq!(announced.last().unwrap()["palette"], "mono");
+    }
+
+    #[test]
+    fn a_hand_over_writes_nothing_when_the_file_comes_back_before_the_move() {
+        let home = home("hand-over-before-move");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let edited = render(&Settings {
+            palette: "mono".into(),
+            ..Settings::default()
+        });
+        let held = serde_json::to_value(Settings {
+            palette: "amber".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        let mut moves = 0;
+        let stored = store
+            .hand_over_between(&held, &mut || {}, &mut || {
+                moves += 1;
+                put(&home, &edited);
+            })
+            .unwrap();
+        assert_eq!(moves, 1, "it looked again and found the file there");
+        assert_eq!(stored.settings.palette, "mono");
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&home)).unwrap(),
+            edited
+        );
+    }
+
+    #[test]
+    fn a_hand_over_leaves_a_file_it_cannot_read_alone() {
+        let home = home("hand-over-unreadable");
+        put(&home, "{ half");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let held = serde_json::to_value(Settings::default()).unwrap();
+        let stored = store
+            .hand_over_between(&held, &mut || {}, &mut || {})
+            .unwrap();
+        assert!(stored.unreadable);
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&home)).unwrap(),
+            "{ half"
+        );
+    }
+
+    #[test]
+    fn a_hand_over_to_a_missing_file_writes_what_the_window_holds_and_what_it_could_not_use() {
+        let home = home("hand-over-missing");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        let mut held = serde_json::to_value(Settings {
+            palette: "amber".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        held["unreadEntries"] = json!([
+            { "field": "keys", "section": "", "name": "find", "reason": "not a key", "entry": { "key": 3 } },
+            { "field": "accounts", "section": "", "name": "everywhere", "reason": "no such account", "entry": "Bad" },
+            { "field": "keys", "section": "", "name": "lost", "reason": "an entry the window could not say" }
+        ]);
+        let stored = store.hand_over(&held).unwrap();
+        assert!(stored.stored && !stored.unreadable);
+        assert_eq!(stored.settings.palette, "amber");
+        let file = file_of(&home);
+        assert_eq!(file["palette"], "amber");
+        assert_eq!(file["keys"]["find"], json!({ "key": 3 }));
+        assert_eq!(file["accounts"]["everywhere"], "Bad");
+        assert!(file["keys"].get("lost").is_none());
+        assert_eq!(changes(&recorder).len(), 1);
+    }
+
+    #[test]
+    fn a_file_missing_only_for_a_moment_is_not_told_as_gone() {
+        let home = home("missing-a-moment");
+        put(&home, &whole_text());
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        assert!(store.load().stored);
+        std::fs::remove_file(settings_path(&home)).unwrap();
+        let edited = render(&Settings {
+            palette: "indigo".into(),
+            ..Settings::default()
+        });
+        store.reread_between(&mut || put(&home, &edited));
+        assert_eq!(missing_told(&recorder), 0);
+        assert_eq!(changes(&recorder).last().unwrap()["palette"], "indigo");
+    }
+
+    #[test]
+    fn a_save_that_finds_the_file_missing_for_a_moment_builds_on_the_new_one() {
+        let home = home("save-missing-a-moment");
+        put(&home, &whole_text());
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        assert!(store.load().stored);
+        std::fs::remove_file(settings_path(&home)).unwrap();
+        let edited = render(&Settings {
+            palette: "indigo".into(),
+            ..Settings::default()
+        });
+        let next = store
+            .set_between(
+                &json!({ "appearance": "dark" }),
+                &mut || put(&home, &edited),
+                &mut || {},
+            )
+            .unwrap();
+        assert_eq!(next.palette, "indigo");
+        assert_eq!(next.appearance, "dark");
+        assert_eq!(missing_told(&recorder), 0);
+    }
+
+    #[test]
+    fn one_bad_theme_costs_that_theme_and_is_carried_through_writes() {
+        let home = home("bad-theme");
+        put(
+            &home,
+            r##"{
+                "palette": "broken",
+                "themes": {
+                    "dusk": { "label": "Dusk", "light": { "accent": "#7a4a8c" } },
+                    "broken": { "light": { "accent": "red" } }
+                }
+            }"##,
+        );
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.themes.keys().collect::<Vec<_>>(), ["dusk"]);
+        assert_eq!(loaded.palette, "teal");
+        let names: Vec<_> = loaded
+            .unread_entries
+            .iter()
+            .map(|u| format!("{}/{}", u.field, u.name))
+            .collect();
+        assert_eq!(names, ["themes/broken", "palette/"]);
+
+        // A change of something else, and one of the themes that leaves the
+        // bad one out, both keep it and the palette that names it.
+        store.set(&json!({ "chime": true })).unwrap();
+        let dusk = json!({ "dusk": { "label": "Dusk", "light": { "accent": "#7a4a8c" } } });
+        store.set(&json!({ "themes": dusk })).unwrap();
+        let file = file_of(&home);
+        assert_eq!(
+            file["themes"]["broken"],
+            json!({ "light": { "accent": "red" } })
+        );
+        assert_eq!(file["palette"], "broken");
+        assert_eq!(file["themes"]["dusk"]["label"], "Dusk");
+
+        // Writing the theme again mends it, and the palette is its own again.
+        let mended = json!({
+            "dusk": { "label": "Dusk", "light": { "accent": "#7a4a8c" } },
+            "broken": { "label": "Mended", "light": { "accent": "#aa0000" } }
+        });
+        let next = store.set(&json!({ "themes": mended })).unwrap();
+        assert!(next.unread_entries.is_empty(), "{:?}", next.unread_entries);
+        assert_eq!(next.palette, "broken");
+        assert_eq!(store.load().settings.palette, "broken");
+
+        // Choosing another palette replaces the one the file named.
+        put(
+            &home,
+            r#"{ "palette": "broken", "themes": { "broken": { "light": { "accent": "red" } } } }"#,
+        );
+        store.set(&json!({ "palette": "rose" })).unwrap();
+        assert_eq!(file_of(&home)["palette"], "rose");
+    }
+
+    #[test]
+    fn the_choices_every_project_uses_are_kept_when_they_did_not_read() {
+        let home = home("bad-everywhere");
+        put(
+            &home,
+            r#"{
+                "hooks": { "everywhere": "yes", "overrides": {} },
+                "accounts": { "list": { "Bad": { "claude": 4 } }, "everywhere": "Bad" }
+            }"#,
+        );
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.accounts.everywhere, None);
+        // The window sends the accounts and the hooks whole, as it holds them.
+        let work = json!({ "claude": "~/.claude-work" });
+        store
+            .set(&json!({
+                "accounts": { "list": { "Work": work }, "everywhere": null, "overrides": {} },
+                "hooks": { "everywhere": true, "overrides": { "/p": true } }
+            }))
+            .unwrap();
+        let file = file_of(&home);
+        assert_eq!(file["accounts"]["everywhere"], "Bad");
+        assert_eq!(file["accounts"]["list"]["Bad"], json!({ "claude": 4 }));
+        assert_eq!(file["accounts"]["list"]["Work"]["claude"], "~/.claude-work");
+        assert_eq!(file["hooks"]["everywhere"], "yes");
+
+        // Choosing an account for every project replaces it.
+        store
+            .set(&json!({
+                "accounts": { "list": { "Work": work }, "everywhere": "Work", "overrides": {} },
+                "hooks": { "everywhere": false, "overrides": {} }
+            }))
+            .unwrap();
+        let file = file_of(&home);
+        assert_eq!(file["accounts"]["everywhere"], "Work");
+        assert_eq!(file["hooks"]["everywhere"], false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_the_app_may_not_read_is_refused_saying_so() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = home("denied");
+        put(&home, &whole_text());
+        let path = settings_path(&home);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&path).is_ok() {
+            // Run with the power to read anything, as root is: nothing to see.
+            return;
+        }
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let error = store
+            .set_between(&json!({ "chime": true }), &mut || {}, &mut || {})
+            .unwrap_err();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(error.contains("not allowed to read"), "{error}");
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(!error.contains("not valid settings"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), whole_text());
+    }
+
+    #[test]
+    fn a_value_the_app_does_not_use_and_a_field_it_does_not_have_are_kept() {
+        let home = home("bad-scalars");
+        put(
+            &home,
+            r#"{ "look": "termnal", "chime": "loud", "fromANewerApp": { "on": true }, "workflows": [] }"#,
+        );
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.look, "modern");
+        let fields: Vec<_> = loaded
+            .unread_entries
+            .iter()
+            .map(|u| u.field.as_str())
+            .collect();
+        assert_eq!(fields, ["chime", "fromANewerApp", "look", "workflows"]);
+        assert!(loaded.unread_entries[2].reason.contains("modern, terminal"));
+
+        store.set(&json!({ "appearance": "dark" })).unwrap();
+        let file = file_of(&home);
+        assert_eq!(file["look"], "termnal");
+        assert_eq!(file["chime"], "loud");
+        assert_eq!(file["fromANewerApp"], json!({ "on": true }));
+        assert_eq!(file["workflows"], json!([]));
+        assert_eq!(file["appearance"], "dark");
+
+        // Setting the look replaces the one the file held.
+        store.set(&json!({ "look": "terminal" })).unwrap();
+        let file = file_of(&home);
+        assert_eq!(file["look"], "terminal");
+        assert_eq!(file["chime"], "loud");
+    }
+
+    #[test]
+    fn a_new_file_is_never_put_over_one_written_meanwhile() {
+        let home = home("no-clobber");
+        let path = settings_path(&home);
+        let staged = stage(&path, "{ \"palette\": \"amber\" }\n").unwrap();
+        put(&home, "{ \"palette\": \"mono\" }\n");
+        assert!(!commit_new(&staged, &path).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{ \"palette\": \"mono\" }\n"
+        );
+        assert!(!staged.exists(), "the staged file is cleared away");
+        std::fs::remove_file(&path).unwrap();
+        let staged = stage(&path, "{ \"palette\": \"amber\" }\n").unwrap();
+        assert!(commit_new(&staged, &path).unwrap());
+        assert!(std::fs::read_to_string(&path).unwrap().contains("amber"));
+        assert!(!staged.exists());
     }
 }

@@ -1,18 +1,28 @@
 <script lang="ts">
   import { unreadOf, type UnreadEntry } from "$lib/unread.svelte";
 
-  let { field }: { field: UnreadEntry["field"] } = $props();
+  let { field }: { field: string | string[] } = $props();
 
-  let entries = $derived(unreadOf(field));
+  let entries = $derived((Array.isArray(field) ? field : [field]).flatMap((one) => unreadOf(one)));
+
+  /** What the user calls a setting the file holds. */
+  const NAMES: Record<string, string> = {
+    terminalFont: "terminal font",
+    interfaceFont: "interface font",
+    userStyles: "custom styles choice",
+    pastSessions: "span past sessions stay listed",
+    notifications: "notifications choice",
+    chime: "chime choice",
+  };
 
   /** What an entry is called to the user. */
   function called(entry: UnreadEntry): string {
-    if (entry.name === "") return `The ${entry.field} in the file`;
+    if (entry.name === "") return `The ${NAMES[entry.field] ?? entry.field} in the file`;
     return entry.section === "" ? `${entry.name}` : `${entry.name} (${entry.section})`;
   }
 </script>
 
-{#each entries as entry (`${entry.section}/${entry.name}`)}
+{#each entries as entry (`${entry.field}/${entry.section}/${entry.name}`)}
   <p class="unread" role="status" data-testid="unread-entry" data-field={entry.field}>
     <b>{called(entry)}</b> is not used: {entry.reason}. The file keeps it as written until it is
     mended or the setting is chosen again.

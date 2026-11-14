@@ -1,7 +1,7 @@
 /**
- * The entries of the keys, the hooks and the accounts the settings file
- * holds and the app does not use, with the rule each breaks. The file keeps
- * them as written.
+ * What the settings file holds and the app does not use, with the rule each
+ * breaks: entries of the keys, the hooks, the accounts and the themes, and
+ * values of settings. The file keeps them as written.
  */
 
 import type { Settings } from "$lib/core";
@@ -16,6 +16,6 @@ export function adoptUnread(entries: UnreadEntry[] | undefined) {
 }
 
 /** The unread entries of one field. */
-export function unreadOf(field: UnreadEntry["field"]): UnreadEntry[] {
+export function unreadOf(field: string): UnreadEntry[] {
   return unread.entries.filter((entry) => entry.field === field);
 }

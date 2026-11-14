@@ -392,6 +392,7 @@
       <div class="panel" class:fill={tab === "workflows"}>
         {#if tab === "appearance"}
           <h3>Appearance</h3>
+          <UnreadEntries field="appearance" />
           <div class="seg" role="radiogroup" aria-label="Appearance">
             {#each THEMES as option (option.choice)}
               <button
@@ -406,6 +407,7 @@
           </div>
 
           <h3>Theme</h3>
+          <UnreadEntries field="look" />
           <div class="looks" role="radiogroup" aria-label="Theme">
             {#each LOOKS as look (look.name)}
               <button
@@ -423,6 +425,7 @@
           </div>
 
           <h3>Font</h3>
+          <UnreadEntries field={["terminalFont", "interfaceFont"]} />
           <div class="fonts">
             <div class="font-row">
               <span class="font-what">Terminal</span>
@@ -463,6 +466,7 @@
           </div>
 
           <h3>Colour</h3>
+          <UnreadEntries field={["themes", "palette"]} />
           <div class="swatches" role="radiogroup" aria-label="Colour">
             {#each PALETTES as palette (palette.name)}
               <button
@@ -514,6 +518,7 @@
           {/if}
 
           <h3>Custom styles</h3>
+          <UnreadEntries field="userStyles" />
           <div class="seg" role="radiogroup" aria-label="Custom styles">
             <button
               role="radio"
@@ -635,6 +640,7 @@
         {:else if tab === "sessions"}
           <section data-testid="settings-sessions">
             <h3>Past sessions</h3>
+            <UnreadEntries field="pastSessions" />
             <p class="note">
               A session this app ran stays listed under its project, greyed, ready to resume. Left
               unchanged for longer than this, it goes behind the fold with the rest of the project's
@@ -922,6 +928,7 @@
           {/if}
         {:else if tab === "notifications"}
           <h3>System notifications</h3>
+          <UnreadEntries field="notifications" />
           <div class="seg" role="radiogroup" aria-label="System notifications">
             <button
               role="radio"
@@ -940,6 +947,7 @@
           </div>
 
           <h3>Chime</h3>
+          <UnreadEntries field="chime" />
           <div class="seg" role="radiogroup" aria-label="Chime">
             <button
               role="radio"

@@ -3,23 +3,25 @@
  *
  * On start the window asks the core for them and takes them. A machine
  * with no settings file yet is one the window's own copy is the only record
- * of, from before the core kept them: the window hands that over once, and
- * from then on the core's file is what every window follows. The core's
+ * of, from before the core kept them: the window hands that over, and from
+ * then on the core's file is what every window follows. A file that goes
+ * missing while the window is open is handed the window's copy the same way. The core's
  * news of a change, from this window, another one, or an edit to the file,
  * is taken the same way.
  */
 
 import { adoptAccounts, accountsSettings } from "$lib/accounts.svelte";
-import { core, type Settings } from "$lib/core";
+import { core, type Settings, type StoredSettings } from "$lib/core";
 import { adoptWorkflows, workflowsSettings } from "$lib/workflows.svelte";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptPastSessions, pastSessionsSettings } from "$lib/sessions.svelte";
 import { adoptKeys, keysSettings } from "$lib/keys.svelte";
 import { adoptNotify, notifySettings } from "$lib/notify.svelte";
-import { onRefused, onSettled, persist, sending } from "$lib/persist";
+import { flush, holdUntil, onRefused, onSettled, sending } from "$lib/persist";
+import { showRefusal } from "$lib/refusal.svelte";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
 import { adoptUserStylesSetting, followStyles, userStyles } from "$lib/userStyles.svelte";
-import { adoptUnread } from "$lib/unread.svelte";
+import { adoptUnread, unread } from "$lib/unread.svelte";
 import { workspace } from "$lib/workspace.svelte";
 
 /** The settings as the window has them now. */
@@ -61,6 +63,12 @@ export function adopt(settings: Settings) {
   );
 }
 
+/** The settings the window holds, as it hands them over to a file that is
+    not there: with the entries it knows the file held and did not use. */
+function held(): Settings {
+  return { ...currentSettings(), unreadEntries: unread.entries };
+}
+
 /**
  * Follows the core's settings for as long as the window is open. Answers
  * with what stops following. A core that keeps no settings leaves the
@@ -76,52 +84,84 @@ export async function followSettings(): Promise<() => void> {
   let heard = false;
   known = null;
   passed = null;
+  const hear = (settings: Settings) => {
+    if (sending()) {
+      passed = settings;
+      return;
+    }
+    heard = true;
+    adopt(settings);
+  };
+  // Hands what the window holds over to a file that is not there. The core
+  // writes it only if the file is still not there; a file that is there by
+  // then, such as one an editor saved by moving the old file aside, is what
+  // the window takes. Changes made meanwhile wait, and are laid over what
+  // the hand-over left.
+  const handOver = async () => {
+    let found: StoredSettings;
+    try {
+      found = await core().settingsHandOver(held());
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      showRefusal(reason, null, "The settings file is gone, and the window could not write its settings back");
+      return;
+    }
+    if (!found.unreadable) hear(found.settings);
+  };
   onSettled((settings) => {
     heard = true;
     adopt(settings);
   });
   // A refused change takes the window back to what is stored: the file when
   // it can be read whole, otherwise the news that was let pass, otherwise
-  // what the window last took.
+  // what the window last took. A file that is gone is handed what the
+  // window then holds.
   onRefused(async () => {
     heard = true;
-    let found: Awaited<ReturnType<ReturnType<typeof core>["settingsGet"]>> | null = null;
+    let found: StoredSettings | null = null;
     try {
       found = await core().settingsGet();
     } catch {
       found = null;
     }
-    if (found !== null && found.stored && !found.unreadable) adopt(found.settings);
-    else if (passed !== null) adopt(passed);
-    else if (known !== null) adopt(known);
+    if (found !== null && found.stored && !found.unreadable) {
+      adopt(found.settings);
+      return "stored";
+    }
+    const last = passed ?? known;
+    if (last !== null) adopt(last);
+    if (found !== null && !found.stored) await handOver();
+    return last !== null ? "last" : null;
   });
   let stop = () => {};
   let stopMissing = () => {};
   const stopStyles = await followStyles();
   try {
-    stop = await core().onSettingsChanged((settings) => {
-      if (sending()) {
-        passed = settings;
-        return;
-      }
-      heard = true;
-      adopt(settings);
-    });
-    // A file that was there and is gone: what the window holds is handed
-    // over, as at the start of a machine with no file, so the next change is
-    // laid over it and not over the defaults.
+    stop = await core().onSettingsChanged(hear);
+    // A file that was there and is gone, and stayed gone a moment: once the
+    // changes on their way are answered, what the window holds is handed
+    // over, so the next change is laid over it and not over the defaults.
     stopMissing =
       (await core().onSettingsMissing?.(() => {
-        void persist(currentSettings());
+        void holdUntil(flush().then(handOver));
       })) ?? stopMissing;
-    const found = await core().settingsGet();
-    // A file that could not be read whole says nothing about the settings:
-    // the window keeps what it has, and takes the file when the core
-    // announces a whole one.
-    if (!heard && !found.unreadable) {
-      if (found.stored) adopt(found.settings);
-      else adopt(await core().settingsSet(currentSettings()));
-    }
+    // Changes wait for the first read, and for a hand-over when there is
+    // no file, so none is laid over the defaults before the window's copy
+    // is handed over.
+    await holdUntil(
+      (async () => {
+        const found = await core().settingsGet();
+        // A file that could not be read whole says nothing about the
+        // settings: the window keeps what it has, and takes the file when
+        // the core announces a whole one.
+        // A change made before it answered is waiting to be sent, so the
+        // read is news to it, as news while a change is on its way is.
+        if (heard || found.unreadable) return;
+        if (!found.stored) await handOver();
+        else if (sending()) passed = found.settings;
+        else adopt(found.settings);
+      })(),
+    );
   } catch {
     // No core to keep them: the window's copy holds for this run.
   }

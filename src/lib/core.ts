@@ -1021,14 +1021,18 @@ export interface Settings {
     /** The workflows in the file that are not used, carried as written. */
     unread?: UnreadWorkflow[];
   };
-  /** What the file holds in the keys, the hooks and the accounts that is
-      not used, each with the rule it breaks. The core writes it back as it
-      was. */
+  /** What the file holds and the app does not use, each with the rule it
+      breaks: an entry of the keys, the hooks, the accounts or the themes, a
+      choice of account that names one, a value of a setting, or a field
+      that is not a setting. The core writes it back as it was. */
   unreadEntries?: {
-    field: "keys" | "hooks" | "accounts";
+    /** The field of the file it is in, as the file spells it. */
+    field: string;
     section: string;
     name: string;
     reason: string;
+    /** The entry as the file holds it. */
+    entry?: unknown;
   }[];
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
@@ -1290,6 +1294,11 @@ export interface Core {
       do, and then nothing changes. Answers with the settings as they now
       are. */
   settingsSet(change: Partial<Settings>): Promise<Settings>;
+  /** Hands over the settings the window holds, for a machine whose file is
+      not there. They are written only if it is still not there when the
+      core comes to write; a file that is there by then stands, and is what
+      the answer holds. */
+  settingsHandOver(held: Settings): Promise<StoredSettings>;
   /** The settings changed, by this window, another, or an edit to the
       file. */
   onSettingsChanged(handler: (settings: Settings) => void): Promise<() => void>;
@@ -1687,6 +1696,7 @@ const tauriCore: Core = {
   },
   settingsGet: () => invoke<StoredSettings>("settings_get"),
   settingsSet: (change) => invoke<Settings>("settings_set", { change }),
+  settingsHandOver: (held) => invoke<StoredSettings>("settings_hand_over", { held }),
   async onSettingsChanged(handler) {
     return listen<Settings>("settings_changed", (event) =>
       handler(event.payload),
@@ -1981,6 +1991,9 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async settingsSet() {
+    throw new Error("no core");
+  },
+  async settingsHandOver() {
     throw new Error("no core");
   },
   async onSettingsChanged() {
