@@ -1261,3 +1261,36 @@ test.describe("a permission cannot be disguised", () => {
     await expect(page.getByTestId("permission-whole-text")).toContainText("Tool: DeleteRepository");
   });
 });
+
+test.describe("the keyboard, when the dock goes by itself", () => {
+  test("goes to the composer when a question settles itself", async ({ page }) => {
+    await openIntegrated(page);
+    const request = await agent(
+      page,
+      `f.startTurn("${H}"); return f.question("${H}", [{ question: "Which one?", header: null, options: [{ label: "A", description: null }], multiple: false }]);`,
+    );
+    await page.getByTestId("composer-input").press("ArrowUp");
+    await expect(page.getByTestId("question-option").first()).toBeFocused();
+    await agent(page, `f.expire("${H}", "${request}");`);
+    await expect(page.getByTestId("question-dock")).toHaveCount(0);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await page.keyboard.type("still here");
+    await expect(page.getByTestId("composer-input")).toHaveValue("still here");
+  });
+
+  test("goes to the composer when a request is withdrawn", async ({ page }) => {
+    await openIntegrated(page);
+    const request = await agent(
+      page,
+      `f.startTurn("${H}"); const c = f.startTool("${H}", "commandExecution", { command: "ls" }, { kind: "command" }); return f.ask("${H}", "commandExecution", { command: "ls" }, { call: c });`,
+    );
+    await page.getByTestId("composer-input").press("ArrowUp");
+    await expect(page.getByTestId("choice-allow")).toBeFocused();
+    await agent(page, `f.expire("${H}", "${request}"); f.endTurn("${H}");`);
+    await expect(page.getByTestId("permission-dock")).toHaveCount(0);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    // The step says the request was withdrawn.
+    await page.getByTestId("work-line").last().click();
+    await expect(page.getByTestId("step-status").last()).toHaveText("permission withdrawn");
+  });
+});

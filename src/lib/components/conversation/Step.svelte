@@ -35,6 +35,7 @@
         text: answered(part.answer.choice),
         tone: part.answer.choice === "deny" || part.answer.choice === "cancel" ? "bad" : "quiet",
       };
+    if (part.withdrawn && part.answer === null) return { text: "permission withdrawn", tone: "quiet" };
     if (!part.done) return { text: "running", tone: "run" };
     if (part.error) return { text: "failed", tone: "bad" };
     const took = part.until - part.at;

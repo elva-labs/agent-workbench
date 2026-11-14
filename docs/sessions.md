@@ -374,7 +374,11 @@ stop the turn. A line under the choices says what the one in focus or under
 the pointer does. A question docks the same way with its options, answered by
 picking one where one is all it takes, with room for the user's own words
 where it takes them; a secret answer is typed hidden. Requests are answered
-one at a time, the oldest first, and the dock says how many more wait.
+one at a time, the oldest first, and the dock says how many more wait. A
+permission the agent withdraws before it is answered says so on the step
+that asked for it, or in a note where no step is known, as a question that
+settles itself does. When the dock goes by itself while it has the
+keyboard, the keyboard goes back to the composer.
 
 The composer under the dock takes several lines, images dropped, pasted or
 picked, and any other dropped file as its path in the text; a message sent

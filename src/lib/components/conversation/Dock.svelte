@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { Conversation, Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
   import { answer, reply } from "$lib/integrated.svelte";
@@ -54,6 +54,26 @@
       .map((piece) => (typeof piece === "string" ? piece : markers(piece.name)))
       .join("");
   }
+
+  // The dock going away by itself, a question that settled itself or a
+  // request the agent withdrew, gives the keyboard back as an answer does
+  // when the dock had it.
+  let held = false;
+  $effect.pre(() => {
+    request;
+    untrack(() => {
+      held = dock !== null && dock.contains(document.activeElement);
+    });
+  });
+  $effect(() => {
+    request;
+    untrack(() => {
+      if (!held) return;
+      held = false;
+      const owner = document.activeElement;
+      if (owner === null || owner === document.body || !owner.isConnected) onAnswered?.();
+    });
+  });
 
   // ---- permissions ----
 

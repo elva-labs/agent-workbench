@@ -118,6 +118,9 @@ export interface ToolCall extends Timed {
   tasks: Task[];
   /** How the user answered a permission the call asked for. */
   answer: { choice: PermissionChoice; message: string | null } | null;
+  /** The agent withdrew a permission the call asked for before it was
+      answered. */
+  withdrawn: boolean;
   /** The call is how the agent keeps or proposes its plan: a plan event
       named it. */
   plan: boolean;
@@ -388,6 +391,7 @@ export class Conversation {
           parts: [],
           tasks: [],
           answer: null,
+          withdrawn: false,
           plan: false,
           at: now,
           until: now,
@@ -934,6 +938,20 @@ export class Conversation {
     if (request === undefined || request.state !== "open") return;
     request.state = "withdrawn";
     request.answering = false;
+    // A permission withdrawn leaves its trace: on the step that asked, or
+    // as a note where the step is not known.
+    if (request.asked.type === "permissionAsked") {
+      const call = request.asked.call === null ? undefined : this.#calls.get(request.asked.call);
+      if (call !== undefined) call.withdrawn = true;
+      else
+        this.#push({
+          kind: "note",
+          key: "",
+          tone: "info",
+          text: "The agent withdrew a request for permission before it was answered.",
+          at: now,
+        });
+    }
     const question = this.#question(id);
     if (question !== null && question.outcome === "open") {
       question.outcome = "withdrawn";

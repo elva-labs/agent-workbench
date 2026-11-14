@@ -359,6 +359,22 @@ describe("a conversation, from the core's events", () => {
     expect(conversation.requests[0]).toMatchObject({ request, state: "withdrawn" });
     expect(conversation.open).toEqual([]);
     expect(conversation.turns[1].outcome).toBe("interrupted");
+    // With no step to mark, a note says it was withdrawn.
+    expect(conversation.entries.filter((entry) => entry.kind === "note").map((entry) => entry.kind === "note" && entry.text)).toEqual([
+      "The agent withdrew a request for permission before it was answered.",
+    ]);
+  });
+
+  it("marks the step whose permission the agent withdrew", async () => {
+    const { fake, conversation, id, send } = played();
+    send(M1, "go");
+    fake.startTurn(id);
+    const call = fake.startTool(id, "commandExecution", { command: "ls" }, { kind: "command" });
+    const request = fake.ask(id, "commandExecution", { command: "ls" }, { call });
+    fake.expire(id, request);
+    await Promise.resolve();
+    expect(conversation.call(call)!.withdrawn).toBe(true);
+    expect(conversation.entries.some((entry) => entry.kind === "note")).toBe(false);
   });
 
   it("asks a question in the thread and draws the answer, a secret's left out", () => {

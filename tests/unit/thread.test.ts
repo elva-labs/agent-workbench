@@ -44,6 +44,7 @@ function call(over: Partial<ToolCall> = {}): ToolCall {
     parts: [],
     tasks: [],
     answer: null,
+    withdrawn: false,
     plan: false,
     at: 0,
     until: 1000,

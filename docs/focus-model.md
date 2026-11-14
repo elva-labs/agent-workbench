@@ -186,7 +186,9 @@ composer while it waits goes as a message only on a second Enter. A question's o
 way; where one pick answers the question, picking it answers. A denial that
 asks for words takes them in a field where <kbd>Enter</kbd> denies and
 <kbd>Esc</kbd> goes back to the choices. Once an answer is on its way the
-keyboard goes to the next request, or back to the composer. The model's menu
+keyboard goes to the next request, or back to the composer, and so it does
+when the request with the keyboard goes by itself: a question that settles
+itself, or a permission the agent withdraws. The model's menu
 opens from its button and is walked with the arrows, <kbd>Enter</kbd>
 picking and <kbd>Esc</kbd> closing it.
 
