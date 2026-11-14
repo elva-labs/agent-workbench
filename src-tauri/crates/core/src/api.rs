@@ -1019,8 +1019,7 @@ mod tests {
     // has, and the worktree's clean-up takes them away again.
     #[test]
     fn a_worktree_made_for_a_session_has_the_project_s_hooks_until_it_goes() {
-        let base = std::env::temp_dir().join("workbench-api-worktree-hooks");
-        std::fs::remove_dir_all(&base).ok();
+        let base = Scratch::new("api-worktree-hooks");
         let (home, project) = (base.join("home"), base.join("project"));
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&project).unwrap();
@@ -1075,10 +1074,9 @@ mod tests {
     }
 
     /// A repository with one commit, and a home with the daemon in place,
-    /// both under a fresh folder of the temporary directory.
-    fn hooked_repository(name: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("workbench-api-{name}"));
-        std::fs::remove_dir_all(&base).ok();
+    /// both under a scratch folder that lives as long as the first value.
+    fn hooked_repository(name: &str, files: &[(&str, &str)]) -> (Scratch, PathBuf, PathBuf) {
+        let base = Scratch::new(&format!("api-{name}"));
         let (home, project) = (base.join("home"), base.join("project"));
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&project).unwrap();
@@ -1102,7 +1100,7 @@ mod tests {
         let daemon = hook::daemon_path(&home);
         std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
         std::fs::write(&daemon, "").unwrap();
-        (home, project)
+        (base, home, project)
     }
 
     // The session works without the hooks, read off its output, so their
@@ -1110,7 +1108,7 @@ mod tests {
     #[test]
     fn a_worktree_is_made_when_its_hooks_cannot_be_written() {
         // A file where Codex keeps its folder: the tree cannot have one.
-        let (home, project) = hooked_repository("worktree-hooks-fail", &[(".codex", "x\n")]);
+        let (_base, home, project) = hooked_repository("worktree-hooks-fail", &[(".codex", "x\n")]);
         let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
         // The project's hooks are Claude Code's file, as a project without
         // that file of Codex's would have them.
@@ -1132,7 +1130,7 @@ mod tests {
     // session starts or resumes in it.
     #[test]
     fn a_session_in_a_worktree_without_the_hooks_brings_them() {
-        let (home, project) = hooked_repository("worktree-hooks-later", &[]);
+        let (_base, home, project) = hooked_repository("worktree-hooks-later", &[]);
         let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
         core.hook_install(&project, &[]).unwrap();
         // A tree made without them, as one from before they were shared.
