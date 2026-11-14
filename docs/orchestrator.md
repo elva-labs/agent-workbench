@@ -64,15 +64,23 @@ an orchestrator chooses the model for a piece of work when it starts it
 rather than sending a model command afterwards. A model's name belongs to
 one agent, so a start that names a model names the agent too, and one
 that leaves the agent out is refused rather than given the project's last.
-A start can name an account as well, by the name it has in the settings,
-for work under a login other than the project's own; one that names an
-account there is not is refused with the names there are. A session
-resumed comes back under the account it ran under.
+A started session runs under the account of the session that started it,
+the agents' own included, whatever account its project is set to. A start
+can name another account, by the name it has in the settings; one that
+names an account there is not is refused with the names there are. A start
+that names none runs under the project's account when the caller's cannot
+be handed on. That is so when the workbench cannot tell which session is
+calling, as with a Codex session that has not been resumed or an agent run
+outside the workbench; when the project is on another machine than the
+caller, where the caller's login is not; and when the caller's account has
+no directory for the agent being started, or is no longer in the settings.
+A session resumed comes back under the account it ran under.
 
 ## What is remembered
 
 What a session started is written down by session id, with the project,
-the worktree, the agent and the name, and kept between runs beside the
+the worktree, the agent, the name and the account, and kept between runs
+beside the
 sessions the app knows as its own. An orchestrator closed and resumed
 keeps its id, so the sessions it started are still its own: the ones
 still running answer to its tools as before, and a row with one of its

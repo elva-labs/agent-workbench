@@ -266,3 +266,53 @@ test.describe("a new session from the palette with accounts", () => {
     await expect(page.getByTestId("account-readout")).toHaveText("account: Default");
   });
 });
+
+test.describe("a session started by a session under another account", () => {
+  test("runs under the starting session's account, not the project's", async ({ page }) => {
+    // The project runs under the agents' own, and there is an account to
+    // start a session under instead.
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { accounts: { ...WORK, overrides: {} } },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.getByTestId("project-account")).toHaveCount(0);
+
+    // The user's own session, started under Work from the palette.
+    await page.keyboard.press(`${MOD}+Shift+P`);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.locator("[data-testid='palette-row'][aria-selected='true']"),
+    ).toContainText("Work");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
+    await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
+
+    // That session starts another and names no account.
+    await page.evaluate(
+      (project) =>
+        (
+          window as unknown as { __conductRequest: (call: unknown) => void }
+        ).__conductRequest({
+          id: "c-1",
+          tool: "start",
+          arguments: { project, prompt: "Fix the flaky test" },
+          cwd: project,
+          session: "session-1",
+        }),
+      PROJECT,
+    );
+    await expect(page.getByTestId("conduct-ask")).toBeVisible();
+    await page.getByTestId("conduct-allow").click();
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+
+    // The new session's agent is pointed at the same account's directory.
+    await expect.poll(() => spawns(page)).toHaveLength(2);
+    expect((await spawns(page))[1].prompt).toContain("Fix the flaky test");
+    expect((await spawns(page))[1].configDir).toBe("~/.claude-work");
+  });
+});

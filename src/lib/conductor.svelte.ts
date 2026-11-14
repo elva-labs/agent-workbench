@@ -23,7 +23,13 @@
  * the app are listed as stopped and can be resumed where they ran.
  */
 
-import { accountOf, accounts, dirsOf, names } from "$lib/accounts.svelte";
+import {
+  accountOf,
+  accounts,
+  dirFor,
+  dirsOf,
+  names,
+} from "$lib/accounts.svelte";
 import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
@@ -41,6 +47,7 @@ import {
   type Session,
 } from "$lib/sessions.svelte";
 import type { AgentId } from "$lib/core";
+import { hostOf } from "$lib/remote.svelte";
 import { screen, takesPaste } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -546,7 +553,8 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     );
   if (!workspace.open.some((open) => open.path === project))
     return refused(`No project at ${project} is open in the workbench.`);
-  // An account is one the user named in the settings, or the project's.
+  // An account is one the user named in the settings; a start that names
+  // none runs under the caller's.
   const wanted = text(request, "account");
   if (wanted !== null && !(wanted in accounts.list))
     return refused(
@@ -554,7 +562,8 @@ async function startSession(request: ConductRequest): Promise<Answered> {
         ? "There are no accounts in the workbench's settings; leave the account out."
         : `There is no account called ${wanted}. The accounts are ${names().join(", ")}.`,
     );
-  const account = wanted ?? accountOf(project);
+  const agent = agentOf(request, project);
+  const account = wanted ?? handedOn(request, project, agent);
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
@@ -582,7 +591,6 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
-  const agent = agentOf(request, project);
   const session = create(
     project,
     null,
@@ -618,6 +626,29 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   return said(
     `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
   );
+}
+
+/**
+ * The account a start runs under when it names none: the calling session's,
+ * the agents' own included, whatever the project is set to. The project's
+ * when the caller's cannot be handed on: the window has no row for the
+ * caller, the project is on another machine than the caller, where the
+ * caller's login is not, or the caller's account holds no directory for
+ * the agent to run, which is also how one the settings no longer hold
+ * reads.
+ */
+function handedOn(
+  request: ConductRequest,
+  project: string,
+  agent: AgentId,
+): string | null {
+  const calling = request.session === null ? null : byId(request.session);
+  if (calling === null) return accountOf(project);
+  if (hostOf(calling.project) !== hostOf(project)) return accountOf(project);
+  const { account } = calling;
+  if (account !== null && dirFor(account, agent) === undefined)
+    return accountOf(project);
+  return account;
 }
 
 /** Why a caller may not start another session right now, when it may not:
