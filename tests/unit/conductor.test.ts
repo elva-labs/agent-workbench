@@ -53,7 +53,7 @@ import {
 } from "$lib/sessions.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
-import { defaultWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
+import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import type { Workflow } from "$lib/core";
@@ -1919,6 +1919,13 @@ describe("starting in a workflow's shape", () => {
     if (review.kind === "review") review.limit = 1;
     return workflow;
   };
+
+  it("says a limit of one as once in the tag, as the diagram and the instructions do", () => {
+    const review = limitOne().steps[1];
+    expect(stepFacts(review)).toContain("Otherwise: go back to Work at most once, then ask me.");
+    expect(stepFacts(review)).toContain("A piece is reviewed 2 times at most before that.");
+    expect(describeWorkflow(limitOne())).toContain("else back to Work once at most");
+  });
 
   it("holds a resumed work session to the step's room", async () => {
     orchestrating();

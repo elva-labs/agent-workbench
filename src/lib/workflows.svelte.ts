@@ -727,7 +727,7 @@ export function stepFacts(step: WorkflowStep, work: string | null = null): strin
         : `${label(first)}, used first, or ${rest.map(label).join(" or ")}`;
   if (step.kind === "work")
     return ["Does work.", `Models it may use: ${models}.`, `Sessions at once: ${step.parallel}.`];
-  const times = step.limit === 1 ? "1 time" : `${step.limit} times`;
+  const times = step.limit === 1 ? "once" : `${step.limit} times`;
   return [
     work === null ? "Reviews work." : `Reviews ${work}.`,
     `Models it may use: ${models}.`,
@@ -743,7 +743,7 @@ export function describeWorkflow(workflow: Workflow): string {
   const steps = workflow.steps.map((step) =>
     step.kind === "work"
       ? `${step.name} (${modelsText(step.models)}, ${step.parallel} at once)`
-      : `${step.name} (${modelsText(step.models)}, passes when ${passesText(step)}, else back to ${step.backTo} ${step.limit} times at most)`,
+      : `${step.name} (${modelsText(step.models)}, passes when ${passesText(step)}, else back to ${step.backTo} ${step.limit === 1 ? "once" : `${step.limit} times`} at most)`,
   );
   const own = startsOnly(workflow) ? "" : ", keeping its own subagents";
   return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}${own}`;

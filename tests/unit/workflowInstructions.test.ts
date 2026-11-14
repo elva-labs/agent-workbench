@@ -94,7 +94,7 @@ describe("what an orchestrator is told", () => {
     if (workflow.steps[1].kind === "review") workflow.steps[1].limit = 1;
     const lines = instructionLines(workflow);
     expect(lines[1]).toContain('Run at most 4 "Work" sessions at once, and stop each once its piece is done with;');
-    expect(lines[2]).toContain("Send a piece back once;");
+    expect(lines[2]).toContain("Send a piece back at most once;");
   });
 
   it("says which of the reviewer and the orchestrator decides", () => {

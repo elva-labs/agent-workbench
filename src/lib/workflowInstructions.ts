@@ -74,7 +74,7 @@ function stepLine(workflow: Workflow, index: number): string {
   const target = workflow.steps.findIndex((other) => other.name === step.backTo);
   const between = target < 0 ? [] : workflow.steps.slice(target + 1, index).map((other) => other.name);
   const through = between.length === 0 ? "" : `, take it through ${listed(between)} again`;
-  const times = step.limit === 1 ? "once" : `at most ${step.limit} times`;
+  const times = step.limit === 1 ? "at most once" : `at most ${step.limit} times`;
   const otherwise = `If it does not pass, send it back with send to the piece's own session for ${quoted(step.backTo)}, with what the review found, resuming that session first with start if it was stopped${through}. Then review it again for ${quoted(step.name)}, with a new review naming the same work or a line to the reviewer. Send a piece back ${times}; after that, stop and ask the user, and start another round only if they want one.`;
   return `${lead}, ${placeText(step)}. ${passes} ${otherwise}`;
 }
