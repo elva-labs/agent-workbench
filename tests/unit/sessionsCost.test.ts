@@ -72,6 +72,28 @@ afterEach(() => {
 });
 
 describe("the sessions pane's cost", () => {
+  // A row in one project changing moves rows in that project alone: the
+  // others keep the very rows they were drawn with, and none of them is
+  // measured to be moved.
+  it("measures the rows of the project that changed, and no others", () => {
+    applyDetect({ id: "claude-code", path: "/usr/local/bin/claude", caps: null, fromLoginShell: true }, true);
+    stage(24);
+    render(SessionsPane);
+    flushSync();
+    const row = sessions.all.find((session) => session.project === "/work/project-17" && session.status !== "dormant")!;
+    const measured = vi.spyOn(Element.prototype, "getBoundingClientRect");
+    for (let i = 0; i < 3; i++) {
+      measured.mockClear();
+      row.working = !row.working;
+      row.changedAt = Date.now() + 1000 * (i + 1);
+      flushSync();
+      const rows = measured.mock.contexts.filter((element) => (element as Element).classList.contains("row-slot"));
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThanOrEqual(2 * 5);
+    }
+    measured.mockRestore();
+  });
+
   // A row changing redraws what it changes, and works out where each row
   // stands once for all of them: four times the rows cost about four times
   // as much, not sixteen or sixty-four.

@@ -2,7 +2,7 @@
   import Pane from "$lib/components/Pane.svelte";
   import { agentLabel, installed, isReady } from "$lib/agent.svelte";
   import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
-  import type { AgentId } from "$lib/core";
+  import type { AgentId, ProjectInfo } from "$lib/core";
   import {
     byChange,
     byKey,
@@ -154,6 +154,15 @@
     return holding ? steady(shown, wanted) : wanted;
   }
 
+  /** The split last drawn, and its projects in order, to hand back while
+      nothing in it has changed. */
+  let shownSplit: { active: ProjectInfo[]; inactive: ProjectInfo[] } | null = null;
+  let shownProjects: ProjectInfo[] = [];
+
+  function sameList<T>(a: T[], b: T[]): boolean {
+    return a.length === b.length && a.every((item, at) => item === b[at]);
+  }
+
   /** The projects under the orchestrator's own: opening the directory it
       runs in is opening the project already pinned above them, and it is
       drawn once. They are split into the ones in use and the ones folded
@@ -167,12 +176,24 @@
     const { active, inactive } = splitProjects([...byPath.keys()], onScreen(workspace.active), layout.projectSort, now);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
-    shownActive = resorted ? active : held(shownActive, active);
-    shownInactive = resorted ? inactive : held(shownInactive, inactive);
-    return {
-      active: shownActive.map((path) => byPath.get(path)!),
-      inactive: shownInactive.map((path) => byPath.get(path)!),
+    const nextActive = resorted ? active : held(shownActive, active);
+    const nextInactive = resorted ? inactive : held(shownInactive, inactive);
+    // The same projects in the same order are the split already drawn, so
+    // nothing that draws it is asked to again.
+    const kept =
+      shownSplit !== null &&
+      sameList(nextActive, shownActive) &&
+      sameList(nextInactive, shownInactive) &&
+      [...nextActive, ...nextInactive].every((path, at) => byPath.get(path) === shownProjects[at]);
+    shownActive = nextActive;
+    shownInactive = nextInactive;
+    if (kept) return shownSplit!;
+    shownProjects = [...nextActive, ...nextInactive].map((path) => byPath.get(path)!);
+    shownSplit = {
+      active: nextActive.map((path) => byPath.get(path)!),
+      inactive: nextInactive.map((path) => byPath.get(path)!),
     };
+    return shownSplit;
   });
 
   /** The projects under Inactive when the pane last looked. One that
@@ -483,14 +504,54 @@
     return { entries, hidden };
   }
 
+  type Body = ReturnType<typeof bodyOf>;
+
+  /** The bodies and the entries last drawn, by project and by row id. */
+  let shownBodies = new Map<string, Body>();
+  let shownEntries = new Map<string, Entry>();
+
   /** What stands under each project drawn, worked out once per change for
-      the keyboard's rows and the template alike. */
+      the keyboard's rows and the template alike. A project whose rows have
+      not changed keeps the very rows it was drawn with, so a change in one
+      project redraws and measures that project alone. */
   let bodies = $derived.by(() => {
-    const out = new Map<string, ReturnType<typeof bodyOf>>();
-    if (pinned !== null) out.set(pinned, bodyOf(pinned));
-    for (const project of split.active) out.set(project.path, bodyOf(project.path));
+    const out = new Map<string, Body>();
+    const was = shownEntries;
+    shownEntries = new Map();
+    const keep = (path: string) => {
+      const fresh = bodyOf(path);
+      const entries = fresh.entries.map(reuse(was));
+      const hidden = fresh.hidden.map(reuse(was));
+      const prev = shownBodies.get(path);
+      out.set(
+        path,
+        prev !== undefined && sameList(prev.entries, entries) && sameList(prev.hidden, hidden)
+          ? prev
+          : { entries, hidden },
+      );
+    };
+    if (pinned !== null) keep(pinned);
+    for (const project of split.active) keep(project.path);
+    shownBodies = out;
     return out;
   });
+
+
+  /** The entry already drawn for a row when it says the same. */
+  function reuse(was: Map<string, Entry>) {
+    return (entry: Entry): Entry => {
+      const prev = was.get(entry.id);
+      const same =
+        prev !== undefined &&
+        prev.at === entry.at &&
+        (prev.kind === "session"
+          ? entry.kind === "session" && prev.session === entry.session
+          : entry.kind === "past" && prev.transcript === entry.transcript);
+      const kept = same ? prev : entry;
+      shownEntries.set(kept.id, kept);
+      return kept;
+    };
+  }
 
   const NO_BODY: ReturnType<typeof bodyOf> = { entries: [], hidden: [] };
 
