@@ -708,12 +708,14 @@
     -webkit-user-select: none;
   }
 
+  /* The signs sit on their line's tint, so they lean toward the ink to
+     stay readable on it in every palette. */
   .line.add .sign {
-    color: var(--add);
+    color: color-mix(in srgb, var(--add) 80%, var(--ink));
   }
 
   .line.del .sign {
-    color: var(--del);
+    color: color-mix(in srgb, var(--del) 80%, var(--ink));
   }
 
   .line.head {

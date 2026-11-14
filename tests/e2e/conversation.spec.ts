@@ -1019,6 +1019,14 @@ test.describe("the conversation's text", () => {
           await page.getByTestId("step-row").first().click();
           await page.getByTestId("composer-input").fill("A draft");
           for (const found of await shortfalls(page)) failures.push(`${look} ${appearance} ${palette}: ${found}`);
+          // The change a request makes, opened in the dock, with its signs.
+          await page.getByTestId("choice-allow").click();
+          await agent(
+            page,
+            `f.ask("${H}", "Edit", { file_path: "${PROJECT}/src/a.ts", old_string: "let a = 1;", new_string: "let a = 2;" });`,
+          );
+          await page.getByTestId("permission-details").click();
+          for (const found of await shortfalls(page)) failures.push(`${look} ${appearance} ${palette}, the change: ${found}`);
           await page.close();
         }
     expect(failures).toEqual([]);
