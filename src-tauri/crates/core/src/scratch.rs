@@ -6,27 +6,13 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
-/// Variables git reads to find a repository, an index, objects, config or an
-/// identity. A test run from inside a git command (a rebase `--exec`, a hook,
+/// What a test isolates beyond the variables that name a repository, which
+/// the core's own list holds: the config an identity and a caller's settings
+/// come from. A test run from inside a git command (a rebase `--exec`, a hook,
 /// a bisect) inherits them, and git would then act on the caller's repository.
-const GIT_VARIABLES: &[&str] = &[
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
+const ALSO_ISOLATED: &[&str] = &[
     "GIT_CONFIG",
     "GIT_CONFIG_COUNT",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_DIR",
-    "GIT_GRAFT_FILE",
-    "GIT_IMPLICIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_NAMESPACE",
-    "GIT_NO_REPLACE_OBJECTS",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_PREFIX",
-    "GIT_QUARANTINE_PATH",
-    "GIT_REPLACE_REF_BASE",
-    "GIT_SHALLOW_FILE",
-    "GIT_WORK_TREE",
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
     "GIT_AUTHOR_DATE",
@@ -34,6 +20,13 @@ const GIT_VARIABLES: &[&str] = &[
     "GIT_COMMITTER_EMAIL",
     "GIT_COMMITTER_DATE",
 ];
+
+fn is_isolated(name: &str) -> bool {
+    crate::git::REPOSITORY_VARIABLES.contains(&name)
+        || ALSO_ISOLATED.contains(&name)
+        || name.starts_with("GIT_CONFIG_KEY_")
+        || name.starts_with("GIT_CONFIG_VALUE_")
+}
 
 static ISOLATE: Once = Once::new();
 
@@ -45,10 +38,7 @@ pub fn isolate_git() {
     ISOLATE.call_once(|| {
         for (name, _) in std::env::vars_os() {
             let name = name.to_string_lossy();
-            if GIT_VARIABLES.contains(&name.as_ref())
-                || name.starts_with("GIT_CONFIG_KEY_")
-                || name.starts_with("GIT_CONFIG_VALUE_")
-            {
+            if is_isolated(&name) {
                 std::env::remove_var(&*name);
             }
         }
@@ -116,5 +106,22 @@ impl AsRef<Path> for Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_variable_the_core_clears_is_isolated_in_tests() {
+        for name in crate::git::REPOSITORY_VARIABLES {
+            assert!(is_isolated(name), "{name}");
+        }
+        for name in ["GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_3", "GIT_AUTHOR_NAME"] {
+            assert!(is_isolated(name), "{name}");
+        }
+        assert!(!is_isolated("GIT_SSH_COMMAND"));
+        assert!(!is_isolated("PATH"));
     }
 }
