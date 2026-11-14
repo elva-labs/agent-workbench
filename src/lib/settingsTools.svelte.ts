@@ -23,7 +23,7 @@
  * refused with a word saying they are the user's, in the settings.
  */
 
-import { core, type SettingsRequest } from "$lib/core";
+import { core, type SettingsRequest, type UnreadWorkflow } from "$lib/core";
 import {
   COLOUR_TOKENS,
   SHAPE_TOKENS,
@@ -49,6 +49,19 @@ import {
   type PresetName,
 } from "$lib/keys.svelte";
 import { label, sessions } from "$lib/sessions.svelte";
+import { AGENT_ORDER, CODEX_DEFAULT, modelsOf } from "$lib/models";
+import {
+  changed,
+  describeWorkflow,
+  readWorkflow,
+  MOST_PARALLEL,
+  MOST_ROUNDS,
+  MOST_STEPS,
+  takeWorkflowChange,
+  workflowsSettings,
+  type WorkflowChange,
+} from "$lib/workflows.svelte";
+import { projectLabel } from "$lib/workspace.svelte";
 import { setUserStyles, styleProblem, userStyles } from "$lib/userStyles.svelte";
 import {
   INTERFACE_FONTS,
@@ -90,6 +103,8 @@ interface Next {
   terminalFont?: MonoName;
   interfaceFont?: SansName;
   keys?: Keymap;
+  /** A workflow added or replaced, one deleted, or the default named. */
+  workflows?: WorkflowChange;
 }
 
 export interface Ask {
@@ -137,6 +152,10 @@ const USERS_OWN = new Set([
   "inactiveAfter",
   "notifications",
   "chime",
+  "workflowOverrides",
+  "workflowOverride",
+  "projectWorkflow",
+  "projectWorkflows",
 ]);
 
 /** The ids of the calls handled lately, so a call delivered twice is
@@ -232,6 +251,8 @@ export function describeSettings(): string {
       .map(([token, most]) => `${token} up to ${most}px`)
       .join(", ")}. A token left out keeps the default palette's value.`,
     "",
+    ...describeWorkflows(),
+    "",
     `userStyles: ${userStyles.on} (true or false): whether the user's own stylesheet is laid over the app's.`,
     userStyles.problem !== null
       ? `The user's stylesheet on disk is not used: ${userStyles.problem}.`
@@ -242,6 +263,43 @@ export function describeSettings(): string {
     "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the accounts, how long past sessions stay listed, the notifications and the chime are the user's to change, in the settings.",
   ];
   return lines.join("\n");
+}
+
+/** The workflows as the agent reads them, with the shape it writes one in. */
+function describeWorkflows(): string[] {
+  const held = workflowsSettings();
+  return [
+    "",
+    "workflows: a workflow says which model a session starts on, the orchestrator, and the steps it hands out in order. The user's:",
+    held.list.length === 0
+      ? "  none."
+      : `\`\`\`json\n${JSON.stringify(held.list, null, 2)}\n\`\`\``,
+    held.default === null
+      ? "New sessions start with no workflow."
+      : `New sessions start with the workflow ${held.default}.`,
+    ...setAside(held.unread ?? []),
+    `Change one with settings_change's workflow argument, a whole workflow that replaces the one of its name or adds one: {"name", "orchestrator": {"agent", "model"}, "steps": [...]}. A step is {"kind": "work", "name", "models", "parallel"} or {"kind": "review", "name", "models", "reviewerApproves", "orchestratorAgrees", "backTo", "limit"}. models is a list of {"agent", "model"}, each model one word and listed once, and empty means any model; the first is used unless there is a reason to pick another. parallel is how many sessions run at once, 1 to ${MOST_PARALLEL}. A review passes when the reviewer approves, the orchestrator agrees, or both, so one is true; backTo names an earlier work step and limit, 1 to ${MOST_ROUNDS}, is how many times it goes back before the user is asked. Names are unique, a workflow has 1 to ${MOST_STEPS} steps and the first does work. The agents are ${AGENT_ORDER.join(" and ")}: claude-code takes the models ${modelsOf("claude-code").map((option) => option.model).join(", ")}, and codex takes ${CODEX_DEFAULT}, its own default. deleteWorkflow takes a workflow's name away and defaultWorkflow names the one new sessions start with, or null for none. Which workflow a project follows is the user's to choose.`,
+  ];
+}
+
+/** The workflows the settings file holds but cannot use, each with why and
+    as written, so an agent asked to mend one can write it again whole. */
+function setAside(unread: UnreadWorkflow[]): string[] {
+  if (unread.length === 0) return [];
+  return [
+    "The settings file also holds workflows that are not used, because they do not keep the rules. Writing a workflow under one's name with the workflow argument mends it, and it takes back the default and the project choices that named it:",
+    ...unread.map((entry) => {
+      const named = [
+        entry.default ? "the file names it for new sessions" : null,
+        entry.projects.length === 1
+          ? "a project's choice names it"
+          : entry.projects.length > 1
+            ? `${entry.projects.length} projects' choices name it`
+            : null,
+      ].filter((part) => part !== null);
+      return `- ${entry.name ?? "A workflow without a name"}: ${entry.reason}${named.length > 0 ? `; ${named.join(", ")}` : ""}. As written:\n\`\`\`json\n${JSON.stringify(entry.entry, null, 2)}\n\`\`\``;
+    }),
+  ];
 }
 
 /** How much of the user's sheet the settings tool reads out. */
@@ -296,6 +354,9 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
         break;
       case "keyPreset":
       case "keys":
+      case "workflow":
+      case "deleteWorkflow":
+      case "defaultWorkflow":
         break;
       case "userStyles":
         if (typeof value !== "boolean") throw new Error("userStyles is true or false.");
@@ -347,7 +408,95 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
     next.keys = table;
   }
 
-  return { next, changes: changesOf(next) };
+  const planned = planWorkflows(args);
+  if (planned !== null) next.workflows = planned.change;
+
+  return {
+    next,
+    changes: [...changesOf(next), ...(planned === null ? [] : planned.changes)],
+  };
+}
+
+/** What the workflow arguments of a call would do to the workflows: one
+    added or replaced by its name, one deleted, the default named. Checked
+    whole against the workflows as they are, and shown as what moves,
+    including each project that chose a workflow deleted and would follow
+    the default again. Null when the call has none of them. */
+function planWorkflows(
+  args: Record<string, unknown>,
+): { change: WorkflowChange; changes: Change[] } | null {
+  const { workflow, deleteWorkflow, defaultWorkflow } = args;
+  if (workflow === undefined && deleteWorkflow === undefined && defaultWorkflow === undefined) {
+    return null;
+  }
+  const change: WorkflowChange = {};
+  if (workflow !== undefined) change.write = readWorkflow(workflow);
+  if (deleteWorkflow !== undefined) {
+    if (typeof deleteWorkflow !== "string") {
+      throw new Error("deleteWorkflow is the name of a workflow.");
+    }
+    change.remove = deleteWorkflow;
+  }
+  if (defaultWorkflow !== undefined) {
+    if (defaultWorkflow !== null && typeof defaultWorkflow !== "string") {
+      throw new Error("defaultWorkflow is the name of a workflow, or null for none.");
+    }
+    change.default = defaultWorkflow;
+  }
+  const before = workflowsSettings();
+  const after = changed(before, change);
+  const changes: Change[] = [];
+
+  if (change.write !== undefined) {
+    const written = change.write;
+    const was = before.list.find((held) => held.name === written.name);
+    const mended = was === undefined ? before.unread?.find((entry) => entry.name === written.name) : undefined;
+    if (was === undefined || JSON.stringify(was) !== JSON.stringify(written)) {
+      changes.push({
+        field: `workflow.${written.name}`,
+        label: `Workflow ${written.name}`,
+        from:
+          mended !== undefined
+            ? `in the file but not used: ${mended.reason}`
+            : was === undefined
+              ? "none"
+              : describeWorkflow(was),
+        to: `${describeWorkflow(written)}${was === undefined && mended === undefined ? ", new" : ""}`,
+      });
+    }
+  }
+  if (change.remove !== undefined) {
+    const name = change.remove;
+    const was = before.list.find((held) => held.name === name)!;
+    changes.push({
+      field: `workflow.${name}`,
+      label: `Workflow ${name}`,
+      from: describeWorkflow(was),
+      to: "deleted",
+    });
+  }
+  const projects = new Set([...Object.keys(before.overrides), ...Object.keys(after.overrides)]);
+  const said = (choice: string | null | undefined) =>
+    choice === undefined ? "as for new sessions" : (choice ?? "none");
+  for (const project of projects) {
+    if (after.overrides[project] !== before.overrides[project]) {
+      changes.push({
+        field: `workflowOverride.${project}`,
+        label: `Workflow for ${projectLabel(project)}`,
+        from: said(before.overrides[project]),
+        to: said(after.overrides[project]),
+      });
+    }
+  }
+  if (after.default !== before.default) {
+    changes.push({
+      field: "defaultWorkflow",
+      label: "Workflow for new sessions",
+      from: before.default ?? "none",
+      to: after.default ?? "none",
+    });
+  }
+  return { change, changes };
 }
 
 /** The lines a change shows the user: only what actually moves. */
@@ -532,33 +681,58 @@ async function change(
         ? request.arguments.reason.trim()
         : null;
     const caller = callerOf(request);
-    const choice = await new Promise<Choice>((settle) => {
-      settingsAsk.asking = {
-        request,
-        caller,
-        reason,
-        changes,
-        theme: shown ?? null,
-        css: css ?? null,
-      };
-      pending = settle;
-    });
-    if (choice === "decline") {
-      return refused("The user declined the change. Nothing changed.");
+    let asked = { next, changes, theme: shown, css };
+    // The change is planned again once it is allowed, against the settings
+    // as they are by then; if what it would do has moved meanwhile, the user
+    // is asked again about what it now does.
+    for (;;) {
+      const question = asked;
+      const choice = await new Promise<Choice>((settle) => {
+        settingsAsk.asking = {
+          request,
+          caller,
+          reason,
+          changes: question.changes,
+          theme: question.theme ?? null,
+          css: question.css ?? null,
+        };
+        pending = settle;
+      });
+      if (choice === "decline") {
+        return refused("The user declined the change. Nothing changed.");
+      }
+      const now = planned(request.arguments ?? {});
+      if (now.changes.length === 0) {
+        return said("Nothing to change: the settings are already so.");
+      }
+      asked = { next: now.next, changes: now.changes, theme: now.theme, css: now.css };
+      if (JSON.stringify(now.changes) === JSON.stringify(question.changes)) break;
     }
-    const undo = await take(next);
-    offerUndo({ caller, changes }, undo);
-    const made = changes.map((change) => `${change.label} is now ${change.to}`).join("; ");
+    const undo = await take(asked.next);
+    offerUndo({ caller, changes: asked.changes }, undo);
+    const made = asked.changes.map((change) => `${change.label} is now ${change.to}`).join("; ");
     return said(`The user allowed the change. ${made}. They can undo it for a short while.`);
   });
 }
 
 /** Makes a change, and answers with what puts things back as they were.
-    A stylesheet the core refuses after all is the change's reason for not
-    being made, and nothing else is touched. */
+    A stylesheet or workflows the core refuses after all are the change's
+    reason for not being made, and nothing else is touched. */
 async function take(next: Next): Promise<() => void> {
   const sheet = userStyles.css;
   if (next.css !== undefined) await core().stylesSet(next.css);
+  let workflowsBack: (() => void) | null = null;
+  if (next.workflows !== undefined) {
+    try {
+      workflowsBack = await takeWorkflowChange(next.workflows);
+    } catch (error) {
+      if (next.css !== undefined) void core().stylesSet(sheet).catch(() => {});
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `The user allowed the change, but it could not be made: ${reason.replace(/\.$/, "")}. Nothing changed.`,
+      );
+    }
+  }
   const before = {
     appearance: theme.choice,
     look: theme.look,
@@ -587,6 +761,7 @@ async function take(next: Next): Promise<() => void> {
     if (next.terminalFont !== undefined) setMono(before.terminalFont);
     if (next.interfaceFont !== undefined) setSans(before.interfaceFont);
     if (next.keys !== undefined) setBindings(before.keys);
+    workflowsBack?.();
   };
 }
 

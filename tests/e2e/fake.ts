@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 
 /**
  * A fake core, installed at the seam `src/lib/core.ts` already checks.
@@ -66,6 +67,8 @@ export async function installFakeCore(
     settings?: Record<string, unknown>;
     /** A stylesheet of the user's already on the machine. */
     styles?: string;
+    /** The agents the machine has, Claude Code alone unless said. */
+    agents?: string[];
     /** Past Claude Code sessions the core reports for the first project,
         each from the agent's own directory unless it names an account's. */
     transcripts?: {
@@ -86,8 +89,13 @@ export async function installFakeCore(
     held?: string[];
   } = {},
 ) {
+  // The scripted integrated session, as `window.__integrated`, for a test
+  // to drive with `page.evaluate`.
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, active, used, held }) => {
+    `window.__integrated = (${fakeIntegrated.toString()})();`,
+  );
+  await page.addInitScript(
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, active, used, held }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -132,6 +140,10 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+
+      // Installed by the script before this one.
+      const integrated = () =>
+        (window as unknown as { __integrated: FakeIntegrated }).__integrated;
 
       // The embedded browser's tabs, kept the way the Rust model keeps
       // them: ids from 1, never reused; every tab has an owner, each owner
@@ -360,6 +372,33 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
+        workflows: {
+          list: [
+            {
+              name: "Build and review",
+              orchestrator: { agent: "claude-code", model: "fable" },
+              steps: [
+                {
+                  kind: "work",
+                  name: "Work",
+                  models: [{ agent: "claude-code", model: "sonnet" }],
+                  parallel: 1,
+                },
+                {
+                  kind: "review",
+                  name: "Review",
+                  models: [{ agent: "claude-code", model: "opus" }],
+                  reviewerApproves: true,
+                  orchestratorAgrees: true,
+                  backTo: "Work",
+                  limit: 3,
+                },
+              ],
+            },
+          ],
+          default: "Build and review",
+          overrides: {},
+        },
         pastSessions: "forever",
         inactiveAfter: "week",
         themes: {},
@@ -394,7 +433,7 @@ export async function installFakeCore(
       ).__WORKBENCH_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
-          path: agent === "claude-code" ? "/usr/local/bin/claude" : null,
+          path: agents.includes(agent) ? `/usr/local/bin/${agent}` : null,
           caps: null,
           fromLoginShell: true,
         }),
@@ -441,6 +480,35 @@ export async function installFakeCore(
           const fake = window as unknown as { __chimes?: number };
           fake.__chimes = (fake.__chimes ?? 0) + 1;
         },
+        integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) =>
+          integrated().start(options),
+        integratedTrust: async (options: Parameters<FakeIntegrated["trust"]>[0]) =>
+          integrated().trust(options),
+        integratedSend: async (
+          id: string,
+          message: string,
+          text: string,
+          images?: Parameters<FakeIntegrated["send"]>[3],
+        ) => integrated().send(id, message, text, images),
+        integratedInterrupt: async (id: string) => integrated().interrupt(id),
+        integratedCompact: async (id: string) => integrated().compact(id),
+        integratedAnswer: async (
+          id: string,
+          request: string,
+          choice: Parameters<FakeIntegrated["answer"]>[2],
+          message?: string,
+        ) => integrated().answer(id, request, choice, message),
+        integratedReply: async (id: string, request: string, answers: string[][] | null) =>
+          integrated().reply(id, request, answers),
+        integratedConfigure: async (
+          id: string,
+          settings: Parameters<FakeIntegrated["configure"]>[1],
+        ) => integrated().configure(id, settings),
+        integratedSnapshot: async (id: string) => integrated().snapshot(id),
+        integratedStop: async (id: string) => integrated().stop(id),
+        onIntegratedEvent: async (
+          handler: Parameters<FakeIntegrated["subscribe"]>[0],
+        ) => integrated().subscribe(handler),
         spawn: async (
           spawnOptions: { session?: string },
           onOutput: (bytes: Uint8Array) => void,
@@ -1089,6 +1157,8 @@ export async function installFakeCore(
           settings: "",
           events: "",
         }),
+        hookStatusMany: async (projects: string[]) =>
+          projects.map(() => ({ installed: false, settings: "", events: "" })),
         hookInstall: async () => ({
           installed: true,
           settings: "",
@@ -1170,6 +1240,9 @@ export async function installFakeCore(
             : { stored: true, settings: found };
         },
         settingsSet: async (change: Record<string, unknown>) => {
+          // A test can have the core refuse the next changes, as a full disk would.
+          const refusal = (window as unknown as { __refuseSettings?: string }).__refuseSettings;
+          if (refusal !== undefined) throw new Error(refusal);
           const before = readSettings() ?? settingsDefaults;
           const themes = (change.themes ?? before.themes ?? {}) as Record<string, unknown>;
           for (const [field, value] of Object.entries(change)) {
@@ -1181,7 +1254,7 @@ export async function installFakeCore(
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
-            } else if (!["keys", "hooks", "accounts", "themes"].includes(field)) {
+            } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }
           }
@@ -1231,6 +1304,7 @@ export async function installFakeCore(
       styles: options.styles ?? null,
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
+      agents: options.agents ?? ["claude-code"],
       active: options.active ?? null,
       used: options.used ?? null,
       held: options.held ?? [],

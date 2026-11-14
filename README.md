@@ -51,8 +51,8 @@ state at a glance, and projects on other machines over ssh.
   the desktop is set to, five palettes, and the terminal's font and the
   interface's chosen apart. See [settings](docs/settings.md).
 - **Keyboard first.** The agent owns the keyboard. The app claims a few
-  modifier chords, all of them yours to change, and one of them opens a
-  command palette of every session and action. See
+  modifier chords, all of them yours to change. One goes to any session or
+  project, another runs any command or starts a session. See
   [focus](docs/focus-model.md).
 
 ## Platforms
@@ -109,7 +109,7 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Sessions](docs/sessions.md): what a session is, what its row says,
   active and inactive projects and the chord to the next session that needs
   you, past sessions, and how the changes pane keeps up.
-- [Focus](docs/focus-model.md): who owns the keyboard, and the command palette.
+- [Focus](docs/focus-model.md): who owns the keyboard, and the two palettes.
 - [Settings](docs/settings.md): the seven tabs, the appearance and the look,
   fonts and colours, live updates, past sessions and inactive projects,
   accounts, plugins, keys.
@@ -122,6 +122,8 @@ npm run test:driver   # the real binary, driven over WebDriver
 - [Plugins](docs/plugins.md): where they come from, the sources offered out
   of the box, what one may add to the workbench, and how one is written.
 - [Agents](docs/adapters.md): Claude Code and Codex CLI, and how they differ.
+- [Integrated sessions](docs/integrated.md): an agent driven in messages
+  rather than in a terminal, and the events it gives the window.
 - [Remote](docs/remote.md): projects on other machines.
 - [Platforms](docs/platforms.md): what differs on each.
 - [Testing](docs/testing.md) and [CI and releases](docs/release.md).

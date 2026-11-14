@@ -25,6 +25,7 @@ const reviewing: KeyContext = { focus: "changes", reviewing: true };
 describe("resolveAction", () => {
   it("maps the palette, the jump to who needs you, and the zoom", () => {
     expect(resolveAction(mod("p", { shiftKey: true }))).toEqual({ type: "palette" });
+    expect(resolveAction(mod("p"))).toEqual({ type: "goto" });
     expect(resolveAction(mod("."))).toEqual({ type: "attention" });
     expect(resolveAction(mod("="))).toEqual({ type: "zoom", step: 1 });
     expect(resolveAction(mod("-"))).toEqual({ type: "zoom", step: -1 });
@@ -59,9 +60,10 @@ describe("resolveAction", () => {
     expect(resolveAction(ctrl("="), { mac: false })).toEqual({ type: "zoom", step: 1 });
   });
 
-  it("opens the palette on Cmd+; in the vim preset", () => {
+  it("opens the palettes on Cmd+; and Cmd+P in the vim preset", () => {
     applyPreset("vim");
     expect(resolveAction(mod(";"))).toEqual({ type: "palette" });
+    expect(resolveAction(mod("p"))).toEqual({ type: "goto" });
   });
 
   it("maps modifier digits to pane focus", () => {

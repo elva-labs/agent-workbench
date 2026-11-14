@@ -29,6 +29,7 @@ default preset:
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd>                              | Cycle theme: light, dark, system                            |
 | <kbd>Cmd</kbd><kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd>                | Zoom the terminal that has focus in, out, or back           |
+| <kbd>Cmd</kbd><kbd>P</kbd>                                              | Go to a session or project                                  |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd>                              | Open the command palette                                    |
 | <kbd>Cmd</kbd><kbd>,</kbd>                                              | Open the settings                                           |
 
@@ -50,36 +51,72 @@ The **Vim** preset lays movement between panes on <kbd>h</kbd>, <kbd>j</kbd>,
 <kbd>k</kbd> and <kbd>l</kbd>, as the panes lie: sessions to the left,
 changes to the right, the terminal below, the agent above it. The terminal
 panel toggles on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>J</kbd>, and sessions
-step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The palette
-opens on <kbd>Cmd</kbd><kbd>;</kbd> there, since <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd>
-steps sessions.
+step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The command
+palette opens on <kbd>Cmd</kbd><kbd>;</kbd> there, since
+<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> steps sessions. Going to a session
+or project stays on <kbd>Cmd</kbd><kbd>P</kbd>.
 
-## The command palette
+## The palettes
 
-<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> puts a field over the workbench
-listing every session and every action the keys can do. What is typed
-narrows the list to the entries holding every word of it, in any order, as
-[the tree's filter](layout.md#the-field-above-the-tree) does. Sessions are
-listed in three groups, the ones that need you, the ones at work and the
-rest, each in the order its sessions last changed, the latest first, and
-each session says where it belongs: its project, the orchestrator that
-started it, and the line it left. Picking one does what a click on its row
-does. An action is listed with its chord, and picking one does what the
-chord does. The first entry goes to the next session that needs you, as
-<kbd>Cmd</kbd><kbd>.</kbd> does (see
-[sessions](sessions.md#active-and-inactive)). It shows how many are waiting, and with
-none it cannot be picked.
-
+Two lists share one field over the workbench. What is typed narrows the
+list to the entries holding every word of it, in any order, as
+[the tree's filter](layout.md#the-field-above-the-tree) does.
 <kbd>Up</kbd> and <kbd>Down</kbd> move the cursor and <kbd>Enter</kbd>
-picks. <kbd>Escape</kbd> or the chord again puts the palette away, and the
-keyboard goes back where it was. While it is up, the palette has the
-keyboard and no chord reaches past it, except that Settings opened from the
-app's menu puts the palette away first. The cursor stays on the same entry
-while sessions change state under it.
+picks. The cursor starts on the first entry that can be picked, and stays on
+the same entry while sessions change state and move under it.
 
-While a dialog, or a question over the agent pane, is up, the palette's
-chord does not open it and <kbd>Cmd</kbd><kbd>.</kbd> does nothing, so the
-keyboard stays where the dialog has it.
+**Go to** opens on <kbd>Cmd</kbd><kbd>P</kbd> and lists the sessions, then the
+projects. A session matches on its name or on the label of its project.
+Sessions are listed by when they last changed, the latest first, each with a
+dot for its state, its project and the time since. With nothing typed the
+cursor starts on the first session that is not the one on screen, so Enter
+goes to the previous one. Every open project is listed, with how many sessions
+are live in it or the time since it was last used, the most recently used
+first. <kbd>Enter</kbd> on a session shows it and puts the keyboard in its
+agent, as a click on its row does. On a project it brings the project forward,
+with the keyboard in the session on screen or, for a project with none, in the
+sessions pane. A sessions pane that is folded opens for that, or peeks over
+the agent while reviewing, so the viewer stays, and in a window too narrow for
+the pane it stays as the user set it and the keyboard goes to the agent pane's
+New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session
+in that project, as below. A <kbd>&gt;</kbd> typed as the first character
+switches to the commands, with the rest of what was typed. With nothing open
+the list holds one row, Open project. The footer names only what the list on
+screen can do.
+
+**Commands** open on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> and list every
+action the keys can do, each with its chord, and the ones that have none: new
+session, new session in the project on screen, open project and open remote
+project. Picking an action does what its chord does. The first entry goes to
+the next session that needs you, as <kbd>Cmd</kbd><kbd>.</kbd> does (see
+[sessions](sessions.md)). It shows how many are waiting, and with none it
+cannot be picked.
+
+**A new session** is asked for in the same field, a step at a time. First the
+project, unless only one is open: the one on screen above the others, then by
+when they were last used. Then the account, when accounts are named in the
+[settings](settings.md#accounts), with the project's own under the cursor;
+then the agent, when more than one is installed, with the one last started in
+the project under the cursor. A step with nothing to choose is not asked. Each
+answer stays in the field as a chip, and <kbd>Backspace</kbd> on an empty
+field takes the last one back, one step to a press however long the key is
+held; from the first step it returns to the commands with what was typed there
+still in the field. The last answer brings the project forward and starts the
+session the way the new-session row of the sessions pane does, and the
+keyboard goes to the new agent.
+
+<kbd>Escape</kbd> puts the palette away from any step, and so does the chord
+of the list that is up: <kbd>Cmd</kbd><kbd>P</kbd> for go to,
+<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> for the commands and a new session.
+The other chord switches to its list. The keyboard goes back where it was.
+While the palette is up it has the keyboard and no other chord reaches past
+it, except that Settings opened from the app's menu puts the palette away
+first.
+
+While a dialog, or a question over the agent pane, is up, neither chord opens
+a palette and <kbd>Cmd</kbd><kbd>.</kbd> does nothing, so the keyboard stays
+where the dialog has it. Answering the question gives the keyboard back to
+the pane that has the focus.
 
 ## What the app never claims
 
@@ -90,11 +127,16 @@ keyboard stays where the dialog has it.
   modifier is <kbd>Cmd</kbd>. On Windows and Linux the modifier is
   <kbd>Ctrl</kbd>, so the bound chords are taken from the terminal there,
   and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them.
-- **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent
-  needs it, and so does a shell in the panel. A pane that owns focus may use
-  it: the file viewer closes on it and leaves the keyboard in the tree, and
-  a list pane hands the keyboard back to the agent. This is the one key whose meaning depends on context, so
-  the resolution takes the focus state and lives in one testable place.
+- **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
+  it, and so does a shell in the panel. A pane that owns focus may use it: the
+  file viewer closes on it and leaves the keyboard in the tree, and a list
+  pane hands the keyboard back to the agent. This is the one key whose meaning
+  depends on context, so the resolution takes the focus state and lives in one
+  testable place.
+- **A pane that goes away does not keep the keyboard.** When the window
+  narrows past the sessions or changes pane while it has focus, the keyboard
+  goes to the agent pane. A dialog or the palette that holds the keyboard
+  at that moment keeps it, and hands it to the agent pane when it goes.
 - **<kbd>Shift</kbd><kbd>Enter</kbd> is a new line in the agent pane.** The
   terminal would send the same carriage return as for <kbd>Enter</kbd>, so
   the app sends Meta+Enter, which Claude Code takes as a newline. A shell in

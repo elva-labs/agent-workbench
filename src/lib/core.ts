@@ -27,7 +27,13 @@ export type AgentId = "claude-code" | "codex";
 export interface DetectReport {
   id: string;
   path: string | null;
-  caps: { resumable: boolean; titles: boolean; acp: boolean } | null;
+  caps: {
+    resumable: boolean;
+    titles: boolean;
+    acp: boolean;
+    /** Can run as an integrated session, drawn by the window. */
+    integrated: boolean;
+  } | null;
   /** False when the login shell could not be read, which changes what a
       missing binary means. */
   fromLoginShell: boolean;
@@ -40,6 +46,60 @@ export interface DetectReport {
 export interface AccountDirs {
   claude: string | null;
   codex: string | null;
+}
+
+/** An agent and the name of one of its models. */
+export interface WorkflowModel {
+  agent: AgentId;
+  model: string;
+}
+
+/** A step that does the task, with how many sessions may run at once. An
+    empty `models` allows any model. */
+export interface WorkStep {
+  kind: "work";
+  name: string;
+  models: WorkflowModel[];
+  parallel: number;
+}
+
+/** A step that checks the work. It passes when each condition that is on
+    holds; otherwise the work goes back to the earlier step `backTo`, at
+    most `limit` times, and then the user is asked. */
+export interface ReviewStep {
+  kind: "review";
+  name: string;
+  models: WorkflowModel[];
+  reviewerApproves: boolean;
+  orchestratorAgrees: boolean;
+  backTo: string;
+  limit: number;
+}
+
+export type WorkflowStep = WorkStep | ReviewStep;
+
+/** A workflow in the settings file that does not read or keep the rules.
+    It is not used, and the file keeps it where it stood, with the default
+    and the project choices that named it, until the user removes it. */
+export interface UnreadWorkflow {
+  name: string | null;
+  /** The rule it breaks. */
+  reason: string;
+  /** The entry as the file holds it. */
+  entry: unknown;
+  /** Where it stands in the file's list. */
+  at: number;
+  /** Whether the file names it as the workflow new sessions start with. */
+  default: boolean;
+  /** The projects whose choice names it. */
+  projects: string[];
+}
+
+/** The model a session starts on, and the steps it hands out. */
+export interface Workflow {
+  name: string;
+  orchestrator: WorkflowModel;
+  steps: WorkflowStep[];
 }
 
 export interface SpawnOptions {
@@ -69,6 +129,391 @@ export interface SpawnOptions {
 export interface Spawned {
   ptyId: string;
   sessionId: string | null;
+}
+
+/** An integrated session: the agent run as a process the core talks to in
+    messages, with no terminal. Started like a pty session, except that the
+    window draws the conversation from `onIntegratedEvent`.
+
+    Events can name an id before the call that hands it back resolves:
+    `ready` may come before `integratedStart` resolves, so the caller keeps
+    the events of an id it does not know yet and plays them once it does.
+    A message's id is the caller's own, chosen before it sends. */
+export interface IntegratedStartOptions {
+  agent: AgentId;
+  project: string;
+  /** Where to run when that is not the project: a worktree under it. */
+  cwd?: string;
+  /** Resume an existing session rather than starting a new one. */
+  session?: string;
+  /** The model to run on, by the name the agent takes. */
+  model?: string;
+  /** The mode to start in, one of those `ready` lists. */
+  mode?: string;
+  /** The effort to start at, one of those `ready` lists. */
+  effort?: string;
+  /** The account's configuration directory, as for `spawn`. */
+  configDir?: string;
+}
+
+/** What starting an integrated session hands back: the id every other
+    command and every event names it by, and the conversation's id where
+    the workbench knows it at the start, the one it chose or resumes. An
+    agent that makes its own ids has none yet: `ready` carries the agent's
+    id either way, and that is the one resuming takes. */
+export interface IntegratedStarted {
+  id: string;
+  sessionId: string | null;
+}
+
+/** Where `integratedTrust` records the user's yes. */
+export type IntegratedTrustOptions = Pick<
+  IntegratedStartOptions,
+  "agent" | "project" | "cwd" | "configDir"
+>;
+
+/** What a start fails with, before the folder, in a folder the agent does
+    not hold as trusted. The window asks the user, and on a yes records it
+    with `integratedTrust` and starts again. */
+export const INTEGRATED_UNTRUSTED = "untrusted";
+
+/** Whether a failed `integratedStart` failed because the folder is not
+    trusted. */
+export function isUntrusted(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith(`${INTEGRATED_UNTRUSTED}:`);
+}
+
+/** An image attached to a message: base64 data and its media type, one of
+    png, jpeg, gif or webp. */
+export interface IntegratedImage {
+  mediaType: string;
+  data: string;
+}
+
+/** An answer to a permission request. `allowSession` and `allowAlways`
+    keep what their offer says they remember; `deny` lets the turn go on
+    and `cancel` stops it. */
+export type PermissionChoice =
+  | "allow"
+  | "allowSession"
+  | "allowAlways"
+  | "deny"
+  | "cancel";
+
+/** One answer a permission request takes. `remembers` says, in words to
+    show, what the choice keeps beyond this call; `message` whether it
+    carries the user's words to the agent. A choice with nothing precise to
+    remember is never offered. */
+export interface PermissionOffer {
+  choice: PermissionChoice;
+  remembers: string | null;
+  message: boolean;
+}
+
+/** What a session is doing, for its row. `working` while a turn runs, a
+    message waits, the conversation is compacted or a subagent is at work
+    or about to report; `asking` while a permission or a question waits for
+    an answer; `idle` otherwise. */
+export type IntegratedState = "working" | "asking" | "idle";
+
+/** What the session runs on, as `integratedConfigure` answers it. */
+export interface IntegratedSettings {
+  model: string | null;
+  mode: string | null;
+  effort: string | null;
+}
+
+export interface IntegratedHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  /** Each starting with `+`, `-` or a space. */
+  lines: string[];
+}
+
+/** A file a tool call changed: `create` with its content, `update` with
+    its hunks, `delete` with neither, `move` with `to` and hunks if it also
+    changed. Paths have the host on them for a remote session. */
+export interface IntegratedFileChange {
+  path: string;
+  kind: "create" | "update" | "delete" | "move";
+  to: string | null;
+  hunks: IntegratedHunk[];
+  content: string | null;
+  /** The content or the hunks were cut short. */
+  truncated: boolean;
+}
+
+/** The tokens a turn took: all the model read, cached or not, with how
+    many came from a cache, and all it wrote, with how many were
+    reasoning. */
+export interface IntegratedUsage {
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+/** What sort of tool a call is, whatever the agent calls it. */
+export type IntegratedToolKind =
+  | "command"
+  | "edit"
+  | "read"
+  | "search"
+  | "web"
+  | "mcp"
+  | "agent"
+  | "other";
+
+export interface IntegratedPlanStep {
+  text: string;
+  status: "pending" | "active" | "done";
+}
+
+/** One thing the agent asks. `multiple` when more than one option may be
+    picked; `secret` when the answer is one not to show, such as a
+    password, which no window is told; `other` when the user may answer in
+    words of their own rather than with an option. */
+export interface IntegratedQuestion {
+  header: string | null;
+  question: string;
+  options: { label: string; description: string | null }[];
+  multiple: boolean;
+  secret: boolean;
+  other: boolean;
+}
+
+/** A session's news, by `type`. Text, thinking, tool calls, plans and
+    requests carry `parent`: the tool call that started the subagent they
+    belong to, or null in the main conversation. */
+export type IntegratedEventBody =
+  /** Sent once, before anything else. `sessionId` is the agent's id for
+      the conversation, the one resuming takes, whatever the start said.
+      `efforts` are those of the model it runs on; each model lists its
+      own. */
+  | {
+      type: "ready";
+      sessionId: string;
+      model: string | null;
+      mode: string | null;
+      effort: string | null;
+      version: string | null;
+      models: {
+        value: string;
+        name: string | null;
+        description: string | null;
+        efforts: string[];
+      }[];
+      modes: { value: string; name: string; description: string | null }[];
+      efforts: string[];
+      commands: { name: string; description: string | null; hint: string | null }[];
+    }
+  /** The model, mode or effort changed; all as they now are. */
+  | {
+      type: "configured";
+      model: string | null;
+      mode: string | null;
+      effort: string | null;
+      efforts: string[];
+    }
+  /** Where a sent message stands before the turn that answers it: sent
+      to the agent with nothing ahead of it, waiting behind a running turn,
+      taken into the running turn, or dropped. The first event for a
+      message, `sent` or `queued`, carries its text and images as they were
+      sent, so any window can draw it; the others carry neither. */
+  | {
+      type: "message";
+      message: string;
+      state: "sent" | "queued" | "taken" | "dropped";
+      error: string | null;
+      text: string | null;
+      images: IntegratedImage[];
+    }
+  /** The messages the turn answers, by the ids they were sent with; one
+      turn may answer several. Empty for a turn the agent began itself. */
+  | { type: "turnStarted"; messages: string[] }
+  /** `totalCostUsd` is the agent's running total for its process, not the
+      turn's cost; `durationMs` and `usage` are the turn's own. */
+  | {
+      type: "turnEnded";
+      outcome: "done" | "interrupted" | "failed";
+      error: string | null;
+      totalCostUsd: number | null;
+      durationMs: number | null;
+      usage: IntegratedUsage | null;
+    }
+  /** While a block streams `done` is false and `text` the piece that came;
+      once complete `done` is true and `text` the whole block. */
+  | { type: "text"; block: string; parent: string | null; text: string; done: boolean }
+  | { type: "thinking"; block: string; parent: string | null; text: string; done: boolean }
+  /** `name` is the agent's own name for the tool, `kind` what sort it is. */
+  | {
+      type: "toolStarted";
+      call: string;
+      parent: string | null;
+      name: string;
+      kind: IntegratedToolKind;
+    }
+  /** `delta` while the input streams as JSON text; `input` once whole, in
+      the agent's own shape. */
+  | {
+      type: "toolInput";
+      call: string;
+      parent: string | null;
+      delta: string | null;
+      input: unknown;
+      truncated: boolean;
+    }
+  | { type: "toolOutput"; call: string; parent: string | null; delta: string }
+  /** A call the turn ended without finishing finishes as an error with no
+      output. */
+  | {
+      type: "toolFinished";
+      call: string;
+      parent: string | null;
+      output: string;
+      error: boolean;
+      truncated: boolean;
+      changes: IntegratedFileChange[];
+    }
+  /** The agent's plan, whole each time: written out, or as steps. */
+  | {
+      type: "plan";
+      call: string | null;
+      parent: string | null;
+      text: string | null;
+      steps: IntegratedPlanStep[];
+    }
+  /** Everything the turn has changed so far, as one unified diff. */
+  | { type: "turnDiff"; diff: string; truncated: boolean }
+  /** Answered with `integratedAnswer` and one of `choices`. */
+  | {
+      type: "permissionAsked";
+      request: string;
+      call: string | null;
+      parent: string | null;
+      tool: string;
+      input: unknown;
+      truncated: boolean;
+      description: string | null;
+      path: string | null;
+      choices: PermissionOffer[];
+    }
+  /** Answered with `integratedReply`. */
+  | {
+      type: "questionAsked";
+      request: string;
+      call: string | null;
+      parent: string | null;
+      questions: IntegratedQuestion[];
+    }
+  /** A permission or a question was answered, from this window or
+      another: a permission with its choice, a question with `allow` and
+      the answers, or `deny` and none when declined. A secret question's
+      answer is left out, as null in its place. `message` is what went to
+      the agent with a denial. */
+  | {
+      type: "answered";
+      request: string;
+      choice: PermissionChoice;
+      answers: (string[] | null)[] | null;
+      message: string | null;
+    }
+  /** The agent stopped waiting for that permission or question. */
+  | { type: "withdrawn"; request: string }
+  /** `ambient`: housekeeping the agent does on its own account, which
+      never keeps the session working and may be left out of the
+      conversation. */
+  | {
+      type: "taskStarted";
+      task: string;
+      call: string | null;
+      kind: "agent" | "shell" | "other";
+      description: string | null;
+      prompt: string | null;
+      background: boolean;
+      ambient: boolean;
+    }
+  | {
+      type: "taskProgress";
+      task: string;
+      call: string | null;
+      tool: string | null;
+      description: string | null;
+    }
+  /** `lost`: ended without a word of how, by the time the agent's turn or
+      its work as a whole was over. `reports`: the agent reports it in a
+      turn of its own, which it begins by itself once no turn runs. */
+  | {
+      type: "taskFinished";
+      task: string;
+      call: string | null;
+      status: "completed" | "failed" | "stopped" | "lost";
+      summary: string | null;
+      reports: boolean;
+    }
+  | { type: "compacting" }
+  /** `asked` when the user or the window asked for it, `full` when the
+      context window was full. */
+  | {
+      type: "compacted";
+      reason: "asked" | "full" | null;
+      tokensBefore: number | null;
+      tokensAfter: number | null;
+    }
+  /** How much of the context window the conversation takes, and how big
+      the window is, in tokens, where the agent reports either. */
+  | { type: "context"; used: number | null; size: number | null }
+  /** Something the agent says that is neither an error nor part of a
+      turn. */
+  | { type: "notice"; level: "info" | "warning"; message: string }
+  /** Streamed pieces left out because the window or its connection fell
+      behind; the whole that follows each holds all of it. */
+  | { type: "skipped"; pieces: number }
+  /** A request to the model failed and the agent tries again; the turn
+      goes on. */
+  | {
+      type: "retrying";
+      message: string;
+      attempt: number | null;
+      attempts: number | null;
+    }
+  /** Sent on every change; the last one is the session's state. */
+  | { type: "state"; state: IntegratedState }
+  /** `notLoggedIn`: the user signs in with the agent in a terminal. */
+  | {
+      type: "error";
+      kind: "notLoggedIn" | "agent" | "protocol" | "process";
+      message: string;
+    }
+  /** The process is gone; nothing follows. */
+  | { type: "ended"; code: number | null; clean: boolean };
+
+/** An event with the session it belongs to. */
+export type IntegratedEvent = IntegratedEventBody & { id: string };
+
+/** What a window that comes to a session late, after a reload or as a
+    second window, reads to catch up on what no transcript holds. It
+    reflects every event that went out before it and none after, so a
+    window that listens first and then asks for it misses nothing.
+
+    `state` is the session's state and `turn` whether a turn runs;
+    `settings` what it runs on and `efforts` those of the model it is on;
+    `ready` the ready event as it went out, null before the agent was
+    ready; `requests` the permissions and questions still waiting for an
+    answer, each as it was asked; `messages` those sent and not yet taken
+    into a turn, in the order sent, each as its first message event told
+    it, with its text and images. */
+export interface IntegratedSnapshot {
+  state: IntegratedState;
+  turn: boolean;
+  settings: IntegratedSettings;
+  efforts: string[];
+  ready: Extract<IntegratedEventBody, { type: "ready" }> | null;
+  requests: Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>[];
+  messages: Extract<IntegratedEventBody, { type: "message" }>[];
 }
 
 /** A transition reported by an agent hook or session log, by session id:
@@ -570,6 +1015,16 @@ export interface Settings {
     everywhere: string | null;
     overrides: Record<string, string | null>;
   };
+  /** The workflows in the order they are shown, the name of the one new
+      sessions start with (null is none), and the projects that choose
+      another, each naming a workflow or null for none. */
+  workflows: {
+    list: Workflow[];
+    default: string | null;
+    overrides: Record<string, string | null>;
+    /** The workflows in the file that are not used, carried as written. */
+    unread?: UnreadWorkflow[];
+  };
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
   pastSessions: PastSessions;
@@ -637,6 +1092,57 @@ export interface Core {
     options: SpawnOptions,
     onOutput: (bytes: Uint8Array) => void,
   ): Promise<Spawned>;
+  /** Starts an agent as an integrated session. Its news arrives through
+      `onIntegratedEvent`, `ready` first, possibly before this resolves.
+      Fails with an error `isUntrusted` knows in a folder the agent does
+      not trust. */
+  integratedStart(options: IntegratedStartOptions): Promise<IntegratedStarted>;
+  /** Records that the user trusts the folder a session would run in. */
+  integratedTrust(options: IntegratedTrustOptions): Promise<void>;
+  /** Sends the user's message under `message`, a UUID the caller chose and
+      has not used in the session; events name the message by it. */
+  integratedSend(
+    id: string,
+    message: string,
+    text: string,
+    images?: IntegratedImage[],
+  ): Promise<void>;
+  /** Stops the running turn. Queued messages stay queued. The turn's end
+      arrives as an event afterwards. */
+  integratedInterrupt(id: string): Promise<void>;
+  /** Compacts the conversation, in the agent's own way. Resolves once
+      asked; `compacting` and `compacted` follow. */
+  integratedCompact(id: string): Promise<void>;
+  /** Answers a permission request with a choice it offered; `message`
+      goes with a choice that takes one. */
+  integratedAnswer(
+    id: string,
+    request: string,
+    choice: PermissionChoice,
+    message?: string,
+  ): Promise<void>;
+  /** Answers a question: per question, the labels picked or, where the
+      question takes them, the user's own words. Null declines to answer. */
+  integratedReply(
+    id: string,
+    request: string,
+    answers: string[][] | null,
+  ): Promise<void>;
+  /** Switches the model, mode or effort, each that is given. Resolves to
+      what the session now runs on. */
+  integratedConfigure(
+    id: string,
+    settings: { model?: string; mode?: string; effort?: string },
+  ): Promise<IntegratedSettings>;
+  /** What a window that comes to the session late reads to catch up.
+      Resolves once every event that went out before it has arrived. */
+  integratedSnapshot(id: string): Promise<IntegratedSnapshot>;
+  /** Ends the session. Resolves at once; `ended` follows. */
+  integratedStop(id: string): Promise<void>;
+  /** Every integrated session's news, each event naming its session. */
+  onIntegratedEvent(
+    handler: (event: IntegratedEvent) => void,
+  ): Promise<() => void>;
   /** Resolves to the pty id. Ended like a session, through `onSessionEnded`. */
   spawnShell(
     options: ShellOptions,
@@ -891,6 +1397,13 @@ export interface Core {
       goes into the agents' state under every account given, as well as
       the agents' own. */
   hookStatus(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
+  /** The status of each project, in the order given, from one read of every
+      account's state. A project on a machine that cannot be reached answers
+      null. */
+  hookStatusMany(
+    projects: string[],
+    accounts: AccountDirs[],
+  ): Promise<(HookStatus | null)[]>;
   hookInstall(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
   hookUninstall(project: string, accounts: AccountDirs[]): Promise<HookStatus>;
 
@@ -1004,6 +1517,37 @@ const tauriCore: Core = {
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => onOutput(toBytes(message));
     return invoke<string>("pty_shell", { ...options, onOutput: channel });
+  },
+
+  integratedStart: (options) =>
+    invoke<IntegratedStarted>("integrated_start", { ...options }),
+  integratedTrust: (options) => invoke<void>("integrated_trust", { ...options }),
+  integratedSend: (id, message, text, images) =>
+    invoke<void>("integrated_send", { id, message, text, images: images ?? [] }),
+  integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
+  integratedCompact: (id) => invoke<void>("integrated_compact", { id }),
+  integratedAnswer: (id, request, choice, message) =>
+    invoke<void>("integrated_answer", {
+      id,
+      request,
+      choice,
+      message: message ?? null,
+    }),
+  integratedReply: (id, request, answers) =>
+    invoke<void>("integrated_reply", { id, request, answers }),
+  integratedConfigure: (id, settings) =>
+    invoke<IntegratedSettings>("integrated_configure", {
+      id,
+      model: settings.model ?? null,
+      mode: settings.mode ?? null,
+      effort: settings.effort ?? null,
+    }),
+  integratedSnapshot: (id) => invoke<IntegratedSnapshot>("integrated_snapshot", { id }),
+  integratedStop: (id) => invoke<void>("integrated_stop", { id }),
+  async onIntegratedEvent(handler) {
+    return listen<IntegratedEvent>("integrated_event", (event) =>
+      handler(event.payload),
+    );
   },
 
   write: (id, data) => invoke("pty_write", { id, data }),
@@ -1217,6 +1761,8 @@ const tauriCore: Core = {
 
   hookStatus: (project, accounts) =>
     invoke<HookStatus>("hook_status", { project, accounts }),
+  hookStatusMany: (projects, accounts) =>
+    invoke<(HookStatus | null)[]>("hook_status_many", { projects, accounts }),
   hookInstall: (project, accounts) =>
     invoke<HookStatus>("hook_install", { project, accounts }),
   hookUninstall: (project, accounts) =>
@@ -1283,6 +1829,29 @@ const detachedCore: Core = {
   },
   async spawnShell() {
     throw new Error("not connected to the workbench core");
+  },
+  async integratedStart() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedTrust() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedSend() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedInterrupt() {},
+  async integratedCompact() {},
+  async integratedAnswer() {},
+  async integratedReply() {},
+  async integratedConfigure() {
+    return { model: null, mode: null, effort: null };
+  },
+  async integratedSnapshot() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedStop() {},
+  async onIntegratedEvent() {
+    return () => {};
   },
   async write() {},
   async resize() {},
@@ -1491,6 +2060,13 @@ const detachedCore: Core = {
   },
   async hookStatus(project) {
     return { installed: false, settings: project, events: "" };
+  },
+  async hookStatusMany(projects) {
+    return projects.map((project) => ({
+      installed: false,
+      settings: project,
+      events: "",
+    }));
   },
   async hookInstall(project) {
     return { installed: false, settings: project, events: "" };

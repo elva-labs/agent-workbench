@@ -13,7 +13,7 @@
   import Resume from "$lib/components/Resume.svelte";
   import { resume } from "$lib/resume.svelte";
   import Palette from "$lib/components/Palette.svelte";
-  import { closePalette, openPalette, palette } from "$lib/palette.svelte";
+  import { closePalette, openCommands, openGoTo, palette } from "$lib/palette.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
@@ -130,7 +130,8 @@
   // so the plugins running there know them.
   watchPluginProjects();
 
-  // Every project opened is brought to the hooks answer, once.
+  // Every project opened after the start is brought to the hooks answer,
+  // once; the ones the window opened with are asked about together.
   $effect(() => {
     for (const project of workspace.open) ensureHooks(project.path);
   });
@@ -472,16 +473,17 @@
     // they do nothing and the webview gets nothing from them either. The
     // chord still puts an open palette away.
     if (
-      (action.type === "attention" || (action.type === "palette" && !palette.open)) &&
+      (action.type === "attention" ||
+        ((action.type === "palette" || action.type === "goto") && !palette.open)) &&
       dialogUp()
     ) {
       e.preventDefault();
       return;
     }
-    // The palette holds the keyboard while it is up: only its own chord,
-    // which puts it away, gets past it. The others are swallowed so the
-    // native menu does not act on them.
-    if (palette.open && action.type !== "palette") {
+    // The palette holds the keyboard while it is up: only its own chords,
+    // which put it away or switch its list, get past it. The others are
+    // swallowed so the native menu does not act on them.
+    if (palette.open && action.type !== "palette" && action.type !== "goto") {
       e.preventDefault();
       return;
     }
@@ -559,9 +561,13 @@
       case "zoom":
         zoomTerminal(action.step);
         break;
+      case "goto":
+        if (palette.open && palette.mode === "goto") closePalette();
+        else openGoTo();
+        break;
       case "palette":
-        if (palette.open) closePalette();
-        else openPalette();
+        if (palette.open && palette.mode !== "goto") closePalette();
+        else openCommands();
         break;
       default:
         action satisfies never;
@@ -702,7 +708,7 @@
 {#if resume.open}
   <Resume />
 {/if}
-{#if palette.open}
+{#if palette.open || palette.leaving}
   <Palette {perform} />
 {/if}
 {#if pluginSections.pending !== null}

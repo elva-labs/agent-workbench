@@ -50,8 +50,16 @@ pub fn take_opened(launches: State<'_, Launches>) -> Vec<String> {
 }
 
 /// The app's run loop events. On macOS the folders `open` names arrive as
-/// one, whether the app was running or is starting for them.
+/// one, whether the app was running or is starting for them. When the app
+/// exits, its integrated sessions are stopped, so that no agent outlives
+/// it.
 pub fn on_event(app: &AppHandle, event: RunEvent) {
+    if let RunEvent::Exit = event {
+        if let Some(core) = app.try_state::<std::sync::Arc<workbench_core::Core>>() {
+            core.integrated_stop_all();
+        }
+        return;
+    }
     #[cfg(target_os = "macos")]
     if let RunEvent::Opened { urls } = event {
         let folders = urls

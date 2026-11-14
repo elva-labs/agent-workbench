@@ -25,7 +25,7 @@
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";
   import { loadKeys } from "$lib/keys.svelte";
-  import { loadHooks } from "$lib/hook.svelte";
+  import { loadHooks, startChecks } from "$lib/hook.svelte";
   import { followSettings } from "$lib/preferences.svelte";
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
@@ -33,7 +33,7 @@
   import { loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
   import { reopen } from "$lib/reopen.svelte";
-  import { followOpenRequests, restore } from "$lib/workspace.svelte";
+  import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
 
   let { children } = $props();
 
@@ -62,9 +62,17 @@
     // in front. A project on another machine brings its sessions back when
     // it arrives; nothing here waits for it.
     let stopReopen = () => {};
+    // The projects the window opened with are asked about together: those
+    // on this machine when they are in, and each other machine's when its
+    // projects have arrived or been given up.
+    const open = () => workspace.open.map((project) => project.path);
+    let arrivals: ReadonlyMap<string, Promise<void>> = new Map();
     const restored = restore().then((arriving) => {
+      arrivals = arriving;
       if (!closed) stopReopen = reopen(arriving);
     });
+    const startHooks = () => startChecks(open, arrivals);
+    void restored.then(startHooks, startHooks);
     const stopOpening = followOpenRequests(restored);
     return () => {
       closed = true;

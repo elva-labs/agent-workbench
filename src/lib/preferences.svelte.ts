@@ -11,6 +11,7 @@
 
 import { adoptAccounts, accountsSettings } from "$lib/accounts.svelte";
 import { core, type Settings } from "$lib/core";
+import { adoptWorkflows, workflowsSettings } from "$lib/workflows.svelte";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptPastSessions, pastSessionsSettings } from "$lib/sessions.svelte";
 import { adoptInactiveAfter, inactiveAfterSettings } from "$lib/projects.svelte";
@@ -28,6 +29,7 @@ export function currentSettings(): Settings {
     keys: { ...keys.bindings },
     hooks: hooksSettings(),
     accounts: accountsSettings(),
+    workflows: workflowsSettings(),
     ...pastSessionsSettings(),
     ...inactiveAfterSettings(),
     userStyles: userStyles.on,
@@ -46,6 +48,7 @@ export function adopt(settings: Settings) {
   // The accounts before the hooks: bringing a project to the hooks answer
   // writes into every account's agent state.
   adoptAccounts(settings.accounts);
+  adoptWorkflows(settings.workflows);
   adoptHooks(
     settings.hooks ?? { everywhere: false, overrides: {} },
     workspace.open.map((project) => project.path),

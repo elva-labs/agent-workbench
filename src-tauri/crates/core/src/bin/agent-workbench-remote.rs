@@ -78,6 +78,8 @@ fn serve() {
             out.send(&answer);
         });
     }
+    // The desktop is gone: no agent is left running for it.
+    core.integrated_stop_all();
 }
 
 /// `connect [--host <address>] [--port <n>]`: pairs this machine with a

@@ -220,3 +220,52 @@ test.describe("a past session under another account", () => {
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
   });
 });
+
+test.describe("a new session from the palette with accounts", () => {
+  const COMMANDS = `${MOD}+Shift+P`;
+  const chosen = (page: Page) =>
+    page.locator("[data-testid='palette-row'][aria-selected='true']");
+
+  test.beforeEach(async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+  });
+
+  test("asks for the account after the project, with the project's own under the cursor", async ({
+    page,
+  }) => {
+    await expect(page.getByTestId("palette-chip")).toHaveText(["New session", "demo"]);
+    await expect(page.getByTestId("palette-field")).toHaveAttribute(
+      "placeholder",
+      "Under which account",
+    );
+    await expect(page.getByTestId("palette-group")).toHaveCount(0);
+    await expect(page.getByTestId("palette-row")).toHaveText([/Default/, /Work/]);
+    await expect(chosen(page)).toContainText("Work");
+    await expect(chosen(page)).toContainText("this project's");
+
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
+    await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
+  });
+
+  test("steps back to the commands, as the one project is not asked", async ({ page }) => {
+    await page.keyboard.press("Backspace");
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "commands");
+  });
+
+  test("starts under another account when the cursor is moved", async ({ page }) => {
+    await page.keyboard.press("ArrowUp");
+    await expect(chosen(page)).toContainText("Default");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBeUndefined();
+    await expect(page.getByTestId("account-readout")).toHaveText("account: Default");
+  });
+});

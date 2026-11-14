@@ -1,8 +1,8 @@
 //! The user's preferences for the workbench, kept in one file per machine.
 //!
 //! The appearance, the look, the palette, the two fonts, the chords the app
-//! claims, the answer on agent hooks and the user's own themes are the
-//! user's, not a window's, so
+//! claims, the answer on agent hooks, the workflows and the user's own
+//! themes are the user's, not a window's, so
 //! they live here under the app's home and every window on the machine
 //! reads the same ones. A change is written whole and moved into place, and
 //! announced as an event carrying the settings as they now are. The file is
@@ -34,6 +34,7 @@ use serde_json::{Map, Value};
 
 use crate::events::{self, Sink};
 use crate::styles::{self, Styles, USER_STYLES_CHANGED};
+use crate::workflow::{self, Workflows};
 
 pub const SETTINGS_CHANGED: &str = "settings_changed";
 
@@ -176,6 +177,9 @@ pub struct Settings {
     pub hooks: Hooks,
     /// The agents' logins kept apart, and which project runs under which.
     pub accounts: Accounts,
+    /// The workflows sessions can follow, the one new sessions start with,
+    /// and which project chooses another.
+    pub workflows: Workflows,
     /// How long a past session stays listed under its project.
     pub past_sessions: String,
     /// How long a project goes unused before the sessions pane folds it.
@@ -205,6 +209,7 @@ impl Default for Settings {
                 overrides: BTreeMap::new(),
             },
             accounts: Accounts::default(),
+            workflows: Workflows::default(),
             past_sessions: "forever".into(),
             inactive_after: "week".into(),
             themes: BTreeMap::new(),
@@ -501,6 +506,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "keys" => settings.keys = keys(value)?,
         "hooks" => settings.hooks = hooks(value)?,
         "accounts" => settings.accounts = accounts(value)?,
+        "workflows" => settings.workflows = workflow::read(value)?,
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
         "inactiveAfter" => settings.inactive_after = one_of(field, value, INACTIVE_AFTER)?,
         other => return Err(format!("there is no setting called {other}")),
@@ -528,7 +534,7 @@ fn settle_palette(settings: &mut Settings) {
 }
 
 /// The settings a file's text holds, each field that does not read left at
-/// its default, and each theme that does not read left out. None when the
+/// its default, and each theme or workflow that does not read left out. None when the
 /// text is not a JSON object at all.
 pub fn parse(text: &str) -> Option<Settings> {
     let fields: Map<String, Value> = serde_json::from_str(text).ok()?;
@@ -536,6 +542,8 @@ pub fn parse(text: &str) -> Option<Settings> {
     for (field, value) in in_order(&fields) {
         if field == "themes" {
             settings.themes = themes(value, true).unwrap_or_default();
+        } else if field == "workflows" {
+            settings.workflows = workflow::read_lenient(value);
         } else {
             let _ = set_field(&mut settings, field, value);
         }
@@ -544,7 +552,8 @@ pub fn parse(text: &str) -> Option<Settings> {
 }
 
 /// The settings with a change laid over them. The change names only the
-/// fields it changes; keys, hooks, accounts and themes are replaced whole.
+/// fields it changes; keys, hooks, accounts, workflows and themes are replaced
+/// whole.
 pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     let fields = change
         .as_object()
@@ -557,8 +566,14 @@ pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     Ok(next)
 }
 
+/// The settings as the file holds them, with the workflows that are not
+/// used written back where they stood.
 fn render(settings: &Settings) -> String {
-    let text = serde_json::to_string_pretty(settings).unwrap_or_default();
+    let mut value = serde_json::to_value(settings).unwrap_or(Value::Null);
+    if let Some(fields) = value.as_object_mut() {
+        fields.insert("workflows".into(), workflow::for_file(&settings.workflows));
+    }
+    let text = serde_json::to_string_pretty(&value).unwrap_or_default();
     format!("{text}\n")
 }
 
@@ -947,6 +962,125 @@ mod tests {
             parse(r#"{ "inactiveAfter": 7 }"#).unwrap().inactive_after,
             "week"
         );
+    }
+
+    #[test]
+    fn a_fresh_machine_has_the_default_workflow_and_marks_it_for_new_sessions() {
+        let home = home("workflows-fresh");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load();
+        assert!(!loaded.stored);
+        let workflows = &loaded.settings.workflows;
+        assert_eq!(workflows.list.len(), 1);
+        assert_eq!(workflows.default.as_deref(), Some(workflow::DEFAULT_NAME));
+        assert!(workflows.overrides.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_workflows_loads_and_gets_the_default() {
+        let parsed = parse(r#"{ "palette": "rose", "accounts": { "list": {} } }"#).unwrap();
+        assert_eq!(parsed.palette, "rose");
+        assert_eq!(parsed.workflows, Workflows::default());
+        let home = home("workflows-old");
+        std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
+        std::fs::write(settings_path(&home), r#"{ "look": "terminal" }"#).unwrap();
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load();
+        assert!(loaded.stored);
+        assert_eq!(loaded.settings.workflows, Workflows::default());
+        // The next write puts them in the file.
+        store.set(&json!({ "palette": "mono" })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["default"], workflow::DEFAULT_NAME);
+        assert_eq!(value["workflows"]["list"][0]["steps"][1]["kind"], "review");
+    }
+
+    #[test]
+    fn workflows_are_replaced_whole_and_checked_before_anything_is_written() {
+        let home = home("workflows-change");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        let next = store
+            .set(&json!({ "workflows": {
+                "list": [{
+                    "name": "Quick",
+                    "orchestrator": { "agent": "claude-code", "model": "opus" },
+                    "steps": [{ "kind": "work", "name": "Do", "models": [], "parallel": 2 }]
+                }],
+                "default": null,
+                "overrides": { "/p": "Quick" }
+            } }))
+            .unwrap();
+        assert_eq!(next.workflows.list[0].name, "Quick");
+        assert_eq!(next.workflows.default, None);
+        assert_eq!(store.load().settings, next);
+
+        let error = store
+            .set(&json!({ "workflows": { "list": [], "default": "Gone" } }))
+            .unwrap_err();
+        assert!(error.contains("no workflow called Gone"), "{error}");
+        assert!(store.set(&json!({ "workflows": "none" })).is_err());
+        assert_eq!(store.load().settings, next, "nothing was written");
+        assert_eq!(changes(&recorder).len(), 1);
+    }
+
+    #[test]
+    fn a_workflow_in_the_file_that_does_not_read_is_set_aside_and_survives_every_write() {
+        let home = home("workflows-partly");
+        std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
+        let mut good = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        good["name"] = json!("Mine");
+        let mut bad = good.clone();
+        bad["name"] = json!("Hand edited");
+        bad["steps"][1]["limit"] = json!(11);
+        let file = json!({ "workflows": {
+            "list": [bad, good],
+            "default": "Hand edited",
+            "overrides": { "/p": "Mine", "/q": "Hand edited" }
+        } });
+        std::fs::write(settings_path(&home), file.to_string()).unwrap();
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings.workflows;
+        assert_eq!(loaded.list.len(), 1);
+        assert_eq!(loaded.list[0].name, "Mine");
+        assert_eq!(loaded.default, None);
+        assert_eq!(loaded.unread.len(), 1);
+        assert_eq!(loaded.unread[0].name.as_deref(), Some("Hand edited"));
+
+        // An unrelated change writes the file with the entry as it was.
+        store.set(&json!({ "palette": "mono" })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"], file["workflows"]);
+
+        // So does a change to the workflows that carries it.
+        let mut carried = serde_json::to_value(&loaded).unwrap();
+        carried["list"][0]["orchestrator"]["model"] = json!("opus");
+        store.set(&json!({ "workflows": carried })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["list"][0], bad);
+        assert_eq!(
+            value["workflows"]["list"][1]["orchestrator"]["model"],
+            "opus"
+        );
+        assert_eq!(value["workflows"]["default"], "Hand edited");
+
+        // Removing it removes it, with the choices that named it.
+        carried["unread"] = json!([]);
+        store.set(&json!({ "workflows": carried })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["workflows"]["list"].as_array().unwrap().len(), 1);
+        assert_eq!(value["workflows"]["default"], Value::Null);
+        assert_eq!(value["workflows"]["overrides"], json!({ "/p": "Mine" }));
+
+        let parsed = parse(r#"{ "workflows": "none" }"#).unwrap();
+        assert_eq!(parsed.workflows, Workflows::default());
+        let parsed = parse(r#"{ "workflows": { "list": [], "default": null } }"#).unwrap();
+        assert!(parsed.workflows.list.is_empty());
+        assert_eq!(parsed.workflows.default, None);
     }
 
     #[test]

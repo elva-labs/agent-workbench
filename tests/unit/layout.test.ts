@@ -152,6 +152,46 @@ describe("responsive collapse", () => {
     expect(sessionsVisible()).toBe(false);
   });
 
+  it("moves the focus to the agent when the window narrows past the pane that has it", () => {
+    applyLayout(1600);
+    focusPane("sessions");
+    expect(layout.focus).toBe("sessions");
+    const before = layout.focusRequest;
+    applyLayout(500);
+    expect(layout.focus).toBe("agent");
+    expect(layout.focusRequest).toBeGreaterThan(before);
+    applyLayout(1600);
+    focusPane("changes");
+    applyLayout(NEEDS_CHANGES - 1);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("does not ask for the keyboard when a dialog holds it as the window narrows past the pane", () => {
+    applyLayout(1600);
+    focusPane("sessions");
+    const dialog = document.createElement("div");
+    dialog.setAttribute("aria-modal", "true");
+    const field = document.createElement("input");
+    dialog.append(field);
+    document.body.append(dialog);
+    field.focus();
+    const asked = layout.focusRequest;
+    applyLayout(500);
+    expect(layout.focus).toBe("agent");
+    expect(layout.focusRequest).toBe(asked);
+    expect(document.activeElement).toBe(field);
+    dialog.remove();
+  });
+
+  it("asks for the keyboard when it is on the page body as the window narrows past the pane", () => {
+    applyLayout(1600);
+    focusPane("sessions");
+    (document.activeElement as HTMLElement | null)?.blur();
+    const asked = layout.focusRequest;
+    applyLayout(500);
+    expect(layout.focusRequest).toBe(asked + 1);
+  });
+
   it("never persists a forced collapse", () => {
     applyLayout(500);
     saveLayout();
