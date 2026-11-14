@@ -113,7 +113,9 @@ A work step runs no more sessions at once than it says. A start past that
 is refused with the sessions running for it, and so is a resume: a session
 that has finished its piece is stopped to make room, and a stopped one can
 be resumed later. A session whose step the workflow no longer has, because
-the step was renamed or removed since, is not resumed; the refusal names
+the step was renamed or removed since, is not resumed, nor is one that was
+not started for a step of the workflow, such as one a plain session in the
+same directory started; the refusal names
 the steps there are. A start takes its place in the step, or its round of a
 review, the moment it is checked, before the user is asked, and gives it
 back when the user refuses or the session does not come up, so two starts
@@ -137,7 +139,9 @@ more for every time it may send the work back, so a review that sends it
 back three times at most has four rounds of a piece. A round past those is
 put to the user through the same question a start is, worded as another
 round of review for that piece; the user's yes lets that one round through,
-and a no tells the orchestrator to ask the user how to go on. Another piece
+and a no tells the orchestrator, by the work's name and its count of
+rounds, to ask the user how to go on; the user's own no is not shown back
+to them as a refused start. Another piece
 has rounds of its own, and stopping a session does not reset the count. A
 fresh piece is not checked against the others, so work started again as a
 new piece begins its rounds again.
@@ -150,9 +154,20 @@ the directory it runs in. A call that names no session is taken to come
 from the one session running in its directory that was not told its id.
 Where that is not certain and a session running there follows a workflow,
 whether or not it was told its id, the call is refused rather than let
-through unchecked. So is a call naming a session the workbench does not
-run, or one that is no longer running and so cannot be calling, while any
-session follows a workflow.
+through unchecked. While any session follows a workflow, so is a call
+naming a session the workbench does not run, or one that is no longer
+running and so cannot be calling, and so is a call naming none from a
+directory where no session that was not told its id runs. A caller under a
+workflow is given no command but `/compact` in a line to any session it
+started, placed in the workflow or not.
+
+What this holds to is the session a call names, and the workbench cannot
+see which process made the call. A tool server run by hand from a
+session's shell that names another running session's id, one that follows
+no workflow, is taken for that session, and its starts are asked about as
+that session's are. This is no wider than the shell itself: from it an
+agent can run another copy of itself, on any model, with no tool server
+and no question at all.
 
 ## What is remembered
 
@@ -216,11 +231,11 @@ and the round for a session started for a step. Where the header is short
 of room, the workflow's name is cut short and then left out, and the place
 stays whole. The rules for that place open in a popover under the tag when
 the pointer rests on it, or on a click, Enter or Space, and Escape puts
-them away: the instructions for the orchestrator, and for a session
-started for a step what the step allows, in the words of its settings: the
-models it may use, how many sessions it runs at once, and for a review
-when the work passes, where it goes back and how many rounds it gives
-each piece. A start the workflow refuses its orchestrator is shown over the
+them away. For the orchestrator they are its instructions. For a session
+started for a step they are what the step allows, in the words of its
+settings: the models it may use, how many sessions it runs at once, and
+for a review when the work passes, where it goes back and how many rounds
+it gives each piece. A start the workflow refuses its orchestrator is shown over the
 terminal in one line, whole while the pointer or the keyboard is on it, as
 well as answered to the agent, until a start goes through or the line is
 put away.
