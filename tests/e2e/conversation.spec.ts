@@ -189,11 +189,17 @@ test.describe("an integrated session", () => {
   test("says on its row and in the header what the core says it is doing", async ({ page }) => {
     await openIntegrated(page);
     const meta = page.locator(`${AGENT} header .meta`);
+    await expect(meta).toHaveText("idle");
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");`);
     await expect(meta).toHaveText("working");
-    await agent(page, `f.ask("${H}", "Bash", { command: "ls" });`);
-    await expect(meta).toHaveText("needs permission");
+    const asked = await page.evaluate(`window.__integrated.ask("${H}", "Bash", { command: "ls" })`);
+    await expect(meta).toHaveText("waits for permission");
     await expect(page.locator("[data-testid='session-row'] .dot.permission")).toBeVisible();
+    await agent(page, `f.answer("${H}", "${String(asked)}", "allow");`);
+    await agent(page, `f.question("${H}", [{ header: null, question: "Which?", options: [], multiple: false }]);`);
+    await expect(meta).toHaveText("asks you");
+    await agent(page, `f.interrupt("${H}");`);
+    await expect(meta).toHaveText("idle");
   });
 
   test("comes back after a restart, and resumes its conversation by its id", async ({ page }) => {
@@ -647,7 +653,7 @@ test.describe("a session of an agent shaped as Codex is", () => {
     await expect(page.getByTestId("permission-dock")).toBeVisible();
     await agent(page, `f.endTurn("${H}");`);
     await expect(page.getByTestId("permission-dock")).toHaveCount(0);
-    await expect(page.locator(`${AGENT} header .meta`)).not.toHaveText("needs permission");
+    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
     await expect(page.getByTestId("composer-input")).toBeEnabled();
   });
 
@@ -827,4 +833,22 @@ test("offers the whole request when a tool that is not a command carries a comma
   await expect(page.getByTestId("permission-dock").locator(".what")).toHaveText("Claude asks to use deploy's run");
   await page.getByTestId("permission-whole").click();
   await expect(page.getByTestId("permission-whole-text")).toContainText('"command": "rm -rf /srv"');
+});
+
+test.describe("the keyboard with no composer to type in", () => {
+  test("goes to Resume once the session is over", async ({ page }) => {
+    await openIntegrated(page);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await agent(page, `f.end("${H}", false);`);
+    await expect(page.getByTestId("resume-session")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+  });
+
+  test("goes to the card that asks to trust the folder, not to its first choice", async ({ page }) => {
+    await openIntegrated(page, { untrusted: true });
+    await expect(page.locator("[data-testid='trust-gate'] .card")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByTestId("trust-folder")).toBeFocused();
+  });
 });

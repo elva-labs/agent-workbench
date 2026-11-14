@@ -73,6 +73,13 @@
       const link = linkFor(current.key);
       if (link.untrusted) return "asks to trust the folder";
       if (link.conversation.notLoggedIn) return "not signed in";
+      // What the session is doing, from its own events: what it waits on
+      // when it waits on the user, else working or idle.
+      if (current.status === "running") {
+        const open = link.conversation.open[0];
+        if (open !== undefined) return open.asked.type === "questionAsked" ? "asks you" : "waits for permission";
+        return link.conversation.working ? "working" : "idle";
+      }
     }
     return statusLabel(current);
   });
