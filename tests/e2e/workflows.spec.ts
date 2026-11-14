@@ -569,9 +569,12 @@ test.describe("the layout", () => {
 
   test("decides beside or under from the window, never from how many steps there are", async ({ page }) => {
     await open(page);
+    // Read as not beside until both are drawn, so the poll waits for them
+    // rather than failing on the first reading under load.
     const beside = async () => {
-      const canvas = await box(page, "workflow-canvas");
-      return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
+      const canvas = await page.getByTestId("workflow-canvas").boundingBox();
+      const settings = await page.getByTestId("step-settings").boundingBox();
+      return canvas !== null && settings !== null && settings.x >= canvas.x + canvas.width;
     };
     await expect.poll(beside).toBe(true);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
