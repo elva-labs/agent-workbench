@@ -94,7 +94,7 @@ the same way.
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
 | Compact | Compacts the conversation, the way the agent does it. Claude Code is sent a compact command as a message of its own, so the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
-| Reply | Answers a question the agent asked: for each question, the options picked or the user's own words. It can also decline to answer. |
+| Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. |
 | Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, and the messages no turn has taken yet. It answers once every event that went out before it has, so it reflects those events and none after. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
@@ -308,9 +308,9 @@ the messages that waited, says what its last words on stderr were, and
 ends with **ended**, so a session never hangs and never brings down the
 core.
 
-## Not covered yet
+## What has no event
 
-Two things another agent offers have no event yet: the conversations of
+Two things another agent offers have no event: the conversations of
 Codex's own sub-agents, which it keeps as threads of their own, and forms
 an MCP server asks the user to fill in from a schema. A question the agent
 asks covers options and words of the user's own, not such a form.
@@ -322,14 +322,27 @@ has to do itself:
 
 - **Order.** A session's events come in order. The first ones can arrive
   before the start answers, so the window keeps the events of an id it
-  does not know yet.
+  does not know yet. A change of settings and a snapshot answer after the
+  events they caused. The other commands answer once what they wrote
+  reached the agent, or the agent said it took it, and what they cause
+  can come after, such as the end of an interrupted turn.
+- **The conversation's id.** The session's row, and resuming it, need the
+  conversation's id. For an agent that makes its own ids the start
+  answers with none, and the id is known only from ready.
+- **Streaming.** Text, thinking and a tool call's input stream in pieces,
+  then come whole. The pieces can have a gap, which a skipped event marks,
+  and the whole holds all of it. A block or an input can also end with no
+  whole after it, when the turn is interrupted or the agent dies; the end
+  of the turn, or of the session, is then its end too.
 - **Messages.** A message's id is the window's own, chosen before it is
   sent. A turn names the messages it answers, several where the agent
   took them together; a turn that names none is one the agent began by
   itself. The first message event for an id carries its text and images,
   so a second window can draw a message it did not send.
 - **Requests.** Each permission and question is settled by an answered or
-  a withdrawn event, whichever window answered it.
+  a withdrawn event, whichever window answered it. The answer to a secret
+  question is not in it, so a window can show that the question was
+  answered, but not what with.
 - **The end.** Nothing comes after ended, and no last state comes with it:
   the open tool calls, the turn, the open requests and the waiting
   messages are closed first, then the session ends.
