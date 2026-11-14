@@ -70,7 +70,14 @@ fn from_login_shell() -> Option<HashMap<String, String>> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL").ok()?;
-    let child = Command::new(&shell)
+    let mut command = Command::new(&shell);
+    // The shell runs the user's startup files, and a git in one of them works
+    // on the project its caller names unless the variables that name one are
+    // gone.
+    for name in crate::git::REPOSITORY_VARIABLES {
+        command.env_remove(name);
+    }
+    let child = command
         .args(["-lic", "env -0"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
