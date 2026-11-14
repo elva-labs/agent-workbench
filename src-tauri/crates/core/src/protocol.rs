@@ -112,6 +112,73 @@ struct SpawnParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct IntegratedStartParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default)]
+    session: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IntegratedTrustParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedSendParams {
+    id: String,
+    message: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    images: Vec<crate::integrated::Image>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedAnswerParams {
+    id: String,
+    request: String,
+    choice: crate::integrated::Choice,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedReplyParams {
+    id: String,
+    request: String,
+    answers: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedConfigureParams {
+    id: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ShellParams {
     project: PathBuf,
     cols: u16,
@@ -334,6 +401,72 @@ pub fn dispatch(
                 p.rows,
                 make_output,
             )?)
+        }
+        "integrated_start" => {
+            let p: IntegratedStartParams = parse(params)?;
+            value(core.integrated_start(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                p.session,
+                p.model.as_deref(),
+                p.mode.as_deref(),
+                p.effort.as_deref(),
+                p.config_dir.as_deref(),
+            )?)
+        }
+        "integrated_trust" => {
+            let p: IntegratedTrustParams = parse(params)?;
+            core.integrated_trust(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                p.config_dir.as_deref(),
+            )?;
+            Ok(Value::Null)
+        }
+        "integrated_send" => {
+            let p: IntegratedSendParams = parse(params)?;
+            core.integrated_send(&p.id, &p.message, &p.text, &p.images)?;
+            Ok(Value::Null)
+        }
+        "integrated_interrupt" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_interrupt(&p.id)?;
+            Ok(Value::Null)
+        }
+        "integrated_compact" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_compact(&p.id)?;
+            Ok(Value::Null)
+        }
+        "integrated_answer" => {
+            let p: IntegratedAnswerParams = parse(params)?;
+            core.integrated_answer(&p.id, &p.request, p.choice, p.message.as_deref())?;
+            Ok(Value::Null)
+        }
+        "integrated_reply" => {
+            let p: IntegratedReplyParams = parse(params)?;
+            core.integrated_reply(&p.id, &p.request, p.answers.as_deref())?;
+            Ok(Value::Null)
+        }
+        "integrated_configure" => {
+            let p: IntegratedConfigureParams = parse(params)?;
+            value(core.integrated_configure(
+                &p.id,
+                p.model.as_deref(),
+                p.mode.as_deref(),
+                p.effort.as_deref(),
+            )?)
+        }
+        "integrated_snapshot" => {
+            let p: IdParams = parse(params)?;
+            value(core.integrated_snapshot(&p.id)?)
+        }
+        "integrated_stop" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_stop(&p.id)?;
+            Ok(Value::Null)
         }
         "pty_shell" => {
             let p: ShellParams = parse(params)?;
@@ -806,6 +939,68 @@ mod tests {
             Some("The user declined the change.")
         );
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn integrated_sessions_are_methods_and_refuse_what_they_cannot_do() {
+        let core = core();
+        let missing = dispatch(
+            &core,
+            "integrated_start",
+            json!({ "agent": "claude-code" }),
+            no_output,
+        )
+        .expect_err("a start names its project");
+        assert!(missing.contains("bad parameters"), "{missing}");
+        let missing = dispatch(
+            &core,
+            "integrated_trust",
+            json!({ "agent": "claude-code" }),
+            no_output,
+        )
+        .expect_err("a trust names its project");
+        assert!(missing.contains("bad parameters"), "{missing}");
+        let codex = dispatch(
+            &core,
+            "integrated_start",
+            json!({ "agent": "codex", "project": "/tmp" }),
+            no_output,
+        )
+        .expect_err("codex has no integrated mode here");
+        assert!(codex.contains("integrated"), "{codex}");
+        for (method, params) in [
+            (
+                "integrated_send",
+                json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111", "text": "hi" }),
+            ),
+            ("integrated_interrupt", json!({ "id": "int-none" })),
+            ("integrated_compact", json!({ "id": "int-none" })),
+            (
+                "integrated_answer",
+                json!({ "id": "int-none", "request": "r", "choice": "allow" }),
+            ),
+            (
+                "integrated_reply",
+                json!({ "id": "int-none", "request": "r", "answers": [["yes"]] }),
+            ),
+            (
+                "integrated_configure",
+                json!({ "id": "int-none", "model": "haiku" }),
+            ),
+            ("integrated_snapshot", json!({ "id": "int-none" })),
+            ("integrated_stop", json!({ "id": "int-none" })),
+        ] {
+            let error = dispatch(&core, method, params, no_output).expect_err(method);
+            assert!(error.contains("no such session"), "{method}: {error}");
+        }
+        let unknown = dispatch(
+            &core,
+            "integrated_answer",
+            json!({ "id": "int-none", "request": "r", "choice": "allowForever" }),
+            no_output,
+        )
+        .expect_err("a choice is one of those a request offers");
+        assert!(unknown.contains("bad parameters"), "{unknown}");
     }
 
     #[test]
