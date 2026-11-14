@@ -1330,7 +1330,7 @@ test.describe("several projects", () => {
   });
 
   // The title's row carries the sort and the menu; under it, the head is a
-  // field that opens the palette with a new-session button beside it, and
+  // field that opens go to with a new-session button beside it, and
   // nothing more. Each project's header stays in view while its rows
   // scroll under it, a hairline between projects. With no accounts there
   // is no foot, and the rows run to the pane's edge.
@@ -1381,7 +1381,7 @@ test.describe("several projects", () => {
     await expect(second).toHaveCSS("border-top-width", "1px");
     await expect(second).toContainText("two");
 
-    // The field opens the palette, and the menu the settings.
+    // The field opens go to, and the menu the settings.
     await page.getByTestId("go-to").click();
     await expect(page.getByTestId("palette")).toBeVisible();
     await page.keyboard.press("Escape");

@@ -1753,8 +1753,8 @@
     visibility: hidden;
   }
 
-  /* The head: a field that opens the palette, and the accent button for a
-     new session in the project on screen beside it. */
+  /* The head: a field that opens go to, and beside it the accent button
+     that asks for a new session. */
   .head {
     flex: none;
     display: flex;
