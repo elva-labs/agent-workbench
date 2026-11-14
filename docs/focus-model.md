@@ -96,8 +96,12 @@ cannot be picked.
 project, unless only one is open: the one on screen above the others, then by
 when they were last used. Then the account, when accounts are named in the
 [settings](settings.md#accounts), with the project's own under the cursor;
-then the agent, when more than one is installed, with the one last started in
-the project under the cursor. A step with nothing to choose is not asked. Each
+then how it runs, when there is a workflow or more than one agent to pick
+between: the workflows under one heading, the project's own first and
+marked as its default, each with the models it runs on, and under another
+the agents to run alone, with no workflow. The cursor starts on the
+project's workflow, else on the agent last started in the project. A step
+with nothing to choose is not asked. Each
 answer stays in the field as a chip, and <kbd>Backspace</kbd> on an empty
 field takes the last one back, one step to a press however long the key is
 held; from the first step it returns to the commands with what was typed there

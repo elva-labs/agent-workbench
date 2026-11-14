@@ -30,7 +30,7 @@ session has the same tools and none of the nudge.
 The seven tools reach the workbench through the same tool server the app's
 own tools use. The orchestrator's own directory carries them whatever the
 projects were told about live updates, and so does a session that follows a
-workflow, which is pointed at the server on its command line where its
+workflow, which is pointed at the server when it starts where its
 project's configuration does not point at it already; any other session has
 them where its project's hooks are on. See [hooks](hooks.md) and
 [agents](adapters.md#under-a-workflow).
@@ -73,12 +73,22 @@ resumed comes back under the account it ran under.
 
 ## Following a workflow
 
-A session the user starts follows its project's workflow, as
-[settings](settings.md#workflows) describes. It starts on the workflow's
-orchestrator, is told the workflow's instructions, and, unless the workflow
-says otherwise, has its agent's own subagent tools taken away, so every
-piece it hands out is a session of its own started with `start`. A session
-that follows no workflow starts others as the rest of this page says.
+A session runs one of two ways: under a workflow, as its orchestrator, or
+as one agent with no workflow. What the user picks is what starts. Picking
+an agent, in the agent pane, in a project's new-session row or in the
+palette, starts that agent alone. Picking a workflow in the palette starts
+its orchestrator, on the workflow's agent and model, and a plain new
+session where there was nothing to pick follows the project's workflow, as
+[settings](settings.md#workflows) describes. A workflow whose
+orchestrator runs on an agent that is not installed is refused on the row,
+and so is a session under a workflow on a machine with no tool server to
+give it the `start` tool.
+
+An orchestrator is told the workflow's instructions and, unless the
+workflow says otherwise, has its agent's own ways of handing work to
+agents the user cannot see taken away, so every piece it hands out is a
+session of its own started with `start`. [Agents](adapters.md#under-a-workflow)
+says what each agent loses and what remains.
 
 Each start from such a session names the step of the workflow it is for,
 and is held to that step before the user is asked anything. A start that
@@ -86,31 +96,56 @@ names no step, or one the workflow does not have, is refused with the
 steps there are. A start that names an agent or a model the step does not
 allow is refused with the ones it does; one that names neither runs on the
 step's first model, and one that names only the agent on the first of that
-agent's. A work step runs no more sessions at once than it says, and a
-start past that is refused with the sessions running for it.
+agent's. A session started for a step stays on the model it was given:
+`send` gives it no command but `/compact`, since commands such as `/model`
+and `/fast` change the model and either agent completes a command from the
+start of its name, and a start or a resume for a step does not begin with
+one either.
+
+A work step runs no more sessions at once than it says. A start past that
+is refused with the sessions running for it, and so is a resume: a session
+that has finished its piece is stopped to make room, and a stopped one can
+be resumed later. A start takes its place in the step, or its round of a
+review, the moment it is checked, before the user is asked, and gives it
+back when the user refuses or the session does not come up, so two starts
+at once cannot both find room or share a round.
 
 A review names the session whose work it checks. One that names none, or
 names a session the caller did not start for a work step, is refused: there
-is no work behind it. The workbench counts the rounds of each review for
-each piece of work. A piece is named by the work session that began it; a
-start for a later work step can name the session the piece came from, and
-carries the piece on. A review may run once and then once more for every
-time it may send the work back, so a review that sends it back three times
-at most has four rounds of a piece. A start for another round after those is
-refused with a line telling the orchestrator to stop and ask the user. Another
-piece has rounds of its own, and stopping a session does not reset the count.
+is no work behind it. A piece is named by the work session that began it;
+a start for a later work step can name the session the piece came from,
+and carries the piece on. A piece that does not pass is sent back with
+`send` to its own session for the step the review goes back to, resumed
+first if it was stopped, and is reviewed again by a new review naming the
+same work or by a line to the reviewer.
+
+The workbench counts the rounds of each review for each piece: a review
+started, a review resumed with a prompt, and a line sent to a review that
+has finished its round each count one. A review may run once and then once
+more for every time it may send the work back, so a review that sends it
+back three times at most has four rounds of a piece. A round past those is
+put to the user through the same question a start is, worded as another
+round of review for that piece; the user's yes lets that one round through,
+and a no tells the orchestrator to ask the user how to go on. Another piece
+has rounds of its own, and stopping a session does not reset the count. A
+fresh piece is not checked against the others, so work started again as a
+new piece begins its rounds again.
 
 A started session remembers its step, and a review its round and the work
-it checks. `sessions` says both for each session, the stopped ones too,
-and `start` with a stopped session's id brings it back in the same step,
-on a model the step allows.
+it checks. `sessions` says both for each session, the stopped ones too.
+
+An agent that is not told its session's id, as Codex is not, is known by
+the directory it runs in. Where several sessions run in that directory and
+one of them follows a workflow, a call that could be any of them is
+refused rather than let through unchecked.
 
 ## What is remembered
 
 What a session started is written down by session id, with the project,
 the worktree, the agent and the name, and kept between runs beside the
 sessions the app knows as its own. Under a workflow, so are the step and
-round of each, and the rounds each piece has had. An orchestrator closed and resumed
+round of each, and the rounds each piece has had; those go with the
+orchestrator once it is gone from its project's past sessions. An orchestrator closed and resumed
 keeps its id, so the sessions it started are still its own: the ones
 still running answer to its tools as before, and a row with one of its
 ids, resumed from the pane by hand, is folded under it all the same. When
@@ -140,7 +175,9 @@ whatever it has been told to do by something it read.
 
 The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
-answered: allow it from now on, allow this one, or refuse. An allowed
+answered: allow it from now on, allow this one, or refuse. A round of
+review past a workflow's limit is asked about every time, however the
+project was allowed, with Allow another round or No. An allowed
 caller is remembered for that project for as long as the app runs. A
 refusal is an answer the agent reads, not an error. Bringing back a
 session it already started is never asked about: the consent was given
@@ -152,6 +189,14 @@ may have more than eight running at a time.
 ![The question over the agent pane: which session wants to start one, in which project, the prompt it would give, and Allow this session, Once or No.](orchestrator-ask.png)
 
 ## In the panes
+
+The agent pane's header names the workflow a session is part of and its
+place in it, quietly beside the title: the workflow and orchestrator for
+the session following it, or the workflow, the step and the round for a
+session started for a step, with the rules for that place when the pointer
+rests on it. A start the workflow refuses its orchestrator is shown over
+the terminal in one line, as well as answered to the agent, until a start
+goes through or the line is put away.
 
 The sessions an orchestrator started stay in the project they run in, where
 the work is, and keep out of the way: the pane folds them into one quiet

@@ -11,6 +11,7 @@ import type {
 import { AGENT_ORDER, modelLabel, mostCapable, sameModel } from "$lib/models";
 import { core } from "$lib/core";
 import { persist } from "$lib/persist";
+import { startsOnly } from "$lib/workflowInstructions";
 
 /**
  * The workflows a session can follow.
@@ -242,11 +243,7 @@ export function setProblem(set: Settings["workflows"]): string | null {
   return null;
 }
 
-/** Whether a workflow's orchestrator delegates only through the start
-    tool, its own subagent tools taken away. */
-export function startsOnly(workflow: Workflow): boolean {
-  return workflow.startOnly !== false;
-}
+export { startsOnly };
 
 /** Turns a workflow's own subagents off, so start is the one way it
     delegates, or back on. */

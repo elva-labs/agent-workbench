@@ -144,7 +144,9 @@ A fresh install has one workflow, Build and review. Its orchestrator is on
 Claude's most capable model alias, its Work step is on Sonnet, and its
 Review step is on Opus, passes when the reviewer approves and the
 orchestrator agrees, and goes back to Work up to three times before it asks.
-A settings file from before workflows existed gets the same one.
+A settings file from before workflows existed gets the same one. New
+sessions follow none until the user turns a workflow on, in this tab or by
+picking one when starting a session.
 
 A workflow in the file that does not read or keep the rules is not used, and
 neither is a default or a project choice that names it. It is not dropped:
@@ -161,20 +163,27 @@ valid choice. A project can choose another, or none, whatever the default
 is. Deleting a workflow that was the default leaves new sessions with none,
 and a project that chose it follows the default again.
 
-A workflow also says whether its orchestrator delegates only through the
-workbench, which it does unless the workflow says otherwise. Its own
-subagent tools are then taken away, so every piece it hands out is a
-session of its own on the sessions pane, started with the `start` tool;
-with the setting off it keeps them, and their work does not show as
-sessions. The settings file writes the setting only when it is off.
+A workflow also says whether its orchestrator hands out work only as
+sessions the user can see, which it does unless the workflow says
+otherwise. Its agent's own ways of handing work to agents the user cannot
+see are then taken away, as [agents](adapters.md#under-a-workflow) lists,
+so every piece it hands out is a session of its own on the sessions pane,
+started with the `start` tool; with the setting off it keeps its own
+subagents, and their work does not show as sessions. The settings file
+writes the setting only when it is off.
 
-A session started in a project follows the project's workflow: its own
-choice, else the one for new sessions, else none. It starts on the
-workflow's orchestrator, its agent and its model, told the workflow's
-instructions, and keeps the workflow as it was when it started: a
-change in the settings, or a resume after a restart, does not change
-the workflow a session already follows. A session another session
-started follows none. How a workflow's session directs the others is in
+A project's workflow is its own choice, else the one for new sessions, else
+none. A plain new session, where there is nothing to pick, follows it, and
+the palette's new session offers every workflow, the project's first,
+beside the agents to run alone; an agent picked anywhere starts alone. A
+session under a workflow starts on the workflow's orchestrator, its agent
+and its model, told the workflow's instructions, and keeps the workflow as
+it was for as long as it runs, whatever changes in the settings. Resumed,
+it takes the workflow of the same name as the settings have it then. Where
+that workflow was deleted it follows the copy it kept, which its header
+says; where that copy no longer reads either, the user is asked whether to
+resume it without a workflow. A session another session started follows
+none. How a workflow's session directs the others is in
 [orchestrator](orchestrator.md).
 
 The tab lists the workflows across the top, with the default tagged, and
@@ -224,20 +233,25 @@ be written, is said at the top of the tab, and the window shows what is
 stored. Every control can be reached with the keyboard, and the two kinds
 are a radio group the arrow keys move through.
 
-Under the diagram, a box says whether the orchestrator delegates only
-through start, with a line on what that means. What the orchestrator is
-told unfolds into the instructions the workflow comes to: a short numbered
-list. The first tells the orchestrator to direct the work rather than do
-it, and to delegate by starting sessions with the workbench's `start` tool,
-not with its own subagents, naming the step each start is for, giving the
-agent and the model each step names and no model for Codex's own default,
-and naming, for a review, the session whose work it checks. Then each step has a sentence naming the step, what a
+Under the diagram, a box, Hand out work only as sessions you can see, says
+whether the orchestrator keeps its own subagents, with a line on what that
+means. What the orchestrator is told unfolds into the instructions the
+workflow comes to: a short numbered list. The first tells the orchestrator
+to direct the work rather than do it, and to delegate by starting sessions
+with the workbench's `start` tool, not with its own subagents, or, where it
+keeps them, to use them for help and not for a piece of the work; to name
+the step each start is for, give the agent and the model each step names
+and no model for Codex's own default, and name, for a review, the session
+whose work it checks. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
-first as the one to use, how many sessions may run at once, or for a review
-when the work passes, where it goes back, which steps the piece is taken
-through again before it is reviewed again, how many times, and that the
-user is asked after that. The last sentence says to report to the user once
-every piece has come out of or passed the last step.
+first as the one to use, how many of its sessions may run at once and to
+stop each once its piece is done with, or for a review when the work
+passes, that it goes back with `send` to the piece's own session for the
+step it returns to, which steps the piece is taken through again, that it
+is reviewed again by a new review or a line to the reviewer, how many
+times, and that the user is asked after that. The last sentence says to
+report to the user once every piece has come out of or passed the last
+step.
 
 The foot always shows. A switch there marks the workflow for new sessions, with a line
 saying which workflow new sessions start with. Turning it off leaves them

@@ -13,7 +13,7 @@ above it sees a session with an agent id, a project, and an id to resume by.
 | Past sessions | Its transcripts under its configuration directory                  | Its SQLite index under its home                          |
 | Account       | `CLAUDE_CONFIG_DIR`, its configuration directory                   | `CODEX_HOME`, its home                                   |
 | Session name  | The terminal title, stripped of the glyph and the agent's own name | The thread's name, else its title, else the first prompt |
-| Workflow      | `--append-system-prompt`, `--disallowedTools Agent Workflow`       | `-c developer_instructions=…`, `-c features.multi_agent=false` |
+| Workflow      | `--append-system-prompt-file`, `--disallowedTools`                 | `-c developer_instructions=…`, `-c features.multi_agent_v2.disable_native_tools=true` |
 
 ## Accounts
 
@@ -29,19 +29,44 @@ a remote machine runs under directories on that machine.
 ## Under a workflow
 
 A session that follows a workflow is told the workflow's instructions on
-its command line, on every start and every resume, since neither agent
-keeps them with the conversation. Claude Code adds them to its own system
-prompt; Codex takes them as developer instructions, the nearest setting it
-has. Where the workflow delegates only through the workbench, Claude Code
-is started without its subagent tools, `Agent` and `Workflow`, and Codex
-with its multi-agent feature off, so the session hands work out with the
-`start` tool and nothing else.
+every start and every resume. Claude Code adds them to
+its own system prompt, reading them from a file the workbench writes for
+the session; Codex takes them as developer instructions, the nearest
+setting it has, and has no setting that reads them from a file, so they go
+on its command line. The file is made new for each session, readable by
+its owner alone, and removed when the session's process ends.
+
+Claude Code records the system prompt a conversation is first given and
+sends that on every resume. A resumed session whose workflow has changed
+since its conversation began is started with that record turned off, so it
+reads the instructions as they are now.
+
+Where the workflow delegates only through the workbench, each agent loses
+its own ways of handing work to agents the user cannot see. Claude Code is
+started without `Agent`, its subagents, `Workflow`, its multi-agent
+workflows, `SendMessage` and `ListAgents`, which reach other agents, and
+`RemoteTrigger`, which runs agents in the cloud. Codex is started with its
+native collaboration tools turned off: `spawn_agent`, `send_message`,
+`wait_agent`, `list_agents`, `interrupt_agent` and `followup_task`, which a
+model on its newer multi-agent version is given whatever the multi-agent
+features say. What remains is the shell, from which either agent could run
+another copy of itself, and Claude Code's skills, some of which run in a
+subagent of their own; the instructions tell the orchestrator to hand out
+every piece with `start`.
 
 Such a session has the workbench's tools whatever its project was told
 about live updates. Where the agent's configuration for the directory does
-not already point at the tool server, the server is named on the command
-line as well: to Claude Code as an MCP configuration, to Codex as one of its
-servers. A session with no workflow starts as the table above says.
+not already point at the tool server, the server is named when the session
+starts: to Claude Code in a configuration file of the session's own, to
+Codex as one of its servers on the command line. A machine with no tool
+server does not start a session under a workflow, and says why.
+
+On Windows an agent installed as a script runs through the command
+interpreter, which ends a command at its first line break. Claude Code's
+command line holds only file names there. Codex would lose all but the
+first line of the instructions, so a Codex session under a workflow is
+refused on Windows, saying so. A session with no workflow starts as the
+table above says.
 
 ## Detection
 
@@ -50,8 +75,8 @@ of them shows no sign of the other: no tags, and a new session starts it.
 With both, every session row carries a `claude` or `codex` tag, and the
 new-session row opens in place into a row per agent. The cursor starts on
 the agent last started in the project, marked `last used`, else the first
-installed; Up and Down move it, Enter or a click starts that agent, Escape
-closes the choice.
+installed; Up and Down move it, Enter or a click starts that agent, alone
+whatever workflow the project follows, Escape closes the choice.
 
 ## Ids that the agent mints
 
