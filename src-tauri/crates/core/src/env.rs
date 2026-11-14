@@ -361,6 +361,7 @@ mod tests {
             "GIT_DIR=/elsewhere/.git",
             "GIT_WORK_TREE=/elsewhere",
             "GIT_INDEX_FILE=/elsewhere/.git/index",
+            "Git_Common_Dir=/elsewhere/.git",
             "GIT_AUTHOR_NAME=Ada",
             "GIT_CONFIG_GLOBAL=/home/ada/.gitconfig",
         ]));

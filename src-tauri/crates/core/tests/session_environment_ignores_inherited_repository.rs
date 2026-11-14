@@ -80,8 +80,9 @@ fn processes_a_session_starts_do_not_see_the_callers_repository() {
     // The first scratch folder isolates this process from the caller's git
     // variables, so it is made before the variables are set.
     let project = Scratch::new("session-env-project");
-    // A shell that reads no startup files keeps the capture quick and the same
-    // everywhere. It inherits this process's environment, as the user's does.
+    // The system's `sh` as the login shell: the capture reads the system
+    // profile and the user's `.profile` and little else, and inherits this
+    // process's environment, as the user's own shell does.
     std::env::set_var("SHELL", "/bin/sh");
     for name in [
         "GIT_DIR",
