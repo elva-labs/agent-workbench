@@ -9,7 +9,13 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { By, Key, until, type WebDriver } from "selenium-webdriver";
+import {
+  By,
+  Key,
+  until,
+  type WebDriver,
+  type WebElement,
+} from "selenium-webdriver";
 import {
   DAEMON,
   launch,
@@ -47,13 +53,23 @@ async function clickEnabled(driver: WebDriver, selector: string, ms = 10_000) {
 }
 
 /** Clicks until what the click does has shown, since a window that has lost
-    the foreground on Windows spends the first click on getting it back. */
+    the foreground on Windows spends the first click on getting it back.
+    Each click waits for the control to take one: a new-session + is there
+    from the start and disabled until the agents have been detected. */
 async function clickUntil(
   driver: WebDriver,
   locator: By,
   done: () => Promise<boolean>,
 ) {
   for (let attempt = 0; ; attempt += 1) {
+    await driver.wait(
+      async () => {
+        const found = await driver.findElements(locator);
+        return found.length > 0 && (await found[0].isEnabled());
+      },
+      10_000,
+      "the control never took a click",
+    );
     await driver.findElement(locator).click();
     try {
       await driver.wait(done, 2_500);
@@ -62,6 +78,63 @@ async function clickUntil(
       if (attempt >= 2) throw error;
     }
   }
+}
+
+/** The + on the sessions pane's head: the palette's New session. */
+const NEW_SESSION = "[data-testid='new-session']";
+/** The + on the header of the project on screen. */
+const NEW_HERE =
+  "[data-testid='project-head'].on [data-testid='project-new-session']";
+
+/** A new session from the + on the pane's head. With one project open and
+    both fakes on PATH, the palette asks only how the session should run,
+    and the agent is picked from its list by its name. Starting puts the
+    palette away, and nothing is left over the window. */
+async function startFromHead(driver: WebDriver, agent: string) {
+  const asking = By.css("[data-testid='palette'][data-mode='new']");
+  await clickUntil(
+    driver,
+    By.css(NEW_SESSION),
+    async () => (await driver.findElements(asking)).length > 0,
+  );
+  const row = (await driver.wait(
+    () =>
+      driver.executeScript(
+        (agent: string) =>
+          [
+            ...document.querySelectorAll("[data-testid='palette-row']"),
+          ].find(
+            (row) =>
+              row.querySelector("[data-testid='palette-label']")
+                ?.textContent === agent,
+          ) ?? null,
+        agent,
+      ),
+    10_000,
+    `the palette never offered ${agent}`,
+  )) as WebElement;
+  await row.click();
+  await driver.wait(
+    async () =>
+      (await driver.findElements(By.css("[data-testid='palette-scrim']")))
+        .length === 0,
+    5_000,
+    "the palette stayed over the window after the start",
+  );
+}
+
+/** A new session from the + on the header of the project on screen: the
+    choice opens under the project's name, and the agent is picked there. */
+async function startHere(driver: WebDriver, agent: string) {
+  const option = By.css(
+    `[data-testid='agent-option'][data-agent='${agent}']`,
+  );
+  await clickUntil(
+    driver,
+    By.css(NEW_HERE),
+    async () => (await driver.findElements(option)).length > 0,
+  );
+  await driver.findElement(option).click();
 }
 
 /** What the window held when a click did nothing: its size, the element's
@@ -182,13 +255,8 @@ describe("the real app", () => {
 
   it("starts the agent in a pty, in the project, with the id it was given", async () => {
     const { driver } = app;
-    // Both fakes are on PATH, so the row opens into the choice first.
-    await (await located(driver, "[data-testid='new-session']")).click();
-    await driver
-      .findElement(
-        By.css("[data-testid='agent-option'][data-agent='claude-code']"),
-      )
-      .click();
+    // From the + on the pane's head, which asks in the palette.
+    await startFromHead(driver, "Claude Code");
     // The first pty the app opens is the slow one: on a Windows runner the
     // console host, cmd.exe and the scan of a freshly written script all
     // come cold, and one night that took past twenty seconds. Later spawns
@@ -960,19 +1028,8 @@ describe("the real app", () => {
       const remote = `ssh://test${repo}`;
       await openProjects(driver, [remote]);
       await waitForPaneText(driver, SESSIONS, repo.split(/[\\/]/).pop()!);
-      // The row is there before the agents are detected again after the
-      // reload; the button follows the detection.
-      await driver
-        .wait(
-          until.elementLocated(By.css("[data-testid='new-session']")),
-          10_000,
-        )
-        .click();
-      await driver
-        .findElement(
-          By.css("[data-testid='agent-option'][data-agent='claude-code']"),
-        )
-        .click();
+      // From the remote project's own +, which asks under its name.
+      await startHere(driver, "claude-code");
       await waitForText(driver, "FAKE CLAUDE --session-id");
       await waitForText(driver, "in ");
       expect(await screenText(driver)).toMatch(
@@ -1006,23 +1063,18 @@ describe("the real app", () => {
 
   it("offers codex too, and runs it", async () => {
     const { driver } = app;
-    // A claude session first, so the tags have two kinds to tell apart
-    // whatever the tests before left in the list.
-    const choice = By.css("[data-testid='agent-option']");
-    const opened = async () => (await driver.findElements(choice)).length === 2;
+    // A claude session first, from the project's own +, so two kinds run
+    // whatever the tests before left in the list; then codex from the
+    // palette, over a session already running.
     try {
-      await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
+      await startHere(driver, "claude-code");
     } catch (error) {
       throw new Error(
-        `${(error as Error).message}; ${await sceneReport(driver, "[data-testid='new-session']")}`,
+        `${(error as Error).message}; ${await sceneReport(driver, NEW_HERE)}`,
       );
     }
-    let options = await driver.findElements(choice);
-    await options[0].click();
     await waitForText(driver, "FAKE CLAUDE");
-    await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
-    options = await driver.findElements(choice);
-    await options[1].click();
+    await startFromHead(driver, "Codex");
     await waitForText(driver, "FAKE CODEX");
     // Both run side by side, and no row says whose agent it is.
     const rows = await driver.findElements(By.css("[data-testid='session-row']"));
@@ -1077,7 +1129,7 @@ describe("the real app", () => {
       const choice = By.css("[data-testid='agent-option']");
       const opened = async () =>
         (await driver.findElements(choice)).length === 2;
-      await clickUntil(driver, By.css("[data-testid='new-session']"), opened);
+      await clickUntil(driver, By.css(NEW_HERE), opened);
       const chose = await scene();
       // The choice starts on the project's account.
       const work = await located(
