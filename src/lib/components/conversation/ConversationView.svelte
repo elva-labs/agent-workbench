@@ -9,6 +9,8 @@
   import Dock from "./Dock.svelte";
   import Icon from "./Icon.svelte";
   import Thread from "./Thread.svelte";
+  import { tick, untrack } from "svelte";
+  import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
 
   /**
    * What the agent pane draws for an integrated session in place of a
@@ -67,6 +69,33 @@
     });
   }
 
+  let view = $state<HTMLDivElement | null>(null);
+
+  // With no composer to type in, the keyboard goes where the next step is:
+  // Resume once the session is over, the card that asks before it can run.
+  // A card is read before its buttons are reached, so it takes the keyboard
+  // itself rather than its first choice.
+  $effect(() => {
+    layout.focusRequest;
+    const where = link.untrusted
+      ? "[data-testid='trust-gate'] .card"
+      : conversation.notLoggedIn
+        ? "[data-testid='login-gate'] .card"
+        : over
+          ? "[data-testid='resume-session']"
+          : null;
+    if (where === null || !active || layout.focus !== "agent") return;
+    untrack(() => {
+      void tick().then(() => {
+        if (view === null || overlayHoldsKeyboard()) return;
+        const owner = document.activeElement;
+        if (owner !== null && owner !== document.body && view.contains(owner) && owner.matches("button, input, textarea"))
+          return;
+        view.querySelector<HTMLElement>(where)?.focus();
+      });
+    });
+  });
+
   let over = $derived(
     session.status === "exited" || session.status === "crashed" || session.status === "failed",
   );
@@ -97,12 +126,12 @@
   });
 </script>
 
-<div class="conv" class:active data-testid="conversation" data-session={session.key}>
+<div class="conv" class:active bind:this={view} data-testid="conversation" data-session={session.key}>
   {#if link.untrusted}
     <div class="gate" data-testid="trust-gate">
-      <div class="card">
+      <div class="card" tabindex="-1" role="group" aria-labelledby="gate-{session.key}">
         <span class="badge"><Icon name="lock" size={16} /></span>
-        <h2>Trust this folder?</h2>
+        <h2 id="gate-{session.key}">Trust this folder?</h2>
         <p>
           {agent} has not been told that the files in <code>{folder}</code> can be trusted. A trusted
           folder's settings can run hooks and MCP servers on this machine, so trust it only if you know
@@ -118,9 +147,9 @@
     </div>
   {:else if conversation.notLoggedIn}
     <div class="gate" data-testid="login-gate">
-      <div class="card">
+      <div class="card" tabindex="-1" role="group" aria-labelledby="gate-{session.key}">
         <span class="badge"><Icon name="lock" size={16} /></span>
-        <h2>{agent} is not signed in</h2>
+        <h2 id="gate-{session.key}">{agent} is not signed in</h2>
         <p>
           Sign in by running <code>{signIn}</code> in a terminal and following its steps, then start the
           session again. The workbench never signs in for you.
@@ -229,6 +258,11 @@
     border-radius: calc(var(--radius) * 2);
     background: var(--surface);
     box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
+  }
+
+  .card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .badge {
