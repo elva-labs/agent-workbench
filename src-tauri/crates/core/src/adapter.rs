@@ -80,9 +80,10 @@ pub struct LaunchCtx<'a> {
     /// A file naming the same server, for an agent that reads its server
     /// configuration from one.
     pub server_file: Option<&'a Path>,
-    /// For a resumed session, whether the instructions differ from those
-    /// its conversation was first given. Claude Code records what it was
-    /// first told and gives that on every resume until told otherwise.
+    /// For a resumed session, whether what it is told now differs from what
+    /// its conversation was first given, no instructions at all among
+    /// them. Claude Code records what it was first told and gives that on
+    /// every resume until told otherwise.
     pub afresh: bool,
 }
 
@@ -306,9 +307,9 @@ fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
     if let Some(file) = ctx.instructions_file {
         args.push("--append-system-prompt-file".to_string());
         args.push(file.to_string_lossy().to_string());
-        if ctx.afresh {
-            args.extend(["--system-prompt-snapshot", "off"].map(str::to_string));
-        }
+    }
+    if ctx.afresh {
+        args.extend(["--system-prompt-snapshot", "off"].map(str::to_string));
     }
     args
 }
@@ -939,6 +940,19 @@ mod tests {
             ..ctx
         };
         assert!(codex_workflow(&plain, true).unwrap().is_empty());
+        // Resumed with no workflow where its conversation was first given
+        // one, Claude Code is told to let go of what it recorded, and given
+        // nothing in its place.
+        let without = LaunchCtx {
+            afresh: true,
+            start_only: false,
+            server_file: None,
+            ..plain
+        };
+        assert_eq!(
+            argv(ClaudeCode.resume(&without, "abc").unwrap())[1..],
+            ["--resume", "abc", "--system-prompt-snapshot", "off"]
+        );
     }
 
     /// Codex's own subagent tools are gone from what the model is given

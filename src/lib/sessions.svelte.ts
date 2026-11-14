@@ -638,13 +638,18 @@ export function resumedWorkflow(id: string): Resumed {
   return { lost: name ?? "it followed" };
 }
 
-/** What a session resumed under a workflow is told afresh: whether its
-    instructions differ from those its conversation was first given, which
-    an agent that records them would otherwise keep. */
-function toldAfresh(id: string, workflow: Workflow): boolean {
+/** Whether a resumed session is told afresh: what it is told now, a
+    workflow's instructions or none, differs from what its conversation was
+    first given, which an agent that records it would otherwise keep. A
+    session with nothing kept was given no workflow. */
+function toldAfresh(id: string, workflow: Workflow | null): boolean {
   const kept = sessions.workflows[id];
-  const told = kept === undefined ? null : firstTold(kept);
-  return told !== null && told !== orchestratorPrompt(workflow);
+  if (kept === undefined) return false;
+  const now = workflow === null ? null : orchestratorPrompt(workflow);
+  const told = firstTold(kept);
+  // A kept record that no longer says what it was told was told a
+  // workflow's instructions all the same.
+  return told === null ? true : told !== now;
 }
 
 /** Lets go of what is kept for the sessions of a project that are gone
@@ -999,23 +1004,22 @@ const pending = new Set<string>();
 /** Gives a resumed row the workflow it follows from here, and the
     orchestrator's model where it runs on the orchestrator's agent and
     names none. A workflow lost to the user's question fails the row with
-    it. Answers whether the agent is to be told the instructions afresh. */
-function takeUp(session: Session, id: string): boolean {
+    it. */
+function takeUp(session: Session, id: string) {
   const resumed = resumedWorkflow(id);
   if ("lost" in resumed) {
     session.workflowLost = resumed.lost;
     session.status = "failed";
     session.error = `This session followed the workflow "${resumed.lost}", which is gone, and the copy it kept no longer reads. Resume it without a workflow, or start a new session.`;
     changed(session);
-    return false;
+    return;
   }
   const { workflow, gone } = resumed;
   session.workflow = workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow);
   session.workflowGone = gone;
-  if (workflow === null) return false;
+  if (workflow === null) return;
   if (session.model === null && session.agent === workflow.orchestrator.agent)
     session.model = orchestratorModel(workflow);
-  return toldAfresh(id, workflow);
 }
 
 /** Resumes a session whose workflow was lost, with no workflow, in place
@@ -1143,14 +1147,18 @@ export async function launch(
   let session = byKey(key);
   // A row refused before it started has no process to start.
   if (session === null || session.status !== "starting") return false;
-  let afresh = false;
   if (pending.delete(key) && session.resumedFrom !== null) {
     await workflowsKnown();
     session = byKey(key);
     if (session === null || session.status !== "starting") return false;
-    afresh = takeUp(session, session.resumedFrom!);
+    takeUp(session, session.resumedFrom!);
     if (session.status !== "starting") return false;
   }
+  // Resumed with other instructions than its conversation was first given,
+  // or with none where it was given some, the agent lets go of the ones it
+  // recorded.
+  const afresh =
+    session.resumedFrom !== null && toldAfresh(session.resumedFrom, session.workflow);
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -1166,8 +1174,8 @@ export async function launch(
           : {
               instructions: orchestratorPrompt(session.workflow),
               startOnly: startsOnly(session.workflow),
-              ...(afresh ? { afresh: true } : {}),
             }),
+        ...(afresh ? { afresh: true } : {}),
         cols,
         rows,
       },

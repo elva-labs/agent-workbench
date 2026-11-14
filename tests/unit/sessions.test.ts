@@ -1995,6 +1995,14 @@ describe("following a workflow", () => {
     await launch(without.key, 80, 24, () => {});
     expect(spawned.at(-1)).toMatchObject({ session: "old" });
     expect(spawned.at(-1)).not.toHaveProperty("instructions");
+    // Its conversation was first given the workflow's instructions, which
+    // the agent would go on giving itself: it is told to let go of them.
+    expect(spawned.at(-1)).toMatchObject({ afresh: true });
+    // A session never given a workflow is resumed as it always was.
+    const plain = create(P, "never", "claude-code");
+    await launch(plain.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "never" });
+    expect(spawned.at(-1)).not.toHaveProperty("afresh");
   });
 
   it("lets go of what is kept for a session gone from its project's history", async () => {
