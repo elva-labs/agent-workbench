@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -309,6 +310,10 @@ struct Stored {
 
 struct Running {
     child: Child,
+    /// Which start of a plugin this process is. A reader that gets to the
+    /// end of its process late can find the next one under the same key,
+    /// and this is how it tells the two apart.
+    launch: u64,
     stdin: Arc<Mutex<ChildStdin>>,
     state: State,
     detail: Option<String>,
@@ -334,6 +339,9 @@ const LAST_WORDS: Duration = Duration::from_millis(500);
 /// one that dies before it greets is broken, not unlucky, and is not
 /// started every half minute until the app closes.
 const TRIES: u32 = 5;
+
+/// Numbers every start of a plugin's process, for [`Running::launch`].
+static LAUNCHES: AtomicU64 = AtomicU64::new(0);
 
 type Key = (String, String);
 
@@ -1534,6 +1542,7 @@ impl Inner {
                 return;
             }
         };
+        let launch = LAUNCHES.fetch_add(1, Ordering::Relaxed);
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("piped stdin")));
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
@@ -1577,6 +1586,7 @@ impl Inner {
                 key.clone(),
                 Running {
                     child,
+                    launch,
                     stdin,
                     state: State::Starting,
                     detail: None,
@@ -1623,7 +1633,7 @@ impl Inner {
                     plugins.said(&source_id, &plugin, kind, &message);
                 }
             }
-            plugins.exited(&source_id, &plugin, greeted);
+            plugins.exited(&source_id, &plugin, launch, greeted);
         });
     }
 
@@ -1631,7 +1641,11 @@ impl Inner {
     /// it is still on and nothing here asked it to go. A process stop ended
     /// is marked off before it is told, and whoever stopped it starts the
     /// next one, so the reader does not start one of its own as well.
-    fn exited(self: &Arc<Self>, source_id: &str, name: &str, greeted: bool) {
+    ///
+    /// Stop can see the process end, and the next one start, before the
+    /// reader gets here. The reader then finds that next process under the
+    /// key, which is not the one it read, and leaves it alone.
+    fn exited(self: &Arc<Self>, source_id: &str, name: &str, launch: u64, greeted: bool) {
         let key: Key = (source_id.to_string(), name.to_string());
         let enabled = {
             let stored = self.stored.lock().expect("plugins lock");
@@ -1642,7 +1656,7 @@ impl Inner {
         };
         let (still_on, failures, detail) = {
             let mut running = self.running.lock().expect("plugins lock");
-            let Some(live) = running.get_mut(&key) else {
+            let Some(live) = running.get_mut(&key).filter(|live| live.launch == launch) else {
                 return;
             };
             let still_on = enabled && live.state != State::Off;
@@ -2583,6 +2597,62 @@ tools = ["ping"]
         again.remove(&added.id).unwrap();
         assert!(again.list().is_empty());
         assert!(plugins_at(&home, recorder).list().is_empty());
+    }
+
+    // Off and on again can end one process and start the next before the
+    // first one's reader has read to the end of it. What that reader does
+    // then must not touch the process that took its place.
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_of_a_process_that_was_replaced_leaves_the_next_one_alone() {
+        let home = Scratch::absent("plugins-replaced-home");
+        let dir = source_with(
+            "[[plugin]]\nname = \"echo\"\npath = \"github\"\nrun = [\"sh\", \"main.sh\"]\n",
+            "replaced",
+        );
+        std::fs::write(
+            dir.join("github/main.sh"),
+            "#!/bin/sh\necho '{\"type\":\"hello\",\"name\":\"echo\",\"version\":\"1.0.0\"}'\nwhile IFS= read -r line; do case \"$line\" in *stop*) exit 0;; esac; done\n",
+        )
+        .unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let plugins = plugins_at(&home, recorder.clone());
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+        let key: Key = (added.id.clone(), "echo".to_string());
+        let launch = || {
+            let running = plugins.inner.running.lock().unwrap();
+            running.get(&key).map(|live| live.launch)
+        };
+        let came_up = || {
+            for _ in 0..600 {
+                if plugins.list()[0].plugins[0].state == State::Running {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            false
+        };
+
+        plugins.enable(&added.id, "echo", true).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        let first = launch().unwrap();
+        plugins.enable(&added.id, "echo", false).unwrap();
+        plugins.enable(&added.id, "echo", true).unwrap();
+        assert!(came_up(), "{:?}", plugins.list());
+        let second = launch().unwrap();
+        assert_ne!(first, second);
+
+        // The first process's reader, getting to its end only now.
+        plugins.inner.exited(&added.id, "echo", first, true);
+        assert_eq!(launch(), Some(second));
+        assert_eq!(plugins.list()[0].plugins[0].state, State::Running);
+        assert!(!recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(event, payload)| event == PLUGIN_STATE && payload["state"] == "stopped"));
+        plugins.enable(&added.id, "echo", false).unwrap();
     }
 
     #[test]
