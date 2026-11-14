@@ -25,6 +25,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -38,6 +39,10 @@ use crate::styles::{self, Styles, USER_STYLES_CHANGED};
 use crate::workflow::{self, Workflows};
 
 pub const SETTINGS_CHANGED: &str = "settings_changed";
+/// The settings file was there and is gone. A window hands over the
+/// settings it holds, so the next change is laid over them and not over the
+/// defaults.
+pub const SETTINGS_MISSING: &str = "settings_missing";
 
 pub const APPEARANCES: &[&str] = &["system", "light", "dark"];
 pub const LOOKS: &[&str] = &["modern", "terminal"];
@@ -133,6 +138,25 @@ pub struct Hooks {
     pub overrides: BTreeMap<String, bool>,
 }
 
+/// An entry of the keys, the hooks or the accounts that the file holds and
+/// the app does not use, with the rule it breaks. It is written back where
+/// it stood by every save, until a change names the entry again or replaces
+/// the field it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnreadEntry {
+    /// `keys`, `hooks` or `accounts`.
+    pub field: String,
+    /// The part of the field it sits in: empty for the field's own entries.
+    #[serde(default)]
+    pub section: String,
+    /// The entry's name: an action, a project path, an account. Empty when
+    /// the whole field is not the shape it should be.
+    pub name: String,
+    pub reason: String,
+    /// The entry as the file holds it.
+    pub entry: Value,
+}
+
 /// A login kept apart from the others: Claude Code's in a configuration
 /// directory of its own, Codex's in a home of its own. Either left out
 /// means that agent runs on its own directory under the home.
@@ -189,6 +213,10 @@ pub struct Settings {
     pub notifications: bool,
     /// Whether it says so with a chime as well.
     pub chime: bool,
+    /// What the file holds in the keys, hooks and accounts that is not
+    /// used. Not a setting: it is read from the file and written back to it.
+    #[serde(default)]
+    pub unread_entries: Vec<UnreadEntry>,
 }
 
 impl Default for Settings {
@@ -211,6 +239,7 @@ impl Default for Settings {
             user_styles: false,
             notifications: true,
             chime: false,
+            unread_entries: Vec::new(),
         }
     }
 }
@@ -280,6 +309,196 @@ fn keys(value: &Value) -> Result<BTreeMap<String, Chord>, String> {
         keys.insert(action.clone(), chord(action, value)?);
     }
     Ok(keys)
+}
+
+/// What one entry of the file is not: kept with the rule it breaks.
+fn unused(
+    unread: &mut Vec<UnreadEntry>,
+    field: &str,
+    section: &str,
+    name: &str,
+    reason: String,
+    entry: &Value,
+) {
+    unread.push(UnreadEntry {
+        field: field.into(),
+        section: section.into(),
+        name: name.into(),
+        reason,
+        entry: entry.clone(),
+    });
+}
+
+/// The chords that read, each entry on its own; the rest are unread.
+fn keys_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<String, Chord> {
+    let mut keys = BTreeMap::new();
+    let Some(table) = value.as_object() else {
+        let reason = "keys is a table of chords by action".to_string();
+        unused(unread, "keys", "", "", reason, value);
+        return keys;
+    };
+    for (action, value) in table {
+        let read = if keys.len() >= MOST_CHORDS {
+            Err(format!("keys holds {MOST_CHORDS} chords at most"))
+        } else if action.is_empty() || action.chars().count() > LONGEST_NAME {
+            Err(format!("{action:?} is not an action"))
+        } else {
+            chord(action, value)
+        };
+        match read {
+            Ok(chord) => {
+                keys.insert(action.clone(), chord);
+            }
+            Err(reason) => unused(unread, "keys", "", action, reason, value),
+        }
+    }
+    keys
+}
+
+/// The hooks that read, each entry on its own.
+fn hooks_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> Hooks {
+    let mut hooks = Settings::default().hooks;
+    let Some(table) = value.as_object() else {
+        let reason = "hooks is everywhere, on or off, and the projects that say otherwise".into();
+        unused(unread, "hooks", "", "", reason, value);
+        return hooks;
+    };
+    for (name, value) in table {
+        match (name.as_str(), value) {
+            ("everywhere", Value::Bool(on)) => hooks.everywhere = *on,
+            ("everywhere", _) => {
+                let reason = "everywhere is on or off".into();
+                unused(unread, "hooks", "", name, reason, value);
+            }
+            ("overrides", Value::Object(projects)) => {
+                for (project, value) in projects {
+                    match value {
+                        Value::Bool(on) => {
+                            hooks.overrides.insert(project.clone(), *on);
+                        }
+                        _ => {
+                            let reason = format!("the choice for {project} is on or off");
+                            unused(unread, "hooks", "overrides", project, reason, value);
+                        }
+                    }
+                }
+            }
+            ("overrides", _) => {
+                let reason = "overrides is the projects that say otherwise, by path".into();
+                unused(unread, "hooks", "", name, reason, value);
+            }
+            _ => {}
+        }
+    }
+    hooks
+}
+
+/// The accounts that read, each entry on its own. A choice that names an
+/// account that is not used is unread with it.
+fn accounts_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> Accounts {
+    let mut accounts = Accounts::default();
+    let Some(table) = value.as_object() else {
+        let reason = "accounts is a table of accounts by name, the one every project uses, and the projects that say otherwise".into();
+        unused(unread, "accounts", "", "", reason, value);
+        return accounts;
+    };
+    if let Some(list) = table.get("list") {
+        match list.as_object() {
+            Some(list) => {
+                for (name, value) in list {
+                    let read = if accounts.list.len() >= MOST_ACCOUNTS {
+                        Err(format!(
+                            "the settings hold {MOST_ACCOUNTS} accounts at most"
+                        ))
+                    } else {
+                        account(name, value)
+                    };
+                    match read {
+                        Ok(account) => {
+                            accounts.list.insert(name.clone(), account);
+                        }
+                        Err(reason) => unused(unread, "accounts", "list", name, reason, value),
+                    }
+                }
+            }
+            None => {
+                let reason = "list is the accounts by name".into();
+                unused(unread, "accounts", "", "list", reason, list);
+            }
+        }
+    }
+    let choice = |value: &Value, accounts: &Accounts| -> Result<Option<String>, String> {
+        match value {
+            Value::Null => Ok(None),
+            Value::String(name) if accounts.list.contains_key(name) => Ok(Some(name.clone())),
+            Value::String(name) => Err(format!("there is no account called {name} in use")),
+            _ => Err("a choice is an account's name or none".into()),
+        }
+    };
+    if let Some(value) = table.get("everywhere") {
+        match choice(value, &accounts) {
+            Ok(choice) => accounts.everywhere = choice,
+            Err(reason) => unused(unread, "accounts", "", "everywhere", reason, value),
+        }
+    }
+    if let Some(overrides) = table.get("overrides") {
+        match overrides.as_object() {
+            Some(projects) => {
+                for (project, value) in projects {
+                    match choice(value, &accounts) {
+                        Ok(choice) => {
+                            accounts.overrides.insert(project.clone(), choice);
+                        }
+                        Err(reason) => {
+                            unused(unread, "accounts", "overrides", project, reason, value)
+                        }
+                    }
+                }
+            }
+            None => {
+                let reason = "overrides is the projects that say otherwise, by path".into();
+                unused(unread, "accounts", "", "overrides", reason, overrides);
+            }
+        }
+    }
+    accounts
+}
+
+/// One account of the file: a name that will do, and directories that will.
+fn account(name: &str, value: &Value) -> Result<Account, String> {
+    if name.trim().is_empty() || name.chars().count() > LONGEST_ACCOUNT {
+        return Err(format!(
+            "an account's name is a few words, {LONGEST_ACCOUNT} characters at most"
+        ));
+    }
+    let account: Account = serde_json::from_value(value.clone())
+        .map_err(|_| format!("{name} is a directory for Claude Code and one for Codex"))?;
+    for dir in [&account.claude, &account.codex].into_iter().flatten() {
+        if !is_directory(dir) {
+            return Err(format!("a directory of {name} is a path, not {dir:?}"));
+        }
+    }
+    Ok(account)
+}
+
+/// Drops the unread entries a change to `field` has mended: the field's own
+/// shape when it is replaced whole, and an entry the change names again.
+fn mend(settings: &mut Settings, field: &str) {
+    let keys = settings.keys.clone();
+    let hooks = settings.hooks.overrides.clone();
+    let accounts = settings.accounts.clone();
+    settings.unread_entries.retain(|entry| {
+        if entry.field != field {
+            return true;
+        }
+        match (field, entry.section.as_str()) {
+            ("keys", _) => !entry.name.is_empty() && !keys.contains_key(&entry.name),
+            ("hooks", "overrides") => !hooks.contains_key(&entry.name),
+            ("accounts", "list") => !accounts.list.contains_key(&entry.name),
+            ("accounts", "overrides") => !accounts.overrides.contains_key(&entry.name),
+            _ => false,
+        }
+    });
 }
 
 fn hooks(value: &Value) -> Result<Hooks, String> {
@@ -520,9 +739,18 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "chime" => settings.chime = value.as_bool().ok_or("chime is true or false")?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
-        "keys" => settings.keys = keys(value)?,
-        "hooks" => settings.hooks = hooks(value)?,
-        "accounts" => settings.accounts = accounts(value)?,
+        "keys" => {
+            settings.keys = keys(value)?;
+            mend(settings, "keys");
+        }
+        "hooks" => {
+            settings.hooks = hooks(value)?;
+            mend(settings, "hooks");
+        }
+        "accounts" => {
+            settings.accounts = accounts(value)?;
+            mend(settings, "accounts");
+        }
         "workflows" => settings.workflows = workflow::read(value)?,
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
         other => return Err(format!("there is no setting called {other}")),
@@ -550,13 +778,21 @@ fn settle_palette(settings: &mut Settings) {
 }
 
 /// The settings a file's text holds, each field that does not read left at
-/// its default, and each theme or workflow that does not read left out. None when the
+/// its default, each theme or workflow that does not read left out, and each
+/// key, hook or account entry that does not read set aside. None when the
 /// text is not a JSON object at all.
 pub fn parse(text: &str) -> Option<Settings> {
     let fields: Map<String, Value> = serde_json::from_str(text).ok()?;
     let mut settings = Settings::default();
+    let mut unread = Vec::new();
     for (field, value) in in_order(&fields) {
-        if field == "themes" {
+        if field == "keys" {
+            settings.keys = keys_lenient(value, &mut unread);
+        } else if field == "hooks" {
+            settings.hooks = hooks_lenient(value, &mut unread);
+        } else if field == "accounts" {
+            settings.accounts = accounts_lenient(value, &mut unread);
+        } else if field == "themes" {
             settings.themes = themes(value, true).unwrap_or_default();
         } else if field == "workflows" {
             settings.workflows = workflow::read_lenient(value);
@@ -564,6 +800,7 @@ pub fn parse(text: &str) -> Option<Settings> {
             let _ = set_field(&mut settings, field, value);
         }
     }
+    settings.unread_entries = unread;
     Some(settings)
 }
 
@@ -582,21 +819,56 @@ pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     Ok(next)
 }
 
+/// Writes an unread entry back where the file had it.
+fn put_back(fields: &mut Map<String, Value>, entry: &UnreadEntry) {
+    if entry.section.is_empty() && entry.name.is_empty() {
+        fields.insert(entry.field.clone(), entry.entry.clone());
+        return;
+    }
+    let field = fields
+        .entry(entry.field.clone())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(table) = field.as_object_mut() else {
+        return;
+    };
+    let table = if entry.section.is_empty() {
+        table
+    } else {
+        let part = table
+            .entry(entry.section.clone())
+            .or_insert_with(|| Value::Object(Map::new()));
+        match part.as_object_mut() {
+            Some(part) => part,
+            None => return,
+        }
+    };
+    table.insert(entry.name.clone(), entry.entry.clone());
+}
+
 /// The settings as the file holds them, with the workflows that are not
 /// used written back where they stood.
 fn render(settings: &Settings) -> String {
     let mut value = serde_json::to_value(settings).unwrap_or(Value::Null);
     if let Some(fields) = value.as_object_mut() {
         fields.insert("workflows".into(), workflow::for_file(&settings.workflows));
+        fields.remove("unreadEntries");
+        for entry in &settings.unread_entries {
+            put_back(fields, entry);
+        }
     }
     let text = serde_json::to_string_pretty(&value).unwrap_or_default();
     format!("{text}\n")
 }
 
-/// Writes the file whole and moves it into place, so a reader finds the
-/// old settings or the new, never half of either. The text goes to a
-/// temporary file beside the settings file and is on disk before the move.
-fn write(path: &Path, text: &str) -> Result<(), String> {
+/// Where a write to the settings file lands: the file itself, or what a
+/// link at its place points at, so a settings file that is a link stays one.
+fn target_of(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Writes the text to a temporary file beside the file it is for, and on to
+/// disk. Answers with where it is.
+fn stage(path: &Path, text: &str) -> Result<PathBuf, String> {
     use std::io::Write;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -611,10 +883,24 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(&temporary);
         format!("could not write {}: {e}", temporary.display())
     })?;
-    std::fs::rename(&temporary, path).map_err(|e| {
-        let _ = std::fs::remove_file(&temporary);
+    Ok(temporary)
+}
+
+fn commit(temporary: &Path, path: &Path) -> Result<(), String> {
+    std::fs::rename(temporary, path).map_err(|e| {
+        let _ = std::fs::remove_file(temporary);
         format!("could not write {}: {e}", path.display())
     })
+}
+
+/// Writes the file whole and moves it into place, so a reader finds the
+/// old settings or the new, never half of either. The text goes to a
+/// temporary file beside the settings file and is on disk before the move.
+#[cfg(test)]
+fn write(path: &Path, text: &str) -> Result<(), String> {
+    let path = target_of(path);
+    let temporary = stage(&path, text)?;
+    commit(&temporary, &path)
 }
 
 /// The settings file of one machine, the stylesheet beside it, and the
@@ -632,6 +918,9 @@ pub struct Store {
     /// Held while a change is read, laid over and written, so two changes
     /// at once both land.
     writing: Mutex<()>,
+    /// Whether the file was there when last looked at, so its going missing
+    /// is told to the windows once.
+    existed: AtomicBool,
 }
 
 impl Store {
@@ -643,6 +932,7 @@ impl Store {
             announced: Mutex::new(None),
             styles_announced: Mutex::new(None),
             writing: Mutex::new(()),
+            existed: AtomicBool::new(false),
         }
     }
 
@@ -683,25 +973,36 @@ impl Store {
         &self.path
     }
 
-    /// One look at the file.
-    fn look(&self) -> Found {
+    /// One look at the file, and the text it held when there was one.
+    fn look_at(&self) -> (Found, Option<String>) {
         match std::fs::read_to_string(&self.path) {
-            Ok(text) => parse(&text).map_or(Found::Unreadable, |s| Found::Whole(Box::new(s))),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Found::Missing,
-            Err(_) => Found::Unreadable,
+            Ok(text) => {
+                self.existed.store(true, Ordering::SeqCst);
+                let found = parse(&text).map_or(Found::Unreadable, |s| Found::Whole(Box::new(s)));
+                (found, Some(text))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Found::Missing, None),
+            Err(_) => {
+                self.existed.store(true, Ordering::SeqCst);
+                (Found::Unreadable, None)
+            }
         }
+    }
+
+    fn look(&self) -> Found {
+        self.look_at().0
     }
 
     /// Looks until the file is whole or missing, up to `MOST_LOOKS` times, and
     /// calls `between` before each look after the first.
-    fn look_settled(&self, between: &mut dyn FnMut()) -> Found {
-        let mut found = self.look();
+    fn look_settled(&self, between: &mut dyn FnMut()) -> (Found, Option<String>) {
+        let mut found = self.look_at();
         for _ in 1..MOST_LOOKS {
-            if found != Found::Unreadable {
+            if found.0 != Found::Unreadable {
                 break;
             }
             between();
-            found = self.look();
+            found = self.look_at();
         }
         found
     }
@@ -709,8 +1010,11 @@ impl Store {
     /// The settings as they are, and what the file held. A file that does
     /// not parse is answered as unreadable, not as the defaults, and the
     /// next look the watcher takes at a whole file is announced even when
-    /// it matches what was announced before.
+    /// it matches what was announced before. The look and the forgetting
+    /// happen under the write lock, so a look of the watcher's cannot fall
+    /// between them.
     pub fn load(&self) -> Stored {
+        let _writing = self.writing.lock();
         match self.look() {
             Found::Whole(settings) => Stored {
                 stored: true,
@@ -740,35 +1044,70 @@ impl Store {
         }
     }
 
+    /// Tells the windows the file that was there is gone, once.
+    fn note_missing(&self) {
+        if self.existed.swap(false, Ordering::SeqCst) {
+            self.forget_announced();
+            events::emit(&self.sink, SETTINGS_MISSING, &Value::Null);
+        }
+    }
+
     /// Lays a change over the settings, writes them and announces them.
     /// Answers with the settings as they now are. A file that does not
     /// parse is looked at again a few times; if it still does not, nothing
     /// is written and the answer says so.
     pub fn set(&self, change: &Value) -> Result<Settings, String> {
-        self.set_between_looks(change, &mut || std::thread::sleep(BETWEEN_LOOKS))
+        self.set_between(
+            change,
+            &mut || std::thread::sleep(BETWEEN_LOOKS),
+            &mut || {},
+        )
     }
 
-    fn set_between_looks(
+    /// `between` runs before each further look at a file that does not
+    /// parse, and `before_move` once the new text is staged and before it
+    /// is moved into place.
+    fn set_between(
         &self,
         change: &Value,
         between: &mut dyn FnMut(),
+        before_move: &mut dyn FnMut(),
     ) -> Result<Settings, String> {
         let _writing = self.writing.lock().map_err(|_| "the settings are stuck")?;
-        let current = match self.look_settled(between) {
-            Found::Whole(settings) => *settings,
-            Found::Missing => Settings::default(),
-            Found::Unreadable => {
-                self.forget_announced();
-                return Err(format!(
-                    "the settings file could not be read, so nothing was saved: it is empty or not valid settings, perhaps because something is writing it. Try again in a moment, or mend or remove {}",
-                    self.path.display()
-                ));
+        // A file that changed between the read and the move was edited
+        // meanwhile: the change is laid over what is there now instead.
+        for _ in 0..MOST_LOOKS {
+            let (found, seen) = self.look_settled(between);
+            let current = match found {
+                Found::Whole(settings) => *settings,
+                Found::Missing if self.existed.load(Ordering::SeqCst) => {
+                    self.note_missing();
+                    return Err("the settings file is gone, so nothing was saved: the window is putting its settings back, and the change can be made again".into());
+                }
+                Found::Missing => Settings::default(),
+                Found::Unreadable => {
+                    self.forget_announced();
+                    return Err(format!(
+                        "the settings file could not be read, so nothing was saved: it is empty or not valid settings, perhaps because something is writing it. Try again in a moment, or mend {}",
+                        self.path.display()
+                    ));
+                }
+            };
+            let next = apply(&current, change)?;
+            let path = target_of(&self.path);
+            let staged = stage(&path, &render(&next))?;
+            before_move();
+            let now = std::fs::read_to_string(&self.path).ok();
+            if now != seen {
+                let _ = std::fs::remove_file(&staged);
+                continue;
             }
-        };
-        let next = apply(&current, change)?;
-        write(&self.path, &render(&next))?;
-        self.announce(&next);
-        Ok(next)
+            commit(&staged, &path)?;
+            self.existed.store(true, Ordering::SeqCst);
+            self.announce(&next);
+            return Ok(next);
+        }
+        Err("the settings file keeps changing, so nothing was saved: try again in a moment".into())
     }
 
     fn announce(&self, settings: &Settings) {
@@ -783,10 +1122,10 @@ impl Store {
     }
 
     /// Reads the file again after something touched it, and announces what
-    /// it holds if that is news. A file that is gone is left alone, and so
-    /// is one that does not parse: the windows keep what they have, and
-    /// the next whole file is announced even when it matches what was last
-    /// announced. The read and the announcement happen under the write
+    /// it holds if that is news. A file that does not parse is left alone:
+    /// the windows keep what they have, and the next whole file is
+    /// announced even when it matches what was last announced. A file that
+    /// is gone is told to the windows, which hand over what they hold. The read and the announcement happen under the write
     /// lock, so what is announced is never older than a change the store
     /// has already announced.
     fn reread(&self) {
@@ -796,7 +1135,7 @@ impl Store {
         match self.look() {
             Found::Whole(settings) => self.announce(&settings),
             Found::Unreadable => self.forget_announced(),
-            Found::Missing => {}
+            Found::Missing => self.note_missing(),
         }
     }
 
@@ -1383,7 +1722,11 @@ mod tests {
             let store = Store::new(&home, recorder.clone());
             let mut looks = 0;
             let error = store
-                .set_between_looks(&json!({ "appearance": "dark" }), &mut || looks += 1)
+                .set_between(
+                    &json!({ "appearance": "dark" }),
+                    &mut || looks += 1,
+                    &mut || {},
+                )
                 .unwrap_err();
             assert!(error.contains("could not be read"), "{error}");
             assert!(error.contains("nothing was saved"), "{error}");
@@ -1405,10 +1748,14 @@ mod tests {
         let whole = whole_text();
         let mut looks = 0;
         let next = store
-            .set_between_looks(&json!({ "appearance": "dark" }), &mut || {
-                looks += 1;
-                put(&home, &whole);
-            })
+            .set_between(
+                &json!({ "appearance": "dark" }),
+                &mut || {
+                    looks += 1;
+                    put(&home, &whole);
+                },
+                &mut || {},
+            )
             .unwrap();
         assert_eq!(looks, 1);
         assert_eq!(next.appearance, "dark");
@@ -1462,44 +1809,6 @@ mod tests {
 
     #[test]
     fn a_whole_file_after_an_unreadable_look_is_announced_even_when_it_matches_what_was() {
-        let home = home("after-unreadable");
-        let recorder = Arc::new(Recorder::default());
-        let store = Arc::new(Store::new(&home, recorder.clone()));
-        put(&home, &whole_text());
-        store.watch().unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        assert!(
-            changes(&recorder).is_empty(),
-            "the file as it began is not news"
-        );
-
-        // The same content written again, emptied first: a look that
-        // catches it empty is not news, and the whole file after it is.
-        put(&home, "");
-        let until = Instant::now() + Duration::from_secs(10);
-        while store.announced.lock().unwrap().is_some() && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(
-            store.announced.lock().unwrap().is_none(),
-            "the empty look was seen"
-        );
-        assert!(
-            changes(&recorder).is_empty(),
-            "an unreadable file is not announced"
-        );
-        put(&home, &whole_text());
-        let until = Instant::now() + Duration::from_secs(10);
-        while changes(&recorder).is_empty() && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let announced = changes(&recorder);
-        assert_eq!(announced.len(), 1, "{announced:?}");
-        assert_eq!(announced[0]["palette"], "rose");
-    }
-
-    #[test]
-    fn a_window_s_read_that_catches_the_file_empty_lets_the_next_whole_look_through() {
         let home = home("read-unreadable");
         let recorder = Arc::new(Recorder::default());
         let store = Store::new(&home, recorder.clone());
@@ -1631,5 +1940,222 @@ mod tests {
         let announced = changes(&recorder);
         assert_eq!(announced.len(), 2, "{announced:?}");
         assert_eq!(announced[1]["palette"], "rose");
+    }
+
+    fn keyed(extra: &str) -> String {
+        format!(r#"{{ "palette": "rose", {extra} }}"#)
+    }
+
+    #[test]
+    fn one_bad_key_costs_that_key_and_is_carried_through_writes() {
+        let home = home("bad-key");
+        put(
+            &home,
+            &keyed(
+                r#""keys": { "review": { "key": "g", "shift": false, "alt": false }, "find": { "key": 3 } }"#,
+            ),
+        );
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.palette, "rose");
+        assert!(loaded.keys.contains_key("review"));
+        assert!(!loaded.keys.contains_key("find"));
+        assert_eq!(loaded.unread_entries.len(), 1);
+        assert_eq!(loaded.unread_entries[0].name, "find");
+        assert!(loaded.unread_entries[0].reason.contains("find"));
+
+        store.set(&json!({ "appearance": "dark" })).unwrap();
+        let text = std::fs::read_to_string(settings_path(&home)).unwrap();
+        let file: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(file["keys"]["find"], json!({ "key": 3 }), "carried: {text}");
+        assert_eq!(file["keys"]["review"]["key"], "g");
+        assert!(file.get("unreadEntries").is_none());
+
+        // Naming the entry again mends it.
+        store
+            .set(&json!({ "keys": {
+                "review": { "key": "g", "shift": false, "alt": false },
+                "find": { "key": "f", "shift": true, "alt": false }
+            } }))
+            .unwrap();
+        let loaded = store.load().settings;
+        assert!(loaded.unread_entries.is_empty());
+        assert_eq!(loaded.keys["find"].key, "f");
+    }
+
+    #[test]
+    fn one_bad_hook_choice_or_account_costs_that_entry_only() {
+        let home = home("bad-hooks-accounts");
+        put(
+            &home,
+            &keyed(
+                r#""hooks": { "everywhere": false, "overrides": { "/a": true, "/b": "yes" } },
+                   "accounts": {
+                     "list": { "Work": { "claude": "~/.claude-work" }, "": {}, "Bad": { "claude": 4 } },
+                     "everywhere": "Work",
+                     "overrides": { "/a": "Work", "/b": "Bad", "/c": "Nobody" }
+                   }"#,
+            ),
+        );
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert!(!loaded.hooks.everywhere);
+        assert_eq!(loaded.hooks.overrides.len(), 1);
+        assert_eq!(loaded.accounts.list.len(), 1);
+        assert_eq!(loaded.accounts.everywhere.as_deref(), Some("Work"));
+        assert_eq!(loaded.accounts.overrides.len(), 1);
+        let names: Vec<_> = loaded
+            .unread_entries
+            .iter()
+            .map(|u| format!("{}/{}/{}", u.field, u.section, u.name))
+            .collect();
+        assert_eq!(names.len(), 5, "{names:?}");
+        assert!(
+            names.contains(&"hooks/overrides//b".to_string()),
+            "{names:?}"
+        );
+
+        store.set(&json!({ "chime": true })).unwrap();
+        let file: Value =
+            serde_json::from_str(&std::fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(file["hooks"]["overrides"]["/b"], "yes");
+        assert_eq!(file["accounts"]["list"]["Bad"], json!({ "claude": 4 }));
+        assert_eq!(file["accounts"]["overrides"]["/c"], "Nobody");
+        assert_eq!(file["accounts"]["overrides"]["/a"], "Work");
+    }
+
+    #[test]
+    fn a_field_that_is_not_the_shape_at_all_is_unread_whole_and_replaced_by_a_change() {
+        let home = home("bad-field");
+        put(&home, &keyed(r#""keys": [1, 2], "hooks": 7"#));
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let loaded = store.load().settings;
+        assert_eq!(loaded.unread_entries.len(), 2);
+        assert!(loaded.keys.is_empty());
+        store.set(&json!({ "chime": true })).unwrap();
+        let file: Value =
+            serde_json::from_str(&std::fs::read_to_string(settings_path(&home)).unwrap()).unwrap();
+        assert_eq!(file["keys"], json!([1, 2]));
+        assert_eq!(file["hooks"], json!(7));
+        store
+            .set(&json!({ "hooks": { "everywhere": false, "overrides": {} } }))
+            .unwrap();
+        let loaded = store.load().settings;
+        assert_eq!(loaded.unread_entries.len(), 1);
+        assert_eq!(loaded.unread_entries[0].field, "keys");
+    }
+
+    #[test]
+    fn a_file_going_missing_is_told_once_and_a_save_before_that_is_refused() {
+        let home = home("goes-missing");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        let count = |recorder: &Recorder| {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, _)| name == SETTINGS_MISSING)
+                .count()
+        };
+        store.set(&json!({ "palette": "rose" })).unwrap();
+        std::fs::remove_file(settings_path(&home)).unwrap();
+        store.reread();
+        store.reread();
+        assert_eq!(count(&recorder), 1);
+
+        // A save that finds it gone before the watcher did refuses, and tells.
+        store.set(&json!({ "palette": "rose" })).unwrap();
+        std::fs::remove_file(settings_path(&home)).unwrap();
+        let error = store.set(&json!({ "look": "terminal" })).unwrap_err();
+        assert!(error.contains("is gone"), "{error}");
+        assert_eq!(count(&recorder), 2);
+        assert!(!settings_path(&home).exists(), "nothing was written");
+
+        // A machine that never had a file does not say it went missing.
+        let fresh = home_of("never-had");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&fresh, recorder.clone());
+        store.reread();
+        assert_eq!(count(&recorder), 0);
+        store.set(&json!({ "palette": "rose" })).unwrap();
+    }
+
+    fn home_of(name: &str) -> PathBuf {
+        home(name)
+    }
+
+    #[test]
+    fn the_refusal_to_save_over_an_unreadable_file_says_to_mend_it_not_to_remove_it() {
+        let home = home("mend-message");
+        put(&home, "{ half");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let error = store
+            .set_between(&json!({ "chime": true }), &mut || {}, &mut || {})
+            .unwrap_err();
+        assert!(error.contains("mend"), "{error}");
+        assert!(!error.contains("remove"), "{error}");
+        assert!(error.contains(&settings_path(&home).display().to_string()));
+    }
+
+    #[test]
+    fn a_hand_edit_saved_while_a_change_is_being_written_is_not_lost() {
+        let home = home("edit-during-write");
+        put(&home, &whole_text());
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let mut edits = 0;
+        let edited = render(&Settings {
+            palette: "mono".into(),
+            look: "terminal".into(),
+            ..Settings::default()
+        });
+        let next = store
+            .set_between(&json!({ "appearance": "dark" }), &mut || {}, &mut || {
+                edits += 1;
+                if edits == 1 {
+                    put(&home, &edited);
+                }
+            })
+            .unwrap();
+        assert_eq!(edits, 2, "the change was laid over the edited file");
+        assert_eq!(next.palette, "mono");
+        assert_eq!(next.appearance, "dark");
+        assert_eq!(store.load().settings.palette, "mono");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_settings_file_that_is_a_link_stays_a_link() {
+        let home = home("link");
+        let elsewhere = home.join("elsewhere.json");
+        std::fs::write(&elsewhere, whole_text()).unwrap();
+        std::fs::create_dir_all(settings_path(&home).parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, settings_path(&home)).unwrap();
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        store.set(&json!({ "appearance": "dark" })).unwrap();
+        assert!(std::fs::symlink_metadata(settings_path(&home))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let text = std::fs::read_to_string(&elsewhere).unwrap();
+        assert!(text.contains("\"appearance\": \"dark\""), "{text}");
+        assert!(text.contains("\"rose\""));
+    }
+
+    #[test]
+    fn a_load_waits_for_a_change_in_progress() {
+        let home = home("load-lock");
+        put(&home, &whole_text());
+        let store = Arc::new(Store::new(&home, Arc::new(Recorder::default())));
+        let held = store.writing.lock().unwrap();
+        let reader = {
+            let store = Arc::clone(&store);
+            std::thread::spawn(move || store.load())
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!reader.is_finished(), "the load holds the write lock");
+        drop(held);
+        assert!(reader.join().unwrap().stored);
     }
 }

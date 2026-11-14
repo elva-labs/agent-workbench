@@ -288,6 +288,7 @@ fn open_at(
             if event == CLOSED {
                 let _ = app.emit(REMOTE_CLOSED, json!({ "host": name, "reason": payload }));
             } else if event == workbench_core::settings::SETTINGS_CHANGED
+                || event == workbench_core::settings::SETTINGS_MISSING
                 || event == workbench_core::styles::USER_STYLES_CHANGED
             {
                 // The window follows the settings of the machine it runs on,
