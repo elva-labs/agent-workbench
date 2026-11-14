@@ -410,10 +410,12 @@ so the file is missing for a moment. A file that was there and is found
 missing is looked at again a quarter of a second later, and only if it is
 still missing is every window told it is gone. A window that hears this, or
 that finds no file at start, hands over the settings it holds, with the
-entries it knows the file held and did not use. The hand-over is written only
-if the file is still missing when it is about to be written, and it is put in
-place in a way that never replaces a file; a file that is there by then is
-what stands, and the window takes it. Changes made in the window before its
+entries it knows the file held and did not use. The hand-over is read a setting
+at a time, the way a file is, so a value the app does not accept is set aside
+and kept as written in the file while the rest is handed over. The hand-over is
+written only if the file is still missing when it is about to be written, and
+it is put in place in a way that never replaces a file; a file that is there
+by then is what stands, and the window takes it. Changes made in the window before its
 first read is answered, or while it hands over, wait, and are laid over what
 the read or the hand-over left. Once the windows are told the file
 is gone, a change that is not a hand-over is refused until a hand-over has

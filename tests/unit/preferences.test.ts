@@ -76,7 +76,15 @@ vi.mock("$lib/core", () => ({
         state.handOvers.push(held);
         // Written only while there is no file.
         if (state.unreadable) return { stored: true, unreadable: true, settings: DEFAULTS };
-        if (state.stored === null) state.stored = { ...DEFAULTS, ...held };
+        // A field the core does not accept is set aside and the rest is
+        // written.
+        if (state.stored === null) {
+          const accepted = { ...held };
+          if (!["system", "plex", "jetbrains"].includes(accepted.terminalFont)) {
+            accepted.terminalFont = DEFAULTS.terminalFont;
+          }
+          state.stored = { ...DEFAULTS, ...accepted };
+        }
         return { stored: true, settings: state.stored };
       };
       if (!state.holdingHandOver) return Promise.resolve(answer());
@@ -215,6 +223,20 @@ describe("followSettings", () => {
     expect(Object.keys(handed.keys ?? {})).toHaveLength(Object.keys(PRESETS.default).length);
     expect(handed.hooks).toEqual({ everywhere: true, overrides: {} });
     expect(state.stored?.palette).toBe("indigo");
+  });
+
+  it("hands over a copy with a stale value in it and takes what the core kept", async () => {
+    localStorage.setItem("workbench.palette", "indigo");
+    loadTheme();
+    theme.mono = "gone-mono" as typeof theme.mono;
+    await followSettings();
+    expect(state.handOvers).toHaveLength(1);
+    expect(state.handOvers[0].terminalFont).toBe("gone-mono");
+    expect(state.handOvers[0].palette).toBe("indigo");
+    expect(state.stored?.palette).toBe("indigo");
+    expect(theme.mono).toBe("system");
+    expect(theme.palette).toBe("indigo");
+    expect(refusal.reason).toBeNull();
   });
 
   it("hands over hooks off for a setup from before the hooks choice", async () => {

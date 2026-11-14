@@ -922,21 +922,32 @@ pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
 }
 
 /// The settings a window hands over for a file that is not there: what it
-/// holds laid over the defaults, with the entries it knows the file held and
-/// did not use, less any it holds again.
+/// holds laid over the defaults, read a field at a time the way a file is
+/// read, so a value the app does not accept is set aside and kept as written
+/// and the rest is handed over. The entries the window knows the file held
+/// and did not use come with them, less any it holds again.
 fn handed_over(held: &Value) -> Result<Settings, String> {
     let mut fields = held
         .as_object()
         .ok_or("the settings handed over are an object of settings by name")?
         .clone();
     let unread = fields.remove("unreadEntries");
-    let mut settings = apply(&Settings::default(), &Value::Object(fields))?;
+    let mut settings = parse(&Value::Object(fields).to_string())
+        .ok_or("the settings handed over are an object of settings by name")?;
     if let Some(Value::Array(entries)) = unread {
-        settings.unread_entries = entries
+        let own = std::mem::take(&mut settings.unread_entries);
+        let carried: Vec<UnreadEntry> = entries
             .into_iter()
             .filter_map(|entry| serde_json::from_value::<UnreadEntry>(entry).ok())
             .filter(|entry| !holds(&settings, entry) || is_choice(entry))
+            .filter(|entry| {
+                !own.iter().any(|own| {
+                    (&own.field, &own.section, &own.name)
+                        == (&entry.field, &entry.section, &entry.name)
+                })
+            })
             .collect();
+        settings.unread_entries = carried.into_iter().chain(own).collect();
     }
     Ok(settings)
 }
@@ -2611,6 +2622,37 @@ mod tests {
             "the old file was never written into"
         );
         assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn a_hand_over_sets_aside_a_value_that_does_not_apply_and_hands_over_the_rest() {
+        let home = home("hand-over-stale-value");
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        let mut held = serde_json::to_value(Settings {
+            palette: "amber".into(),
+            ..Settings::default()
+        })
+        .unwrap();
+        held["terminalFont"] = json!("Gone Mono");
+        let stored = store.hand_over(&held).unwrap();
+        assert!(stored.stored && !stored.unreadable);
+        assert_eq!(stored.settings.palette, "amber");
+        assert_eq!(
+            stored.settings.terminal_font,
+            Settings::default().terminal_font
+        );
+        assert!(stored
+            .settings
+            .unread_entries
+            .iter()
+            .any(|entry| entry.field == "terminalFont" && entry.entry == json!("Gone Mono")));
+        let file = file_of(&home);
+        assert_eq!(file["palette"], "amber");
+        assert_eq!(file["terminalFont"], "Gone Mono");
+        // Saves are not refused afterwards.
+        store.set(&json!({ "look": "terminal" })).unwrap();
+        assert_eq!(file_of(&home)["look"], "terminal");
     }
 
     #[test]
