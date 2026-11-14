@@ -243,6 +243,36 @@ export function sortProjects(paths: string[], sort: ProjectSort): string[] {
   });
 }
 
+/** How often an inactive project's history is read again while the
+    window is looked at. The active ones are read on every tick of the
+    history clock; nothing much happens in an inactive one, but work done
+    there outside the app still wakes it. */
+export const QUIET_EVERY = 5 * 60_000;
+
+/** When the inactive projects' histories were last asked for. */
+let quietAt = -Infinity;
+
+/** The projects whose history the clock reads now: the active ones every
+    time, and the inactive ones as well once every few minutes, and on the
+    first reading after `readQuietNext`. */
+export function historyDue(
+  paths: string[],
+  current: string | null,
+  now = Date.now(),
+): string[] {
+  if (now - quietAt >= QUIET_EVERY) {
+    quietAt = now;
+    return paths;
+  }
+  return paths.filter((path) => isActive(path, current, now));
+}
+
+/** The window came back into view: the next reading takes in the
+    inactive projects as well. */
+export function readQuietNext() {
+  quietAt = -Infinity;
+}
+
 /** The projects split into the active and the inactive, each in the
     order chosen. A project that is not active by what is known, and whose
     transcripts have not been read yet, is in neither until they are: they
@@ -289,4 +319,5 @@ export function steady(shown: string[], next: string[]): string[] {
 export function resetProjects() {
   projects.used = {};
   projects.inactiveAfter = "week";
+  quietAt = -Infinity;
 }

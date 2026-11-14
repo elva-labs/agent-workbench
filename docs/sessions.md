@@ -17,8 +17,9 @@ and once a minute while it is looked at, so a session run in a terminal
 outside the app is there to resume without a restart. A list that has not
 changed is left as it is, and a machine that does not answer holds up only
 its own projects. A project under [Inactive](#active-and-inactive) is read
-when it is opened and again when it leaves Inactive, and the clock passes
-over it in between.
+on a slower clock, every five minutes while the window is looked at, and
+each time the window comes back into view, so a session run in it from a
+terminal wakes it; it is read again as it leaves Inactive.
 
 The pane's title row carries two small buttons at its end: the order the
 projects are listed in, and a menu with Open project, Open remote project,
@@ -187,9 +188,8 @@ without another such second is waiting. A single burst, a clock ticking
 over in the footer or a cursor blinking, is not work and holds nothing
 back, and nothing the agent draws while starting counts
 until you have sent it a line or a minute has passed. The dot says it on
-the row, with the words on hover and for a screen reader, and in the
-second line while the agent has left nothing there; the agent pane's
-header spells the state out. A session that goes quiet, ends, or rings for
+the row, with the words on hover and for a screen reader; the agent
+pane's header spells the state out. A session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the
 name in ink, `waiting for you` in the agent pane, a count in the status bar,
 and the same count on the app's icon. Having it on

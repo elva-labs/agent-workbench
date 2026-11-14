@@ -18,12 +18,15 @@ vi.mock("$lib/core", () => ({
 import {
   adoptInactiveAfter,
   inactiveAfterSettings,
+  historyDue,
   isActive,
   lastActive,
   lastUsed,
   loadUsed,
   onScreen,
   projects,
+  QUIET_EVERY,
+  readQuietNext,
   resetProjects,
   setInactiveAfter,
   sortProjects,
@@ -298,6 +301,24 @@ describe("the projects whose history is not read yet", () => {
       active: ["/known"],
       inactive: ["/unread"],
     });
+  });
+});
+
+// The history clock ticks every minute. The projects in use are read on
+// every tick, the inactive ones every five minutes, and all of them on
+// the first tick after the window comes back into view.
+describe("the histories the clock reads", () => {
+  it("takes in the inactive projects every few minutes, and after a return", () => {
+    touch("/active", NOW - DAY);
+    touch("/old", NOW - 40 * DAY);
+    const paths = ["/active", "/old"];
+    expect(historyDue(paths, null, NOW)).toEqual(paths);
+    expect(historyDue(paths, null, NOW + 60_000)).toEqual(["/active"]);
+    expect(historyDue(paths, null, NOW + 4 * 60_000)).toEqual(["/active"]);
+    expect(historyDue(paths, null, NOW + QUIET_EVERY)).toEqual(paths);
+    expect(historyDue(paths, null, NOW + QUIET_EVERY + 60_000)).toEqual(["/active"]);
+    readQuietNext();
+    expect(historyDue(paths, null, NOW + QUIET_EVERY + 120_000)).toEqual(paths);
   });
 });
 

@@ -1074,12 +1074,15 @@ export async function installFakeCore(
           projects: string[],
           agent: string,
           configDir?: string,
-        ) =>
-          projects.map((project) =>
+        ) => {
+          const w = window as unknown as { __historyReads?: string[][] };
+          (w.__historyReads ??= []).push(projects);
+          return projects.map((project) =>
             project === open[0] && agent === "claude-code"
               ? transcripts.filter((transcript) => transcript.configDir === configDir)
               : [],
-          ),
+          );
+        },
         sessionTitle: async () => null,
         hookStatus: async () => ({
           installed: false,

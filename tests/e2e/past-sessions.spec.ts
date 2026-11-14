@@ -65,3 +65,40 @@ test("reads the span from the machine's settings", async ({ page }) => {
   await expect(page.getByTestId("past-session")).toHaveCount(1);
   await expect(page.getByTestId("earlier-sessions")).toContainText("1");
 });
+
+// The history clock reads the projects in use every minute, and the ones
+// under Inactive every five, and all of them when the window comes back
+// into view: work done outside the app in an inactive project wakes it.
+test("reads an inactive project's history on a slower clock", async ({ page }) => {
+  const OLD = "/home/ada/dev/old";
+  await page.clock.install();
+  await installFakeCore(page, {
+    open: [PROJECT, OLD],
+    used: { [PROJECT]: 0, [OLD]: 30 * DAY * 1000 },
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
+  const reads = () =>
+    page.evaluate(() => (window as unknown as { __historyReads?: string[][] }).__historyReads?.flat() ?? []);
+  const clear = () =>
+    page.evaluate(() => {
+      (window as unknown as { __historyReads?: string[][] }).__historyReads = [];
+    });
+  const focus = () => page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  const blur = () => page.evaluate(() => window.dispatchEvent(new Event("blur")));
+
+  await blur();
+  await focus();
+  await expect.poll(reads).toContain(OLD);
+  await clear();
+  await page.clock.runFor(61_000);
+  await expect.poll(reads).toContain(PROJECT);
+  expect(await reads()).not.toContain(OLD);
+  await page.clock.runFor(5 * 60_000);
+  await expect.poll(reads).toContain(OLD);
+
+  await clear();
+  await blur();
+  await focus();
+  await expect.poll(reads).toContain(OLD);
+});
