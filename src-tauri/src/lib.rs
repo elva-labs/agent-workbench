@@ -172,6 +172,7 @@ async fn integrated_start(
     mode: Option<String>,
     effort: Option<String>,
     config_dir: Option<String>,
+    instructions: Option<String>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
@@ -189,11 +190,12 @@ async fn integrated_start(
             mode.as_deref(),
             effort.as_deref(),
             config_dir.as_deref(),
+            instructions.as_deref(),
         )?),
         Route::Remote { host, rest } => {
             let started = remotes.connection(&host)?.call(
                 "integrated_start",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "mode": mode, "effort": effort, "configDir": config_dir }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
             let id = with_host_id(&host, id);

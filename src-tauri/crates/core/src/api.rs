@@ -44,6 +44,11 @@ pub struct Spawned {
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
 
+/// Why an integrated session is not started with a workflow's instructions:
+/// an integrated session has no way to be given them, and starting it
+/// without them would drop the workflow unseen.
+pub const NO_INTEGRATED_WORKFLOW: &str = "An integrated session cannot follow a workflow, because it is not given a workflow's instructions. Start a session that follows a workflow in a terminal.";
+
 /// Why a session that follows a workflow is not started: it would have no
 /// start tool to hand its work out with.
 pub const NO_TOOLS: &str = "This session follows a workflow, which hands out its work with the workbench's tools, and this machine has no tool server to give it them. Pick an agent to start one alone instead.";
@@ -495,7 +500,11 @@ impl Core {
         mode: Option<&str>,
         effort: Option<&str>,
         config_dir: Option<&str>,
+        instructions: Option<&str>,
     ) -> Result<crate::integrated::Started, String> {
+        if instructions.is_some_and(|text| !text.trim().is_empty()) {
+            return Err(NO_INTEGRATED_WORKFLOW.to_string());
+        }
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let protocol = adapter
             .integrated()
@@ -1240,6 +1249,23 @@ mod tests {
             |_| Box::new(|_: &[u8]| true),
         );
         assert_eq!(spawned.err().as_deref(), Some(NO_TOOLS));
+    }
+
+    #[test]
+    fn an_integrated_session_is_refused_workflow_instructions_it_cannot_be_given() {
+        let home = Scratch::new("api-integrated-workflow");
+        let started = core_at(&home).integrated_start(
+            "claude-code",
+            &home,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("1. Direct the work."),
+        );
+        assert_eq!(started.err().as_deref(), Some(NO_INTEGRATED_WORKFLOW));
     }
 
     #[test]

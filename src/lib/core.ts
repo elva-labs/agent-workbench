@@ -169,6 +169,9 @@ export interface IntegratedStartOptions {
   effort?: string;
   /** The account's configuration directory, as for `spawn`. */
   configDir?: string;
+  /** A workflow's instructions. An integrated session cannot be given
+      them, so a start that carries any is refused. */
+  instructions?: string;
 }
 
 /** What starting an integrated session hands back: the id every other

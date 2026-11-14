@@ -133,6 +133,8 @@ struct IntegratedStartParams {
     effort: Option<String>,
     #[serde(default)]
     config_dir: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -422,6 +424,7 @@ pub fn dispatch(
                 p.mode.as_deref(),
                 p.effort.as_deref(),
                 p.config_dir.as_deref(),
+                p.instructions.as_deref(),
             )?)
         }
         "integrated_trust" => {
@@ -989,6 +992,14 @@ mod tests {
         )
         .expect_err("codex has no integrated mode here");
         assert!(codex.contains("integrated"), "{codex}");
+        let flow = dispatch(
+            &core,
+            "integrated_start",
+            json!({ "agent": "claude-code", "project": "/tmp", "instructions": "1. Direct the work." }),
+            no_output,
+        )
+        .expect_err("a workflow's instructions cannot be passed to an integrated session");
+        assert_eq!(flow, crate::api::NO_INTEGRATED_WORKFLOW);
         for (method, params) in [
             (
                 "integrated_send",

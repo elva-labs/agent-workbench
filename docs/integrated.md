@@ -56,6 +56,11 @@ signs in is passed: no token and no key. A session under an account that is
 not signed in says so as an error, and the user signs in by running `claude`
 in a terminal; the workbench never drives a sign-in.
 
+An integrated session is not given a workflow's instructions. A start that
+carries them is refused with an error saying so, before anything runs, so a
+workflow is never dropped without the caller knowing. A session that follows
+a workflow runs in a terminal.
+
 ## Trust
 
 Print mode skips the agent's own question of whether a folder's files are
