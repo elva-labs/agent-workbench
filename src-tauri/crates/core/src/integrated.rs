@@ -744,7 +744,8 @@ pub enum Sending {
     /// it is written.
     Line { line: String },
     /// Settled without asking the agent, such as a setting the agent takes
-    /// with the next message: the reply, and the events it makes.
+    /// with the next message: the reply, and the events it makes, which go
+    /// out before the reply does.
     Local { reply: Value, events: Vec<Event> },
 }
 
@@ -2151,18 +2152,22 @@ fn request(
                     machine.tracker.observe(bounded(event), &mut out);
                 }
                 live.emit(&out);
-                return Ok(reply);
+                // Through the outbox like the agent's own replies, so that
+                // it comes back after the events it made.
+                let (replied, local) = mpsc::channel();
+                live.put(Out::Reply(replied, Ok(reply)));
+                (None, Some((None, local)))
             }
             Sending::Line { line } => {
                 live.emit(&out);
-                (live.enqueue(line)?, None)
+                (Some(live.enqueue(line)?), None)
             }
             Sending::Request { line, key } => {
                 live.emit(&out);
                 let (replied, reply) = mpsc::channel();
                 machine.replies.insert(key.clone(), replied);
                 match live.enqueue(line) {
-                    Ok(went) => (went, Some((key, reply))),
+                    Ok(went) => (Some(went), Some((Some(key), reply))),
                     Err(error) => {
                         machine.replies.remove(&key);
                         machine.driver.forget(&key);
@@ -2172,19 +2177,24 @@ fn request(
             }
         }
     };
-    live.written(went)?;
+    if let Some(went) = went {
+        live.written(went)?;
+    }
     let Some((key, reply)) = waiting else {
         return Ok(Value::Null);
     };
     let by = by.min(std::time::Instant::now() + CONTROL_TIMEOUT);
     match reply.recv_timeout(by.saturating_duration_since(std::time::Instant::now())) {
         Ok(result) => result,
-        Err(RecvTimeoutError::Timeout) => {
-            let mut machine = live.machine.lock().expect("machine lock");
-            machine.replies.remove(&key);
-            machine.driver.forget(&key);
-            Err("the agent did not answer in time".into())
-        }
+        Err(RecvTimeoutError::Timeout) => match key {
+            Some(key) => {
+                let mut machine = live.machine.lock().expect("machine lock");
+                machine.replies.remove(&key);
+                machine.driver.forget(&key);
+                Err("the agent did not answer in time".into())
+            }
+            None => Err("the session's news did not go out in time".into()),
+        },
         Err(RecvTimeoutError::Disconnected) => Err("the agent ended".into()),
     }
 }
@@ -2875,22 +2885,31 @@ mod tests {
 
     impl Bench {
         fn new(driver: Box<dyn Driver>) -> Self {
-            Self::with(driver, None)
+            Self::with(driver, None, None)
         }
 
         /// A session whose agent has not said it is ready yet.
         fn starting(driver: Box<dyn Driver>) -> Self {
-            Self::with(driver, Some(mpsc::channel().0))
+            Self::with(driver, Some(mpsc::channel().0), None)
         }
 
-        fn with(driver: Box<dyn Driver>, ready: Option<Sender<()>>) -> Self {
+        /// A session whose news goes to `sink` rather than the recorder.
+        fn into(driver: Box<dyn Driver>, sink: Arc<dyn Sink>) -> Self {
+            Self::with(driver, None, Some(sink))
+        }
+
+        fn with(
+            driver: Box<dyn Driver>,
+            ready: Option<Sender<()>>,
+            sink: Option<Arc<dyn Sink>>,
+        ) -> Self {
             let recorder = Arc::new(crate::events::testing::Recorder::default());
             let outbox = Arc::new(Outbox::default());
             let (lines, queued) = mpsc::channel::<Line>();
             let (kill, _) = mpsc::channel();
             let (seen, written) = mpsc::channel();
             std::thread::spawn({
-                let sink: Arc<dyn Sink> = recorder.clone();
+                let sink: Arc<dyn Sink> = sink.unwrap_or_else(|| recorder.clone());
                 let outbox = Arc::clone(&outbox);
                 move || send_out("int-bench", &sink, &outbox)
             });
@@ -3072,6 +3091,35 @@ mod tests {
         assert!(
             took < CONFIGURE_TIMEOUT + Duration::from_millis(500),
             "{took:?}"
+        );
+    }
+
+    #[test]
+    fn a_setting_settled_without_the_agent_answers_after_its_events() {
+        let gate = Arc::new(Gate::default());
+        let bench = Bench::into(fake(), gate.clone());
+        let (answered, answer) = mpsc::channel();
+        std::thread::spawn({
+            let sessions = Arc::clone(&bench.sessions);
+            move || {
+                let reply = control(&sessions, "int-bench", &Control::SetModel("sonnet".into()));
+                let _ = answered.send(reply);
+            }
+        });
+        assert!(
+            answer.recv_timeout(Duration::from_millis(300)).is_err(),
+            "no answer while its event waits for the window"
+        );
+        *gate.open.lock().unwrap() = true;
+        gate.opened.notify_all();
+        let reply = answer.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(reply.unwrap()["model"], "sonnet");
+        let taken = gate.taken.events.lock().unwrap();
+        assert!(
+            taken
+                .iter()
+                .any(|(_, event)| event["type"] == "configured" && event["model"] == "sonnet"),
+            "{taken:?}"
         );
     }
 
