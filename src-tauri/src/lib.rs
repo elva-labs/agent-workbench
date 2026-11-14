@@ -13,6 +13,7 @@ mod browser_keys;
 mod browser_page;
 mod chrome;
 mod launch;
+mod leaving;
 mod menu;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod probe;
@@ -1649,6 +1650,7 @@ pub fn run() {
             app.manage(Arc::new(ssh::LocalDaemon::default()));
             app.manage(Arc::new(browser::Browser::default()));
             app.manage(Arc::new(browser_keys::Keys::default()));
+            app.manage(Arc::new(leaving::Leaving::default()));
             menu::install(app)?;
             if let Some(webview_window) = app.get_webview_window("main") {
                 chrome::inset_window_controls(&webview_window.as_ref().window());
@@ -1664,6 +1666,7 @@ pub fn run() {
             launch::request(app.handle(), launch::folders(std::env::args(), &cwd));
             Ok(())
         })
+        .on_window_event(leaving::on_window_event)
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
@@ -1736,6 +1739,10 @@ pub fn run() {
             remote_pair,
             remote_forget,
             menu::app_menu,
+            menu::menu_keys,
+            leaving::leave_unsaved,
+            leaving::leave_heard,
+            leaving::leave_confirmed,
             launch::take_opened,
             browser::browser_open,
             browser::browser_focus,
