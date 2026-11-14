@@ -368,12 +368,19 @@ is elsewhere, is marked outside, and one that starts at a home folder,
 names a variable or a glob is marked as not plainly in the project. The
 mark comes before the path, as in "asks to write a path outside the
 project: ~/.ssh/authorized_keys", so no path can push it out of sight.
-Every such path the request names is listed. A link inside the project that
-leads out of it cannot be seen from the window. A command, path or address
+Whenever any path of a request lies outside the project or not plainly in
+it, the line itself says so and how many, and those paths are listed before
+the description the agent wrote, which is cut like other long text. A link
+inside the project that leads out of it cannot be seen from the window. A command, path or address
 longer than the line holds is cut, with its whole a fold away that opens
 in place, and the line says in the warning colour how many characters the
-cut leaves out. An address also names the host it goes to, since its start
-can look like another. The whole request, with the tool it names, is a fold away
+cut leaves out, a subagent's description included. An address is read
+after trimming, whatever its slashes, and the line names the host it really
+goes to, since its start can look like another; where a client such as curl
+would read another host from it, as with a backslash before an `@`, it
+names that one too, and it says in the warning colour when the address
+names a user before its host, holds a backslash, or has a host that mixes
+scripts. The whole request, with the tool it names, is a fold away
 wherever the line does not say all of it. What the request holds scrolls
 between its line and its choices, which stay in sight whatever it holds.
 The first allows the call once and remembers

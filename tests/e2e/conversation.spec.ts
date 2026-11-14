@@ -1308,6 +1308,25 @@ test.describe("a permission cannot be disguised", () => {
     await expect(page.getByTestId("permission-outside-list")).toHaveText("Outside the project: /");
   });
 
+  test("by an address that leads somewhere its start does not say", async ({ page }) => {
+    await openIntegrated(page);
+    const host = page.getByTestId("permission-host");
+    const warn = page.getByTestId("permission-address-warn");
+    // The reviewer's cases: no slashes, a leading space, and a backslash
+    // two readers disagree about.
+    await agent(page, `f.startTurn("${H}"); f.ask("${H}", "WebFetch", { url: "https:github.com@evil.example/" });`);
+    await expect(host).toHaveText("on evil.example");
+    await expect(warn).toHaveText(", and it names a user before the host");
+    await page.getByTestId("choice-allow").click();
+    await agent(page, `f.ask("${H}", "WebFetch", { url: " https://github.com@evil.example/" });`);
+    await expect(host).toHaveText("on evil.example");
+    await page.getByTestId("choice-allow").click();
+    await agent(page, String.raw`f.ask("${H}", "WebFetch", { url: "https://github.com\\@evil.example/" });`);
+    await expect(host).toHaveText("on github.com");
+    await expect(page.getByTestId("permission-host-other")).toHaveText(", or on evil.example as some clients read it");
+    await expect(warn).toContainText("it holds a backslash");
+  });
+
   test("by a tool that is not a command carrying one, with no call to say which", async ({ page }) => {
     await openIntegrated(page);
     await agent(page, `f.startTurn("${H}"); f.ask("${H}", "DeleteRepository", { command: "ls" });`);
@@ -1440,6 +1459,42 @@ test.describe("a request too long for its line", () => {
     // An address that starts like one host and goes to another.
     await agent(page, `f.ask("${H}", "WebFetch", { url: "https://github.com@evil.example/x" });`);
     await expect(page.getByTestId("permission-host")).toHaveText("on evil.example");
+  });
+
+  test("says on its line how many paths lie outside, before anything the agent wrote", async ({ page }) => {
+    await openIntegrated(page);
+    // The reviewer's case: a two-path edit, one of them outside, under a
+    // long description.
+    await agent(
+      page,
+      `f.startTurn("${H}"); const c = f.startTool("${H}", "fileChange", {}, { kind: "edit" });
+       f.emit("${H}", { type: "permissionAsked", request: "r-1", call: c, parent: null, tool: "fileChange",
+         input: { changes: [{ path: "${PROJECT}/src/a.ts", diff: "+a" }, { path: "/etc/hosts", diff: "+b" }] },
+         truncated: false, description: ${JSON.stringify("Because ".repeat(400))}, path: null,
+         choices: [{ choice: "allow", remembers: null, message: false }, { choice: "deny", remembers: null, message: false }] });`,
+    );
+    const line = page.getByTestId("permission-dock").locator(".what p");
+    await expect(line).toContainText("asks to edit src/a.ts and 1 more, with 1 path outside the project");
+    expect(await inSight(page, "permission-away-count")).toBe(true);
+    expect(await inSight(page, "permission-outside-list")).toBe(true);
+    // The list stands before the description, which is cut and counted.
+    const order = await page
+      .getByTestId("permission-dock")
+      .evaluate((dock) => [...dock.querySelectorAll(".away, .description")].map((node) => node.className.split(" ")[0]));
+    expect(order).toEqual(["away", "description"]);
+    await expect(page.getByTestId("permission-dock").locator(".description")).toContainText("more characters");
+  });
+
+  test("says how much a cut subagent's description leaves out", async ({ page }) => {
+    await openIntegrated(page);
+    const description = "Tidy ".repeat(60);
+    await agent(
+      page,
+      `f.startTurn("${H}");
+       const c = f.startTool("${H}", "Task", { description: ${JSON.stringify(description)} }, { kind: "agent" });
+       f.emit("${H}", { type: "permissionAsked", request: "sub-1", call: null, parent: c, tool: "Bash", input: { command: "ls" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }] });`,
+    );
+    await expect(page.getByTestId("permission-cut")).toHaveText(`and ${description.length - 160} more characters`);
   });
 
   test("cuts a long command and a long address, each a fold away", async ({ page }) => {

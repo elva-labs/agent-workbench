@@ -659,3 +659,49 @@ function partLines(part: Part): string[] {
 function capital(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+/** Where an address leads, as a reader of it must know: the host the URL
+    standard reads, the host a client that reads addresses its own way
+    would go to when that is another, and what in its authority could
+    mislead. Null for text that is not an address with a host. */
+export interface Address {
+  host: string;
+  /** The host a client such as curl reads, when it is not `host`. */
+  other: string | null;
+  warnings: string[];
+}
+
+const HOSTED = /^(https?|wss?|ftp):/i;
+
+export function address(text: string): Address | null {
+  const trimmed = text.trim();
+  if (!HOSTED.test(trimmed)) return null;
+  let host: string;
+  try {
+    host = new URL(trimmed).host;
+  } catch {
+    return null;
+  }
+  if (host === "") return null;
+  // The authority as a client that follows the old rules reads it: after
+  // the scheme and any slashes, up to the first slash, query or fragment;
+  // a backslash is part of it, and the host follows its last @.
+  const rest = trimmed.slice(trimmed.indexOf(":") + 1).replace(/^\/+/, "");
+  const authority = /^[^/?#]*/.exec(rest)?.[0] ?? "";
+  const plainHost = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d*$/, "");
+  let other: string | null = null;
+  try {
+    const read = new URL(`http://${plainHost}`).host;
+    if (read !== "" && read !== host.replace(/:\d+$/, "")) other = read;
+  } catch {
+    other = plainHost === "" ? null : plainHost;
+  }
+  const warnings: string[] = [];
+  if (authority.includes("@")) warnings.push("it names a user before the host");
+  if (authority.includes("\\")) warnings.push("it holds a backslash");
+  const letters = [...plainHost].filter((char) => /\p{L}/u.test(char));
+  const latin = letters.filter((char) => /\p{Script=Latin}/u.test(char)).length;
+  if (latin > 0 && latin < letters.length) warnings.push("its host mixes scripts");
+  else if (latin === 0 && letters.length > 0) warnings.push("its host is not in Latin letters");
+  return { host, other, warnings };
+}

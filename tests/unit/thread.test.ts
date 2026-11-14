@@ -11,6 +11,7 @@ import {
   revealed,
   place,
   phraseText,
+  address,
   nowDoing,
   runningCall,
   segments,
@@ -531,5 +532,33 @@ describe("a name an MCP server gave", () => {
     expect(what.lead).toEqual(["use ", { name: server }, "'s"]);
     expect(stepTitle(call({ tool: "mcp", name: "mcp__" + server + "__push" })).lead).toEqual(["Used ", { name: server }, "'s"]);
     expect(phraseText(what)).toBe(`use ${server}'s push`);
+  });
+});
+
+describe("an address", () => {
+  it("is read after trimming, whatever its slashes, and names the host it leads to", () => {
+    // The reviewer's cases.
+    expect(address("https:github.com@evil.example/")).toMatchObject({ host: "evil.example" });
+    expect(address(" https://github.com@evil.example/")).toMatchObject({ host: "evil.example" });
+    expect(address("https://example.com/a")).toEqual({ host: "example.com", other: null, warnings: [] });
+    expect(address("http://example.com:8080/x")).toEqual({ host: "example.com:8080", other: null, warnings: [] });
+    expect(address("not an address")).toBeNull();
+    expect(address("mailto:a@b.c")).toBeNull();
+  });
+
+  it("says what in its authority could mislead", () => {
+    expect(address("https:github.com@evil.example/")!.warnings).toEqual(["it names a user before the host"]);
+    expect(address("https://аpple.com/")!.warnings).toEqual(["its host mixes scripts"]);
+  });
+
+  it("names both hosts where two readers of it disagree", () => {
+    // The URL standard reads the backslash as a slash and goes to
+    // github.com; a client like curl takes all before the @ as a user and
+    // goes to evil.example.
+    expect(address("https://github.com\\@evil.example/")).toEqual({
+      host: "github.com",
+      other: "evil.example",
+      warnings: ["it names a user before the host", "it holds a backslash"],
+    });
   });
 });

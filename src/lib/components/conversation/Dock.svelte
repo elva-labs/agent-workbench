@@ -3,7 +3,7 @@
   import type { Conversation, Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
   import { answer, reply } from "$lib/integrated.svelte";
-  import { asks, choiceLabel, choiceMeans, place, requestCwd, requestPaths, shown as markers, type Piece } from "$lib/thread";
+  import { address, asks, choiceLabel, choiceMeans, place, requestCwd, requestPaths, shown as markers, type Piece } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
 
@@ -46,6 +46,13 @@
     const input = call?.input as Record<string, unknown> | null | undefined;
     const description = typeof input?.description === "string" ? input.description : null;
     return description === null ? [`A subagent of ${agent}'s`] : ["The subagent for “", { name: cut(description) }, "”"];
+  }
+
+  /** What a subagent that asks was asked to do, as it wrote it. */
+  function askerDescription(parent: string | null): string {
+    if (parent === null) return "";
+    const input = conversation.call(parent)?.input as Record<string, unknown> | null | undefined;
+    return typeof input?.description === "string" ? input.description : "";
   }
 
   /** Who asks, as a label, with what cannot be seen in it written out. */
@@ -264,16 +271,6 @@
     return Math.max(0, Array.from(text).length - LONG);
   }
 
-  /** The host an address goes to, said on its own: the start of an address
-      can look like one host and lead to another. */
-  function hostOf(text: string): string | null {
-    if (!/^https?:\/\//i.test(text)) return null;
-    try {
-      return new URL(text).host;
-    } catch {
-      return null;
-    }
-  }
   const KINDS = ["outside", "unknown"] as const;
 
   /** A command's first line, and how many lines follow it. */
@@ -383,7 +380,7 @@
       <div class="what">
         <span class="ring"></span>
         <p>
-          <b>{@render pieces(asker(asked.parent))}</b> asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
+          <b>{@render pieces(asker(asked.parent))}</b>{@render cutOff(askerDescription(asked.parent))} asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
                 class="exact"><Plain text={cut(parts.first)} /></code
               >{@render cutOff(parts.first)}{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
@@ -392,18 +389,13 @@
                   data-testid="permission-outside">{AWAY[at.where]}</span
                 >{" "}{/if}<code class="exact"><Plain text={cut(at.text)} /></code>{@render cutOff(at.text)}{:else}<code
                 class="exact"><Plain text={cut(what.object)} /></code
-              >{@render cutOff(what.object)}{#if hostOf(what.object) !== null}<span data-testid="permission-host"
-                  >{" "}on <code class="exact"><Plain text={hostOf(what.object) ?? ""} /></code></span
-                >{/if}{/if}{/if}
+              >{@render cutOff(what.object)}{@render leadsTo(what.object)}{/if}{/if}{@render awayCount(away, headAway)}
         </p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
       <!-- What the request holds scrolls under its line; the line and the
            choices stay in sight whatever it holds. -->
       <div class="body">
-      {#if asked.description}
-        <p class="description"><Plain text={asked.description} /></p>
-      {/if}
       {#each KINDS as kind (kind)}
         {@const these = away.filter((each) => each.where === kind && !(headAway && each.path === what.object))}
         {#if these.length > 0}
@@ -414,6 +406,9 @@
           </p>
         {/if}
       {/each}
+      {#if asked.description}
+        <p class="description"><Plain text={cut(asked.description)} />{@render cutOff(asked.description)}</p>
+      {/if}
       {#if command !== null || cutHead || lines_ !== null || full !== null}
         <div class="folds">
           {#if command !== null}
@@ -497,7 +492,7 @@
       {@const questions = asked.questions}
       <div class="what">
         <span class="ring"></span>
-        <p><b>{@render pieces(asker(asked.parent))}</b> asks you</p>
+        <p><b>{@render pieces(asker(asked.parent))}</b>{@render cutOff(askerDescription(asked.parent))} asks you</p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -596,6 +591,28 @@
     {/if}
   </div>
 {/if}
+
+<!-- Where an address leads: the host it goes to, said on its own since its
+     start can look like another; the host another reader of it would go to
+     when that is another; and what in it could mislead, in the warning
+     colour. -->
+{#snippet leadsTo(text: string)}{@const at = address(text)}{#if at !== null}<span data-testid="permission-host"
+      >{" "}on <code class="exact"><Plain text={at.host} /></code></span
+    >{#if at.other !== null}<span class="warn" data-testid="permission-host-other"
+        >, or on <code class="exact"><Plain text={at.other} /></code> as some clients read it</span
+      >{/if}{#if at.warnings.length > 0}<span class="warn" data-testid="permission-address-warn"
+        >, and {at.warnings.join(" and ")}</span
+      >{/if}{/if}{/snippet}
+
+<!-- How many of a request's paths lie outside the project or not plainly
+     in it, said on its line whenever the line itself does not already mark
+     the one there is. -->
+{#snippet awayCount(away: { where: "outside" | "unknown" }[], marked: boolean)}{@const out = away.filter((each) => each.where === "outside").length}{@const unsure = away.length - out}{#if away.length > (marked ? 1 : 0)}<span
+      class="warn"
+      data-testid="permission-away-count"
+      >{#if out > 0}, with {out} {out === 1 ? "path" : "paths"} outside the project{/if}{#if unsure > 0}{out > 0 ? " and" : ", with"}
+        {unsure} not plainly in it{/if}</span
+    >{/if}{/snippet}
 
 <!-- What a cut leaves out, counted on the line. -->
 {#snippet cutOff(text: string)}{#if leftOut(text) > 0}<span class="warn" data-testid="permission-cut"
