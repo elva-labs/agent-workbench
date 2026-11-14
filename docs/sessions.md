@@ -33,9 +33,10 @@ open, the pane says so and offers Open project there as well.
 Each project starts with a header: its name, the account it runs under as
 a tag when that is not the agents' own, and a button that starts a session
 in it, bringing it forward first. Beside that button, while the pointer is
-on the header, a ⋯ opens the project's own menu, New session and Close
-project; a right click on the header opens it too. Closing a project stops
-everything running in it. The header stays in view while the project's rows
+on the header, a ⋯ opens the project's own menu, New session and, set apart
+below a separator and in the colour of a removal, Close project; a right
+click on the header opens it too. Closing a project stops everything
+running in it. The header stays in view while the project's rows
 scroll under it, until the next project's pushes it out, and a hairline
 separates one project from the next. With more than one agent installed, a
 new session opens the choice in place under the project's name, a row per

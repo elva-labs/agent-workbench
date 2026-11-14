@@ -615,8 +615,15 @@ describe("SessionsPane", () => {
     const head = document.querySelector<HTMLElement>('[data-row="project:/repo"]')!;
     expect(within(head).queryByTestId("close-project")).toBeNull();
     await fireEvent.click(within(head).getByTestId("project-more"));
-    expect(within(head).getByTestId("project-menu")).toBeInTheDocument();
-    await fireEvent.click(within(head).getByTestId("close-project"));
+    const menu = within(head).getByTestId("project-menu");
+    // Close, which stops everything running in the project, stands apart
+    // below a separator, marked as what it is.
+    const close = within(head).getByTestId("close-project");
+    expect(close.previousElementSibling).toHaveAttribute("role", "separator");
+    expect(close).toHaveClass("destructive");
+    expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(1);
+    expect(within(head).getByTestId("project-menu-new")).not.toHaveClass("destructive");
+    await fireEvent.click(close);
     expect(workspace.open.map((project) => project.path)).toEqual(["/other"]);
 
     // A right click opens it as well, and Escape closes it.

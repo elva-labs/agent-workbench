@@ -243,6 +243,9 @@
     title?: string;
     /** The chord that does the same, shown at the item's end. */
     chord?: string;
+    /** It stops or removes something: set apart below a separator, and in
+        the colour that says so. */
+    destructive?: boolean;
     disabled: boolean;
     run: () => void;
   }
@@ -283,7 +286,13 @@
     const path = projectMenu.path;
     return [
       { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
-      { id: "close-project", label: "Close project", disabled: false, run: () => closeProject(path) },
+      {
+        id: "close-project",
+        label: "Close project",
+        destructive: true,
+        disabled: false,
+        run: () => closeProject(path),
+      },
     ];
   });
 
@@ -1082,10 +1091,12 @@
     <div class="scrim" onclick={() => (projectMenu = null)}></div>
     <div class="menu project-menu" class:up={projectMenu.up} role="menu" data-testid="project-menu">
       {#each projectItems as item, index (item.id)}
+        {#if item.destructive && index > 0}<div class="separator" role="separator"></div>{/if}
         <button
           role="menuitem"
           tabindex="-1"
           class:at={projectMenuAt === index}
+          class:destructive={item.destructive}
           onclick={() => fromProjectMenu(item)}
           disabled={item.disabled}
           data-testid={item.id}
@@ -1850,6 +1861,18 @@
 
   .more-menu {
     right: var(--row-pad-x);
+  }
+
+  .menu .separator {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--rule);
+  }
+
+  .menu button.destructive,
+  .menu button.destructive:hover:not(:disabled),
+  .menu button.destructive.at:not(:disabled) {
+    color: var(--del);
   }
 
   .menu button:disabled {
