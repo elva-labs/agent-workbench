@@ -32,6 +32,7 @@
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { reopen } from "$lib/reopen.svelte";
+  import { listenIntegrated } from "$lib/integrated.svelte";
   import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
 
   let { children } = $props();
@@ -60,12 +61,19 @@
     // in front. A project on another machine brings its sessions back when
     // it arrives; nothing here waits for it.
     let stopReopen = () => {};
+    // The integrated sessions' events are listened to before any session
+    // comes back, so one the core still runs after a reload misses none.
+    let stopIntegrated = () => {};
+    const listening = listenIntegrated().then((stop) => {
+      if (closed) stop();
+      else stopIntegrated = stop;
+    });
     // The projects the window opened with are asked about together: those
     // on this machine when they are in, and each other machine's when its
     // projects have arrived or been given up.
     const open = () => workspace.open.map((project) => project.path);
     let arrivals: ReadonlyMap<string, Promise<void>> = new Map();
-    const restored = restore().then((arriving) => {
+    const restored = Promise.all([restore(), listening]).then(([arriving]) => {
       arrivals = arriving;
       if (!closed) stopReopen = reopen(arriving);
     });
@@ -78,6 +86,7 @@
       stopStops();
       stopOpening();
       stopReopen();
+      stopIntegrated();
     };
   });
 </script>

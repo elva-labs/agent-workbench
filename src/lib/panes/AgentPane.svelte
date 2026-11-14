@@ -30,6 +30,7 @@
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
   import { otherKind, type SessionKind } from "$lib/sessionKind.svelte";
+  import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { workspace } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
@@ -57,6 +58,18 @@
   // this pane shows.
   $effect(() => {
     if (current?.status === "dormant") wake(current.key);
+  });
+
+  // An integrated session starts as soon as its row is starting, as a
+  // terminal session starts when its terminal mounts.
+  $effect(() => {
+    for (const session of sessions.all) {
+      if (session.kind !== "integrated" || session.status !== "starting") continue;
+      const key = session.key;
+      untrack(() => {
+        if (handleOf(key) === null && !linkFor(key).busy) void launchIntegrated(key);
+      });
+    }
   });
 
   /** Whether the new-session button has opened into the choice of agent. */

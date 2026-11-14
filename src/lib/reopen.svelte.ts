@@ -1,5 +1,6 @@
 import type { AgentId } from "$lib/core";
 import { startedFor } from "$lib/conductor.svelte";
+import { handleOf, reattach } from "$lib/integrated.svelte";
 import {
   activeSession,
   forProject,
@@ -41,6 +42,9 @@ interface Open {
   /** How it ran. A record from before there were integrated sessions has
       none, which reads as a terminal. */
   kind?: "terminal" | "integrated";
+  /** The core's id for an integrated session while it ran, which a window
+      reloaded while the core still runs it takes it up by. */
+  handle?: string | null;
 }
 
 function onRecord(session: Session): boolean {
@@ -55,7 +59,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account, kind } = entry as Record<
+  const { project, id, agent, startIn, model, account, kind, handle } = entry as Record<
     string,
     unknown
   >;
@@ -66,7 +70,8 @@ function isOpenEntry(entry: unknown): entry is Open {
     (startIn === null || typeof startIn === "string") &&
     (model === null || typeof model === "string") &&
     (account === undefined || account === null || typeof account === "string") &&
-    (kind === undefined || kind === "terminal" || kind === "integrated")
+    (kind === undefined || kind === "terminal" || kind === "integrated") &&
+    (handle === undefined || handle === null || typeof handle === "string")
   );
 }
 
@@ -112,7 +117,7 @@ export function reopen(
   const bring = (entry: Open) => {
     if (!isOpen(entry.project)) return;
     if (sessions.all.some((session) => session.id === entry.id)) return;
-    reopened(
+    const row = reopened(
       entry.project,
       entry.id,
       entry.agent,
@@ -121,6 +126,10 @@ export function reopen(
       entry.account ?? null,
       entry.kind ?? "terminal",
     );
+    // A window reloaded while the core still runs the session takes it up
+    // where it is; after a restart there is nothing to take up, and the
+    // row waits to be resumed like any other.
+    if (row.kind === "integrated" && entry.handle) void reattach(row.key, entry.handle);
   };
   // The session on screen at the quit, when its project is the one in front
   // and nothing else is on screen; otherwise the project's most recent, as
@@ -176,6 +185,7 @@ export function reopen(
             model: session.model,
             account: session.account,
             kind: session.kind,
+            ...(session.kind === "integrated" ? { handle: handleOf(session.key) } : {}),
           })),
           ...held,
         ],
