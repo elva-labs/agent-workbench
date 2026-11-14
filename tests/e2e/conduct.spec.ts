@@ -280,3 +280,77 @@ test.describe("the conductor", () => {
     expect((await answerTo(page, "c-3"))!.error).toContain("did not allow");
   });
 });
+
+test.describe("a session that follows a workflow", () => {
+  test.beforeEach(async ({ page }) => {
+    // The settings a fresh install has: new sessions follow Build and
+    // review.
+    await installFakeCore(page);
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+  });
+
+  const spawns = (page: Page) =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __spawns?: {
+              agent: string;
+              model?: string;
+              instructions?: string;
+              startOnly?: boolean;
+            }[];
+          }
+        ).__spawns ?? [],
+    );
+
+  test("starts on the workflow's orchestrator, told the workflow", async ({ page }) => {
+    const [first] = await spawns(page);
+    expect(first.agent).toBe("claude-code");
+    expect(first.model).toBe("fable");
+    expect(first.startOnly).toBe(true);
+    expect(first.instructions).toContain('workflow "Build and review"');
+    expect(first.instructions).toContain('2. For the step "Work"');
+  });
+
+  test("names a step in each start, and is refused one the workflow does not have", async ({
+    page,
+  }) => {
+    await push(page, {
+      id: "c-1",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
+    expect((await answerTo(page, "c-1"))!.error).toContain(
+      'The steps are "Work" (work) and "Review" (review).',
+    );
+    // Refused before the user is troubled.
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+
+    await push(page, {
+      id: "c-2",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test", step: "Work" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-2")).not.toBeNull();
+    expect((await answerTo(page, "c-2"))!.content).toContain(
+      'Started session session-2 for step "Work"',
+    );
+    // The step's first model, and none of the workflow: the worker is no
+    // orchestrator.
+    const worker = (await spawns(page)).at(-1)!;
+    expect(worker.model).toBe("sonnet");
+    expect(worker.instructions).toBeUndefined();
+
+    await push(page, { id: "c-3", tool: "sessions", session: "session-1" });
+    await expect.poll(() => answerTo(page, "c-3")).not.toBeNull();
+    expect((await answerTo(page, "c-3"))!.content).toContain('step "Work"');
+  });
+});

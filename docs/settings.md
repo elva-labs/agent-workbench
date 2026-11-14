@@ -229,8 +229,9 @@ through start, with a line on what that means. What the orchestrator is
 told unfolds into the instructions the workflow comes to: a short numbered
 list. The first tells the orchestrator to direct the work rather than do
 it, and to delegate by starting sessions with the workbench's `start` tool,
-not with its own subagents, giving the agent and the model each step names
-and no model for Codex's own default. Then each step has a sentence naming the step, what a
+not with its own subagents, naming the step each start is for, giving the
+agent and the model each step names and no model for Codex's own default,
+and naming, for a review, the session whose work it checks. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
 first as the one to use, how many sessions may run at once, or for a review
 when the work passes, where it goes back, which steps the piece is taken

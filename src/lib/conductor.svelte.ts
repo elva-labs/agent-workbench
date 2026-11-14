@@ -21,6 +21,12 @@
  * caller resumed after the app was closed still finds its sessions: the
  * running ones are its to direct as before, and the ones that went with
  * the app are listed as stopped and can be resumed where they ran.
+ *
+ * A caller that follows a workflow starts sessions in its shape: each start
+ * names a step of it, on a model the step allows, no more at once than a
+ * work step lets run, and a review of a session that did work. The started
+ * session remembers its place, and the rounds of each review are counted
+ * per piece of work, up to the most the review sends the work back.
  */
 
 import { accountOf, accounts, dirsOf, names } from "$lib/accounts.svelte";
@@ -40,7 +46,9 @@ import {
   statusMessage,
   type Session,
 } from "$lib/sessions.svelte";
-import type { AgentId } from "$lib/core";
+import type { AgentId, ReviewStep, Workflow, WorkflowStep } from "$lib/core";
+import { CODEX_DEFAULT } from "$lib/models";
+import { modelText } from "$lib/workflowInstructions";
 import { screen } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -123,7 +131,32 @@ export interface Started {
   account?: string | null;
 }
 
+/** Where a started session stands in its caller's workflow. */
+export interface Place {
+  /** The step it is for, by name. */
+  step: string;
+  kind: WorkflowStep["kind"];
+  /** The piece of work it is part of: the id of the session that began the
+      piece. Null for a work session that began one and has no id yet. */
+  piece: string | null;
+  /** For a review, which round of it this is, from one. */
+  round: number | null;
+  /** For a review, the session whose work it checks. */
+  work: string | null;
+}
+
+/** What a caller that follows a workflow has run by it: where each session
+    it started stands, by session id, and how many rounds each review has
+    had of each piece, by the review's step and the piece. Kept between
+    runs, and not forgotten when a session is stopped, since a piece
+    outlives the sessions that worked on it. */
+export interface Run {
+  places: Record<string, Place>;
+  rounds: Record<string, number>;
+}
+
 const STARTED_KEY = "workbench.started";
+const RUNS_KEY = "workbench.runs";
 
 export const conductor = $state({
   asking: null as Ask | null,
@@ -135,6 +168,11 @@ export const conductor = $state({
       runs. A row whose id is here is the caller's whether or not it was
       started in this run. */
   started: {} as Record<string, Started[]>,
+  /** Where each started row stands in its caller's workflow, by the row's
+      key, from the moment it is made: the place of a row with no id yet. */
+  places: {} as Record<string, Place>,
+  /** What each caller has run by its workflow, by the caller's id. */
+  runs: {} as Record<string, Run>,
 });
 
 /** Reads what callers started in earlier runs. A corrupt entry reads as
@@ -155,6 +193,45 @@ export function loadStarted() {
   } catch {
     // Nothing was started, then.
   }
+  try {
+    const raw = localStorage.getItem(RUNS_KEY);
+    if (raw === null) return;
+    const stored: unknown = JSON.parse(raw);
+    if (typeof stored !== "object" || stored === null) return;
+    const runs: Record<string, Run> = {};
+    for (const [caller, run] of Object.entries(stored)) {
+      if (typeof run !== "object" || run === null) continue;
+      const { places, rounds } = run as Record<string, unknown>;
+      const kept: Run = { places: {}, rounds: {} };
+      for (const [id, place] of Object.entries(isRecord(places) ? places : {}))
+        if (isPlace(place)) kept.places[id] = place;
+      for (const [piece, count] of Object.entries(
+        isRecord(rounds) ? rounds : {},
+      ))
+        if (typeof count === "number" && Number.isInteger(count) && count > 0)
+          kept.rounds[piece] = count;
+      runs[caller] = kept;
+    }
+    conductor.runs = runs;
+  } catch {
+    // Nothing was run by a workflow, then.
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+function isPlace(value: unknown): value is Place {
+  if (typeof value !== "object" || value === null) return false;
+  const { step, kind, piece, round, work } = value as Record<string, unknown>;
+  return (
+    typeof step === "string" &&
+    (kind === "work" || kind === "review") &&
+    (piece === null || typeof piece === "string") &&
+    (round === null ||
+      (typeof round === "number" && Number.isInteger(round))) &&
+    (work === null || typeof work === "string")
+  );
 }
 
 function isStarted(entry: unknown): entry is Started {
@@ -189,6 +266,58 @@ function remember(caller: string, entry: Started) {
     entry,
   ];
   saveStarted();
+}
+
+function saveRuns() {
+  try {
+    localStorage.setItem(RUNS_KEY, JSON.stringify(conductor.runs));
+  } catch {
+    // Non-fatal: the places and rounds start afresh after a restart.
+  }
+}
+
+const runOf = (caller: string): Run =>
+  (conductor.runs[caller] ??= { places: {}, rounds: {} });
+
+/** What the rounds of a review of a piece are counted under. */
+const roundKey = (step: string, piece: string) => `${step}\n${piece}`;
+
+/** How many rounds of a review a piece has had. */
+export function roundsOf(caller: string, step: string, piece: string): number {
+  return conductor.runs[caller]?.rounds[roundKey(step, piece)] ?? 0;
+}
+
+function countRound(caller: string, step: string, piece: string) {
+  const { rounds } = runOf(caller);
+  const key = roundKey(step, piece);
+  rounds[key] = (rounds[key] ?? 0) + 1;
+  saveRuns();
+}
+
+function place(caller: string, id: string, at: Place) {
+  runOf(caller).places[id] = at;
+  saveRuns();
+}
+
+/** Where a started row stands in its caller's workflow, when it does. */
+export function placeOf(key: string): Place | null {
+  const own = conductor.places[key];
+  if (own !== undefined) return own;
+  const session = byKey(key);
+  const caller = startedFor(key);
+  const id = session?.id ?? null;
+  if (id === null || caller === null) return null;
+  return placed(caller, id);
+}
+
+/** Where a session a caller started stands, by its id, whether or not it
+    is still a row. */
+function placed(caller: string, id: string): Place | null {
+  const kept = conductor.runs[caller]?.places[id];
+  if (kept !== undefined) return kept;
+  const row = byId(id);
+  if (row === null || startedFor(row.key) !== caller) return null;
+  return conductor.places[row.key] ?? null;
 }
 
 function forget(caller: string, id: string) {
@@ -413,7 +542,10 @@ function sessionLines(request: ConductRequest): string {
   );
   if (listed.length === 0 && gone.length === 0)
     return "You have started no sessions.";
-  const lines = [...listed.map(describe), ...gone.map(describeGone)];
+  const lines = [
+    ...listed.map(describe),
+    ...gone.map((entry) => describeGone(callerOf(request), entry)),
+  ];
   // Listing a stop is telling it.
   for (const session of listed) tell(session.key);
   return lines.join("\n");
@@ -423,26 +555,35 @@ function describe(session: Session): string {
   const parts = [session.id ?? "", label(session), session.project];
   const tree = session.worktree ?? session.startIn;
   if (tree !== null && tree !== session.project) parts.push(`worktree ${tree}`);
-  parts.push(session.agent, stateOf(session));
+  parts.push(session.agent);
+  const place = placeOf(session.key);
+  if (place !== null) parts.push(placeText(place));
+  parts.push(stateOf(session));
   if (untold(session)) parts.push("not reported to you yet");
   if (session.note !== null) parts.push(`last line: ${session.note}`);
   return parts.join("  ");
 }
 
 /** A remembered session that is not open as a row, in the same words. */
-function describeGone(entry: Started): string {
+function describeGone(owner: string, entry: Started): string {
   const parts = [
     entry.id,
     sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8),
     entry.project,
   ];
   if (entry.worktree !== null) parts.push(`worktree ${entry.worktree}`);
-  parts.push(
-    entry.agent,
-    "stopped",
-    `resume it with start, naming session ${entry.id}`,
-  );
+  parts.push(entry.agent);
+  const at = placed(owner, entry.id);
+  if (at !== null) parts.push(placeText(at));
+  parts.push("stopped", `resume it with start, naming session ${entry.id}`);
   return parts.join("  ");
+}
+
+/** Where a session stands in the workflow, in the words the tools answer
+    in: its step, and for a review the round and the work it checks. */
+export function placeText(place: Place): string {
+  if (place.kind === "work") return `step "${place.step}"`;
+  return `step "${place.step}" round ${place.round ?? 1}, reviewing session ${place.work ?? "unknown"}`;
 }
 
 /** What a session is doing, in the words the tools answer in. */
@@ -494,6 +635,10 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
+  // A caller that follows a workflow starts sessions in its shape.
+  const workflow = workflowOfCaller(request);
+  const fit = workflow === null ? null : fitStart(request, workflow, caller);
+  if (fit !== null && "refusal" in fit) return refused(fit.refusal);
 
   const wants = flag(request, "worktree");
   if ((await askUser(request, project, prompt, wants)) === "no")
@@ -518,17 +663,19 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
-  const agent = agentOf(request, project);
+  const agent = fit?.agent ?? agentOf(request, project);
   const session = create(
     project,
     null,
     agent,
     startIn,
     `${oneLine(prompt)} ${OUTCOME_ASK}`,
-    text(request, "model"),
+    fit === null ? text(request, "model") : fit.model,
     account,
+    null,
   );
   conductor.startedBy[session.key] = caller;
+  if (fit !== null) conductor.places[session.key] = fit.place;
   // The name the caller gave is the row's, until the agent names it.
   if (name !== null) session.title = oneLine(name);
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
@@ -551,9 +698,195 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
+  if (fit === null)
+    return said(
+      `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
+    );
+  // A work session that began a piece is the piece's name from here.
+  const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
+  conductor.places[session.key] = at;
+  place(caller, id, at);
+  if (at.kind === "review" && at.piece !== null)
+    countRound(caller, at.step, at.piece);
   return said(
-    `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
+    `Started session ${id} for ${placeText(at)} in ${where}. It has the prompt. Call wait to hear how it goes.`,
   );
+}
+
+/** What a start in a workflow's shape comes to: where the session stands,
+    and the agent and model it runs on, null where the step leaves them to
+    the call. */
+interface Fit {
+  place: Place;
+  agent: AgentId | null;
+  model: string | null;
+}
+
+/** Names the same when they differ only in the case of A to Z, as the
+    workflows compare them. */
+const asciiLower = (name: string) =>
+  name.trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+const sameName = (a: string, b: string) => asciiLower(a) === asciiLower(b);
+
+const quoted = (name: string) => `"${name}"`;
+
+/** A list in a sentence: "a", "a or b", "a, b or c". */
+function either(items: string[], joiner = "or"): string {
+  return items.length <= 1
+    ? items.join("")
+    : `${items.slice(0, -1).join(", ")} ${joiner} ${items[items.length - 1]}`;
+}
+
+/** The steps of a workflow, each with its kind, for an answer. */
+function stepsText(workflow: Workflow): string {
+  return either(
+    workflow.steps.map((step) => `${quoted(step.name)} (${step.kind})`),
+    "and",
+  );
+}
+
+/**
+ * Holds a start to the caller's workflow. The step is named, and is one the
+ * workflow has; the model is one the step allows, its first when none is
+ * named; a work step has room for another session; a review is of a session
+ * the caller started for a work step, with rounds left for that piece.
+ * Each refusal says what would do.
+ */
+function fitStart(
+  request: ConductRequest,
+  workflow: Workflow,
+  caller: string,
+): Fit | { refusal: string } {
+  const named = text(request, "step");
+  if (named === null)
+    return {
+      refusal: `You follow the workflow ${quoted(workflow.name)}, so a start names the step it is for, with step. The steps are ${stepsText(workflow)}.`,
+    };
+  const step = workflow.steps.find((candidate) =>
+    sameName(candidate.name, named),
+  );
+  if (step === undefined)
+    return {
+      refusal: `The workflow ${quoted(workflow.name)} has no step called ${quoted(named)}. The steps are ${stepsText(workflow)}.`,
+    };
+  const runs = modelFor(text(request, "agent"), text(request, "model"), step);
+  if ("refusal" in runs) return runs;
+  const from = text(request, "work");
+
+  if (step.kind === "work") {
+    const running = startedBy(caller).filter(
+      (session) => isLive(session) && placeOf(session.key)?.step === step.name,
+    );
+    if (running.length >= step.parallel) {
+      const ids = either(
+        running.map((session) => session.id ?? label(session)),
+        "and",
+      );
+      return {
+        refusal: `The step ${quoted(step.name)} runs ${step.parallel === 1 ? "one session" : `${step.parallel} sessions at most`} at once, and ${running.length === 1 ? `session ${ids} is` : `sessions ${ids} are`} running for it. Wait for one to finish, or stop it, before starting another.`,
+      };
+    }
+    // Work that carries on a piece another work session began names it,
+    // so the piece's reviews go on counting; without one it begins a piece.
+    let piece: string | null = null;
+    if (from !== null) {
+      const earlier = placed(caller, from);
+      if (earlier === null)
+        return {
+          refusal: `Session ${from} is not one you started for a step of ${quoted(workflow.name)}, so there is no piece of work to carry on. Leave work out to begin a new piece.`,
+        };
+      piece = earlier.piece ?? from;
+    }
+    return {
+      ...runs,
+      place: { step: step.name, kind: "work", piece, round: null, work: null },
+    };
+  }
+
+  if (from === null)
+    return {
+      refusal: `A review checks a piece of work: name the session that did it, one you started for a work step of ${quoted(workflow.name)}, with work.`,
+    };
+  const earlier = placed(caller, from);
+  if (earlier === null || earlier.kind !== "work")
+    return {
+      refusal: `Session ${from} is not one you started for a work step of ${quoted(workflow.name)}, so there is no work behind this review. Name the session that did the work, with work.`,
+    };
+  const piece = earlier.piece ?? from;
+  const done = roundsOf(caller, step.name, piece);
+  if (done > step.limit) return { refusal: pastTheLimit(step, from, done) };
+  return {
+    ...runs,
+    place: {
+      step: step.name,
+      kind: "review",
+      piece,
+      round: done + 1,
+      work: from,
+    },
+  };
+}
+
+/** What a caller is told when a piece has had every round a review gives. */
+function pastTheLimit(step: ReviewStep, work: string, done: number): string {
+  const times = step.limit === 1 ? "once" : `${step.limit} times at most`;
+  return `The work of session ${work} has had ${done} rounds of ${quoted(step.name)}, and the workflow sends a piece back ${times}. Start no more rounds of it: stop and ask the user how to go on.`;
+}
+
+/** The agent and model a step runs a start on: the first the step allows
+    of those the call names, the agent's own when the step allows any. */
+function modelFor(
+  agent: string | null,
+  model: string | null,
+  step: WorkflowStep,
+): { agent: AgentId | null; model: string | null } | { refusal: string } {
+  const named: AgentId | null =
+    agent === "claude-code" || agent === "codex" ? agent : null;
+  if (step.models.length === 0) return { agent: named, model };
+  const fits = step.models.filter(
+    (allowed) =>
+      (agent === null || allowed.agent === agent) &&
+      (model === null || allowed.model === model),
+  );
+  const first = fits[0];
+  if (first === undefined) {
+    const asked =
+      agent !== null && model !== null
+        ? `${agent} with the model ${model}`
+        : agent !== null
+          ? agent
+          : `the model ${model}`;
+    return {
+      refusal: `The step ${quoted(step.name)} does not allow ${asked}. It allows ${either(step.models.map(modelText))}. Leave the agent and the model out to use the first.`,
+    };
+  }
+  return {
+    agent: first.agent,
+    model:
+      first.agent === "codex" && first.model === CODEX_DEFAULT
+        ? null
+        : first.model,
+  };
+}
+
+/**
+ * The calling session's row: the one its id names, else, for an agent that
+ * was not told its id, the one live row running where the call came from.
+ */
+function callerRow(request: ConductRequest): Session | null {
+  if (request.session !== null) return byId(request.session);
+  const here = sessions.all.filter(
+    (session) =>
+      isLive(session) &&
+      !session.told &&
+      (session.startIn ?? session.project) === request.cwd,
+  );
+  return here.length === 1 ? here[0] : null;
+}
+
+/** The workflow the caller follows, when it follows one. */
+function workflowOfCaller(request: ConductRequest): Workflow | null {
+  return callerRow(request)?.workflow ?? null;
 }
 
 /** Why a caller may not start another session right now, when it may not:
@@ -607,6 +940,21 @@ async function resumeSession(
     );
 
   const prompt = text(request, "prompt");
+  // A session resumed for a step of the caller's workflow goes on in that
+  // step, on a model the step allows.
+  const at = placed(caller, id);
+  const step =
+    at === null
+      ? undefined
+      : workflowOfCaller(request)?.steps.find(
+          (candidate) => candidate.name === at.step,
+        );
+  let model = text(request, "model");
+  if (step !== undefined) {
+    const runs = modelFor(agent, model, step);
+    if ("refusal" in runs) return refused(runs.refusal);
+    model = runs.model;
+  }
 
   // A row that ended is its transcript again; the resumed session takes
   // its place rather than sitting beside it.
@@ -618,10 +966,12 @@ async function resumeSession(
     agent,
     worktree,
     prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
-    text(request, "model"),
+    model,
     entry.account ?? null,
+    null,
   );
   conductor.startedBy[session.key] = caller;
+  if (at !== null) conductor.places[session.key] = at;
   if (session.title === null && entry.name !== null) session.title = entry.name;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 
@@ -1071,6 +1421,8 @@ export function resetConductor() {
   for (const key of Object.keys(conductor.startedBy))
     delete conductor.startedBy[key];
   conductor.started = {};
+  conductor.places = {};
+  conductor.runs = {};
   pending = null;
   queue.length = 0;
   allowed.clear();

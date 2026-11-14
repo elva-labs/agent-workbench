@@ -32,6 +32,8 @@ describe("what an orchestrator is told", () => {
     expect(first).toContain("never with your own subagents");
     expect(first).toContain("do not edit files");
     expect(first).toContain("leave the model out where it says no model");
+    expect(first).toContain("name the step it is for");
+    expect(first).toContain("names the session whose work it checks");
   });
 
   it("tells a session which workflow it follows, before the numbered list", () => {

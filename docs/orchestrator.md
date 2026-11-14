@@ -20,14 +20,20 @@ worktree of its own when pieces touch the same files, to wait on them rather
 than ask after them in a loop, to put the user's whole task in the prompt it
 starts a session with and none of its own housekeeping, and to leave a line
 on its own row when it stops, whether to relay a question or to report.
-Every other session has the same tools and none of the nudge.
+A session that follows a workflow is an orchestrator as well, in whatever
+project it runs: it is told the same, and the workflow besides, as
+[following a workflow](#following-a-workflow) describes. Every other
+session has the same tools and none of the nudge.
 
 ## The tools
 
 The seven tools reach the workbench through the same tool server the app's
 own tools use. The orchestrator's own directory carries them whatever the
-projects were told about live updates; any other session has them where its
-project's hooks are on. See [hooks](hooks.md).
+projects were told about live updates, and so does a session that follows a
+workflow, which is pointed at the server on its command line where its
+project's configuration does not point at it already; any other session has
+them where its project's hooks are on. See [hooks](hooks.md) and
+[agents](adapters.md#under-a-workflow).
 
 `projects` lists the open projects, the caller's own marked, so a session
 names a project the app actually has. `sessions` lists the sessions the
@@ -65,11 +71,46 @@ for work under a login other than the project's own; one that names an
 account there is not is refused with the names there are. A session
 resumed comes back under the account it ran under.
 
+## Following a workflow
+
+A session the user starts follows its project's workflow, as
+[settings](settings.md#workflows) describes. It starts on the workflow's
+orchestrator, is told the workflow's instructions, and, unless the workflow
+says otherwise, has its agent's own subagent tools taken away, so every
+piece it hands out is a session of its own started with `start`. A session
+that follows no workflow starts others as the rest of this page says.
+
+Each start from such a session names the step of the workflow it is for,
+and is held to that step before the user is asked anything. A start that
+names no step, or one the workflow does not have, is refused with the
+steps there are. A start that names an agent or a model the step does not
+allow is refused with the ones it does; one that names neither runs on the
+step's first model, and one that names only the agent on the first of that
+agent's. A work step runs no more sessions at once than it says, and a
+start past that is refused with the sessions running for it.
+
+A review names the session whose work it checks. One that names none, or
+names a session the caller did not start for a work step, is refused: there
+is no work behind it. The workbench counts the rounds of each review for
+each piece of work. A piece is named by the work session that began it; a
+start for a later work step can name the session the piece came from, and
+carries the piece on. A review may run once and then once more for every
+time it may send the work back, so a review that sends it back three times
+at most has four rounds of a piece. A start for another round after those is
+refused with a line telling the orchestrator to stop and ask the user. Another
+piece has rounds of its own, and stopping a session does not reset the count.
+
+A started session remembers its step, and a review its round and the work
+it checks. `sessions` says both for each session, the stopped ones too,
+and `start` with a stopped session's id brings it back in the same step,
+on a model the step allows.
+
 ## What is remembered
 
 What a session started is written down by session id, with the project,
 the worktree, the agent and the name, and kept between runs beside the
-sessions the app knows as its own. An orchestrator closed and resumed
+sessions the app knows as its own. Under a workflow, so are the step and
+round of each, and the rounds each piece has had. An orchestrator closed and resumed
 keeps its id, so the sessions it started are still its own: the ones
 still running answer to its tools as before, and a row with one of its
 ids, resumed from the pane by hand, is folded under it all the same. When
