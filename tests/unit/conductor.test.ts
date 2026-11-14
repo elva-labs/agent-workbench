@@ -5,7 +5,10 @@ import {
   CAP,
   cancelled,
   ENTER_AFTER,
+  ENTER_AFTER_MAX,
   PASTE_FROM,
+  PIECE,
+  PIECE_EVERY,
   OUTCOME_ASK,
   allow,
   allowedProjects,
@@ -19,6 +22,7 @@ import {
   startedBy,
   startedFor,
   stopAll,
+  typeWhole,
   watchStops,
   worktreeName,
 } from "$lib/conductor.svelte";
@@ -115,8 +119,9 @@ function call(
 const last = () => answers[answers.length - 1];
 
 /** A terminal with these lines in its buffer. */
-function screenOf(lines: string[]): Screen {
+function screenOf(lines: string[], bracketedPasteMode?: boolean): Screen {
   return {
+    ...(bracketedPasteMode === undefined ? {} : { modes: { bracketedPasteMode } }),
     buffer: {
       active: {
         length: lines.length,
@@ -660,13 +665,14 @@ describe("sending and stopping", () => {
     expect(last().error).toBeNull();
   });
 
-  it("pastes a long line whole, and sends it with Enter on its own after the paste", async () => {
-    own(A, "pty-1", "sid-1");
+  it("pastes a long line whole when the terminal takes paste, and sends it with Enter on its own after the paste", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], true));
     const long = "word ".repeat(1000).trim();
     const answering = handle(call("send", { session: "sid-1", text: long }));
     await settle();
     expect(written).toEqual([["pty-1", `\x1b[200~${long}\x1b[201~`]]);
-    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER_MAX);
     await answering;
     expect(written).toEqual([
       ["pty-1", `\x1b[200~${long}\x1b[201~`],
@@ -674,14 +680,143 @@ describe("sending and stopping", () => {
     ]);
   });
 
-  it("types a line just under the paste length as it is", async () => {
-    own(A, "pty-1", "sid-1");
-    const line = "x".repeat(PASTE_FROM - 1);
-    const answering = handle(call("send", { session: "sid-1", text: line }));
+  it("waits longer before Enter the longer the pasted line is, up to a cap", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], true));
+    const enterAfter = async (length: number) => {
+      written.length = 0;
+      const answering = handle(
+        call("send", { session: "sid-1", text: "x".repeat(length) }),
+      );
+      await settle();
+      const waited = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+      await waited(ENTER_AFTER);
+      const early = written.length;
+      await waited(ENTER_AFTER_MAX);
+      await answering;
+      return { early, done: written.length };
+    };
+    // 6000 bytes asks for more than the 150 ms a short line waits.
+    expect(await enterAfter(6000)).toEqual({ early: 1, done: 2 });
+    // The wait never passes the cap, however long the line.
+    written.length = 0;
+    const answering = handle(
+      call("send", { session: "sid-1", text: "x".repeat(200_000) }),
+    );
     await settle();
-    expect(written).toEqual([["pty-1", line]]);
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER_MAX);
+    await answering;
+    expect(written.at(-1)).toEqual(["pty-1", "\r"]);
+  });
+
+  it("types a long line in small pieces when the terminal has not asked for paste", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], false));
+    const long = "word ".repeat(100).trim();
+    const answering = handle(call("send", { session: "sid-1", text: long }));
+    await settle();
+    expect(written).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(PIECE_EVERY * 20);
     await vi.advanceTimersByTimeAsync(ENTER_AFTER);
     await answering;
+    const typed = written.slice(0, -1);
+    expect(typed.length).toBeGreaterThan(1);
+    expect(typed.every(([, piece]) => piece.length <= PIECE)).toBe(true);
+    expect(typed.map(([, piece]) => piece).join("")).toBe(long);
+    expect(written.at(-1)).toEqual(["pty-1", "\r"]);
+    expect(written.some(([, piece]) => piece.includes("\x1b"))).toBe(false);
+  });
+
+  it("types a long line in pieces when the session has no terminal in reach", async () => {
+    own(A, "pty-1", "sid-1");
+    const long = "y".repeat(PASTE_FROM * 2);
+    const answering = handle(call("send", { session: "sid-1", text: long }));
+    await vi.advanceTimersByTimeAsync(PIECE_EVERY * 20 + ENTER_AFTER);
+    await answering;
+    expect(written.some(([, piece]) => piece.includes("\x1b"))).toBe(false);
+    expect(written.slice(0, -1).map(([, piece]) => piece).join("")).toBe(long);
+  });
+
+  it("switches from pieces to a paste as soon as the terminal asks for paste", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    const long = "z".repeat(PASTE_FROM * 2);
+    const send = async () => {
+      written.length = 0;
+      const answering = handle(call("send", { session: "sid-1", text: long }));
+      await vi.advanceTimersByTimeAsync(PIECE_EVERY * 20 + ENTER_AFTER_MAX);
+      await answering;
+      return written.length;
+    };
+    const off = screenOf([], false);
+    register(row.key, off);
+    expect(await send()).toBeGreaterThan(2);
+    off.modes!.bracketedPasteMode = true;
+    expect(await send()).toBe(2);
+    expect(written[0][1]).toBe(`\x1b[200~${long}\x1b[201~`);
+  });
+
+  it("decides by bytes: 150 CJK characters are 450 bytes and are not typed in one write", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], true));
+    const cjk = "漢".repeat(150);
+    const answering = handle(call("send", { session: "sid-1", text: cjk }));
+    await settle();
+    expect(written).toEqual([["pty-1", `\x1b[200~${cjk}\x1b[201~`]]);
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER_MAX);
+    await answering;
+  });
+
+  it("never cuts a character when typing in pieces", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], false));
+    const mixed = "漢😀a".repeat(60);
+    const answering = handle(call("send", { session: "sid-1", text: mixed }));
+    await vi.advanceTimersByTimeAsync(PIECE_EVERY * 100 + ENTER_AFTER);
+    await answering;
+    const typed = written.slice(0, -1).map(([, piece]) => piece);
+    expect(typed.join("")).toBe(mixed);
+    expect(typed.every((piece) => !piece.includes("\ufffd"))).toBe(true);
+    expect(typed.every((piece) => new TextEncoder().encode(piece).length <= PIECE)).toBe(true);
+  });
+
+  it("pastes a line of exactly the threshold and types one a byte short", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], true));
+    for (const [size, pasted] of [
+      [PASTE_FROM, true],
+      [PASTE_FROM - 1, false],
+    ] as const) {
+      written.length = 0;
+      const line = "x".repeat(size);
+      const answering = handle(call("send", { session: "sid-1", text: line }));
+      await settle();
+      expect(written).toEqual([["pty-1", pasted ? `\x1b[200~${line}\x1b[201~` : line]]);
+      await vi.advanceTimersByTimeAsync(ENTER_AFTER_MAX);
+      await answering;
+    }
+  });
+
+  it("strips an escape from a line, so it cannot end its own paste", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], true));
+    const line = `${"a".repeat(PASTE_FROM)}\x1b[201~rm -rf`;
+    const answering = handle(call("send", { session: "sid-1", text: line }));
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER_MAX);
+    await answering;
+    const body = String(written[0][1]).slice("\x1b[200~".length, -"\x1b[201~".length);
+    expect(body.includes("\x1b")).toBe(false);
+  });
+
+  it("types text whole without an Enter, for a line the user reads and sends", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(row.key, screenOf([], true));
+    const long = "q".repeat(PASTE_FROM * 3);
+    await typeWhole(row.key, "pty-1", long);
+    expect(written).toEqual([["pty-1", `\x1b[200~${long}\x1b[201~`]]);
+    written.length = 0;
+    await typeWhole(row.key, "pty-1", "short");
+    expect(written).toEqual([["pty-1", "short"]]);
   });
 
   it("refuses a session the workbench does not have", async () => {
