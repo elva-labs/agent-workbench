@@ -2337,6 +2337,19 @@ test.describe("a new session from the palette", () => {
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   });
 
+  test("starts at once with one agent where no workflow was ever turned on, as before workflows", async ({ page }) => {
+    // A fresh install: the shipped workflow is there, and nothing follows
+    // it.
+    await open(page, { open: [ONE] });
+    await page.keyboard.press(COMMANDS);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+    await expect.poll(() => spawnCount(page)).toBe(1);
+    expect((await spawns(page))[0]).toMatchObject({ project: ONE, agent: "claude-code" });
+    expect((await spawns(page))[0].instructions).toBeUndefined();
+  });
+
   test("offers the workflows above the agents, the project's own first, and starts what is picked", async ({
     page,
   }) => {
@@ -2350,7 +2363,8 @@ test.describe("a new session from the palette", () => {
     const flow = entries(page).first();
     await expect(flow).toContainText("Build and review");
     await expect(flow).toContainText("Fable directs, Sonnet works, Opus reviews");
-    await expect(flow).toContainText("project default");
+    // The project follows the default for new sessions, and says so.
+    await expect(flow.getByTestId("palette-end")).toHaveText("default");
     // The workflows sit above the agents, and the cursor starts on the
     // project's own.
     const agentRow = (await entries(page).nth(1).boundingBox())!;

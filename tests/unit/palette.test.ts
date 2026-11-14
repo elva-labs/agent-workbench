@@ -448,8 +448,17 @@ describe("how a new session runs", () => {
     steps: [defaultWorkflow().steps[0]],
   });
 
-  it("offers the workflows above the agents, even with one agent installed", () => {
+  it("asks nothing more and starts the agent at once, with one agent and no workflow turned on", () => {
     adoptWorkflows(undefined);
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+    const outcome = beginNew(A);
+    if (outcome.type === "close") outcome.then();
+    expect(outcome.type).toBe("close");
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null, model: null });
+  });
+
+  it("offers the workflows above the agents once one is turned on, even with one agent installed", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: { "/elsewhere": "Build and review" } });
     expect(stepsLeft([{ kind: "project", path: A }])).toEqual(["agent"]);
     beginNew(A);
     const items = stepItems("");
@@ -462,9 +471,21 @@ describe("how a new session runs", () => {
     expect(flow.kind === "choice" && flow.end).toBe("");
     // The project follows none, so the cursor starts on the agent.
     expect(startingId()).toBe("agent:claude-code");
+    // Picked, the one agent starts alone, though nothing else was there
+    // to pick between.
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
     const outcome = choose("Claude Code");
     if (outcome.type === "close") outcome.then();
     expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null, model: null });
+  });
+
+  it("says whether the project chose its workflow or follows the default", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    beginNew(A);
+    const ends = () => stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
+    expect(ends()).toEqual(["default", ""]);
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: { [A]: "Build and review" } });
+    expect(ends()).toEqual(["project's workflow", ""]);
   });
 
   it("puts the project's workflow first, marked, with the cursor on it, and starts under it", () => {
@@ -473,7 +494,7 @@ describe("how a new session runs", () => {
     const items = stepItems("");
     expect(items.map((item) => item.label)).toEqual(["Build and review", "Quick fix", "Claude Code"]);
     expect(items.map((item) => (item.kind === "choice" ? item.end : null))).toEqual([
-      "project default",
+      "project's workflow",
       "",
       "",
     ]);

@@ -19,7 +19,13 @@ import {
 import { agentLabel, installed, isReady } from "$lib/agent.svelte";
 import type { AgentId, Workflow, WorkflowModel } from "$lib/core";
 import { modelLabel } from "$lib/models";
-import { workflowNamed, workflowOf, workflows } from "$lib/workflows.svelte";
+import {
+  overrideOf,
+  workflowNamed,
+  workflowOf,
+  workflows,
+  workflowTurnedOn,
+} from "$lib/workflows.svelte";
 import {
   defaultAgent,
   label,
@@ -54,8 +60,9 @@ import { reduced } from "$lib/motion";
  * A new session is asked for in steps in the same field: the project, then
  * the account when accounts are named, then how it runs: under one of the
  * workflows, the project's own first, or as one agent with no workflow.
- * Each answer becomes a chip, and a step with nothing to choose is not
- * asked. The session starts on the last answer.
+ * The workflows are offered once the user has turned one on, for new
+ * sessions or for a project. Each answer becomes a chip, and a step with
+ * nothing to choose is not asked. The session starts on the last answer.
  */
 
 export type Mode = "goto" | "commands" | "new";
@@ -370,13 +377,13 @@ export function commandItems(query: string): PaletteItem[] {
 
 /** The question a new session asks next given the answers so far, or null
     when it has all it needs. How it runs is asked as "agent", and answered
-    by an agent or a workflow; it is asked when there is a workflow, or more
-    than one agent, to pick between. */
+    by an agent or a workflow; it is asked when there is more than one
+    agent, or a workflow on offer, to pick between. */
 export function nextStep(steps: Step[]): StepKind | null {
   const has = (kind: StepKind) => steps.some((step) => step.kind === kind);
   if (!has("project")) return "project";
   if (hasAccounts() && !has("account")) return "account";
-  const how = installed().length > 1 || workflows.list.length > 0;
+  const how = installed().length > 1 || offered().length > 0;
   if (how && !has("agent") && !has("workflow")) return "agent";
   return null;
 }
@@ -421,16 +428,26 @@ export function chipOf(step: Step): string {
 export const WORKFLOWS = "Workflows";
 export const ALONE = "One agent, no workflow";
 
+/** The workflows a new session is offered: none until the user has turned
+    one on. */
+function offered() {
+  return workflowTurnedOn() ? workflows.list : [];
+}
+
 /** What the last question offers, as titled lists drawn in order: the
-    workflows, the project's own first, then the agents to run alone. */
+    workflows, the project's own first, then the agents to run alone. The
+    project's own says whether the project chose it or follows the default
+    for new sessions. */
 function runSections(
   project: string,
 ): { title: string; items: PaletteItem[] }[] {
   const own = workflowOf(project);
+  const ownEnd = overrideOf(project) === undefined ? "default" : "project's workflow";
+  const list = offered();
   const ordered =
-    own === null
-      ? workflows.list
-      : [own, ...workflows.list.filter((workflow) => workflow.name !== own.name)];
+    own === null || list.length === 0
+      ? list
+      : [own, ...list.filter((workflow) => workflow.name !== own.name)];
   const sections = [
     {
       title: WORKFLOWS,
@@ -441,7 +458,7 @@ function runSections(
         group: WORKFLOWS,
         step: { kind: "workflow", workflow: workflow.name },
         detail: workflowGist(workflow),
-        end: workflow.name === own?.name ? "project default" : "",
+        end: workflow.name === own?.name ? ownEnd : "",
       })),
     },
     {
