@@ -306,6 +306,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         leaveConfirmed: async () => {},
         onMenuAction: async () => () => {},
         menuKeys: async () => {},
+        menuEnabled: async () => {},
         worktreeAdd: async (project: string, name: string) =>
           `${project}/${name}`,
         setSelection: async () => {},

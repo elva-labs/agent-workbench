@@ -1509,6 +1509,8 @@ export interface Core {
   /** The chord table, for the menu items that do what an action does to
       show and answer that action's chord. */
   menuKeys(table: Record<string, KeyChord>): Promise<void>;
+  /** Which of the File menu's items can act, by action. */
+  menuEnabled(state: Record<string, boolean>): Promise<void>;
 
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
@@ -1892,6 +1894,7 @@ const tauriCore: Core = {
     return listen<string>("menu_action", (event) => handler(event.payload));
   },
   menuKeys: (table) => invoke("menu_keys", { table }),
+  menuEnabled: (state) => invoke("menu_enabled", { state }),
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
   remoteConnect: (host) =>
@@ -2230,6 +2233,7 @@ const detachedCore: Core = {
     return () => {};
   },
   async menuKeys() {},
+  async menuEnabled() {},
   async remoteHosts() {
     return { configured: [], saved: [] };
   },

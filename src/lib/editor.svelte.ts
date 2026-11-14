@@ -57,6 +57,7 @@ import {
   enterReview,
   focusPane,
   layout,
+  returnFocus,
   setEditing,
   toggleRightPane,
 } from "$lib/layout.svelte";
@@ -112,7 +113,10 @@ export interface Buffer {
 
 /** A question put over the editor before something is lost: closing a
     tab with unsaved edits, or the window or the app with any. */
-export type Ask = { kind: "close"; key: string } | { kind: "leave"; leave: "window" | "quit" };
+export type Ask =
+  | { kind: "close"; key: string }
+  /** The core's question numbered `generation`, about the window or the app. */
+  | { kind: "leave"; leave: "window" | "quit"; generation: number };
 
 /** A session or a project being closed while tabs beside it hold the only
     copy of unsaved edits: the question in the sessions pane. */
@@ -205,6 +209,13 @@ export function activeTab(): Tab | null {
 
 export function activeBuffer(): Buffer | null {
   return editor.active === null ? null : (editor.buffers[editor.active] ?? null);
+}
+
+/** Whether there is a file in front to save: a text file read in, shown
+    in the editor's place. */
+export function canSaveInFront(): boolean {
+  const buffer = activeBuffer();
+  return buffer !== null && !buffer.loading && buffer.error === null && !otherKindShown();
 }
 
 /** Whether any open file has edits not yet written. */
@@ -344,6 +355,12 @@ async function load(root: string, path: string) {
     buffer.error = reason(error);
     buffer.loading = false;
   }
+}
+
+/** Why a save failed, naming the file once: the core's sentence names it
+    already when it says what is wrong with it. */
+function couldNotSave(path: string, why: string): string {
+  return why.includes(path) ? `Could not save: ${why}` : `Could not save ${lastSegment(path)}: ${why}`;
 }
 
 /** An error from the core as the sentence it is. */
@@ -537,7 +554,7 @@ export async function save(key: string | null = editor.active): Promise<boolean>
     return true;
   } catch (error) {
     const still = editor.buffers[key];
-    if (still !== undefined) still.failed = `Could not save ${lastSegment(buffer.path)}: ${reason(error)}`;
+    if (still !== undefined) still.failed = couldNotSave(buffer.path, reason(error));
     return false;
   } finally {
     const still = editor.buffers[key];
@@ -596,7 +613,7 @@ export async function keepMine(key: string | null = editor.active) {
     wrote(key, doc, result.stamp);
   } catch (error) {
     const still = editor.buffers[key];
-    if (still !== undefined) still.failed = `Could not save ${lastSegment(buffer.path)}: ${reason(error)}`;
+    if (still !== undefined) still.failed = couldNotSave(buffer.path, reason(error));
   } finally {
     const still = editor.buffers[key];
     if (still !== undefined) still.saving = false;
@@ -788,22 +805,11 @@ export function watchedFiles(): string[] {
 }
 
 /** The core asks before the window closes or the app quits while the
-    editor holds unsaved edits: the question goes over the editor, which
-    comes forward for it, with the first unsaved file in front when this
-    session has it open. The core hears at once that the question is up;
-    without that it lets the window go. */
+    editor holds unsaved edits. The question is drawn over the whole window,
+    whatever the panes show, and it is the drawing that tells the core it
+    is up. */
 export function leaveRequested(ask: { kind: "window" | "quit"; generation: number }) {
-  void core().leaveHeard(ask.generation).catch(() => {});
-  const show = () => {
-    const first = Object.entries(editor.buffers).find(([, buffer]) => buffer.dirty);
-    if (first !== undefined && editor.tabs.some((tab) => tabKey(tab) === first[0])) {
-      bringForward(first[0]);
-      void showInViewer();
-    }
-    editor.asking = { kind: "leave", leave: ask.kind };
-  };
-  if (layout.mode === "editing") show();
-  else enterEditor(show);
+  editor.asking = { kind: "leave", leave: ask.kind, generation: ask.generation };
 }
 
 /** The files with unsaved edits, by name, for the question. */
@@ -826,20 +832,54 @@ export function leaveWithoutSaving() {
 }
 
 /** Every unsaved file written, then the window closes or the app quits if
-    they all were; a file that could not be written stays, with why. */
+    they all were. When one could not be, nothing goes: that file comes
+    forward with its bar or why, and the status bar says what stopped. */
 export async function saveAllAndLeave() {
   const asked = editor.asking;
   if (asked?.kind !== "leave") return;
   editor.asking = null;
-  const written = await Promise.all(unsavedKeys().map((key) => save(key)));
-  if (written.every(Boolean)) void core().leaveConfirmed(asked.leave).catch(() => {});
+  const keys = unsavedKeys();
+  const written = await Promise.all(keys.map((key) => save(key)));
+  const failed = keys.filter((_, at) => !written[at]);
+  if (failed.length === 0) {
+    void core().leaveConfirmed(asked.leave).catch(() => {});
+    return;
+  }
+  stopped(asked.leave === "quit" ? "Quit stopped" : "The window stays open", failed);
 }
 
 /** The user's answer to the window or the app going: stay. */
 export function leaveCancelled() {
   if (editor.asking?.kind !== "leave") return;
   editor.asking = null;
-  focusFiles("editor");
+  returnFocus();
+}
+
+/**
+ * A save on the way out could not be made: the first file it stopped at
+ * comes forward in the editor, with the bar that holds it back or why it
+ * failed, beside whichever session is on screen, and the status bar says
+ * what was stopped and why.
+ */
+function stopped(what: string, keys: string[]) {
+  const key = keys[0];
+  const buffer = editor.buffers[key];
+  if (buffer === undefined) return;
+  const why =
+    buffer.changed !== null
+      ? `${lastSegment(buffer.path)} changed on disk`
+      : buffer.failed !== null
+        ? lastSegment(buffer.path) + " could not be saved"
+        : `${lastSegment(buffer.path)} was not saved`;
+  say(`${what}: ${why}`);
+  const show = () => {
+    if (!editor.tabs.some((tab) => tabKey(tab) === key)) {
+      editor.tabs.push({ root: buffer.root, path: buffer.path, preview: false, view: "edit", note: null });
+    }
+    void activate(key);
+  };
+  if (layout.mode === "editing") show();
+  else enterEditor(show);
 }
 
 /** Closes the editor's tab in front, asking as its × does: the chord, or
@@ -899,7 +939,9 @@ export async function closingSave() {
   if (asked === null) return;
   editor.closing = null;
   const written = await Promise.all(asked.keys.map((key) => save(key)));
-  if (written.every(Boolean)) asked.close();
+  const failed = asked.keys.filter((_, at) => !written[at]);
+  if (failed.length === 0) asked.close();
+  else stopped(`${asked.what} stays open`, failed);
 }
 
 export function closingDrop() {

@@ -768,15 +768,42 @@ test.describe("questions before anything unsaved goes", () => {
     await expect(page.getByTestId("close-window")).toHaveCount(0);
   });
 
-  test("asks from agent mode too, bringing the editor forward", async ({ page }) => {
+  test("asks from agent mode too, over the whole window", async ({ page }) => {
     await treeRow(page, "README.md").click();
     await typeAtEnd(page, "mine");
     await flip(page);
     await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
     await expect(page.getByTestId("close-window")).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
     await page.getByTestId("close-window-confirm").click();
     await expect.poll(() => controls(page)).toEqual(["quit"]);
+  });
+
+  test("tells the core the question is up only once it is drawn", async ({ page }) => {
+    await treeRow(page, "README.md").click();
+    await typeAtEnd(page, "mine");
+    const leave = () =>
+      page.evaluate(() => {
+        const state = (window as unknown as { __leave: { asked: number; heard: number } }).__leave;
+        return { asked: state.asked, heard: state.heard };
+      });
+    await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
+    await expect(page.getByTestId("leave-ask")).toBeVisible();
+    await expect.poll(leave).toEqual({ asked: 1, heard: 1 });
+  });
+
+  test("stops a Save all and quit at a file that changed on disk, and says so", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await diskWrite(page, "README.md", "theirs\n");
+    await expect(page.getByTestId("disk-bar")).toBeVisible();
+    await treeRow(page, "Cargo.toml").dblclick();
+    await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
+    await page.getByTestId("close-window-alternative").click();
+    await expect(page.getByTestId("flash-readout")).toHaveText("Quit stopped: README.md changed on disk");
+    await expect(page.locator("[data-testid='editor-tab'][aria-selected='true']")).toHaveAttribute("data-path", "README.md");
+    await expect(page.getByTestId("disk-bar")).toBeVisible();
+    expect(await controls(page)).toEqual([]);
   });
 
   test("asks before a session with unsaved tabs is closed, in the sessions pane", async ({ page }) => {
@@ -1001,7 +1028,7 @@ test.describe("a file the disk no longer gives back", () => {
   test("says a save of a read-only file failed, on that file", async ({ page }) => {
     await page.evaluate(() => (window as unknown as { __refusals: { readOnly: Set<string> } }).__refusals.readOnly.add("README.md"));
     await page.keyboard.press(`${MOD}+s`);
-    await expect(page.getByTestId("editor-failed")).toHaveText("Could not save README.md: README.md is read-only");
+    await expect(page.getByTestId("editor-failed")).toHaveText("Could not save: README.md is read-only");
     await treeRow(page, "Cargo.toml").dblclick();
     await expect(page.getByTestId("editor-failed")).toHaveCount(0);
   });
@@ -1107,5 +1134,126 @@ test.describe("the corner and the keyboard", () => {
     await page.keyboard.press(`${MOD}+3`);
     await page.getByTestId("toggle-right").focus();
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
+  });
+});
+
+test.describe("the leave question with an orchestrator's board on screen", () => {
+  test("is drawn over the board, and heard only then", async ({ page }) => {
+    const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
+    await page.setViewportSize({ width: 1728, height: 1000 });
+    await installFakeCore(page, { open: [ORCHESTRATOR, "/home/ada/dev/demo"] });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("started-board")).toBeVisible();
+    // Unsaved edits in the project, then back to the orchestrator in editor mode.
+    await page.locator(`${SESSIONS} .project-row`).filter({ hasText: "demo" }).first().click();
+    await flip(page);
+    await treeRow(page, "README.md").click();
+    await typeAtEnd(page, "mine");
+    await page.locator(`${SESSIONS} [data-testid='session-row']`).first().click();
+    await expect(page.getByTestId("started-board")).toBeVisible();
+    await expect(page.getByTestId("editor-column")).toHaveCount(0);
+
+    await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
+    await expect(page.getByTestId("leave-ask")).toBeVisible();
+    await expect(page.getByTestId("leave-ask")).toContainText("Quit with unsaved edits?");
+    expect(
+      await page.evaluate(() => (window as unknown as { __leave: { heard: number } }).__leave.heard),
+    ).toBe(1);
+    await page.getByTestId("close-window-confirm").click();
+    await expect.poll(() => controls(page)).toEqual(["quit"]);
+  });
+});
+
+test.describe("the name field while the agent writes files", () => {
+  test("stays the same field, text and all, and writes nothing", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await page.getByTestId("tree-new-file").click();
+    await page.keyboard.type("half");
+    await diskWrite(page, "aaa-new.rs", "fn new() {}\n");
+    await expect(treeRow(page, "aaa-new.rs")).toBeVisible();
+    const field = page.getByTestId("name-field");
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("half");
+    await page.keyboard.type("-done");
+    await expect(field).toHaveValue("half-done");
+    // The agent's file went to disk past the editor; the editor wrote nothing.
+    expect(await writes(page)).toEqual([]);
+  });
+
+  test("leaves a folder's name as it is when the keyboard goes elsewhere", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await treeRow(page, "README.md").click();
+    await expect.poll(() => editorText(page)).toContain("// README.md");
+    await page.getByTestId("tree-new-folder").click();
+    await page.keyboard.type("policy");
+    await page.locator(".cm-content").click();
+    await expect(page.getByTestId("name-field")).toHaveValue("policy");
+    await expect(page.getByTestId("pending-folder")).toHaveCount(0);
+  });
+});
+
+test.describe("Cmd+W with no tab in editor mode", () => {
+  test("closes the window on macOS, as the menu's Close Tab does", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    const mac = await page.evaluate(() => /Mac/.test(navigator.platform));
+    await page.keyboard.press(`${MOD}+3`);
+    await page.keyboard.press(`${MOD}+w`);
+    expect(await controls(page)).toEqual(mac ? ["close"] : []);
+  });
+});
+
+test.describe("the session question in a peek", () => {
+  test("goes, closing nothing, when the peek is put away", async ({ page }) => {
+    await open(page, 1440);
+    await flip(page);
+    await page.getByTestId("unfold-sessions").click();
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.getByTestId("unfold-sessions").click();
+    await page.locator("[data-testid='session-row']").first().hover();
+    await page.locator(`${SESSIONS} [aria-label^='Close session']`).first().click();
+    await expect(page.getByTestId("close-owner")).toBeVisible();
+    // The peek put away by its chord, from wherever the keyboard is.
+    await page.keyboard.press(`${MOD}+1`);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual(FOLDED + 1);
+    await page.getByTestId("unfold-sessions").click();
+    await expect(page.getByTestId("close-owner")).toHaveCount(0);
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
+  });
+});
+
+test.describe("many tabs, round two", () => {
+  test("keep the whole name of the tab in front", async ({ page }) => {
+    await open(page, 1440);
+    await flip(page);
+    for (const name of ["Cargo.toml", "README.md", "main.rs", "lib.rs", "mod.rs", "store.rs", "eviction.rs"]) {
+      await treeRow(page, name).dblclick();
+    }
+    await tab(page, "README.md").click();
+    const name = tab(page, "README.md").locator(".name");
+    expect(await name.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+    // A short name behind fits too.
+    const short = tab(page, "src/cache/mod.rs").locator(".name");
+    expect(await short.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+  });
+});
+
+test.describe("the File menu's items", () => {
+  test("say which can act", async ({ page }) => {
+    await open(page, 1728);
+    const state = () =>
+      page.evaluate(() => (window as unknown as { __menuEnabled?: Record<string, boolean> }).__menuEnabled);
+    await expect.poll(async () => (await state())?.["file.save"]).toBe(false);
+    expect((await state())?.["file.new"]).toBe(true);
+    await flip(page);
+    await treeRow(page, "README.md").click();
+    await expect.poll(async () => (await state())?.["file.save"]).toBe(true);
   });
 });

@@ -44,6 +44,7 @@ import {
   loadEditorSize,
 } from "$lib/editor.svelte";
 import { languageOf } from "$lib/codeEditor";
+import { flash } from "$lib/flash.svelte";
 import { undo } from "@codemirror/commands";
 import { clear, files, refresh, setScope } from "$lib/files.svelte";
 import { layout } from "$lib/layout.svelte";
@@ -59,6 +60,9 @@ const binary = new Set<string>();
 const writes: { file: string; text: string; stamp: string | null; overwrite: boolean }[] = [];
 /** The window controls the fake core was asked for. */
 const controls: string[] = [];
+/** The reads held back, to be answered in the order a test chooses, while
+    this is not null. */
+let heldReads: (() => void)[] | null = null;
 /** Files the fake core will not write. */
 const readOnly = new Set<string>();
 /** A stamp names exact content. */
@@ -83,7 +87,10 @@ vi.mock("$lib/core", () => ({
       if (binary.has(file)) throw new Error(`${file} is a binary file`);
       const text = disk.get(file);
       if (text === undefined) throw new Error(`${file} does not exist`);
-      return { text, stamp: stampOf(text) };
+      const answer = { text, stamp: stampOf(text) };
+      // A test can hold the reads back, to answer them in an order of its own.
+      if (heldReads !== null) return new Promise((resolve) => heldReads!.push(() => resolve(answer)));
+      return answer;
     },
     async fileWrite(_root: string, file: string, text: string, stamp: string | null, overwrite: boolean) {
       writes.push({ file, text, stamp, overwrite });
@@ -138,6 +145,7 @@ beforeEach(async () => {
   writes.length = 0;
   controls.length = 0;
   readOnly.clear();
+  heldReads = null;
   disk.set("docs/a.md", "# A\n\nfirst\nsecond\n");
   disk.set("src/b.rs", "fn b() {}\n");
   disk.set("src/c.rs", "fn c() {}\n");
@@ -470,7 +478,8 @@ describe("saving", () => {
     readOnly.add("docs/a.md");
     expect(await save()).toBe(false);
     const key = keyOf("/one", "docs/a.md");
-    expect(editor.buffers[key].failed).toBe("Could not save a.md: docs/a.md is read-only");
+    // The core's sentence names the file; the message says it once.
+    expect(editor.buffers[key].failed).toBe("Could not save: docs/a.md is read-only");
     view.destroy();
     attachView(null);
     await openFile("src/b.rs", { keep: true });
@@ -580,13 +589,13 @@ describe("closing with unsaved edits", () => {
 });
 
 describe("leaving with unsaved edits", () => {
-  it("puts the question over the editor, telling the core it is up", async () => {
+  it("puts the question up, leaving it to the drawn question to say it is heard", async () => {
     await openFile("docs/a.md");
     const view = mount();
     view.dispatch({ changes: { from: 0, insert: "x" } });
     leaveRequested({ kind: "quit", generation: 3 });
-    expect(controls).toContain("heard 3");
-    expect(editor.asking).toEqual({ kind: "leave", leave: "quit" });
+    expect(controls).not.toContain("heard 3");
+    expect(editor.asking).toEqual({ kind: "leave", leave: "quit", generation: 3 });
     leaveCancelled();
     expect(editor.asking).toBeNull();
     leaveRequested({ kind: "window", generation: 4 });
@@ -605,6 +614,9 @@ describe("leaving with unsaved edits", () => {
     await saveAllAndLeave();
     expect(controls).not.toContain("leave window");
     expect(editor.buffers[keyOf("/one", "docs/a.md")].failed).toContain("read-only");
+    // What stopped it is said, and the file is in front.
+    expect(flash.text).toBe("The window stays open: a.md could not be saved");
+    expect(activeTab()?.path).toBe("docs/a.md");
     readOnly.clear();
     leaveRequested({ kind: "window", generation: 2 });
     await saveAllAndLeave();
@@ -790,13 +802,41 @@ describe("a reload", () => {
   it("drops the answer to an older read that comes back after a newer one", async () => {
     await openFile("docs/a.md");
     const view = mount();
+    heldReads = [];
     disk.set("docs/a.md", "older\n");
     diskChanged(["/one/docs/a.md"]);
     disk.set("docs/a.md", "newer\n");
     diskChanged(["/one/docs/a.md"]);
     await settle();
+    const [older, newer] = heldReads;
+    // The newer read answers first, the older one last.
+    newer();
+    await settle();
+    expect(view.state.doc.toString()).toBe("newer\n");
+    older();
+    await settle();
     expect(view.state.doc.toString()).toBe("newer\n");
     view.destroy();
+  });
+
+  it("tells a session close that stopped which file stopped it, beside the session on screen", async () => {
+    sessions.active = "a";
+    await ownerShown();
+    await openFile("docs/a.md", { keep: true });
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    view.destroy();
+    attachView(null);
+    sessions.active = "b";
+    await ownerShown();
+    readOnly.add("docs/a.md");
+    let closed = false;
+    closeAsking("session 1", ["a"], () => (closed = true));
+    await closingSave();
+    expect(closed).toBe(false);
+    expect(flash.text).toBe("session 1 stays open: a.md could not be saved");
+    // Open only beside the other session, it comes forward beside this one.
+    expect(activeTab()?.path).toBe("docs/a.md");
   });
 
   it("does not land a check that began before a save", async () => {

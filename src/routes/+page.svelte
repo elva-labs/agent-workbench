@@ -14,6 +14,7 @@
   import Palette from "$lib/components/Palette.svelte";
   import { closePalette, openCommands, openGoTo, palette } from "$lib/palette.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
+  import LeaveAsk from "$lib/components/LeaveAsk.svelte";
   import RefusalBanner from "$lib/components/RefusalBanner.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
@@ -33,8 +34,9 @@
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
   import { newFile } from "$lib/fileOps.svelte";
   import {
+    activeTab,
+    canSaveInFront,
     closeFront,
-    closeTabInFront,
     findInFile,
     flipMode,
     focusFiles,
@@ -342,8 +344,27 @@
 
   // The native layer takes a chord back from a browser tab's page on the
   // app's behalf, so it needs the table again whenever a binding changes.
+  // Save and Close Tab are editor mode's: outside it a browser tab's page
+  // keeps them, and on macOS they reach the File menu as they would from
+  // anywhere else.
   $effect(() => {
-    void core().browserKeys(Object.values(keys.bindings));
+    const chords = Object.entries(keys.bindings)
+      .filter(([action]) => editing || (action !== "file.save" && action !== "file.close"))
+      .map(([, chord]) => chord);
+    void core().browserKeys(chords);
+  });
+
+  // The File menu's items that cannot act are greyed out: Save without a
+  // file in front to save, New File without a project. Close Tab can always
+  // act on macOS, where with no tab it closes the window.
+  $effect(() => {
+    void core()
+      .menuEnabled({
+        "file.new": workspace.active !== null,
+        "file.save": editing && canSaveInFront(),
+        "file.close": isMac() || (editing && activeTab() !== null),
+      })
+      .catch(() => {});
   });
 
   // The File menu's items show and answer the chords of their actions.
@@ -599,7 +620,9 @@
         if (editing) void save();
         break;
       case "closeTab":
-        closeTabInFront();
+        // With no tab to close it is the window's close on macOS, as the
+        // menu's Close Tab is.
+        closeFront();
         break;
       case "newFile":
         newFile();
@@ -844,6 +867,7 @@
   <ConductAsk />
 {/if}
 <SettingsAsk />
+<LeaveAsk />
 <RefusalBanner />
 <UserStyles />
 

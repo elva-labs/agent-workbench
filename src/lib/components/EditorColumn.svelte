@@ -30,15 +30,11 @@
     diskText,
     editor,
     keepMine,
-    leaveCancelled,
-    leaveWithoutSaving,
     loadFromDisk,
     otherKindShown,
     putAwayOther,
-    saveAllAndLeave,
     saveAndClose,
     tryAgain,
-    unsavedNames,
   } from "$lib/editor.svelte";
   import { lineDiff } from "$lib/lineDiff";
   import { lastSegment } from "$lib/paths";
@@ -63,13 +59,11 @@
     if (changed.stamp !== null) return "changed" as const;
     return changed.problem === null ? ("gone" as const) : ("unreadable" as const);
   });
-  let names = $derived(editor.asking?.kind === "leave" ? unsavedNames() : []);
   /** The file the close question is about, by its own key: whatever tab is
       in front, the answer is about this one. */
   let asked = $derived(
     editor.asking?.kind === "close" ? (editor.buffers[editor.asking.key]?.path ?? null) : null,
   );
-  let leaving = $derived(editor.asking?.kind === "leave" ? editor.asking.leave : null);
 </script>
 
 {#snippet asking()}
@@ -84,22 +78,6 @@
         onConfirm={closeWithoutSaving}
         onCancel={cancelAsk}
         testid="close-unsaved"
-      />
-    </div>
-  {:else if leaving !== null}
-    <div class="strip">
-      <ConfirmStrip
-        question={leaving === "quit" ? "Quit with unsaved edits?" : "Close the window with unsaved edits?"}
-        detail="{names.length === 1 ? '1 file has' : `${names.length} files have`} edits not yet saved: {names.join(', ')}."
-        action={leaving === "quit" ? "Quit without saving" : "Close without saving"}
-        alternative={{
-          label: leaving === "quit" ? "Save all and quit" : "Save all and close",
-          onClick: () => void saveAllAndLeave(),
-        }}
-        safe
-        onConfirm={leaveWithoutSaving}
-        onCancel={leaveCancelled}
-        testid="close-window"
       />
     </div>
   {/if}

@@ -1410,6 +1410,9 @@ export async function installFakeCore(
         menuKeys: async (table: Record<string, unknown>) => {
           (window as unknown as Record<string, unknown>).__menuKeys = table;
         },
+        menuEnabled: async (state: Record<string, boolean>) => {
+          (window as unknown as Record<string, unknown>).__menuEnabled = state;
+        },
         settingsGet: async () => {
           const found = readSettings();
           return found === null
