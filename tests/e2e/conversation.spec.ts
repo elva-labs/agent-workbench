@@ -347,3 +347,124 @@ test.describe("a permission that could be misread", () => {
     await expect(page.getByTestId("permission-outside")).toHaveText("outside the project");
   });
 });
+
+test.describe("the composer", () => {
+  const input = (page: Page) => page.getByTestId("composer-input");
+
+  test("sends on Enter, breaks the line on Shift+Enter, and empties", async ({ page }) => {
+    await openIntegrated(page);
+    await expect(input(page)).toBeFocused();
+    await page.keyboard.type("First line");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("second line");
+    const one = (await input(page).boundingBox())!.height;
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("third line");
+    // The field grows with what is written.
+    expect((await input(page).boundingBox())!.height).toBeGreaterThan(one);
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toHaveValue("");
+    expect((await calls(page)).find((call) => call.method === "send")).toMatchObject({
+      text: "First line\nsecond line\nthird line",
+    });
+    await expect(page.getByTestId("user-message")).toContainText("First line");
+    // The row is named after the first line.
+    await expect(page.getByTestId("session-row")).toContainText("First line");
+  });
+
+  test("turns Send into Stop while the agent works, shows a message sent meanwhile as waiting, and stops on Escape", async ({ page }) => {
+    await openIntegrated(page);
+    await page.keyboard.type("go");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("${H}"); f.emit("${H}", { type: "text", block: "w", parent: null, text: "On it", done: false });`);
+    await expect(page.getByTestId("stop")).toBeVisible();
+    await expect(page.getByTestId("send")).toHaveCount(0);
+    await page.keyboard.type("and this");
+    await expect(page.getByTestId("send")).toBeVisible();
+    await page.keyboard.press("Enter");
+    const waiting = page.getByTestId("user-message").filter({ hasText: "and this" });
+    await expect(waiting).toHaveAttribute("data-state", "queued");
+    await expect(page.getByTestId("message-waiting")).toBeVisible();
+    // It stands under the agent's running reply.
+    const run = (await page.getByTestId("agent-run").boundingBox())!;
+    expect((await waiting.boundingBox())!.y).toBeGreaterThan(run.y + run.height - 1);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("turn-outcome")).toHaveText("Interrupted");
+    expect((await calls(page)).some((call) => call.method === "interrupt")).toBe(true);
+    // The waiting message is still waiting, and the turn that takes it places it.
+    await agent(page, `f.turn("${H}", "Now the second.");`);
+    await expect(waiting).toHaveAttribute("data-state", "taken");
+  });
+
+  test("shows the model and changes it", async ({ page }) => {
+    await openIntegrated(page);
+    const chip = page.getByTestId("model-chip");
+    await expect(chip).toHaveText("Default model");
+    await chip.click();
+    await expect(page.getByTestId("model-option")).toHaveText(["Haiku", "Sonnet"]);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(chip).toHaveText("Sonnet");
+    expect((await calls(page)).find((call) => call.method === "configure")).toMatchObject({
+      settings: { model: "sonnet" },
+    });
+    await expect(input(page)).toBeFocused();
+  });
+
+  test("takes an image dropped or pasted with the message, and another file by its path", async ({ page }) => {
+    await openIntegrated(page);
+    const box = (await page.getByTestId("composer").boundingBox())!;
+    await page.evaluate(
+      ({ x, y }) =>
+        (window as unknown as { __fileDrag: (drag: unknown) => void }).__fileDrag({
+          type: "drop",
+          paths: ["/home/ada/shot.png", "/home/ada/notes.md"],
+          x,
+          y,
+        }),
+      { x: box.x + 40, y: box.y + 20 },
+    );
+    await expect(page.getByTestId("attachments").locator("img")).toHaveCount(1);
+    await expect(input(page)).toHaveValue("/home/ada/notes.md ");
+    await input(page).evaluate((field) => {
+      const data = new DataTransfer();
+      const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
+      data.items.add(new File([bytes], "paste.png", { type: "image/png" }));
+      field.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await expect(page.getByTestId("attachments").locator("img")).toHaveCount(2);
+    await page.getByTestId("remove-attachment").first().click();
+    await expect(page.getByTestId("attachments").locator("img")).toHaveCount(1);
+    await input(page).focus();
+    await page.keyboard.press("Enter");
+    const sent = (await calls(page)).find((call) => call.method === "send") as unknown as { images: unknown[]; text: string };
+    expect(sent.images).toHaveLength(1);
+    expect(sent.text.trim()).toBe("/home/ada/notes.md");
+    await expect(page.getByTestId("user-message").locator("img")).toHaveCount(1);
+  });
+
+  test("reaches the dock with Up from an empty composer, and has the keyboard back once answered", async ({ page }) => {
+    await openIntegrated(page);
+    await page.keyboard.type("go");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("${H}"); f.ask("${H}", "Bash", { command: "ls" });`);
+    // Typing goes on in the composer while the dock waits.
+    await expect(input(page)).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(page.getByTestId("choice-allow")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("permission-dock")).toHaveCount(0);
+    await expect(input(page)).toBeFocused();
+  });
+
+  test("keeps the app's chords, and the keyboard goes back to the composer by the agent's", async ({ page }) => {
+    await openIntegrated(page);
+    await page.keyboard.type("draft");
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await page.keyboard.press("ControlOrMeta+2");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    await expect(input(page)).toBeFocused();
+    await expect(input(page)).toHaveValue("draft");
+  });
+});
