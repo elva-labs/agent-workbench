@@ -156,7 +156,9 @@
 </script>
 
 <div class="frame">
+<!-- The handlers only note that the user acted in the thread. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="thread"
   bind:this={scroller}
