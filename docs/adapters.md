@@ -16,7 +16,7 @@ and an id to resume by.
 | Past sessions | Its transcripts under its configuration directory                  | Its SQLite index under its home                          |
 | Account       | `CLAUDE_CONFIG_DIR`, its configuration directory                   | `CODEX_HOME`, its home                                   |
 | Session name  | The terminal title, stripped of the glyph and the agent's own name | The thread's name, else its title, else the first prompt |
-| Workflow      | `--append-system-prompt-file`, `--disallowedTools`                 | `-c developer_instructions=…`, `-c features.multi_agent_v2.disable_native_tools=true` |
+| Workflow      | `--append-system-prompt-file`, `--disallowedTools`                 | `-c developer_instructions=…`, `-c features.multi_agent=false`, `-c features.multi_agent_v2.disable_native_tools=true` |
 
 ## Accounts
 
@@ -37,22 +37,29 @@ its own system prompt, reading them from a file the workbench writes for
 the session; Codex takes them as developer instructions, the nearest
 setting it has, and has no setting that reads them from a file, so they go
 on its command line. The file is made new for each session, readable by
-its owner alone, and removed when the session's process ends.
+its owner alone, and removed when the session's process ends. Each
+workbench process keeps its sessions' files in a folder of its own, beside
+a lock it holds for as long as it runs; the folder of a process that ended
+without removing its files, because it crashed, is removed the next time a
+workbench starts a session under a workflow.
 
 Claude Code records the system prompt a conversation is first given and
-sends that on every resume. A resumed session whose workflow has changed
-since its conversation began is started with that record turned off, so it
-reads the instructions as they are now.
+sends that on every resume. A resumed session told something other than
+what its conversation began with, a changed workflow or no workflow where
+it had one, is started with that record turned off, so it reads what it is
+told now.
 
 Where the workflow delegates only through the workbench, each agent loses
 its own ways of handing work to agents the user cannot see. Claude Code is
 started without `Agent`, its subagents, `Workflow`, its multi-agent
 workflows, `SendMessage` and `ListAgents`, which reach other agents, and
 `RemoteTrigger`, which runs agents in the cloud. Codex is started with its
-native collaboration tools turned off: `spawn_agent`, `send_message`,
-`wait_agent`, `list_agents`, `interrupt_agent` and `followup_task`, which a
-model on its newer multi-agent version is given whatever the multi-agent
-features say. What remains is the shell, from which either agent could run
+multi-agent features off and its native collaboration tools turned off:
+`spawn_agent`, `send_message`, `wait_agent`, `list_agents`,
+`interrupt_agent` and `followup_task`, which a model on its newer
+multi-agent version is given whatever the multi-agent features say. A
+Codex from before that version passes over the second setting without a
+word, and the first takes its multi-agent tools away. What remains is the shell, from which either agent could run
 another copy of itself, and Claude Code's skills, some of which run in a
 subagent of their own; the instructions tell the orchestrator to hand out
 every piece with `start`.

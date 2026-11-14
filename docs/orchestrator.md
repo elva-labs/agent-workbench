@@ -104,12 +104,17 @@ agent's. A session started for a step stays on the model it was given:
 `send` gives it no command but `/compact`, since commands such as `/model`
 and `/fast` change the model and either agent completes a command from the
 start of its name, and a start or a resume for a step does not begin with
-one either.
+one either. A line counts as a command where it begins with a slash once
+characters that draw nothing are passed over and a wide slash is read as a
+slash, so one that begins with a path is refused too, and says to put a
+word before it.
 
 A work step runs no more sessions at once than it says. A start past that
 is refused with the sessions running for it, and so is a resume: a session
 that has finished its piece is stopped to make room, and a stopped one can
-be resumed later. A start takes its place in the step, or its round of a
+be resumed later. A session whose step the workflow no longer has, because
+the step was renamed or removed since, is not resumed; the refusal names
+the steps there are. A start takes its place in the step, or its round of a
 review, the moment it is checked, before the user is asked, and gives it
 back when the user refuses or the session does not come up, so two starts
 at once cannot both find room or share a round.
@@ -125,7 +130,9 @@ same work or by a line to the reviewer.
 
 The workbench counts the rounds of each review for each piece: a review
 started, a review resumed with a prompt, and a line sent to a review that
-has finished its round each count one. A review may run once and then once
+has finished its round each count one. A review resumed with no prompt has
+not finished a round since it came back, so the first line it is sent
+counts its round. A review may run once and then once
 more for every time it may send the work back, so a review that sends it
 back three times at most has four rounds of a piece. A round past those is
 put to the user through the same question a start is, worded as another
@@ -139,9 +146,12 @@ A started session remembers its step, and a review its round and the work
 it checks. `sessions` says both for each session, the stopped ones too.
 
 An agent that is not told its session's id, as Codex is not, is known by
-the directory it runs in. Where several sessions run in that directory and
-one of them follows a workflow, a call that could be any of them is
-refused rather than let through unchecked.
+the directory it runs in. A call that names no session is taken to come
+from the one session running in its directory that was not told its id.
+Where that is not certain and a session running there follows a workflow,
+whether or not it was told its id, the call is refused rather than let
+through unchecked. So is a call naming a session the workbench does not
+run, while any session follows a workflow.
 
 ## What is remembered
 
@@ -181,7 +191,10 @@ The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. A round of
 review past a workflow's limit is asked about every time, however the
-project was allowed, with Allow another round or No. An allowed
+project was allowed. It names the review and the work by the names the user
+sees, "Review has run twice on Fix the cache, as many times as the workflow
+allows. Allow another round?", with Allow one more round or Stop at the
+limit. An allowed
 caller is remembered for that project for as long as the app runs. A
 refusal is an answer the agent reads, not an error. Bringing back a
 session it already started is never asked about: the consent was given
@@ -195,12 +208,17 @@ may have more than eight running at a time.
 ## In the panes
 
 The agent pane's header names the workflow a session is part of and its
-place in it, quietly beside the title: the workflow and orchestrator for
-the session following it, or the workflow, the step and the round for a
-session started for a step, with the rules for that place when the pointer
-rests on it. A start the workflow refuses its orchestrator is shown over
-the terminal in one line, as well as answered to the agent, until a start
-goes through or the line is put away.
+place in it, quietly beside the title and in the header's own type: the
+workflow and orchestrator for the session following it, the workflow
+marked deleted where it follows the copy it kept, or the workflow, the step
+and the round for a session started for a step. Where the header is short
+of room, the workflow's name is cut short and then left out, and the place
+stays whole. The rules for that place open in a popover under the tag when
+the pointer rests on it, or on a click, Enter or Space, and Escape puts
+them away. A start the workflow refuses its orchestrator is shown over the
+terminal in one line, whole while the pointer or the keyboard is on it, as
+well as answered to the agent, until a start goes through or the line is
+put away.
 
 The sessions an orchestrator started stay in the project they run in, where
 the work is, and keep out of the way: the pane folds them into one quiet
