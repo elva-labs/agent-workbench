@@ -1345,6 +1345,9 @@ export function statusMessage(session: Session): string {
 /** The word shown in the pane header. */
 export function statusLabel(session: Session | null): string {
   if (session === null) return "no session";
+  // A session whose workflow is lost has not started: it waits on the
+  // user to say how it goes on.
+  if (session.workflowLost !== null) return "waiting for your choice";
   switch (session.status) {
     case "dormant":
       return "was open, starts when selected";

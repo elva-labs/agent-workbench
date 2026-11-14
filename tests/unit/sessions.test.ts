@@ -1990,6 +1990,8 @@ describe("following a workflow", () => {
     expect(row.status).toBe("failed");
     expect(row.workflowLost).toBe("Gone");
     expect(statusMessage(row)).toContain('followed the workflow "Gone", which is gone');
+    // It has not started: it waits on the user's word, and says so.
+    expect(statusLabel(row)).toBe("waiting for your choice");
     const without = resumeWithout(row.key)!;
     expect(byKey(row.key)).toBeNull();
     await launch(without.key, 80, 24, () => {});

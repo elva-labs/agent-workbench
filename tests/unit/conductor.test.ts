@@ -21,6 +21,7 @@ import {
   refuse,
   resetConductor,
   revoke,
+  roundQuestion,
   mayChangeModel,
   startedBy,
   startedFor,
@@ -47,7 +48,7 @@ import {
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
-import { instructions } from "$lib/workflowInstructions";
+import { instructionLines } from "$lib/workflowInstructions";
 import type { Workflow } from "$lib/core";
 
 const A = "/home/ada/dev/one";
@@ -1670,7 +1671,7 @@ describe("starting in a workflow's shape", () => {
     const review = workflow.steps[1];
     if (review.kind === "review") review.limit = 2;
     orchestrating(workflow);
-    const work = await begun({ step: "Work" }, "w1");
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
     // Three rounds: the first, and the two the work may be sent back for.
     for (const round of [1, 2, 3]) {
       const row = await begun({ step: "Review", work: "w1" }, `r${round}`);
@@ -1690,7 +1691,17 @@ describe("starting in a workflow's shape", () => {
     // allowed; refused, the caller is told to ask the user.
     const asked = handle(from({ step: "Review", work: "w1" }));
     await settle();
-    expect(conductor.asking?.round).toEqual({ step: "Review", work: "w1", done: 3, limit: 2 });
+    expect(conductor.asking?.round).toEqual({
+      step: "Review",
+      work: "w1",
+      name: "Fix the cache",
+      done: 3,
+      limit: 2,
+    });
+    // The user is asked in the words they know the work by.
+    expect(roundQuestion(conductor.asking!.round!)).toBe(
+      "Review has run 3 times on Fix the cache, as many times as the workflow allows. Allow another round?",
+    );
     refuse();
     await asked;
     expect(last().error).toBe(
@@ -1869,7 +1880,7 @@ describe("starting in a workflow's shape", () => {
     flushSync();
     const asked = handle(from({ session: "r1", prompt: "And once more" }));
     await settle();
-    expect(conductor.asking?.round).toEqual({ step: "Review", work: "w1", done: 2, limit: 1 });
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", work: "w1", done: 2, limit: 1 });
     refuse();
     await asked;
     expect(last().error).toContain("has had 2 rounds");
@@ -1988,16 +1999,22 @@ describe("starting in a workflow's shape", () => {
   it("names the workflow and each session's place in it, with the rules that place goes by", async () => {
     const orch = orchestrating();
     expect(workflowTag(byKey(orch.key)!)).toEqual({
-      text: "Build and review · orchestrator",
-      rules: instructions(defaultWorkflow()),
+      workflow: "Build and review",
+      role: "orchestrator",
+      rules: instructionLines(defaultWorkflow()),
     });
-    const work = await begun({ step: "Work" }, "w1");
-    expect(workflowTag(byKey(work.key)!)?.text).toBe("Build and review · Work");
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    expect(workflowTag(byKey(work.key)!)).toMatchObject({ workflow: "Build and review", role: "Work" });
     const review = await begun({ step: "Review", work: "w1" }, "r1");
     const tag = workflowTag(byKey(review.key)!)!;
-    expect(tag.text).toBe("Build and review · Review round 1");
-    expect(tag.rules).toContain('For the step "Review"');
-    expect(tag.rules).toContain("This one reviews the work of session w1.");
+    expect(tag.role).toBe("Review round 1");
+    expect(tag.rules).toHaveLength(1);
+    expect(tag.rules[0]).toContain('For the step "Review"');
+    // The work it checks by the name the user knows it by.
+    expect(tag.rules[0]).toContain("This one reviews Fix the cache.");
+    // A deleted workflow followed by its kept copy says so by its name.
+    byKey(orch.key)!.workflowGone = true;
+    expect(workflowTag(byKey(orch.key)!)?.workflow).toBe("Build and review (deleted)");
     // A session outside any workflow has no tag.
     const plain = create(A, null, "claude-code", null, null, null, null, null);
     expect(workflowTag(plain)).toBeNull();
@@ -2022,7 +2039,7 @@ describe("starting in a workflow's shape", () => {
     // The line it is sent is the next round, which is the user's to allow.
     const answering = handle(call("send", { session: "r1", text: "Review it once more" }, { session: "orch" }));
     await settle();
-    expect(conductor.asking?.round).toMatchObject({ step: "Review", done: 2 });
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", done: 2, name: "Fix the cache" });
     refuse();
     await answering;
     expect(last().error).toContain("the user did not allow another");
@@ -2095,6 +2112,16 @@ describe("starting in a workflow's shape", () => {
     expect(mayChangeModel("\uff0fmodel opus")).toBe(true);
     expect(mayChangeModel("/compact")).toBe(false);
     expect(mayChangeModel("Look at /src/x.ts")).toBe(false);
+  });
+
+  it("asks about a round past the limit in words, however many rounds there were", () => {
+    const at = { step: "Review", work: "w1", name: "Fix the cache", limit: 1 };
+    expect(roundQuestion({ ...at, done: 2 })).toBe(
+      "Review has run twice on Fix the cache, as many times as the workflow allows. Allow another round?",
+    );
+    expect(roundQuestion({ ...at, done: 3 })).toBe(
+      "Review has run 3 times on Fix the cache, more times than the workflow allows. Allow another round?",
+    );
   });
 
   it("keeps a refused start where the user can see it, until a start goes through", async () => {

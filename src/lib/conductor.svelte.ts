@@ -49,11 +49,7 @@ import {
 } from "$lib/sessions.svelte";
 import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
 import { CODEX_DEFAULT } from "$lib/models";
-import {
-  instructionLines,
-  instructions,
-  modelText,
-} from "$lib/workflowInstructions";
+import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { screen, takesPaste } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -190,7 +186,10 @@ export interface Ask {
     allow. */
 export interface Beyond {
   step: string;
+  /** The session whose work it checks, by id, for the caller. */
   work: string;
+  /** What the user knows that work by: its row's name. */
+  name: string;
   done: number;
   limit: number;
 }
@@ -587,33 +586,60 @@ export function dismissRefusal(key: string) {
   delete conductor.refusals[key];
 }
 
-/** What a session's header says of the workflow it is part of: the
-    workflow's name and its place in it, with the rules that place goes by.
-    Null for a session outside any workflow. */
-export function workflowTag(
-  session: Session,
-): { text: string; rules: string } | null {
+/** What a session's header says of the workflow it is part of. */
+export interface WorkflowTag {
+  /** The workflow's name, marked when it was deleted and the session
+      follows the copy it kept; null when the caller's workflow is not known
+      here. */
+  workflow: string | null;
+  /** The session's place in it: orchestrator, or the step and round. */
+  role: string;
+  /** The rules that place goes by, a sentence or a few each. */
+  rules: string[];
+}
+
+/** The workflow a session is part of and its place in it, with the rules
+    that place goes by. Null for a session outside any workflow. */
+export function workflowTag(session: Session): WorkflowTag | null {
   if (session.workflow !== null) {
-    const gone = session.workflowGone ? " · deleted, as it was" : "";
     return {
-      text: `${session.workflow.name} · orchestrator${gone}`,
-      rules: instructions(session.workflow),
+      workflow: session.workflowGone
+        ? `${session.workflow.name} (deleted)`
+        : session.workflow.name,
+      role: "orchestrator",
+      rules: instructionLines(session.workflow),
     };
   }
   const at = placeOf(session.key);
   if (at === null) return null;
   const caller = startedFor(session.key);
   const workflow = caller === null ? null : (byId(caller)?.workflow ?? null);
-  const where = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
-  if (workflow === null) return { text: where, rules: placeText(at) };
-  const index = workflow.steps.findIndex((step) => step.name === at.step);
+  const role = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
+  const index =
+    workflow === null ? -1 : workflow.steps.findIndex((step) => sameName(step.name, at.step));
+  const rule =
+    workflow === null || index === -1
+      ? `This session runs ${placeText(at)}.`
+      : instructionLines(workflow)[index + 1];
+  const reviews =
+    at.kind === "review" && at.work !== null && caller !== null
+      ? ` This one reviews ${workName(caller, at.work)}.`
+      : "";
   return {
-    text: `${workflow.name} · ${where}`,
-    rules:
-      index === -1
-        ? placeText(at)
-        : `${instructionLines(workflow)[index + 1]}${at.kind === "review" && at.work !== null ? ` This one reviews the work of session ${at.work}.` : ""}`,
+    workflow: workflow?.name ?? null,
+    role,
+    rules: [`${rule}${reviews}`],
   };
+}
+
+/** What the user knows a session's work by: the name its row has, or had,
+    and never its id. */
+export function workName(caller: string, id: string): string {
+  const row = byId(id);
+  if (row !== null && row.title !== null) return row.title;
+  const known = sessions.names[id] ?? remembered(caller, id)?.name ?? null;
+  if (known !== null) return known;
+  return row !== null && row.resumedFrom === null ? label(row) : "the work it checks";
 }
 
 /** The open projects, the caller's own marked. */
@@ -1046,7 +1072,7 @@ function fitStart(
       round: done + 1,
       work: from,
     },
-    beyond: pastLimit(step, from, done),
+    beyond: pastLimit(caller, step, from, done),
     hold: () => {},
     release: (started) => {
       if (!started) uncountRound(caller, step.name, piece);
@@ -1056,10 +1082,28 @@ function fitStart(
 
 /** A round past the most a review gives a piece: one more than the first
     and a round for every time it may send the work back. Null within it. */
-function pastLimit(step: ReviewStep, work: string, done: number): Beyond | null {
+function pastLimit(
+  caller: string,
+  step: ReviewStep,
+  work: string,
+  done: number,
+): Beyond | null {
   return done > step.limit
-    ? { step: step.name, work, done, limit: step.limit }
+    ? { step: step.name, work, name: workName(caller, work), done, limit: step.limit }
     : null;
+}
+
+/** What the user is asked about a round past the limit, in the words
+    they know the work by: "Review has run twice on Fix the cache, as many
+    times as the workflow allows. Allow another round?" */
+export function roundQuestion(beyond: Beyond): string {
+  const times =
+    beyond.done === 1 ? "once" : beyond.done === 2 ? "twice" : `${beyond.done} times`;
+  const most =
+    beyond.done === beyond.limit + 1
+      ? "as many times as the workflow allows"
+      : "more times than the workflow allows";
+  return `${beyond.step} has run ${times} on ${beyond.name}, ${most}. Allow another round?`;
 }
 
 /** What a caller is told when the user did not allow a round past the
@@ -1244,7 +1288,7 @@ async function resumeSession(
     } else if (prompt !== null && at.piece !== null) {
       const piece = at.piece;
       const done = roundsOf(caller, step.name, piece);
-      beyond = pastLimit(step, at.work ?? piece, done);
+      beyond = pastLimit(caller, step, at.work ?? piece, done);
       countRound(caller, step.name, piece);
       goesOn = { ...at, round: done + 1 };
       release = (started) => {
@@ -1371,7 +1415,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
     );
     if (review?.kind === "review") {
       const done = roundsOf(caller, review.name, at.piece);
-      const beyond = pastLimit(review, at.work ?? at.piece, done);
+      const beyond = pastLimit(caller, review, at.work ?? at.piece, done);
       if (
         beyond !== null &&
         (await askUser(request, session.project, typed, false, beyond)) === "no"

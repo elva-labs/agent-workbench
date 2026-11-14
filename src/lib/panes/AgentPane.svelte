@@ -1,5 +1,6 @@
 <script lang="ts">
   import HooksNotice from "$lib/components/HooksNotice.svelte";
+  import WorkflowTagButton from "$lib/components/WorkflowTagButton.svelte";
   import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
@@ -144,7 +145,7 @@
 
 {#snippet head()}
   {#if tag !== null}
-    <span class="tag" title={tag.rules} role="note" aria-label="{tag.text}. {tag.rules}" data-testid="workflow-tag">{tag.text}</span>
+    <WorkflowTagButton {tag} />
   {/if}
 {/snippet}
 
@@ -152,8 +153,9 @@
   <div class="wrap" bind:this={wrap}>
     {#if refusal !== null && current !== null}
       <!-- What the workflow refused the agent, said to the user too. -->
-      <p class="refused" title={refusal} data-testid="workflow-refused">
-        <span class="refused-text">Start refused: {refusal}</span>
+      <p class="refused" data-testid="workflow-refused">
+        <span class="refused-lead">Start refused</span>
+        <span class="refused-text">{refusal}</span>
         <button
           class="refused-close"
           onclick={() => dismissRefusal(current!.key)}
@@ -242,19 +244,7 @@
     background: var(--surface-2);
   }
 
-  /* The workflow a session is part of: quiet, beside the title. */
-  .tag {
-    max-width: 32ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 11.5px;
-    color: var(--ink-3);
-    cursor: default;
-  }
-
-  /* One line over the top of the terminal, cut short with the whole of it
-     on hover. */
+  /* One line over the top of the terminal, cut short. */
   .refused {
     position: absolute;
     inset: 0 0 auto 0;
@@ -266,8 +256,16 @@
     padding: 6px var(--pane-pad);
     border-bottom: 1px solid var(--rule);
     background: var(--surface-2);
-    font-size: 12px;
+    font-family: var(--chrome);
+    font-size: var(--row-size);
     color: var(--ink-2);
+  }
+  .refused-lead {
+    flex: none;
+    font-size: var(--meta-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    color: var(--accent);
   }
   .refused-text {
     flex: 1;
@@ -275,6 +273,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* The whole of it while the pointer or the keyboard is on it. */
+  .refused:hover .refused-text,
+  .refused:focus-within .refused-text {
+    white-space: normal;
   }
   .refused-close {
     border: 0;

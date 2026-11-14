@@ -1,6 +1,6 @@
 <script lang="ts">
   import { coversBrowser } from "$lib/browser.svelte";
-  import { allow, conductor, once, refuse } from "$lib/conductor.svelte";
+  import { allow, conductor, once, refuse, roundQuestion } from "$lib/conductor.svelte";
   import { returnFocus } from "$lib/layout.svelte";
 
   let ask = $derived(conductor.asking);
@@ -18,16 +18,11 @@
        yes lets this one through. -->
   <div class="ask" role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants another round of {ask.round.step}</p>
-    <p class="where" data-testid="conduct-round">
-      The work of session {ask.round.work} has had {ask.round.done} rounds, and the workflow sends a piece back {ask.round
-        .limit === 1
-        ? "once"
-        : `${ask.round.limit} times at most`}.
-    </p>
+    <p class="where" data-testid="conduct-round">{roundQuestion(ask.round)}</p>
     {#if ask.prompt !== ""}<p class="prompt">{ask.prompt}</p>{/if}
     <div class="actions">
-      <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow another round</button>
-      <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">No</button>
+      <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow one more round</button>
+      <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">Stop at the limit</button>
     </div>
   </div>
 {:else if ask !== null}
