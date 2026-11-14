@@ -451,11 +451,15 @@ fn plain_worktree_name(name: &str) -> bool {
 /// Variables that name a repository, a work tree, an index, objects or the
 /// refs to look under. A process started by `git rebase --exec`, a hook or
 /// `git bisect run` inherits them, and git would follow them away from the
-/// directory it is asked to work in. The user's config and identity
-/// variables are not here: those are settings, not a pointer at a repository.
+/// directory it is asked to work in. `GIT_CONFIG_PARAMETERS` is here because
+/// only `git -c` sets it, and it can carry `core.worktree`. The user's own
+/// config variables (`GIT_CONFIG_COUNT` with its keys and values, the global
+/// and system files) and identity variables are not: those are settings, not
+/// a pointer at a repository.
 pub(crate) const REPOSITORY_VARIABLES: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
+    "GIT_CONFIG_PARAMETERS",
     "GIT_DIR",
     "GIT_GRAFT_FILE",
     "GIT_IMPLICIT_WORK_TREE",

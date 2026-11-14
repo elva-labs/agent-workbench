@@ -27,7 +27,9 @@ The git the core runs, for projects and for plugins, always works on the
 repository in the folder it is run in. It clears the variables that name a
 repository, a work tree, an index or an object directory before it starts, so
 a core started from a hook or a rebase does not follow the caller's
-repository. The user's own config and identity variables are left as they are.
+repository. That includes the config git passes down from `git -c`, which can
+name a work tree. The user's own config variables, such as `GIT_CONFIG_COUNT`
+with its keys and values, and identity variables are left as they are.
 The environment handed to agents, terminals and plugins is cleared of the same
 variables, so a git typed into a terminal or run by an agent acts on the
 project the session is in.
