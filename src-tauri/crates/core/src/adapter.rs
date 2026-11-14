@@ -26,6 +26,9 @@ pub struct Caps {
     pub titles: bool,
     /// Speaks the Agent Client Protocol, so no TUI scraping is needed.
     pub acp: bool,
+    /// Can run as an integrated session: a process the core talks to in
+    /// messages, with the conversation drawn by the window.
+    pub integrated: bool,
 }
 
 /// How the workbench talks to a running agent. `Acp` joins in phase 5; the
@@ -130,9 +133,16 @@ pub trait AgentAdapter: Send + Sync {
 
     fn caps(&self) -> Caps;
 
-    /// Whether the workbench chooses a fresh session's id. When it does not,
-    /// the agent mints one and the workbench has to find it afterwards.
-    fn mints_id(&self) -> bool {
+    /// How the agent is driven as an integrated session, for an agent that
+    /// has a structured protocol to drive it by.
+    fn integrated(&self) -> Option<&'static dyn crate::integrated::Protocol> {
+        None
+    }
+
+    /// Whether the agent takes a fresh session's id from the workbench,
+    /// which then chooses it. When it does not, the agent mints one and the
+    /// workbench has to find it afterwards.
+    fn takes_id(&self) -> bool {
         true
     }
 
@@ -153,9 +163,15 @@ pub trait AgentAdapter: Send + Sync {
 /// it disables transcript saving, which is precisely the data phase 3's
 /// session index reads, and it points its messaging socket at the parent.
 ///
+/// `CLAUDECODE` marks a process as running inside Claude Code, and the
+/// agent refuses or misbehaves under it. `WORKBENCH_SESSION` names the
+/// parent's own session to its tools; a session of the workbench's gets its
+/// own instead.
+///
 /// Configuration variables under the same prefix are deliberately kept, since
 /// those are the user's and are meant to be inherited.
 const SESSION_SCOPED: &[&str] = &[
+    "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_CODE_BRIDGE_SESSION_ID",
@@ -163,7 +179,52 @@ const SESSION_SCOPED: &[&str] = &[
     "CLAUDE_CODE_MESSAGING_TOKEN",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_PID",
+    SESSION_VAR,
 ];
+
+/// Gives a plain process, one with no terminal, the project directory and
+/// the captured environment, the parent session's markers left out, as
+/// [`prepare`] does for a pty.
+pub fn prepare_process(
+    command: &mut std::process::Command,
+    project: &Path,
+    vars: &HashMap<String, String>,
+) {
+    command.current_dir(project);
+    command.env_clear();
+    command.envs(
+        vars.iter()
+            .filter(|(key, _)| !SESSION_SCOPED.contains(&key.as_str())),
+    );
+}
+
+/// A plain process for a program found on PATH. A `.cmd` or `.bat` on
+/// Windows goes through the command interpreter, as in [`program`], and no
+/// console window opens for it.
+pub fn process(binary: &Path, vars: &HashMap<String, String>) -> std::process::Command {
+    let command = if cfg!(windows) && is_shell_script(binary) {
+        let comspec = vars
+            .get("COMSPEC")
+            .cloned()
+            .unwrap_or_else(|| "cmd.exe".to_string());
+        let mut command = std::process::Command::new(comspec);
+        command.arg("/c").arg(binary);
+        command
+    } else {
+        std::process::Command::new(binary)
+    };
+    #[cfg(windows)]
+    let command = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = command;
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    };
+    command
+}
 
 /// Gives a command the project directory and the captured environment.
 ///
@@ -369,11 +430,16 @@ impl AgentAdapter for ClaudeCode {
             resumable: true,
             titles: true,
             acp: false,
+            integrated: true,
         }
     }
 
     fn reads_files(&self) -> bool {
         true
+    }
+
+    fn integrated(&self) -> Option<&'static dyn crate::integrated::Protocol> {
+        Some(&crate::claude_stream::CLAUDE_STREAM)
     }
 }
 
@@ -427,10 +493,11 @@ impl AgentAdapter for Codex {
             resumable: true,
             titles: true,
             acp: false,
+            integrated: false,
         }
     }
 
-    fn mints_id(&self) -> bool {
+    fn takes_id(&self) -> bool {
         false
     }
 }
@@ -479,8 +546,8 @@ mod tests {
 
     #[test]
     fn codex_mints_its_own_ids_and_resumes_by_subcommand() {
-        assert!(ClaudeCode.mints_id());
-        assert!(!Codex.mints_id());
+        assert!(ClaudeCode.takes_id());
+        assert!(!Codex.takes_id());
 
         let dir = std::env::temp_dir().join("workbench-adapter-codex");
         std::fs::create_dir_all(&dir).unwrap();

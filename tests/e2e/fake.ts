@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 
 /**
  * A fake core, installed at the seam `src/lib/core.ts` already checks.
@@ -114,6 +115,11 @@ export async function installFakeCore(
     }[];
   } = {},
 ) {
+  // The scripted integrated session, as `window.__integrated`, for a test
+  // to drive with `page.evaluate`.
+  await page.addInitScript(
+    `window.__integrated = (${fakeIntegrated.toString()})();`,
+  );
   await page.addInitScript(
     ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, buildAndReview }) => {
       const state = { fixture, changed: null as unknown, opened };
@@ -140,6 +146,10 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+
+      // Installed by the script before this one.
+      const integrated = () =>
+        (window as unknown as { __integrated: FakeIntegrated }).__integrated;
 
       // The embedded browser's tabs, kept the way the Rust model keeps
       // them: ids from 1, never reused; every tab has an owner, each owner
@@ -445,6 +455,35 @@ export async function installFakeCore(
           const fake = window as unknown as { __chimes?: number };
           fake.__chimes = (fake.__chimes ?? 0) + 1;
         },
+        integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) =>
+          integrated().start(options),
+        integratedTrust: async (options: Parameters<FakeIntegrated["trust"]>[0]) =>
+          integrated().trust(options),
+        integratedSend: async (
+          id: string,
+          message: string,
+          text: string,
+          images?: Parameters<FakeIntegrated["send"]>[3],
+        ) => integrated().send(id, message, text, images),
+        integratedInterrupt: async (id: string) => integrated().interrupt(id),
+        integratedCompact: async (id: string) => integrated().compact(id),
+        integratedAnswer: async (
+          id: string,
+          request: string,
+          choice: Parameters<FakeIntegrated["answer"]>[2],
+          message?: string,
+        ) => integrated().answer(id, request, choice, message),
+        integratedReply: async (id: string, request: string, answers: string[][] | null) =>
+          integrated().reply(id, request, answers),
+        integratedConfigure: async (
+          id: string,
+          settings: Parameters<FakeIntegrated["configure"]>[1],
+        ) => integrated().configure(id, settings),
+        integratedSnapshot: async (id: string) => integrated().snapshot(id),
+        integratedStop: async (id: string) => integrated().stop(id),
+        onIntegratedEvent: async (
+          handler: Parameters<FakeIntegrated["subscribe"]>[0],
+        ) => integrated().subscribe(handler),
         spawn: async (
           spawnOptions: { session?: string },
           onOutput: (bytes: Uint8Array) => void,
