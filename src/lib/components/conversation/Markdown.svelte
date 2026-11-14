@@ -1,10 +1,11 @@
 <script lang="ts">
   import { core } from "$lib/core";
-  import { render } from "$lib/media.svelte";
+  import { renderSaid } from "$lib/media.svelte";
 
   /**
    * What the agent wrote, as a reader sees it: the same Markdown the viewer
-   * renders for a presented document, links opening outside the window.
+   * renders for a presented document, links opening outside the window and
+   * an image from an address shown as a link to it rather than fetched.
    * While it streams it is drawn again at most once a frame, and a caret
    * stands where the next words will come, so the text grows in place.
    */
@@ -37,7 +38,7 @@
     if (frame !== null) cancelAnimationFrame(frame);
   });
 
-  let html = $derived(render(shown));
+  let html = $derived(renderSaid(shown));
 
   function onclick(e: MouseEvent) {
     const anchor = (e.target as HTMLElement | null)?.closest("a");

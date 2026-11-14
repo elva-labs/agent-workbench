@@ -202,6 +202,26 @@ renderer.image = ({ href, title, text }) => {
   return `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(text)}"${named}>`;
 };
 
+/** The renderer for what an agent says in a conversation: the same, except
+    that an image is loaded only from the text itself. One from anywhere
+    else would be fetched the moment the words arrive, which would tell
+    whoever serves it whatever the agent put in its address. */
+const said = new marked.Renderer();
+said.link = ({ href, title, tokens }) => {
+  const text = said.parser.parseInline(tokens);
+  if (!LINK.test(href)) return text;
+  const named = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<a href="${escapeAttribute(href)}"${named} rel="noopener noreferrer">${text}</a>`;
+};
+said.image = ({ href, title, text }) => {
+  if (/^data:image\//i.test(href)) {
+    const named = title ? ` title="${escapeAttribute(title)}"` : "";
+    return `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(text)}"${named}>`;
+  }
+  if (!/^https?:/i.test(href)) return escapeText(text);
+  return `<a href="${escapeAttribute(href)}" rel="noopener noreferrer">${escapeText(text || href)}</a>`;
+};
+
 function escapeText(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -220,6 +240,13 @@ function escapeAttribute(text: string): string {
 export function render(markdown: string): string {
   const escaped = markdown.replace(/</g, "&lt;");
   return marked.parse(escaped, { async: false, gfm: true, renderer }) as string;
+}
+
+/** Markdown an agent wrote in a conversation, rendered as `render` does,
+    with an image from anywhere but the text itself shown as a link. */
+export function renderSaid(markdown: string): string {
+  const escaped = markdown.replace(/</g, "&lt;");
+  return marked.parse(escaped, { async: false, gfm: true, renderer: said }) as string;
 }
 
 function decode(base64: string): string {

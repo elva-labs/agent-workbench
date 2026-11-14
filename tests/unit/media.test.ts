@@ -9,6 +9,7 @@ import {
   ownerFor,
   presented,
   render,
+  renderSaid,
   resetMedia,
 } from "$lib/media.svelte";
 import { closeViewer, files } from "$lib/files.svelte";
@@ -251,5 +252,20 @@ describe("presenting", () => {
     });
     const gone = await load("/one/missing.png");
     expect("error" in gone && gone.error).toContain("could not read");
+  });
+});
+
+describe("what an agent says in a conversation", () => {
+  it("is rendered as a document is, with an image from an address shown as a link to it", () => {
+    const html = renderSaid(
+      "Look ![chart](https://example.com/leak?x=secret) and ![dot](data:image/png;base64,AAAA) and [docs](https://example.com) <img src=x>",
+    );
+    expect(html).not.toContain('src="https://example.com');
+    expect(html).toContain('<a href="https://example.com/leak?x=secret" rel="noopener noreferrer">chart</a>');
+    expect(html).toContain('<img src="data:image/png;base64,AAAA" alt="dot">');
+    expect(html).toContain('<a href="https://example.com" rel="noopener noreferrer">docs</a>');
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
+    expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
   });
 });
