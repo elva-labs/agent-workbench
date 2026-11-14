@@ -1959,6 +1959,8 @@ test.describe("the file viewer", () => {
 
   test("resizes the whole pane against the agent", async ({ page }) => {
     await row(page, "mod.rs").click();
+    // The viewer opening widens the pane; it is measured once that is done.
+    await settled(page);
     const before = await widthOf(page, CHANGES);
 
     const handle = page.getByRole("separator", { name: "Resize the viewer" });
@@ -1970,8 +1972,9 @@ test.describe("the file viewer", () => {
     });
     await page.mouse.up();
 
-    expect(await widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
-    expect(await widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
+    await settled(page);
+    await expect.poll(() => widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
+    await expect.poll(() => widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
 
   test("widens the scope and falls back to content for an unchanged file", async ({
