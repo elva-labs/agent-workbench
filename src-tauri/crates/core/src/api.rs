@@ -344,12 +344,12 @@ impl Core {
         let orchestrator = self.is_orchestrator(project);
         let project = cwd.unwrap_or(project);
 
-        // A resumed session's id is known, and a fresh one's when the
-        // workbench mints it; an agent that mints its own is found later.
+        // A resumed session's id is known, and a fresh one's when the agent
+        // takes the one the workbench chooses; one it mints is found later.
         let resumed = session.is_some();
         let session_id = match session {
             Some(id) => Some(id),
-            None if adapter.mints_id() => Some(new_session_id()),
+            None if adapter.takes_id() => Some(new_session_id()),
             None => None,
         };
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
@@ -445,7 +445,7 @@ impl Core {
         let resume = session.is_some();
         // The workbench chooses a fresh session's id for an agent that takes
         // one; one that makes its own says it in `ready`.
-        let session = session.or_else(|| adapter.mints_id().then(new_session_id));
+        let session = session.or_else(|| adapter.takes_id().then(new_session_id));
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));

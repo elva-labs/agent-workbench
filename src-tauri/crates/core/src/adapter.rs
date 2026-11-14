@@ -96,9 +96,10 @@ pub trait AgentAdapter: Send + Sync {
         None
     }
 
-    /// Whether the workbench chooses a fresh session's id. When it does not,
-    /// the agent mints one and the workbench has to find it afterwards.
-    fn mints_id(&self) -> bool {
+    /// Whether the agent takes a fresh session's id from the workbench,
+    /// which then chooses it. When it does not, the agent mints one and the
+    /// workbench has to find it afterwards.
+    fn takes_id(&self) -> bool {
         true
     }
 }
@@ -358,7 +359,7 @@ impl AgentAdapter for Codex {
         }
     }
 
-    fn mints_id(&self) -> bool {
+    fn takes_id(&self) -> bool {
         false
     }
 }
@@ -407,8 +408,8 @@ mod tests {
 
     #[test]
     fn codex_mints_its_own_ids_and_resumes_by_subcommand() {
-        assert!(ClaudeCode.mints_id());
-        assert!(!Codex.mints_id());
+        assert!(ClaudeCode.takes_id());
+        assert!(!Codex.takes_id());
 
         let dir = std::env::temp_dir().join("workbench-adapter-codex");
         std::fs::create_dir_all(&dir).unwrap();
