@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::codex_app_server::CODEX_APP_SERVER;
-use crate::events::testing::Recorder;
+use crate::events::testing::{Recorder, Waits};
 use crate::scratch::Scratch;
 
 const STAND_IN: &str = r#"#!/bin/sh
@@ -115,6 +115,7 @@ struct Harness {
     sessions: Arc<Sessions>,
     recorder: Arc<Recorder>,
     id: String,
+    waits: Waits,
 }
 
 fn start(name: &str, scenario: &str) -> Harness {
@@ -168,6 +169,7 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         sessions,
         recorder,
         id: started.id,
+        waits: Waits::default(),
     }
 }
 
@@ -183,40 +185,30 @@ impl Harness {
             .collect()
     }
 
-    /// Waits for an event, and hands back every event up to and with it.
+    /// Waits for an event past the last match, and hands back every event
+    /// from the start up to and with it.
     fn until(&self, what: impl Fn(&Value) -> bool) -> Vec<Value> {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            let events = self.events();
-            if let Some(at) = events.iter().position(&what) {
-                return events[..=at].to_vec();
-            }
-            assert!(
-                Instant::now() < deadline,
-                "never came; the session said {events:#?}"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        self.waits.until(|| self.events(), what)
+    }
+
+    /// Waits for the session to go into `state`, and hands back every state
+    /// it has told up to and with it.
+    fn until_state(&self, state: &str) -> Vec<String> {
+        states(&self.until(|event| event["type"] == "state" && event["state"] == state))
     }
 
     fn until_type(&self, kind: &str) -> Vec<Value> {
         self.until(|event| event["type"] == kind)
     }
 
-    /// Waits for the `n`th event of a kind, and hands back every event up
-    /// to and with it.
-    fn until_nth(&self, kind: &str, n: usize) -> Vec<Value> {
-        self.until(|_| self.events().iter().filter(|e| e["type"] == kind).count() >= n);
-        let mut seen = 0;
-        let events = self.events();
-        let at = events
-            .iter()
-            .position(|event| {
-                seen += usize::from(event["type"] == kind);
-                seen == n
-            })
-            .expect("waited for above");
-        events[..=at].to_vec()
+    /// Waits until the agent has been sent an answer to request `id`. The
+    /// stand-in's record is not an event, so the waits' place stays.
+    fn until_answered(&self, id: i64) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !self.answers().contains_key(&id) {
+            assert!(Instant::now() < deadline, "never answered {id}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn stdin(&self) -> Vec<Value> {
@@ -325,10 +317,7 @@ fn a_session_starts_a_thread_streams_a_turn_and_stops_cleanly() {
     assert_eq!(ended["outcome"], "done");
     assert_eq!(ended["usage"]["cachedTokens"], 4);
     assert_eq!(ended["usage"]["reasoningTokens"], 1);
-    assert_eq!(
-        states(&h.until_nth("state", 3)),
-        ["idle", "working", "idle"]
-    );
+    assert_eq!(h.until_state("idle"), ["idle", "working", "idle"]);
 
     let started = &h.sent("thread/start")[0]["params"];
     assert_eq!(started["approvalsReviewer"], "user");
@@ -421,7 +410,8 @@ fn a_message_sent_before_ready_or_during_a_turn_waits_for_its_own() {
     let queued = h.until(|e| e["type"] == "message" && e["state"] == "queued");
     assert_eq!(queued.last().unwrap()["message"], second.as_str());
     assert_eq!(h.sent("turn/start").len(), 1, "held while the turn runs");
-    let events = h.until_nth("turnEnded", 2);
+    h.until_type("turnEnded");
+    let events = h.until_type("turnEnded");
     let started: Vec<Value> = events
         .iter()
         .filter(|e| e["type"] == "turnStarted")
@@ -541,9 +531,9 @@ fn each_answer_to_an_approval_reaches_the_agent_as_its_decision() {
     ];
     for (request, choice) in answers {
         h.until(|e| e["type"] == "permissionAsked" && e["request"] == request);
-        h.until(|_| states(&h.events()).last().map(String::as_str) == Some("asking"));
+        h.until_state("asking");
         answer(&h.sessions, &h.id, request, choice, Some("why not")).unwrap();
-        h.until(|_| states(&h.events()).last().map(String::as_str) == Some("working"));
+        h.until_state("working");
     }
     let events = h.until_type("turnEnded");
     let asked = events
@@ -658,9 +648,9 @@ fn an_interrupt_ends_the_turn_and_the_core_closes_what_was_open() {
     assert_eq!(events[n - 1]["outcome"], "interrupted");
     // The approval nobody answered is answered no, so the agent is not
     // left holding it.
-    h.until(|_| h.answers().contains_key(&3));
+    h.until_answered(3);
     assert_eq!(h.answers()[&3]["result"]["decision"], "decline");
-    assert_eq!(states(&h.until_nth("state", 5)).last().unwrap(), "idle");
+    assert_eq!(h.until_state("idle").last().unwrap(), "idle");
     h.stop();
 }
 
@@ -722,7 +712,8 @@ fn compaction_notices_and_a_retry() {
     let h = start("compact", &scenario);
     h.until_type("ready");
     integrated_compact(&h);
-    let events = h.until_nth("notice", 2);
+    h.until_type("notice");
+    let events = h.until_type("notice");
     let tail: Vec<String> = kinds(&events)
         .into_iter()
         .filter(|k| k != "state")
@@ -1177,16 +1168,12 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
             sessions: Arc::clone(&sessions),
             recorder,
             id: started.id,
+            waits: Waits::default(),
         }
     };
     let turn = |h: &Harness, text: &str| -> Vec<Value> {
-        let before = h
-            .events()
-            .iter()
-            .filter(|e| e["type"] == "turnEnded")
-            .count();
         let message = h.send(text);
-        let events = h.until_nth("turnEnded", before + 1);
+        let events = h.until_type("turnEnded");
         let at = events
             .iter()
             .rposition(|e| e["type"] == "turnStarted")
@@ -1226,7 +1213,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         None,
     )
     .unwrap();
-    let events = h.until_nth("turnEnded", 2);
+    let events = h.until_type("turnEnded");
     let finished = events
         .iter()
         .find(|e| {
@@ -1255,7 +1242,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         None,
     )
     .unwrap();
-    let events = h.until_nth("turnEnded", 3);
+    let events = h.until_type("turnEnded");
     assert_eq!(events.last().unwrap()["outcome"], "done", "{events:#?}");
     assert!(!work.join("made.txt").exists());
 
@@ -1299,18 +1286,13 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
             std::thread::sleep(Duration::from_millis(50));
         }
     };
-    let before = h.events().len();
     h.send(&format!("SLEEP {}", &command["sleep ".len()..]));
     // The interrupt waits for both Codex's word that the call started and
     // the command itself, which come in no fixed order.
-    h.until(|_| {
-        h.events()[before..]
-            .iter()
-            .any(|e| e["type"] == "toolStarted" && e["kind"] == "command")
-    });
+    h.until(|e| e["type"] == "toolStarted" && e["kind"] == "command");
     wait_for("the command never ran", &sleeping);
     control(&sessions, &h.id, &Control::Interrupt).unwrap();
-    let events = h.until_nth("turnEnded", 5);
+    let events = h.until_type("turnEnded");
     assert_eq!(
         events.last().unwrap()["outcome"],
         "interrupted",
