@@ -80,9 +80,10 @@ export interface Session {
       output is flowing while it works, and the screen is still when it
       waits. */
   working: boolean;
-  /** Whether output can mean work yet: the user has sent the agent a line,
-      or it has been up long enough to have finished starting. Until then
-      what it draws is its own start-up, spinners included. */
+  /** Whether output can mean work yet: the agent has been sent a line, on
+      its command line or typed, or it has been up long enough to have
+      finished starting. Until then what it draws is its own start-up,
+      spinners included. */
   engaged: boolean;
   /** When the process came up, for the start-up allowance. */
   startedAt: number | null;
@@ -915,7 +916,7 @@ function row(
     account,
     worktree: null,
     working: false,
-    engaged: false,
+    engaged: prompt !== null,
     startedAt: null,
     unread: false,
     note: null,
@@ -1162,7 +1163,7 @@ export function statusLabel(session: Session | null): string {
  * redraw, and a redraw is one burst: a footer's clock ticking over, a
  * status line changing. So "working" is more than a redraw's worth of bytes
  * in each of three seconds running, and "waiting" is two seconds after the
- * last such second, a redraw or two in them notwithstanding. Nothing counts until the user has sent the agent a line or a
+ * last such second, a redraw or two in them notwithstanding. Nothing counts until the agent has been sent a line or a
  * minute has passed since it came up: an agent starting draws plenty, its
  * spinner while it connects most of all, and none of it is work. A session
  * that goes quiet while nobody is looking at it, or rings for attention,

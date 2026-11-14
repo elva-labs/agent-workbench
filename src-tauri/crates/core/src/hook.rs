@@ -88,6 +88,12 @@ fn codex_config_path(project: &Path) -> PathBuf {
     project.join(".codex").join("config.toml")
 }
 
+/// The files the hooks write in a folder, as paths inside it.
+const CLAUDE_LOCAL: &str = ".claude/settings.local.json";
+const CODEX_HOOKS: &str = ".codex/hooks.json";
+const CODEX_CONFIG: &str = ".codex/config.toml";
+const FILES: [&str; 3] = [CLAUDE_LOCAL, CODEX_HOOKS, CODEX_CONFIG];
+
 const SERVER_NAME: &str = "agent-workbench";
 const CODEX_SERVER_KEY: &str = "agent_workbench";
 
@@ -447,42 +453,222 @@ fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
 
 /// Adds the hooks, leaving every other setting and every other hook alone.
 /// The server goes into every account's Claude Code state, so a session
-/// under any of them has the tools.
+/// under any of them has the tools. The worktrees the workbench made for
+/// the project get the same, as [`share`] gives them; one whose files
+/// cannot be read is left as it is, and the project's own answer stands.
+/// Each account's state is read and written once, however many worktrees
+/// there are, and loses the server of any worktree of the project's that
+/// git no longer lists or whose folder is gone.
 pub fn install(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookStatus, String> {
-    let path = settings_path(project);
-    let mut settings = read_for_writing(&path)?;
-    let mut changed = add_entry(
-        &mut settings,
-        "PostToolUse",
-        json!({
-            "matcher": MATCHER,
-            "hooks": [{ "type": "command", "command": command(home) }],
-        }),
-        home,
-    )?;
-    for event in CLAUDE_SESSION_EVENTS {
-        changed |= add_entry(&mut settings, event, session_entry(home), home)?;
+    add_hooks(home, project, &[])?;
+    let listed = sharing(project);
+    let mut trees = Vec::new();
+    for tree in &listed {
+        let leave = tracked(tree);
+        if add_hooks(home, tree, &leave).is_ok() {
+            trees.push((tree.clone(), leave));
+        }
     }
-    if changed {
-        write_settings(&path, &settings)?;
-    }
-
-    let codex = codex_hooks_path(project);
-    let mut hooks = read_for_writing(&codex)?;
-    let mut changed = false;
-    for event in CODEX_SESSION_EVENTS {
-        changed |= add_entry(&mut hooks, event, session_entry(home), home)?;
-    }
-    if changed {
-        write_settings(&codex, &hooks)?;
-    }
-
     touch_events(home)?;
+
+    let live: Vec<String> = listed.iter().map(|tree| state_key(tree)).collect();
+    let bases = worktree_bases(project);
+    let gone = |key: &str| under(&bases, key) && !live.iter().any(|tree| tree == key);
     if daemon_path(home).is_file() {
-        install_server(home, project, accounts)?;
+        let mut folders = vec![project.to_path_buf()];
+        folders.extend(trees.iter().map(|(tree, _)| tree.clone()));
+        claude_servers(home, accounts, &folders, gone)?;
+        point_codex(home, project)?;
+        for (tree, leave) in &trees {
+            if !leave.contains(&CODEX_CONFIG) {
+                let _ = point_codex(home, tree);
+            }
+        }
+    } else {
+        claude_servers(home, accounts, &[], gone)?;
     }
     exclude_from_git(project);
     Ok(status(home, project, accounts))
+}
+
+/// Whether the project has the hooks in its own settings, whatever else is
+/// or is not in place.
+fn has_hooks(home: &Path, project: &Path) -> bool {
+    let read = read_settings(&settings_path(project));
+    ["PostToolUse"]
+        .iter()
+        .chain(CLAUDE_SESSION_EVENTS)
+        .all(|event| has_ours(&read, event, home))
+}
+
+/// Gives a worktree of the project the hooks the project has, and says
+/// whether it did. A worktree is a checkout of its own, and the agents read
+/// their local settings from the directory they run in, so the project's
+/// do not reach a session there. Nothing is written when the project has
+/// no hooks, when the folder is not one of the project's worktrees that is
+/// still there, or when the project does not share with its worktrees, as
+/// [`sharing`] says. None of the files is written where the worktree's
+/// checkout tracks it, so the worktree shows no change, and a worktree that
+/// has them all is left as it is.
+pub fn share(
+    home: &Path,
+    project: &Path,
+    worktree: &Path,
+    accounts: &[Dirs],
+) -> Result<bool, String> {
+    if !has_hooks(home, project) || !shares_with(project, worktree) {
+        return Ok(false);
+    }
+    let leave = tracked(worktree);
+    add_hooks(home, worktree, &leave)?;
+    touch_events(home)?;
+    if daemon_path(home).is_file() {
+        claude_servers(home, accounts, &[worktree.to_path_buf()], |_| false)?;
+        if !leave.contains(&CODEX_CONFIG) {
+            point_codex(home, worktree)?;
+        }
+    }
+    exclude_from_git(project);
+    Ok(true)
+}
+
+/// Takes out of the agents' own state what [`share`] put there for a
+/// worktree that is gone: the server Claude Code was pointed at for it. Its
+/// own files went with it.
+pub fn forget(home: &Path, worktree: &Path, accounts: &[Dirs]) -> Result<(), String> {
+    let key = state_key(worktree);
+    claude_servers(home, accounts, &[], |other| other == key)
+}
+
+/// The worktrees the workbench made for the project that it shares its
+/// hooks with: those git lists that are still a checkout, a folder with its
+/// `.git`, so a folder the user deleted is never made again. A project that
+/// is a folder inside its repository shares with none. Its worktrees are
+/// checkouts of the whole repository, with the agent run at their top
+/// rather than in the project's folder, and files written there could be
+/// kept out of git's view only by lines that every checkout of the
+/// repository reads, the user's main one included.
+fn sharing(project: &Path) -> Vec<PathBuf> {
+    if !at_top(project) {
+        return Vec::new();
+    }
+    crate::git::worktree_paths(project)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|tree| standing(tree))
+        .collect()
+}
+
+/// Whether a folder is one of the worktrees [`sharing`] gives the project's
+/// hooks to, asked of the folder alone, without listing them.
+fn shares_with(project: &Path, tree: &Path) -> bool {
+    let tree = canonical(tree);
+    standing(&tree)
+        && worktree_bases(project)
+            .iter()
+            .any(|base| tree.parent() == Some(base.as_path()))
+        && at_top(project)
+}
+
+/// Whether a worktree's folder is there with the `.git` that makes it a
+/// checkout.
+fn standing(tree: &Path) -> bool {
+    tree.join(".git").exists()
+}
+
+/// Whether a folder is the top of its repository's checkout.
+fn at_top(project: &Path) -> bool {
+    let Ok(repo) = git2::Repository::discover(project) else {
+        return false;
+    };
+    repo.workdir()
+        .is_some_and(|workdir| canonical(workdir) == canonical(project))
+}
+
+/// The folder the project's worktrees are made in, as given and resolved.
+fn worktree_bases(project: &Path) -> Vec<PathBuf> {
+    let mut bases = vec![canonical(&project.join(crate::git::WORKTREES))];
+    let resolved = canonical(project).join(crate::git::WORKTREES);
+    if !bases.contains(&resolved) {
+        bases.push(resolved);
+    }
+    bases
+}
+
+/// Whether a key of Claude Code's per-project state is a folder inside one
+/// of `bases`.
+fn under(bases: &[PathBuf], key: &str) -> bool {
+    let key = Path::new(key);
+    bases
+        .iter()
+        .any(|base| key != base && key.starts_with(base))
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The key Claude Code files a folder's state under: its resolved path.
+fn state_key(folder: &Path) -> String {
+    canonical(folder).to_string_lossy().to_string()
+}
+
+/// Which of the files the hooks write the checkout a folder is in tracks.
+/// Those are the checkout's own, and writing into one would show as a
+/// change to it.
+fn tracked(folder: &Path) -> Vec<&'static str> {
+    let Ok(repo) = git2::Repository::discover(folder) else {
+        return Vec::new();
+    };
+    let (Some(workdir), Ok(index)) = (repo.workdir(), repo.index()) else {
+        return Vec::new();
+    };
+    let workdir = canonical(workdir);
+    let folder = canonical(folder);
+    let Ok(inside) = folder.strip_prefix(&workdir) else {
+        return Vec::new();
+    };
+    FILES
+        .into_iter()
+        .filter(|file| index.get_path(&inside.join(file), 0).is_some())
+        .collect()
+}
+
+/// Adds the hooks to the agents' settings files in a folder, all but those
+/// named in `leave`, which are not read or written.
+fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
+    if !leave.contains(&CLAUDE_LOCAL) {
+        let path = settings_path(folder);
+        let mut settings = read_for_writing(&path)?;
+        let mut changed = add_entry(
+            &mut settings,
+            "PostToolUse",
+            json!({
+                "matcher": MATCHER,
+                "hooks": [{ "type": "command", "command": command(home) }],
+            }),
+            home,
+        )?;
+        for event in CLAUDE_SESSION_EVENTS {
+            changed |= add_entry(&mut settings, event, session_entry(home), home)?;
+        }
+        if changed {
+            write_settings(&path, &settings)?;
+        }
+    }
+
+    if !leave.contains(&CODEX_HOOKS) {
+        let codex = codex_hooks_path(folder);
+        let mut hooks = read_for_writing(&codex)?;
+        let mut changed = false;
+        for event in CODEX_SESSION_EVENTS {
+            changed |= add_entry(&mut hooks, event, session_entry(home), home)?;
+        }
+        if changed {
+            write_settings(&codex, &hooks)?;
+        }
+    }
+    Ok(())
 }
 
 /// The `projects` of each account's Claude Code state, in the order of the
@@ -520,41 +706,67 @@ fn has_server(states: &[Map<String, Value>], home: &Path, project: &Path) -> boo
     })
 }
 
-/// Points both agents at the daemon as an MCP server for the project:
-/// Claude Code in its per-project state, under every account, and Codex
-/// in the project's own config, beside its hooks file.
-fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), String> {
+/// Changes where every account's Claude Code state points Claude Code at
+/// the daemon: at it for each folder in `add`, and no longer for each other
+/// folder whose key `drop` picks. Each state file is read and written once,
+/// however many folders there are, and one that is not there is made only
+/// to add to.
+fn claude_servers(
+    home: &Path,
+    accounts: &[Dirs],
+    add: &[PathBuf],
+    drop: impl Fn(&str) -> bool,
+) -> Result<(), String> {
     let daemon = daemon_path(home).to_string_lossy().to_string();
-    let key = dunce::canonicalize(project)
-        .unwrap_or_else(|_| project.to_path_buf())
-        .to_string_lossy()
-        .to_string();
-
+    let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
+    let add: Vec<String> = add.iter().map(|folder| state_key(folder)).collect();
     for claude in account::claude_jsons(home, accounts) {
+        if add.is_empty() && !claude.exists() {
+            continue;
+        }
         update_settings(&claude, |state| {
-            let servers = state
-                .entry("projects")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .ok_or("Claude's projects state is not an object")?
-                .entry(key.clone())
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .ok_or("Claude's project state is not an object")?
-                .entry("mcpServers")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .ok_or("Claude's mcpServers state is not an object")?;
-            let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
-            if servers.get(SERVER_NAME) == Some(&entry) {
-                return Ok(false);
+            let mut changed = false;
+            if let Some(projects) = state.get_mut("projects").and_then(Value::as_object_mut) {
+                for (key, project) in projects.iter_mut() {
+                    if add.contains(key) || !drop(key) {
+                        continue;
+                    }
+                    changed |= project
+                        .get_mut("mcpServers")
+                        .and_then(Value::as_object_mut)
+                        .is_some_and(|servers| servers.remove(SERVER_NAME).is_some());
+                }
             }
-            servers.insert(SERVER_NAME.into(), entry);
-            Ok(true)
+            for key in &add {
+                let servers = state
+                    .entry("projects")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .ok_or("Claude's projects state is not an object")?
+                    .entry(key.clone())
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .ok_or("Claude's project state is not an object")?
+                    .entry("mcpServers")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .ok_or("Claude's mcpServers state is not an object")?;
+                if servers.get(SERVER_NAME) != Some(&entry) {
+                    servers.insert(SERVER_NAME.into(), entry.clone());
+                    changed = true;
+                }
+            }
+            Ok(changed)
         })?;
     }
+    Ok(())
+}
 
-    let codex = codex_config_path(project);
+/// Points Codex at the daemon as an MCP server in the folder's own config,
+/// beside its hooks file.
+fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
+    let daemon = daemon_path(home).to_string_lossy().to_string();
+    let codex = codex_config_path(folder);
     let text = std::fs::read_to_string(&codex).unwrap_or_default();
     let mut document = text
         .parse::<toml_edit::DocumentMut>()
@@ -589,53 +801,33 @@ fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), 
     Ok(())
 }
 
-/// Takes the server out of both agents' configuration, and a Codex config
-/// that held nothing but it goes too.
-fn uninstall_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), String> {
-    let key = dunce::canonicalize(project)
-        .unwrap_or_else(|_| project.to_path_buf())
-        .to_string_lossy()
-        .to_string();
-    for claude in account::claude_jsons(home, accounts) {
-        if !claude.exists() {
-            continue;
-        }
-        update_settings(&claude, |state| {
-            Ok(state
-                .get_mut("projects")
-                .and_then(Value::as_object_mut)
-                .and_then(|projects| projects.get_mut(&key))
-                .and_then(Value::as_object_mut)
-                .and_then(|project| project.get_mut("mcpServers"))
-                .and_then(Value::as_object_mut)
-                .is_some_and(|servers| servers.remove(SERVER_NAME).is_some()))
-        })?;
+/// Takes the server out of the folder's Codex config, and a config that
+/// held nothing but it goes too.
+fn unpoint_codex(folder: &Path) -> Result<(), String> {
+    let codex = codex_config_path(folder);
+    if !codex.exists() {
+        return Ok(());
     }
-
-    let codex = codex_config_path(project);
-    if codex.exists() {
-        let text = std::fs::read_to_string(&codex).unwrap_or_default();
-        let mut document = text
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
-        let mut changed = false;
-        if let Some(servers) = document
-            .get_mut("mcp_servers")
-            .and_then(|item| item.as_table_mut())
-        {
-            changed = servers.remove(CODEX_SERVER_KEY).is_some();
-            if servers.is_empty() {
-                document.remove("mcp_servers");
-            }
+    let text = std::fs::read_to_string(&codex).unwrap_or_default();
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+    let mut changed = false;
+    if let Some(servers) = document
+        .get_mut("mcp_servers")
+        .and_then(|item| item.as_table_mut())
+    {
+        changed = servers.remove(CODEX_SERVER_KEY).is_some();
+        if servers.is_empty() {
+            document.remove("mcp_servers");
         }
-        if changed {
-            if document.as_table().is_empty() {
-                std::fs::remove_file(&codex)
-                    .map_err(|e| format!("could not remove {codex:?}: {e}"))?;
-            } else {
-                std::fs::write(&codex, document.to_string())
-                    .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
-            }
+    }
+    if changed {
+        if document.as_table().is_empty() {
+            std::fs::remove_file(&codex).map_err(|e| format!("could not remove {codex:?}: {e}"))?;
+        } else {
+            std::fs::write(&codex, document.to_string())
+                .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
         }
     }
     Ok(())
@@ -661,11 +853,7 @@ fn exclude_from_git(project: &Path) {
     let exclude = repo.commondir().join("info").join("exclude");
     let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
     let before = text.len();
-    for file in [
-        ".claude/settings.local.json",
-        ".codex/hooks.json",
-        ".codex/config.toml",
-    ] {
+    for file in FILES {
         let line = format!(
             "/{}",
             inside.join(file).to_string_lossy().replace('\\', "/")
@@ -688,10 +876,37 @@ fn exclude_from_git(project: &Path) {
 }
 
 /// Removes only our entries. Anything else in the files stays, and a Codex
-/// file that held nothing but ours goes with them.
+/// file that held nothing but ours goes with them. The worktrees the
+/// project shares its hooks with lose theirs too; one whose files cannot
+/// be read keeps what is in them. Each account's state is read and written
+/// once, and loses the server of the project and of every folder in its
+/// worktrees' folder, listed by git or not.
 pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookStatus, String> {
-    let path = settings_path(project);
-    if path.exists() {
+    remove_hooks(home, project, &[])?;
+    let mut trees = Vec::new();
+    for tree in sharing(project) {
+        let leave = tracked(&tree);
+        if remove_hooks(home, &tree, &leave).is_ok() {
+            trees.push((tree, leave));
+        }
+    }
+    let own = state_key(project);
+    let bases = worktree_bases(project);
+    claude_servers(home, accounts, &[], |key| key == own || under(&bases, key))?;
+    unpoint_codex(project)?;
+    for (tree, leave) in &trees {
+        if !leave.contains(&CODEX_CONFIG) {
+            let _ = unpoint_codex(tree);
+        }
+    }
+    Ok(status(home, project, accounts))
+}
+
+/// Removes our entries from the agents' settings files in a folder, all
+/// but those named in `leave`, which are not read or written.
+fn remove_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
+    let path = settings_path(folder);
+    if path.exists() && !leave.contains(&CLAUDE_LOCAL) {
         let mut settings = read_for_writing(&path)?;
         for event in ["PostToolUse"].iter().chain(CLAUDE_SESSION_EVENTS) {
             remove_entries(&mut settings, event, home);
@@ -699,8 +914,8 @@ pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookS
         write_settings(&path, &settings)?;
     }
 
-    let codex = codex_hooks_path(project);
-    if codex.exists() {
+    let codex = codex_hooks_path(folder);
+    if codex.exists() && !leave.contains(&CODEX_HOOKS) {
         let mut hooks = read_for_writing(&codex)?;
         for event in CODEX_SESSION_EVENTS {
             remove_entries(&mut hooks, event, home);
@@ -711,9 +926,7 @@ pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookS
             write_settings(&codex, &hooks)?;
         }
     }
-    uninstall_server(home, project, accounts)?;
-
-    Ok(status(home, project, accounts))
+    Ok(())
 }
 
 /// Changes an account's agent state, a JSON file that the agents' running
@@ -727,6 +940,8 @@ fn update_settings(
     change: impl FnOnce(&mut Map<String, Value>) -> Result<bool, String>,
 ) -> Result<(), String> {
     let _state = lock_state();
+    #[cfg(test)]
+    tests::STATE_CHANGES.with(|changes| changes.set(changes.get() + 1));
     let mut settings = read_for_writing(path)?;
     if change(&mut settings)? {
         write_settings(path, &settings)?;
@@ -818,24 +1033,25 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     thread_local! {
         /// How many account states `read_servers` has read on this thread.
         pub(super) static STATE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// How many reads, changes and writes of a state file this thread
+        /// has made.
+        pub(super) static STATE_CHANGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     }
 
     fn claude_json_path(home: &Path) -> PathBuf {
         account::claude_json(home, None)
     }
 
-    fn fixture(name: &str) -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!("workbench-hook-{name}"));
-        std::fs::remove_dir_all(&base).ok();
-        let home = base.join("home");
-        let project = base.join("project");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(&project).unwrap();
-        (home, project)
+    fn fixture(name: &str) -> (Scratch, Scratch) {
+        (
+            Scratch::new(&format!("hook-{name}-home")),
+            Scratch::new(&format!("hook-{name}-project")),
+        )
     }
 
     #[test]
@@ -1424,16 +1640,378 @@ mod tests {
         install(&home, &project, &[]).unwrap();
         assert!(status(&home, &project, &[]).installed);
     }
-    fn many_projects(name: &str, count: usize) -> (PathBuf, Vec<PathBuf>) {
-        let (home, first) = fixture(name);
-        let base = first.parent().unwrap().to_path_buf();
-        let mut projects = vec![first];
-        for at in 1..count {
-            let project = base.join(format!("project-{at}"));
-            std::fs::create_dir_all(&project).unwrap();
-            projects.push(project);
+    /// A repository with one commit, holding `files` as given.
+    fn committed(project: &Path, files: &[(&str, &str)]) {
+        let git = |args: &[&str]| {
+            let done = std::process::Command::new("git")
+                .args(args)
+                .current_dir(project)
+                .output()
+                .expect("git should be installed");
+            assert!(done.status.success(), "git {args:?}: {done:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(project.join("a.txt"), "one\n").unwrap();
+        for (file, text) in files {
+            let path = project.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
         }
-        (home, projects)
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "first"]);
+    }
+
+    /// What `git status` says of a checkout, untracked files included.
+    fn porcelain(checkout: &Path) -> String {
+        let done = std::process::Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .current_dir(checkout)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&done.stdout).to_string()
+    }
+
+    fn server_for(home: &Path, folder: &Path) -> Option<Value> {
+        let key = dunce::canonicalize(folder)
+            .unwrap_or_else(|_| folder.to_path_buf())
+            .to_string_lossy()
+            .to_string();
+        read_settings(&claude_json_path(home))
+            .get("projects")
+            .and_then(|projects| projects.get(&key))
+            .and_then(|project| project.get("mcpServers"))
+            .and_then(|servers| servers.get(SERVER_NAME))
+            .cloned()
+    }
+
+    // A worktree is a checkout of its own, and the agent run there reads
+    // its local settings from it rather than from the project.
+    #[test]
+    fn a_worktree_gets_the_hooks_its_project_has_and_shows_no_change() {
+        let (home, project) = fixture("share");
+        with_daemon(&home);
+        let theirs = "model = \"o3\"\n";
+        committed(&project, &[(CODEX_CONFIG, theirs)]);
+        install(&home, &project, &[]).unwrap();
+
+        let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
+        assert!(share(&home, &project, &tree, &[]).unwrap());
+
+        assert!(
+            has_hooks(&home, &tree),
+            "Claude Code's hooks are in the tree"
+        );
+        let codex = codex_hooks_of(&tree);
+        for event in CODEX_SESSION_EVENTS {
+            assert!(codex["hooks"][event][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .contains("sessions.jsonl"));
+        }
+        assert!(server_for(&home, &tree).is_some(), "the tools reach it too");
+        // The checkout tracks its Codex config, so that is left as it was.
+        assert_eq!(
+            std::fs::read_to_string(tree.join(CODEX_CONFIG)).unwrap(),
+            theirs
+        );
+        assert_eq!(porcelain(&tree), "", "the worktree shows no change");
+        assert!(crate::git::status(&tree).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_worktree_of_a_project_without_hooks_gets_nothing() {
+        let (home, project) = fixture("share-off");
+        with_daemon(&home);
+        committed(&project, &[]);
+
+        let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
+        assert!(!share(&home, &project, &tree, &[]).unwrap());
+        assert!(!tree.join(".claude").exists());
+        assert!(!tree.join(".codex").exists());
+        assert!(!claude_json_path(&home).exists());
+        assert_eq!(porcelain(&tree), "");
+    }
+
+    // A worktree made before the hooks were turned on has none; turning
+    // them on gives it them, and turning them off takes them away again.
+    #[test]
+    fn hooks_turned_on_or_off_later_reach_the_project_s_worktrees() {
+        let (home, project) = fixture("share-later");
+        with_daemon(&home);
+        committed(&project, &[]);
+        let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
+        assert!(!share(&home, &project, &tree, &[]).unwrap());
+
+        install(&home, &project, &[]).unwrap();
+        assert!(has_hooks(&home, &tree));
+        assert!(server_for(&home, &tree).is_some());
+        assert_eq!(porcelain(&tree), "");
+
+        uninstall(&home, &project, &[]).unwrap();
+        assert!(!has_hooks(&home, &tree));
+        assert!(!codex_hooks_path(&tree).exists());
+        assert!(server_for(&home, &tree).is_none());
+        assert_eq!(porcelain(&tree), "");
+    }
+
+    // What the tree held goes with it; what the agents' state held for it
+    // is taken out.
+    #[test]
+    fn a_worktree_s_clean_up_takes_its_hooks_with_it() {
+        let (home, project) = fixture("share-gone");
+        with_daemon(&home);
+        committed(&project, &[]);
+        install(&home, &project, &[]).unwrap();
+        let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
+        share(&home, &project, &tree, &[]).unwrap();
+
+        // The hooks' files are no work of the tree's: it still goes.
+        crate::git::worktree_remove(&project, "fix").unwrap();
+        assert!(!tree.exists());
+        assert!(server_for(&home, &tree).is_some());
+        forget(&home, &tree, &[]).unwrap();
+        assert!(server_for(&home, &tree).is_none());
+        assert!(
+            server_for(&home, &project).is_some(),
+            "the project keeps its own"
+        );
+    }
+
+    fn git_in(folder: &Path, args: &[&str]) {
+        let done = std::process::Command::new("git")
+            .args(args)
+            .current_dir(folder)
+            .output()
+            .expect("git should be installed");
+        assert!(done.status.success(), "git {args:?}: {done:?}");
+    }
+
+    // A tree the user deleted without telling git is still listed by it,
+    // and writing the hooks there would make its folder again, one git can
+    // then no longer take away.
+    #[test]
+    fn a_worktree_whose_folder_is_gone_is_never_made_again() {
+        let (home, project) = fixture("share-deleted");
+        with_daemon(&home);
+        committed(&project, &[]);
+        let gone = PathBuf::from(crate::git::worktree_add(&project, "gone").unwrap());
+        let hollow = PathBuf::from(crate::git::worktree_add(&project, "hollow").unwrap());
+        std::fs::remove_dir_all(&gone).unwrap();
+        std::fs::remove_file(hollow.join(".git")).unwrap();
+
+        install(&home, &project, &[]).unwrap();
+        assert!(!gone.exists(), "the deleted folder stays deleted");
+        assert!(!hollow.join(".claude").exists());
+        assert!(!hollow.join(".codex").exists());
+        assert!(server_for(&home, &gone).is_none());
+        assert!(server_for(&home, &hollow).is_none());
+        assert!(!share(&home, &project, &gone, &[]).unwrap());
+        assert!(!gone.exists());
+
+        uninstall(&home, &project, &[]).unwrap();
+        assert!(!gone.exists());
+    }
+
+    // A project in a folder of its repository has worktrees that are
+    // checkouts of the whole repository. Keeping files at their top out of
+    // git's view would take lines every checkout reads, the main one too.
+    #[test]
+    fn a_project_inside_its_repository_shares_nothing_and_leaves_the_checkout_alone() {
+        let (home, base) = fixture("share-subfolder");
+        with_daemon(&home);
+        let repo = base.join("repo");
+        let project = repo.join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("main.rs"), "fn main() {}\n").unwrap();
+        committed(&repo, &[]);
+        let exclude = repo.join(".git").join("info").join("exclude");
+        install(&home, &project, &[]).unwrap();
+        let excluded = std::fs::read_to_string(&exclude).unwrap();
+
+        let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
+        assert!(!share(&home, &project, &tree, &[]).unwrap());
+        install(&home, &project, &[]).unwrap();
+        assert!(!tree.join(".claude").exists());
+        assert!(!tree.join(".codex").exists());
+        assert!(server_for(&home, &tree).is_none());
+        assert_eq!(porcelain(&tree), "", "the worktree shows no change");
+        assert_eq!(
+            std::fs::read_to_string(&exclude).unwrap(),
+            excluded,
+            "the shared exclude list holds the project's lines alone"
+        );
+
+        // A file of the user's at the top of the main checkout still shows.
+        std::fs::create_dir_all(repo.join(".codex")).unwrap();
+        std::fs::write(repo.join(CODEX_CONFIG), "model = \"o3\"\n").unwrap();
+        assert!(porcelain(&repo).contains("?? .codex/config.toml"));
+
+        uninstall(&home, &project, &[]).unwrap();
+        assert_eq!(std::fs::read_to_string(&exclude).unwrap(), excluded);
+        assert!(porcelain(&repo).contains("?? .codex/config.toml"));
+    }
+
+    fn state_with(home: &Path, key: &str, entry: Value) {
+        let path = claude_json_path(home);
+        let mut state = read_settings(&path);
+        state
+            .entry("projects")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .unwrap()
+            .insert(key.to_string(), entry);
+        write_settings(&path, &state).unwrap();
+    }
+
+    fn project_state(home: &Path, key: &str) -> Value {
+        read_settings(&claude_json_path(home))["projects"][key].clone()
+    }
+
+    // A tree removed by hand, or lost between its removal and the clean-up
+    // of what was written for it, leaves the server in the agents' state;
+    // the next toggle takes it out, and only ours.
+    #[test]
+    fn a_toggle_drops_the_server_of_worktrees_git_no_longer_lists() {
+        let (home, project) = fixture("share-stale");
+        with_daemon(&home);
+        committed(&project, &[]);
+        install(&home, &project, &[]).unwrap();
+        let kept = PathBuf::from(crate::git::worktree_add(&project, "kept").unwrap());
+        let removed = PathBuf::from(crate::git::worktree_add(&project, "removed").unwrap());
+        share(&home, &project, &kept, &[]).unwrap();
+        share(&home, &project, &removed, &[]).unwrap();
+        let removed_key = state_key(&removed);
+        git_in(
+            &project,
+            &["worktree", "remove", "--force", &removed.to_string_lossy()],
+        );
+        let old = format!(
+            "{}",
+            canonical(&project)
+                .join(crate::git::WORKTREES)
+                .join("old")
+                .display()
+        );
+        state_with(
+            &home,
+            &old,
+            json!({
+                "hasTrustDialogAccepted": true,
+                "mcpServers": {
+                    SERVER_NAME: { "type": "stdio", "command": "x", "args": ["mcp"] },
+                    "theirs": { "type": "stdio", "command": "y" },
+                },
+            }),
+        );
+        let elsewhere = home.join("elsewhere");
+        let elsewhere_key = elsewhere.to_string_lossy().to_string();
+        state_with(
+            &home,
+            &elsewhere_key,
+            json!({ "mcpServers": { SERVER_NAME: { "command": "z" } } }),
+        );
+
+        install(&home, &project, &[]).unwrap();
+        assert!(project_state(&home, &removed_key)["mcpServers"]
+            .get(SERVER_NAME)
+            .is_none());
+        let old_state = project_state(&home, &old);
+        assert!(old_state["mcpServers"].get(SERVER_NAME).is_none());
+        assert!(old_state["mcpServers"].get("theirs").is_some());
+        assert_eq!(old_state["hasTrustDialogAccepted"], true);
+        assert!(server_for(&home, &kept).is_some());
+        assert!(server_for(&home, &project).is_some());
+        assert!(
+            project_state(&home, &elsewhere_key)["mcpServers"]
+                .get(SERVER_NAME)
+                .is_some(),
+            "a folder outside the project's worktrees is not the toggle's"
+        );
+
+        // Turning them off takes out every one under the worktrees' folder.
+        state_with(
+            &home,
+            &old,
+            json!({ "mcpServers": { SERVER_NAME: { "command": "x" } } }),
+        );
+        uninstall(&home, &project, &[]).unwrap();
+        assert!(server_for(&home, &kept).is_none());
+        assert!(project_state(&home, &old)["mcpServers"]
+            .get(SERVER_NAME)
+            .is_none());
+        assert!(project_state(&home, &elsewhere_key)["mcpServers"]
+            .get(SERVER_NAME)
+            .is_some());
+    }
+
+    fn changes_during(run: impl FnOnce()) -> usize {
+        let before = STATE_CHANGES.with(|changes| changes.get());
+        run();
+        STATE_CHANGES.with(|changes| changes.get()) - before
+    }
+
+    // An agent's own process rewrites its state without the workbench's
+    // lock, so each rewrite of it is a chance to lose one of the agent's.
+    #[test]
+    fn a_toggle_changes_each_account_s_state_once_however_many_worktrees() {
+        let (home, project) = fixture("share-once");
+        with_daemon(&home);
+        committed(&project, &[]);
+        let trees: Vec<PathBuf> = (0..3)
+            .map(|at| {
+                PathBuf::from(crate::git::worktree_add(&project, &format!("tree-{at}")).unwrap())
+            })
+            .collect();
+        let accounts = [Dirs {
+            claude: Some("~/.claude-work".into()),
+            codex: None,
+        }];
+
+        assert_eq!(
+            changes_during(|| {
+                install(&home, &project, &accounts).unwrap();
+            }),
+            2
+        );
+        for tree in &trees {
+            assert!(has_hooks(&home, tree));
+            assert!(status(&home, tree, &accounts).installed);
+        }
+        assert_eq!(
+            changes_during(|| {
+                uninstall(&home, &project, &accounts).unwrap();
+            }),
+            2
+        );
+        for tree in &trees {
+            assert!(!has_hooks(&home, tree));
+            assert!(server_for(&home, tree).is_none());
+        }
+    }
+
+    /// Project folders that live as long as this value does.
+    struct Projects {
+        paths: Vec<PathBuf>,
+        _held: Vec<Scratch>,
+    }
+
+    impl std::ops::Deref for Projects {
+        type Target = Vec<PathBuf>;
+        fn deref(&self) -> &Vec<PathBuf> {
+            &self.paths
+        }
+    }
+
+    fn many_projects(name: &str, count: usize) -> (Scratch, Projects) {
+        let (home, first) = fixture(name);
+        let mut held = vec![first];
+        for at in 1..count {
+            held.push(Scratch::new(&format!("hook-{name}-project-{at}")));
+        }
+        let paths = held.iter().map(|folder| folder.to_path_buf()).collect();
+        (home, Projects { paths, _held: held })
     }
 
     fn work_account() -> Vec<Dirs> {
@@ -1484,12 +2062,12 @@ mod tests {
         let (home, projects) = many_projects("batch-reads", 30);
         with_daemon(&home);
         let accounts = work_account();
-        for project in &projects {
+        for project in projects.iter() {
             install(&home, project, &accounts).unwrap();
         }
 
         let alone = reads_during(|| {
-            for project in &projects {
+            for project in projects.iter() {
                 assert!(status(&home, project, &accounts).installed);
             }
         });
@@ -1512,7 +2090,7 @@ mod tests {
         });
         assert_eq!(reads, 0);
         assert!(!claude_json_path(&home).exists());
-        for project in &projects {
+        for project in projects.iter() {
             assert!(!settings_path(project).exists());
         }
     }

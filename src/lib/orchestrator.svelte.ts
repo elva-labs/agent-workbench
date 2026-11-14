@@ -236,7 +236,7 @@ export async function readWorktrees(): Promise<void> {
 export async function cleanWorktrees(): Promise<void> {
   for (const tree of removable(leftBehind.trees)) {
     try {
-      await core().worktreeRemove(tree.project, tree.name);
+      await core().worktreeRemove(tree.project, tree.name, dirsOf());
     } catch {
       // The tree grew work between the read and the removal. It stays.
     }

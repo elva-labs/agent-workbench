@@ -5,7 +5,11 @@ own terminal and scrollback. A project holds as many as you start, several
 projects can be open at once, and switching between any of them stops
 nothing. The sessions you are not looking at are hidden rather than
 unmounted, and hidden in a way that keeps their box in layout, so a
-background session's pty is never resized and never reflows.
+background session's pty is never resized and never reflows. Each
+terminal takes in what its agent draws as it arrives: on the next frame
+the window paints, or a moment later when the window paints none, as when
+it is minimised or behind other windows. A session that has never been on
+screen still has its screen to read, its title and its bell.
 
 Nothing new starts by itself. Opening a project shows what the project has:
 live sessions if any and past ones to resume. Opening the app brings back
@@ -205,9 +209,11 @@ seconds running is **working**, with the dot breathing, and two seconds
 without another such second is waiting. A single burst, a clock ticking
 over in the footer or a cursor blinking, is not work and holds nothing
 back, and nothing the agent draws while starting counts
-until you have sent it a line or a minute has passed. The dot says it on
-the row, with the words on hover and for a screen reader; the agent
-pane's header spells the state out. A session that goes quiet, ends, or rings for
+until it has been sent a line or a minute has passed. A session started
+with a prompt has been sent one, and so has one that another session
+types a line into. The dot says it on the row, with the words on hover and
+for a screen reader; the agent pane's header spells the state out. A
+session that goes quiet, ends, or rings for
 attention while nobody is looking at it is **unread**: the accent dot, the
 name a step stronger than a live session's that has been read, as it is
 while a session asks for a permission, `waiting for you` in the agent pane,
@@ -366,4 +372,5 @@ the row its exact state, as above. They are off until asked for, because
 they write into your configuration, and nothing should edit that because you
 opened a folder. They go where the agent keeps local, uncommitted settings,
 so they never turn up in a diff, and turning them off removes only what was
-added.
+added. A worktree the workbench makes for a session gets them too, as
+[hooks](hooks.md) describes.

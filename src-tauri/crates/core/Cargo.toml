@@ -13,6 +13,10 @@ name = "workbench_core"
 name = "agent-workbench-remote"
 path = "src/bin/agent-workbench-remote.rs"
 
+# Scratch folders for the tests of this crate and of the crates built on it.
+[features]
+test-support = []
+
 [dependencies]
 dunce = "1"
 serde = { version = "1", features = ["derive"] }
@@ -30,3 +34,6 @@ url = "2.5.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+workbench-core = { path = ".", features = ["test-support"] }
