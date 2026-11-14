@@ -41,6 +41,8 @@ vi.mock("$lib/persist", () => ({
     sent.push(change);
     return Promise.resolve(refusal);
   },
+  // The window's recovery takes what is stored when the core refuses.
+  recovering: () => true,
 }));
 
 vi.mock("$lib/core", () => ({
@@ -381,14 +383,11 @@ describe("a workflow the file holds but cannot use", () => {
 });
 
 describe("a change the core refuses", () => {
-  it("is said, and the window goes back to what is stored", async () => {
-    stored = workflowsSettings();
+  it("is said in the tab, and left to the window's recovery to take back", async () => {
     refusal = "could not write the settings file";
     expect(addWorkflow()).toBe("New workflow");
-    expect(workflows.list).toHaveLength(2);
     await settle();
     await settle();
-    expect(workflows.list.map((workflow) => workflow.name)).toEqual([NAME]);
     expect(workflows.refused).toBe("could not write the settings file");
     refusal = null;
     addWorkflow();
