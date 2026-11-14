@@ -96,8 +96,11 @@ describe("the orchestrator's tools with an integrated session", () => {
 
   it("sends a message through the session's own send, whole, and says when it waits for the turn", async () => {
     const { id, handle: core } = await own();
+    const session = sessions.all.find((candidate) => candidate.id === id)!;
+    session.engaged = false;
     const first = call("send", { session: id, text: "Line one\nline two" });
     await handle(first);
+    expect(session.engaged).toBe(true);
     expect(answerTo(first)).toMatchObject({ error: null, content: `Sent to session ${id}. Call wait to hear what it does next.` });
     expect(fake.calls.find((made) => made.method === "send")).toMatchObject({ text: "Line one\nline two" });
     fake.startTurn(core);

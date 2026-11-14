@@ -409,6 +409,9 @@ export function send(key: string, text: string, images: IntegratedImage[] = []):
   if (text.trim() === "" && images.length === 0) return null;
   const id = crypto.randomUUID();
   link.conversation.sending(id, text, images);
+  // A message sent is the agent spoken to, by the user or by a session
+  // that started it.
+  session.engaged = true;
   session.note = null;
   if (session.title === null) {
     const line = text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
