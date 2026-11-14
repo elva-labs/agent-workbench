@@ -355,3 +355,43 @@ test.describe("the orchestrator", () => {
     await expect(page.getByTestId("session-row")).toHaveCount(2);
   });
 });
+
+test.describe("a started session in a project of its own", () => {
+  const OTHER = "/home/ada/dev/other";
+
+  // Nothing else runs in the project the started session runs in, and
+  // nobody has used it in weeks: it stays under Inactive when the session
+  // is picked from its starter's rail, and the starter's project is the
+  // one used.
+  test("leaves that project under Inactive when the session is picked", async ({
+    page,
+  }) => {
+    await installFakeCore(page, {
+      open: [PROJECT, OTHER],
+      used: { [PROJECT]: 60_000, [OTHER]: 30 * 24 * 3600 * 1000 },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await push(page, {
+      id: "o-1",
+      tool: "start",
+      arguments: { project: OTHER, prompt: "Bump the client" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "o-1")).not.toBeNull();
+
+    const heads = page.locator("[data-row^='project:']");
+    const started = page.getByTestId("started-session");
+    await expect(started).toContainText("other");
+    await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
+    await started.click();
+    await expect(page.locator(".session.kid")).toHaveClass(/on/);
+    await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
+    await expect(row(page, OTHER)).toHaveCount(0);
+    await expect(heads.first()).toHaveAttribute("data-row", `project:${ORCHESTRATOR}`);
+  });
+});

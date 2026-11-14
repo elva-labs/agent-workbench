@@ -22,6 +22,7 @@ import {
   lastActive,
   lastUsed,
   loadUsed,
+  onScreen,
   projects,
   resetProjects,
   setInactiveAfter,
@@ -261,6 +262,25 @@ describe("a session hanging under its starter", () => {
     kid.unread = true;
     expect(isActive("/here", null, NOW)).toBe(true);
     expect(isActive("/there", null, NOW)).toBe(false);
+  });
+
+  // Picked, from the pane, the palette or the chord, it is on screen and
+  // its starter's project is the one used, and the one the pane counts
+  // as on screen.
+  it("is picked into its starter's project", () => {
+    workspace.open.push(
+      { path: "/here", name: "here", repository: "/here", isGit: true },
+      { path: "/there", name: "there", repository: "/there", isGit: true },
+    );
+    touch("/there", NOW - 60 * DAY);
+    const { kid } = hang("/there");
+    goTo(kid.key);
+    expect(workspace.active).toBe("/there");
+    expect(sessions.active).toBe(kid.key);
+    expect(Date.now() - projects.used["/here"]).toBeLessThan(1000);
+    expect(projects.used["/there"]).toBe(NOW - 60 * DAY);
+    expect(onScreen(workspace.active)).toBe("/here");
+    expect(onScreen("/elsewhere")).toBe("/elsewhere");
   });
 });
 

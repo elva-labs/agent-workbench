@@ -53,7 +53,7 @@
     type PaneId,
     type ProjectSort,
   } from "$lib/layout.svelte";
-  import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
+  import { lastUsed, onScreen, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
   import { openPalette } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
@@ -141,12 +141,14 @@
   /** The projects under the orchestrator's own: opening the directory it
       runs in is opening the project already pinned above them, and it is
       drawn once. They are split into the ones in use and the ones folded
-      under Inactive, each in the order the sort menu says. */
+      under Inactive, each in the order the sort menu says. The project on
+      screen is in use, and while the session on screen hangs under its
+      starter in another project, that is the starter's. */
   let split = $derived.by(() => {
     const byPath = new Map(
       workspace.open.filter((project) => project.path !== orchestrator.dir).map((project) => [project.path, project]),
     );
-    const { active, inactive } = splitProjects([...byPath.keys()], workspace.active, layout.projectSort, now);
+    const { active, inactive } = splitProjects([...byPath.keys()], onScreen(workspace.active), layout.projectSort, now);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
     shownActive = resorted ? active : held(shownActive, active);

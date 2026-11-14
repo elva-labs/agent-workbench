@@ -411,6 +411,42 @@ describe("SessionsPane", () => {
     expect(layout.focus).toBe("agent");
   });
 
+  // A session started by another hangs under its starter. Picking it goes
+  // to the session, and the starter's project is the one used and drawn
+  // on screen: the project it runs in, with nothing else under it, stays
+  // under Inactive rather than coming up as an empty header.
+  it("keeps a started session's own project under Inactive when it is picked", async () => {
+    workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"), repo("/other", "other"));
+    workspace.active = "/other";
+    const own = create("/other");
+    started(own.key, "pty-1", "own-1");
+    const starter = create("/starter");
+    started(starter.key, "pty-2", "starter-1");
+    const kid = create("/kid");
+    started(kid.key, "pty-3", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    sessions.active = own.key;
+    touch("/other", Date.now() - 1000);
+    touch("/starter", Date.now() - 5000);
+    touch("/kid", Date.now() - 30 * 24 * 3600 * 1000);
+
+    render(SessionsPane);
+    const names = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
+    await waitFor(() => expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project"));
+    expect(names()).toEqual(["other", "starter"]);
+
+    await fireEvent.click(screen.getByTestId("started-session"));
+    expect(sessions.active).toBe(kid.key);
+    expect(workspace.active).toBe("/kid");
+    expect(Date.now() - projects.used["/starter"]).toBeLessThan(1000);
+    expect(Date.now() - projects.used["/kid"]).toBeGreaterThan(24 * 3600 * 1000);
+    await tick();
+    expect(names()).toEqual(["starter", "other"]);
+    expect(screen.getByTestId("inactive-fold")).toHaveTextContent("Inactive 1 project");
+    expect(document.querySelector(`[data-row="session:${kid.key}"]`)).toHaveClass("on");
+  });
+
   // Cmd+1, Down, Enter, type: the pane is one tab stop with a cursor in it.
   it("walks the rows with the keyboard and confirms with Enter", async () => {
     workspace.open.push(repo("/repo", "repo"));

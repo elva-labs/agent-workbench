@@ -11,7 +11,7 @@ import {
   sessions,
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
-import { forgetUsed, touch } from "$lib/projects.svelte";
+import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
 
 /**
  * The projects this window has open.
@@ -145,14 +145,15 @@ export function activate(path: string) {
 }
 
 /** The user picked a session: it comes forward, and its project with it
-    when that is another, and the project counts as used. False for a key
-    no row has. */
+    when that is another. The project it is drawn under counts as used,
+    which for a session hanging under its starter is the starter's. False
+    for a key no row has. */
 export function goTo(key: string): boolean {
   const session = byKey(key);
   if (session === null) return false;
   if (session.project !== workspace.active) activate(session.project);
   select(key);
-  touch(session.project);
+  touch(drawnIn(session));
   return true;
 }
 

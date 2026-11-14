@@ -58,7 +58,10 @@ The kill lives in one place: closing a session stops its pty and clears the
 id, and the terminal's own teardown does not, so a second signal never lands
 on an id that may since have been reused. On shutdown the pty master closes
 with the process and the agent sees SIGHUP. Picking a session that belongs
-to another project brings that project forward.
+to another project brings that project forward. A session that hangs under
+the session that started it, in another project, is drawn there: picking it
+uses the starter's project, which the pane takes as the one on screen, and
+the project it runs in stays where it was.
 
 ## Active and inactive
 
