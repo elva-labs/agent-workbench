@@ -1,6 +1,7 @@
 import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Settings } from "$lib/core";
 import { persist } from "$lib/persist";
+import { hostOf } from "$lib/remote.svelte";
 
 /**
  * The agents' hooks: one answer for every project, and a word for the rare
@@ -29,11 +30,26 @@ export const hook = $state({
   installed: {} as Record<string, boolean>,
   busy: false,
   error: null as string | null,
+  /** True until the projects on this machine are in and asked about
+      together. */
+  starting: true,
 });
 
 let loaded = false;
 /** Projects brought to the answer since the window opened. */
 const applied = new Set<string>();
+/** Projects inside a batch that has not finished applying them: they read
+    the answer as it stands when the batch gets to them. */
+const batching = new Set<string>();
+/** Projects on other machines still on their way, by host: they are asked
+    about together with the rest of their machine once all have arrived or
+    been given up, and ask for nothing themselves meanwhile. */
+const waiting = new Map<string, Set<string>>();
+
+function isWaiting(project: string): boolean {
+  const host = hostOf(project);
+  return host !== null && waiting.get(host)?.has(project) === true;
+}
 
 export function loadHooks() {
   loaded = true;
@@ -98,8 +114,10 @@ export function hooksSettings(): Settings["hooks"] {
 }
 
 /** Takes the answer the core has for the machine, and brings the projects
-    given to it when it differs from what the window had. Nothing is sent
-    back, since this is the core's word. */
+    given to it when it differs from what the window had. Only projects
+    already brought to the answer are applied; one still held back for its
+    machine's batch, or inside a batch, reads the new answer when that
+    batch applies it. Nothing is sent back, since this is the core's word. */
 export function adoptHooks(settings: Settings["hooks"], projects: string[]) {
   if (!loaded) loadHooks();
   const overrides: Record<string, boolean> = {};
@@ -114,7 +132,9 @@ export function adoptHooks(settings: Settings["hooks"], projects: string[]) {
   hook.everywhere = everywhere;
   hook.overrides = overrides;
   remember();
-  for (const project of projects) void apply(project);
+  for (const project of projects) {
+    if (applied.has(project) && !batching.has(project)) void apply(project);
+  }
 }
 
 function sorted(record: Record<string, boolean>): [string, boolean][] {
@@ -183,11 +203,75 @@ export async function reapply(projects: string[]) {
 }
 
 /** Called for every open project: each is brought to the answer once per
-    run, when it is first seen. */
+    run, when it is first seen, asking for itself. Nothing is asked while
+    the window is still starting, nor for a project on its way from another
+    machine; `startChecks` asks for those together. */
 export function ensure(project: string) {
-  if (applied.has(project)) return;
+  if (hook.starting || applied.has(project) || isWaiting(project)) return;
   applied.add(project);
   void apply(project);
+}
+
+/** The projects on this machine are in: they are asked about in one
+    request, and so are the projects of each other machine, local projects
+    never waiting on a remote one. `open` lists the paths of the projects
+    open now. `arriving` names the projects on other machines still on their
+    way, each with a promise that settles once it is open or given up; the
+    projects of such a machine are asked about in one request once all of
+    its arrivals have settled. Each project is then brought to the answer.
+    Projects opened from here on ask for themselves. */
+export function startChecks(
+  open: () => string[],
+  arriving: ReadonlyMap<string, Promise<void>> = new Map(),
+) {
+  const late = new Map<string, Promise<unknown>[]>();
+  for (const [project, arrived] of arriving) {
+    const host = hostOf(project);
+    if (host === null || applied.has(project)) continue;
+    if (!waiting.has(host)) waiting.set(host, new Set());
+    waiting.get(host)!.add(project);
+    late.set(host, [...(late.get(host) ?? []), arrived]);
+  }
+
+  const groups = new Map<string | null, string[]>();
+  for (const project of open()) {
+    const host = hostOf(project);
+    if (applied.has(project) || (host !== null && late.has(host))) continue;
+    applied.add(project);
+    groups.set(host, [...(groups.get(host) ?? []), project]);
+  }
+  hook.starting = false;
+  for (const group of groups.values()) void applyMany(group);
+
+  for (const [host, arrivals] of late) {
+    void Promise.allSettled(arrivals).then(() => {
+      waiting.delete(host);
+      const group = open().filter(
+        (project) => hostOf(project) === host && !applied.has(project),
+      );
+      for (const project of group) applied.add(project);
+      if (group.length > 0) void applyMany(group);
+    });
+  }
+}
+
+/** What is on disk for the projects of one machine, from one request, and
+    then each brought to the answer in turn. */
+async function applyMany(projects: string[]) {
+  for (const project of projects) batching.add(project);
+  try {
+    const answers = await core().hookStatusMany(projects, dirsOf());
+    projects.forEach((project, at) => {
+      hook.installed[project] = answers[at]?.installed === true;
+    });
+  } catch {
+    // Not knowing is not an error worth showing, as with one project.
+    for (const project of projects) hook.installed[project] = false;
+  }
+  for (const project of projects) {
+    await apply(project);
+    batching.delete(project);
+  }
 }
 
 /** The answer for every project, applied to the ones open now. */
@@ -211,6 +295,9 @@ export async function setOverride(project: string, value: boolean | null) {
 export function reset() {
   loaded = true;
   applied.clear();
+  batching.clear();
+  waiting.clear();
+  hook.starting = false;
   hook.everywhere = false;
   hook.overrides = {};
   hook.installed = {};

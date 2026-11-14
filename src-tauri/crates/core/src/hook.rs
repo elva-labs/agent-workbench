@@ -22,11 +22,23 @@
 //! a growing log of nothing.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
+
+/// Held across every read, change and write of an account's agent state, so
+/// two installs, removals or trust copies at the same moment cannot each
+/// write back a copy that lacks the other's entry.
+static STATE: Mutex<()> = Mutex::new(());
+
+fn lock_state() -> MutexGuard<'static, ()> {
+    STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
@@ -243,22 +255,42 @@ fn session_entry(home: &Path) -> Value {
 /// Installed is all of ours in Claude Code's settings. The Codex file is
 /// written alongside and not asked about: a project without Codex has none.
 pub fn status(home: &Path, project: &Path, accounts: &[Dirs]) -> HookStatus {
-    let settings = settings_path(project);
-    let read = read_settings(&settings);
-    let hooks = has_ours(&read, "PostToolUse", home)
-        && CLAUDE_SESSION_EVENTS
-            .iter()
-            .all(|event| has_ours(&read, event, home));
-    // With a daemon here the server is part of what is installed: a project
-    // that got the hooks before there was a server is brought up to date
-    // by the next install.
-    let installed =
-        hooks && (!daemon_path(home).is_file() || server_installed(home, project, accounts));
-    HookStatus {
-        installed,
-        settings: settings.to_string_lossy().to_string(),
-        events: events_path(home).to_string_lossy().to_string(),
-    }
+    status_many(home, &[project.to_path_buf()], accounts)
+        .pop()
+        .expect("one answer for one project")
+}
+
+/// The status of each project, in the order given. Each account's Claude
+/// Code state, which can be large, is read and parsed once for all of
+/// them, and only when a project with the hooks in place needs it.
+pub fn status_many(home: &Path, projects: &[PathBuf], accounts: &[Dirs]) -> Vec<HookStatus> {
+    let daemon_here = daemon_path(home).is_file();
+    let events = events_path(home).to_string_lossy().to_string();
+    let mut servers: Option<Vec<Map<String, Value>>> = None;
+    projects
+        .iter()
+        .map(|project| {
+            let settings = settings_path(project);
+            let read = read_settings(&settings);
+            let hooks = has_ours(&read, "PostToolUse", home)
+                && CLAUDE_SESSION_EVENTS
+                    .iter()
+                    .all(|event| has_ours(&read, event, home));
+            // With a daemon here the server is part of what is installed: a
+            // project that got the hooks before there was a server is brought
+            // up to date by the next install.
+            let installed = hooks
+                && (!daemon_here || {
+                    let states = servers.get_or_insert_with(|| read_servers(home, accounts));
+                    has_server(states, home, project)
+                });
+            HookStatus {
+                installed,
+                settings: settings.to_string_lossy().to_string(),
+                events: events.clone(),
+            }
+        })
+        .collect()
 }
 
 /// Gives a worktree the trust its project has. Both agents ask, the first
@@ -281,6 +313,7 @@ pub fn trust_like(
             .to_string()
     };
     let (from, to) = (canonical(project), canonical(worktree));
+    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         trust_claude(&claude, &from, &to)?;
     }
@@ -388,18 +421,33 @@ pub fn install(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookSta
     Ok(status(home, project, accounts))
 }
 
-/// Whether Claude Code is pointed at the daemon here for the project,
-/// under every account.
-fn server_installed(home: &Path, project: &Path, accounts: &[Dirs]) -> bool {
+/// The `projects` of each account's Claude Code state, in the order of the
+/// accounts, each file read and parsed once.
+fn read_servers(home: &Path, accounts: &[Dirs]) -> Vec<Map<String, Value>> {
+    account::claude_jsons(home, accounts)
+        .iter()
+        .map(|claude| {
+            #[cfg(test)]
+            tests::STATE_READS.with(|reads| reads.set(reads.get() + 1));
+            match read_settings(claude).remove("projects") {
+                Some(Value::Object(projects)) => projects,
+                _ => Map::new(),
+            }
+        })
+        .collect()
+}
+
+/// Whether every account's state points Claude Code at the daemon here for
+/// the project.
+fn has_server(states: &[Map<String, Value>], home: &Path, project: &Path) -> bool {
     let key = dunce::canonicalize(project)
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
     let daemon = daemon_path(home).to_string_lossy().to_string();
-    account::claude_jsons(home, accounts).iter().all(|claude| {
-        read_settings(claude)
-            .get("projects")
-            .and_then(|projects| projects.get(&key))
+    states.iter().all(|projects| {
+        projects
+            .get(&key)
             .and_then(|project| project.get("mcpServers"))
             .and_then(|servers| servers.get(SERVER_NAME))
             .and_then(|server| server.get("command"))
@@ -418,6 +466,7 @@ fn install_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<(), 
         .to_string_lossy()
         .to_string();
 
+    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         let mut state = read_for_writing(&claude)?;
         let servers = state
@@ -482,6 +531,7 @@ fn uninstall_server(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<()
         .unwrap_or_else(|_| project.to_path_buf())
         .to_string_lossy()
         .to_string();
+    let _state = lock_state();
     for claude in account::claude_jsons(home, accounts) {
         if !claude.exists() {
             continue;
@@ -619,6 +669,11 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many account states `read_servers` has read on this thread.
+        pub(super) static STATE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
 
     fn claude_json_path(home: &Path) -> PathBuf {
         account::claude_json(home, None)
@@ -1095,5 +1150,164 @@ mod tests {
         assert!(!status(&home, &project, &[]).installed);
         install(&home, &project, &[]).unwrap();
         assert!(status(&home, &project, &[]).installed);
+    }
+    fn many_projects(name: &str, count: usize) -> (PathBuf, Vec<PathBuf>) {
+        let (home, first) = fixture(name);
+        let base = first.parent().unwrap().to_path_buf();
+        let mut projects = vec![first];
+        for at in 1..count {
+            let project = base.join(format!("project-{at}"));
+            std::fs::create_dir_all(&project).unwrap();
+            projects.push(project);
+        }
+        (home, projects)
+    }
+
+    fn work_account() -> Vec<Dirs> {
+        vec![Dirs {
+            claude: Some("~/.claude-work".into()),
+            codex: None,
+        }]
+    }
+
+    fn reads_during(run: impl FnOnce()) -> usize {
+        let before = STATE_READS.with(|reads| reads.get());
+        run();
+        STATE_READS.with(|reads| reads.get()) - before
+    }
+
+    #[test]
+    fn a_batch_answers_as_each_project_would_alone() {
+        let (home, projects) = many_projects("batch-same", 4);
+        with_daemon(&home);
+        let accounts = work_account();
+        install(&home, &projects[0], &accounts).unwrap();
+        // Hooks without the server, as a setup from before the server has.
+        install(&home, &projects[1], &accounts).unwrap();
+        let mut state = read_settings(&claude_json_path(&home));
+        let key = dunce::canonicalize(&projects[1]).unwrap();
+        state["projects"]
+            .as_object_mut()
+            .unwrap()
+            .remove(key.to_string_lossy().as_ref());
+        write_settings(&claude_json_path(&home), &state).unwrap();
+
+        let batch = status_many(&home, &projects, &accounts);
+        assert_eq!(batch.len(), projects.len());
+        for (project, answer) in projects.iter().zip(&batch) {
+            let alone = status(&home, project, &accounts);
+            assert_eq!(answer.installed, alone.installed);
+            assert_eq!(answer.settings, alone.settings);
+            assert_eq!(answer.events, alone.events);
+        }
+        let installed: Vec<bool> = batch.iter().map(|answer| answer.installed).collect();
+        assert_eq!(installed, [true, false, false, false]);
+    }
+
+    // Thirty projects, two accounts: alone each project reads both states,
+    // in a batch each is read once.
+    #[test]
+    fn a_batch_parses_each_accounts_state_once() {
+        let (home, projects) = many_projects("batch-reads", 30);
+        with_daemon(&home);
+        let accounts = work_account();
+        for project in &projects {
+            install(&home, project, &accounts).unwrap();
+        }
+
+        let alone = reads_during(|| {
+            for project in &projects {
+                assert!(status(&home, project, &accounts).installed);
+            }
+        });
+        let batch = reads_during(|| {
+            let answers = status_many(&home, &projects, &accounts);
+            assert!(answers.iter().all(|answer| answer.installed));
+        });
+        assert_eq!(alone, 60);
+        assert_eq!(batch, 2);
+    }
+
+    // Nothing that is not needed is read, and nothing is ever written.
+    #[test]
+    fn a_batch_reads_no_state_when_no_project_has_the_hooks() {
+        let (home, projects) = many_projects("batch-none", 5);
+        with_daemon(&home);
+        let reads = reads_during(|| {
+            let answers = status_many(&home, &projects, &[]);
+            assert!(answers.iter().all(|answer| !answer.installed));
+        });
+        assert_eq!(reads, 0);
+        assert!(!claude_json_path(&home).exists());
+        for project in &projects {
+            assert!(!settings_path(project).exists());
+        }
+    }
+
+    // Projects share the account's state file; a batch asked after one's
+    // install or removal sees the file as it is then.
+    #[test]
+    fn a_batch_sees_one_projects_install_and_removal_through_the_shared_state() {
+        let (home, projects) = many_projects("batch-shared", 2);
+        with_daemon(&home);
+        let installed = |home: &Path| -> Vec<bool> {
+            status_many(home, &projects, &[])
+                .iter()
+                .map(|answer| answer.installed)
+                .collect()
+        };
+        assert_eq!(installed(&home), [false, false]);
+        install(&home, &projects[0], &[]).unwrap();
+        assert_eq!(installed(&home), [true, false]);
+        install(&home, &projects[1], &[]).unwrap();
+        assert_eq!(installed(&home), [true, true]);
+        uninstall(&home, &projects[0], &[]).unwrap();
+        assert_eq!(installed(&home), [false, true]);
+    }
+
+    #[test]
+    fn a_batch_of_none_is_none() {
+        let (home, _) = fixture("batch-empty");
+        assert!(status_many(&home, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn installs_and_removals_at_the_same_moment_lose_no_entry() {
+        let count = 24;
+        let (home, projects) = many_projects("concurrent", count);
+        with_daemon(&home);
+        let accounts = work_account();
+        let run = |projects: &[PathBuf], remove: bool| {
+            std::thread::scope(|scope| {
+                for project in projects {
+                    let (home, accounts) = (&home, &accounts);
+                    scope.spawn(move || {
+                        if remove {
+                            uninstall(home, project, accounts).unwrap();
+                        } else {
+                            install(home, project, accounts).unwrap();
+                        }
+                    });
+                }
+            });
+        };
+        let all = |home: &Path| -> Vec<bool> {
+            status_many(home, &projects, &accounts)
+                .iter()
+                .map(|answer| answer.installed)
+                .collect()
+        };
+
+        run(&projects, false);
+        assert_eq!(all(&home), vec![true; count]);
+
+        let (gone, kept) = projects.split_at(count / 2);
+        run(gone, true);
+        let mut expected = vec![false; count / 2];
+        expected.extend(vec![true; count - count / 2]);
+        assert_eq!(all(&home), expected);
+        assert!(kept
+            .iter()
+            .all(|project| status(&home, project, &accounts).installed));
     }
 }
