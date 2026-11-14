@@ -49,6 +49,7 @@ import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
+import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import type { Workflow } from "$lib/core";
 
 const A = "/home/ada/dev/one";
@@ -187,6 +188,7 @@ let unwatch: () => void;
 beforeEach(() => {
   // A session follows no workflow here unless a test gives it one.
   resetWorkflows();
+  resetAccounts();
   vi.useFakeTimers();
   unwatch = watchStops();
   resetWorkspace();
@@ -2104,6 +2106,31 @@ describe("starting in a workflow's shape", () => {
     await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }));
     expect(conductor.asking).toBeNull();
     expect(last().error).toBe(UNPLACED);
+  });
+
+  it("honours an account for a step, and resumes the session under it", async () => {
+    adoptAccounts({
+      list: { Work: { claude: "~/.claude-work", codex: null } },
+      everywhere: null,
+      overrides: {},
+    });
+    orchestrating();
+    const work = await begun({ step: "Work", account: "Work" }, "w1");
+    expect(byKey(work.key)?.account).toBe("Work");
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    const back = await resumed(from({ session: "w1" }), "pty-w1b");
+    expect(back.account).toBe("Work");
+    expect(back.model).toBe("sonnet");
+    // One it does not have is refused with the ones there are, and none
+    // is chosen for a step that names none.
+    expect(await refusedWith({ step: "Work", account: "Home" })).toBe(
+      "There is no account called Home. The accounts are Work.",
+    );
+    ended({ id: "pty-w1b", code: 0, clean: true });
+    flushSync();
+    const plain = await begun({ step: "Work" }, "w2");
+    expect(byKey(plain.key)?.account).toBeNull();
   });
 
   it("reads a line as a command after characters that draw nothing, and a wide slash as a slash", () => {
