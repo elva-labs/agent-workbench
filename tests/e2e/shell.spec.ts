@@ -2030,6 +2030,7 @@ test.describe("the file viewer", () => {
 
   test("gives the agent back at exactly its old width", async ({ page }) => {
     await page.setViewportSize({ width: 720, height: 800 });
+    await settled(page);
     const before = await widthOf(page, AGENT);
 
     await page.keyboard.press(`${MOD}+d`);

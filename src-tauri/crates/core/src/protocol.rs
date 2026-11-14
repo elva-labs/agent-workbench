@@ -167,6 +167,13 @@ struct HookParams {
 }
 
 #[derive(Deserialize)]
+struct HookManyParams {
+    projects: Vec<PathBuf>,
+    #[serde(default)]
+    accounts: Vec<Dirs>,
+}
+
+#[derive(Deserialize)]
 struct RootParams {
     root: PathBuf,
 }
@@ -345,6 +352,10 @@ pub fn dispatch(
         "hook_status" => {
             let p: HookParams = parse(params)?;
             value(core.hook_status(&p.project, &p.accounts)?)
+        }
+        "hook_status_many" => {
+            let p: HookManyParams = parse(params)?;
+            value(core.hook_status_many(&p.projects, &p.accounts)?)
         }
         "hook_install" => {
             let p: HookParams = parse(params)?;
@@ -657,6 +668,43 @@ mod tests {
             sent.contains("not running") || sent.contains("no home directory"),
             "{sent}"
         );
+    }
+
+    #[test]
+    fn the_hook_status_of_many_projects_is_one_answer_each_in_order() {
+        let core = core();
+        let error = dispatch(
+            &core,
+            "hook_status_many",
+            json!({ "project": "/a" }),
+            no_output,
+        )
+        .expect_err("the projects are a list");
+        assert!(error.contains("bad parameters"), "{error}");
+        let missing = std::env::temp_dir().join("workbench-no-such-project");
+        let projects = json!([
+            missing.join("one"),
+            missing.join("two"),
+            missing.join("three")
+        ]);
+        let answer = dispatch(
+            &core,
+            "hook_status_many",
+            json!({ "projects": projects }),
+            no_output,
+        );
+        match core.home() {
+            Some(_) => {
+                let answers = answer.unwrap();
+                let answers = answers.as_array().unwrap();
+                assert_eq!(answers.len(), 3);
+                for (at, name) in ["one", "two", "three"].iter().enumerate() {
+                    assert_eq!(answers[at]["installed"], false);
+                    assert!(answers[at]["settings"].as_str().unwrap().contains(name));
+                }
+            }
+            None => assert!(answer.is_err()),
+        }
     }
 
     #[test]

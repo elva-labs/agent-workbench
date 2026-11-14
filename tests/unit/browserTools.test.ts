@@ -16,6 +16,7 @@ const stepped: { kind: string; id: number }[] = [];
 const clicked: { id: number | null; ref: string }[] = [];
 const typed: { id: number | null; ref: string; text: string; submit: boolean }[] = [];
 const evaluated: { id: number | null; script: string }[] = [];
+const captured: (number | null)[] = [];
 
 let openResult: unknown = { tabs: [], owner: null, active: null };
 let openError: string | null = null;
@@ -28,6 +29,7 @@ let nextSnapshot: unknown = { tabs: [], owner: null, active: null };
 let snapshotText = "page text [ref=e1]";
 let consoleEntries: { level: string; text: string; time: number; url: string }[] = [];
 let screenshotPath = "/tmp/workbench-browser/1-fake.png";
+let screenshotError: string | null = null;
 let evalResult = "null";
 
 vi.mock("$lib/core", () => ({
@@ -86,7 +88,11 @@ vi.mock("$lib/core", () => ({
       if (typeError !== null) throw new Error(typeError);
     },
     browserConsole: async () => consoleEntries,
-    browserScreenshot: async () => screenshotPath,
+    browserScreenshot: async (id: number | null) => {
+      captured.push(id);
+      if (screenshotError !== null) throw new Error(screenshotError);
+      return screenshotPath;
+    },
     browserEval: async (id: number | null, script: string) => {
       evaluated.push({ id, script });
       return evalResult;
@@ -187,6 +193,7 @@ beforeEach(() => {
   clicked.length = 0;
   typed.length = 0;
   evaluated.length = 0;
+  captured.length = 0;
   openResult = { tabs: [], owner: null, active: null };
   openError = null;
   navigateError = null;
@@ -196,6 +203,7 @@ beforeEach(() => {
   snapshotText = "page text [ref=e1]";
   consoleEntries = [];
   screenshotPath = "/tmp/workbench-browser/1-fake.png";
+  screenshotError = null;
   evalResult = "null";
 });
 
@@ -480,29 +488,72 @@ describe("browser_console", () => {
 });
 
 describe("browser_screenshot", () => {
-  it("shows the browser, activates the named tab, and answers with the path", async () => {
+  it("captures the named tab where it is, without bringing it forward or showing the browser", async () => {
     browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/", { front: false })];
     browser.active = 1;
-    nextSnapshot = { tabs: browser.tabs, owner: HERE, active: 2 };
     screenshotPath = "/tmp/workbench-browser/2-fake.png";
     await handle(call("browser_screenshot", { tab: 2 }));
-    expect(activated).toEqual([2]);
+    expect(captured).toEqual([2]);
+    expect(activated).toEqual([]);
+    expect(browser.showing).toBe(false);
     expect(last().content).toBe("/tmp/workbench-browser/2-fake.png");
   });
 
-  it("refuses from a session the user is not looking at, leaving the viewer alone", async () => {
+  it("captures a tab of a session the user is not looking at, leaving the viewer alone", async () => {
     const { ownerA, ownerB } = twoSessions();
     browser.tabs = [
       tab(1, "http://localhost:4000/", { owner: ownerB }),
       tab(2, "http://localhost:3000/", { owner: ownerA, opener: { kind: "agent" } }),
     ];
     browser.active = 1;
-    await handle(call("browser_screenshot", { tab: 2 }, { session: "s1" }));
+    screenshotPath = "/tmp/workbench-browser/2-fake.png";
+    await handle(call("browser_screenshot", {}, { session: "s1" }));
+    expect(captured).toEqual([2]);
     expect(activated).toEqual([]);
     expect(browser.showing).toBe(false);
     expect(browser.active).toBe(1);
-    expect(last().error).toContain("Tab 2 is not on screen");
-    expect(last().error).toContain("browser_snapshot");
+    expect(last().error).toBeNull();
+    expect(last().content).toBe("/tmp/workbench-browser/2-fake.png");
+  });
+
+  it("refuses a tab the calling session does not own", async () => {
+    const { ownerA, ownerB } = twoSessions();
+    browser.tabs = [
+      tab(1, "http://localhost:4000/", { owner: ownerB }),
+      tab(2, "http://localhost:3000/", { owner: ownerA }),
+    ];
+    await handle(call("browser_screenshot", { tab: 1 }, { session: "s1" }));
+    expect(captured).toEqual([]);
+    expect(last().error).toBe("Tab 1 belongs to another session.");
+  });
+
+  it("refuses a tab whose page did not load, whose view would be blank", async () => {
+    browser.tabs = [
+      tab(1, "http://localhost:3000/", { error: "nothing answered at localhost:3000" }),
+    ];
+    await handle(call("browser_screenshot", {}));
+    expect(captured).toEqual([]);
+    expect(last().content).toBeNull();
+    expect(last().error).toBe(
+      "Tab 1 did not load http://localhost:3000/: nothing answered at localhost:3000.",
+    );
+  });
+
+  it("refuses a new tab with no page open in it", async () => {
+    browser.tabs = [tab(1, "about:blank")];
+    await handle(call("browser_screenshot", {}));
+    expect(captured).toEqual([]);
+    expect(last().error).toBe("Tab 1 is a new tab with no page open in it.");
+  });
+
+  it("answers with the core's reason when the tab cannot be captured", async () => {
+    browser.tabs = [tab(1, "https://a.example/")];
+    screenshotError =
+      "the workbench's window is minimised or hidden, and a tab cannot be captured while it is; ask the user to bring the window back, or read the page with browser_snapshot";
+    await handle(call("browser_screenshot", {}));
+    expect(captured).toEqual([1]);
+    expect(last().content).toBeNull();
+    expect(last().error).toContain("window is minimised");
   });
 });
 

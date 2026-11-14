@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod capture;
+
 /// What a typed address becomes, or why it does not become anything.
 ///
 /// `about:blank` passes through untouched. A scheme other than `http` or

@@ -31,6 +31,7 @@ export type ActionKey =
   | "zoom.in"
   | "zoom.out"
   | "zoom.reset"
+  | "goto"
   | "palette"
   | "theme"
   | "settings";
@@ -72,6 +73,7 @@ export const ACTIONS: ActionInfo[] = [
   { key: "zoom.in", label: "Zoom the terminal in", group: "Terminal" },
   { key: "zoom.out", label: "Zoom the terminal out", group: "Terminal" },
   { key: "zoom.reset", label: "Reset the terminal's zoom", group: "Terminal" },
+  { key: "goto", label: "Go to a session or project", group: "App" },
   { key: "palette", label: "Open the command palette", group: "App" },
   { key: "theme", label: "Cycle the theme", group: "App" },
   { key: "settings", label: "Open settings", group: "App" },
@@ -100,6 +102,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
+    goto: plain("p"),
     palette: shifted("p"),
     theme: shifted("t"),
     settings: plain(","),
@@ -125,8 +128,9 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
-    // Shift+Cmd+P steps sessions here, so the palette sits where vim keeps
-    // its command line.
+    goto: plain("p"),
+    // Shift+Cmd+P steps sessions here, so the command palette sits where vim
+    // keeps its command line.
     palette: plain(";"),
     theme: shifted("t"),
     settings: plain(","),
