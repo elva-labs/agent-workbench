@@ -583,13 +583,11 @@ pub fn read_manifest(
     Ok(declared)
 }
 
-/// Every git call the plugins make. The ext transport runs whatever a
-/// URL names, so it is off; what the caller passes is arguments alone.
+/// Every git call the plugins make. What the caller passes is arguments
+/// alone.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["-c", "protocol.ext.allow=never"])
+    let output = crate::git::command(dir)
         .args(args)
-        .current_dir(dir)
         .output()
         .map_err(|e| format!("could not run git: {e}"))?;
     if !output.status.success() {

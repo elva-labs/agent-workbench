@@ -10,6 +10,13 @@ import { PROJECT, installFakeCore } from "./fake";
 
 const CHANGES = "section[data-pane='changes']";
 
+/** The row of the session with this name, wherever the order puts it: the
+    latest change is on top. */
+const named = (page: Page, name: string) =>
+  page
+    .locator("[data-testid='session-row']")
+    .filter({ has: page.locator(".label", { hasText: new RegExp(`^${name}$`) }) });
+
 async function push(
   page: Page,
   request: {
@@ -146,7 +153,7 @@ test("a tab an agent opens for another session shows when the user switches to i
   await expect(page.getByTestId("browser-fold")).toContainText("Browser (0)");
   await expect(page.getByTestId("mode-readout")).toHaveText("working");
 
-  await page.locator("[data-testid='session-row']").first().click();
+  await named(page, "session 1").click();
   await expect(page.locator(".session.on")).toContainText("session 1");
   await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
   await expect(page.getByTestId("browser-fold")).toContainText("Browser (1)");
@@ -179,7 +186,8 @@ test("closing a session closes its tabs, and no one else's", async ({ page }) =>
   await ask(page, "c2", "browser_open", "session-2", { url: "http://localhost:4000" });
   expect(await allTabs(page)).toBe(2);
 
-  await page.getByTestId("close-session").first().click({ force: true });
+  await named(page, "session 1").hover();
+  await named(page, "session 1").locator("..").getByTestId("close-session").click();
   await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
   await expect.poll(() => allTabs(page)).toBe(1);
   const left = await ask(page, "c3", "browser_tabs", "session-2");
