@@ -24,6 +24,11 @@ export const LABEL = "orchestrator";
 
 export const orchestrator = $state<{ dir: string | null }>({ dir: null });
 
+let knowDir: (dir: string | null) => void = () => {};
+/** Settles with the orchestrator's directory once the core has said where
+    it is, or with null when it cannot say. */
+export const dirKnown: Promise<string | null> = new Promise((resolve) => (knowDir = resolve));
+
 /** Asks the core where an orchestrator session runs, and makes the
     directory if it is not there yet. A core that cannot say leaves the
     project out of the pane rather than showing one that cannot start. */
@@ -32,8 +37,10 @@ export async function load(): Promise<void> {
     orchestrator.dir = await core().orchestratorDir();
   } catch {
     orchestrator.dir = null;
+    knowDir(null);
     return;
   }
+  knowDir(orchestrator.dir);
   // The tools are what make an orchestrator one, and they reach an agent
   // through the hooks and the tool server written into the directory it
   // runs in. The directory is the app's own, so they are always there,

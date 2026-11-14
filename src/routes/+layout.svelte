@@ -33,6 +33,7 @@
   import { loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
   import { reopen } from "$lib/reopen.svelte";
+  import { dirKnown } from "$lib/orchestrator.svelte";
   import { listenIntegrated } from "$lib/integrated.svelte";
   import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
 
@@ -77,7 +78,7 @@
     let arrivals: ReadonlyMap<string, Promise<void>> = new Map();
     const restored = Promise.all([restore(), listening]).then(([arriving]) => {
       arrivals = arriving;
-      if (!closed) stopReopen = reopen(arriving);
+      if (!closed) stopReopen = reopen(arriving, dirKnown);
     });
     const startHooks = () => startChecks(open, arrivals);
     void restored.then(startHooks, startHooks);

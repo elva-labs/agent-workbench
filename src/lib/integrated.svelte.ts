@@ -362,7 +362,7 @@ function again(session: Session) {
  * heard while it was asked for come before it. True when the session was
  * there and is the row's.
  */
-export function reattach(key: string, handle: string): Promise<boolean> {
+export function reattach(key: string, handle: string, spoken = true): Promise<boolean> {
   const link = linkFor(key);
   const attempt = (async () => {
     if (link.handle !== null) return true;
@@ -384,6 +384,11 @@ export function reattach(key: string, handle: string): Promise<boolean> {
       for (const body of held) deliver(key, link, body);
       const before = link.conversation.state;
       link.conversation.restore(snapshot);
+      // Only a session that was spoken to has earlier messages to point at.
+      link.conversation.late = spoken;
+      // The same session goes on, not one resumed from its transcript: it
+      // keeps the name it had.
+      session.resumedFrom = null;
       if (snapshot.ready !== null) identify(session, snapshot.ready.sessionId);
       settle(session, snapshot.state, before, link);
       return true;

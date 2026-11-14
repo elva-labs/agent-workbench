@@ -35,6 +35,10 @@ function load() {
   }
 }
 
+// Read when the module loads, never while a view is drawn, which may not
+// write the state it reads.
+load();
+
 /** A session sent the message with this id. */
 export function sentBy(message: string, from: string) {
   load();
@@ -71,7 +75,6 @@ export interface Sender {
 
 /** Who sent a message: null for the user. */
 export function senderOf(message: { id: string }): Sender | null {
-  load();
   const from = senders.byMessage[message.id] ?? null;
   if (from === null) return null;
   const row = sessions.all.find((candidate) => candidate.id === from) ?? null;
@@ -86,4 +89,5 @@ export function senderOf(message: { id: string }): Sender | null {
 export function resetSenders() {
   senders.byMessage = {};
   loaded = false;
+  load();
 }

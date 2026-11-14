@@ -1632,3 +1632,54 @@ test("does not call a session You, whatever the name it is started with", async 
   await row.click();
   await expect(page.locator(`${AGENT} > header`)).toContainText("Count the files");
 });
+
+test.describe("after a reload, an orchestrated session", () => {
+  async function orchestrate(page: Page) {
+    await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] }, keepIntegrated: true });
+    await page.goto("/");
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await page.evaluate(
+      (project) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id: "o-1",
+          tool: "start",
+          arguments: { project, prompt: "Count the files" },
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      PROJECT,
+    );
+    await page.getByTestId("conduct-allow").click();
+    await expect(page.getByTestId("started-session")).toHaveCount(1);
+  }
+
+  test("is taken up where the core still runs it, under its starter, with who sent what", async ({ page }) => {
+    await orchestrate(page);
+    await page.reload();
+    const row = page.getByTestId("started-session");
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText("Count the files");
+    await row.click();
+    const view = page.locator("[data-testid='conversation']:visible");
+    await expect(view.getByTestId("user-message")).toHaveAttribute("data-from", "integrated-session-1");
+    await expect(view.getByTestId("thread-intro")).toContainText("Earlier messages of this session are in its transcript");
+    expect((await calls(page)).filter((call) => call.method === "start")).toHaveLength(0);
+  });
+
+  test("that was never sent a message comes back as itself, not as a new one", async ({ page }) => {
+    // The orchestrator's own session here was never sent a message.
+    await orchestrate(page);
+    await page.reload();
+    const own = page.getByTestId("session-row").filter({ has: page.getByTestId("orchestrator-summary") });
+    await expect(own).toHaveCount(1);
+    await expect(own.locator(".label")).toHaveText("session 1");
+    await own.click();
+    await expect(page.locator(`${AGENT} > header .meta`)).toHaveText("idle");
+    await expect(page.locator("[data-testid='conversation']:visible").getByTestId("thread-intro")).not.toContainText(
+      "Earlier messages",
+    );
+    expect((await calls(page)).filter((call) => call.method === "start")).toHaveLength(0);
+  });
+});
