@@ -7,21 +7,32 @@ import {
   highlightSpecialChars,
   keymap,
   lineNumbers,
+  runScopeHandlers,
+  type Panel,
   type ViewUpdate,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { search, searchKeymap } from "@codemirror/search";
+import {
+  SearchQuery,
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  getSearchQuery,
+  search,
+  searchKeymap,
+  selectMatches,
+  setSearchQuery,
+} from "@codemirror/search";
 
 /**
  * The editor as CodeMirror builds it: line numbers, the line the cursor is
  * on, undo and redo, and find in the file, with nothing that completes or
  * highlights. No language package is loaded.
  *
- * The keys are CodeMirror's own for moving and editing, less the two the app
- * holds while the editor has the keyboard: find, which the app opens here
- * through its own chord so that rebinding it moves both, and Cmd+D, which is
- * the viewer's chord. Undo also answers the Edit menu, which reaches the page
- * as an input event rather than a key.
+ * The keys are CodeMirror's own for moving and editing, Cmd+D for the next
+ * occurrence among them, less find, which the app opens here through its
+ * own chord so that rebinding it moves both. Undo also answers the Edit
+ * menu, which reaches the page as an input event rather than a key.
  *
  * Every colour is one of the app's tokens and the face is the terminal's, so
  * the editor follows the look, the palette, the appearance and the font the
@@ -29,7 +40,7 @@ import { search, searchKeymap } from "@codemirror/search";
  */
 
 /** Keys the app answers itself while the editor has the keyboard. */
-const HELD = new Set(["Mod-f", "Mod-d"]);
+const HELD = new Set(["Mod-f"]);
 
 let listener: ((update: ViewUpdate) => void) | null = null;
 
@@ -95,63 +106,211 @@ const theme = EditorView.theme({
     color: "var(--ink-2)",
   },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--head-rule)" },
-  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--head-rule)" },
-  ".cm-search": {
+  ".cm-find": {
     display: "flex",
     flexWrap: "wrap",
     alignItems: "center",
-    gap: "4px 8px",
+    gap: "6px 8px",
     padding: "6px 10px",
     fontFamily: "var(--chrome)",
-    fontSize: "12px",
+    fontSize: "var(--btn-size)",
   },
-  ".cm-search br": { display: "none" },
-  ".cm-search label": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "4px",
-    fontSize: "12px",
-    color: "var(--ink-3)",
-  },
-  ".cm-textfield": {
-    height: "24px",
-    padding: "0 8px",
+  ".cm-find-field": {
+    flex: "1 1 180px",
+    minWidth: "120px",
+    height: "26px",
+    padding: "0 9px",
     border: "1px solid var(--field-border)",
-    borderRadius: "var(--radius-sm)",
+    borderRadius: "var(--radius)",
     backgroundColor: "var(--field-bg)",
     color: "var(--ink)",
-    fontFamily: "var(--mono)",
-    fontSize: "12px",
+    fontFamily: "var(--chrome)",
+    fontSize: "var(--field-size)",
     outline: "none",
   },
-  ".cm-textfield:focus": {
-    boxShadow: "0 0 0 1.5px var(--accent)",
+  ".cm-find-field:focus": { boxShadow: "0 0 0 1.5px var(--accent)" },
+  ".cm-find-field::placeholder": { color: "var(--ink-3)" },
+  ".cm-find-count": {
+    minWidth: "72px",
+    color: "var(--ink-3)",
+    fontVariantNumeric: "tabular-nums",
+    whiteSpace: "nowrap",
   },
-  ".cm-button": {
-    height: "24px",
+  ".cm-find-group": {
+    display: "flex",
+    gap: "0",
+    padding: "2px",
+    borderRadius: "var(--radius)",
+    backgroundColor: "color-mix(in srgb, var(--surface-2) 70%, var(--ink) 6%)",
+  },
+  ".cm-find-button": {
+    height: "22px",
     padding: "0 9px",
     border: "0",
     borderRadius: "var(--radius-sm)",
-    backgroundImage: "none",
-    backgroundColor: "transparent",
-    boxShadow: "inset 0 0 0 1px var(--rule-strong)",
-    color: "var(--ink-2)",
-    fontFamily: "var(--chrome)",
-    fontSize: "var(--btn-size)",
-    textTransform: "var(--label-case)",
-    letterSpacing: "var(--label-track-tight)",
-    cursor: "pointer",
-  },
-  ".cm-button:hover": { color: "var(--ink)" },
-  ".cm-search button[name=close]": {
-    marginLeft: "auto",
-    border: "0",
     background: "none",
     color: "var(--ink-3)",
-    fontSize: "16px",
+    fontFamily: "var(--chrome)",
+    fontSize: "var(--btn-size)",
+    letterSpacing: "var(--label-track-tight)",
+    textTransform: "var(--label-case)",
+    whiteSpace: "nowrap",
     cursor: "pointer",
   },
+  ".cm-find-button:hover": { color: "var(--ink)" },
+  ".cm-find-button[aria-pressed=true]": {
+    backgroundColor: "var(--surface)",
+    color: "var(--ink)",
+    boxShadow: "0 0 0 1px var(--head-rule)",
+  },
+  ".cm-find-close": {
+    width: "24px",
+    height: "24px",
+    marginLeft: "auto",
+    border: "0",
+    borderRadius: "var(--radius-sm)",
+    background: "none",
+    color: "var(--ink-3)",
+    fontSize: "15px",
+    lineHeight: "1",
+    cursor: "pointer",
+  },
+  ".cm-find-close:hover": { backgroundColor: "var(--surface-2)", color: "var(--ink)" },
+  ".cm-find button:focus-visible": { outline: "2px solid var(--accent)", outlineOffset: "1px" },
 });
+
+/** Past this many, the find bar counts no further. */
+const MOST_COUNTED = 999;
+
+/**
+ * Find in the file, in the app's own look and words: the field, how many
+ * matches there are, Previous, Next and All, and whether case, whole words
+ * or a regular expression count. Enter is the next match, Shift+Enter the
+ * one before, Escape closes it. There is nothing to replace with.
+ */
+class FindPanel implements Panel {
+  dom: HTMLElement;
+  top = true;
+  private field: HTMLInputElement;
+  private count: HTMLElement;
+  private toggles: Record<"caseSensitive" | "wholeWord" | "regexp", HTMLButtonElement>;
+  private query: SearchQuery;
+
+  constructor(private view: EditorView) {
+    this.query = getSearchQuery(view.state);
+    const make = <K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, string>, text = "") => {
+      const node = document.createElement(tag);
+      for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+      if (text !== "") node.textContent = text;
+      return node;
+    };
+    this.field = make("input", {
+      class: "cm-find-field",
+      name: "search",
+      placeholder: "Find in file",
+      "aria-label": "Find in file",
+      "main-field": "true",
+      spellcheck: "false",
+      autocomplete: "off",
+      "data-testid": "find-field",
+    });
+    this.field.value = this.query.search;
+    this.field.addEventListener("input", () => this.commit());
+    this.count = make("span", { class: "cm-find-count", "aria-live": "polite", "data-testid": "find-count" });
+    const button = (label: string, run: () => void, testid: string) => {
+      const node = make("button", { type: "button", class: "cm-find-button", "data-testid": testid }, label);
+      node.addEventListener("click", run);
+      return node;
+    };
+    const steps = make("span", { class: "cm-find-group" });
+    steps.append(
+      button("Previous", () => findPrevious(view), "find-previous"),
+      button("Next", () => findNext(view), "find-next"),
+      button("All", () => selectMatches(view), "find-all"),
+    );
+    const toggle = (label: string, key: "caseSensitive" | "wholeWord" | "regexp") => {
+      const node = button(label, () => {
+        node.setAttribute("aria-pressed", String(node.getAttribute("aria-pressed") !== "true"));
+        this.commit();
+      }, `find-${key}`);
+      node.setAttribute("aria-pressed", String(this.query[key]));
+      return node;
+    };
+    this.toggles = {
+      caseSensitive: toggle("Match case", "caseSensitive"),
+      wholeWord: toggle("Whole word", "wholeWord"),
+      regexp: toggle("Regexp", "regexp"),
+    };
+    const options = make("span", { class: "cm-find-group" });
+    options.append(this.toggles.caseSensitive, this.toggles.wholeWord, this.toggles.regexp);
+    const close = make("button", { type: "button", class: "cm-find-close", "aria-label": "Close find", title: "Close find" }, "×");
+    close.addEventListener("click", () => closeSearchPanel(view));
+    this.dom = make("div", { class: "cm-find", role: "search", "data-testid": "find-bar" });
+    this.dom.append(this.field, this.count, steps, options, close);
+    this.dom.addEventListener("keydown", (e) => this.keydown(e));
+    this.recount();
+  }
+
+  private commit() {
+    const query = new SearchQuery({
+      search: this.field.value,
+      caseSensitive: this.toggles.caseSensitive.getAttribute("aria-pressed") === "true",
+      wholeWord: this.toggles.wholeWord.getAttribute("aria-pressed") === "true",
+      regexp: this.toggles.regexp.getAttribute("aria-pressed") === "true",
+    });
+    if (query.eq(this.query)) return;
+    this.query = query;
+    this.view.dispatch({ effects: setSearchQuery.of(query) });
+  }
+
+  private keydown(e: KeyboardEvent) {
+    if (runScopeHandlers(this.view, e, "search-panel")) {
+      e.preventDefault();
+    } else if (e.key === "Enter" && e.target === this.field) {
+      e.preventDefault();
+      (e.shiftKey ? findPrevious : findNext)(this.view);
+    }
+  }
+
+  /** How many matches there are, or that the text is no expression. */
+  private recount() {
+    const query = this.query;
+    if (query.search === "") {
+      this.count.textContent = "";
+      return;
+    }
+    if (!query.valid) {
+      this.count.textContent = "Not an expression";
+      return;
+    }
+    let found = 0;
+    const cursor = query.getCursor(this.view.state);
+    while (found <= MOST_COUNTED && !cursor.next().done) found += 1;
+    this.count.textContent =
+      found === 0 ? "No matches" : found > MOST_COUNTED ? `${MOST_COUNTED}+ matches` : `${found} ${found === 1 ? "match" : "matches"}`;
+  }
+
+  update(update: ViewUpdate) {
+    let changed = update.docChanged;
+    for (const tr of update.transactions) {
+      for (const effect of tr.effects) {
+        if (!effect.is(setSearchQuery)) continue;
+        changed = true;
+        if (effect.value.eq(this.query)) continue;
+        this.query = effect.value;
+        this.field.value = this.query.search;
+        for (const key of ["caseSensitive", "wholeWord", "regexp"] as const) {
+          this.toggles[key].setAttribute("aria-pressed", String(this.query[key]));
+        }
+      }
+    }
+    if (changed) this.recount();
+  }
+
+  mount() {
+    this.field.select();
+  }
+}
 
 /** Everything a file's state carries. Shared by every file, so switching
     tabs swaps one state for another and nothing is set up again. */
@@ -163,7 +322,7 @@ export const extensions: Extension[] = [
   drawSelection(),
   EditorState.allowMultipleSelections.of(true),
   highlightActiveLine(),
-  search({ top: true }),
+  search({ top: true, createPanel: (view) => new FindPanel(view) }),
   keymap.of([
     ...defaultKeymap,
     ...historyKeymap,
@@ -177,26 +336,6 @@ export const extensions: Extension[] = [
 /** A file's text as a fresh state: the cursor at the top, no history. */
 export function stateFor(text: string): EditorState {
   return EditorState.create({ doc: text, extensions });
-}
-
-/** The part of `next` that differs from `prev`, as one change from the
-    first character that differs to the last: what a reload replaces, so
-    the cursor, the selection and the scroll before and after it hold. */
-export function changeBetween(
-  prev: string,
-  next: string,
-): { from: number; to: number; insert: string } | null {
-  if (prev === next) return null;
-  let start = 0;
-  const shortest = Math.min(prev.length, next.length);
-  while (start < shortest && prev.charCodeAt(start) === next.charCodeAt(start)) start++;
-  let endPrev = prev.length;
-  let endNext = next.length;
-  while (endPrev > start && endNext > start && prev.charCodeAt(endPrev - 1) === next.charCodeAt(endNext - 1)) {
-    endPrev--;
-    endNext--;
-  }
-  return { from: start, to: endPrev, insert: next.slice(start, endNext) };
 }
 
 const LANGUAGES: Record<string, string> = {
