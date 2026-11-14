@@ -713,10 +713,19 @@
   /** The question about closing a session or a project, while it is up. */
   let closingStrip = $state<HTMLDivElement | null>(null);
 
+  /** The session as the question names it: its label, and its project
+      too where another row reads the same, as a started session's row
+      names the project it runs in. */
+  function closingName(session: Session): string {
+    const name = label(session);
+    const same = sessions.all.some((other) => other.key !== session.key && label(other) === name);
+    return same ? `${name} in ${projectLabel(session.project)}` : name;
+  }
+
   /** Closes a session, asking first when tabs beside it hold the only
       copy of unsaved edits. */
   function closeSessionAsking(session: Session) {
-    closeAsking(label(session), [session.key], () => closeSession(session.key));
+    closeAsking(closingName(session), [session.key], () => closeSession(session.key));
   }
 
   /** Closes a project, asking first when tabs beside it or beside one of
