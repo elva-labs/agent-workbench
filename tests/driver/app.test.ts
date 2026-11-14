@@ -364,6 +364,55 @@ describe("the real app", () => {
     await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
 
+  // Editor mode on the real core: the agent moves to the right, a file is
+  // read, edited and written through the core, and a change on disk with
+  // nothing unsaved is read in. The window goes back to agent mode after,
+  // for the tests that follow.
+  it("edits and saves a file in editor mode through the core", async () => {
+    const { driver } = app;
+    const mode = () => textOf(driver, "[data-testid='mode-readout']");
+    await (await located(driver, "[data-testid='mode-editor']")).click();
+    await driver.wait(async () => (await mode()) === "editing", 10_000);
+    const sides = (await driver.executeScript(() => {
+      const left = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().left;
+      return [left("section[data-pane='changes']"), left("section[data-pane='agent']")];
+    })) as number[];
+    expect(sides[1]).toBeGreaterThan(sides[0]);
+
+    // Every file is listed while editing; a click opens one as a tab.
+    await waitForPaneText(driver, TREE, "README.md");
+    await driver.executeScript(() => {
+      const rows = document.querySelectorAll<HTMLElement>("[data-testid='file-tree'] [role='treeitem']");
+      [...rows].find((row) => row.querySelector(".name")?.textContent === "README.md")?.click();
+    });
+    await located(driver, ".cm-content");
+    await waitForPaneText(driver, ".cm-content", "# demo");
+
+    const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+    await (await driver.findElement(By.css(".cm-content"))).click();
+    await driver.actions().keyDown(key).sendKeys(Key.END).keyUp(key).perform();
+    await driver.actions().sendKeys("from the editor").perform();
+    await located(driver, "[data-testid='editor-tab-dirty']", 5_000);
+    // Nothing reaches the disk until the save.
+    expect(readFileSync(join(repo, "README.md"), "utf8")).not.toContain("from the editor");
+    await driver.actions().keyDown(key).sendKeys("s").keyUp(key).perform();
+    await driver.wait(
+      () => readFileSync(join(repo, "README.md"), "utf8").includes("from the editor"),
+      10_000,
+      "the save never reached the disk",
+    );
+    await driver.wait(
+      async () => (await driver.findElements(By.css("[data-testid='editor-tab-dirty']"))).length === 0,
+      10_000,
+    );
+
+    writeFileSync(join(repo, "README.md"), "# demo\n\nfrom the disk\n");
+    await waitForPaneText(driver, ".cm-content", "from the disk");
+
+    await (await located(driver, "[data-testid='mode-agent']")).click();
+    await driver.wait(async () => (await mode()) === "working", 10_000);
+  });
+
   // The agent's show tool, through the daemon as the agent would call it:
   // one JSON-RPC exchange on its stdin, and the viewer opens on the lines.
   it("opens the viewer where the agent's show tool pointed", async () => {
