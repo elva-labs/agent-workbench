@@ -1032,3 +1032,22 @@ test("takes up a session the core still runs when the window is reloaded", async
   await expect(page.getByTestId("agent-text").last()).toHaveText("All 12 pass.");
   await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
 });
+
+test("lays out the composer's bar in a narrow pane with nothing drawn over another", async ({ page }) => {
+  await page.setViewportSize({ width: 700, height: 800 });
+  await openIntegrated(page);
+  await agent(page, `f.context("${H}", 41000, 200000);`);
+  const boxes = await Promise.all(
+    ["attach", "model-chip", "mode-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
+  );
+  const ctx = await page.getByTestId("composer").locator(".ctx").boundingBox();
+  const all = [...boxes, ctx].map((box) => box!);
+  for (let a = 0; a < all.length; a++)
+    for (let b = a + 1; b < all.length; b++) {
+      const [x, y] = [all[a], all[b]];
+      const apart = x.x + x.width <= y.x + 0.5 || y.x + y.width <= x.x + 0.5 || x.y + x.height <= y.y + 0.5 || y.y + y.height <= x.y + 0.5;
+      expect(apart, `${a} and ${b} overlap`).toBe(true);
+    }
+  const composer = (await page.getByTestId("composer").boundingBox())!;
+  for (const box of all) expect(box.x + box.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
+});

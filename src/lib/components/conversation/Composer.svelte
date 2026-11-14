@@ -533,8 +533,11 @@
     color: var(--ink-2);
   }
 
+  /* The bar wraps where the pane is too narrow for all of it on one line,
+     so nothing in it is drawn over another. */
   .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     min-width: 0;
@@ -575,7 +578,7 @@
 
   .picker {
     position: relative;
-    min-width: 0;
+    flex: none;
   }
 
   .after {
