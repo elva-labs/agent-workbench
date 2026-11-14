@@ -63,6 +63,8 @@ pub struct DirEntry {
 
 pub struct Core {
     pub sessions: Arc<Sessions>,
+    /// The integrated sessions, beside the ptys.
+    pub integrated: Arc<crate::integrated::Sessions>,
     pub watchers: Arc<Watchers>,
     pub sink: Arc<dyn Sink>,
     home: Option<PathBuf>,
@@ -124,6 +126,7 @@ impl Core {
             .map(|home| Arc::new(crate::settings::Store::new(home, Arc::clone(&sink))));
         Self {
             sessions: Arc::new(Sessions::default()),
+            integrated: Arc::new(crate::integrated::Sessions::default()),
             processes: crate::processes::Processes::default(),
             watchers: Arc::new(Watchers::default()),
             sink,
@@ -341,12 +344,12 @@ impl Core {
         let orchestrator = self.is_orchestrator(project);
         let project = cwd.unwrap_or(project);
 
-        // A resumed session's id is known, and a fresh one's when the
-        // workbench mints it; an agent that mints its own is found later.
+        // A resumed session's id is known, and a fresh one's when the agent
+        // takes the one the workbench chooses; one it mints is found later.
         let resumed = session.is_some();
         let session_id = match session {
             Some(id) => Some(id),
-            None if adapter.mints_id() => Some(new_session_id()),
+            None if adapter.takes_id() => Some(new_session_id()),
             None => None,
         };
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
@@ -406,6 +409,193 @@ impl Core {
             );
         }
         Ok(Spawned { pty_id, session_id })
+    }
+
+    /// Starts an agent as an integrated session: a process spoken to in
+    /// messages, whose news goes out as `integrated_event`. A fresh
+    /// session's id is chosen here, as for a pty; `session` resumes one.
+    /// The rest is as for [`Core::spawn`], with the mode and the effort the
+    /// session starts in, and the workbench's tool server attached to the
+    /// session when the daemon is installed where the agents look for it.
+    ///
+    /// The agent skips its own trust question when driven this way, so a
+    /// folder it does not hold as trusted is refused with an error that
+    /// starts with [`crate::integrated::UNTRUSTED`], until
+    /// [`Core::integrated_trust`] records the user's yes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn integrated_start(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: Option<String>,
+        model: Option<&str>,
+        mode: Option<&str>,
+        effort: Option<&str>,
+        config_dir: Option<&str>,
+    ) -> Result<crate::integrated::Started, String> {
+        let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        let protocol = adapter
+            .integrated()
+            .ok_or_else(|| format!("{agent} cannot run as an integrated session"))?;
+        let environment = env::environment();
+        let opened = project.to_string_lossy().to_string();
+        let orchestrator = self.is_orchestrator(project);
+        let project = cwd.unwrap_or(project);
+        let resume = session.is_some();
+        // The workbench chooses a fresh session's id for an agent that takes
+        // one; one that makes its own says it in `ready`.
+        let session = session.or_else(|| adapter.takes_id().then(new_session_id));
+        let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
+        let expanded =
+            config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
+        let trusted = self
+            .home
+            .as_deref()
+            .is_some_and(|home| protocol.trusted(home, expanded.as_deref(), project));
+        if !trusted {
+            return Err(format!(
+                "{}: {} has not been trusted in {} yet",
+                crate::integrated::UNTRUSTED,
+                project.display(),
+                protocol.name()
+            ));
+        }
+        if let Some(dir) = &expanded {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        }
+        let tool_server = self
+            .home
+            .as_deref()
+            .map(hook::daemon_path)
+            .filter(|path| path.is_file());
+        let launch = crate::integrated::Launch {
+            project,
+            env: &environment.vars,
+            session: session.as_deref(),
+            resume,
+            model: model.filter(|model| !model.trim().is_empty()),
+            mode: mode.filter(|mode| !mode.trim().is_empty()),
+            effort: effort.filter(|effort| !effort.trim().is_empty()),
+            config_dir: expanded.as_deref(),
+            tool_server: tool_server.as_deref(),
+            orchestrator,
+        };
+        let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
+        crate::integrated::start(
+            Arc::clone(&self.sink),
+            Arc::clone(&self.integrated),
+            protocol,
+            &launch,
+            Box::new(move |started| {
+                if let Some(plugins) = starting {
+                    plugins.session_started(&started.id, started.session_id.as_deref(), &opened);
+                }
+            }),
+            Box::new(move |id| {
+                if let Some(plugins) = ending {
+                    plugins.session_ended(id);
+                }
+            }),
+        )
+    }
+
+    /// Records that the user trusts the folder an integrated session of the
+    /// agent would run in, under the account whose configuration directory
+    /// is given, where the agent's own trust question would.
+    pub fn integrated_trust(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        config_dir: Option<&str>,
+    ) -> Result<(), String> {
+        let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        let protocol = adapter
+            .integrated()
+            .ok_or_else(|| format!("{agent} cannot run as an integrated session"))?;
+        let home = self.home.as_deref().ok_or("no home directory")?;
+        let expanded = config_dir
+            .filter(|dir| !dir.trim().is_empty())
+            .map(|dir| account::expand(home, dir));
+        protocol.trust(home, expanded.as_deref(), cwd.unwrap_or(project))
+    }
+
+    /// Sends the user's message, with any images, under the id the window
+    /// chose for it, which the turn that answers it names.
+    pub fn integrated_send(
+        &self,
+        id: &str,
+        message: &str,
+        text: &str,
+        images: &[crate::integrated::Image],
+    ) -> Result<(), String> {
+        crate::integrated::send(&self.integrated, id, message, text, images)
+    }
+
+    /// Stops the turn that is running. Queued messages stay queued.
+    pub fn integrated_interrupt(&self, id: &str) -> Result<(), String> {
+        crate::integrated::control(&self.integrated, id, &crate::integrated::Control::Interrupt)
+            .map(|_| ())
+    }
+
+    /// Compacts the conversation, in the agent's own way. Comes back once
+    /// asked; the compaction's events follow.
+    pub fn integrated_compact(&self, id: &str) -> Result<(), String> {
+        crate::integrated::control(&self.integrated, id, &crate::integrated::Control::Compact)
+            .map(|_| ())
+    }
+
+    /// Answers a permission request the session asked.
+    pub fn integrated_answer(
+        &self,
+        id: &str,
+        request: &str,
+        choice: crate::integrated::Choice,
+        message: Option<&str>,
+    ) -> Result<(), String> {
+        crate::integrated::answer(&self.integrated, id, request, choice, message)
+    }
+
+    /// Answers a question the session asked; None declines.
+    pub fn integrated_reply(
+        &self,
+        id: &str,
+        request: &str,
+        answers: Option<&[Vec<String>]>,
+    ) -> Result<(), String> {
+        crate::integrated::reply(&self.integrated, id, request, answers)
+    }
+
+    /// Switches the session's model, mode or effort, each that is given.
+    /// Answers with what the session now runs on.
+    pub fn integrated_configure(
+        &self,
+        id: &str,
+        model: Option<&str>,
+        mode: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<crate::integrated::Settings, String> {
+        crate::integrated::configure(&self.integrated, id, model, mode, effort)
+    }
+
+    /// What a window that comes to an integrated session late reads to
+    /// catch up, after every event that went out before it.
+    pub fn integrated_snapshot(&self, id: &str) -> Result<crate::integrated::Snapshot, String> {
+        crate::integrated::snapshot(&self.integrated, id)
+    }
+
+    /// Stops every integrated session, and waits a few seconds for them to
+    /// be gone: for the end of the app or the daemon.
+    pub fn integrated_stop_all(&self) {
+        crate::integrated::stop_all(&self.integrated);
+    }
+
+    /// Ends an integrated session. Comes back at once; the session's
+    /// `ended` event follows.
+    pub fn integrated_stop(&self, id: &str) -> Result<(), String> {
+        crate::integrated::stop(&self.integrated, id)
     }
 
     /// The user's shell in a pty, for the terminal panel. Hands back the pty
