@@ -126,6 +126,21 @@ fn put_back(payload: &mut Value, key: &str, qualify: impl Fn(&str) -> String) {
     }
 }
 
+/// An integrated session's snapshot from a remote core, with the host put
+/// back on the paths its requests name, as on the events they were.
+pub fn snapshot_homeward(host: &str, mut snapshot: Value) -> Value {
+    if let Some(requests) = snapshot.get_mut("requests").and_then(Value::as_array_mut) {
+        for request in requests {
+            *request = homeward(
+                host,
+                workbench_core::integrated::INTEGRATED_EVENT,
+                request.take(),
+            );
+        }
+    }
+    snapshot
+}
+
 /// An event from a remote core, with the host put back on whatever names
 /// a pty or a path.
 pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
@@ -539,6 +554,16 @@ mod tests {
             json!({"id": "int-1", "type": "permissionAsked", "path": "/srv/b.rs"}),
         );
         assert_eq!(asked["path"], "ssh://lab/srv/b.rs");
+        let snapshot = snapshot_homeward(
+            "lab",
+            json!({"state": "asking", "requests": [
+                {"type": "permissionAsked", "request": "r1", "path": "/srv/b.rs"},
+                {"type": "questionAsked", "request": "r2"},
+            ]}),
+        );
+        assert_eq!(snapshot["requests"][0]["path"], "ssh://lab/srv/b.rs");
+        assert_eq!(snapshot["requests"][1]["request"], "r2");
+        assert!(snapshot["requests"][1].get("id").is_none());
         let text = homeward(
             "lab",
             "integrated_event",

@@ -357,6 +357,28 @@ async fn integrated_configure(
     .await
 }
 
+/// What a window that comes to an integrated session late reads to catch
+/// up, with the host put back on its paths for a session elsewhere.
+#[tauri::command]
+async fn integrated_snapshot(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&id) {
+        Route::Local(id) => value(core.integrated_snapshot(&id)?),
+        Route::Remote { host, rest } => {
+            let snapshot = remotes
+                .connection(&host)?
+                .call("integrated_snapshot", json!({ "id": rest }))?;
+            Ok(remote::snapshot_homeward(&host, snapshot))
+        }
+    })
+    .await
+}
+
 #[tauri::command]
 async fn integrated_stop(
     core: State<'_, Arc<Core>>,
@@ -1585,6 +1607,7 @@ pub fn run() {
             integrated_answer,
             integrated_reply,
             integrated_configure,
+            integrated_snapshot,
             integrated_stop,
             settings_get,
             settings_set,

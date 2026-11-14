@@ -440,6 +440,28 @@ export type IntegratedEventBody =
 /** An event with the session it belongs to. */
 export type IntegratedEvent = IntegratedEventBody & { id: string };
 
+/** What a window that comes to a session late, after a reload or as a
+    second window, reads to catch up on what no transcript holds. It
+    reflects every event that went out before it and none after, so a
+    window that listens first and then asks for it misses nothing.
+
+    `state` is the session's state and `turn` whether a turn runs;
+    `settings` what it runs on and `efforts` those of the model it is on;
+    `ready` the ready event as it went out, null before the agent was
+    ready; `requests` the permissions and questions still waiting for an
+    answer, each as it was asked; `messages` those sent and not yet taken
+    into a turn, in the order sent, each as its first message event told
+    it, with its text and images. */
+export interface IntegratedSnapshot {
+  state: IntegratedState;
+  turn: boolean;
+  settings: IntegratedSettings;
+  efforts: string[];
+  ready: Extract<IntegratedEventBody, { type: "ready" }> | null;
+  requests: Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>[];
+  messages: Extract<IntegratedEventBody, { type: "message" }>[];
+}
+
 /** A transition reported by an agent hook or session log, by session id:
     `prompt` (the user sent one), `stop` (the turn ended), `permission` (it
     is asking), `idle` (it has been waiting a while). */
@@ -1042,6 +1064,9 @@ export interface Core {
     id: string,
     settings: { model?: string; mode?: string; effort?: string },
   ): Promise<IntegratedSettings>;
+  /** What a window that comes to the session late reads to catch up.
+      Resolves once every event that went out before it has arrived. */
+  integratedSnapshot(id: string): Promise<IntegratedSnapshot>;
   /** Ends the session. Resolves at once; `ended` follows. */
   integratedStop(id: string): Promise<void>;
   /** Every integrated session's news, each event naming its session. */
@@ -1447,6 +1472,7 @@ const tauriCore: Core = {
       mode: settings.mode ?? null,
       effort: settings.effort ?? null,
     }),
+  integratedSnapshot: (id) => invoke<IntegratedSnapshot>("integrated_snapshot", { id }),
   integratedStop: (id) => invoke<void>("integrated_stop", { id }),
   async onIntegratedEvent(handler) {
     return listen<IntegratedEvent>("integrated_event", (event) =>
@@ -1749,6 +1775,9 @@ const detachedCore: Core = {
   async integratedReply() {},
   async integratedConfigure() {
     return { model: null, mode: null, effort: null };
+  },
+  async integratedSnapshot() {
+    throw new Error("not connected to the workbench core");
   },
   async integratedStop() {},
   async onIntegratedEvent() {

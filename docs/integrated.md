@@ -95,6 +95,7 @@ the same way.
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. |
+| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, and the messages no turn has taken yet. It answers once every event that went out before it has, so it reflects those events and none after. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
 Events can name an id before the command that hands it back has answered:
@@ -331,9 +332,15 @@ has to do itself:
 - **The end.** Nothing comes after ended, and no last state comes with it:
   the open tool calls, the turn, the open requests and the waiting
   messages are closed first, then the session ends.
-- **History.** Nothing is kept or played back. A resumed session's past
-  turns, and everything before a window reloaded, are read from the
-  agent's transcript, not from these events.
+- **History.** No event is kept or played back. A window that comes to a
+  session late, after a reload or as a second window, listens first and
+  then asks for a snapshot, and draws from it what no transcript holds:
+  the state, the settings and what the agent offers, the requests waiting
+  for an answer, which it can still answer, and the messages that wait
+  for a turn. Every turn the agent has begun, and what was said in it, is
+  read from the agent's transcript, as are a resumed session's past turns.
+  The part of a turn still running that the transcript does not hold yet,
+  such as a block still streaming, comes in the events that follow.
 - **Content.** Images in a tool's result and a command's output kept apart
   from its errors or its exit code arrive as plain text. Long content is
   cut down and flagged.

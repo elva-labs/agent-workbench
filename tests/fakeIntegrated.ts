@@ -6,6 +6,7 @@ import type {
   IntegratedPlanStep,
   IntegratedQuestion,
   IntegratedSettings,
+  IntegratedSnapshot,
   IntegratedStartOptions,
   IntegratedStarted,
   IntegratedToolKind,
@@ -34,6 +35,7 @@ export type IntegratedCall =
       id: string;
       settings: { model?: string; mode?: string; effort?: string };
     }
+  | { method: "snapshot"; id: string }
   | { method: "stop"; id: string };
 
 /** How the scripted agent behaves. `holding`: it takes no message while a
@@ -53,8 +55,9 @@ export interface FakeIntegratedOptions {
     derived from the events, an answer is told, tool calls left open close
     when their turn or subagent ends, housekeeping tasks never keep the
     session working, a task the agent says it reports keeps the session
-    working until its report's turn ends, and long output is cut down and
-    says so. `ready` goes out before `start` returns, as it may from the
+    working until its report's turn ends, long output is cut down and says
+    so, and a snapshot holds what a window that comes late cannot read
+    elsewhere. `ready` goes out before `start` returns, as it may from the
     core, and an interrupt's end of turn comes after the call. What the
     agent says within a turn is the test's to script, through `emit` and
     the helpers built on it. */
@@ -81,6 +84,7 @@ export interface FakeIntegrated {
     id: string,
     settings: { model?: string; mode?: string; effort?: string },
   ): IntegratedSettings;
+  snapshot(id: string): IntegratedSnapshot;
   stop(id: string): void;
   subscribe(handler: (event: IntegratedEvent) => void): () => void;
 
@@ -191,9 +195,12 @@ export interface FakeIntegrated {
  * source to the page as it is, so it may refer to nothing outside itself.
  */
 export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegrated {
-  type Asked =
+  type Asking = Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>;
+  type Told = Extract<IntegratedEventBody, { type: "message" }>;
+  type Asked = (
     | { kind: "permission"; offers: PermissionOffer[] }
-    | { kind: "question"; questions: IntegratedQuestion[] };
+    | { kind: "question"; questions: IntegratedQuestion[] }
+  ) & { event: Asking };
   type Task = {
     call: string | null;
     kind: "agent" | "shell" | "other";
@@ -204,7 +211,11 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   type Session = {
     sessionId: string | null;
     settings: IntegratedSettings;
+    efforts: string[];
+    ready: Extract<IntegratedEventBody, { type: "ready" }> | null;
     pending: string[];
+    /** The first message event of each pending message. */
+    told: Map<string, Told>;
     used: Set<string>;
     turn: boolean;
     asked: Map<string, Asked>;
@@ -271,7 +282,10 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       sessions.set(id, {
         sessionId,
         settings,
+        efforts: [],
+        ready: null,
         pending: [],
+        told: new Map(),
         used: new Set(),
         turn: false,
         asked: new Map(),
@@ -322,14 +336,16 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.held.push({ message, text, images });
         else handOver(id, message);
       }
-      fake.emit(id, {
+      const told: Told = {
         type: "message",
         message,
         state: queued ? "queued" : "sent",
         error: null,
         text,
         images,
-      });
+      };
+      session.told.set(message, told);
+      fake.emit(id, told);
     },
 
     interrupt(id) {
@@ -424,6 +440,23 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       return { ...session.settings };
     },
 
+    snapshot(id) {
+      const session = live(id);
+      fake.calls.push({ method: "snapshot", id });
+      return {
+        state: (session.state as IntegratedSnapshot["state"] | null) ?? "idle",
+        turn: session.turn,
+        settings: { ...session.settings },
+        efforts: [...session.efforts],
+        ready: session.ready,
+        requests: [...session.asked.values()].map((asked) => asked.event),
+        messages: session.pending.flatMap((message) => {
+          const told = session.told.get(message);
+          return told ? [told] : [];
+        }),
+      };
+    },
+
     stop(id) {
       live(id);
       fake.calls.push({ method: "stop", id });
@@ -442,6 +475,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         case "ready":
         case "configured":
           session.settings = { model: body.model, mode: body.mode, effort: body.effort };
+          session.efforts = body.efforts;
+          if (body.type === "ready") session.ready = body;
           break;
         case "turnStarted": {
           const messages = body.messages.filter((m) => session.pending.includes(m));
@@ -453,6 +488,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.turn = true;
           session.reporting = false;
           session.pending = session.pending.filter((m) => !messages.includes(m));
+          for (const message of messages) session.told.delete(message);
           body = { type: "turnStarted", messages };
           break;
         }
@@ -461,6 +497,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           if (body.state === "taken" || body.state === "dropped") {
             if (!session.pending.includes(message)) return;
             session.pending = session.pending.filter((m) => m !== message);
+            session.told.delete(message);
             session.held = session.held.filter((held) => held.message !== message);
           }
           break;
@@ -505,10 +542,14 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           break;
         }
         case "permissionAsked":
-          session.asked.set(body.request, { kind: "permission", offers: body.choices });
+          session.asked.set(body.request, { kind: "permission", offers: body.choices, event: body });
           break;
         case "questionAsked":
-          session.asked.set(body.request, { kind: "question", questions: body.questions });
+          session.asked.set(body.request, {
+            kind: "question",
+            questions: body.questions,
+            event: body,
+          });
           break;
         case "answered":
         case "withdrawn":

@@ -826,6 +826,29 @@ pub struct Settings {
     pub effort: Option<String>,
 }
 
+/// What a window that comes to a session late, after a reload or as a
+/// second window, reads to catch up: what no transcript holds. It reflects
+/// every event that went out before it, and none after.
+///
+/// `state` is the session's state and `turn` whether a turn runs;
+/// `settings` what it runs on and `efforts` the efforts of the model it is
+/// on; `ready` the ready event as it went out, null before the agent was
+/// ready; `requests` every permission request and question still waiting
+/// for an answer, each as it was asked; `messages` every message sent and
+/// not yet taken into a turn, in the order sent, each as its first message
+/// event told it, with its text and images.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub state: SessionState,
+    pub turn: bool,
+    pub settings: Settings,
+    pub efforts: Vec<String>,
+    pub ready: Option<Event>,
+    pub requests: Vec<Event>,
+    pub messages: Vec<Event>,
+}
+
 /// The state of a session as its events say it, and the bookkeeping that
 /// says it.
 ///
@@ -852,6 +875,8 @@ pub struct Settings {
 struct Tracker {
     /// Sent and not yet taken, in the order sent.
     pending: Vec<String>,
+    /// The first message event of each pending message, as it went out.
+    told: HashMap<String, Event>,
     /// Every message id used, so none is used twice.
     used: BTreeSet<String>,
     turn: bool,
@@ -870,6 +895,10 @@ struct Tracker {
     reporting: bool,
     compacting: bool,
     settings: Settings,
+    /// The efforts of the model the session is on, as the events last said.
+    efforts: Vec<String>,
+    /// The ready event, as it went out.
+    ready: Option<Event>,
     state: Option<SessionState>,
 }
 
@@ -915,6 +944,7 @@ impl Tracker {
     /// A message that could not be sent after all.
     fn unsend(&mut self, message: &str) {
         self.pending.retain(|m| m != message);
+        self.told.remove(message);
     }
 
     /// A message the agent refused before it went: as if it was never
@@ -932,19 +962,24 @@ impl Tracker {
                 model,
                 mode,
                 effort,
+                efforts,
                 ..
             }
             | Event::Configured {
                 model,
                 mode,
                 effort,
-                ..
+                efforts,
             } => {
                 self.settings = Settings {
                     model: model.clone(),
                     mode: mode.clone(),
                     effort: effort.clone(),
                 };
+                self.efforts = efforts.clone();
+                if matches!(event, Event::Ready { .. }) {
+                    self.ready = Some(event.clone());
+                }
             }
             Event::TurnStarted { messages } => {
                 let messages: Vec<String> = messages
@@ -963,6 +998,7 @@ impl Tracker {
                 self.turn = true;
                 self.reporting = false;
                 self.pending.retain(|m| !messages.contains(m));
+                self.told.retain(|m, _| !messages.contains(m));
                 out.push(Event::TurnStarted { messages });
                 self.push_state(out);
                 return;
@@ -1088,6 +1124,23 @@ impl Tracker {
         }
     }
 
+    /// What a window that comes late reads to catch up.
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            state: self.state(),
+            turn: self.turn,
+            settings: self.settings.clone(),
+            efforts: self.efforts.clone(),
+            ready: self.ready.clone(),
+            requests: self.asking.clone(),
+            messages: self
+                .pending
+                .iter()
+                .filter_map(|message| self.told.get(message).cloned())
+                .collect(),
+        }
+    }
+
     /// The questions of an open question request.
     fn questions(&self, request: &str) -> Option<&[Question]> {
         self.asking.iter().find_map(|asked| match asked {
@@ -1130,6 +1183,7 @@ impl Tracker {
                 });
             }
         }
+        self.told.clear();
         for message in std::mem::take(&mut self.pending) {
             out.push(Event::message(
                 &message,
@@ -1995,7 +2049,7 @@ pub fn send(
                 }
             }
         };
-        let mut out = vec![Event::Message {
+        let told = Event::Message {
             message: message.to_string(),
             state: if queued {
                 MessageState::Queued
@@ -2005,7 +2059,12 @@ pub fn send(
             error: None,
             text: Some(text.to_string()),
             images: images.to_vec(),
-        }];
+        };
+        machine
+            .tracker
+            .told
+            .insert(message.to_string(), told.clone());
+        let mut out = vec![told];
         machine.tracker.push_state(&mut out);
         live.emit(&out);
         went
@@ -2195,6 +2254,23 @@ fn request(
             }
             None => Err("the session's news did not go out in time".into()),
         },
+        Err(RecvTimeoutError::Disconnected) => Err("the agent ended".into()),
+    }
+}
+
+/// What a window that comes to the session late reads to catch up. Comes
+/// back once every event that went out before it has reached the sink.
+pub fn snapshot(sessions: &Sessions, id: &str) -> Result<Snapshot, String> {
+    let live = sessions.get(id)?;
+    let (snapshot, out) = {
+        let machine = live.machine.lock().expect("machine lock");
+        let (passed, out) = mpsc::channel();
+        live.put(Out::Reply(passed, Ok(Value::Null)));
+        (machine.tracker.snapshot(), out)
+    };
+    match out.recv_timeout(CONTROL_TIMEOUT) {
+        Ok(_) => Ok(snapshot),
+        Err(RecvTimeoutError::Timeout) => Err("the session's news did not go out in time".into()),
         Err(RecvTimeoutError::Disconnected) => Err("the agent ended".into()),
     }
 }
@@ -3092,6 +3168,63 @@ mod tests {
             took < CONFIGURE_TIMEOUT + Duration::from_millis(500),
             "{took:?}"
         );
+    }
+
+    #[test]
+    fn a_snapshot_holds_what_no_transcript_does_and_follows_what_went_out() {
+        let bench = Bench::new(fake());
+        let empty = snapshot(&bench.sessions, "int-bench").unwrap();
+        assert!(empty.ready.is_none(), "nothing before the agent is ready");
+        bench.live.take("ready");
+        bench.send(M1, "one");
+        bench.live.take(&format!("start {M1}"));
+        bench.send(M2, "two");
+        bench.live.take("question q1");
+
+        let taken = snapshot(&bench.sessions, "int-bench").unwrap();
+        let seen: Vec<Value> = bench
+            .recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, payload)| payload.clone())
+            .collect();
+        assert!(
+            seen.iter().any(|event| event["type"] == "questionAsked"),
+            "what went out before it has reached the sink: {seen:?}"
+        );
+        let json = serde_json::to_value(&taken).unwrap();
+        assert_eq!(json["state"], "asking");
+        assert_eq!(json["turn"], true);
+        assert_eq!(json["settings"]["model"], "haiku");
+        assert_eq!(json["ready"]["type"], "ready");
+        assert_eq!(json["ready"]["sessionId"], "minted");
+        assert_eq!(json["requests"].as_array().unwrap().len(), 1);
+        assert_eq!(json["requests"][0]["type"], "questionAsked");
+        assert_eq!(json["requests"][0]["request"], "q1");
+        assert_eq!(json["requests"][0]["questions"][0]["secret"], true);
+        assert_eq!(
+            json["messages"],
+            serde_json::json!([{
+                "type": "message", "message": M2, "state": "queued",
+                "error": null, "text": "two", "images": [],
+            }]),
+            "only what no turn has taken yet"
+        );
+
+        reply(
+            &bench.sessions,
+            "int-bench",
+            "q1",
+            Some(&[vec!["x".into()], vec!["yes".into()]]),
+        )
+        .unwrap();
+        bench.live.take("end");
+        bench.live.take(&format!("start {M2}"));
+        let later = snapshot(&bench.sessions, "int-bench").unwrap();
+        assert!(later.requests.is_empty() && later.messages.is_empty());
+        assert_eq!(later.state, SessionState::Working);
     }
 
     #[test]

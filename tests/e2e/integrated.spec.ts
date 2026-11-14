@@ -20,10 +20,13 @@ test("the fake core runs a scripted integrated session behind the seam", async (
       }
     ).__integrated;
     integrated.turn(id, "hi there");
+    const snapshot = await seam.integratedSnapshot(id);
     await seam.integratedStop(id);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    return { id, message, events };
+    return { id, message, events, snapshot };
   }, PROJECT);
+  expect(heard.snapshot).toMatchObject({ state: "idle", turn: false, messages: [] });
+  expect(heard.snapshot.ready?.type).toBe("ready");
   const types = heard.events.map((event) => event.type);
   expect(types[0]).toBe("ready");
   const started = heard.events.find((event) => event.type === "turnStarted");

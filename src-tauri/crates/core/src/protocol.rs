@@ -459,6 +459,10 @@ pub fn dispatch(
                 p.effort.as_deref(),
             )?)
         }
+        "integrated_snapshot" => {
+            let p: IdParams = parse(params)?;
+            value(core.integrated_snapshot(&p.id)?)
+        }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;
             core.integrated_stop(&p.id)?;
@@ -983,6 +987,7 @@ mod tests {
                 "integrated_configure",
                 json!({ "id": "int-none", "model": "haiku" }),
             ),
+            ("integrated_snapshot", json!({ "id": "int-none" })),
             ("integrated_stop", json!({ "id": "int-none" })),
         ] {
             let error = dispatch(&core, method, params, no_output).expect_err(method);

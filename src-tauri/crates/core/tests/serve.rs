@@ -299,6 +299,15 @@ while read -r line; do :; done
             .unwrap()
             .iter()
             .any(|(_, payload)| { payload["type"] == "text" && payload["text"] == "from afar" }));
+        // A window that comes late catches up on what no transcript holds:
+        // this stand-in never says it took the message, so it still waits.
+        let snapshot = connection
+            .call("integrated_snapshot", json!({ "id": id }))
+            .unwrap();
+        assert_eq!(snapshot["state"], "working", "{snapshot}");
+        assert_eq!(snapshot["turn"], false);
+        assert_eq!(snapshot["ready"]["type"], "ready");
+        assert_eq!(snapshot["messages"][0]["text"], "hello");
         connection
             .call("integrated_stop", json!({ "id": id }))
             .unwrap();

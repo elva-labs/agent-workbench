@@ -580,6 +580,12 @@ impl Core {
         crate::integrated::configure(&self.integrated, id, model, mode, effort)
     }
 
+    /// What a window that comes to an integrated session late reads to
+    /// catch up, after every event that went out before it.
+    pub fn integrated_snapshot(&self, id: &str) -> Result<crate::integrated::Snapshot, String> {
+        crate::integrated::snapshot(&self.integrated, id)
+    }
+
     /// Stops every integrated session, and waits a few seconds for them to
     /// be gone: for the end of the app or the daemon.
     pub fn integrated_stop_all(&self) {

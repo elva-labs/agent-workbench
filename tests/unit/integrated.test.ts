@@ -53,6 +53,7 @@ describe("the seam's integrated sessions", () => {
     await seam.integratedReply("int-1", "q-2", null);
     await seam.integratedConfigure("int-1", { model: "sonnet" });
     await seam.integratedConfigure("int-1", { mode: "acceptEdits", effort: "low" });
+    await seam.integratedSnapshot("int-1");
     await seam.integratedStop("int-1");
     expect(invoke.mock.calls).toEqual([
       [
@@ -97,6 +98,7 @@ describe("the seam's integrated sessions", () => {
         "integrated_configure",
         { id: "int-1", model: null, mode: "acceptEdits", effort: "low" },
       ],
+      ["integrated_snapshot", { id: "int-1" }],
       ["integrated_stop", { id: "int-1" }],
     ]);
   });
@@ -248,6 +250,35 @@ describe("the scripted integrated session", () => {
     expect(() => fake.reply(id, request, [[" "]])).toThrow();
     fake.reply(id, request, [["Teal, my own"]]);
     expect(states(heard).at(-1)).toBe("working");
+  });
+
+  it("holds in a snapshot what a window that comes late cannot read elsewhere", () => {
+    const { fake, id } = started();
+    fake.send(id, M1, "one");
+    fake.startTurn(id);
+    fake.send(id, M2, "two", [{ mediaType: "image/png", data: "AAAA" }]);
+    const request = fake.ask(id, "Bash", { command: "ls" }, { path: "/repo/a" });
+    const snapshot = fake.snapshot(id);
+    expect(snapshot).toMatchObject({
+      state: "asking",
+      turn: true,
+      settings: { model: "haiku", mode: "default" },
+      ready: { type: "ready", sessionId: "integrated-session-1" },
+      requests: [{ type: "permissionAsked", request, tool: "Bash", path: "/repo/a" }],
+      messages: [
+        {
+          type: "message",
+          message: M2,
+          state: "queued",
+          text: "two",
+          images: [{ mediaType: "image/png", data: "AAAA" }],
+        },
+      ],
+    });
+    fake.answer(id, request, "allow");
+    fake.endTurn(id);
+    fake.startTurn(id);
+    expect(fake.snapshot(id)).toMatchObject({ state: "working", requests: [], messages: [] });
   });
 
   it("tells no window a secret answer, and takes only options where it takes no words", () => {
