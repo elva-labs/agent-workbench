@@ -969,8 +969,10 @@
 <!-- The sessions a session started, hanging under it on a rail from its
      dot, one line each: the state, the name, the project it runs in when
      that is another, the model or, in the accent, that it is asking for a
-     permission, and when it last changed. The name gives way last. Delete
-     does nothing on these rows; their own × stops them. -->
+     permission, and when it last changed. Short of room, the project is
+     cut first, then the model goes whole and the project with it, and the
+     name gives way last; the time and asking always stand. Delete does
+     nothing on these rows; their own × stops them. -->
 {#snippet rail(parent: Session)}
   {@const kids = childrenOf(parent)}
   {#if kids.length > 0 && !collapsed[parent.key]}
@@ -997,14 +999,17 @@
               class:permission={kid.needs === "permission"}
               title={statusLabel(kid)}
             ></span>
-            <span class="label" class:unread={kid.unread}>{label(kid)}</span>
-            {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
-                >{projectLabel(kid.project)}</span
-              >{/if}
+            <span class="fit">
+              <span class="label" class:unread={kid.unread}>{label(kid)}</span>
+              {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
+                  >{projectLabel(kid.project)}</span
+                >{/if}
+              {#if !isAsking(kid) && kid.model !== null}
+                <span class="model" data-testid="started-model">{modelLabel(kid.model)}</span>
+              {/if}
+            </span>
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
-            {:else if kid.model !== null}
-              <span class="model">{modelLabel(kid.model)}</span>
             {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
             <span class="state told">{statusLabel(kid)}</span>
@@ -2617,8 +2622,7 @@
     bottom: 0;
   }
 
-  /* A started session on one line. Short of room, the project it runs in
-     gives way first, then the model, and the name last. */
+  /* A started session on one line. */
   .kid-row {
     display: flex;
     align-items: center;
@@ -2631,15 +2635,27 @@
     margin-right: 8px;
   }
 
-  /* The name keeps its width up to most of the row, and the rest give way
-     around it. */
+  /* The name, the project and the model share one line that wraps what
+     does not fit onto a second one out of sight, so what goes, goes whole:
+     the project is cut down to a few letters first, then the model goes,
+     then the project, and the name alone is cut last. */
+  .kid-row .fit {
+    flex: 1;
+    min-width: 0;
+    height: calc(var(--fold-size) * 1.5);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    overflow: hidden;
+  }
+
   .kid-row .label {
-    flex: 0 0 auto;
-    max-width: 62%;
+    flex: 0 1 auto;
   }
 
   .kid-row .where {
-    flex: 0 1000 auto;
+    flex: 1 1 4ch;
+    max-width: max-content;
     min-width: 0;
     margin-left: 6px;
     overflow: hidden;
@@ -2649,16 +2665,16 @@
   }
 
   .kid-row .model {
-    flex: 0 1 auto;
+    flex: none;
     margin-left: auto;
   }
 
-  .kid-row .model + .when {
-    margin-left: 0;
+  .kid-row .when,
+  .model.asking {
+    flex: none;
   }
 
   .model.asking {
-    flex-shrink: 0;
     color: var(--accent);
   }
 

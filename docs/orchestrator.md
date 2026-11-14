@@ -116,8 +116,9 @@ may have more than eight running at a time.
 The sessions a session started hang directly under it, one line each,
 joined to its dot by a thin rail: the state dot, the name, the model it was
 started on and when it last changed. One that runs in another project than
-its starter names that project after its own name, and the project is cut
-before the name when the row is short of room. The line speaks
+its starter names that project after its own name. Short of room, the
+project is cut first, then the model is left out and the project with it,
+and the name is cut last; the time always stands. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
 a permission, which only you can grant. Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the

@@ -395,3 +395,81 @@ test.describe("a started session in a project of its own", () => {
     await expect(heads.first()).toHaveAttribute("data-row", `project:${ORCHESTRATOR}`);
   });
 });
+
+// Short of room, a started row cuts its project first, then drops its
+// model whole, and cuts its name last; its time and the accent's asking
+// always stand in full.
+for (const width of [300, 240, 180]) {
+  test(`fits a started row into a pane ${width} pixels wide`, async ({ page }) => {
+    const OTHER = "/home/ada/dev/other-project";
+    await page.addInitScript((width) => {
+      localStorage.setItem("workbench.layout", JSON.stringify({ sessions: width }));
+    }, width);
+    await installFakeCore(page, { open: [PROJECT, OTHER] });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    const start = async (id: string, project: string, name: string) => {
+      await push(page, {
+        id,
+        tool: "start",
+        arguments: { project, prompt: "Go", name, agent: "claude-code", model: "sonnet" },
+        session: "session-1",
+      });
+      const allow = page.getByTestId("conduct-allow");
+      if (await allow.isVisible()) await allow.click();
+      await expect.poll(() => answerTo(page, id)).not.toBeNull();
+    };
+    await start("o-1", OTHER, "Startup history scan");
+    await start("o-2", PROJECT, "Palette check");
+    await page.evaluate(() =>
+      (
+        window as unknown as { __sessionEvent: (event: { sessionId: string; kind: string }) => void }
+      ).__sessionEvent({ sessionId: "session-2", kind: "permission" }),
+    );
+    await expect(page.getByTestId("started-asking")).toHaveText("asking");
+
+    for (const started of await page.getByTestId("started-session").all()) {
+      const row = (await started.boundingBox())!;
+      const fit = (await started.locator(".fit").boundingBox())!;
+      const shown = async (selector: string) => {
+        const part = started.locator(selector);
+        if ((await part.count()) === 0) return null;
+        const box = (await part.boundingBox())!;
+        return box.y < fit.y + fit.height - 1 && box.width > 0 ? part : null;
+      };
+      const whole = async (selector: string) => {
+        const part = started.locator(selector);
+        const box = (await part.boundingBox())!;
+        expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
+        expect(await part.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5)).toBe(true);
+      };
+      // The time, and asking, in full and inside the row.
+      await whole(".when");
+      if ((await started.getByTestId("started-asking").count()) > 0) await whole("[data-testid='started-asking']");
+      // The model whole or not at all, never cut.
+      const model = await shown("[data-testid='started-model']");
+      if (model !== null) await whole("[data-testid='started-model']");
+      // The name always shows, and is cut only once the rest has gone.
+      const name = (await shown(".label"))!;
+      expect(name).not.toBeNull();
+      const cut = await name.evaluate((el) => el.scrollWidth > el.clientWidth + 0.5);
+      if (cut) {
+        expect(model).toBeNull();
+        expect(await shown(".where")).toBeNull();
+      }
+      // The project, when it shows, keeps a few letters.
+      const where = await shown(".where");
+      if (where !== null) expect((await where.boundingBox())!.width).toBeGreaterThan(14);
+    }
+    // At the default width there is room for the short one's model.
+    if (width === 300) {
+      const short = page.getByTestId("started-session").filter({ hasText: "Palette check" });
+      const model = (await short.getByTestId("started-model").boundingBox())!;
+      const fit = (await short.locator(".fit").boundingBox())!;
+      expect(model.y).toBeLessThan(fit.y + fit.height - 1);
+    }
+  });
+}
