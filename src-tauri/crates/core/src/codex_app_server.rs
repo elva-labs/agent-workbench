@@ -14,10 +14,11 @@
 //!
 //! A conversation is a thread, a message starts a turn, and what happens in
 //! a turn arrives as items: text, reasoning, a command, a file change, a
-//! tool call. Codex takes no message while a turn runs, so the core holds
-//! each one and hands it over once the last turn is over. The model, the
-//! effort and the mode go with the next turn, so a change of any is settled
-//! here without asking the agent.
+//! tool call. Codex folds a message sent while a turn runs into that turn,
+//! so the core holds each one and hands it over once the last turn is over,
+//! and each message starts a turn of its own. The model, the effort and the
+//! mode go with the next turn, so a change of any is settled here without
+//! asking the agent.
 //!
 //! Everything leaves as the agent-neutral events of the integrated
 //! sessions; nothing Codex-shaped goes past this file.
@@ -2150,6 +2151,9 @@ impl Driver for AppServer {
         out
     }
 
+    /// Codex folds a `turn/start` sent while a turn runs into that turn,
+    /// answering with its id, so a message held until it ends gets a turn
+    /// and settings of its own.
     fn takes_while_busy(&self) -> bool {
         false
     }

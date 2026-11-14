@@ -126,13 +126,23 @@ for the session, not even the account's folder, before the folder is
 trusted.
 
 Codex keeps the same answer in its configuration, as a `trust_level` for
-a folder in the `config.toml` of the account's home, and a Codex start
-reads it the way Codex does. The folder's own record decides when there is
-one, and only `trusted` is a yes. A folder with no record of its own takes
-the record of the repository it is in, which for a worktree is its main
-repository's; a folder between the two counts for nothing. The trust
-command writes the folder's own record, leaving the rest of the file as
-the user wrote it.
+a folder in the `config.toml` of its home. That is the account's home, or
+for a session under no account the one Codex itself runs with: the
+`CODEX_HOME` of the environment the Codex process starts with, else
+`.codex` in the user's home. A Codex start reads the answer the way Codex
+does. The folder's own record decides when there is one, and only
+`trusted` is a yes. A folder with no record of its own takes the record of
+its repository's root, and a folder between the two counts for nothing.
+The root is found from the nearest folder at or above it with a `.git`,
+passing over a `.git` folder that holds no repository. When that `.git` is
+a folder, its folder is the root. When it is a file, the folder is a root
+only through being a linked worktree: its git directory sits in the
+`worktrees` folder of the repository's common git directory and names the
+folder back, and the folder holding that common directory has a `.git` of
+its own that leads to it. That folder is the root. Any other checkout with
+a `.git` file, a submodule or one whose git directory is kept elsewhere,
+has no root, and only its own record counts. The trust command writes the
+folder's own record, leaving the rest of the file as the user wrote it.
 
 Running agents, the user's own terminal sessions among them, read and
 rewrite the same state file. The workbench reads it right before it
@@ -315,8 +325,10 @@ started by itself, which happens when work it left running in the
 background finishes while the session is idle. A turn the agent ends
 without having said it started is started first, so every end has a start.
 
-Codex takes no message while a turn runs. For an agent like it the core
-holds each one, and each message gets a turn of its own. It hands one over
+Codex folds a message sent while a turn runs into that turn, which then
+answers it along with what it was doing. The core holds each message for
+an agent like it instead, so that each message gets a turn of its own and
+the settings it goes with. It hands one over
 only when the agent has said it is ready, no turn runs, and the agent has
 named the one handed over before, in a turn's start or as dropped, and
 makes the line for it then, so that it goes with the conversation the
