@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
   import Parts from "./Parts.svelte";
+  import Plain from "./Plain.svelte";
 
   /**
    * One step of the agent's work: a tool call, or a stretch of thinking.
@@ -69,7 +70,7 @@
     <span class="glyph"><Icon name={glyph(part.kind === "tool" ? part.tool : "thinking")} size={13} /></span>
     <span class="title">
       <span class="verb">{title.verb}</span>
-      {#if title.object !== null}<code class="object">{title.object}</code>{/if}
+      {#if title.object !== null}<code class="object"><Plain text={title.object} /></code>{/if}
     </span>
     {#if status !== null}
       <span class="status {status.tone}" data-testid="step-status">{status.text}</span>
@@ -103,7 +104,7 @@
             {#if "command" in input}
               <!-- The row shows a short command whole; a long one is here. -->
               {#if input.command.includes("\n") || input.command.length > 72}
-                <pre class="block command"><span class="prompt">$ </span>{input.command}</pre>
+                <pre class="block command"><span class="prompt">$ </span><Plain text={input.command} /></pre>
               {/if}
             {:else if part.tool !== "edit" || part.changes.length === 0}
               <pre class="block input">{input.json}</pre>
@@ -184,6 +185,12 @@
 
   .verb {
     flex: none;
+  }
+
+  .object,
+  .command {
+    unicode-bidi: isolate;
+    direction: ltr;
   }
 
   .object {

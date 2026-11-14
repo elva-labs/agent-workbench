@@ -5,6 +5,7 @@
   import { answer, reply } from "$lib/integrated.svelte";
   import { asks, choiceLabel, choiceMeans, inputPath } from "$lib/thread";
   import Icon from "./Icon.svelte";
+  import Plain from "./Plain.svelte";
 
   /**
    * What the agent waits on the user for, docked over the composer rather
@@ -254,19 +255,20 @@
         <span class="ring"></span>
         <p>
           <b>{asker(asked.parent)}</b> asks to {what.verb}{#if what.object !== null}{" "}{#if asked.tool === "Bash"}{@const command = lines(what.object)}<code
-                >{command.first}</code
+                class="exact"><Plain text={command.first} /></code
               >{#if command.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {command.rest} more {command.rest === 1 ? "line" : "lines"}</span
                 >{/if}{:else if asked.path || inputPath(asked.input)}{@const place = where(what.object)}<code
-                title={what.object}>{place.text}</code
-              >{#if place.outside}<span class="also" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code
-                >{what.object}</code
+                class="exact"
+                title={what.object}><Plain text={place.text} /></code
+              >{#if place.outside}<span class="also" data-testid="permission-outside">{" "}outside the project</span>{/if}{:else}<code class="exact"
+                ><Plain text={what.object} /></code
               >{/if}{/if}
         </p>
         {#if more > 0}<span class="more">{more} more waiting</span>{/if}
       </div>
       {#if asked.description}
-        <p class="description">{asked.description}</p>
+        <p class="description"><Plain text={asked.description} /></p>
       {/if}
       {#if more_ !== null}
         <button class="reveal" onclick={() => (shown = !shown)} aria-expanded={shown} data-testid="permission-details">
@@ -274,11 +276,11 @@
         </button>
         {#if shown}
           {#if "text" in more_}
-            <pre class="details">{more_.text}</pre>
+            <pre class="details exact"><Plain text={more_.text} /></pre>
           {:else}
             <div class="details diff">
               {#each more_.lines as line, at (at)}
-                <div class="line {line.kind}">{line.text}</div>
+                <div class="line {line.kind}"><Plain text={line.text} /></div>
               {/each}
             </div>
           {/if}
@@ -479,6 +481,13 @@
   .also {
     color: var(--accent);
     white-space: nowrap;
+  }
+
+  /* What the agent asks to run or touch reads left to right as one piece,
+     whatever its characters would make of the text around it. */
+  .exact {
+    unicode-bidi: isolate;
+    direction: ltr;
   }
 
   .description {

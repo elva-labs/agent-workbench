@@ -7,6 +7,7 @@ import {
   choiceMeans,
   inputPath,
   mcpName,
+  revealed,
   nowDoing,
   runningCall,
   segments,
@@ -339,5 +340,25 @@ describe("small words", () => {
     expect(tokens(12_400)).toBe("12k");
     expect(tokens(1_000_000)).toBe("1M");
     expect(tokens(1_250_000)).toBe("1.3M");
+  });
+});
+
+describe("text the agent chose, as it reads", () => {
+  it("shows every character that would change how it reads without being seen", () => {
+    expect(revealed("echo safe \u202efr- mr\u202c && ls")).toEqual([
+      { text: "echo safe ", unseen: false },
+      { text: "⟨U+202E⟩", unseen: true },
+      { text: "fr- mr", unseen: false },
+      { text: "⟨U+202C⟩", unseen: true },
+      { text: " && ls", unseen: false },
+    ]);
+    const all = "\u0000\u001b\u007f\u0085\u061c\u200b\u200d\u200f\u2028\u202a\u2066\u2069\u2060\ufeff";
+    expect(revealed(all).every((part) => part.unseen)).toBe(true);
+    expect(revealed(all)).toHaveLength(14);
+  });
+
+  it("leaves line breaks, tabs and ordinary text alone", () => {
+    expect(revealed("a\tb\nc ü 日本")).toEqual([{ text: "a\tb\nc ü 日本", unseen: false }]);
+    expect(revealed("")).toEqual([{ text: "", unseen: false }]);
   });
 });

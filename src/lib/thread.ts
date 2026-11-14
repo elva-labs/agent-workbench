@@ -417,3 +417,25 @@ export function tokens(count: number): string {
 export function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
+/** Characters that change how text reads without being seen: controls,
+    marks and overrides that reorder text, and characters of no width. */
+const UNSEEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+
+/** Text split so that every character that would change how it reads
+    without being seen stands as a visible marker of its own, such as
+    ⟨U+202E⟩. A line break and a tab stay as they are. */
+export function revealed(text: string): { text: string; unseen: boolean }[] {
+  const out: { text: string; unseen: boolean }[] = [];
+  let plain = "";
+  for (const char of text) {
+    if (UNSEEN.test(char)) {
+      if (plain !== "") out.push({ text: plain, unseen: false });
+      plain = "";
+      const code = char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0");
+      out.push({ text: `⟨U+${code}⟩`, unseen: true });
+    } else plain += char;
+  }
+  if (plain !== "" || out.length === 0) out.push({ text: plain, unseen: false });
+  return out;
+}

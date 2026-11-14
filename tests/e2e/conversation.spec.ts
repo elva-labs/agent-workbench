@@ -556,3 +556,13 @@ test("stays put when the user opens a fold at the foot", async ({ page }) => {
   await expect(page.getByTestId("step")).toHaveCount(12);
   await expect(line).toBeInViewport();
 });
+
+test("shows the characters that would disguise a command, and draws it left to right", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.ask("${H}", "Bash", { command: "echo safe \\u202efr- mr\\u202c && ls" });`);
+  const code = page.getByTestId("permission-dock").locator("code").first();
+  await expect(code).toHaveText("echo safe ⟨U+202E⟩fr- mr⟨U+202C⟩ && ls");
+  await expect(code.getByTestId("unseen-character")).toHaveCount(2);
+  expect(await code.evaluate((node) => getComputedStyle(node).unicodeBidi)).toBe("isolate");
+  expect(await code.evaluate((node) => getComputedStyle(node).direction)).toBe("ltr");
+});
