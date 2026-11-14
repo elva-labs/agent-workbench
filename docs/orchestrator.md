@@ -52,20 +52,23 @@ told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
 telling anything. `read` answers with the last lines on a session's screen,
-as you would see them, whether or not it has ever been on screen. `stop` stops a session and files it with the sessions to
-resume, behind the fold, rather than leaving a row of it under the project.
+as you would see them, whether or not it has ever been on screen. `stop`
+stops a session and files it with the sessions to resume, behind the fold,
+rather than leaving a row of it under the project.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
 A worktree it starts in is trusted where its project is, with either agent,
-so nothing asks on the way in, and has the project's hooks when the project
+so nothing asks on the way in. It has the project's hooks when the project
 has them on, so `sessions` and `wait` follow the agent's own word for what
-it is doing there as they do in the project; see [hooks](hooks.md). A start can also name a model, which goes to
-the agent on its command line and holds from the session's first turn, so
-an orchestrator chooses the model for a piece of work when it starts it
-rather than sending a model command afterwards. A model's name belongs to
-one agent, so a start that names a model names the agent too, and one
-that leaves the agent out is refused rather than given the project's last.
+it is doing there as they do in the project, except for a project that is
+a folder inside its repository; see [hooks](hooks.md). A start can also
+name a model, which goes to the agent on its command line and holds from
+the session's first turn, so an orchestrator chooses the model for a piece
+of work when it starts it rather than sending a model command afterwards.
+A model's name belongs to one agent, so a start that names a model names
+the agent too, and one that leaves the agent out is refused rather than
+given the project's last.
 A start can name an account as well, by the name it has in the settings,
 for work under a login other than the project's own; one that names an
 account there is not is refused with the names there are. A session

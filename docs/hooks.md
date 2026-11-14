@@ -43,13 +43,24 @@ A worktree the workbench makes for a session is a checkout of its own, and
 each agent reads its local settings from the directory it runs in, so the
 project's files do not reach a session there. When the project has the
 hooks, the worktree is given the same entries, and the same pointer to the
-tool server, before the agent starts. The exclude list covers its files as
-it does the project's, so the worktree's checkout shows nothing new, and a
-file the worktree's checkout tracks is left as it is: a project that
-commits its Codex config keeps it unchanged there, and Codex in that
-worktree has the hooks without the tools. When the project has no hooks,
-nothing is written. Turning the hooks on or off for the project later does
-the same in each of the worktrees the workbench made for it.
+tool server, when it is made and again whenever a session starts or
+resumes in it, so a worktree that lacks them gets them before its agent
+starts. Turning the hooks on or off for the project does the same in each
+of its worktrees at once. The lines the exclude list holds for the
+project's own files cover the worktree's too, and no line is added for
+them, so the worktree's checkout shows nothing new. A file the worktree's
+checkout tracks is left as it is: a project that commits its Codex config
+keeps it unchanged there, and Codex in that worktree has the hooks without
+the tools. When the project has no hooks, nothing is written. A worktree
+whose folder was deleted is left deleted, and one whose hooks cannot be
+written is made all the same; a session there is read off its output.
+
+A project that is a folder inside its repository gives its worktrees
+nothing. Each of them is a checkout of the whole repository, with the
+agent run at its top rather than in the project's folder, and files there
+could be kept out of git's view only by lines that every checkout of the
+repository reads, the main one included. A session in such a worktree is
+read off its output.
 
 ## What they give
 
@@ -185,4 +196,7 @@ Turning hooks off for a project removes the app's entries and nothing else,
 in the project and in its worktrees. A Codex hooks file the app created and
 emptied is deleted with them. Cleaning up a worktree takes its files with
 it, and the tool server's entry for it in each account's Claude Code state
-goes too. On a remote project the same is done on that machine.
+goes too. A worktree that went another way, removed by hand or deleted,
+loses that entry the next time the hooks are turned on or off. Each
+account's state file is read and written once for the project and all of
+its worktrees. On a remote project the same is done on that machine.
