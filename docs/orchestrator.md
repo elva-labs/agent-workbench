@@ -57,7 +57,10 @@ because the user interrupted it or the agent itself is gone, ends without
 telling anything. `read` answers with the last lines on a session's screen,
 as you would see them, whether or not it has ever been on screen; for an
 integrated session, which has no screen, with what its agent last said and
-did, a line for each step, and what it is doing or waiting for now. `stop`
+did, a line for each step, and what it is doing or waiting for now; each
+message in it is said to be the user's or the session's that sent it. A
+message one session sends another shows in that session's thread under the
+sender's name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
 their row, rather than leaving a row of it under the project.
 A session `start` starts runs in a terminal or integrated as the

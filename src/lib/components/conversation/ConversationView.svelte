@@ -3,6 +3,9 @@
   import { dirFor } from "$lib/accounts.svelte";
   import { linkFor, resume, trust } from "$lib/integrated.svelte";
   import { close, type Session } from "$lib/sessions.svelte";
+  import { senderOf } from "$lib/senders.svelte";
+  import { spoken } from "$lib/instructions";
+  import { startedFor } from "$lib/conductor.svelte";
   import { projectLabel } from "$lib/workspace.svelte";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
@@ -41,7 +44,8 @@
       agent dropped stays in the thread, where it happened; one that never
       reached it leaves the thread for the composer. */
   function putBack(message: Message) {
-    link.draft = link.draft.trim() === "" ? message.text : `${message.text}\n${link.draft}`;
+    const text = spoken(message.text).text;
+    link.draft = link.draft.trim() === "" ? text : `${text}\n${link.draft}`;
     link.images = [...message.images, ...link.images];
     if (!message.placed) conversation.forget(message.id);
     queueMicrotask(() =>
@@ -162,7 +166,14 @@
       </div>
     </div>
   {:else}
-    <Thread {conversation} root={folder} {intro} agent={name} onPutBack={putBack} />
+    <Thread
+      {conversation}
+      root={folder}
+      {intro}
+      agent={name}
+      onPutBack={putBack}
+      sender={(message) => senderOf(session, message, startedFor(session.key))}
+    />
     <div class="foot">
       {#if over}
         <div class="ended" data-testid="session-ended">

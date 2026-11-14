@@ -2,6 +2,10 @@
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
   import { clock, nowDoing, speaker, startedIds, tokens } from "$lib/thread";
+  import { spoken } from "$lib/instructions";
+  import type { Sender } from "$lib/senders.svelte";
+  import { focusPane } from "$lib/layout.svelte";
+  import { goTo } from "$lib/workspace.svelte";
   import Icon from "./Icon.svelte";
   import Parts from "./Parts.svelte";
   import Plain from "./Plain.svelte";
@@ -9,9 +13,12 @@
 
   /**
    * The thread: who said what, in the order it happened. The user's words
-   * sit to the right in a tinted bubble under "You"; the agent's run on
-   * the left under its name, down a quiet line at the side. Messages that
-   * wait for the agent stand under the thread until a turn takes them.
+   * sit to the right in a tinted bubble under "You", and what another
+   * session sent sits there too, in a plain bubble under that session's
+   * name; the agent's run on the left under its name, down a quiet line at
+   * the side. Messages that wait for the agent stand under the thread until
+   * a turn takes them. The workbench's own sentence after a started
+   * session's prompt is never shown as part of it, only behind a fold.
    *
    * The thread stays at its foot while it is there and new content comes,
    * and stays where the user scrolled to otherwise, with a way back down.
@@ -26,9 +33,18 @@
     agent: string;
     /** A message that failed to send is taken back into the composer. */
     onPutBack?: (message: Message) => void;
+    /** The session that sent a message, or null for the user. */
+    sender?: (message: Message) => Sender | null;
   }
 
-  let { conversation, root, intro, agent, onPutBack }: Props = $props();
+  let { conversation, root, intro, agent, onPutBack, sender }: Props = $props();
+
+  /** The messages whose workbench sentence stands open. */
+  let unfolded = $state<Record<string, boolean>>({});
+
+  function goToSender(from: Sender) {
+    if (from.key !== null && goTo(from.key)) focusPane("agent");
+  }
 
   let scroller = $state<HTMLDivElement | null>(null);
   /** Whether the thread is at its foot, and so follows what comes. */
@@ -314,15 +330,26 @@
 </div>
 
 {#snippet userMessage(said: Message)}
+  {@const from = sender?.(said) ?? null}
+  {@const words = spoken(said.text)}
   <article
     class="msg you"
+    class:from={from !== null}
     class:waiting={!said.placed}
     class:dropped={said.state === "dropped" || said.state === "failed"}
     data-testid="user-message"
     data-state={said.state}
+    data-from={from?.id}
   >
     <header class="who">
-      <b>You</b>
+      {#if from === null}
+        <b>You</b>
+      {:else}
+        <span>From</span><span class="sender" data-testid="message-sender"><Plain text={from.name} /></span>
+        {#if from.key !== null}<button class="link go" onclick={() => goToSender(from)} data-testid="message-sender-go"
+            >Go to it</button
+          >{/if}
+      {/if}
       {#if said.at !== null}<time class="num">{clock(said.at)}</time>{/if}
     </header>
     <div class="bubble">
@@ -333,8 +360,17 @@
           {/each}
         </div>
       {/if}
-      {#if said.text !== ""}<p>{said.text}</p>{/if}
+      {#if words.text !== ""}<p>{words.text}</p>{/if}
     </div>
+    {#if words.instructions !== null}
+      <button
+        class="link instructions"
+        onclick={() => (unfolded[said.id] = !unfolded[said.id])}
+        aria-expanded={unfolded[said.id] === true}
+        data-testid="workbench-instructions">Instructions from the workbench</button
+      >
+      {#if unfolded[said.id]}<p class="state" data-testid="workbench-instructions-text">{words.instructions}</p>{/if}
+    {/if}
     {#if said.state === "queued"}
       <p class="state" data-testid="message-waiting">Waiting for the agent to finish what it is doing</p>
     {:else if said.state === "sending"}
@@ -469,6 +505,34 @@
     max-height: 120px;
     border-radius: var(--radius-sm);
     object-fit: cover;
+  }
+
+  /* Another session's words: a plain bubble, so they never read as the
+     user's own. */
+  .you.from .bubble {
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--rule);
+  }
+
+  .who .sender {
+    font-weight: 600;
+    color: var(--ink);
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .who .go {
+    margin-left: 0;
+  }
+
+  .instructions {
+    margin: -2px 0 0;
+    font-size: var(--conv-fine);
+    color: var(--ink-2);
+  }
+
+  .instructions:hover {
+    color: var(--ink);
   }
 
   .you.waiting .bubble {

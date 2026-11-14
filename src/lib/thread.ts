@@ -1,3 +1,4 @@
+import { spoken } from "$lib/instructions";
 import type { IntegratedEventBody, IntegratedToolKind, PermissionChoice, PermissionOffer } from "$lib/core";
 import type { Conversation, Part, PlanPart, QuestionPart, TextPart, ToolCall } from "$lib/conversation.svelte";
 
@@ -601,7 +602,12 @@ export function revealed(text: string): { text: string; unseen: boolean }[] {
     read: its last run with the messages it answered, a line per step, and
     what it is doing or waiting for now. At most `lines` lines, the latest
     kept. */
-export function lastRun(conversation: Conversation, lines: number): string {
+export function lastRun(
+  conversation: Conversation,
+  lines: number,
+  /** The name of the session that sent a message, or null for the user. */
+  who: (message: { id: string; text: string }) => string | null = () => null,
+): string {
   const out: string[] = [];
   const entries = conversation.entries;
   let at = entries.length - 1;
@@ -612,7 +618,11 @@ export function lastRun(conversation: Conversation, lines: number): string {
     const entry = entries[index];
     if (entry.kind === "user") {
       const message = conversation.messages[entry.message];
-      if (message !== undefined) out.push(`The user said: ${message.text}`);
+      if (message !== undefined) {
+        const from = who(message);
+        const said = spoken(message.text).text;
+        out.push(from === null ? `The user said: ${said}` : `${capital(from)} said: ${said}`);
+      }
     } else if (entry.kind === "agent") {
       for (const part of entry.parts) out.push(...partLines(part));
       const turn = conversation.turns[entry.turn];
@@ -637,7 +647,7 @@ export function lastRun(conversation: Conversation, lines: number): string {
   }
   for (const message of conversation.waiting)
     if (message.state === "queued" || message.state === "sending")
-      out.push(`A message waits for the turn: ${message.text}`);
+      out.push(`A message waits for the turn: ${spoken(message.text).text}`);
   return out.slice(-lines).join("\n");
 }
 
@@ -676,4 +686,8 @@ function partLines(part: Part): string[] {
       return [`- ${title}${how}`];
     }
   }
+}
+
+function capital(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

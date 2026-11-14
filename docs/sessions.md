@@ -321,8 +321,14 @@ same way.
 
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,
-asking the user or waiting for a permission. Under it is the thread. The
-user's words sit to the right in a tinted bubble under You; the agent's run
+asking the user or waiting for a permission. A session another session
+started is named by the name its start gave, or by the first line of its
+prompt. Under it is the thread. The user's words sit to the right in a
+tinted bubble under You. What another session sent, the prompt it started
+the session with or a message it sent later, sits there in a plain bubble
+under that session's name, with a way to go to it; the sentence the
+workbench adds to a started session's prompt, asking it to call notify, is
+never shown as part of it, only behind a fold of its own. The agent's run
 on the left under the model it ran on, or the agent's own name where that is
 not known, with the time, down a quiet line at the side. What the session
 shows is chosen by the kind of each call and the shape of what it carries,

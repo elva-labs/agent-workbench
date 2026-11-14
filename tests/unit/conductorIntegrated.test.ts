@@ -8,6 +8,8 @@ import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
+import { resetSenders, senderOf } from "$lib/senders.svelte";
+import { OUTCOME_ASK } from "$lib/instructions";
 
 // The orchestrator's tools with a session that runs integrated: it is
 // started, sent to, read, waited on and stopped as a terminal one is, with
@@ -43,6 +45,8 @@ beforeEach(async () => {
   resetWorkspace();
   resetSessionKinds();
   resetAgent();
+  localStorage.clear();
+  resetSenders();
   applyDetect(
     { id: "claude-code", path: "/usr/local/bin/claude", caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
     true,
@@ -91,7 +95,18 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(answerTo(request)?.error).toBeNull();
     expect(answerTo(request)?.content).toContain(`Started session ${byKey(row.key)!.id}`);
     const sent = fake.calls.find((made) => made.method === "send") as { text: string } | undefined;
-    expect(sent?.text.startsWith("Scan the history")).toBe(true);
+    expect(sent?.text).toBe(`Scan the history ${OUTCOME_ASK}`);
+    // Named by the prompt alone, and the prompt read as the starter's, with
+    // the workbench's sentence left out.
+    const session = byKey(row.key)!;
+    expect(session.title).toBe("Scan the history");
+    const message = Object.values(conversationOf(row.key).messages)[0];
+    expect(senderOf(session, message, A)?.name).toBe("an agent in one");
+    fake.turn(handleOf(row.key)!, "On it.");
+    const read = call("read", { session: session.id });
+    await handle(read);
+    expect(answerTo(read)?.content).toContain("An agent in one said: Scan the history");
+    expect(answerTo(read)?.content).not.toContain("notify");
   });
 
   it("sends a message through the session's own send, whole, and says when it waits for the turn", async () => {
@@ -123,7 +138,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     const read = call("read", { session: id });
     await handle(read);
     expect(answerTo(read)?.content).toBe(
-      `Session ${id}, what its agent last said and did:\nThe user said: Fix the scan\n- Ran npm test\nFixed.\nThe tests pass.`,
+      `Session ${id}, what its agent last said and did:\nAn agent in one said: Fix the scan\n- Ran npm test\nFixed.\nThe tests pass.`,
     );
     fake.startTurn(core);
     fake.ask(core, "Bash", { command: "rm -rf build" });

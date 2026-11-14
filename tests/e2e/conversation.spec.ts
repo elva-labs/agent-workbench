@@ -1158,7 +1158,7 @@ test.describe("in the sessions pane, an integrated session", () => {
     await expect(started).toContainText("demo");
     await expect(page.getByTestId("orchestrator-summary")).toHaveText("1 running");
     await started.click();
-    await expect(page.locator(".session.kid")).toHaveClass(/on/);
+    await expect(page.locator(".session.kid")).toHaveClass(/(^|\s)on(\s|$)/);
     await expect(page.locator("[data-testid='conversation']:visible")).toHaveCount(1);
     await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
   });
@@ -1293,4 +1293,49 @@ test.describe("the keyboard, when the dock goes by itself", () => {
     await page.getByTestId("work-line").last().click();
     await expect(page.getByTestId("step-status").last()).toHaveText("permission withdrawn");
   });
+});
+
+test("shows a message another session sent under that session, and never the workbench's sentence as its words", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("sessions-menu").click();
+  await page.getByTestId("menu-orchestrator").click();
+  await expect(page.getByTestId("conversation")).toBeVisible();
+  const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
+    page.evaluate(
+      ({ project, id, tool, args }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id,
+          tool,
+          arguments: args,
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT, id, tool, args },
+    );
+  await conduct("o-1", "start", { project: PROJECT, prompt: "Count the files" });
+  await page.getByTestId("conduct-allow").click();
+  const started = page.getByTestId("started-session");
+  await expect(started).toContainText("Count the files");
+  await expect(started).not.toContainText("notify");
+  await conduct("o-2", "send", { session: "integrated-session-2", text: "Now count the tests" });
+  await started.click();
+  const view = page.locator("[data-testid='conversation']:visible");
+  await expect(page.locator(`${AGENT} > header`)).toContainText("Count the files");
+  await expect(page.locator(`${AGENT} > header`)).not.toContainText("notify");
+  const messages = view.getByTestId("user-message");
+  await expect(messages).toHaveCount(2);
+  for (const message of await messages.all()) {
+    await expect(message).toHaveAttribute("data-from", "integrated-session-1");
+    await expect(message.locator(".who")).not.toContainText("You");
+  }
+  await expect(messages.first().locator(".bubble")).toHaveText("Count the files");
+  await expect(messages.last().locator(".bubble")).toHaveText("Now count the tests");
+  // The workbench's sentence is behind a fold of its own.
+  await messages.first().getByTestId("workbench-instructions").click();
+  await expect(messages.first().getByTestId("workbench-instructions-text")).toContainText("call the notify tool");
+  // And the sender is a click away.
+  await messages.first().getByTestId("message-sender-go").click();
+  await expect(page.locator(".session.kid")).not.toHaveClass(/(^|\s)on(\s|$)/);
+  await expect(page.locator("[data-testid='conversation']:visible").getByTestId("user-message")).toHaveCount(0);
 });

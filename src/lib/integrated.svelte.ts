@@ -1,4 +1,6 @@
 import { dirFor } from "$lib/accounts.svelte";
+import { spoken } from "$lib/instructions";
+import { sentBy } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
 import {
   core,
@@ -402,7 +404,14 @@ export function reattach(key: string, handle: string): Promise<boolean> {
 
 /** Sends the user's message under an id of the window's own. A row with no
     name yet takes the first line of its first message. */
-export function send(key: string, text: string, images: IntegratedImage[] = []): string | null {
+/** Sends a message to the agent: the user's, or with `from` another
+    session's, which the thread then shows under that session's name. */
+export function send(
+  key: string,
+  text: string,
+  images: IntegratedImage[] = [],
+  from: string | null = null,
+): string | null {
   const link = links.get(key);
   const session = byKey(key);
   if (link === undefined || link.handle === null || session === null) return null;
@@ -413,8 +422,11 @@ export function send(key: string, text: string, images: IntegratedImage[] = []):
   // that started it.
   session.engaged = true;
   session.note = null;
+  if (from !== null && session.id !== null) sentBy(session.id, id, text, from);
+  // Named by its first line, without the workbench's sentence after a
+  // started session's prompt.
   if (session.title === null) {
-    const line = text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
+    const line = spoken(text).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
     if (line !== undefined) named(key, line.length > 60 ? `${line.slice(0, 59)}…` : line);
   }
   core()

@@ -45,6 +45,8 @@ import type { AgentId } from "$lib/core";
 import { screen, takesPaste } from "$lib/screens";
 import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
 import { lastRun } from "$lib/thread";
+import { OUTCOME_ASK } from "$lib/instructions";
+import { senderOf } from "$lib/senders.svelte";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -62,10 +64,7 @@ export const START_WAIT = 30_000;
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
 export const LINES_MAX = 200;
-/** The sentence every started session gets after the caller's own line, so
-    what became of it comes back on its row instead of being watched for. */
-export const OUTCOME_ASK =
-  "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
+export { OUTCOME_ASK };
 
 /** How long after a line is typed its Enter follows. An agent takes a
     chunk that arrives at once for a paste, and an Enter inside a paste is
@@ -759,7 +758,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
         `Session ${id} is an integrated session and is ${stateOf(session)}, so it takes no message now. Start it again with start, naming session ${id}, then send.`,
       );
     const working = session.working;
-    if (sendIntegrated(session.key, line) === null)
+    if (sendIntegrated(session.key, line, [], callerOf(request)) === null)
       return refused(`Session ${id} is an integrated session and took no message: there was nothing to send.`);
     return said(
       working
@@ -911,7 +910,11 @@ function readSession(request: ConductRequest): Answered {
   // An integrated session has no screen: what its agent last said and did
   // is read from its conversation instead.
   if (session.kind === "integrated") {
-    const run = lastRun(conversationOf(session.key), lines);
+    const run = lastRun(
+      conversationOf(session.key),
+      lines,
+      (message) => senderOf(session, message, startedFor(session.key))?.name ?? null,
+    );
     if (run === "")
       return said(`Session ${id} is an integrated session and has said nothing yet. ${lastLine(session)}`);
     return said(`Session ${id}, what its agent last said and did:\n${run}`);
