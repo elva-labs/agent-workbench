@@ -141,7 +141,9 @@ const PREFERRED_KEY = "workbench.agents";
 const WORKFLOWS_KEY = "workbench.workflows";
 
 /** What is kept of the workflow a session follows: the workflow as its
-    last run started on it, as it was written, since it may no longer read;
+    last run started on it, as it was written, since it may no longer read,
+    or null for none by the user's word, given when the one it followed was
+    lost;
     the instructions its conversation was first given, which an agent that
     records them keeps until told otherwise; and the project, so what is
     kept goes once the session is gone from it. */
@@ -625,7 +627,7 @@ export type Resumed =
  */
 export function resumedWorkflow(id: string): Resumed {
   const kept = sessions.workflows[id];
-  if (kept === undefined) return { workflow: null, gone: false };
+  if (kept === undefined || kept.workflow === null) return { workflow: null, gone: false };
   const raw = kept.workflow;
   const name =
     typeof raw === "object" && raw !== null && typeof (raw as { name?: unknown }).name === "string"
@@ -1023,11 +1025,20 @@ function takeUp(session: Session, id: string) {
 }
 
 /** Resumes a session whose workflow was lost, with no workflow, in place
-    of the row that asked. */
+    of the row that asked. The user's word is kept, so the session is not
+    asked about again, along with what its conversation was first told, so
+    it goes on being told afresh. */
 export function resumeWithout(key: string): Session | null {
   const session = byKey(key);
   if (session === null || session.workflowLost === null || session.id === null) return null;
   const { project, id, agent, startIn, model, account } = session;
+  const before = sessions.workflows[id];
+  sessions.workflows[id] = {
+    workflow: null,
+    told: before === undefined ? null : firstTold(before),
+    project,
+  };
+  saveKept();
   close(key);
   return create(project, id, agent, startIn, null, model, account, null);
 }

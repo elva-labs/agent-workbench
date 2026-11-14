@@ -2000,6 +2000,20 @@ describe("following a workflow", () => {
     // Its conversation was first given the workflow's instructions, which
     // the agent would go on giving itself: it is told to let go of them.
     expect(spawned.at(-1)).toMatchObject({ afresh: true });
+    // The user's word is kept: resumed again, as after the window reloads,
+    // it follows none without asking, and is still told afresh.
+    expect(JSON.parse(localStorage.getItem("workbench.workflows")!).old).toEqual({
+      workflow: null,
+      told: "1. Direct the work.",
+      project: P,
+    });
+    close(without.key);
+    const again = create(P, "old", "claude-code");
+    expect(await launch(again.key, 80, 24, () => {})).toBe(true);
+    expect(byKey(again.key)?.workflowLost).toBeNull();
+    expect(byKey(again.key)?.workflow).toBeNull();
+    expect(spawned.at(-1)).toMatchObject({ session: "old", afresh: true });
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
     // A session never given a workflow is resumed as it always was.
     const plain = create(P, "never", "claude-code");
     await launch(plain.key, 80, 24, () => {});
