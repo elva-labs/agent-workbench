@@ -13,7 +13,24 @@
   }
 </script>
 
-{#if ask !== null}
+{#if ask !== null && ask.round !== null}
+  <!-- A round of review past what the workflow gives a piece: the user's
+       yes lets this one through. -->
+  <div class="ask" role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
+    <p class="title">{ask.caller} wants another round of {ask.round.step}</p>
+    <p class="where" data-testid="conduct-round">
+      The work of session {ask.round.work} has had {ask.round.done} rounds, and the workflow sends a piece back {ask.round
+        .limit === 1
+        ? "once"
+        : `${ask.round.limit} times at most`}.
+    </p>
+    {#if ask.prompt !== ""}<p class="prompt">{ask.prompt}</p>{/if}
+    <div class="actions">
+      <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow another round</button>
+      <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">No</button>
+    </div>
+  </div>
+{:else if ask !== null}
   <div class="ask" role="alertdialog" aria-label="Start a session" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants to start a session</p>
     <p class="where">

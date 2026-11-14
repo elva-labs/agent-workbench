@@ -111,6 +111,19 @@ export interface Ask {
   /** The prompt's first line. */
   prompt: string;
   worktree: boolean;
+  /** For a round of a review past the most the workflow gives a piece: the
+      review, the work it checks and how many rounds it has had. The user's
+      yes lets this one round through. */
+  round: Beyond | null;
+}
+
+/** A round of a review past the workflow's limit, which only the user can
+    allow. */
+export interface Beyond {
+  step: string;
+  work: string;
+  done: number;
+  limit: number;
 }
 
 /** What the user answered: allowed from now on, allowed this once, or no. */
@@ -695,6 +708,10 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // now, before anything is awaited, and given back if it does not happen.
   const flow = callerFlow(request);
   if ("refusal" in flow) return refused(flow.refusal);
+  if (flow.workflow !== null && mayChangeModel(prompt))
+    return refused(
+      "A session you start for a step of your workflow runs on the model the step allows, so its prompt is words, not a command: the workbench starts none with a prompt that begins with a slash.",
+    );
   const fit =
     flow.workflow === null ? null : fitStart(request, flow.workflow, caller);
   if (fit !== null && "refusal" in fit) return refused(fit.refusal);
@@ -719,8 +736,13 @@ async function startFitted(
   fit: Fit | null,
 ): Promise<Answered> {
   const wants = flag(request, "worktree");
-  if ((await askUser(request, project, prompt, wants)) === "no")
-    return refused("The user did not allow the session to be started.");
+  const beyond = fit?.beyond ?? null;
+  if ((await askUser(request, project, prompt, wants, beyond)) === "no")
+    return refused(
+      beyond === null
+        ? "The user did not allow the session to be started."
+        : notAllowed(beyond),
+    );
 
   let startIn: string | null = null;
   if (wants) {
@@ -800,6 +822,8 @@ interface Fit {
   place: Place;
   agent: AgentId | null;
   model: string | null;
+  /** For a round past the review's limit, what the user is asked to allow. */
+  beyond: Beyond | null;
   /** The row now holds the place in the step the start took. */
   hold: () => void;
   /** Gives back what the start took, unless it started. */
@@ -875,6 +899,7 @@ function fitStart(
     return {
       ...runs,
       place: { step: step.name, kind: "work", piece, round: null, work: null },
+      beyond: null,
       hold: free,
       release: free,
     };
@@ -891,7 +916,6 @@ function fitStart(
     };
   const piece = earlier.piece ?? from;
   const done = roundsOf(caller, step.name, piece);
-  if (done > step.limit) return { refusal: pastTheLimit(step, from, done) };
   countRound(caller, step.name, piece);
   return {
     ...runs,
@@ -902,6 +926,7 @@ function fitStart(
       round: done + 1,
       work: from,
     },
+    beyond: pastLimit(step, from, done),
     hold: () => {},
     release: (started) => {
       if (!started) uncountRound(caller, step.name, piece);
@@ -909,10 +934,18 @@ function fitStart(
   };
 }
 
-/** What a caller is told when a piece has had every round a review gives. */
-function pastTheLimit(step: ReviewStep, work: string, done: number): string {
-  const times = step.limit === 1 ? "once" : `${step.limit} times at most`;
-  return `The work of session ${work} has had ${done} rounds of ${quoted(step.name)}, and the workflow sends a piece back ${times}. Start no more rounds of it: stop and ask the user how to go on.`;
+/** A round past the most a review gives a piece: one more than the first
+    and a round for every time it may send the work back. Null within it. */
+function pastLimit(step: ReviewStep, work: string, done: number): Beyond | null {
+  return done > step.limit
+    ? { step: step.name, work, done, limit: step.limit }
+    : null;
+}
+
+/** What a caller is told when the user did not allow a round past the
+    limit. */
+function notAllowed(beyond: Beyond): string {
+  return `The work of session ${beyond.work} has had ${beyond.done} rounds of ${quoted(beyond.step)}, as many as the workflow gives a piece, and the user did not allow another. Ask the user how to go on.`;
 }
 
 /** The agent and model a step runs a start on: the first the step allows
@@ -1044,7 +1077,10 @@ async function resumeSession(
   let goesOn = at;
   let release: (started: boolean) => void = () => {};
   let hold = () => {};
+  let beyond: Beyond | null = null;
   if (step !== undefined && at !== null) {
+    if (prompt !== null && mayChangeModel(prompt))
+      return refused(keepsItsModel(id, at));
     const runs = modelFor(agent, model, step);
     if ("refusal" in runs) return refused(runs.refusal);
     model = runs.model;
@@ -1057,8 +1093,7 @@ async function resumeSession(
     } else if (prompt !== null && at.piece !== null) {
       const piece = at.piece;
       const done = roundsOf(caller, step.name, piece);
-      if (done > step.limit)
-        return refused(pastTheLimit(step, at.work ?? piece, done));
+      beyond = pastLimit(step, at.work ?? piece, done);
       countRound(caller, step.name, piece);
       goesOn = { ...at, round: done + 1 };
       release = (started) => {
@@ -1069,6 +1104,13 @@ async function resumeSession(
 
   let started = false;
   try {
+    // Resuming is not asked about, the consent having been given when the
+    // session was started, except for a round past the review's limit.
+    if (
+      beyond !== null &&
+      (await askUser(request, project, prompt ?? "", false, beyond)) === "no"
+    )
+      return refused(notAllowed(beyond));
     if (worktree !== null && !(await treeStands(project, worktree)))
       return refused(
         `Session ${id} ran in the worktree ${worktree}, which is gone. Start a new session for the work instead.`,
@@ -1158,24 +1200,28 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   const typed = oneLine(line);
   const at = placeOf(session.key);
   // A session started for a step stays on the model the step gave it.
-  if (at !== null && changesModel(typed))
-    return refused(
-      `Session ${id} runs ${placeText(at)} of your workflow, on a model the step allows, and stays on it: the workbench does not send it a command that changes its model. Start the step's work on another model it allows instead.`,
-    );
+  if (at !== null && mayChangeModel(typed))
+    return refused(keepsItsModel(id, at));
+  const flow = callerFlow(request);
+  if ("refusal" in flow) return refused(flow.refusal);
   // A line to a review that has finished its round asks it for another
   // look, which is another round of the piece.
   let round: Place | null = null;
   if (at !== null && at.kind === "review" && at.piece !== null && finished(session)) {
     const caller = callerOf(request);
-    const step = callerFlow(request);
-    const review =
-      "workflow" in step
-        ? step.workflow?.steps.find((candidate) => candidate.name === at.step)
-        : undefined;
+    const review = flow.workflow?.steps.find(
+      (candidate) => candidate.name === at.step,
+    );
     if (review?.kind === "review") {
       const done = roundsOf(caller, review.name, at.piece);
-      if (done > review.limit)
-        return refused(pastTheLimit(review, at.work ?? at.piece, done));
+      const beyond = pastLimit(review, at.work ?? at.piece, done);
+      if (
+        beyond !== null &&
+        (await askUser(request, session.project, typed, false, beyond)) === "no"
+      )
+        return refused(notAllowed(beyond));
+      if (session.status !== "running" || session.ptyId === null)
+        return refused(`Session ${id} is not running.`);
       countRound(caller, review.name, at.piece);
       round = { ...at, round: done + 1 };
       conductor.places[session.key] = round;
@@ -1185,7 +1231,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
       if (mark !== undefined) mark.worked = false;
     }
   }
-  await typeLine(session.ptyId, typed);
+  await typeLine(session.ptyId!, typed);
   return said(
     round === null
       ? `Sent to session ${id}. Call wait to hear what it does next.`
@@ -1193,10 +1239,19 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   );
 }
 
-/** Whether a line is a command that changes the model an agent runs on:
-    /model, or /fast, which moves Claude Code to a faster model. */
-export function changesModel(line: string): boolean {
-  return /^\/(model|fast)\b/i.test(line.trim());
+/** Whether a line may change the model an agent runs on. Any command an
+    agent takes after a slash might, /model, /fast and /config among them,
+    and either agent completes a command from the start of its name, so
+    every one may except /compact, which only shortens the conversation. */
+export function mayChangeModel(line: string): boolean {
+  const typed = line.trim();
+  return typed.startsWith("/") && !/^\/compact(\s|$)/i.test(typed);
+}
+
+/** What a caller is told when a line or a prompt for a session placed in
+    its workflow could change the session's model. */
+function keepsItsModel(id: string, at: Place): string {
+  return `Session ${id} runs ${placeText(at)} of your workflow, on a model the step allows, and stays on it: the workbench gives it no command but /compact. Say what you want in words instead.`;
 }
 
 /** Whether a session has worked and come to rest since it was last sent a
@@ -1436,9 +1491,11 @@ function askUser(
   project: string,
   prompt: string,
   worktree: boolean,
+  round: Beyond | null = null,
 ): Promise<Choice> {
   const caller = callerOf(request);
-  if (allowed.has(`${caller}\n${project}`)) return Promise.resolve("allow");
+  if (round === null && allowed.has(`${caller}\n${project}`))
+    return Promise.resolve("allow");
   const session = request.session === null ? null : byId(request.session);
   const ask: Ask = {
     request,
@@ -1446,6 +1503,7 @@ function askUser(
     project,
     prompt: prompt.split("\n")[0],
     worktree,
+    round,
   };
   return new Promise<Choice>((settle) => {
     queue.push({ ask, settle });
@@ -1466,7 +1524,8 @@ function answerAsk(choice: Choice) {
   const settle = pending;
   conductor.asking = null;
   pending = null;
-  if (ask !== null && choice === "allow")
+  // A round past the limit is allowed once, whatever the button.
+  if (ask !== null && choice === "allow" && ask.round === null)
     allowed.add(`${callerOf(ask.request)}\n${ask.project}`);
   settle?.(choice);
   nextAsk();

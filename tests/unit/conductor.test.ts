@@ -1522,9 +1522,17 @@ describe("starting in a workflow's shape", () => {
       flushSync();
     }
     expect(roundsOf("orch", "Review", "w1")).toBe(3);
-    expect(await refusedWith({ step: "Review", work: "w1" })).toBe(
-      'The work of session w1 has had 3 rounds of "Review", and the workflow sends a piece back 2 times at most. Start no more rounds of it: stop and ask the user how to go on.',
+    // Another round is the user's to allow, however the project was
+    // allowed; refused, the caller is told to ask the user.
+    const asked = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round).toEqual({ step: "Review", work: "w1", done: 3, limit: 2 });
+    refuse();
+    await asked;
+    expect(last().error).toBe(
+      'The work of session w1 has had 3 rounds of "Review", as many as the workflow gives a piece, and the user did not allow another. Ask the user how to go on.',
     );
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
 
     // Another piece has rounds of its own, even with the first one's work
     // session stopped.
@@ -1535,7 +1543,41 @@ describe("starting in a workflow's shape", () => {
     await begun({ step: "Work" }, "w2");
     const other = await begun({ step: "Review", work: "w2" }, "r4");
     expect(placeOf(other.key)?.round).toBe(1);
-    expect(await refusedWith({ step: "Review", work: "w1" })).toContain("has had 3 rounds");
+    const again = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(3);
+    refuse();
+    await again;
+  });
+
+  it("lets one round past the limit through when the user allows it, and asks again for the next", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work" }, "w1");
+    for (const round of [1, 2]) {
+      await begun({ step: "Review", work: "w1" }, `r${round}`);
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    const granted = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(2);
+    once();
+    await settle();
+    const row = forProject(B).at(-1)!;
+    started(row.key, "pty-r3", "r3");
+    flushSync();
+    await granted;
+    expect(last().content).toContain('for step "Review" round 3');
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
+    ended({ id: "pty-r3", code: 0, clean: true });
+    flushSync();
+    // The next one is asked about again.
+    const next = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(3);
+    refuse();
+    await next;
+    expect(last().error).toContain("the user did not allow another");
   });
 
   it("counts the rounds of a piece carried on by a later work step under the piece", async () => {
@@ -1661,7 +1703,12 @@ describe("starting in a workflow's shape", () => {
     expect(roundsOf("orch", "Review", "w1")).toBe(2);
     ended({ id: "pty-r1c", code: 0, clean: true });
     flushSync();
-    expect(await refusedWith({ session: "r1", prompt: "And once more" })).toContain("has had 2 rounds");
+    const asked = handle(from({ session: "r1", prompt: "And once more" }));
+    await settle();
+    expect(conductor.asking?.round).toEqual({ step: "Review", work: "w1", done: 2, limit: 1 });
+    refuse();
+    await asked;
+    expect(last().error).toContain("has had 2 rounds");
     expect(roundsOf("orch", "Review", "w1")).toBe(2);
   });
 
@@ -1684,21 +1731,32 @@ describe("starting in a workflow's shape", () => {
     await sent("r1", "The second file too");
     expect(roundsOf("orch", "Review", "w1")).toBe(2);
     reviewed(review);
-    const refusal = await sent("r1", "Once more");
-    expect(refusal.error).toContain("has had 2 rounds");
+    const answering = handle(call("send", { session: "r1", text: "Once more" }, { session: "orch" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(2);
+    refuse();
+    await answering;
+    expect(last().error).toContain("has had 2 rounds");
     expect(written.filter(([, data]) => data === "Once more")).toHaveLength(0);
   });
 
   it("refuses a line that changes a started session's model, and not one to a session with no step", async () => {
     orchestrating();
     await begun({ step: "Work" }, "w1");
-    for (const line of ["/model opus", "  /MODEL", "/fast"]) {
+    for (const line of ["/model opus", "  /MODEL", "/fast", "/mod", "/config"]) {
       const answer = await sent("w1", line);
       expect(answer.error).toContain("stays on it");
     }
-    expect(written.some(([, data]) => data.includes("/model"))).toBe(false);
+    expect(written.some(([, data]) => data.startsWith("/"))).toBe(false);
     expect((await sent("w1", "/compact")).error).toBeNull();
     expect((await sent("w1", "Use the model in src/model.ts")).error).toBeNull();
+    // Nor does a start or a resume for a step begin with a command.
+    expect(await refusedWith({ step: "Work", prompt: "/model opus" })).toContain(
+      "begins with a slash",
+    );
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    expect(await refusedWith({ session: "w1", prompt: "/model opus" })).toContain("stays on it");
   });
 
   it("takes a step's room and a review's round before asking, and gives them back when refused", async () => {

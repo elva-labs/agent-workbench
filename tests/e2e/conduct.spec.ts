@@ -404,3 +404,54 @@ test.describe("a session that follows a workflow", () => {
     expect((await answerTo(page, "c-3"))!.content).toContain('step "Work"');
   });
 });
+
+test.describe("a round of review past the workflow's limit", () => {
+  test("is put to the user, and goes ahead only when they allow it", async ({ page }) => {
+    const once = structuredClone(WITH_WORKFLOW);
+    const review = once.workflows.list[0].steps[1] as { limit: number };
+    review.limit = 1;
+    await installFakeCore(page, { settings: once });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+
+    const start = async (id: string, args: Record<string, unknown>) => {
+      await push(page, {
+        id,
+        tool: "start",
+        arguments: { project: PROJECT, prompt: "Go", ...args },
+        session: "session-1",
+      });
+    };
+    await start("c-1", { step: "Work" });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
+    // Two rounds: the first, and the one the work may be sent back for.
+    for (const id of ["c-2", "c-3"]) {
+      await start(id, { step: "Review", work: "session-2" });
+      await expect.poll(() => answerTo(page, id)).not.toBeNull();
+      expect((await answerTo(page, id))!.error).toBeNull();
+    }
+
+    await start("c-4", { step: "Review", work: "session-2", prompt: "Look once more" });
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask).toContainText("wants another round of Review");
+    await expect(page.getByTestId("conduct-round")).toHaveText(
+      "The work of session session-2 has had 2 rounds, and the workflow sends a piece back once.",
+    );
+    await expect(ask).toContainText("Look once more");
+    await expect(page.getByTestId("conduct-allow")).toHaveCount(0);
+    await page.getByTestId("conduct-allow-round").click();
+    await expect(ask).toHaveCount(0);
+    await expect.poll(() => answerTo(page, "c-4")).not.toBeNull();
+    expect((await answerTo(page, "c-4"))!.content).toContain('for step "Review" round 3');
+
+    await start("c-5", { step: "Review", work: "session-2" });
+    await expect(ask).toBeVisible();
+    await page.getByTestId("conduct-no").click();
+    await expect.poll(() => answerTo(page, "c-5")).not.toBeNull();
+    expect((await answerTo(page, "c-5"))!.error).toContain("the user did not allow another");
+  });
+});
