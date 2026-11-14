@@ -4,6 +4,7 @@
   import type { Action } from "$lib/keymap";
   import { isMac } from "$lib/platform";
   import {
+    ALONE,
     chipOf,
     closePalette,
     palette,
@@ -14,6 +15,7 @@
     startingId,
     stepBack,
     stepsLeft,
+    WORKFLOWS,
     type PaletteItem,
   } from "$lib/palette.svelte";
   import { isLive } from "$lib/sessions.svelte";
@@ -87,11 +89,16 @@
 
   /** The list as runs of rows under one heading, each with the place its
       first row holds in the list. A new session's step is one list, which
-      its field already names, so it has no heading. */
+      its field already names, so it has no heading, except how it runs when
+      it offers workflows as well as agents. */
+  const headed = $derived(
+    palette.mode !== "new" ||
+      (items.some((item) => item.group === WORKFLOWS) && items.some((item) => item.group === ALONE)),
+  );
   const sections = $derived.by(() => {
     const runs: { group: string | null; start: number; rows: PaletteItem[] }[] = [];
     items.forEach((item, index) => {
-      const group = palette.mode === "new" ? null : item.group;
+      const group = headed ? item.group : null;
       const last = runs[runs.length - 1];
       if (last !== undefined && last.group === group) last.rows.push(item);
       else runs.push({ group, start: index, rows: [item] });
@@ -292,7 +299,10 @@
               {#if item.kind === "session"}
                 <span class="detail" data-testid="palette-detail">{item.project}</span>
                 <span class="end" data-testid="palette-end">{item.when}</span>
-              {:else if item.kind === "project" || item.kind === "choice"}
+              {:else if item.kind === "choice"}
+                <span class="detail" data-testid="palette-detail">{item.detail}</span>
+                <span class="end" data-testid="palette-end">{item.end}</span>
+              {:else if item.kind === "project"}
                 <span class="detail"></span>
                 <span class="end" data-testid="palette-end">{item.end}</span>
               {:else if item.kind === "attention"}

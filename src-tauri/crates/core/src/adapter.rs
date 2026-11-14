@@ -58,11 +58,60 @@ pub struct LaunchCtx<'a> {
     /// it as `CLAUDE_CONFIG_DIR`, Codex as `CODEX_HOME`. The agent's own
     /// directory otherwise.
     pub config_dir: Option<&'a Path>,
-    /// Whether this session is the one that directs the others. It runs in
-    /// the workbench's own orchestrator directory, and the tools it starts
-    /// tell it what directing work means.
+    /// Whether this session is the one that directs the others: it runs in
+    /// the workbench's own orchestrator directory, or follows a workflow.
+    /// The tools it starts tell it what directing work means.
     pub orchestrator: bool,
+    /// What a session that follows a workflow is told: the workflow's
+    /// instructions, added to what the agent tells itself, from the first
+    /// turn and on every resume.
+    pub instructions: Option<&'a str>,
+    /// The same instructions in a file of the session's own, for an agent
+    /// that reads them from one rather than from its command line.
+    pub instructions_file: Option<&'a Path>,
+    /// Whether the agent's own ways of handing work to agents the user
+    /// cannot see are taken away, so that the workbench's start tool is the
+    /// one way the session delegates.
+    pub start_only: bool,
+    /// The workbench's tool server, named on the command line for a session
+    /// that needs the tools where the agent's own configuration does not
+    /// point at it.
+    pub server: Option<&'a Path>,
+    /// A file naming the same server, for an agent that reads its server
+    /// configuration from one.
+    pub server_file: Option<&'a Path>,
+    /// For a resumed session, whether what it is told now differs from what
+    /// its conversation was first given, no instructions at all among
+    /// them. Claude Code records what it was first told and gives that on
+    /// every resume until told otherwise.
+    pub afresh: bool,
 }
+
+/// The tools Claude Code hands work to agents the user cannot see with: its
+/// subagents, its multi-agent workflows, messages to other agents and the
+/// listing of them, and remote agents run in the cloud.
+pub const CLAUDE_SUBAGENT_TOOLS: &[&str] = &[
+    "Agent",
+    "Workflow",
+    "SendMessage",
+    "ListAgents",
+    "RemoteTrigger",
+];
+
+/// The settings that take Codex's own subagent tools away. The second
+/// takes spawn_agent, send_message, wait_agent, list_agents,
+/// interrupt_agent and followup_task from a model on the newer multi-agent
+/// version, which is given them whatever the first says. The first turns
+/// off the multi-agent tools of a Codex that has no newer version, which
+/// passes over the second without a word.
+pub const CODEX_NO_SUBAGENTS: &[&str] = &[
+    "features.multi_agent=false",
+    "features.multi_agent_v2.disable_native_tools=true",
+];
+
+/// The name the tool server goes by, to Claude Code and to Codex.
+pub const SERVER_NAME: &str = "agent-workbench";
+pub const CODEX_SERVER_KEY: &str = "agent_workbench";
 
 /// The variable that names the session to the tools the agent starts.
 pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
@@ -101,6 +150,13 @@ pub trait AgentAdapter: Send + Sync {
     /// workbench has to find it afterwards.
     fn takes_id(&self) -> bool {
         true
+    }
+
+    /// Whether the agent reads a workflow's instructions and its tool
+    /// server from files of the session's own, rather than from its
+    /// command line.
+    fn reads_files(&self) -> bool {
+        false
     }
 }
 
@@ -227,6 +283,79 @@ fn program(binary: PathBuf, args: &[&str], vars: &HashMap<String, String>) -> Co
     command
 }
 
+/// The configuration that names the tool server to Claude Code, which the
+/// session reads from a file of its own.
+pub fn claude_server_config(server: &Path) -> String {
+    serde_json::json!({ "mcpServers": { SERVER_NAME: {
+        "type": "stdio",
+        "command": server.to_string_lossy(),
+        "args": ["mcp"],
+    } } })
+    .to_string()
+}
+
+/// What Claude Code is given for a session that follows a workflow: the
+/// tool server and the instructions, each by a file of the session's own,
+/// so no line of either is on the command line, and its own ways to hand
+/// work out taken away. The list of tools comes before a flag of its own,
+/// which ends it.
+fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(file) = ctx.server_file {
+        args.push("--mcp-config".to_string());
+        args.push(file.to_string_lossy().to_string());
+    }
+    if ctx.start_only {
+        args.push("--disallowedTools".to_string());
+        args.extend(CLAUDE_SUBAGENT_TOOLS.iter().map(|tool| tool.to_string()));
+    }
+    if let Some(file) = ctx.instructions_file {
+        args.push("--append-system-prompt-file".to_string());
+        args.push(file.to_string_lossy().to_string());
+    }
+    if ctx.afresh {
+        args.extend(["--system-prompt-snapshot", "off"].map(str::to_string));
+    }
+    args
+}
+
+/// Why Codex does not start a session that follows a workflow on Windows:
+/// it takes the instructions only on its command line, and an install run
+/// through the command interpreter loses every line of them after the first.
+pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex takes a workflow's instructions only on its command line, which Windows cuts short, so a session on Codex cannot follow a workflow here. Choose Claude Code for the workflow's orchestrator, or pick Codex to start it alone.";
+
+/// The same for Codex, which takes each as a setting of its configuration:
+/// the instructions as developer instructions, its own subagent tools taken
+/// away, and the tool server as one of its servers. Codex has no setting
+/// that reads developer instructions from a file, so they go on the command
+/// line, which is refused on Windows.
+fn codex_workflow(ctx: &LaunchCtx, windows: bool) -> Result<Vec<String>, String> {
+    if windows && ctx.instructions.is_some() {
+        return Err(CODEX_WORKFLOW_ON_WINDOWS.into());
+    }
+    // A JSON string is a TOML basic string as well: quoted, on one line,
+    // with the same escapes.
+    let text = |value: &str| serde_json::Value::from(value).to_string();
+    let mut settings = Vec::new();
+    if let Some(server) = ctx.server {
+        settings.push(format!(
+            "mcp_servers.{CODEX_SERVER_KEY}.command={}",
+            text(&server.to_string_lossy())
+        ));
+        settings.push(format!("mcp_servers.{CODEX_SERVER_KEY}.args=[\"mcp\"]"));
+    }
+    if ctx.start_only {
+        settings.extend(CODEX_NO_SUBAGENTS.iter().map(|setting| setting.to_string()));
+    }
+    if let Some(instructions) = ctx.instructions {
+        settings.push(format!("developer_instructions={}", text(instructions)));
+    }
+    Ok(settings
+        .into_iter()
+        .flat_map(|setting| ["-c".to_string(), setting])
+        .collect())
+}
+
 /// The model flag and the prompt on the end of an agent's arguments. Both
 /// agents take `--model`, and both take the prompt after `--`: it is the
 /// agent's text, whatever it starts with, and never one of the agent's flags.
@@ -289,11 +418,17 @@ impl AgentAdapter for ClaudeCode {
     }
 
     fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        self.command(ctx, &with_prompt(ctx, vec!["--session-id", session]))
+        let workflow = claude_workflow(ctx);
+        let mut args = vec!["--session-id", session];
+        args.extend(workflow.iter().map(String::as_str));
+        self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        self.command(ctx, &with_prompt(ctx, vec!["--resume", session]))
+        let workflow = claude_workflow(ctx);
+        let mut args = vec!["--resume", session];
+        args.extend(workflow.iter().map(String::as_str));
+        self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn caps(&self) -> Caps {
@@ -303,6 +438,10 @@ impl AgentAdapter for ClaudeCode {
             acp: false,
             integrated: true,
         }
+    }
+
+    fn reads_files(&self) -> bool {
+        true
     }
 
     fn integrated(&self) -> Option<&'static dyn crate::integrated::Protocol> {
@@ -343,11 +482,16 @@ impl AgentAdapter for Codex {
     }
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
-        self.command(ctx, &with_prompt(ctx, Vec::new()))
+        let workflow = codex_workflow(ctx, cfg!(windows))?;
+        let args = workflow.iter().map(String::as_str).collect();
+        self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        self.command(ctx, &with_prompt(ctx, vec!["resume", session]))
+        let workflow = codex_workflow(ctx, cfg!(windows))?;
+        let mut args = vec!["resume", session];
+        args.extend(workflow.iter().map(String::as_str));
+        self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn caps(&self) -> Caps {
@@ -428,6 +572,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -469,6 +619,12 @@ mod tests {
             prompt: Some("--dangerously-skip-permissions and fix it"),
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -517,6 +673,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
         assert_eq!(claude.get_env(CLAUDE_CONFIG_VAR), Some(own.as_os_str()));
@@ -555,6 +717,12 @@ mod tests {
             prompt: Some("Go on with the cache test"),
             model: Some("sonnet"),
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -604,6 +772,226 @@ mod tests {
     }
 
     #[test]
+    fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
+        let dir = Scratch::new("adapter-workflow");
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let vars = vars_with_path(&dir);
+        let server = Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote");
+        let told = Path::new("/home/ada/.agent-workbench/sessions/abc.md");
+        let named = Path::new("/home/ada/.agent-workbench/sessions/abc.json");
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: Some("abc"),
+            prompt: Some("Fix the flaky test"),
+            model: Some("fable"),
+            orchestrator: true,
+            instructions: Some("1. Direct the work.\n2. Say \"done\"."),
+            instructions_file: Some(told),
+            start_only: true,
+            server: Some(server),
+            server_file: Some(named),
+            afresh: false,
+        };
+        let argv = |surface: Surface| {
+            let Surface::Pty(command) = surface;
+            command
+                .get_argv()
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        };
+        // Claude Code reads the server and the instructions from the
+        // session's files, so nothing on its command line has a line break
+        // or a quote for a command interpreter to cut at.
+        let claude_after = |first: &str| {
+            [
+                first,
+                "abc",
+                "--mcp-config",
+                "/home/ada/.agent-workbench/sessions/abc.json",
+                "--disallowedTools",
+                "Agent",
+                "Workflow",
+                "SendMessage",
+                "ListAgents",
+                "RemoteTrigger",
+                "--append-system-prompt-file",
+                "/home/ada/.agent-workbench/sessions/abc.md",
+                "--model",
+                "fable",
+                "--",
+                "Fix the flaky test",
+            ]
+            .map(str::to_string)
+            .to_vec()
+        };
+        let launched = argv(ClaudeCode.launch(&ctx, "abc").unwrap());
+        assert_eq!(launched[1..], claude_after("--session-id"));
+        assert!(launched.iter().all(|arg| !arg.contains(['\n', '"'])));
+        assert_eq!(
+            argv(ClaudeCode.resume(&ctx, "abc").unwrap())[1..],
+            claude_after("--resume")
+        );
+        assert_eq!(
+            claude_server_config(server),
+            format!(
+                r#"{{"mcpServers":{{"agent-workbench":{{"args":["mcp"],"command":"{}","type":"stdio"}}}}}}"#,
+                server.display()
+            )
+        );
+
+        let codex_settings = [
+            "-c".to_string(),
+            format!(
+                "mcp_servers.agent_workbench.command=\"{}\"",
+                server.display()
+            ),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
+            "-c".to_string(),
+            "features.multi_agent=false".to_string(),
+            "-c".to_string(),
+            "features.multi_agent_v2.disable_native_tools=true".to_string(),
+            "-c".to_string(),
+            r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#.to_string(),
+        ];
+        assert_eq!(codex_workflow(&ctx, false).unwrap(), codex_settings);
+        let tail = ["--model", "fable", "--", "Fix the flaky test"].map(str::to_string);
+        if !cfg!(windows) {
+            assert_eq!(
+                argv(Codex.launch(&ctx, "").unwrap())[1..],
+                [codex_settings.to_vec(), tail.to_vec()].concat()
+            );
+            assert_eq!(
+                argv(Codex.resume(&ctx, "abc").unwrap())[1..],
+                [
+                    vec!["resume".to_string(), "abc".to_string()],
+                    codex_settings.to_vec(),
+                    tail.to_vec()
+                ]
+                .concat()
+            );
+        }
+        // On Windows the instructions would be cut at their first line.
+        assert_eq!(
+            codex_workflow(&ctx, true).unwrap_err(),
+            CODEX_WORKFLOW_ON_WINDOWS
+        );
+
+        // With its own tools left alone and the server already configured,
+        // the session is told the workflow and nothing else changes.
+        let ctx = LaunchCtx {
+            start_only: false,
+            server: None,
+            server_file: None,
+            model: None,
+            prompt: None,
+            ..ctx
+        };
+        assert_eq!(
+            argv(ClaudeCode.launch(&ctx, "abc").unwrap())[1..],
+            [
+                "--session-id",
+                "abc",
+                "--append-system-prompt-file",
+                "/home/ada/.agent-workbench/sessions/abc.md"
+            ]
+        );
+        assert_eq!(
+            codex_workflow(&ctx, false).unwrap(),
+            [
+                "-c",
+                r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#
+            ]
+        );
+        // Resumed with instructions other than those it was first given,
+        // Claude Code is told to read them rather than the record it keeps.
+        let changed = LaunchCtx {
+            afresh: true,
+            ..ctx
+        };
+        assert_eq!(
+            argv(ClaudeCode.resume(&changed, "abc").unwrap())[1..],
+            [
+                "--resume",
+                "abc",
+                "--append-system-prompt-file",
+                "/home/ada/.agent-workbench/sessions/abc.md",
+                "--system-prompt-snapshot",
+                "off"
+            ]
+        );
+        let ctx = LaunchCtx {
+            afresh: false,
+            ..changed
+        };
+        // A session with no workflow starts on Windows as anywhere.
+        let plain = LaunchCtx {
+            instructions: None,
+            instructions_file: None,
+            ..ctx
+        };
+        assert!(codex_workflow(&plain, true).unwrap().is_empty());
+        // Resumed with no workflow where its conversation was first given
+        // one, Claude Code is told to let go of what it recorded, and given
+        // nothing in its place.
+        let without = LaunchCtx {
+            afresh: true,
+            start_only: false,
+            server_file: None,
+            ..plain
+        };
+        assert_eq!(
+            argv(ClaudeCode.resume(&without, "abc").unwrap())[1..],
+            ["--resume", "abc", "--system-prompt-snapshot", "off"]
+        );
+    }
+
+    /// Codex's own subagent tools are gone from what the model is given
+    /// with the settings the workbench passes, and there without them. Run
+    /// where Codex is installed, on a home of its own; a machine without it
+    /// has nothing to check.
+    #[test]
+    fn codex_lists_no_subagent_tools_with_the_settings() {
+        let vars: HashMap<String, String> = std::env::vars().collect();
+        let Some(codex) = find_on_path(&vars, "codex") else {
+            return;
+        };
+        let home = Scratch::new("codex-home");
+        let input = |settings: &[&str]| {
+            let mut command = std::process::Command::new(&codex);
+            command
+                .args(["debug", "prompt-input"])
+                .env(CODEX_HOME_VAR, home.path())
+                .current_dir(&home);
+            for setting in settings {
+                command.args(["-c", setting]);
+            }
+            let output = command.arg("hi").output().unwrap();
+            String::from_utf8_lossy(&output.stdout).to_string()
+        };
+        let tools = ["spawn_agent", "send_message", "wait_agent", "list_agents"];
+        let with = input(&[]);
+        let without = input(CODEX_NO_SUBAGENTS);
+        assert!(!with.is_empty(), "codex debug prompt-input answered");
+        assert!(!without.is_empty(), "codex debug prompt-input answered");
+        for tool in tools {
+            assert!(with.contains(tool), "{tool} is there without the settings");
+            assert!(!without.contains(tool), "{tool} is gone with them");
+        }
+    }
+
+    #[test]
     fn finds_the_binary_on_the_given_path() {
         let dir = fake_claude("adapter-detect");
         let vars = vars_with_path(&dir);
@@ -628,6 +1016,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
         assert_eq!(
@@ -644,6 +1038,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
@@ -671,6 +1071,12 @@ mod tests {
                 prompt: None,
                 model: None,
                 orchestrator,
+                instructions: None,
+                start_only: false,
+                server: None,
+                instructions_file: None,
+                server_file: None,
+                afresh: false,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
             command
@@ -699,6 +1105,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -717,6 +1129,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -741,6 +1159,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -771,6 +1195,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -798,6 +1228,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -820,6 +1256,12 @@ mod tests {
             prompt: None,
             model: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            afresh: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

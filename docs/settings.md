@@ -151,7 +151,9 @@ A fresh install has one workflow, Build and review. Its orchestrator is on
 Claude's most capable model alias, its Work step is on Sonnet, and its
 Review step is on Opus, passes when the reviewer approves and the
 orchestrator agrees, and goes back to Work up to three times before it asks.
-A settings file from before workflows existed gets the same one.
+A settings file from before workflows existed gets the same one. New
+sessions follow none until the user turns a workflow on, in this tab or by
+picking one when starting a session.
 
 A workflow in the file that does not read or keep the rules is not used, and
 neither is a default or a project choice that names it. It is not dropped:
@@ -167,6 +169,36 @@ One workflow is marked as the one new sessions start with, and none is a
 valid choice. A project can choose another, or none, whatever the default
 is. Deleting a workflow that was the default leaves new sessions with none,
 and a project that chose it follows the default again.
+
+A workflow also says whether its orchestrator hands out work only as
+sessions the user can see, which it does unless the workflow says
+otherwise. Its agent's own ways of handing work to agents the user cannot
+see are then taken away, as [agents](adapters.md#under-a-workflow) lists,
+so every piece it hands out is a session of its own on the sessions pane,
+started with the `start` tool; with the setting off it keeps its own
+subagents, and their work does not show as sessions. The settings file
+writes the setting only when it is off.
+
+A project's workflow is its own choice, else the one for new sessions, else
+none. A plain new session, where there is nothing to pick, follows it. In a
+project that follows a workflow, by its own choice or by the default, the
+palette's new session offers every workflow, the project's first, marked as
+the project's workflow or as the default, beside the agents to run alone.
+The choice a project's own new-session row opens, when there is more than
+one agent or an account to pick, offers the project's workflow first in the
+same way, with the cursor on it, above the agents. In a project that follows none it asks nothing it did not ask before
+workflows, whatever other projects chose, and with one agent installed it
+starts that agent at once. An agent picked anywhere starts alone. A
+session under a workflow starts on the workflow's orchestrator, its agent
+and its model, told the workflow's instructions, and keeps the workflow as
+it was for as long as it runs, whatever changes in the settings. Resumed,
+it takes the workflow of the same name as the settings have it then. Where
+that workflow was deleted it follows the copy it kept, which its header
+says; where that copy no longer reads either, the session does not start,
+its header says it waits for the user's choice, and the user is asked
+whether to resume it without a workflow. A session another session started follows
+none. How a workflow's session directs the others is in
+[orchestrator](orchestrator.md).
 
 The tab lists the workflows across the top, with the default tagged, and
 New workflow after them. The picked one has its name above the diagram,
@@ -184,7 +216,10 @@ draws a line under the row from itself to the step it repeats, lines that
 arrive at one step standing side by side so they do not cross, and under all
 the lines a label names the review and says where the work goes back to,
 until when (the reviewer approves, the orchestrator agrees, or both approve)
-and how many rounds at most. The steps share the width there is; where even
+and how many times at most, as the step's settings say it. A review that
+sends the work back at most three times reviews a piece four times at most;
+the round counted on a review's header and in the question past the limit
+count reviews the same way. The steps share the width there is; where even
 the narrowest steps do not fit, the row scrolls sideways under the
 orchestrator's head, which stays in place, with the hidden edge faded, and
 the step picked is scrolled into view.
@@ -215,18 +250,25 @@ be written, is said at the top of the tab, and the window shows what is
 stored. Every control can be reached with the keyboard, and the two kinds
 are a radio group the arrow keys move through.
 
-Under the diagram, What the orchestrator is told unfolds into the
-instructions the workflow comes to: a short numbered list. The first tells
-the orchestrator to direct the work rather than do it, and to delegate by
-starting sessions with the workbench's `start` tool, not with its own
-subagents, giving the agent and the model each step names and no model for
-Codex's own default. Then each step has a sentence naming the step, what a
+Under the diagram, a box, Hand out work only as sessions you can see, says
+whether the orchestrator keeps its own subagents, with a line on what that
+means. What the orchestrator is told unfolds into the instructions the
+workflow comes to: a short numbered list. The first tells the orchestrator
+to direct the work rather than do it, and to delegate by starting sessions
+with the workbench's `start` tool, not with its own subagents, or, where it
+keeps them, to use them for help and not for a piece of the work; to name
+the step each start is for, give the agent and the model each step names
+and no model for Codex's own default, and name, for a review, the session
+whose work it checks. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
-first as the one to use, how many sessions may run at once, or for a review
-when the work passes, where it goes back, which steps the piece is taken
-through again before it is reviewed again, how many times, and that the
-user is asked after that. The last sentence says to report to the user once
-every piece has come out of or passed the last step.
+first as the one to use, how many of its sessions may run at once and to
+stop each once its piece is done with, or for a review when the work
+passes, that it goes back with `send` to the piece's own session for the
+step it returns to, which steps the piece is taken through again, that it
+is reviewed again by a new review or a line to the reviewer, how many
+times, and that the user is asked after that. The last sentence says to
+report to the user once every piece has come out of or passed the last
+step.
 
 The foot always shows. A switch there marks the workflow for new sessions, with a line
 saying which workflow new sessions start with. Turning it off leaves them

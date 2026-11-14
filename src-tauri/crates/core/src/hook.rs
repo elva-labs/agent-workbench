@@ -28,6 +28,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
+use crate::adapter::{CODEX_SERVER_KEY, SERVER_NAME};
 
 /// Held across each read, change and write of an account's agent state, so
 /// two installs, removals or trust writes at the same moment cannot each
@@ -94,8 +95,62 @@ const CODEX_HOOKS: &str = ".codex/hooks.json";
 const CODEX_CONFIG: &str = ".codex/config.toml";
 const FILES: [&str; 3] = [CLAUDE_LOCAL, CODEX_HOOKS, CODEX_CONFIG];
 
-const SERVER_NAME: &str = "agent-workbench";
-const CODEX_SERVER_KEY: &str = "agent_workbench";
+/// Where a session that needs the workbench's tools finds the tool server.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ToolServer {
+    /// The agent's own configuration for the directory points at it.
+    Configured,
+    /// The daemon is here and the agent is not pointed at it, so it is
+    /// named on the session's own command line.
+    Named(PathBuf),
+    /// There is no daemon on this machine to serve the tools.
+    Missing,
+}
+
+/// Where a session in `dir` finds the tool server: the daemon, when there is
+/// one here, named on the command line unless the agent's own configuration
+/// for the directory already points at it. `config_dir` is the account's
+/// directory for the agent, spelled as the settings spell it.
+pub fn tool_server(home: &Path, dir: &Path, agent: &str, config_dir: Option<&str>) -> ToolServer {
+    let daemon = daemon_path(home);
+    if !daemon.is_file() {
+        return ToolServer::Missing;
+    }
+    let command = daemon.to_string_lossy().to_string();
+    let installed = match agent {
+        "claude-code" => {
+            let key = dunce::canonicalize(dir)
+                .unwrap_or_else(|_| dir.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            read_settings(&account::claude_json(home, config_dir))
+                .get("projects")
+                .and_then(|projects| projects.get(&key))
+                .and_then(|project| project.get("mcpServers"))
+                .and_then(|servers| servers.get(SERVER_NAME))
+                .and_then(|server| server.get("command"))
+                .and_then(Value::as_str)
+                == Some(command.as_str())
+        }
+        "codex" => std::fs::read_to_string(codex_config_path(dir))
+            .ok()
+            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
+            .is_some_and(|document| {
+                document
+                    .get("mcp_servers")
+                    .and_then(|servers| servers.get(CODEX_SERVER_KEY))
+                    .and_then(|server| server.get("command"))
+                    .and_then(|command| command.as_str())
+                    == Some(command.as_str())
+            }),
+        _ => true,
+    };
+    if installed {
+        ToolServer::Configured
+    } else {
+        ToolServer::Named(daemon)
+    }
+}
 
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
@@ -1052,6 +1107,40 @@ mod tests {
             Scratch::new(&format!("hook-{name}-home")),
             Scratch::new(&format!("hook-{name}-project")),
         )
+    }
+
+    #[test]
+    fn the_server_goes_on_the_command_line_only_where_the_agent_lacks_it() {
+        let (home, project) = fixture("server-pending");
+        for agent in ["claude-code", "codex"] {
+            assert_eq!(
+                tool_server(&home, &project, agent, None),
+                ToolServer::Missing,
+                "{agent}"
+            );
+        }
+        with_daemon(&home);
+        for agent in ["claude-code", "codex"] {
+            assert_eq!(
+                tool_server(&home, &project, agent, None),
+                ToolServer::Named(daemon_path(&home)),
+                "{agent}"
+            );
+        }
+        install(&home, &project, &[]).unwrap();
+        for agent in ["claude-code", "codex"] {
+            assert_eq!(
+                tool_server(&home, &project, agent, None),
+                ToolServer::Configured,
+                "{agent}"
+            );
+        }
+        // Another account's Claude Code state was not written, so a session
+        // under it still needs the server named.
+        assert_eq!(
+            tool_server(&home, &project, "claude-code", Some("~/.claude-work")),
+            ToolServer::Named(daemon_path(&home))
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Transcript } from "$lib/core";
+import type { SpawnOptions, Transcript, Workflow } from "$lib/core";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { stash } from "$lib/exits";
 import { resetZoom, zoom, zoomed } from "$lib/zoom.svelte";
@@ -61,11 +61,17 @@ import {
   sessions,
   started,
   statusLabel,
+  onForgotten,
+  resumeWithout,
   statusMessage,
   disown,
   HISTORY_EVERY,
   followHistory,
+  launch,
+  workflowFor,
 } from "$lib/sessions.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import { orchestratorPrompt } from "$lib/workflowInstructions";
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
@@ -90,8 +96,13 @@ function hold(host: string): () => void {
 const LAB = "ssh://ada@lab/srv/one";
 let cwdAnswer: string | null = null;
 let cwdAsks = 0;
+const spawned: SpawnOptions[] = [];
 vi.mock("$lib/core", () => ({
   core: () => ({
+    spawn: async (options: SpawnOptions) => {
+      spawned.push(options);
+      return { ptyId: `pty-${spawned.length}`, sessionId: options.session ?? `sid-${spawned.length}` };
+    },
     kill: async (id: string) => {
       killed.push(id);
     },
@@ -139,6 +150,9 @@ vi.mock("$lib/core", () => ({
 }));
 
 beforeEach(() => {
+  // A session follows no workflow here unless a test gives it one.
+  resetWorkflows();
+  spawned.length = 0;
   reset();
   resetAttention();
   resetAccounts();
@@ -1831,5 +1845,218 @@ describe("the next session that needs you", () => {
     expect(sessions.active).toBe(only.key);
     expect(waitingOnYou()).toHaveLength(1);
     expect(nextNeedingYou()).toBeNull();
+  });
+});
+
+
+describe("following a workflow", () => {
+  const P = "/home/ada/dev/one";
+  const codexRun = (): Workflow => ({
+    ...defaultWorkflow(),
+    name: "Codex run",
+    orchestrator: { agent: "codex", model: "default" },
+    startOnly: false,
+  });
+
+  const codexToo = () =>
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+
+  it("starts a plain new session on the project's workflow, its orchestrator's agent and model, told the workflow", async () => {
+    adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: "Build and review", overrides: {} });
+    const session = create(P);
+    expect(session.workflow).toEqual(defaultWorkflow());
+    expect(session.agent).toBe("claude-code");
+    expect(session.model).toBe("fable");
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({
+      agent: "claude-code",
+      model: "fable",
+      instructions: orchestratorPrompt(defaultWorkflow()),
+      startOnly: true,
+    });
+    expect(workflowFor("sid-1")).toEqual(defaultWorkflow());
+  });
+
+  it("starts the one agent installed on the project's workflow, there being nothing to pick", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(create(P, null, "claude-code").workflow?.name).toBe("Build and review");
+  });
+
+  it("starts an agent picked from several alone, whatever the project follows", async () => {
+    codexToo();
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(P, null, "codex");
+    expect(session.workflow).toBeNull();
+    expect(session.agent).toBe("codex");
+    expect(defaultAgent(P)).toBe("codex");
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)?.agent).toBe("codex");
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
+    // Picked as Claude Code, it is Claude Code alone, on no model.
+    const claude = create(P, null, "claude-code");
+    expect(claude.workflow).toBeNull();
+    expect(claude.model).toBeNull();
+  });
+
+  it("starts the workflow given, and none when given none", () => {
+    codexToo();
+    adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: null, overrides: {} });
+    expect(create(P, null, undefined, null, null, null, null, codexRun()).agent).toBe("codex");
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(create(P, null, undefined, null, null, null, null, null).workflow).toBeNull();
+  });
+
+  it("refuses a workflow whose orchestrator's agent is not installed, and starts nothing", async () => {
+    adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: null, overrides: { [P]: "Codex run" } });
+    const session = create(P);
+    expect(session.status).toBe("failed");
+    expect(statusMessage(session)).toBe(
+      'The workflow "Codex run" runs its orchestrator on Codex, which is not installed here. Pick an agent to start one alone, or choose another workflow for this project in the settings.',
+    );
+    expect(await launch(session.key, 80, 24, () => {})).toBe(false);
+    expect(spawned).toHaveLength(0);
+    // What the project used last is not what failed to start.
+    expect(sessions.preferred[P]).toBeUndefined();
+  });
+
+  it("starts Codex's orchestrator on its own default, keeping its subagents when the workflow says so", async () => {
+    codexToo();
+    adoptWorkflows({ list: [defaultWorkflow(), codexRun()], default: null, overrides: { [P]: "Codex run" } });
+    const session = create(P);
+    expect(session.agent).toBe("codex");
+    expect(session.model).toBeNull();
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)?.startOnly).toBe(false);
+    expect(spawned.at(-1)?.instructions).toContain('workflow "Codex run"');
+  });
+
+  it("starts a session as it always has where the project follows no workflow", async () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: { [P]: null } });
+    const session = create(P, null, "claude-code");
+    expect(session.workflow).toBeNull();
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
+    expect(spawned.at(-1)).not.toHaveProperty("startOnly");
+    expect(spawned.at(-1)?.model).toBeUndefined();
+  });
+
+  it("keeps its workflow while it runs, and resumed takes the workflow's version of the day, told afresh", async () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(P);
+    await launch(session.key, 80, 24, () => {});
+    // The workflow is changed in the settings while the session runs: its
+    // orchestrator's model, and the model its work runs on.
+    const changed = { ...defaultWorkflow(), orchestrator: { agent: "claude-code" as const, model: "haiku" } };
+    changed.steps = structuredClone(changed.steps);
+    changed.steps[0].models = [{ agent: "claude-code", model: "haiku" }];
+    adoptWorkflows({ list: [changed], default: "Build and review", overrides: {} });
+    expect(byKey(session.key)?.workflow?.orchestrator.model).toBe("fable");
+    close(session.key);
+
+    // Resumed from the past sessions after a restart, it follows the
+    // workflow by name as it is now, though the project follows none.
+    reset();
+    adoptWorkflows({ list: [changed], default: null, overrides: {} });
+    loadRemembered();
+    const resumed = create(P, "sid-1", "claude-code");
+    await launch(resumed.key, 80, 24, () => {});
+    expect(byKey(resumed.key)?.workflow).toEqual(changed);
+    expect(byKey(resumed.key)?.workflowGone).toBe(false);
+    expect(spawned.at(-1)).toMatchObject({
+      session: "sid-1",
+      model: "haiku",
+      instructions: orchestratorPrompt(changed),
+      afresh: true,
+    });
+    // What it was first told stays what its conversation was first told.
+    expect(sessions.workflows["sid-1"].told).toBe(orchestratorPrompt(defaultWorkflow()));
+
+    // Resumed again with the workflow as the conversation was first told
+    // it, nothing is told afresh.
+    close(resumed.key);
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+    const again = create(P, "sid-1", "claude-code");
+    await launch(again.key, 80, 24, () => {});
+    expect(spawned.at(-1)).not.toHaveProperty("afresh");
+  });
+
+  it("follows the copy it kept of a workflow deleted since, and says so", async () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(P);
+    await launch(session.key, 80, 24, () => {});
+    close(session.key);
+    adoptWorkflows({ list: [], default: null, overrides: {} });
+    const resumed = create(P, "sid-1", "claude-code");
+    await launch(resumed.key, 80, 24, () => {});
+    expect(byKey(resumed.key)?.workflow).toEqual(defaultWorkflow());
+    expect(byKey(resumed.key)?.workflowGone).toBe(true);
+    expect(spawned.at(-1)?.instructions).toBe(orchestratorPrompt(defaultWorkflow()));
+  });
+
+  it("asks the user when the workflow is gone and its copy no longer reads, and resumes without one on their word", async () => {
+    sessions.workflows["old"] = {
+      workflow: { name: "Gone", orchestrator: { agent: "claude-code", model: "fable" }, steps: [] },
+      told: "1. Direct the work.",
+      project: P,
+    };
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const resumed = create(P, "old", "claude-code");
+    expect(await launch(resumed.key, 80, 24, () => {})).toBe(false);
+    expect(spawned).toHaveLength(0);
+    const row = byKey(resumed.key)!;
+    expect(row.status).toBe("failed");
+    expect(row.workflowLost).toBe("Gone");
+    expect(statusMessage(row)).toContain('followed the workflow "Gone", which is gone');
+    // It has not started: it waits on the user's word, and says so.
+    expect(statusLabel(row)).toBe("waiting for your choice");
+    const without = resumeWithout(row.key)!;
+    expect(byKey(row.key)).toBeNull();
+    await launch(without.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "old" });
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
+    // Its conversation was first given the workflow's instructions, which
+    // the agent would go on giving itself: it is told to let go of them.
+    expect(spawned.at(-1)).toMatchObject({ afresh: true });
+    // The user's word is kept: resumed again, as after the window reloads,
+    // it follows none without asking, and is still told afresh.
+    expect(JSON.parse(localStorage.getItem("workbench.workflows")!).old).toEqual({
+      workflow: null,
+      told: "1. Direct the work.",
+      project: P,
+    });
+    close(without.key);
+    const again = create(P, "old", "claude-code");
+    expect(await launch(again.key, 80, 24, () => {})).toBe(true);
+    expect(byKey(again.key)?.workflowLost).toBeNull();
+    expect(byKey(again.key)?.workflow).toBeNull();
+    expect(spawned.at(-1)).toMatchObject({ session: "old", afresh: true });
+    expect(spawned.at(-1)).not.toHaveProperty("instructions");
+    // A session never given a workflow is resumed as it always was.
+    const plain = create(P, "never", "claude-code");
+    await launch(plain.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "never" });
+    expect(spawned.at(-1)).not.toHaveProperty("afresh");
+  });
+
+  it("lets go of what is kept for a session gone from its project's history", async () => {
+    sessions.workflows["gone"] = { workflow: defaultWorkflow(), told: null, project: P };
+    sessions.workflows["here"] = { workflow: defaultWorkflow(), told: null, project: P };
+    sessions.workflows["elsewhere"] = { workflow: defaultWorkflow(), told: null, project: "/other" };
+    historyAnswer = [{ id: "here", title: "Still here", modified: 1, size: 100, cwd: null }];
+    const heard: string[][] = [];
+    onForgotten((ids) => heard.push(ids));
+    await loadHistory(P);
+    onForgotten(null);
+    expect(Object.keys(sessions.workflows).sort()).toEqual(["elsewhere", "here"]);
+    // What its workflow ran is let go of with it.
+    expect(heard).toEqual([["gone"]]);
+    expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
+  });
+
+  it("gives a session started with no workflow none, whatever its project follows", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(P, null, "claude-code", null, "go", "sonnet", null, null);
+    expect(session.workflow).toBeNull();
+    expect(session.model).toBe("sonnet");
   });
 });

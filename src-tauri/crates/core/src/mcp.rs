@@ -50,8 +50,12 @@ pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
      and a name for the work, on a worktree of its own when pieces touch the \
      same files. When a piece calls for a particular model, name it with \
      start's model argument, which takes effect before the session's first \
-     turn; sending /model to a running session is for changing its mind \
-     later. Call the sessions tool before starting anything: sessions you \
+     turn; outside a workflow, sending /model to a running session is for \
+     changing its mind later. When this session follows a workflow, its \
+     instructions name the steps: every start names the one it is for, a \
+     review names the session whose work it checks, and a session stays on \
+     the model its step gave it. Call the sessions tool before starting \
+     anything: sessions you \
      started in an earlier run of yours are listed there too, stopped, and \
      start with the session named picks one up where it left off. Send is \
      for answering what a session asks and for \
@@ -581,7 +585,7 @@ pub fn projects_tool() -> Value {
 pub fn sessions_tool() -> Value {
     json!({
         "name": "sessions",
-        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. The ones that have stopped, in an earlier run of yours as well as this one, are listed too, and start with the session named resumes one. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
+        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. When you follow a workflow, each also says the step it is for, and a review which round of that step it is and the session whose work it checks. The ones that have stopped, in an earlier run of yours as well as this one, are listed too, and start with the session named resumes one. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -595,7 +599,7 @@ pub fn sessions_tool() -> Value {
 pub fn start_tool() -> Value {
     json!({
         "name": "start",
-        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then call wait to hear how it went, and send to answer anything it asks. With a session named, one you started before that has since stopped, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with.",
+        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then call wait to hear how it went, and send to answer anything it asks. With a session named, one you started before that has since stopped, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -606,7 +610,9 @@ pub fn start_tool() -> Value {
                 "model": { "type": "string", "description": "The model to run the session on, by the name the agent takes on its command line: an alias such as sonnet or opus, or a model's full name. The agent is named with it, since a model's name belongs to one agent. Chosen here, before the session's first turn, rather than sent to it afterwards. The agent's own default when left out." },
                 "account": { "type": "string", "description": "The account to run the session under, by the name the user gave it in the workbench's settings: a login kept apart from the others. The project's own account when left out, which is what the user set for it. Name one only when the user asked for the work under a particular account." },
                 "worktree": { "type": "boolean", "description": "True to run in a worktree of its own, on a branch named after it, so its changes stay off the branch the user is on." },
-                "session": { "type": "string", "description": "The id of a session you started before, as the sessions tool lists it, to resume it instead of starting a new one. It comes back where it ran, worktree and all, with its conversation; project and worktree are then taken from it, and the prompt is optional." }
+                "session": { "type": "string", "description": "The id of a session you started before, as the sessions tool lists it, to resume it instead of starting a new one. It comes back where it ran, worktree and all, with its conversation; project and worktree are then taken from it, and the prompt is optional. It goes on in the step it was started for." },
+                "step": { "type": "string", "description": "The step of your workflow this session is for, by its name, when you follow a workflow. Required then." },
+                "work": { "type": "string", "description": "The id of the session whose work this one goes on with: for a review, the work session it checks, which is required; for a later work step, the session the piece came from, so the piece's rounds go on being counted. Leave it out for work that begins a piece." }
             },
             "required": []
         }
@@ -617,7 +623,7 @@ pub fn start_tool() -> Value {
 pub fn send_tool() -> Value {
     json!({
         "name": "send",
-        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next.",
+        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next. When you follow a workflow, a session started for a step stays on the model it was given, so a line that changes its model is refused, and a line to a review that has finished its round asks it for another look, which counts as another round of that piece.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1809,6 +1815,36 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("on its own"));
+        // Under a workflow a start names its step, and a review the work.
+        for field in ["step", "work"] {
+            assert_eq!(
+                start["inputSchema"]["properties"][field]["type"], "string",
+                "{field}"
+            );
+        }
+        let told = start["description"].as_str().unwrap();
+        for words in ["names the step", "first model", "ask the user"] {
+            assert!(told.contains(words), "{words}");
+        }
+        assert!(named("sessions")["description"]
+            .as_str()
+            .unwrap()
+            .contains("round"));
+        // Under a workflow a session keeps its step's model, and nothing
+        // invites the orchestrator to change it.
+        assert!(named("send")["description"]
+            .as_str()
+            .unwrap()
+            .contains("a line that changes its model is refused"));
+        assert!(ORCHESTRATOR_INSTRUCTIONS
+            .contains("outside a workflow, sending /model to a running session"));
+        for tool in conductor_tools() {
+            assert!(
+                !tool.to_string().contains('\u{2014}'),
+                "{} has no long dashes",
+                tool["name"]
+            );
+        }
         let wait = named("wait");
         assert_eq!(
             wait["inputSchema"]["properties"]["seconds"]["maximum"],

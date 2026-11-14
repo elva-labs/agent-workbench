@@ -47,7 +47,7 @@
     ownFor,
     parentOf,
   } from "$lib/orchestrator.svelte";
-  import { startedFor } from "$lib/conductor.svelte";
+  import { placeOf, startedFor } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -69,6 +69,7 @@
   import { tick } from "svelte";
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
+  import { overrideOf, workflowOf } from "$lib/workflows.svelte";
 
   /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
@@ -94,7 +95,26 @@
     }
     choosing = path;
     picked = accountOf(path);
-    cursor = `pick:${path}:${defaultAgent(path)}`;
+    cursor =
+      workflowOf(path) === null
+        ? `pick:${path}:${defaultAgent(path)}`
+        : `pick:${path}:${FOLLOW}`;
+  }
+
+  /** The row id of the project's workflow in the choice. */
+  const FOLLOW = "workflow";
+
+  /** How the project came to follow its workflow, as the palette says it. */
+  function followedBy(path: string): string {
+    return overrideOf(path) === undefined ? "default" : "project's workflow";
+  }
+
+  /** Starts a session on the workflow the project follows. */
+  function startFollowing(path: string) {
+    const workflow = workflowOf(path);
+    if (workflow === null) return;
+    choosing = null;
+    startSession(path, undefined, picked, workflow);
   }
 
   function startWith(path: string, agent: AgentId) {
@@ -650,10 +670,17 @@
       while it is open under its name, else none. */
   function starting(path: string): Row[] {
     if (!isReady() || !choosable || choosing !== path) return [];
-    return installed().map((agent) => ({
-      id: `pick:${path}:${agent}`,
-      run: () => startWith(path, agent),
-    }));
+    const own: Row[] =
+      workflowOf(path) === null
+        ? []
+        : [{ id: `pick:${path}:${FOLLOW}`, run: () => startFollowing(path) }];
+    return [
+      ...own,
+      ...installed().map((agent) => ({
+        id: `pick:${path}:${agent}`,
+        run: () => startWith(path, agent),
+      })),
+    ];
   }
 
   let cursor = $state<string | null>(null);
@@ -1083,6 +1110,11 @@
   {#if kids.length > 0 && !collapsed[parent.key]}
     <div class="kids" data-testid="started-rail">
       {#each kids as kid, index (kid.key)}
+        <!-- A session started for a step of its starter's workflow shows
+             its step where another shows its model: the step set the
+             model, and the step is what tells the rows apart. The round is
+             in the header, where there is room for it. -->
+        {@const role = placeOf(kid.key)?.step ?? null}
         <div
           class="session kid"
           class:first={index === 0}
@@ -1109,7 +1141,9 @@
               {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
                   >{projectLabel(kid.project)}</span
                 >{/if}
-              {#if !isAsking(kid) && kid.model !== null}
+              {#if !isAsking(kid) && role !== null}
+                <span class="model" data-testid="started-role">{role}</span>
+              {:else if !isAsking(kid) && kid.model !== null}
                 <span class="model" data-testid="started-model">{modelLabel(kid.model)}</span>
               {/if}
             </span>
@@ -1376,6 +1410,21 @@
           {/each}
         </div>
         <div class="choice-head"><span>with</span></div>
+      {/if}
+      {#if workflowOf(path) !== null}
+        <button
+          class="option"
+          class:cursor={current === `pick:${path}:${FOLLOW}`}
+          tabindex="-1"
+          onclick={() => startFollowing(path)}
+          data-row="pick:{path}:{FOLLOW}"
+          data-testid="workflow-option"
+          data-workflow={workflowOf(path)?.name}
+        >
+          <span class="mark">›</span>
+          <span class="label">{workflowOf(path)?.name}</span>
+          <span class="state">{followedBy(path)}</span>
+        </button>
       {/if}
       {#each installed() as id (id)}
         <button

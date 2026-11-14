@@ -44,6 +44,15 @@ pub struct Spawned {
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
 
+/// Why an integrated session is not started with a workflow's instructions:
+/// an integrated session has no way to be given them, and starting it
+/// without them would drop the workflow unseen.
+pub const NO_INTEGRATED_WORKFLOW: &str = "An integrated session cannot follow a workflow, because it is not given a workflow's instructions. Start a session that follows a workflow in a terminal.";
+
+/// Why a session that follows a workflow is not started: it would have no
+/// start tool to hand its work out with.
+pub const NO_TOOLS: &str = "This session follows a workflow, which hands out its work with the workbench's tools, and this machine has no tool server to give it them. Pick an agent to start one alone instead.";
+
 /// An agent that mints its own ids has written one down.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +344,12 @@ impl Core {
     /// a worktree under it that a resumed session belongs to. `config_dir`
     /// is where the agent keeps its configuration when the session runs
     /// under an account of the user's own, spelled with `~` for the home.
+    /// `instructions` are a workflow's, for a session that follows one: it
+    /// directs the others, has the workbench's tools whatever its project
+    /// was told about live updates, and, with `start_only`, delegates only
+    /// through them. `afresh` says what a resumed session is told now, its
+    /// instructions or none, differs from what its conversation was first
+    /// given.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -345,6 +360,9 @@ impl Core {
         prompt: Option<&str>,
         model: Option<&str>,
         config_dir: Option<&str>,
+        instructions: Option<&str>,
+        start_only: bool,
+        afresh: bool,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -355,7 +373,8 @@ impl Core {
         // is what the plugins know it by, and not the worktree under it
         // the agent may run in.
         let opened = project.to_string_lossy().to_string();
-        let orchestrator = self.is_orchestrator(project);
+        let instructions = instructions.filter(|text| !text.trim().is_empty());
+        let orchestrator = instructions.is_some() || self.is_orchestrator(project);
         self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
 
@@ -376,6 +395,32 @@ impl Core {
             std::fs::create_dir_all(dir)
                 .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
+        // A session that follows a workflow hands its work out with the
+        // workbench's start tool, so it is not started where no tool server
+        // can reach it.
+        let server = match (instructions, self.home.as_deref()) {
+            (None, _) => None,
+            (Some(_), Some(home)) => match hook::tool_server(home, project, agent, config_dir) {
+                hook::ToolServer::Configured => None,
+                hook::ToolServer::Named(daemon) => Some(daemon),
+                hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
+            },
+            (Some(_), None) => return Err(NO_TOOLS.into()),
+        };
+        // An agent that reads the instructions and the server from files is
+        // given files of the session's own, which go when the session does.
+        let mut files = SessionFiles::default();
+        let mut instructions_file = None;
+        let mut server_file = None;
+        if let (Some(text), Some(home), true) =
+            (instructions, self.home.as_deref(), adapter.reads_files())
+        {
+            instructions_file = Some(files.write(home, "md", text)?);
+            if let Some(daemon) = &server {
+                server_file =
+                    Some(files.write(home, "json", &adapter::claude_server_config(daemon))?);
+            }
+        }
         let ctx = LaunchCtx {
             project,
             env: &environment.vars,
@@ -384,6 +429,12 @@ impl Core {
             model: model.filter(|model| !model.trim().is_empty()),
             config_dir: expanded.as_deref(),
             orchestrator,
+            instructions,
+            instructions_file: instructions_file.as_deref(),
+            start_only: instructions.is_some() && start_only,
+            server: server.as_deref(),
+            server_file: server_file.as_deref(),
+            afresh: resumed && afresh,
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
@@ -408,6 +459,7 @@ impl Core {
             command,
             size(cols, rows),
             output,
+            files,
         )?;
         if let Some(plugins) = &self.plugins {
             plugins.session_started(&pty_id, session_id.as_deref(), &opened);
@@ -448,7 +500,11 @@ impl Core {
         mode: Option<&str>,
         effort: Option<&str>,
         config_dir: Option<&str>,
+        instructions: Option<&str>,
     ) -> Result<crate::integrated::Started, String> {
+        if instructions.is_some_and(|text| !text.trim().is_empty()) {
+            return Err(NO_INTEGRATED_WORKFLOW.to_string());
+        }
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let protocol = adapter
             .integrated()
@@ -631,6 +687,7 @@ impl Core {
             command,
             size(cols, rows),
             output,
+            (),
         )
     }
 
@@ -994,6 +1051,149 @@ fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Files a session reads while it runs, each made new and readable by its
+/// owner alone, and removed when the session is done with them: when its
+/// process ends, or when it never starts.
+#[derive(Default)]
+struct SessionFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl SessionFiles {
+    /// Writes a file of the session's own under the workbench's directory,
+    /// and answers with where it is.
+    fn write(&mut self, home: &Path, extension: &str, text: &str) -> Result<PathBuf, String> {
+        let dir = own_dir(home)?;
+        let path = dir.join(format!("{}.{extension}", new_session_id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .map_err(|e| format!("could not create {}: {e}", path.display()))?;
+        self.paths.push(path.clone());
+        std::io::Write::write_all(&mut file, text.as_bytes())
+            .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+        Ok(path)
+    }
+}
+
+impl Drop for SessionFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Where the files sessions read while they run are kept.
+fn sessions_dir(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("sessions")
+}
+
+/// How long a lock file is left alone after it is made, so one whose
+/// process has made it and not yet taken it is never mistaken for one left
+/// behind.
+const LOCK_SETTLES: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The folder this process keeps its sessions' files in, under the
+/// sessions folder: one of its own, beside a lock file it holds for as long
+/// as it runs. The first time it is asked for, what processes that ended
+/// without removing their files left behind is removed.
+fn own_dir(home: &Path) -> Result<PathBuf, String> {
+    own_dir_locking(home, |file| file.try_lock())
+}
+
+/// `own_dir`, taking the lock with `lock`. Where the lock cannot be taken,
+/// as on a filesystem that does not lock, the folder has no lock file, so
+/// no process sweeps it, and this one sweeps nothing: it cannot tell a
+/// folder left behind from one in use.
+fn own_dir_locking(
+    home: &Path,
+    lock: impl Fn(&std::fs::File) -> Result<(), std::fs::TryLockError>,
+) -> Result<PathBuf, String> {
+    // Each folder with the lock this process holds on it, where it could
+    // take one.
+    type Owned = Vec<(PathBuf, PathBuf, Option<std::fs::File>)>;
+    static OWNED: std::sync::Mutex<Owned> = std::sync::Mutex::new(Vec::new());
+    let mut owned = OWNED.lock().unwrap_or_else(|e| e.into_inner());
+    let made = |dir: &Path| {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))
+    };
+    if let Some((_, dir, _)) = owned.iter().find(|(at, _, _)| at == home) {
+        made(dir)?;
+        return Ok(dir.clone());
+    }
+    let root = sessions_dir(home);
+    made(&root)?;
+    let name = new_session_id();
+    let lock_path = root.join(format!("{name}.lock"));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .map_err(|e| format!("could not create {}: {e}", lock_path.display()))?;
+    let held = if lock(&file).is_ok() {
+        sweep_sessions(&root);
+        Some(file)
+    } else {
+        drop(file);
+        std::fs::remove_file(&lock_path)
+            .map_err(|e| format!("could not remove {}: {e}", lock_path.display()))?;
+        None
+    };
+    let dir = root.join(&name);
+    made(&dir)?;
+    owned.push((home.to_path_buf(), dir.clone(), held));
+    Ok(dir)
+}
+
+/// Removes the folders of processes that are gone: those whose lock file
+/// no process holds and that were not made a moment ago. A process that
+/// ends lets go of its lock however it ends, so this is what a crash left.
+fn sweep_sessions(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("lock") {
+            continue;
+        }
+        let settled = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.elapsed().ok())
+            .is_some_and(|age| age >= LOCK_SETTLES);
+        if !settled {
+            continue;
+        }
+        let Ok(file) = std::fs::OpenOptions::new().write(true).open(&path) else {
+            continue;
+        };
+        if file.try_lock().is_err() {
+            continue;
+        }
+        std::fs::remove_dir_all(path.with_extension("")).ok();
+        drop(file);
+        std::fs::remove_file(&path).ok();
+    }
+}
+
 /// A terminal is a character grid, so a pty is sized in cells. The pixel
 /// fields matter only to programs drawing sixels, and xterm.js reports none.
 fn size(cols: u16, rows: u16) -> PtySize {
@@ -1020,6 +1220,185 @@ mod tests {
 
     fn core() -> Core {
         core_with(Arc::new(Recorder::default()))
+    }
+
+    /// A core whose home is the given directory, with no plugins and no
+    /// settings.
+    fn core_at(home: &Path) -> Core {
+        Core {
+            sessions: Arc::new(Sessions::default()),
+            integrated: Arc::new(crate::integrated::Sessions::default()),
+            processes: crate::processes::Processes::default(),
+            watchers: Arc::new(Watchers::default()),
+            sink: Arc::new(Recorder::default()),
+            home: Some(home.to_path_buf()),
+            plugins: None,
+            settings: None,
+        }
+    }
+
+    #[test]
+    fn a_session_under_a_workflow_is_refused_where_no_tool_server_can_reach_it() {
+        let home = Scratch::new("api-no-tools");
+        let spawned = core_at(&home).spawn(
+            "claude-code",
+            &home,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("1. Direct the work."),
+            true,
+            false,
+            80,
+            24,
+            |_| Box::new(|_: &[u8]| true),
+        );
+        assert_eq!(spawned.err().as_deref(), Some(NO_TOOLS));
+    }
+
+    #[test]
+    fn an_integrated_session_is_refused_workflow_instructions_it_cannot_be_given() {
+        let home = Scratch::new("api-integrated-workflow");
+        let started = core_at(&home).integrated_start(
+            "claude-code",
+            &home,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("1. Direct the work."),
+        );
+        assert_eq!(started.err().as_deref(), Some(NO_INTEGRATED_WORKFLOW));
+    }
+
+    #[test]
+    fn a_session_file_is_made_new_for_its_owner_alone_and_goes_with_the_session() {
+        let home = Scratch::new("api-session-files");
+        let mut files = SessionFiles::default();
+        let told = files
+            .write(&home, "md", "1. Direct the work.\n2. Report.")
+            .unwrap();
+        assert_eq!(
+            told.parent().unwrap().parent().unwrap(),
+            sessions_dir(&home)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&told).unwrap(),
+            "1. Direct the work.\n2. Report."
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&told).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let other = files.write(&home, "json", "{}").unwrap();
+        assert_ne!(told, other);
+        drop(files);
+        assert!(!told.exists() && !other.exists());
+    }
+
+    #[test]
+    fn what_a_process_that_is_gone_left_is_swept_and_nothing_else() {
+        let home = Scratch::new("api-sweep");
+        let root = sessions_dir(&home);
+        std::fs::create_dir_all(&root).unwrap();
+        let long_ago = std::time::SystemTime::now() - 2 * LOCK_SETTLES;
+        // Left by a process that crashed: its lock is free and old.
+        let gone = root.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::write(gone.join("a.md"), "1. Direct the work.").unwrap();
+        let gone_lock = std::fs::File::create(root.join("gone.lock")).unwrap();
+        gone_lock.set_modified(long_ago).unwrap();
+        drop(gone_lock);
+        // Held by a process that runs.
+        let held = root.join("held");
+        std::fs::create_dir_all(&held).unwrap();
+        std::fs::write(held.join("b.md"), "text").unwrap();
+        let held_lock = std::fs::File::create(root.join("held.lock")).unwrap();
+        held_lock.set_modified(long_ago).unwrap();
+        held_lock.try_lock().unwrap();
+        // Just made, by a process that has not taken its lock yet.
+        let new = root.join("new");
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::File::create(root.join("new.lock")).unwrap();
+
+        let mut files = SessionFiles::default();
+        let told = files.write(&home, "md", "text").unwrap();
+        assert!(!gone.exists() && !root.join("gone.lock").exists());
+        assert!(held.join("b.md").exists() && root.join("held.lock").exists());
+        assert!(new.exists() && root.join("new.lock").exists());
+        // This process's own folder has its lock, which it holds.
+        let own = told.parent().unwrap();
+        let own_lock = own.with_extension("lock");
+        assert!(own_lock.exists());
+        assert!(std::fs::File::open(&own_lock).unwrap().try_lock().is_err());
+        drop(held_lock);
+        drop(files);
+    }
+
+    #[test]
+    fn a_filesystem_that_cannot_lock_still_starts_sessions_and_sweeps_nothing() {
+        let home = Scratch::new("api-no-lock");
+        let root = sessions_dir(&home);
+        std::fs::create_dir_all(&root).unwrap();
+        // What looks left behind, which a process that cannot lock cannot
+        // tell from a folder in use.
+        let gone = root.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let gone_lock = std::fs::File::create(root.join("gone.lock")).unwrap();
+        gone_lock
+            .set_modified(std::time::SystemTime::now() - 2 * LOCK_SETTLES)
+            .unwrap();
+        drop(gone_lock);
+
+        let unsupported = |_: &std::fs::File| {
+            Err(std::fs::TryLockError::Error(std::io::Error::from(
+                std::io::ErrorKind::Unsupported,
+            )))
+        };
+        let own = own_dir_locking(&home, unsupported).unwrap();
+        assert!(own.is_dir());
+        assert!(gone.exists() && root.join("gone.lock").exists());
+        // Its folder has no lock file, so no other process sweeps it.
+        assert!(!own.with_extension("lock").exists());
+        // Asked again, it answers with the same folder.
+        assert_eq!(own_dir_locking(&home, unsupported).unwrap(), own);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_a_session_holds_goes_once_its_process_has_ended() {
+        let home = Scratch::new("api-held");
+        let mut files = SessionFiles::default();
+        let told = files.write(&home, "md", "text").unwrap();
+        let recorder = Arc::new(Recorder::default());
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.args(["-c", "sleep 0.3"]);
+        pty::spawn(
+            recorder.clone(),
+            Arc::new(Sessions::default()),
+            command,
+            size(80, 24),
+            |_| Box::new(|_: &[u8]| true),
+            files,
+        )
+        .unwrap();
+        // There while the process runs, gone once it has ended.
+        assert!(told.exists());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while recorder.events.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            !recorder.events.lock().unwrap().is_empty(),
+            "the session ended"
+        );
+        assert!(!told.exists());
     }
 
     // A session started on a worktree runs with the hooks its project

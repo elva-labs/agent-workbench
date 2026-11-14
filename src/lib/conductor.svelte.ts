@@ -21,6 +21,12 @@
  * caller resumed after the app was closed still finds its sessions: the
  * running ones are its to direct as before, and the ones that went with
  * the app are listed as stopped and can be resumed where they ran.
+ *
+ * A caller that follows a workflow starts sessions in its shape: each start
+ * names a step of it, on a model the step allows, no more at once than a
+ * work step lets run, and a review of a session that did work. The started
+ * session remembers its place, and the rounds of each review are counted
+ * per piece of work, up to the most the review sends the work back.
  */
 
 import { accountOf, accounts, dirsOf, names } from "$lib/accounts.svelte";
@@ -36,12 +42,16 @@ import {
   isLive,
   label,
   onDirected,
+  onForgotten,
   sessions,
   statusMessage,
   typed,
   type Session,
 } from "$lib/sessions.svelte";
-import type { AgentId } from "$lib/core";
+import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
+import { CODEX_DEFAULT } from "$lib/models";
+import { instructionLines, modelText } from "$lib/workflowInstructions";
+import { stepFacts } from "$lib/workflows.svelte";
 import { screen, takesPaste } from "$lib/screens";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -170,6 +180,22 @@ export interface Ask {
   /** The prompt's first line. */
   prompt: string;
   worktree: boolean;
+  /** For a round of a review past the most the workflow gives a piece: the
+      review, the work it checks and how many rounds it has had. The user's
+      yes lets this one round through. */
+  round: Beyond | null;
+}
+
+/** A round of a review past the workflow's limit, which only the user can
+    allow. */
+export interface Beyond {
+  step: string;
+  /** The session whose work it checks, by id, for the caller. */
+  work: string;
+  /** What the user knows that work by: its row's name. */
+  name: string;
+  done: number;
+  limit: number;
 }
 
 /** What the user answered: allowed from now on, allowed this once, or no. */
@@ -190,7 +216,32 @@ export interface Started {
   account?: string | null;
 }
 
+/** Where a started session stands in its caller's workflow. */
+export interface Place {
+  /** The step it is for, by name. */
+  step: string;
+  kind: WorkflowStep["kind"];
+  /** The piece of work it is part of: the id of the session that began the
+      piece. Null for a work session that began one and has no id yet. */
+  piece: string | null;
+  /** For a review, which round of it this is, from one. */
+  round: number | null;
+  /** For a review, the session whose work it checks. */
+  work: string | null;
+}
+
+/** What a caller that follows a workflow has run by it: where each session
+    it started stands, by session id, and how many rounds each review has
+    had of each piece, by the review's step and the piece. Kept between
+    runs, and not forgotten when a session is stopped, since a piece
+    outlives the sessions that worked on it. */
+export interface Run {
+  places: Record<string, Place>;
+  rounds: Record<string, number>;
+}
+
 const STARTED_KEY = "workbench.started";
+const RUNS_KEY = "workbench.runs";
 
 export const conductor = $state({
   asking: null as Ask | null,
@@ -202,11 +253,25 @@ export const conductor = $state({
       runs. A row whose id is here is the caller's whether or not it was
       started in this run. */
   started: {} as Record<string, Started[]>,
+  /** Where each started row stands in its caller's workflow, by the row's
+      key, from the moment it is made: the place of a row with no id yet. */
+  places: {} as Record<string, Place>,
+  /** What each caller has run by its workflow, by the caller's id. */
+  runs: {} as Record<string, Run>,
+  /** The last start refused to a caller that follows a workflow, by the
+      caller's row key, until it starts one or the user puts it away: the
+      user sees why as well as the agent. */
+  refusals: {} as Record<string, string>,
 });
 
 /** Reads what callers started in earlier runs. A corrupt entry reads as
     nothing remembered rather than a broken pane. */
 export function loadStarted() {
+  loadStartedList();
+  loadRuns();
+}
+
+function loadStartedList() {
   try {
     const raw = localStorage.getItem(STARTED_KEY);
     if (raw === null) return;
@@ -222,6 +287,53 @@ export function loadStarted() {
   } catch {
     // Nothing was started, then.
   }
+}
+
+function loadRuns() {
+  try {
+    const raw = localStorage.getItem(RUNS_KEY);
+    if (raw === null) return;
+    const stored: unknown = JSON.parse(raw);
+    if (typeof stored !== "object" || stored === null) return;
+    const runs: Record<string, Run> = {};
+    for (const [caller, run] of Object.entries(stored)) {
+      if (typeof run !== "object" || run === null) continue;
+      const { places, rounds } = run as Record<string, unknown>;
+      const kept: Run = { places: {}, rounds: {} };
+      for (const [id, place] of Object.entries(isRecord(places) ? places : {}))
+        if (isPlace(place)) kept.places[id] = place;
+      for (const [key, count] of Object.entries(
+        isRecord(rounds) ? rounds : {},
+      )) {
+        if (typeof count !== "number" || !Number.isInteger(count) || count <= 0)
+          continue;
+        const cut = key.indexOf("\n");
+        if (cut === -1) continue;
+        const counted = roundKey(key.slice(0, cut), key.slice(cut + 1));
+        kept.rounds[counted] = (kept.rounds[counted] ?? 0) + count;
+      }
+      runs[caller] = kept;
+    }
+    conductor.runs = runs;
+  } catch {
+    // Nothing was run by a workflow, then.
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+function isPlace(value: unknown): value is Place {
+  if (typeof value !== "object" || value === null) return false;
+  const { step, kind, piece, round, work } = value as Record<string, unknown>;
+  return (
+    typeof step === "string" &&
+    (kind === "work" || kind === "review") &&
+    (piece === null || typeof piece === "string") &&
+    (round === null ||
+      (typeof round === "number" && Number.isInteger(round))) &&
+    (work === null || typeof work === "string")
+  );
 }
 
 function isStarted(entry: unknown): entry is Started {
@@ -256,6 +368,117 @@ function remember(caller: string, entry: Started) {
     entry,
   ];
   saveStarted();
+}
+
+function saveRuns() {
+  try {
+    localStorage.setItem(RUNS_KEY, JSON.stringify(conductor.runs));
+  } catch {
+    // Non-fatal: the places and rounds start afresh after a restart.
+  }
+}
+
+const runOf = (caller: string): Run =>
+  (conductor.runs[caller] ??= { places: {}, rounds: {} });
+
+/** What the rounds of a review of a piece are counted under: the step's
+    name in any case, as the workflows compare names. */
+const roundKey = (step: string, piece: string) => `${asciiLower(step)}\n${piece}`;
+
+/** How many rounds of a review a piece has had. */
+export function roundsOf(caller: string, step: string, piece: string): number {
+  return conductor.runs[caller]?.rounds[roundKey(step, piece)] ?? 0;
+}
+
+function countRound(caller: string, step: string, piece: string) {
+  const { rounds } = runOf(caller);
+  const key = roundKey(step, piece);
+  rounds[key] = (rounds[key] ?? 0) + 1;
+  saveRuns();
+}
+
+/** Takes back a round counted for a start that did not happen. */
+function uncountRound(caller: string, step: string, piece: string) {
+  const { rounds } = runOf(caller);
+  const key = roundKey(step, piece);
+  const left = (rounds[key] ?? 0) - 1;
+  if (left > 0) rounds[key] = left;
+  else delete rounds[key];
+  saveRuns();
+}
+
+/** Places in a work step taken by starts and resumes still on their way,
+    by the caller and the step. A start takes its place before it awaits
+    anything, so two at once cannot both find room. */
+const reserved = new Map<string, number>();
+const slotKey = (caller: string, step: string) => `${caller}\n${asciiLower(step)}`;
+
+/** Takes a place in a work step, and answers with what gives it back. */
+function reserveSlot(caller: string, step: string): () => void {
+  const key = slotKey(caller, step);
+  reserved.set(key, (reserved.get(key) ?? 0) + 1);
+  let given = false;
+  return () => {
+    if (given) return;
+    given = true;
+    const left = (reserved.get(key) ?? 1) - 1;
+    if (left > 0) reserved.set(key, left);
+    else reserved.delete(key);
+  };
+}
+
+/** The sessions a caller has running for a step, and how many places in it
+    starts on their way hold besides. */
+function runningFor(caller: string, step: string): { sessions: Session[]; held: number } {
+  return {
+    sessions: startedBy(caller).filter(
+      (session) => {
+        const at = isLive(session) ? placeOf(session.key) : null;
+        return at !== null && sameName(at.step, step);
+      },
+    ),
+    held: reserved.get(slotKey(caller, step)) ?? 0,
+  };
+}
+
+/** Why a work step has no room for another session, when it has none. */
+function noRoom(caller: string, step: WorkStep): string | null {
+  const { sessions: running, held } = runningFor(caller, step.name);
+  if (running.length + held < step.parallel) return null;
+  const at = step.parallel === 1 ? "one session" : `${step.parallel} sessions at most`;
+  if (running.length === 0)
+    return `The step ${quoted(step.name)} runs ${at} at once, and another start for it is on its way. Wait for it to answer before starting another.`;
+  const ids = either(
+    running.map((session) => session.id ?? label(session)),
+    "and",
+  );
+  return `The step ${quoted(step.name)} runs ${at} at once, and ${running.length === 1 ? `session ${ids} is` : `sessions ${ids} are`} running for it. Stop one once its work is done, before starting another; a stopped session can be resumed.`;
+}
+
+function place(caller: string, id: string, at: Place) {
+  runOf(caller).places[id] = at;
+  saveRuns();
+}
+
+/** Where a started row stands in its caller's workflow, when it does. */
+export function placeOf(key: string): Place | null {
+  const own = conductor.places[key];
+  if (own !== undefined) return own;
+  const session = byKey(key);
+  const caller = startedFor(key);
+  const id = session?.id ?? null;
+  if (id === null || caller === null) return null;
+  return placed(caller, id);
+}
+
+/** Where a session a caller started stands, by its id, whether or not it
+    is still a row. */
+function placed(caller: string, id: string): Place | null {
+  const kept = conductor.runs[caller]?.places[id];
+  if (kept !== undefined) return kept;
+  const row = byId(id);
+  if (row === null || startedFor(row.key) !== caller) return null;
+  return conductor.places[row.key] ?? null;
 }
 
 function forget(caller: string, id: string) {
@@ -303,6 +526,9 @@ let pending: ((choice: Choice) => void) | null = null;
 interface Answered {
   content: string | null;
   error: string | null;
+  /** The refusal is the user's own answer to the question, which they
+      need not be shown again. */
+  byUser?: boolean;
 }
 
 /** The waits being held, by call, each with what ends it unanswered. */
@@ -344,6 +570,8 @@ export async function handle(request: ConductRequest): Promise<void> {
   } catch (error) {
     answered = refused(String(error));
   }
+  if (request.tool === "start" && answered.byUser !== true)
+    noteRefusal(request, answered.error);
   if (given.delete(request.id)) return;
   await core()
     .conductAnswer(request.id, request.cwd, answered.content, answered.error)
@@ -372,6 +600,78 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
     default:
       return refused(`The workbench has no ${String(request.tool)} tool.`);
   }
+}
+
+/** Keeps a refused start where the user can see it, for a caller that
+    follows a workflow, and clears it once a start goes through. */
+function noteRefusal(request: ConductRequest, error: string | null) {
+  const row =
+    request.session !== null
+      ? byId(request.session)
+      : (untoldHere(request.cwd).at(0) ?? null);
+  if (row === null) return;
+  if (error === null) delete conductor.refusals[row.key];
+  else if (row.workflow !== null) conductor.refusals[row.key] = error;
+}
+
+/** Puts away the refusal shown on a caller's row. */
+export function dismissRefusal(key: string) {
+  delete conductor.refusals[key];
+}
+
+/** What a session's header says of the workflow it is part of. */
+export interface WorkflowTag {
+  /** The workflow's name, marked when it was deleted and the session
+      follows the copy it kept; null when the caller's workflow is not known
+      here. */
+  workflow: string | null;
+  /** The session's place in it: orchestrator, or the step and round. */
+  role: string;
+  /** The rules that place goes by: the orchestrator's instructions, a
+      sentence or a few each, or what a step allows, a line each. */
+  rules: string[];
+  /** Whether the rules are steps in order, as instructions are. */
+  numbered: boolean;
+}
+
+/** The workflow a session is part of and its place in it, with the rules
+    that place goes by. Null for a session outside any workflow. */
+export function workflowTag(session: Session): WorkflowTag | null {
+  if (session.workflow !== null) {
+    return {
+      workflow: session.workflowGone
+        ? `${session.workflow.name} (deleted)`
+        : session.workflow.name,
+      role: "orchestrator",
+      rules: instructionLines(session.workflow),
+      numbered: true,
+    };
+  }
+  const at = placeOf(session.key);
+  if (at === null) return null;
+  const caller = startedFor(session.key);
+  const workflow = caller === null ? null : (byId(caller)?.workflow ?? null);
+  const role = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
+  const step = workflow?.steps.find((candidate) => sameName(candidate.name, at.step));
+  const work =
+    at.kind === "review" && at.work !== null && caller !== null
+      ? workName(caller, at.work)
+      : null;
+  const rules =
+    step === undefined
+      ? [`Runs for the step ${at.step}.`, ...(work === null ? [] : [`Reviews ${work}.`])]
+      : stepFacts(step, work);
+  return { workflow: workflow?.name ?? null, role, rules, numbered: false };
+}
+
+/** What the user knows a session's work by: the name its row has, or had,
+    and never its id. */
+export function workName(caller: string, id: string): string {
+  const row = byId(id);
+  if (row !== null && row.title !== null) return row.title;
+  const known = sessions.names[id] ?? remembered(caller, id)?.name ?? null;
+  if (known !== null) return known;
+  return row !== null && row.resumedFrom === null ? label(row) : "the work it checks";
 }
 
 /** The open projects, the caller's own marked. */
@@ -488,7 +788,10 @@ function sessionLines(request: ConductRequest): string {
   );
   if (listed.length === 0 && gone.length === 0)
     return "You have started no sessions.";
-  const lines = [...listed.map(describe), ...gone.map(describeGone)];
+  const lines = [
+    ...listed.map(describe),
+    ...gone.map((entry) => describeGone(callerOf(request), entry)),
+  ];
   // Listing a stop is telling it.
   for (const session of listed) tell(session.key);
   return lines.join("\n");
@@ -498,26 +801,35 @@ function describe(session: Session): string {
   const parts = [session.id ?? "", label(session), session.project];
   const tree = session.worktree ?? session.startIn;
   if (tree !== null && tree !== session.project) parts.push(`worktree ${tree}`);
-  parts.push(session.agent, stateOf(session));
+  parts.push(session.agent);
+  const place = placeOf(session.key);
+  if (place !== null) parts.push(placeText(place));
+  parts.push(stateOf(session));
   if (untold(session)) parts.push("not reported to you yet");
   if (session.note !== null) parts.push(`last line: ${session.note}`);
   return parts.join("  ");
 }
 
 /** A remembered session that is not open as a row, in the same words. */
-function describeGone(entry: Started): string {
+function describeGone(owner: string, entry: Started): string {
   const parts = [
     entry.id,
     sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8),
     entry.project,
   ];
   if (entry.worktree !== null) parts.push(`worktree ${entry.worktree}`);
-  parts.push(
-    entry.agent,
-    "stopped",
-    `resume it with start, naming session ${entry.id}`,
-  );
+  parts.push(entry.agent);
+  const at = placed(owner, entry.id);
+  if (at !== null) parts.push(placeText(at));
+  parts.push("stopped", `resume it with start, naming session ${entry.id}`);
   return parts.join("  ");
+}
+
+/** Where a session stands in the workflow, in the words the tools answer
+    in: its step, and for a review the round and the work it checks. */
+export function placeText(place: Place): string {
+  if (place.kind === "work") return `step "${place.step}"`;
+  return `step "${place.step}" round ${place.round ?? 1}, reviewing session ${place.work ?? "unknown"}`;
 }
 
 /** What a session is doing, in the words the tools answer in. */
@@ -569,10 +881,49 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
+  // A caller that follows a workflow starts sessions in its shape. What the
+  // start takes, a place in a work step or a round of a review, is taken
+  // now, before anything is awaited, and given back if it does not happen.
+  const flow = callerFlow(request);
+  if ("refusal" in flow) return refused(flow.refusal);
+  if (flow.workflow !== null && mayChangeModel(oneLine(prompt)))
+    return refused(
+      "A session you start for a step of your workflow runs on the model the step allows, so its prompt is words, not a command: the workbench starts none with a prompt that begins with a slash, a path included. Put a word before it.",
+    );
+  const fit =
+    flow.workflow === null ? null : fitStart(request, flow.workflow, caller);
+  if (fit !== null && "refusal" in fit) return refused(fit.refusal);
+  let started = false;
+  try {
+    const answer = await startFitted(request, project, prompt, name, account, caller, fit);
+    started = answer.error === null;
+    return answer;
+  } finally {
+    fit?.release(started);
+  }
+}
 
+/** The rest of a start, once it has been held to the caller's workflow. */
+async function startFitted(
+  request: ConductRequest,
+  project: string,
+  prompt: string,
+  name: string | null,
+  account: string | null,
+  caller: string,
+  fit: Fit | null,
+): Promise<Answered> {
   const wants = flag(request, "worktree");
-  if ((await askUser(request, project, prompt, wants)) === "no")
-    return refused("The user did not allow the session to be started.");
+  const beyond = fit?.beyond ?? null;
+  if ((await askUser(request, project, prompt, wants, beyond)) === "no")
+    return {
+      ...refused(
+        beyond === null
+          ? "The user did not allow the session to be started."
+          : notAllowed(beyond),
+      ),
+      byUser: true,
+    };
 
   let startIn: string | null = null;
   if (wants) {
@@ -593,17 +944,23 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
-  const agent = agentOf(request, project);
+  const agent = fit?.agent ?? agentOf(request, project);
   const session = create(
     project,
     null,
     agent,
     startIn,
     `${oneLine(prompt)} ${OUTCOME_ASK}`,
-    text(request, "model"),
+    fit === null ? text(request, "model") : fit.model,
     account,
+    null,
   );
   conductor.startedBy[session.key] = caller;
+  if (fit !== null) {
+    conductor.places[session.key] = fit.place;
+    // The row holds its place in the step from here.
+    fit.hold();
+  }
   // The name the caller gave is the row's, until the agent names it.
   if (name !== null) session.title = oneLine(name);
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
@@ -626,9 +983,284 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
+  if (fit === null)
+    return said(
+      `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
+    );
+  // A work session that began a piece is the piece's name from here.
+  const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
+  conductor.places[session.key] = at;
+  place(caller, id, at);
   return said(
-    `Started session ${id} in ${where}. It has the prompt. Call wait to hear how it goes.`,
+    `Started session ${id} for ${placeText(at)} in ${where}. It has the prompt. Call wait to hear how it goes.`,
   );
+}
+
+/** What a start in a workflow's shape comes to: where the session stands,
+    and the agent and model it runs on, null where the step leaves them to
+    the call. */
+interface Fit {
+  place: Place;
+  agent: AgentId | null;
+  model: string | null;
+  /** For a round past the review's limit, what the user is asked to allow. */
+  beyond: Beyond | null;
+  /** The row now holds the place in the step the start took. */
+  hold: () => void;
+  /** Gives back what the start took, unless it started. */
+  release: (started: boolean) => void;
+}
+
+/** Names the same when they differ only in the case of A to Z, as the
+    workflows compare them. */
+const asciiLower = (name: string) =>
+  name.trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+const sameName = (a: string, b: string) => asciiLower(a) === asciiLower(b);
+
+const quoted = (name: string) => `"${name}"`;
+
+/** A list in a sentence: "a", "a or b", "a, b or c". */
+function either(items: string[], joiner = "or"): string {
+  return items.length <= 1
+    ? items.join("")
+    : `${items.slice(0, -1).join(", ")} ${joiner} ${items[items.length - 1]}`;
+}
+
+/** The steps of a workflow, each with its kind, for an answer. */
+function stepsText(workflow: Workflow): string {
+  return either(
+    workflow.steps.map((step) => `${quoted(step.name)} (${step.kind})`),
+    "and",
+  );
+}
+
+/**
+ * Holds a start to the caller's workflow. The step is named, and is one the
+ * workflow has; the model is one the step allows, its first when none is
+ * named; a work step has room for another session; a review is of a session
+ * the caller started for a work step, with rounds left for that piece.
+ * Each refusal says what would do.
+ */
+function fitStart(
+  request: ConductRequest,
+  workflow: Workflow,
+  caller: string,
+): Fit | { refusal: string } {
+  const named = text(request, "step");
+  if (named === null)
+    return {
+      refusal: `You follow the workflow ${quoted(workflow.name)}, so a start names the step it is for, with step. The steps are ${stepsText(workflow)}.`,
+    };
+  const step = workflow.steps.find((candidate) =>
+    sameName(candidate.name, named),
+  );
+  if (step === undefined)
+    return {
+      refusal: `The workflow ${quoted(workflow.name)} has no step called ${quoted(named)}. The steps are ${stepsText(workflow)}.`,
+    };
+  const runs = modelFor(text(request, "agent"), text(request, "model"), step);
+  if ("refusal" in runs) return runs;
+  const from = text(request, "work");
+
+  if (step.kind === "work") {
+    const full = noRoom(caller, step);
+    if (full !== null) return { refusal: full };
+    // Work that carries on a piece another work session began names it,
+    // so the piece's reviews go on counting; without one it begins a piece.
+    let piece: string | null = null;
+    if (from !== null) {
+      const earlier = placed(caller, from);
+      if (earlier === null)
+        return {
+          refusal: `Session ${from} is not one you started for a step of ${quoted(workflow.name)}, so there is no piece of work to carry on. Leave work out to begin a new piece.`,
+        };
+      piece = earlier.piece ?? from;
+    }
+    const free = reserveSlot(caller, step.name);
+    return {
+      ...runs,
+      place: { step: step.name, kind: "work", piece, round: null, work: null },
+      beyond: null,
+      hold: free,
+      release: free,
+    };
+  }
+
+  if (from === null)
+    return {
+      refusal: `A review checks a piece of work: name the session that did it, one you started for a work step of ${quoted(workflow.name)}, with work.`,
+    };
+  const earlier = placed(caller, from);
+  if (earlier === null || earlier.kind !== "work")
+    return {
+      refusal: `Session ${from} is not one you started for a work step of ${quoted(workflow.name)}, so there is no work behind this review. Name the session that did the work, with work.`,
+    };
+  const piece = earlier.piece ?? from;
+  const done = roundsOf(caller, step.name, piece);
+  countRound(caller, step.name, piece);
+  return {
+    ...runs,
+    place: {
+      step: step.name,
+      kind: "review",
+      piece,
+      round: done + 1,
+      work: from,
+    },
+    beyond: pastLimit(caller, step, from, done),
+    hold: () => {},
+    release: (started) => {
+      if (!started) uncountRound(caller, step.name, piece);
+    },
+  };
+}
+
+/** A round past the most a review gives a piece: one more than the first
+    and a round for every time it may send the work back. Null within it. */
+function pastLimit(
+  caller: string,
+  step: ReviewStep,
+  work: string,
+  done: number,
+): Beyond | null {
+  return done > step.limit
+    ? { step: step.name, work, name: workName(caller, work), done, limit: step.limit }
+    : null;
+}
+
+/** What the user is asked about a round past the limit, in the words
+    they know the work by: "Review has run twice on Fix the cache, as many
+    times as the workflow allows. Allow another round?" */
+export function roundQuestion(beyond: Beyond): string {
+  const times =
+    beyond.done === 1 ? "once" : beyond.done === 2 ? "twice" : `${beyond.done} times`;
+  const most =
+    beyond.done === beyond.limit + 1
+      ? "as many times as the workflow allows"
+      : "more times than the workflow allows";
+  return `${beyond.step} has run ${times} on ${beyond.name}, ${most}. Allow another round?`;
+}
+
+/** What a caller is told when the user did not allow a round past the
+    limit. */
+function notAllowed(beyond: Beyond): string {
+  const most = beyond.limit + 1;
+  const against =
+    beyond.done === most
+      ? "as many as the workflow gives a piece"
+      : `more than the ${most} the workflow gives a piece`;
+  return `${quoted(beyond.name)}, the work of session ${beyond.work}, has had ${beyond.done} rounds of ${quoted(beyond.step)}, ${against}, and the user did not allow another. Ask the user how to go on.`;
+}
+
+/** The agent and model a step runs a start on: the first the step allows
+    of those the call names, the agent's own when the step allows any. */
+function modelFor(
+  agent: string | null,
+  model: string | null,
+  step: WorkflowStep,
+): { agent: AgentId | null; model: string | null } | { refusal: string } {
+  const named: AgentId | null =
+    agent === "claude-code" || agent === "codex" ? agent : null;
+  if (step.models.length === 0) return { agent: named, model };
+  const fits = step.models.filter(
+    (allowed) =>
+      (agent === null || allowed.agent === agent) &&
+      (model === null || allowed.model === model),
+  );
+  const first = fits[0];
+  if (first === undefined) {
+    const asked =
+      agent !== null && model !== null
+        ? `${agent} with the model ${model}`
+        : agent !== null
+          ? agent
+          : `the model ${model}`;
+    return {
+      refusal: `The step ${quoted(step.name)} does not allow ${asked}. It allows ${either(step.models.map(modelText))}. Leave the agent and the model out to use the first.`,
+    };
+  }
+  return {
+    agent: first.agent,
+    model:
+      first.agent === "codex" && first.model === CODEX_DEFAULT
+        ? null
+        : first.model,
+  };
+}
+
+/** The live rows running where a call came from. */
+function liveHere(cwd: string): Session[] {
+  return sessions.all.filter(
+    (session) => isLive(session) && (session.startIn ?? session.project) === cwd,
+  );
+}
+
+/** The live rows an agent that was not told its id may be calling from:
+    the ones running where the call came from. */
+function untoldHere(cwd: string): Session[] {
+  return liveHere(cwd).filter((session) => !session.told);
+}
+
+/** What a caller is told when the workbench cannot tell which session in
+    its directory is calling, and one that runs there follows a workflow. */
+export const UNPLACED =
+  "The workbench cannot tell which session in this directory is calling, and a session here follows a workflow, so it cannot hold this call to the workflow. Start sessions from a session in a directory of its own, such as a worktree.";
+
+/** What a call naming no session is told when no session the workbench
+    runs in its directory can be the caller, while a session follows a
+    workflow. */
+export const NOWHERE =
+  "The workbench runs no session in this directory that could be making this call, and a session follows a workflow, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.";
+
+/** What a call naming no session is told when several sessions the
+    workbench runs in its directory were not told their id, and so any of
+    them could be the caller, while a session follows a workflow. */
+export const AMBIGUOUS =
+  "The workbench cannot tell which of the sessions in this directory is calling, and a session follows a workflow, so it cannot tell what this call may do. Start sessions from a session in a directory of its own, such as a worktree.";
+
+/** Whether a running session follows a workflow. */
+function workflowRunning(): boolean {
+  return sessions.all.some((session) => isLive(session) && session.workflow !== null);
+}
+
+/** What a call is told that names a session the workbench does not run. */
+function unknownCaller(id: string): string {
+  return `The workbench runs no session ${id}, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.`;
+}
+
+/** The workflow the caller follows, null for none, or why the call cannot
+    be held to one. A call naming a session the workbench does not run, or
+    one whose process is not running and so cannot be calling, is refused
+    while a session follows a workflow: it could be that session. One
+    naming none is the one session running in its directory that was not
+    told its id. Where that is not certain and a session there follows a
+    workflow, a session told its id among them, the call is refused rather
+    than let through unchecked. So is one from a directory where no such
+    session runs, and one from a directory where several do, while any
+    session follows a workflow. */
+function callerFlow(
+  request: ConductRequest,
+): { workflow: Workflow | null } | { refusal: string } {
+  if (request.session !== null) {
+    const row = byId(request.session);
+    if (row !== null && isLive(row)) return { workflow: row.workflow };
+    return workflowRunning()
+      ? { refusal: unknownCaller(request.session) }
+      : { workflow: row?.workflow ?? null };
+  }
+  const here = untoldHere(request.cwd);
+  const following = liveHere(request.cwd).filter(
+    (session) => session.workflow !== null,
+  );
+  if (
+    here.length === 1 &&
+    following.every((session) => session.key === here[0].key)
+  )
+    return { workflow: here[0].workflow };
+  if (following.length > 0) return { refusal: UNPLACED };
+  if (here.length !== 1 && workflowRunning())
+    return { refusal: here.length === 0 ? NOWHERE : AMBIGUOUS };
+  return { workflow: null };
 }
 
 /** Why a caller may not start another session right now, when it may not:
@@ -671,43 +1303,122 @@ async function resumeSession(
     );
   const room = roomFor(request);
   if (room !== null) return room;
+  const flow = callerFlow(request);
+  if ("refusal" in flow) return refused(flow.refusal);
   const { project, worktree, agent } = entry;
   if (!workspace.open.some((open) => open.path === project))
     return refused(
       `Session ${id} ran in ${project}, which is not open in the workbench.`,
     );
-  if (worktree !== null && !(await treeStands(project, worktree)))
-    return refused(
-      `Session ${id} ran in the worktree ${worktree}, which is gone. Start a new session for the work instead.`,
-    );
 
   const prompt = text(request, "prompt");
+  // A session resumed for a step of the caller's workflow goes on in that
+  // step, on a model the step allows, held to the step as a start is: a
+  // work step's room, and for a review given a prompt, another round.
+  const at = placed(caller, id);
+  const step =
+    at === null
+      ? undefined
+      : flow.workflow?.steps.find((candidate) => sameName(candidate.name, at.step));
+  // A caller under a workflow runs every session in its shape, so one
+  // started outside it, such as by a plain session in the same directory,
+  // is not brought back under it.
+  if (at === null && flow.workflow !== null)
+    return refused(
+      `Session ${id} was not started for a step of the workflow ${quoted(flow.workflow.name)}, so it cannot be held to it, and you follow that workflow. Start a new session for a step instead.`,
+    );
+  // A session whose step the workflow no longer has has nothing to be held
+  // to, so it is not brought back.
+  if (at !== null && flow.workflow !== null && step === undefined)
+    return refused(
+      `Session ${id} ran for the step ${quoted(at.step)}, which the workflow ${quoted(flow.workflow.name)} no longer has. The steps are ${stepsText(flow.workflow)}. Start a new session for the step its work is in now.`,
+    );
+  let model = text(request, "model");
+  let goesOn = at;
+  let release: (started: boolean) => void = () => {};
+  let hold = () => {};
+  let beyond: Beyond | null = null;
+  // A review brought back with no prompt waits for a line, and that line is
+  // its next round.
+  const owesRound =
+    step?.kind === "review" && prompt === null && at !== null && at.piece !== null;
+  if (step !== undefined && at !== null) {
+    if (prompt !== null && mayChangeModel(oneLine(prompt)))
+      return refused(keepsItsModel(id, at));
+    const runs = modelFor(agent, model, step);
+    if ("refusal" in runs) return refused(runs.refusal);
+    model = runs.model;
+    if (step.kind === "work") {
+      const full = noRoom(caller, step);
+      if (full !== null) return refused(full);
+      const free = reserveSlot(caller, step.name);
+      hold = free;
+      release = free;
+    } else if (prompt !== null && at.piece !== null) {
+      const piece = at.piece;
+      const done = roundsOf(caller, step.name, piece);
+      beyond = pastLimit(caller, step, at.work ?? piece, done);
+      countRound(caller, step.name, piece);
+      goesOn = { ...at, round: done + 1 };
+      release = (started) => {
+        if (!started) uncountRound(caller, step.name, piece);
+      };
+    }
+  }
 
-  // A row that ended is its transcript again; the resumed session takes
-  // its place rather than sitting beside it.
-  if (open !== null) close(open.key);
-  const looking = sessions.active;
-  const session = create(
-    project,
-    id,
-    agent,
-    worktree,
-    prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
-    text(request, "model"),
-    entry.account ?? null,
-  );
-  conductor.startedBy[session.key] = caller;
-  if (session.title === null && entry.name !== null) session.title = entry.name;
-  if (looking !== null && byKey(looking) !== null) sessions.active = looking;
+  let started = false;
+  try {
+    // Resuming is not asked about, the consent having been given when the
+    // session was started, except for a round past the review's limit.
+    if (
+      beyond !== null &&
+      (await askUser(request, project, prompt ?? "", false, beyond)) === "no"
+    )
+      return { ...refused(notAllowed(beyond)), byUser: true };
+    if (worktree !== null && !(await treeStands(project, worktree)))
+      return refused(
+        `Session ${id} ran in the worktree ${worktree}, which is gone. Start a new session for the work instead.`,
+      );
 
-  const trouble = await cameUp(session.key);
-  if (trouble !== null) return refused(trouble);
-  const where = worktree === null ? project : `${project}, in ${worktree}`;
-  return said(
-    prompt === null
-      ? `Resumed session ${id} in ${where}. It has its conversation and is waiting. Send it a line to go on, then call wait.`
-      : `Resumed session ${id} in ${where}. It has its conversation and the prompt. Call wait to hear how it goes.`,
-  );
+    // A row that ended is its transcript again; the resumed session takes
+    // its place rather than sitting beside it.
+    const now = byId(id);
+    if (now !== null) close(now.key);
+    const looking = sessions.active;
+    const session = create(
+      project,
+      id,
+      agent,
+      worktree,
+      prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
+      model,
+      entry.account ?? null,
+      null,
+    );
+    conductor.startedBy[session.key] = caller;
+    if (goesOn !== null) {
+      conductor.places[session.key] = goesOn;
+      hold();
+    }
+    if (session.title === null && entry.name !== null) session.title = entry.name;
+    if (looking !== null && byKey(looking) !== null) sessions.active = looking;
+
+    const trouble = await cameUp(session.key);
+    if (trouble !== null) return refused(trouble);
+    started = true;
+    if (owesRound) owed.add(session.key);
+    if (goesOn !== null && goesOn !== at) place(caller, id, goesOn);
+    const where = worktree === null ? project : `${project}, in ${worktree}`;
+    const round =
+      goesOn !== null && goesOn !== at ? ` for ${placeText(goesOn)}` : "";
+    return said(
+      prompt === null
+        ? `Resumed session ${id} in ${where}. It has its conversation and is waiting. Send it a line to go on, then call wait.`
+        : `Resumed session ${id}${round} in ${where}. It has its conversation and the prompt. Call wait to hear how it goes.`,
+    );
+  } finally {
+    release(started);
+  }
 }
 
 /** Whether a worktree is still one of the project's. */
@@ -751,8 +1462,88 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   if (!mine(request, session)) return notMine(id);
   if (session.status !== "running" || session.ptyId === null)
     return refused(`Session ${id} is not running.`);
-  await typeLine(session.key, session.ptyId, oneLine(line));
-  return said(`Sent to session ${id}. Call wait to hear what it does next.`);
+  const typed = oneLine(line);
+  const at = placeOf(session.key);
+  const flow = callerFlow(request);
+  if ("refusal" in flow) return refused(flow.refusal);
+  // A session started for a step stays on the model the step gave it, and a
+  // caller under a workflow changes the model of none it reaches.
+  if ((at !== null || flow.workflow !== null) && mayChangeModel(typed))
+    return refused(
+      at !== null
+        ? keepsItsModel(id, at)
+        : `You follow a workflow, so the workbench gives the sessions you reach no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.`,
+    );
+  // A line to a review that has finished its round asks it for another
+  // look, which is another round of the piece.
+  let round: Place | null = null;
+  if (
+    at !== null &&
+    at.kind === "review" &&
+    at.piece !== null &&
+    (finished(session) || owed.has(session.key))
+  ) {
+    const caller = callerOf(request);
+    const review = flow.workflow?.steps.find((candidate) =>
+      sameName(candidate.name, at.step),
+    );
+    if (review?.kind === "review") {
+      const done = roundsOf(caller, review.name, at.piece);
+      const beyond = pastLimit(caller, review, at.work ?? at.piece, done);
+      if (
+        beyond !== null &&
+        (await askUser(request, session.project, typed, false, beyond)) === "no"
+      )
+        return refused(notAllowed(beyond));
+      if (session.status !== "running" || session.ptyId === null)
+        return refused(`Session ${id} is not running.`);
+      countRound(caller, review.name, at.piece);
+      owed.delete(session.key);
+      round = { ...at, round: done + 1 };
+      conductor.places[session.key] = round;
+      if (session.id !== null) place(caller, session.id, round);
+      // The round is counted once, however many lines go before it works.
+      const mark = stops.get(session.key);
+      if (mark !== undefined) mark.worked = false;
+    }
+  }
+  await typeLine(session.key, session.ptyId!, typed);
+  return said(
+    round === null
+      ? `Sent to session ${id}. Call wait to hear what it does next.`
+      : `Sent to session ${id}, for ${placeText(round)}. Call wait to hear what it does next.`,
+  );
+}
+
+/** Whether a line may change the model an agent runs on. Any command an
+    agent takes after a slash might, /model, /fast and /config among them,
+    and either agent completes a command from the start of its name, so
+    every one may except /compact, which only shortens the conversation. A
+    line is read as a command where it begins with a slash once characters
+    that draw nothing are passed over and a wide slash is read as a slash,
+    which takes a path at its start for one as well. */
+export function mayChangeModel(line: string): boolean {
+  const typed = line.normalize("NFKC").replace(/^[\s\p{Cf}]+/u, "");
+  return typed.startsWith("/") && !/^\/compact(\s|$)/i.test(typed);
+}
+
+/** What a caller is told when a line or a prompt for a session placed in
+    its workflow could change the session's model. */
+function keepsItsModel(id: string, at: Place): string {
+  return `Session ${id} runs ${placeText(at)} of your workflow, on a model the step allows, and stays on it: the workbench gives it no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.`;
+}
+
+/** Reviews resumed with no prompt, by row key, whose next line is their
+    next round: they have not worked since they came back, so they have not
+    finished one. */
+const owed = new Set<string>();
+
+/** Whether a session has worked and come to rest since it was last sent a
+    line or started. */
+function finished(session: Session): boolean {
+  observe(session);
+  const mark = stops.get(session.key);
+  return mark !== undefined && mark.worked && mark.rest === "quiet";
 }
 
 function stopSession(request: ConductRequest): Answered {
@@ -921,6 +1712,12 @@ export function startedFor(key: string | null): string | null {
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
 
+// A session gone from its project goes from what its workflow ran too.
+onForgotten((ids) => {
+  for (const id of ids) delete conductor.runs[id];
+  saveRuns();
+});
+
 /** The rows a session started, running or not. */
 export function startedBy(sessionId: string): Session[] {
   return sessions.all.filter(
@@ -984,9 +1781,11 @@ function askUser(
   project: string,
   prompt: string,
   worktree: boolean,
+  round: Beyond | null = null,
 ): Promise<Choice> {
   const caller = callerOf(request);
-  if (allowed.has(`${caller}\n${project}`)) return Promise.resolve("allow");
+  if (round === null && allowed.has(`${caller}\n${project}`))
+    return Promise.resolve("allow");
   const session = request.session === null ? null : byId(request.session);
   const ask: Ask = {
     request,
@@ -994,6 +1793,7 @@ function askUser(
     project,
     prompt: prompt.split("\n")[0],
     worktree,
+    round,
   };
   return new Promise<Choice>((settle) => {
     queue.push({ ask, settle });
@@ -1014,7 +1814,8 @@ function answerAsk(choice: Choice) {
   const settle = pending;
   conductor.asking = null;
   pending = null;
-  if (ask !== null && choice === "allow")
+  // A round past the limit is allowed once, whatever the button.
+  if (ask !== null && choice === "allow" && ask.round === null)
     allowed.add(`${callerOf(ask.request)}\n${ask.project}`);
   settle?.(choice);
   nextAsk();
@@ -1146,11 +1947,16 @@ export function resetConductor() {
   for (const key of Object.keys(conductor.startedBy))
     delete conductor.startedBy[key];
   conductor.started = {};
+  conductor.places = {};
+  conductor.runs = {};
+  conductor.refusals = {};
   pending = null;
   queue.length = 0;
   allowed.clear();
   seen.clear();
   stops.clear();
+  owed.clear();
+  reserved.clear();
   waiting.clear();
   given.clear();
 }

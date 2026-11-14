@@ -20,6 +20,8 @@ const state = {
   refuse: null as string | null,
   /** The file is there and does not parse. */
   unreadable: false,
+  /** The core cannot write the window's copy to a missing file. */
+  handOverFails: false,
   hookCalls: [] as string[],
 };
 
@@ -73,6 +75,7 @@ vi.mock("$lib/core", () => ({
     },
     settingsHandOver(held: Settings): Promise<StoredSettings> {
       if (state.noCore) return Promise.reject(new Error("no core"));
+      if (state.handOverFails) return Promise.reject(new Error("read-only"));
       const answer = (): StoredSettings => {
         state.handOvers.push(held);
         // Written only while there is no file.
@@ -130,6 +133,7 @@ import { adopt, currentSettings, followSettings } from "$lib/preferences.svelte"
 import { loadTheme, setLook, setPalette, setThemes, theme } from "$lib/theme.svelte";
 import { notify, resetNotify, setChime, setNotifications } from "$lib/notify.svelte";
 import { workspace } from "$lib/workspace.svelte";
+import { unknowWorkflows, workflowsKnown } from "$lib/workflows.svelte";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -148,6 +152,7 @@ beforeEach(() => {
   state.noCore = false;
   state.refuse = null;
   state.unreadable = false;
+  state.handOverFails = false;
   state.hookCalls = [];
   localStorage.clear();
   showRefusal(null);
@@ -370,6 +375,35 @@ describe("followSettings", () => {
     expect(state.sets).toEqual([]);
     expect(state.handOvers).toEqual([]);
     expect(theme.palette).toBe("indigo");
+  });
+
+  it("lets a resumed session go on with the workflows however the startup goes", async () => {
+    /** Whether a resumed session waiting on the workflows has been let go. */
+    async function letGo(): Promise<boolean> {
+      let gone = false;
+      void workflowsKnown().then(() => (gone = true));
+      await settle();
+      return gone;
+    }
+    const paths: [string, () => void][] = [
+      ["a whole file", () => (state.stored = { ...DEFAULTS })],
+      ["a file that cannot be read", () => (state.unreadable = true)],
+      ["no file, handed over", () => (state.stored = null)],
+      ["no file, and the hand-over refused", () => (state.handOverFails = true)],
+      ["no core", () => (state.noCore = true)],
+    ];
+    for (const [path, arrange] of paths) {
+      state.stored = null;
+      state.unreadable = false;
+      state.handOverFails = false;
+      state.noCore = false;
+      arrange();
+      unknowWorkflows();
+      expect(await letGo(), path).toBe(false);
+      const stop = await followSettings();
+      expect(await letGo(), path).toBe(true);
+      stop();
+    }
   });
 
   it("stops listening when told to", async () => {

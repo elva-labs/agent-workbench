@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 const MOD = "ControlOrMeta";
 const AGENT = "section[data-pane='agent']";
@@ -10,8 +10,10 @@ const file = (page: Page) =>
 const step = (page: Page, name: string) =>
   page.locator(`[data-testid="workflow-step"][data-step="${name}"]`);
 
+/** Opens the tab. Without settings of its own, the shipped workflow is
+    there and turned on for new sessions. */
 async function open(page: Page, settings?: Record<string, unknown>, agents?: string[]) {
-  await installFakeCore(page, { open: [PROJECT], settings, agents });
+  await installFakeCore(page, { open: [PROJECT], settings: settings ?? WITH_WORKFLOW, agents });
   await page.goto("/");
   await expect(page.locator(AGENT)).toBeVisible();
   await page.keyboard.press(`${MOD}+,`);
@@ -20,6 +22,15 @@ async function open(page: Page, settings?: Record<string, unknown>, agents?: str
 }
 
 test.describe("the workflows tab", () => {
+  test("has the shipped workflow on a fresh install, with new sessions following none", async ({ page }) => {
+    await open(page, {});
+    const chip = page.locator('[data-testid="workflow-chip"][data-workflow="Build and review"]');
+    await expect(chip).toBeVisible();
+    await expect(page.getByTestId("workflow-default-tag")).toHaveCount(0);
+    await expect(page.getByTestId("workflow-default")).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByTestId("workflow-default-line")).toHaveText("New sessions start with no workflow.");
+  });
+
   test("lists the default workflow, marked, with the orchestrator as the frame and the steps in it", async ({
     page,
   }) => {
@@ -59,7 +70,7 @@ test.describe("the workflows tab", () => {
     expect(Math.abs(line.x + line.width - (review.x + review.width / 2))).toBeLessThan(2);
     expect(line.y).toBeGreaterThanOrEqual(Math.max(work.y + work.height, review.y + review.height) - 2);
     const label = page.getByTestId("workflow-loop-label");
-    await expect(label).toHaveText("Review: back to Work until both approve, 3 rounds at most");
+    await expect(label).toHaveText("Review: back to Work until both approve, at most 3 times");
     const text = (await label.boundingBox())!;
     expect(text.y).toBeGreaterThan(line.y);
   });
@@ -71,8 +82,29 @@ test.describe("the workflows tab", () => {
     const list = page.getByTestId("workflow-told-list");
     await expect(list).toBeVisible();
     await expect(list.locator("li")).toHaveCount(4);
-    await expect(list).toContainText("`start` tool");
+    await expect(list).toContainText("the workbench's start tool");
+    await expect(list).not.toContainText("`");
     await expect(list).toContainText("at most 3 times");
+  });
+
+  test("says the orchestrator delegates only through start, and lets it keep its subagents", async ({
+    page,
+  }) => {
+    await open(page);
+    const box = page.getByTestId("workflow-start-only");
+    const row = page.getByTestId("workflow-start-only-row");
+    await expect(box).toBeChecked();
+    await expect(row).toContainText("every piece it hands out is a session you can see");
+    // It sits above what the orchestrator is told, inside the tab.
+    const told = (await page.getByTestId("workflow-told").boundingBox())!;
+    const own = (await row.boundingBox())!;
+    expect(own.y + own.height).toBeLessThanOrEqual(told.y + 1);
+    await row.click();
+    await expect(box).not.toBeChecked();
+    await expect(row).toContainText("keeps its own subagents");
+    await expect.poll(async () => (await file(page)).workflows.list[0].startOnly).toBe(false);
+    await row.click();
+    await expect.poll(async () => (await file(page)).workflows.list[0].startOnly).toBeUndefined();
   });
 
   test("changes the orchestrator's model at once and keeps it", async ({ page }) => {
@@ -218,7 +250,7 @@ test.describe("the workflows tab", () => {
     expect(Math.abs(line.x - (plan.x + plan.width / 2))).toBeLessThan(2);
     expect(Math.abs(line.x + line.width - (check.x + check.width / 2))).toBeLessThan(2);
     await expect(page.getByTestId("workflow-loop-label")).toHaveText(
-      "Check: back to Plan until the reviewer approves, 2 rounds at most",
+      "Check: back to Plan until the reviewer approves, at most 2 times",
     );
   });
 
@@ -340,7 +372,7 @@ test.describe("the settings of a step", () => {
     await page.getByTestId("step-limit").fill("5");
     await page.getByTestId("step-limit").press("Enter");
     await expect(page.getByTestId("workflow-loop-label")).toHaveText(
-      "Review: back to Work 2 until the orchestrator agrees, 5 rounds at most",
+      "Review: back to Work 2 until the orchestrator agrees, at most 5 times",
     );
     // A review goes back only to a work step before it.
     const options = await page.getByTestId("step-back-to").locator("option").allTextContents();
@@ -569,9 +601,13 @@ test.describe("the layout", () => {
 
   test("decides beside or under from the window, never from how many steps there are", async ({ page }) => {
     await open(page);
+    // Null while the settings are being moved between beside and under,
+    // which the poll waits out.
     const beside = async () => {
-      const canvas = await box(page, "workflow-canvas");
-      return (await box(page, "step-settings")).x >= canvas.x + canvas.width;
+      const canvas = await page.getByTestId("workflow-canvas").boundingBox();
+      const settings = await page.getByTestId("step-settings").boundingBox();
+      if (canvas === null || settings === null) return null;
+      return settings.x >= canvas.x + canvas.width;
     };
     await expect.poll(beside).toBe(true);
     await page.locator('[data-testid="workflow-add"][data-at="1"]').click();
@@ -665,8 +701,8 @@ test.describe("the lines of reviews", () => {
     await open(page, fourSteps);
     const labels = page.getByTestId("workflow-loop-label");
     await expect(labels).toHaveText([
-      "Check: back to Plan until the orchestrator agrees, 2 rounds at most",
-      "Final review: back to Build until both approve, 3 rounds at most",
+      "Check: back to Plan until the orchestrator agrees, at most 2 times",
+      "Final review: back to Build until both approve, at most 3 times",
     ]);
     const lines = await Promise.all(
       (await page.getByTestId("workflow-loop").all()).map(async (line) => (await line.boundingBox())!),
@@ -714,8 +750,8 @@ test.describe("the lines of reviews", () => {
       },
     });
     await expect(page.getByTestId("workflow-loop-label")).toHaveText([
-      "First look: back to Work until both approve, 3 rounds at most",
-      "Second look: back to Work until the reviewer approves, 2 rounds at most",
+      "First look: back to Work until both approve, at most 3 times",
+      "Second look: back to Work until the reviewer approves, at most 2 times",
     ]);
     const inner = (await page.locator('[data-testid="workflow-loop"][data-from="First look"]').boundingBox())!;
     const outer = (await page.locator('[data-testid="workflow-loop"][data-from="Second look"]').boundingBox())!;
@@ -956,7 +992,7 @@ test.describe("what the step's settings say", () => {
   test("say where new sessions stand beside the switch, pointing at project choices only where there are some", async ({
     page,
   }) => {
-    await installFakeCore(page, { open: [] });
+    await installFakeCore(page, { open: [], settings: WITH_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.keyboard.press(`${MOD}+,`);

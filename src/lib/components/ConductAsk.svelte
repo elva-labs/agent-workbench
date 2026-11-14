@@ -1,6 +1,6 @@
 <script lang="ts">
   import { coversBrowser } from "$lib/browser.svelte";
-  import { allow, conductor, once, refuse } from "$lib/conductor.svelte";
+  import { allow, conductor, once, refuse, roundQuestion } from "$lib/conductor.svelte";
   import { returnFocus } from "$lib/layout.svelte";
 
   let ask = $derived(conductor.asking);
@@ -13,7 +13,19 @@
   }
 </script>
 
-{#if ask !== null}
+{#if ask !== null && ask.round !== null}
+  <!-- A round of review past what the workflow gives a piece: the user's
+       yes lets this one through. -->
+  <div class="ask" role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
+    <p class="title">{ask.caller} wants another round of {ask.round.step}</p>
+    <p class="where" data-testid="conduct-round">{roundQuestion(ask.round)}</p>
+    {#if ask.prompt !== ""}<p class="prompt">{ask.prompt}</p>{/if}
+    <div class="actions">
+      <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow one more round</button>
+      <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">Stop at the limit</button>
+    </div>
+  </div>
+{:else if ask !== null}
   <div class="ask" role="alertdialog" aria-label="Start a session" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants to start a session</p>
     <p class="where">

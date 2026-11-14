@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, NO_WORKFLOW, installFakeCore } from "./fake";
 
 /**
  * An orchestrator, driven by a fake core.
@@ -90,7 +90,7 @@ async function orchestrate(page: Page) {
 
 test.describe("the orchestrator", () => {
   test.beforeEach(async ({ page }) => {
-    await installFakeCore(page);
+    await installFakeCore(page, { settings: NO_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
   });

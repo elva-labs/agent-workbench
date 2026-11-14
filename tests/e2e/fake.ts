@@ -51,6 +51,41 @@ export const DEFAULT_FIXTURE: GitFixture = {
   ],
 };
 
+/** The workflow a fresh install has. */
+export const BUILD_AND_REVIEW = {
+  name: "Build and review",
+  orchestrator: { agent: "claude-code", model: "fable" },
+  steps: [
+    {
+      kind: "work",
+      name: "Work",
+      models: [{ agent: "claude-code", model: "sonnet" }],
+      parallel: 1,
+    },
+    {
+      kind: "review",
+      name: "Review",
+      models: [{ agent: "claude-code", model: "opus" }],
+      reviewerApproves: true,
+      orchestratorAgrees: true,
+      backTo: "Work",
+      limit: 3,
+    },
+  ],
+};
+
+/** A settings file with no workflows at all, for tests of starting and
+    directing sessions as a session with none does. */
+export const NO_WORKFLOW = {
+  workflows: { list: [], default: null, overrides: {} },
+};
+
+/** A settings file whose new sessions follow the workflow a fresh install
+    has, turned on. */
+export const WITH_WORKFLOW = {
+  workflows: { list: [BUILD_AND_REVIEW], default: "Build and review", overrides: {} },
+};
+
 /** Where the fake keeps the settings file the core would keep, in the
     page's storage so a reload finds it the way a restart finds the file. */
 export const SETTINGS_FILE = "fake.settings";
@@ -95,7 +130,7 @@ export async function installFakeCore(
     `window.__integrated = (${fakeIntegrated.toString()})();`,
   );
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, active, used, held }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, active, used, held, buildAndReview }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -372,33 +407,8 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
-        workflows: {
-          list: [
-            {
-              name: "Build and review",
-              orchestrator: { agent: "claude-code", model: "fable" },
-              steps: [
-                {
-                  kind: "work",
-                  name: "Work",
-                  models: [{ agent: "claude-code", model: "sonnet" }],
-                  parallel: 1,
-                },
-                {
-                  kind: "review",
-                  name: "Review",
-                  models: [{ agent: "claude-code", model: "opus" }],
-                  reviewerApproves: true,
-                  orchestratorAgrees: true,
-                  backTo: "Work",
-                  limit: 3,
-                },
-              ],
-            },
-          ],
-          default: "Build and review",
-          overrides: {},
-        },
+        // A fresh install: the shipped workflow, followed by nothing.
+        workflows: { list: [buildAndReview], default: null, overrides: {} },
         pastSessions: "forever",
         inactiveAfter: "week",
         themes: {},
@@ -1318,6 +1328,7 @@ export async function installFakeCore(
       active: options.active ?? null,
       used: options.used ?? null,
       held: options.held ?? [],
+      buildAndReview: BUILD_AND_REVIEW,
     },
   );
 }
