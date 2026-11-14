@@ -344,6 +344,30 @@ struct FileParams {
 }
 
 #[derive(Deserialize)]
+struct FileWriteParams {
+    root: PathBuf,
+    file: String,
+    text: String,
+    #[serde(default)]
+    stamp: Option<String>,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+#[derive(Deserialize)]
+struct RenameParams {
+    root: PathBuf,
+    from: String,
+    to: String,
+}
+
+#[derive(Deserialize)]
+struct TreePathParams {
+    root: PathBuf,
+    path: String,
+}
+
+#[derive(Deserialize)]
 struct WriteParams {
     id: String,
     data: String,
@@ -523,6 +547,24 @@ pub fn dispatch(
         "git_content" => {
             let p: FileParams = parse(params)?;
             value(core.git_content(&p.root, &p.file)?)
+        }
+        "file_read" => {
+            let p: FileParams = parse(params)?;
+            value(core.file_read(&p.root, &p.file)?)
+        }
+        "file_write" => {
+            let p: FileWriteParams = parse(params)?;
+            value(core.file_write(&p.root, &p.file, &p.text, p.stamp.as_deref(), p.overwrite)?)
+        }
+        "path_rename" => {
+            let p: RenameParams = parse(params)?;
+            core.path_rename(&p.root, &p.from, &p.to)?;
+            Ok(Value::Null)
+        }
+        "path_delete" => {
+            let p: TreePathParams = parse(params)?;
+            core.path_delete(&p.root, &p.path)?;
+            Ok(Value::Null)
         }
         "git_watch" => {
             let p: RootParams = parse(params)?;
@@ -741,6 +783,115 @@ mod tests {
             Some(("pty-1".into(), b"hi\n".to_vec()))
         );
         assert_eq!(output_bytes("git_changed", &json!("/repo")), None);
+    }
+
+    #[test]
+    fn the_file_methods_read_write_rename_and_delete() {
+        let dir = Scratch::new("protocol-files");
+        let root = dir.to_string_lossy().into_owned();
+        let core = core();
+        let call = |method: &str, params: Value| dispatch(&core, method, params, no_output);
+
+        let made = call(
+            "file_write",
+            json!({"root": root, "file": "a/b.txt", "text": "one", "stamp": null}),
+        )
+        .unwrap();
+        assert_eq!(made["written"], true);
+
+        let read = call("file_read", json!({"root": root, "file": "a/b.txt"})).unwrap();
+        assert_eq!(read["text"], "one");
+        assert_eq!(read["stamp"], made["stamp"]);
+
+        let stale = call(
+            "file_write",
+            json!({"root": root, "file": "a/b.txt", "text": "two", "stamp": "nope"}),
+        )
+        .unwrap();
+        assert_eq!(stale["written"], false);
+        assert_eq!(stale["stamp"], read["stamp"]);
+
+        let forced = call(
+            "file_write",
+            json!({"root": root, "file": "a/b.txt", "text": "two", "stamp": "nope", "overwrite": true}),
+        )
+        .unwrap();
+        assert_eq!(forced["written"], true);
+
+        assert_eq!(
+            call("path_rename", json!({"root": root, "from": "a", "to": "c"})).unwrap(),
+            Value::Null
+        );
+        let moved = call("file_read", json!({"root": root, "file": "c/b.txt"})).unwrap();
+        assert_eq!(moved["text"], "two");
+
+        assert_eq!(
+            call("path_delete", json!({"root": root, "path": "c"})).unwrap(),
+            Value::Null
+        );
+        let gone = call("file_read", json!({"root": root, "file": "c/b.txt"})).unwrap_err();
+        assert!(gone.contains("does not exist"));
+    }
+
+    #[test]
+    fn the_file_methods_stay_inside_the_working_tree() {
+        // The tree is one level inside the scratch folder, so `../x` is a
+        // real file and `.git` a real folder: each call would succeed
+        // without its guard.
+        let dir = Scratch::new("protocol-files-confined");
+        let tree = dir.path().join("tree");
+        std::fs::create_dir_all(tree.join(".git")).unwrap();
+        std::fs::write(tree.join(".git/HEAD"), "ref").unwrap();
+        std::fs::write(tree.join("a.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("x"), "outside").unwrap();
+        let root = tree.to_string_lossy().into_owned();
+        let core = core();
+
+        let outside = "not a path inside the working tree";
+        let in_git = "in .git";
+        for (method, params, refusal) in [
+            ("file_read", json!({"root": root, "file": "../x"}), outside),
+            (
+                "file_write",
+                json!({"root": root, "file": "../x", "text": "t", "stamp": null, "overwrite": true}),
+                outside,
+            ),
+            (
+                "file_write",
+                json!({"root": root, "file": ".git/HEAD", "text": "t", "stamp": null, "overwrite": true}),
+                in_git,
+            ),
+            (
+                "path_rename",
+                json!({"root": root, "from": "../x", "to": "y"}),
+                outside,
+            ),
+            (
+                "path_rename",
+                json!({"root": root, "from": "a.txt", "to": ".git/hook"}),
+                in_git,
+            ),
+            (
+                "path_delete",
+                json!({"root": root, "path": "../x"}),
+                outside,
+            ),
+            ("path_delete", json!({"root": root, "path": ".git"}), in_git),
+            ("path_delete", json!({"root": root, "path": "."}), outside),
+        ] {
+            let error = dispatch(&core, method, params, no_output).unwrap_err();
+            assert!(error.contains(refusal), "{method}: {error}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("x")).unwrap(),
+            "outside"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tree.join(".git/HEAD")).unwrap(),
+            "ref"
+        );
+        assert!(tree.join("a.txt").exists());
+        assert!(!tree.join("y").exists() && !dir.path().join("y").exists());
     }
 
     #[test]

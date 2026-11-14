@@ -4,8 +4,8 @@ A project's path says where it is. `/home/ada/repo` is here;
 `ssh://ada@box/home/ada/repo` is on `box`, as `ada`. The window never learns
 the difference: every command the panes make routes by the path or pty id it
 was given, and results and events come back with the host put back on. A
-remote project has the same sessions, changes pane, file viewer, search and
-hooks as one here; the work happens on the machine the path names.
+remote project has the same sessions, changes pane, file viewer, editor,
+search and hooks as one here; the work happens on the machine the path names.
 
 ## The pieces
 

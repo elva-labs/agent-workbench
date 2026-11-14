@@ -16,6 +16,7 @@ pub mod codex;
 pub mod cwd;
 pub mod env;
 pub mod events;
+pub mod files;
 pub mod git;
 pub mod hook;
 pub mod integrated;
