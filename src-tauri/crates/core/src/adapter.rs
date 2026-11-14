@@ -310,8 +310,9 @@ impl AgentAdapter for ClaudeCode {
     }
 }
 
-/// Codex CLI: a full-screen TUI like Claude Code, run the same way. It
-/// mints its own session ids and resumes by `codex resume <id>`.
+/// Codex CLI: a full-screen TUI like Claude Code, run the same way, or an
+/// integrated session through its app-server. It mints its own session ids
+/// and resumes by `codex resume <id>`.
 pub struct Codex;
 
 impl Codex {
@@ -355,8 +356,12 @@ impl AgentAdapter for Codex {
             resumable: true,
             titles: true,
             acp: false,
-            integrated: false,
+            integrated: true,
         }
+    }
+
+    fn integrated(&self) -> Option<&'static dyn crate::integrated::Protocol> {
+        Some(&crate::codex_app_server::CODEX_APP_SERVER)
     }
 
     fn takes_id(&self) -> bool {

@@ -960,14 +960,15 @@ mod tests {
         )
         .expect_err("a trust names its project");
         assert!(missing.contains("bad parameters"), "{missing}");
+        let folder = std::env::temp_dir().join("workbench-protocol-codex-untrusted");
         let codex = dispatch(
             &core,
             "integrated_start",
-            json!({ "agent": "codex", "project": "/tmp" }),
+            json!({ "agent": "codex", "project": folder }),
             no_output,
         )
-        .expect_err("codex has no integrated mode here");
-        assert!(codex.contains("integrated"), "{codex}");
+        .expect_err("codex runs integrated only in a folder it trusts");
+        assert!(codex.starts_with(crate::integrated::UNTRUSTED), "{codex}");
         for (method, params) in [
             (
                 "integrated_send",
