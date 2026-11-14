@@ -799,6 +799,38 @@ test("stops following when the user scrolls up, and shows the way back", async (
   await expect.poll(() => fromFoot(page)).toBeLessThan(2);
 });
 
+test("follows again once the user scrolls back to the foot", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", Array.from({ length: 40 }, (_, at) => "Line " + at).join("\\n\\n"));`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  // The reviewer's sequence: up 600 pixels, back down to the foot, then
+  // something new.
+  await page.getByTestId("thread").hover();
+  await page.mouse.wheel(0, -600);
+  await expect.poll(() => fromFoot(page)).toBeGreaterThan(500);
+  await page.mouse.wheel(0, 600);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await agent(page, `f.turn("${H}", Array.from({ length: 12 }, (_, at) => "More " + at).join("\\n\\n"));`);
+  await expect(page.getByTestId("agent-text").last()).toContainText("More 11");
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await expect(page.getByTestId("jump-latest")).toHaveCount(0);
+});
+
+test("stays at its foot when the dock under it grows", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.turn("${H}", Array.from({ length: 40 }, (_, at) => "Line " + at).join("\\n\\n"));`);
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await agent(
+    page,
+    `f.startTurn("${H}"); f.ask("${H}", "Thing", { command: "ls", reason: Array.from({ length: 30 }, () => "why").join("\\n") });`,
+  );
+  await expect(page.getByTestId("permission-dock")).toBeVisible();
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  await page.getByTestId("permission-whole").click();
+  await expect(page.getByTestId("permission-whole-text")).toBeVisible();
+  await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+});
+
 test.describe("a permission is shown whole", () => {
   test("with every path outside the project named, not only the first", async ({ page }) => {
     await openIntegrated(page);

@@ -91,20 +91,30 @@
   $effect(() => {
     pulse();
     untrack(() => {
+      heard();
       if (!pinned) behind = true;
     });
   });
 
   // Follows the thread's own size while at the foot, so text that is drawn
   // a frame after it arrives, or grows as a whole replaces its pieces, is
-  // followed all the same.
+  // followed all the same; and the size of the space it is shown in, which
+  // shrinks as the dock or the composer under it grows.
   $effect(() => {
     if (col === null || scroller === null) return;
     const scrolled = scroller;
-    const observer = new ResizeObserver(() => {
-      if (pinned && performance.now() - touched > 400) toEnd(scrolled);
+    const inner = col;
+    const observer = new ResizeObserver((seen) => {
+      heard();
+      if (!pinned) return;
+      // A fold the user opened in the thread grows it; the space shrinking
+      // under it is never the user's doing in the thread.
+      const grew = seen.some((entry) => entry.target === inner);
+      const shrank = seen.some((entry) => entry.target === scrolled);
+      if (shrank || (grew && performance.now() - touched > 400)) toEnd(scrolled);
     });
     observer.observe(col);
+    observer.observe(scroller);
     return () => observer.disconnect();
   });
 
@@ -126,7 +136,7 @@
 
   /** Where the thread last scrolled itself to: a scroll that lands there
       is its own, and says nothing of where the user wants to be. */
-  let ownTop = -1;
+  let ownTop = Number.NEGATIVE_INFINITY;
 
   function toEnd(node: HTMLDivElement) {
     node.scrollTop = node.scrollHeight;
@@ -138,20 +148,54 @@
   let scrolledBy = Number.NEGATIVE_INFINITY;
   const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
+  /** Where the foot was when the user last scrolled: a scroll can be heard
+      only after more has come, and the foot the user scrolled to is then
+      short of the foot there is now. */
+  let footThen = Number.POSITIVE_INFINITY;
+
   function userScrolls() {
     scrolledBy = performance.now();
+    // From here on a scroll is the user's, wherever it lands.
+    ownTop = Number.NEGATIVE_INFINITY;
+    if (scroller !== null) footThen = scroller.scrollHeight - scroller.clientHeight;
+  }
+
+  /** Where the thread was last heard to be, to tell a scroll down from
+      one up. */
+  let lastTop = 0;
+
+  /** Takes in where the user has scrolled before the thread moves on its
+      own: a browser can tell of a scroll only after more has come. */
+  function heard() {
+    if (scroller !== null && scroller.scrollTop !== lastTop) onscroll();
   }
 
   function onscroll() {
     if (scroller === null) return;
+    const top = scroller.scrollTop;
+    const down = top >= lastTop - 1;
+    lastTop = top;
     // Only the user decides whether the thread follows. The thread's own
     // scroll to its foot can be heard after more has come, and the browser
     // moves the view itself to keep its place while text is drawn again;
     // neither is the user leaving the foot.
-    if (Math.abs(scroller.scrollTop - ownTop) < 2) return;
     if (performance.now() - scrolledBy > 1000) return;
-    pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 32;
-    if (pinned) behind = false;
+    if (Math.abs(top - ownTop) < 2) return;
+    if (scroller.scrollHeight - top - scroller.clientHeight < 32) {
+      pinned = true;
+      behind = false;
+      return;
+    }
+    // Scrolling down to the foot as it stood when the user scrolled is
+    // going back to the foot, and scrolling down never leaves it: either
+    // way the thread follows, and goes on to the foot there is now.
+    if (down && (pinned || footThen - top < 32)) {
+      pinned = true;
+      behind = false;
+      toEnd(scroller);
+      return;
+    }
+    pinned = false;
   }
 
   function toFoot() {
