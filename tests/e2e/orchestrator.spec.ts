@@ -395,6 +395,44 @@ test.describe("a started session in a project of its own", () => {
     await expect(heads.first()).toHaveAttribute("data-row", `project:${ORCHESTRATOR}`);
   });
 
+  // The project the started session runs in has no session drawn under
+  // it. Go to counts none live there, and picking it shows it with none, as
+  // the project on screen, with the keyboard in the sessions pane, rather
+  // than an empty header above the starter's project.
+  test("shows that project with no session when it is picked in go to", async ({ page }) => {
+    await installFakeCore(page, {
+      open: [PROJECT, OTHER],
+      used: { [PROJECT]: 60_000, [OTHER]: 30 * 24 * 3600 * 1000 },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await row(page, PROJECT).getByTestId("project-new-session").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    await push(page, {
+      id: "o-1",
+      tool: "start",
+      arguments: { project: OTHER, prompt: "Bump the client" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "o-1")).not.toBeNull();
+    await expect(page.getByTestId("started-session")).toBeVisible();
+
+    await page.keyboard.press(`${MOD}+P`);
+    const project = page.locator("[data-testid='palette-row'][data-kind='project']").filter({ hasText: "other" });
+    await expect(project).toHaveCount(1);
+    await expect(project).not.toContainText("live");
+    await project.click();
+    await expect(page.getByTestId("palette")).toHaveCount(0);
+
+    const heads = page.locator("[data-row^='project:']");
+    await expect(row(page, OTHER)).toHaveClass(/\bon\b/);
+    await expect(row(page, PROJECT)).not.toHaveClass(/\bon\b/);
+    await expect(page.locator(".session.on")).toHaveCount(0);
+    await expect(heads.first()).toHaveAttribute("data-row", `project:${OTHER}`);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+  });
+
   // With that session on screen its starter's project is the one on
   // screen, for the palette as for the pane: the head's + asks which
   // project with the starter's first and under the cursor, though the

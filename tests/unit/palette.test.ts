@@ -30,7 +30,7 @@ import { matches } from "$lib/files.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
-import { activate, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { activate, onScreen, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
 import { projects, resetProjects } from "$lib/projects.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import "$lib/orchestrator.svelte";
@@ -327,6 +327,39 @@ describe("what picking does in go to", () => {
     expect(outcome.type).toBe("close");
     if (outcome.type === "close") outcome.then();
     expect(workspace.active).toBe(B);
+  });
+
+  // A project whose only session hangs under a starter in another project
+  // has none drawn under it: go to counts none live there, and picking it
+  // shows it with no session, as the project on screen, rather than that
+  // session, which would put the starter's project on screen instead.
+  it("shows a project whose only session hangs elsewhere with none", () => {
+    const starter = create(A);
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create(C);
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    activate(A);
+    sessions.active = starter.key;
+    const row = (path: string) =>
+      goToItems("").find((candidate) => candidate.kind === "project" && candidate.path === path)!;
+    expect(row(A)).toMatchObject({ end: "2 live" });
+    expect(row(C)).toMatchObject({ end: "now" });
+
+    const outcome = pickItem(row(C));
+    if (outcome.type === "close") outcome.then();
+    expect(workspace.active).toBe(C);
+    expect(sessions.active).toBeNull();
+    expect(onScreen()).toBe(C);
+    expect(Date.now() - projects.used[C]).toBeLessThan(1000);
+
+    // A session of its own drawn under it is the one shown.
+    const own = create(C);
+    started(own.key, "pty-3", "own-1");
+    activate(A);
+    const again = pickItem(row(C));
+    if (again.type === "close") again.then();
+    expect(sessions.active).toBe(own.key);
   });
 
   // A project picked is the user using it, as a session picked is.

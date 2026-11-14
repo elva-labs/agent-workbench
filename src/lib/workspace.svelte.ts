@@ -13,6 +13,7 @@ import {
   forProject,
   select,
   sessions,
+  type Session,
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
 import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
@@ -113,16 +114,14 @@ export async function openPath(path: string): Promise<boolean> {
 
   const already = workspace.open.find((project) => project.path === path);
   if (already !== undefined) {
-    activate(already.path);
-    touch(already.path);
+    bringForward(already.path);
     return true;
   }
 
   try {
     const info = await core().projectInfo(path);
     if (!isOpen(info.path)) workspace.open.push(info);
-    activate(info.path);
-    touch(info.path);
+    bringForward(info.path);
     return true;
   } catch (error) {
     workspace.error = String(error);
@@ -146,6 +145,22 @@ export function activate(path: string) {
       .setWindowTitle(`${projectLabel(project.path)} — Agent Workbench`)
       .catch(() => {});
   }
+}
+
+/** The user brought a project forward, from the sessions pane, go to or
+    by opening it again: it is in front and counts as used. What it shows
+    is a session drawn under it: the one on screen when that is one, else
+    its newest. A session that hangs under its starter in another project
+    is drawn there, so a project whose only sessions are such is shown with
+    none, and is itself the project on screen. */
+export function bringForward(path: string) {
+  if (workspace.active !== path) activate(path);
+  touch(path);
+  const drawnHere = (session: Session) => session.project === path && drawnIn(session) === path;
+  const current = sessions.active === null ? null : byKey(sessions.active);
+  if (current !== null && drawnHere(current)) return;
+  const own = forProject(path).filter(drawnHere);
+  sessions.active = own.length > 0 ? own[own.length - 1].key : null;
 }
 
 /** The project on screen, as the sessions pane and the palette both mean

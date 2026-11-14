@@ -70,13 +70,15 @@ projects. A session matches on its name or on the label of its project.
 Sessions are listed by when they last changed, the latest first, each with a
 dot for its state, its project and the time since. With nothing typed the
 cursor starts on the first session that is not the one on screen, so Enter
-goes to the previous one. Every open project is listed, with how many sessions
-are live in it or the time since it was last used, the most recently used
+goes to the previous one. Every open project is listed, with how many of the
+sessions the sessions pane draws under it are live, or the time since it was
+last used, the most recently used
 first. <kbd>Enter</kbd> on a session shows it and puts the keyboard in its
 agent, as a click on its row does. On a project it brings the project forward
 and counts it as used, as [sessions](sessions.md#active-and-inactive) orders
-them, with the keyboard in the session on screen or, for a project with none,
-in the sessions pane. A sessions pane that is folded opens for that, or peeks over
+them, showing a session drawn under it as a click on its header does, with
+the keyboard in that session or, for a project with none, in the sessions
+pane. A sessions pane that is folded opens for that, or peeks over
 the agent while reviewing, so the viewer stays, and in a window too narrow for
 the pane it stays as the user set it and the keyboard goes to the agent pane's
 New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session

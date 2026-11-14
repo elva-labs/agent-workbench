@@ -28,7 +28,7 @@
     type Session,
   } from "$lib/sessions.svelte";
   import {
-    activate,
+    bringForward,
     close as closeProject,
     goTo,
     onScreen,
@@ -407,16 +407,8 @@
   /** A project's own new-session button: the project comes forward, and
       the session starts there, or the choice opens under its name. */
   function newIn(path: string) {
-    if (workspace.active !== path) activate(path);
-    touch(path);
+    bringForward(path);
     offer(path);
-  }
-
-  /** The user brought a project forward from the pane: it is on screen,
-      and counts as used. */
-  function bringForward(path: string) {
-    activate(path);
-    touch(path);
   }
 
   /** The account the session on screen runs under, for the foot, which

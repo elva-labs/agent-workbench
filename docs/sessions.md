@@ -69,6 +69,13 @@ alike. The project it runs in stays where it was in the list, and the
 changes pane, the terminal and the window's title still follow it, since
 that is the repository the session works in.
 
+Bringing a project forward, by a click on its header, a pick in go to or
+opening it again, shows a session drawn under it: the one on screen when it
+is one, else its newest. A project whose only sessions hang under a starter
+in another project has none drawn under it, so it is shown with no session
+and the keyboard in the pane, and is itself the project on screen, with its
+past sessions and its row of earlier ones.
+
 ## Active and inactive
 
 The projects split by themselves into two. A project is active while a

@@ -465,6 +465,40 @@ describe("SessionsPane", () => {
     expect(document.querySelector(`[data-row="session:${kid.key}"]`)).toHaveClass("on");
   });
 
+  // A project whose only session hangs under a starter elsewhere has no
+  // session drawn under it. A click on its header shows it with none, as
+  // the project on screen with its past sessions, and does not bring up the
+  // started session, which would leave it an empty header while the
+  // starter's project is the one on screen.
+  it("shows a project whose only session hangs elsewhere with none when its header is clicked", async () => {
+    workspace.open.push(repo("/starter", "starter"), repo("/kid", "kid"));
+    workspace.active = "/starter";
+    const old = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+    fake.transcripts = [{ id: "gone-1", title: "earlier work", modified: old, size: 400 }];
+    const gone = create("/kid");
+    started(gone.key, "pty-0", "gone-1");
+    closeStore(gone.key);
+    const starter = create("/starter");
+    started(starter.key, "pty-1", "starter-1");
+    const kid = create("/kid");
+    started(kid.key, "pty-2", "kid-1");
+    conductor.startedBy[kid.key] = "starter-1";
+    sessions.active = starter.key;
+    touch("/starter", Date.now() - 5000);
+    touch("/kid", Date.now() - 1000);
+
+    render(SessionsPane);
+    const head = () => document.querySelector<HTMLElement>('[data-row="project:/kid"]')!;
+    await waitFor(() => expect(head()).not.toBeNull());
+    await fireEvent.click(head().querySelector<HTMLElement>("button.project-row")!);
+    expect(workspace.active).toBe("/kid");
+    expect(sessions.active).toBeNull();
+    await tick();
+    expect(head()).toHaveClass("on");
+    expect(document.querySelector('[data-row="project:/starter"]')).not.toHaveClass("on");
+    await waitFor(() => expect(within(head().closest("section")!).getByTestId("past-session")).toHaveTextContent("earlier work"));
+  });
+
   // With that started session on screen, everything that follows the
   // project on screen follows the starter's: its header is marked, and its
   // past sessions and its row of earlier ones stand under it. Its own +

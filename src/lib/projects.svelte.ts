@@ -155,6 +155,11 @@ function drawnUnder(path: string): Session[] {
   return [...own, ...own.flatMap(drawing.childrenOf)];
 }
 
+/** How many of the sessions drawn under the project are live. */
+export function liveUnder(path: string): number {
+  return drawnUnder(path).filter(isLive).length;
+}
+
 /** When a transcript drawn under the project was last written, in
     milliseconds, or null when it has none: its own, but for those of
     sessions that hang under a starter in another project, and those of

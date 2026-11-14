@@ -21,13 +21,12 @@ import type { AgentId } from "$lib/core";
 import {
   defaultAgent,
   label,
-  liveCount,
   sessions,
   waitingOnYou,
   type Session,
 } from "$lib/sessions.svelte";
 import {
-  activate,
+  bringForward,
   goTo,
   onScreen,
   pick,
@@ -35,7 +34,7 @@ import {
   startSession,
   workspace,
 } from "$lib/workspace.svelte";
-import { touch } from "$lib/projects.svelte";
+import { liveUnder } from "$lib/projects.svelte";
 import { unfoldSessions } from "$lib/viewers.svelte";
 import { reduced } from "$lib/motion";
 
@@ -259,10 +258,10 @@ export function projectsByUse(): string[] {
     .map((project) => project.path);
 }
 
-/** How a project stands at a row's end: its live sessions, else how long
-    since it was last used. */
+/** How a project stands at a row's end: the live sessions drawn under it
+    in the sessions pane, else how long since it was last used. */
 function standing(path: string): string {
-  const live = liveCount(path);
+  const live = liveUnder(path);
   if (live > 0) return `${live} live`;
   const used = lastUsed(path);
   return used === null ? "" : since(used);
@@ -606,8 +605,7 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
       return {
         type: "close",
         then: () => {
-          if (workspace.active !== item.path) activate(item.path);
-          touch(item.path);
+          bringForward(item.path);
           if (sessions.active !== null) focusPane("agent");
           else void tick().then(keyboardToSessions);
         },
