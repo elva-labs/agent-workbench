@@ -34,7 +34,6 @@
  */
 
 import { Tween } from "svelte/motion";
-import { isMac } from "$lib/platform";
 
 export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing" | "editing";
@@ -85,24 +84,39 @@ export const DEFAULT = {
 } as const;
 
 /** The room the window's own buttons take at the end of the rightmost
-    header, where the app draws them: on every platform but macOS. */
+    header, where the app draws them: on Windows and Linux. */
 export const WINDOW_CONTROLS = 120;
 
-function controlsRoom(): number {
-  return isMac() ? 0 : WINDOW_CONTROLS;
+/** What the right pane's widths add where the app draws the window's own
+    buttons: its two defaults and the changes pane's least width. Half the
+    buttons' room: the header's status gives way for the rest. */
+export const CONTROLS_STEP = 60;
+
+/** Whether the browser reports Windows or Linux, where the window is
+    undecorated and the app draws the window's own buttons. */
+function drawsWindowButtons(): boolean {
+  return /Win|Linux/.test(globalThis.navigator?.platform ?? "");
 }
 
-/** The changes pane's width in agent mode until the user drags it: wider
-    by the window's own buttons where the app draws them, so its header
-    reads as it does without them. */
+function controlsStep(): number {
+  return drawsWindowButtons() ? CONTROLS_STEP : 0;
+}
+
+/** The changes pane's width in agent mode until the user drags it. */
 export function defaultChanges(): number {
-  return DEFAULT.changes + controlsRoom();
+  return DEFAULT.changes + controlsStep();
 }
 
-/** The agent pane's width in editor mode until the user drags it, wider
-    on the same terms. */
+/** The agent pane's width in editor mode until the user drags it. */
 export function defaultEditAgent(): number {
-  return DEFAULT.editAgent + controlsRoom();
+  return DEFAULT.editAgent + controlsStep();
+}
+
+/** The least the changes pane is drawn at: room in its header for the
+    corner, and for the window's own buttons after it where the app draws
+    them, so neither ever covers the other. */
+export function minChanges(): number {
+  return MIN.changes + controlsStep();
 }
 
 /** How wide the sessions pane's column is while the pane is folded. */
@@ -115,6 +129,16 @@ export const NEEDS_SESSIONS =
     folded sessions pane. */
 export const NEEDS_CHANGES =
   FOLDED + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
+
+/** `NEEDS_SESSIONS` and `NEEDS_CHANGES` on this platform, where the
+    changes pane's least width is its own. */
+function needsSessions(): number {
+  return NEEDS_SESSIONS - MIN.changes + minChanges();
+}
+
+function needsChanges(): number {
+  return NEEDS_CHANGES - MIN.changes + minChanges();
+}
 /**
  * Content width below which reviewing hides the agent rather than squeezing it.
  * Hiding costs nothing: the pane keeps its width, so the PTY is never resized
@@ -397,8 +421,8 @@ function resolveLayout(width: number, height: number) {
 
   layout.agentHidden = false;
   layout.sessionsPeek = false;
-  layout.sessionsForced = width < NEEDS_SESSIONS;
-  layout.changesForced = width < NEEDS_CHANGES;
+  layout.sessionsForced = width < needsSessions();
+  layout.changesForced = width < needsChanges();
 
   const showSessions = sessionsVisible();
   const showChanges = changesVisible();
@@ -407,7 +431,7 @@ function resolveLayout(width: number, height: number) {
     ? Math.max(MIN.sessions, layout.sessions)
     : layout.sessions;
   let changes = showChanges
-    ? Math.max(MIN.changes, layout.changes)
+    ? Math.max(minChanges(), layout.changes)
     : layout.changes;
 
   // The sessions column is there either way, folded or open.
@@ -422,7 +446,7 @@ function resolveLayout(width: number, height: number) {
   // The changes pane gives way first: while you are working, the file list is
   // the thing you can most afford to have narrow.
   if (overflow > 0 && showChanges) {
-    const give = Math.min(overflow, changes - MIN.changes);
+    const give = Math.min(overflow, changes - minChanges());
     changes -= give;
     overflow -= give;
   }

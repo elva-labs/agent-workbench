@@ -106,6 +106,7 @@
     CONTROLS_INSET,
     DEFAULT,
     defaultChanges,
+    minChanges,
     FOLDED,
     MIN,
     MIN_REVIEW,
@@ -515,7 +516,7 @@
       layout.review = Math.max(MIN_REVIEW, layout.review - dx);
       layout.reviewTouched = true;
     } else {
-      layout.changes = Math.max(MIN.changes, layout.changes - dx);
+      layout.changes = Math.max(minChanges(), layout.changes - dx);
       layout.changesDragged = true;
     }
     applyLayout(viewport);

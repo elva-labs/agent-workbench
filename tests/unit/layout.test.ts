@@ -11,11 +11,12 @@ import {
   NEEDS_SESSIONS,
   NEEDS_TERMINAL,
   SPLITTER,
-  WINDOW_CONTROLS,
+  CONTROLS_STEP,
   agentVisible,
   applyLayout,
   defaultChanges,
   defaultEditAgent,
+  minChanges,
   besideSessions,
   editTreeVisible,
   peekable,
@@ -1048,11 +1049,11 @@ describe("the right pane's default widths", () => {
     });
   });
 
-  it("are wider by the window's buttons on Linux and Windows, where the app draws them", () => {
+  it("are wider by a step on Linux and Windows, where the app draws the window's buttons", () => {
     for (const platform of ["Linux x86_64", "Win32"]) {
       asPlatform(platform, () => {
-        expect(defaultChanges()).toBe(DEFAULT.changes + WINDOW_CONTROLS);
-        expect(defaultEditAgent()).toBe(DEFAULT.editAgent + WINDOW_CONTROLS);
+        expect(defaultChanges()).toBe(DEFAULT.changes + CONTROLS_STEP);
+        expect(defaultEditAgent()).toBe(DEFAULT.editAgent + CONTROLS_STEP);
       });
     }
   });
@@ -1063,8 +1064,8 @@ describe("the right pane's default widths", () => {
     saveLayout();
     asPlatform("Linux x86_64", () => {
       loadLayout();
-      expect(layout.changes).toBe(DEFAULT.changes + WINDOW_CONTROLS);
-      expect(layout.editAgent).toBe(DEFAULT.editAgent + WINDOW_CONTROLS);
+      expect(layout.changes).toBe(DEFAULT.changes + CONTROLS_STEP);
+      expect(layout.editAgent).toBe(DEFAULT.editAgent + CONTROLS_STEP);
       expect(layout.changesDragged).toBe(false);
     });
   });
@@ -1092,10 +1093,41 @@ describe("the right pane's default widths", () => {
     localStorage.setItem("workbench.layout", JSON.stringify({ changes: DEFAULT.changes, editAgent: 380 }));
     asPlatform("Linux x86_64", () => {
       loadLayout();
-      expect(layout.changes).toBe(DEFAULT.changes + WINDOW_CONTROLS);
+      expect(layout.changes).toBe(DEFAULT.changes + CONTROLS_STEP);
       expect(layout.changesDragged).toBe(false);
       expect(layout.editAgent).toBe(380);
       expect(layout.editAgentDragged).toBe(true);
     });
+  });
+});
+
+describe("the changes pane's least width", () => {
+  it("is the base one on macOS and where the browser reports no platform", () => {
+    expect(minChanges()).toBe(MIN.changes);
+    asPlatform("MacIntel", () => expect(minChanges()).toBe(MIN.changes));
+  });
+
+  it("keeps room for the window's buttons after the corner on Linux and Windows", () => {
+    for (const platform of ["Linux x86_64", "Win32"]) {
+      asPlatform(platform, () => {
+        expect(minChanges()).toBe(MIN.changes + CONTROLS_STEP);
+        // Squeezed by a narrow window, it stops there, and dragged below
+        // it, it is drawn there.
+        layout.changes = DEFAULT.changes + CONTROLS_STEP;
+        applyLayout(NEEDS_CHANGES + CONTROLS_STEP);
+        expect(changesVisible()).toBe(true);
+        expect(layout.changes).toBe(MIN.changes + CONTROLS_STEP);
+        layout.changes = MIN.changes;
+        applyLayout(1200);
+        expect(layout.changes).toBe(MIN.changes + CONTROLS_STEP);
+        // Below what it needs beside the folded sessions pane, it goes.
+        applyLayout(NEEDS_CHANGES + CONTROLS_STEP - 1);
+        expect(changesVisible()).toBe(false);
+        applyLayout(NEEDS_SESSIONS + CONTROLS_STEP - 1);
+        expect(sessionsVisible()).toBe(false);
+        applyLayout(NEEDS_SESSIONS + CONTROLS_STEP);
+        expect(sessionsVisible()).toBe(true);
+      });
+    }
   });
 });

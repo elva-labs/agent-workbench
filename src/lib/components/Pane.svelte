@@ -58,6 +58,22 @@
   // lights: the native popup that stands in for a menu bar.
   let appMenu = $derived(!mac && !bare && leftmost() === id);
 
+  /** A status cut to less than a few letters says nothing, so it is not
+      drawn. Its box keeps its place, so hiding it moves nothing. */
+  function letters(node: HTMLElement, _text: string) {
+    const check = () => {
+      const least = parseFloat(getComputedStyle(node).fontSize) * 3;
+      node.classList.toggle("cut", node.scrollWidth > node.clientWidth && node.clientWidth < least);
+    };
+    const observer = new ResizeObserver(check);
+    observer.observe(node);
+    check();
+    return {
+      update: check,
+      destroy: () => observer.disconnect(),
+    };
+  }
+
   function openAppMenu() {
     core()
       .openAppMenu()
@@ -101,7 +117,7 @@
         <div class="cell" data-tauri-drag-region>
           {#if appMenu}{@render menuButton()}{/if}
           <span class="title" data-tauri-drag-region>{title}</span>
-          {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
+          {#if meta}<span class="meta" use:letters={meta} data-tauri-drag-region>{meta}</span>{/if}
           {#if cellEnd}<div class="cell-end">{@render cellEnd()}</div>{/if}
         </div>
         {#if head}<div class="head">{@render head()}</div>{/if}
@@ -109,7 +125,7 @@
         {#if appMenu}{@render menuButton()}{/if}
         <span class="title" data-tauri-drag-region>{title}</span>
         {#if head}<div class="head">{@render head()}</div>{/if}
-        {#if meta}<span class="meta" data-tauri-drag-region>{meta}</span>{/if}
+        {#if meta}<span class="meta" use:letters={meta} data-tauri-drag-region>{meta}</span>{/if}
       {/if}
       {#if corner}<Corner />{/if}
       {#if controls}
@@ -338,6 +354,10 @@
 
   header.cornered > .meta {
     text-align: center;
+  }
+
+  .meta:global(.cut) {
+    visibility: hidden;
   }
 
   .pane.focused header {

@@ -43,12 +43,15 @@ modes whatever the panes under them do. The right pane is the changes pane
 in agent mode and the agent while editing; the button and
 <kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is, and in a window
 too narrow to show it at all the status bar says so. On Windows and Linux
-the window controls the app draws come after them, and the right pane opens
-that much wider, in both modes, so its header reads as it does on macOS;
-a width dragged by hand stays as dragged, and a double-click on the
-splitter gives the default back. Short of room, a header's status gives
-way before its name. A click on the corner leaves the keyboard where it
-was, and neither a click nor Tab moves the pane focus.
+the window controls the app draws come after them, and the right pane's
+widths are 60 pixels more in both modes: the changes pane opens at 400 and
+never goes below 320, so the corner and the window controls never cover
+each other, and the agent opens at 480 while editing. A width dragged by
+hand stays as dragged, and a double-click on the splitter gives the
+default back. Short of room, a header's status gives way before its name,
+and goes once it would show no more than a letter or two. A click on the
+corner leaves the keyboard where it was, and neither a click nor Tab moves
+the pane focus.
 
 ## What gives way, in order
 
@@ -56,16 +59,17 @@ The agent pane is a character grid, and below a certain width a TUI stops
 being usable. It is the last pane to lose room and the only one that can
 never be closed.
 
-| Content width | Layout                                        |
-| ------------- | --------------------------------------------- |
-| 812 and up    | All three panes                               |
-| 682 to 812    | Sessions folds                                |
-| Under 682     | Changes folds away too, agent beside the fold |
+| Content width | Windows and Linux | Layout                                        |
+| ------------- | ----------------- | --------------------------------------------- |
+| 812 and up    | 872 and up        | All three panes                               |
+| 682 to 812    | 742 to 872        | Sessions folds                                |
+| Under 682     | Under 742         | Changes folds away too, agent beside the fold |
 
 The window's minimum width is that 682 plus the frame's padding, which stays
 under half of a 1440-wide display so macOS split-screen still accepts the
 window. A unit test keeps the window configuration and the layout's numbers
-in step.
+in step. On Windows and Linux the changes pane needs 60 pixels more, so at
+the window's minimum it folds away and the agent stands beside the fold.
 
 Within a shape, the changes pane gives width up before the sessions pane.
 The sessions pane opens 300 pixels wide, room for a session's name beside
@@ -77,7 +81,7 @@ and not remembered, and peeks from its column as it does while reviewing.
 Then the tree column goes, and then the agent is hidden rather than squeezed
 below its minimum. The agent and the tree give way down to their own
 minimums before they go. At 1440 wide the sessions pane is folded while
-editing; at 1728 everything is open.
+editing; everything is open from 1618, and from 1678 on Windows and Linux.
 
 ## Folded, not gone
 
