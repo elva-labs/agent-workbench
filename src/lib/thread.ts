@@ -324,12 +324,12 @@ export function offeredModel(
   );
 }
 
-/** A model as the agent names it in what it offers, or as it is written,
-    its first letter raised; null for none. */
+/** A model as the agent names it in what it offers, or as it is written;
+    null for none. */
 export function modelName(conversation: Conversation, model: string | null): string | null {
   if (model === null) return null;
   const name = (offeredModel(conversation, model)?.name ?? model).replace(/\s*\(.*\)\s*$/, "").trim();
-  return name === "" ? null : name.charAt(0).toUpperCase() + name.slice(1);
+  return name === "" ? null : name;
 }
 
 /** The ids of the sessions a run started with the workbench's `start`

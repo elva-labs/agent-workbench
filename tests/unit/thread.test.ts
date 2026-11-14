@@ -260,7 +260,7 @@ describe("whose run it is", () => {
     const c = new Conversation(() => 0);
     expect(speaker(c, null, "Claude")).toBe("Claude");
     expect(speaker(c, "default", "Claude")).toBe("Claude");
-    expect(speaker(c, "opus", "Claude")).toBe("Opus");
+    expect(speaker(c, "opus", "Claude")).toBe("opus");
     c.apply({
       type: "ready",
       sessionId: "s",
@@ -275,7 +275,7 @@ describe("whose run it is", () => {
     });
     expect(speaker(c, "sonnet", "Claude")).toBe("Sonnet 5.5");
     expect(speaker(c, "claude-sonnet-5-5", "Claude")).toBe("Sonnet 5.5");
-    expect(speaker(c, "claude-unknown-9", "Claude")).toBe("Claude-unknown-9");
+    expect(speaker(c, "claude-unknown-9", "Claude")).toBe("claude-unknown-9");
   });
 });
 
@@ -414,7 +414,7 @@ describe("a Codex-shaped call", () => {
   it("speaks under the agent's own name on its default model", () => {
     const c = new Conversation(() => 0);
     expect(speaker(c, null, "Codex")).toBe("Codex");
-    expect(speaker(c, "gpt-5-codex", "Codex")).toBe("Gpt-5-codex");
+    expect(speaker(c, "gpt-5-codex", "Codex")).toBe("gpt-5-codex");
   });
 });
 
