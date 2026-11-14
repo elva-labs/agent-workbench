@@ -752,6 +752,26 @@ mod tests {
         let current = watchers.current.lock().unwrap();
         assert!(current.as_ref().unwrap().dirs.is_empty());
         drop(current);
+
+        // And the system agrees, where a watch ends at once: with only
+        // marks under the tree shown, a write to the draft is no news at
+        // all, the tree's least of all. The first mark is told after
+        // whatever was still on its way from the directory let go; Windows
+        // ends a watch in its own time, so there the set above is the check.
+        #[cfg(not(windows))]
+        {
+            let mut inside = Vec::new();
+            mark(&watchers, &recorder, &mut inside, &target);
+            recorder.events.lock().unwrap().clear();
+            std::fs::write(&outside, "four\n").unwrap();
+            mark(&watchers, &recorder, &mut inside, &target);
+            let seen = recorder.events.lock().unwrap().clone();
+            assert!(
+                told_unmarked(&recorder).is_empty()
+                    && !seen.iter().any(|(name, _)| name == GIT_CHANGED),
+                "the draft's directory is let go, but the sink saw {seen:?}"
+            );
+        }
         unwatch(&watchers);
     }
 
