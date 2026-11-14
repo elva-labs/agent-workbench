@@ -89,7 +89,7 @@ fn codex_config_path(project: &Path) -> PathBuf {
 }
 
 const SERVER_NAME: &str = "agent-workbench";
-const CODEX_SERVER_KEY: &str = "agent_workbench";
+pub(crate) const CODEX_SERVER_KEY: &str = "agent_workbench";
 
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
@@ -410,6 +410,101 @@ pub fn claude_trust(state: &Path, folder: &Path) -> Result<(), String> {
         .pop()
         .expect("a folder has at least one key");
     update_settings(state, |read| accept_trust(read, &key))
+}
+
+/// The keys Codex may file a folder's trust under in its configuration:
+/// the path as given and as resolved.
+fn codex_keys(folder: &Path) -> Vec<String> {
+    let mut keys = Vec::new();
+    for path in [
+        folder.to_path_buf(),
+        dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf()),
+    ] {
+        let key = path.to_string_lossy().to_string();
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+/// Whether Codex holds a folder as trusted, by the record its own trust
+/// question writes in the configuration given: a `trust_level` of
+/// `trusted` for the folder, or for a folder above it, such as the
+/// repository it is in.
+pub fn codex_trusts(config: &Path, folder: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return false;
+    };
+    let Ok(document) = text.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let Some(projects) = document.get("projects").and_then(|p| p.as_table_like()) else {
+        return false;
+    };
+    let says_yes = |key: &str| {
+        projects
+            .get(key)
+            .and_then(|project| project.get("trust_level"))
+            .and_then(|level| level.as_str())
+            == Some("trusted")
+    };
+    codex_keys(folder).iter().any(|key| {
+        let mut at = Some(Path::new(key));
+        while let Some(path) = at {
+            let key = path.to_string_lossy();
+            if !key.is_empty() && says_yes(&key) {
+                return true;
+            }
+            at = path.parent();
+        }
+        false
+    })
+}
+
+/// Records in the configuration given that the user trusts a folder, as
+/// Codex's own trust question does when the answer is yes. Everything
+/// else in the file is kept as it was written; a file that cannot be read
+/// is left alone.
+pub fn codex_trust(config: &Path, folder: &Path) -> Result<(), String> {
+    let key = codex_keys(folder)
+        .pop()
+        .expect("a folder has at least one key");
+    let _state = lock_state();
+    let text = match std::fs::read_to_string(config) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("could not read {}: {error}", config.display())),
+    };
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("{} is not TOML ({e}); leaving it alone", config.display()))?;
+    let projects = document["projects"].or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let Some(projects) = projects.as_table_like_mut() else {
+        return Err(format!(
+            "projects in {} is not a table; leaving it alone",
+            config.display()
+        ));
+    };
+    if projects
+        .get(&key)
+        .and_then(|project| project.get("trust_level"))
+        .and_then(|level| level.as_str())
+        == Some("trusted")
+    {
+        return Ok(());
+    }
+    match projects.get_mut(&key).and_then(|p| p.as_table_like_mut()) {
+        Some(project) => {
+            project.insert("trust_level", toml_edit::value("trusted"));
+        }
+        None => {
+            let mut table = toml_edit::Table::new();
+            table["trust_level"] = toml_edit::value("trusted");
+            projects.insert(&key, toml_edit::Item::Table(table));
+        }
+    }
+    write_whole(config, &document.to_string())
 }
 
 fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
@@ -780,14 +875,20 @@ fn remove_stale_writes(parent: &Path, name: &str) {
 /// and the file it names is replaced, and the file keeps its permissions.
 /// What an earlier write cut off by a crash left beside it goes.
 fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
+    let mut text = serde_json::to_string_pretty(&Value::Object(settings.clone()))
+        .map_err(|e| format!("could not write settings: {e}"))?;
+    text.push('\n');
+    write_whole(path, &text)
+}
+
+/// Writes a file whole, as [`write_settings`] describes.
+fn write_whole(path: &Path, text: &str) -> Result<(), String> {
     let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
-    let text = serde_json::to_string_pretty(&Value::Object(settings.clone()))
-        .map_err(|e| format!("could not write settings: {e}"))?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -804,7 +905,6 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
             file.set_permissions(old.permissions())?;
         }
         file.write_all(text.as_bytes())?;
-        file.write_all(b"\n")?;
         file.sync_all()?;
         std::fs::rename(&temporary, &path)
     })();
@@ -988,6 +1088,70 @@ mod tests {
         )
         .unwrap();
         assert!(!claude_trusts(&state, &inner));
+    }
+
+    #[test]
+    fn codex_trusts_a_folder_by_its_own_record_or_one_above_it() {
+        let (home, project) = fixture("codex-trust");
+        let config = home.join(".codex").join("config.toml");
+        let inner = project.join("src");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert!(
+            !codex_trusts(&config, &project),
+            "no configuration, no trust"
+        );
+
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "# mine\nmodel = \"o3\"\n").unwrap();
+        assert!(!codex_trusts(&config, &project));
+        codex_trust(&config, &project).unwrap();
+        assert!(codex_trusts(&config, &project));
+        assert!(
+            codex_trusts(&config, &inner),
+            "a folder inside a trusted one"
+        );
+        assert!(!codex_trusts(&config, &home), "nothing above it");
+
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.starts_with("# mine\nmodel = \"o3\"\n"), "{text}");
+        let document = text.parse::<toml_edit::DocumentMut>().unwrap();
+        let key = dunce::canonicalize(&project)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            document["projects"][key.as_str()]["trust_level"].as_str(),
+            Some("trusted")
+        );
+        codex_trust(&config, &project).unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), text, "once");
+
+        // A record that says otherwise is no, and trusting keeps the rest of
+        // the folder's table.
+        std::fs::write(
+            &config,
+            format!("[projects.'{key}']\ntrust_level = \"untrusted\"\nnote = 1\n"),
+        )
+        .unwrap();
+        assert!(!codex_trusts(&config, &inner));
+        codex_trust(&config, &project).unwrap();
+        let document = std::fs::read_to_string(&config)
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        assert_eq!(
+            document["projects"][key.as_str()]["trust_level"].as_str(),
+            Some("trusted")
+        );
+        assert_eq!(
+            document["projects"][key.as_str()]["note"].as_integer(),
+            Some(1)
+        );
+
+        // A file that is not TOML is left alone.
+        std::fs::write(&config, "[[[ half").unwrap();
+        assert!(codex_trust(&config, &project).is_err());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), "[[[ half");
     }
 
     #[test]
