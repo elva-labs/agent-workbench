@@ -138,6 +138,16 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(senderOf(mine)).toBeNull();
   });
 
+  it("does not name a session by a first line that is another live session's name", async () => {
+    const first = await own();
+    expect(byKey(first.key)!.title).toBeNull();
+    const second = await own();
+    send(second.key, "Session 1\nand more");
+    expect(byKey(second.key)!.title).toBeNull();
+    send(second.key, "Fix the scan");
+    expect(byKey(second.key)!.title).toBe("Fix the scan");
+  });
+
   it("reads what the agent last said and did, as plain text", async () => {
     const { key, id, handle: core } = await own();
     const empty = call("read", { session: id });

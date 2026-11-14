@@ -31,13 +31,20 @@ export function shown(text: string): string {
     .join("");
 }
 
+/** A name as it reads, for telling two names apart: without anything
+    unseen, the spaces and marks around it, or case. */
+export function bareName(name: string): string {
+  return Array.from(name)
+    .filter((char) => !UNSEEN.test(char))
+    .join("")
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 /** Whether a name would read as the user's own, "You", in any case and with
     anything unseen, spaces or marks around it. A session is never called
     that: the thread says "You" for the user alone. */
 export function readsAsYou(name: string): boolean {
-  const bare = Array.from(name)
-    .filter((char) => !UNSEEN.test(char))
-    .join("")
-    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-  return bare.toLowerCase() === "you";
+  return bareName(name) === "you";
 }

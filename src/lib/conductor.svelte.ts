@@ -28,6 +28,7 @@ import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
 import {
+  nameTaken,
   byKey,
   close,
   create,
@@ -607,9 +608,12 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   );
   conductor.startedBy[session.key] = caller;
   // The name the caller gave is the row's, until the agent names it. One
-  // that reads as "You" is the user's alone and is not taken: the row is
-  // named by the prompt instead.
-  const called = name !== null && !readsAsYou(name) ? oneLine(name) : null;
+  // that reads as "You" is the user's alone, and one another live session
+  // has is that session's: neither is taken, and the row is named by the
+  // prompt instead.
+  const you = name !== null && readsAsYou(name);
+  const taken = name !== null && !you && nameTaken(name, session.key);
+  const called = name !== null && !you && !taken ? oneLine(name) : null;
   if (called !== null) session.title = called;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 
@@ -631,9 +635,10 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
-  const notCalled =
-    name !== null && called === null
-      ? ` It is not called ${oneLine(name)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
+  const notCalled = you
+    ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
+    : taken
+      ? ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
       : "";
   return said(
     `Started session ${id} in ${where}. It has the prompt.${notCalled} Call wait to hear how it goes.`,

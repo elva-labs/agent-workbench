@@ -1,5 +1,6 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
+import { readsAsYou } from "$lib/unseen";
 import { sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
 import {
@@ -13,6 +14,7 @@ import {
 } from "$lib/core";
 import { Conversation, type Part } from "$lib/conversation.svelte";
 import {
+  nameTaken,
   adopt,
   byKey,
   failed,
@@ -432,7 +434,10 @@ export function send(
   // started session's prompt.
   if (session.title === null) {
     const line = spoken(text).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
-    if (line !== undefined) named(key, line.length > 60 ? `${line.slice(0, 59)}…` : line);
+    // A first line that reads as another live session's name, or as "You",
+    // leaves the row named by its number.
+    if (line !== undefined && !nameTaken(line, key) && !readsAsYou(line))
+      named(key, line.length > 60 ? `${line.slice(0, 59)}…` : line);
   }
   core()
     .integratedSend(link.handle, id, text, images)

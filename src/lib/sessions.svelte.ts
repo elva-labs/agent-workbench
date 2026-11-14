@@ -17,7 +17,7 @@ import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { kindFor, type SessionKind } from "$lib/sessionKind.svelte";
-import { readsAsYou, shown } from "$lib/unseen";
+import { bareName, readsAsYou, shown } from "$lib/unseen";
 
 /**
  * Every session this window has, live or finished.
@@ -689,6 +689,16 @@ export function label(session: Session): string {
   if (session.title !== null && !readsAsYou(session.title)) return shown(session.title);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
+}
+
+/** Whether a name reads as the name of another live session, `except`
+    aside: a session never takes one, so no message or row can pass for
+    another session's. */
+export function nameTaken(name: string, except: string | null = null): boolean {
+  const bare = bareName(name);
+  return sessions.all.some(
+    (session) => session.key !== except && isLive(session) && bareName(label(session)) === bare,
+  );
 }
 
 /**

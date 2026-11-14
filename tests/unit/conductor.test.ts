@@ -401,6 +401,23 @@ describe("starting a session", () => {
     }
   });
 
+  it("does not give a session the name another live session has, and says so", async () => {
+    // The reviewer's case: a session named "Session 1" beside session 1.
+    const other = create(A);
+    started(other.key, "pty-0", "sid-0");
+    expect(other.title).toBeNull();
+    for (const name of ["Session 1", "session\u200b 1"]) {
+      const row = await startAllowed(
+        call("start", { project: A, prompt: "Fix the flaky test", name }, { session: "caller-1" }),
+        "pty-1",
+        "sid-new",
+      );
+      expect(row.title).toBeNull();
+      expect(last().content).toContain("another session is called that, so the session is named by its prompt");
+      close(row.key);
+    }
+  });
+
   it("gives the session its prompt as one line, and asks it to say how it went", async () => {
     const row = await startAllowed(
       call(

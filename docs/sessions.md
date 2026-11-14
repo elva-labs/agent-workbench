@@ -325,7 +325,10 @@ asking the user or waiting for a permission. A session another session
 started is named by the name its start gave, or by the first line of its
 prompt; a name that reads as You, in any case or with anything unseen
 around it, is never taken, since the thread says You for the user alone,
-and the start tool says so to its caller. Under it is the thread. The user's words sit to the right in a
+and nor is a name another live session has, ignoring case and anything
+unseen, so no message or row can pass for another session's; the start
+tool says which it was to its caller, and the session is named by its
+prompt instead. Under it is the thread. The user's words sit to the right in a
 tinted bubble under You. What another session sent, the prompt it started
 the session with or a message it sent later, sits there in a plain bubble
 under that session's name, with a way to go to it. A message is known as
