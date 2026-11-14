@@ -738,8 +738,10 @@ fn a_file_change_finishes_with_each_file_created_updated_deleted_or_moved() {
         ]
     );
     assert_eq!(changes[3].kind, ChangeKind::Move);
-    assert_eq!(changes[3].path, "/work/demo/src/b.rs", "made absolute");
-    assert_eq!(changes[3].to.as_deref(), Some("/work/demo/src/c.rs"));
+    let project = Path::new("/work/demo");
+    let absolute = |path: &str| project.join(path).to_string_lossy().to_string();
+    assert_eq!(changes[3].path, absolute("src/b.rs"), "made absolute");
+    assert_eq!(changes[3].to.as_deref(), Some(absolute("src/c.rs").as_str()));
     assert_eq!(changes[3].hunks[0].lines, ["-b", "+c"]);
 
     // A change the user declined changes nothing.
