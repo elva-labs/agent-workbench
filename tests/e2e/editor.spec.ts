@@ -126,10 +126,44 @@ test.describe("the editing shape", () => {
   });
 });
 
+/** Where the corner in a pane's header should end: the pane's padding
+    before the window's own buttons where the app draws them, else before
+    the header's end. */
+async function cornerEdge(page: Page, pane: string) {
+  return page.evaluate((pane) => {
+    const header = document.querySelector(`${pane} > header`)!;
+    const pad = parseFloat(getComputedStyle(header).getPropertyValue("--pane-pad"));
+    const controls = header.querySelector("[data-testid='window-controls']");
+    return (controls ?? header).getBoundingClientRect()[controls ? "left" : "right"] - pad;
+  }, pane);
+}
+
+/** The switch in both modes, in whatever window the page thinks it is in. */
+async function switchStandsStill(page: Page) {
+  const before = await box(page, "[data-testid='corner']");
+  expect(Math.abs(before.x + before.width - (await cornerEdge(page, FILES)))).toBeLessThanOrEqual(1);
+  await page.getByTestId("mode-editor").click();
+  await settled(page);
+  await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  const after = await box(page, `${AGENT} [data-testid='corner']`);
+  expect(Math.abs(after.x + after.width - (before.x + before.width))).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.x + after.width - (await cornerEdge(page, AGENT)))).toBeLessThanOrEqual(1);
+}
+
 test.describe("the switch", () => {
+  test("stands where the window's own buttons begin on Linux and Windows, in both modes", async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "Linux x86_64" }));
+    await open(page, 1728);
+    await expect(page.locator(`${FILES} [data-testid='window-controls']`)).toBeVisible();
+    await switchStandsStill(page);
+    await expect(page.locator(`${AGENT} [data-testid='window-controls']`)).toBeVisible();
+  });
+
   test("stands in the same place in both modes and flips on a click", async ({ page }) => {
     await open(page, 1728);
     const before = await box(page, "[data-testid='corner']");
+    expect(Math.abs(before.x + before.width - (await cornerEdge(page, FILES)))).toBeLessThanOrEqual(1);
     await expect(page.getByTestId("mode-agent")).toHaveAttribute("aria-checked", "true");
 
     await page.getByTestId("mode-editor").click();
@@ -139,6 +173,7 @@ test.describe("the switch", () => {
     const after = await box(page, "[data-testid='corner']");
     expect(Math.abs(after.x + after.width - (before.x + before.width))).toBeLessThanOrEqual(1);
     expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(after.x + after.width - (await cornerEdge(page, AGENT)))).toBeLessThanOrEqual(1);
     // In the agent's header now, which is the rightmost.
     await expect(page.locator(`${AGENT} [data-testid='corner']`)).toBeVisible();
 
@@ -172,12 +207,15 @@ test.describe("the right pane", () => {
   test("is the agent while editing: the button and the chord hide and show it", async ({ page }) => {
     await open(page, 1728);
     await flip(page);
+    const shown = await box(page, `${AGENT} [data-testid='corner']`);
     await page.getByTestId("toggle-right").click();
     await settled(page);
     await expect(page.locator(AGENT)).toBeHidden();
-    // The corner moves to the files pane's header, at the same edge.
+    // The corner moves to the files pane's header, at the same edge: where
+    // the window's own buttons begin, or the header's end.
     const corner = await box(page, `${FILES} [data-testid='corner']`);
-    expect(corner.x + corner.width).toBeGreaterThan(1728 - 40);
+    expect(Math.abs(corner.x + corner.width - (shown.x + shown.width))).toBeLessThanOrEqual(1);
+    expect(Math.abs(corner.x + corner.width - (await cornerEdge(page, FILES)))).toBeLessThanOrEqual(1);
 
     await page.keyboard.press(`${MOD}+\\`);
     await settled(page);

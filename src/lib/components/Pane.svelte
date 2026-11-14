@@ -83,6 +83,7 @@
       class:inset
       class:beside
       class:leads={appMenu}
+      class:controlled={controls}
       class:lone={!head && !meta}
       class:columns={titleWidth !== null}
       style:--title-w={titleWidth}
@@ -250,11 +251,24 @@
   }
 
   /* Three buttons the height of the header, flush with the pane's edge, as
-     the platform draws them: a plain hover, and red for close. */
+     the platform draws them: a plain hover, and red for close. They stand
+     out of the header's flow and it keeps their room, so what it spreads
+     out never comes between them and the corner: the corner ends the
+     pane's padding before them in every header, as it ends that far
+     before the header's end where there are none. */
+  header.controlled {
+    --controls-w: 120px;
+    position: relative;
+    padding-right: calc(var(--controls-w) + var(--pane-pad));
+  }
+
   .controls {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: var(--controls-w);
     display: flex;
-    align-self: stretch;
-    margin: -9px calc(-1 * var(--pane-pad)) -9px 4px;
   }
 
   .controls button {
