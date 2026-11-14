@@ -288,7 +288,7 @@ test.describe("the orchestrator", () => {
     const ink = await started.locator(".label").evaluate((label) => getComputedStyle(label).color);
     expect(accent).not.toBe(ink);
     await expect(started.locator(".dot")).toHaveClass(/permission/);
-    await expect(summary).toHaveText("1 running, 1 asking");
+    await expect(summary).toHaveText("1 asking");
 
     // Granted, the agent goes on, and the row goes quiet again.
     await event("prompt");

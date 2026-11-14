@@ -37,7 +37,6 @@
     orchestrator,
     ownFor,
     parentOf,
-    summaryLine,
   } from "$lib/orchestrator.svelte";
   import { startedFor } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
@@ -389,14 +388,15 @@
       and nothing about it is remembered. */
   let collapsed = $state<Record<string, boolean>>({});
 
-  /** What the sessions a session started are doing, in words: how many
-      run, how many of those ask for a permission, and how many are done. */
+  /** What the sessions a session started are doing, in words, each counted
+      once: how many run, how many ask for a permission, and how many are
+      done. */
   function startedWords(kids: Session[]): string {
-    const live = kids.filter(isLive).length;
     const asking = kids.filter(isAsking).length;
-    const done = kids.length - live;
+    const running = kids.filter(isLive).length - asking;
+    const done = kids.length - running - asking;
     return [
-      live > 0 ? `${live} running` : null,
+      running > 0 ? `${running} running` : null,
       asking > 0 ? `${asking} asking` : null,
       done > 0 ? `${done} done` : null,
     ]
@@ -881,8 +881,7 @@
 {#snippet sessionRow(session: Session)}
   {@const kids = childrenOf(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
-  {@const said = session.note ?? summaryLine(session)}
-  {@const line = folded ? startedWords(kids) : (said ?? (kids.length > 0 ? startedWords(kids) : null))}
+  {@const line = folded ? startedWords(kids) : (session.note ?? (kids.length > 0 ? startedWords(kids) : null))}
   {@const owned = session.note !== null && !folded}
   <div
     class="session"

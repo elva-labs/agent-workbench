@@ -125,15 +125,17 @@ starter hears, so the place to go is still the starter and not the
 session it started. A session whose starter the window no longer has
 stands in its own project like any other.
 
-A starter can be folded, from the chevron at the end of its second line or
-with Left on the keyboard, and Right lets them out again: folded, its second
-line says once, in words, what the sessions it started are doing, `2
-running, 1 asking, 1 done`, with a small dot for each where the model
-stands otherwise. Left on a started session moves the cursor up to its
-starter. Nothing about the fold is remembered.
+A starter's second line says in words what the sessions it started are
+doing, each counted once, `2 running, 1 asking, 1 done`, unless its agent
+has left a line there. A starter can be folded, from the chevron at the end
+of its second line or with Left on the keyboard, and Right lets them out
+again: folded, its second line says what they are doing whatever the agent
+left, with a small dot for each where the model stands otherwise. Left on a
+started session moves the cursor up to its starter. Nothing about the fold
+is remembered.
 
-The orchestrator's own row says what it has out, "3 running, 1 asking", and
-its changes pane, headed Orchestrator, shows the sessions it started instead
+The orchestrator's changes pane, headed Orchestrator, shows the sessions it
+started instead
 of a file tree: each with its project, its worktree, what it is doing, how
 long it has been at it and the line it left, with Stop all on the section's
 header. Each row can be stopped on its own, or sent a line without leaving the

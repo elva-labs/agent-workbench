@@ -879,14 +879,14 @@ describe("SessionsPane", () => {
     const elsewhere = kids.find((kid) => kid.querySelector(".where") !== null)!;
     expect(elsewhere.querySelector(".label")!.nextElementSibling).toHaveClass("where");
     expect(elsewhere.querySelector(".where")).toHaveTextContent("other");
-    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("2 running, 1 asking");
+    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("1 running, 1 asking, 1 done");
     expect(within(row()).getByTestId("session-model")).toHaveTextContent("Opus 4.1");
 
     const chevron = within(row()).getByTestId("collapse-started");
     expect(chevron).toHaveAttribute("aria-expanded", "true");
     await fireEvent.click(chevron);
     expect(screen.queryAllByTestId("started-session")).toHaveLength(0);
-    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("2 running, 1 asking, 1 done");
+    expect(within(row()).getByTestId("orchestrator-summary")).toHaveTextContent("1 running, 1 asking, 1 done");
     const dots = within(row()).getByTestId("started-dots");
     expect(dots.querySelectorAll(".dot")).toHaveLength(3);
     expect(dots).toHaveTextContent(/^$/);
