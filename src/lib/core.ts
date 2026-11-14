@@ -103,11 +103,13 @@ export interface IntegratedStartOptions {
 }
 
 /** What starting an integrated session hands back: the id every other
-    command and every event names it by, and the agent's own id for the
-    conversation, which resuming takes. */
+    command and every event names it by, and the conversation's id where
+    the workbench knows it at the start, the one it chose or resumes. An
+    agent that makes its own ids has none yet: `ready` carries the agent's
+    id either way, and that is the one resuming takes. */
 export interface IntegratedStarted {
   id: string;
-  sessionId: string;
+  sessionId: string | null;
 }
 
 /** Where `integratedTrust` records the user's yes. */
@@ -190,11 +192,14 @@ export interface IntegratedFileChange {
   truncated: boolean;
 }
 
+/** The tokens a turn took: all the model read, cached or not, with how
+    many came from a cache, and all it wrote, with how many were
+    reasoning. */
 export interface IntegratedUsage {
   inputTokens: number;
+  cachedTokens: number;
   outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
+  reasoningTokens: number;
 }
 
 /** What sort of tool a call is, whatever the agent calls it. */
@@ -226,8 +231,10 @@ export interface IntegratedQuestion {
     requests carry `parent`: the tool call that started the subagent they
     belong to, or null in the main conversation. */
 export type IntegratedEventBody =
-  /** Sent once, before anything else. `efforts` are those of the model it
-      runs on; each model lists its own. */
+  /** Sent once, before anything else. `sessionId` is the agent's id for
+      the conversation, the one resuming takes, whatever the start said.
+      `efforts` are those of the model it runs on; each model lists its
+      own. */
   | {
       type: "ready";
       sessionId: string;
@@ -253,13 +260,18 @@ export type IntegratedEventBody =
       effort: string | null;
       efforts: string[];
     }
-  /** Where a sent message stands before the turn that answers it: waiting
-      behind a running turn, taken into the running turn, or dropped. */
+  /** Where a sent message stands before the turn that answers it: sent
+      to the agent with nothing ahead of it, waiting behind a running turn,
+      taken into the running turn, or dropped. The first event for a
+      message, `sent` or `queued`, carries its text and images as they were
+      sent, so any window can draw it; the others carry neither. */
   | {
       type: "message";
       message: string;
-      state: "queued" | "taken" | "dropped";
+      state: "sent" | "queued" | "taken" | "dropped";
       error: string | null;
+      text: string | null;
+      images: IntegratedImage[];
     }
   /** The messages the turn answers, by the ids they were sent with; one
       turn may answer several. Empty for a turn the agent began itself. */
@@ -339,8 +351,22 @@ export type IntegratedEventBody =
       parent: string | null;
       questions: IntegratedQuestion[];
     }
+  /** A permission or a question was answered, from this window or
+      another: a permission with its choice, a question with `allow` and
+      the answers, or `deny` and none when declined. `message` is what
+      went to the agent with a denial. */
+  | {
+      type: "answered";
+      request: string;
+      choice: PermissionChoice;
+      answers: string[][] | null;
+      message: string | null;
+    }
   /** The agent stopped waiting for that permission or question. */
   | { type: "withdrawn"; request: string }
+  /** `ambient`: housekeeping the agent does on its own account, which
+      never keeps the session working and may be left out of the
+      conversation. */
   | {
       type: "taskStarted";
       task: string;
@@ -349,6 +375,7 @@ export type IntegratedEventBody =
       description: string | null;
       prompt: string | null;
       background: boolean;
+      ambient: boolean;
     }
   | {
       type: "taskProgress";
@@ -357,21 +384,35 @@ export type IntegratedEventBody =
       tool: string | null;
       description: string | null;
     }
-  /** `lost`: the agent stopped listing it without saying how it ended. */
+  /** `lost`: ended without a word of how, by the time the agent's turn or
+      its work as a whole was over. `reports`: the agent reports it in a
+      turn of its own, which it begins by itself once no turn runs. */
   | {
       type: "taskFinished";
       task: string;
       call: string | null;
       status: "completed" | "failed" | "stopped" | "lost";
       summary: string | null;
+      reports: boolean;
     }
   | { type: "compacting" }
+  /** `asked` when the user or the window asked for it, `full` when the
+      context window was full. */
   | {
       type: "compacted";
-      trigger: string | null;
+      reason: "asked" | "full" | null;
       tokensBefore: number | null;
       tokensAfter: number | null;
     }
+  /** How much of the context window the conversation takes, and how big
+      the window is, in tokens, where the agent reports either. */
+  | { type: "context"; used: number | null; size: number | null }
+  /** Something the agent says that is neither an error nor part of a
+      turn. */
+  | { type: "notice"; level: "info" | "warning"; message: string }
+  /** Streamed pieces left out because the window or its connection fell
+      behind; the whole that follows each holds all of it. */
+  | { type: "skipped"; pieces: number }
   /** A request to the model failed and the agent tries again; the turn
       goes on. */
   | {
@@ -972,6 +1013,9 @@ export interface Core {
   /** Stops the running turn. Queued messages stay queued. The turn's end
       arrives as an event afterwards. */
   integratedInterrupt(id: string): Promise<void>;
+  /** Compacts the conversation, in the agent's own way. Resolves once
+      asked; `compacting` and `compacted` follow. */
+  integratedCompact(id: string): Promise<void>;
   /** Answers a permission request with a choice it offered; `message`
       goes with a choice that takes one. */
   integratedAnswer(
@@ -1374,6 +1418,7 @@ const tauriCore: Core = {
   integratedSend: (id, message, text, images) =>
     invoke<void>("integrated_send", { id, message, text, images: images ?? [] }),
   integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
+  integratedCompact: (id) => invoke<void>("integrated_compact", { id }),
   integratedAnswer: (id, request, choice, message) =>
     invoke<void>("integrated_answer", {
       id,
@@ -1685,6 +1730,7 @@ const detachedCore: Core = {
     throw new Error("not connected to the workbench core");
   },
   async integratedInterrupt() {},
+  async integratedCompact() {},
   async integratedAnswer() {},
   async integratedReply() {},
   async integratedConfigure() {

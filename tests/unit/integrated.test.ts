@@ -46,6 +46,7 @@ describe("the seam's integrated sessions", () => {
     await seam.integratedSend("int-1", M1, "look", [{ mediaType: "image/png", data: "AAAA" }]);
     await seam.integratedSend("int-1", M2, "again");
     await seam.integratedInterrupt("int-1");
+    await seam.integratedCompact("int-1");
     await seam.integratedAnswer("int-1", "r-1", "deny", "not that");
     await seam.integratedAnswer("int-1", "r-2", "allowSession");
     await seam.integratedReply("int-1", "q-1", [["Red"], ["my own words"]]);
@@ -77,6 +78,7 @@ describe("the seam's integrated sessions", () => {
       ],
       ["integrated_send", { id: "int-1", message: M2, text: "again", images: [] }],
       ["integrated_interrupt", { id: "int-1" }],
+      ["integrated_compact", { id: "int-1" }],
       [
         "integrated_answer",
         { id: "int-1", request: "r-1", choice: "deny", message: "not that" },
@@ -185,8 +187,9 @@ describe("the scripted integrated session", () => {
     fake.send(id, M2, "second");
     fake.send(id, M3, "third");
     expect(heard.filter((event) => event.type === "message")).toMatchObject([
-      { message: M2, state: "queued" },
-      { message: M3, state: "queued" },
+      { message: M1, state: "sent", text: "first" },
+      { message: M2, state: "queued", text: "second" },
+      { message: M3, state: "queued", text: "third" },
     ]);
     fake.endTurn(id);
     expect(states(heard).at(-1)).toBe("working");
@@ -296,10 +299,109 @@ describe("the scripted integrated session", () => {
     expect(states(heard).at(-1)).toBe("idle");
   });
 
-  it("is working while it compacts", () => {
+  it("is working while it compacts by itself", () => {
     const { fake, heard, id } = started();
-    fake.compact(id);
+    fake.compaction(id);
     expect(states(heard)).toEqual(["idle", "working", "idle"]);
+    expect(heard.find((event) => event.type === "compacted")).toMatchObject({ reason: "full" });
+  });
+
+  it("compacts when asked, once no turn runs, in a turn that names no message", async () => {
+    const { fake, heard, id } = started();
+    fake.send(id, M1, "go");
+    fake.startTurn(id);
+    fake.compact(id);
+    await Promise.resolve();
+    expect(kinds(heard)).not.toContain("compacting");
+    fake.endTurn(id);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(turns(heard)).toEqual([[M1], []]);
+    expect(heard.find((event) => event.type === "compacted")).toMatchObject({ reason: "asked" });
+    expect(heard.find((event) => event.type === "context")).toMatchObject({ used: 10 });
+    expect(states(heard).at(-1)).toBe("idle");
+    expect(fake.calls.at(-1)).toEqual({ method: "compact", id });
+  });
+
+  it("echoes a message with its text and images, and later states without them", () => {
+    const { fake, heard, id } = started();
+    const image = { mediaType: "image/png", data: "AAAA" };
+    fake.send(id, M1, "look", [image]);
+    fake.startTurn(id, []);
+    fake.send(id, M2, "and this");
+    fake.startTurn(id, [M2]);
+    expect(heard.filter((event) => event.type === "message")).toEqual([
+      { id, type: "message", message: M1, state: "sent", error: null, text: "look", images: [image] },
+      { id, type: "message", message: M2, state: "queued", error: null, text: "and this", images: [] },
+      { id, type: "message", message: M2, state: "taken", error: null, text: null, images: [] },
+    ]);
+    fake.drop(id, M1);
+    expect(heard.at(-1)).toMatchObject({ type: "message", message: M1, state: "dropped" });
+  });
+
+  it("tells every window what a request was answered with", async () => {
+    const { fake, heard, id } = started();
+    fake.startTurn(id);
+    const request = fake.ask(id, "Bash", { command: "ls" });
+    fake.answer(id, request, "deny", "  not now ");
+    const question = fake.question(id, [
+      { header: null, question: "Which?", options: [], multiple: false },
+    ]);
+    fake.reply(id, question, null);
+    expect(heard.filter((event) => event.type === "answered")).toEqual([
+      { id, type: "answered", request, choice: "deny", answers: null, message: "not now" },
+      { id, type: "answered", request: question, choice: "deny", answers: null, message: null },
+    ]);
+    const cancelled = fake.ask(id, "Bash", { command: "rm" });
+    fake.answer(id, cancelled, "cancel");
+    await Promise.resolve();
+    expect(heard.find((event) => event.type === "turnEnded")).toMatchObject({
+      outcome: "interrupted",
+    });
+  });
+
+  it("leaves housekeeping and tasks with no report out of whether it works", () => {
+    const { fake, heard, id } = started();
+    fake.startTurn(id);
+    fake.task(id, null, { ambient: true });
+    const quiet = fake.task(id, null);
+    fake.endTurn(id);
+    expect(states(heard).at(-1)).toBe("working");
+    fake.finishTask(id, quiet, "completed", "done", { reports: false });
+    expect(heard.at(-2)).toMatchObject({ type: "taskFinished", reports: false });
+    expect(states(heard).at(-1)).toBe("idle");
+  });
+
+  it("hands a holding agent one message at a time, each once the last is named", () => {
+    const fake = fakeIntegrated({ holding: true });
+    const { id } = fake.start({ agent: "codex", project: "/repo" });
+    fake.send(id, M1, "one");
+    fake.send(id, M2, "two");
+    expect(fake.handed).toEqual([M1]);
+    fake.startTurn(id);
+    fake.send(id, M3, "three");
+    expect(fake.handed).toEqual([M1]);
+    fake.endTurn(id);
+    expect(fake.handed).toEqual([M1, M2]);
+    fake.turn(id, "two done");
+    expect(fake.handed).toEqual([M1, M2, M3]);
+  });
+
+  it("names no conversation at the start for an agent that makes its own ids", () => {
+    const fake = fakeIntegrated({ mints: true });
+    const heard: IntegratedEvent[] = [];
+    fake.subscribe((event) => heard.push(event));
+    expect(fake.start({ agent: "codex", project: "/repo" }).sessionId).toBeNull();
+    expect(heard[0]).toMatchObject({ type: "ready", sessionId: expect.any(String) });
+  });
+
+  it("cuts long output down and says so, as the core does", () => {
+    const { fake, heard, id } = started();
+    fake.startTurn(id);
+    fake.tool(id, "Read", {}, "x".repeat(70 * 1024));
+    const finished = heard.find((event) => event.type === "toolFinished");
+    expect(finished).toMatchObject({ truncated: true });
+    expect(finished?.type === "toolFinished" && finished.output.length).toBe(64 * 1024);
   });
 
   it("changes the model, mode and effort, and ends when stopped", async () => {

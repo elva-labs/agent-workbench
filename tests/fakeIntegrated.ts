@@ -20,6 +20,7 @@ export type IntegratedCall =
   | { method: "trust"; options: IntegratedTrustOptions }
   | { method: "send"; id: string; message: string; text: string; images: IntegratedImage[] }
   | { method: "interrupt"; id: string }
+  | { method: "compact"; id: string }
   | {
       method: "answer";
       id: string;
@@ -35,16 +36,28 @@ export type IntegratedCall =
     }
   | { method: "stop"; id: string };
 
+/** How the scripted agent behaves. `holding`: it takes no message while a
+    turn runs, so the fake holds each one and hands one over only when no
+    turn runs and the agent has named the last one handed over, as the core
+    does for such an agent. `mints`: it makes its own conversation ids, so
+    a fresh start says none and `ready` says the agent's. */
+export interface FakeIntegratedOptions {
+  holding?: boolean;
+  mints?: boolean;
+}
+
 /** A scripted integrated session behind the seam, for the unit tests and
     the browser tests alike. The commands check what the core checks and
-    the events follow the core's rules: messages are pending until a turn
-    names them, the state is derived from the events, tool calls left open
-    close when their turn or subagent ends, and a subagent that finishes
-    outside a turn keeps the session working until its report's turn ends.
-    `ready` goes out before `start` returns, as it may from the core, and
-    an interrupt's end of turn comes after the call. What the agent says
-    within a turn is the test's to script, through `emit` and the helpers
-    built on it. */
+    the events follow the core's rules: a sent message is echoed with its
+    text, messages are pending until a turn names them, the state is
+    derived from the events, an answer is told, tool calls left open close
+    when their turn or subagent ends, housekeeping tasks never keep the
+    session working, a task the agent says it reports keeps the session
+    working until its report's turn ends, and long output is cut down and
+    says so. `ready` goes out before `start` returns, as it may from the
+    core, and an interrupt's end of turn comes after the call. What the
+    agent says within a turn is the test's to script, through `emit` and
+    the helpers built on it. */
 export interface FakeIntegrated {
   /** Every call, in order. */
   calls: IntegratedCall[];
@@ -52,11 +65,16 @@ export interface FakeIntegrated {
   events: IntegratedEvent[];
   /** Folders a start refuses until they are trusted. */
   untrusted: Set<string>;
+  /** The messages handed over to a holding agent, in order. */
+  handed: string[];
 
   start(options: IntegratedStartOptions): IntegratedStarted;
   trust(options: IntegratedTrustOptions): void;
   send(id: string, message: string, text: string, images?: IntegratedImage[]): void;
   interrupt(id: string): void;
+  /** Asks the agent to compact: once no turn runs, it compacts in a turn
+      that names no message. */
+  compact(id: string): void;
   answer(id: string, request: string, choice: PermissionChoice, message?: string): void;
   reply(id: string, request: string, answers: string[][] | null): void;
   configure(
@@ -68,7 +86,8 @@ export interface FakeIntegrated {
 
   /** Says anything at all for a session, under the core's rules. */
   emit(id: string, event: IntegratedEventBody): void;
-  /** Starts a turn for `messages`, all those waiting when not given. */
+  /** Starts a turn for `messages`: by default all those waiting, or for a
+      holding agent the one handed over. */
   startTurn(id: string, messages?: string[]): void;
   /** Ends the running turn. */
   endTurn(id: string, outcome?: "done" | "interrupted" | "failed", error?: string): void;
@@ -127,19 +146,37 @@ export interface FakeIntegrated {
   task(
     id: string,
     call: string | null,
-    options?: { kind?: "agent" | "shell" | "other"; background?: boolean; description?: string },
+    options?: {
+      kind?: "agent" | "shell" | "other";
+      background?: boolean;
+      ambient?: boolean;
+      description?: string;
+    },
   ): string;
-  /** A task ended. */
+  /** A task ended. It reports in a turn of its own when `reports` says
+      so, by default when it is a subagent in the background that was not
+      lost. */
   finishTask(
     id: string,
     task: string,
     status?: "completed" | "failed" | "stopped" | "lost",
     summary?: string,
+    options?: { reports?: boolean },
   ): void;
   /** The plan, whole. */
   plan(id: string, steps: IntegratedPlanStep[], text?: string | null): void;
-  /** Compacting, start to finish, with no turn of its own. */
-  compact(id: string): void;
+  /** The agent compacting by itself, start to finish, with no turn of its
+      own: by default because the context window was full. */
+  compaction(id: string, reason?: "asked" | "full"): void;
+  /** What the conversation takes of the context window, and its size. */
+  context(id: string, used: number | null, size: number | null): void;
+  /** Something the agent says outside a turn. */
+  notice(id: string, message: string, level?: "info" | "warning"): void;
+  /** The agent drops a message it was sent: refused, discarded or
+      cancelled. */
+  drop(id: string, message: string, error?: string): void;
+  /** The core left out streamed pieces because the window fell behind. */
+  skip(id: string, pieces: number): void;
   /** The process ends by itself: cleanly, or not, with an error. */
   end(id: string, clean?: boolean): void;
 }
@@ -148,26 +185,42 @@ export interface FakeIntegrated {
  * Builds the fake. Self-contained on purpose: the browser tests hand its
  * source to the page as it is, so it may refer to nothing outside itself.
  */
-export function fakeIntegrated(): FakeIntegrated {
+export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegrated {
   type Asked =
     | { kind: "permission"; offers: PermissionOffer[] }
     | { kind: "question"; questions: IntegratedQuestion[] };
+  type Task = {
+    call: string | null;
+    kind: "agent" | "shell" | "other";
+    background: boolean;
+    ambient: boolean;
+  };
+  type Held = { message: string; text: string; images: IntegratedImage[] };
   type Session = {
-    sessionId: string;
+    sessionId: string | null;
     settings: IntegratedSettings;
     pending: string[];
     used: Set<string>;
     turn: boolean;
     asked: Map<string, Asked>;
+    tasks: Map<string, Task>;
     /** Subagents at work, with the call that started each. */
     subagents: Map<string, string | null>;
     /** Open tool calls, with the subagent call each belongs to. */
     open: Map<string, string | null>;
+    /** How much of each open call's input and output has streamed. */
+    streamed: Map<string, number>;
     reporting: boolean;
     compacting: boolean;
+    compactAsked: boolean;
+    held: Held[];
+    handed: string | null;
     state: string | null;
     ended: boolean;
   };
+  // The core's limits on what goes to the window.
+  const OUTPUT_KEEP = 64 * 1024;
+  const CONTENT_KEEP = 256 * 1024;
   const MODES = [
     { value: "default", name: "Default", description: null },
     { value: "acceptEdits", name: "Accept edits", description: null },
@@ -189,21 +242,26 @@ export function fakeIntegrated(): FakeIntegrated {
   const efforts = (model: string | null) =>
     MODELS.find((entry) => entry.value === model)?.efforts ?? [];
 
+  const cut = (text: string, keep: number) =>
+    text.length > keep ? { text: text.slice(0, keep), cut: true } : { text, cut: false };
+
   const fake: FakeIntegrated = {
     calls: [],
     events: [],
     untrusted: new Set(),
+    handed: [],
 
-    start(options) {
-      const folder = options.cwd ?? options.project;
+    start(startOptions) {
+      const folder = startOptions.cwd ?? startOptions.project;
       if (fake.untrusted.has(folder))
         throw new Error(`untrusted: ${folder} has not been trusted in claude yet`);
       const id = `int-${++count}`;
-      const sessionId = options.session ?? `integrated-session-${count}`;
+      const sessionId =
+        startOptions.session ?? (options.mints ? null : `integrated-session-${count}`);
       const settings = {
-        model: options.model ?? null,
-        mode: options.mode ?? "default",
-        effort: options.effort ?? null,
+        model: startOptions.model ?? null,
+        mode: startOptions.mode ?? "default",
+        effort: startOptions.effort ?? null,
       };
       sessions.set(id, {
         sessionId,
@@ -212,18 +270,24 @@ export function fakeIntegrated(): FakeIntegrated {
         used: new Set(),
         turn: false,
         asked: new Map(),
+        tasks: new Map(),
         subagents: new Map(),
         open: new Map(),
+        streamed: new Map(),
         reporting: false,
         compacting: false,
+        compactAsked: false,
+        held: [],
+        handed: null,
         state: null,
         ended: false,
       });
-      fake.calls.push({ method: "start", options, id });
-      // Before the caller has the id, as the core's own may arrive.
+      fake.calls.push({ method: "start", options: startOptions, id });
+      // Before the caller has the id, as the core's own may arrive. An
+      // agent that makes its own id says it here.
       fake.emit(id, {
         type: "ready",
-        sessionId,
+        sessionId: sessionId ?? `agent-thread-${count}`,
         ...settings,
         version: "0.0.0-fake",
         models: MODELS,
@@ -234,22 +298,33 @@ export function fakeIntegrated(): FakeIntegrated {
       return { id, sessionId };
     },
 
-    trust(options) {
-      fake.calls.push({ method: "trust", options });
-      fake.untrusted.delete(options.cwd ?? options.project);
+    trust(trustOptions) {
+      fake.calls.push({ method: "trust", options: trustOptions });
+      fake.untrusted.delete(trustOptions.cwd ?? trustOptions.project);
     },
 
     send(id, message, text, images = []) {
       const session = live(id);
+      if (!text.trim() && images.length === 0) throw new Error("there is nothing to send");
       if (!UUID.test(message)) throw new Error(`"${message}" is not a UUID`);
       if (session.used.has(message)) throw new Error(`message ${message} was sent already`);
-      if (!text.trim() && images.length === 0) throw new Error("there is nothing to send");
       session.used.add(message);
       fake.calls.push({ method: "send", id, message, text, images });
       const queued = session.turn || session.pending.length > 0;
       session.pending.push(message);
-      if (queued) fake.emit(id, { type: "message", message, state: "queued", error: null });
-      settle(id);
+      if (options.holding) {
+        if (session.turn || session.handed !== null || session.held.length > 0)
+          session.held.push({ message, text, images });
+        else handOver(id, message);
+      }
+      fake.emit(id, {
+        type: "message",
+        message,
+        state: queued ? "queued" : "sent",
+        error: null,
+        text,
+        images,
+      });
     },
 
     interrupt(id) {
@@ -268,6 +343,16 @@ export function fakeIntegrated(): FakeIntegrated {
       });
     },
 
+    compact(id) {
+      const session = live(id);
+      fake.calls.push({ method: "compact", id });
+      session.compactAsked = true;
+      // The agent takes it once no turn runs, after the call answers.
+      queueMicrotask(() => {
+        if (!session.turn) compactNow(id);
+      });
+    },
+
     answer(id, request, choice, message) {
       const session = live(id);
       const asked = session.asked.get(request);
@@ -275,15 +360,14 @@ export function fakeIntegrated(): FakeIntegrated {
         throw new Error("the agent is not waiting on that request");
       const offer = asked.offers.find((offer) => offer.choice === choice);
       if (!offer) throw new Error("that choice was not offered for this request");
-      fake.calls.push({
-        method: "answer",
-        id,
-        request,
-        choice,
-        message: offer.message ? (message ?? null) : null,
-      });
-      session.asked.delete(request);
-      settle(id);
+      const said = offer.message && message?.trim() ? message.trim() : null;
+      fake.calls.push({ method: "answer", id, request, choice, message: said });
+      fake.emit(id, { type: "answered", request, choice, answers: null, message: said });
+      // Cancelling stops the turn, which the agent then ends.
+      if (choice === "cancel")
+        queueMicrotask(() => {
+          if (session.turn) fake.endTurn(id, "interrupted");
+        });
     },
 
     reply(id, request, answers) {
@@ -298,8 +382,13 @@ export function fakeIntegrated(): FakeIntegrated {
           throw new Error("a question has no answer");
       }
       fake.calls.push({ method: "reply", id, request, answers });
-      session.asked.delete(request);
-      settle(id);
+      fake.emit(id, {
+        type: "answered",
+        request,
+        choice: answers ? "allow" : "deny",
+        answers,
+        message: null,
+      });
     },
 
     configure(id, settings) {
@@ -342,7 +431,7 @@ export function fakeIntegrated(): FakeIntegrated {
           const messages = body.messages.filter((m) => session.pending.includes(m));
           if (session.turn) {
             for (const message of messages)
-              fake.emit(id, { type: "message", message, state: "taken", error: null });
+              fake.emit(id, { ...movedOn(message, "taken"), error: null });
             return;
           }
           session.turn = true;
@@ -353,9 +442,10 @@ export function fakeIntegrated(): FakeIntegrated {
         }
         case "message": {
           const message = body.message;
-          if (body.state !== "queued") {
+          if (body.state === "taken" || body.state === "dropped") {
             if (!session.pending.includes(message)) return;
             session.pending = session.pending.filter((m) => m !== message);
+            session.held = session.held.filter((held) => held.message !== message);
           }
           break;
         }
@@ -366,9 +456,29 @@ export function fakeIntegrated(): FakeIntegrated {
             fake.emit(id, { type: "turnStarted", messages: [] });
           if (body.type === "toolStarted") session.open.set(body.call, body.parent);
           break;
-        case "toolFinished":
-          session.open.delete(body.call);
+        case "toolInput":
+        case "toolOutput": {
+          const delta = body.delta;
+          if (delta !== null) {
+            const streamed = (session.streamed.get(body.call) ?? 0) + delta.length;
+            session.streamed.set(body.call, streamed);
+            if (streamed > CONTENT_KEEP) return;
+          }
           break;
+        }
+        case "toolFinished": {
+          session.open.delete(body.call);
+          session.streamed.delete(body.call);
+          const output = cut(body.output, OUTPUT_KEEP);
+          const changes = body.changes.map((change) => {
+            const content = change.content === null ? null : cut(change.content, CONTENT_KEEP);
+            return content?.cut
+              ? { ...change, content: content.text, truncated: true }
+              : change;
+          });
+          body = { ...body, output: output.text, truncated: body.truncated || output.cut, changes };
+          break;
+        }
         case "turnEnded": {
           if (!session.turn) fake.emit(id, { type: "turnStarted", messages: [] });
           const working = new Set(session.subagents.values());
@@ -384,17 +494,25 @@ export function fakeIntegrated(): FakeIntegrated {
         case "questionAsked":
           session.asked.set(body.request, { kind: "question", questions: body.questions });
           break;
+        case "answered":
         case "withdrawn":
           session.asked.delete(body.request);
           break;
         case "taskStarted":
-          if (body.kind === "agent") session.subagents.set(body.task, body.call);
+          session.tasks.set(body.task, {
+            call: body.call,
+            kind: body.kind,
+            background: body.background,
+            ambient: body.ambient,
+          });
+          if (body.kind === "agent" && !body.ambient) session.subagents.set(body.task, body.call);
           break;
         case "taskFinished":
+          session.tasks.delete(body.task);
+          if (body.reports && !session.turn && body.status !== "lost") session.reporting = true;
           if (session.subagents.has(body.task)) {
             const call = session.subagents.get(body.task) ?? null;
             session.subagents.delete(body.task);
-            if (!session.turn && body.status !== "lost") session.reporting = true;
             if (call !== null) close(id, (parent) => parent === call);
           }
           break;
@@ -411,12 +529,21 @@ export function fakeIntegrated(): FakeIntegrated {
       const event = { ...body, id } as IntegratedEvent;
       fake.events.push(event);
       for (const handler of handlers) handler(event);
-      if (body.type !== "state" && body.type !== "ended") settle(id);
+      if (body.type === "turnEnded") afterTurn(id);
+      if (body.type !== "state" && body.type !== "ended") {
+        release(id);
+        settle(id);
+      }
     },
 
     startTurn(id, messages) {
       const session = live(id);
-      fake.emit(id, { type: "turnStarted", messages: messages ?? [...session.pending] });
+      const waiting = options.holding
+        ? session.handed === null
+          ? []
+          : [session.handed]
+        : [...session.pending];
+      fake.emit(id, { type: "turnStarted", messages: messages ?? waiting });
     },
 
     endTurn(id, outcome = "done", error) {
@@ -426,28 +553,28 @@ export function fakeIntegrated(): FakeIntegrated {
         error: outcome === "failed" ? (error ?? "the turn failed") : null,
         totalCostUsd: 0.001,
         durationMs: 10,
-        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        usage: { inputTokens: 3, cachedTokens: 2, outputTokens: 1, reasoningTokens: 0 },
       });
     },
 
-    turn(id, text, options = {}) {
-      const parent = options.parent ?? null;
-      if (parent === null) fake.startTurn(id, options.messages);
-      streamed(id, "text", text, parent, options.pieces ?? 3);
+    turn(id, text, turnOptions = {}) {
+      const parent = turnOptions.parent ?? null;
+      if (parent === null) fake.startTurn(id, turnOptions.messages);
+      streamed(id, "text", text, parent, turnOptions.pieces ?? 3);
       if (parent === null) fake.endTurn(id);
     },
 
-    think(id, text, options = {}) {
-      streamed(id, "thinking", text, options.parent ?? null, 2);
+    think(id, text, thinkOptions = {}) {
+      streamed(id, "thinking", text, thinkOptions.parent ?? null, 2);
     },
 
-    ask(id, tool, input, options = {}) {
+    ask(id, tool, input, askOptions = {}) {
       const request = `request-${++requests}`;
       const choices: PermissionOffer[] = [{ choice: "allow", remembers: null, message: false }];
-      if (options.session)
-        choices.push({ choice: "allowSession", remembers: options.session, message: false });
-      if (options.always)
-        choices.push({ choice: "allowAlways", remembers: options.always, message: false });
+      if (askOptions.session)
+        choices.push({ choice: "allowSession", remembers: askOptions.session, message: false });
+      if (askOptions.always)
+        choices.push({ choice: "allowAlways", remembers: askOptions.always, message: false });
       choices.push(
         { choice: "deny", remembers: null, message: true },
         { choice: "cancel", remembers: null, message: true },
@@ -455,13 +582,13 @@ export function fakeIntegrated(): FakeIntegrated {
       fake.emit(id, {
         type: "permissionAsked",
         request,
-        call: options.call ?? null,
+        call: askOptions.call ?? null,
         parent: null,
         tool,
         input,
         truncated: false,
         description: null,
-        path: options.path ?? null,
+        path: askOptions.path ?? null,
         choices,
       });
       return request;
@@ -473,59 +600,86 @@ export function fakeIntegrated(): FakeIntegrated {
       return request;
     },
 
-    startTool(id, name, input, options = {}) {
+    startTool(id, name, input, toolOptions = {}) {
       const call = `call-${++calls}`;
-      const parent = options.parent ?? null;
-      fake.emit(id, { type: "toolStarted", call, parent, name, kind: options.kind ?? "other" });
+      const parent = toolOptions.parent ?? null;
+      fake.emit(id, { type: "toolStarted", call, parent, name, kind: toolOptions.kind ?? "other" });
       fake.emit(id, { type: "toolInput", call, parent, delta: null, input, truncated: false });
       return call;
     },
 
-    finishTool(id, call, output, options = {}) {
+    finishTool(id, call, output, finishOptions = {}) {
       const parent = sessions.get(id)?.open.get(call) ?? null;
       fake.emit(id, {
         type: "toolFinished",
         call,
         parent,
         output,
-        error: options.error ?? false,
+        error: finishOptions.error ?? false,
         truncated: false,
-        changes: options.changes ?? [],
+        changes: finishOptions.changes ?? [],
       });
     },
 
-    tool(id, name, input, output, options = {}) {
-      const call = fake.startTool(id, name, input, options);
-      fake.finishTool(id, call, output, { changes: options.changes });
+    tool(id, name, input, output, toolOptions = {}) {
+      const call = fake.startTool(id, name, input, toolOptions);
+      fake.finishTool(id, call, output, { changes: toolOptions.changes });
       return call;
     },
 
-    task(id, call, options = {}) {
+    task(id, call, taskOptions = {}) {
       const task = `task-${++tasks}`;
       fake.emit(id, {
         type: "taskStarted",
         task,
         call,
-        kind: options.kind ?? "agent",
-        description: options.description ?? null,
+        kind: taskOptions.kind ?? "agent",
+        description: taskOptions.description ?? null,
         prompt: null,
-        background: options.background ?? true,
+        background: taskOptions.background ?? true,
+        ambient: taskOptions.ambient ?? false,
       });
       return task;
     },
 
-    finishTask(id, task, status = "completed", summary) {
-      const call = sessions.get(id)?.subagents.get(task) ?? null;
-      fake.emit(id, { type: "taskFinished", task, call, status, summary: summary ?? null });
+    finishTask(id, task, status = "completed", summary, finishOptions = {}) {
+      const known = sessions.get(id)?.tasks.get(task);
+      const reports =
+        finishOptions.reports ??
+        (known?.kind === "agent" && known.background && !known.ambient && status !== "lost");
+      fake.emit(id, {
+        type: "taskFinished",
+        task,
+        call: known?.call ?? null,
+        status,
+        summary: summary ?? null,
+        reports,
+      });
     },
 
     plan(id, steps, text = null) {
       fake.emit(id, { type: "plan", call: null, parent: null, text, steps });
     },
 
-    compact(id) {
+    compaction(id, reason = "full") {
       fake.emit(id, { type: "compacting" });
-      fake.emit(id, { type: "compacted", trigger: "manual", tokensBefore: 100, tokensAfter: 10 });
+      fake.emit(id, { type: "compacted", reason, tokensBefore: 100, tokensAfter: 10 });
+    },
+
+    context(id, used, size) {
+      fake.emit(id, { type: "context", used, size });
+    },
+
+    notice(id, message, level = "info") {
+      fake.emit(id, { type: "notice", level, message });
+    },
+
+    drop(id, message, error = "the agent refused the message") {
+      fake.emit(id, { ...movedOn(message, "dropped"), error });
+    },
+
+    skip(id, pieces) {
+      fake.emit(id, { type: "skipped", pieces });
     },
 
     end(id, clean = true) {
@@ -548,9 +702,7 @@ export function fakeIntegrated(): FakeIntegrated {
       for (const request of [...session.asked.keys()]) say(id, { type: "withdrawn", request });
       for (const message of session.pending)
         say(id, {
-          type: "message",
-          message,
-          state: "dropped",
+          ...movedOn(message, "dropped"),
           error: "the agent ended before it took the message",
         });
       if (!clean)
@@ -566,6 +718,11 @@ export function fakeIntegrated(): FakeIntegrated {
     return session;
   }
 
+  /** A message event after the first, with nothing of what it said. */
+  function movedOn(message: string, state: "taken" | "dropped") {
+    return { type: "message" as const, message, state, text: null, images: [] };
+  }
+
   /** Puts an event out with no bookkeeping, for the end of a session. */
   function say(id: string, body: IntegratedEventBody) {
     const event = { ...body, id } as IntegratedEvent;
@@ -579,6 +736,7 @@ export function fakeIntegrated(): FakeIntegrated {
     for (const [call, parent] of [...session.open]) {
       if (!which(parent)) continue;
       session.open.delete(call);
+      session.streamed.delete(call);
       say(id, {
         type: "toolFinished",
         call,
@@ -589,6 +747,39 @@ export function fakeIntegrated(): FakeIntegrated {
         changes: [],
       });
     }
+  }
+
+  function handOver(id: string, message: string) {
+    sessions.get(id)!.handed = message;
+    fake.handed.push(message);
+  }
+
+  /** Hands a holding agent the next held message, once no turn runs and
+      it has named the last one handed over. */
+  function release(id: string) {
+    const session = sessions.get(id);
+    if (!options.holding || !session || session.ended) return;
+    if (session.handed !== null && !session.pending.includes(session.handed))
+      session.handed = null;
+    if (session.turn || session.handed !== null) return;
+    const next = session.held.shift();
+    if (next) handOver(id, next.message);
+  }
+
+  /** What the agent does once a turn is over: compact, if it was asked. */
+  function afterTurn(id: string) {
+    const session = sessions.get(id);
+    if (session?.compactAsked) queueMicrotask(() => compactNow(id));
+  }
+
+  function compactNow(id: string) {
+    const session = sessions.get(id);
+    if (!session || session.ended || session.turn || !session.compactAsked) return;
+    session.compactAsked = false;
+    fake.emit(id, { type: "turnStarted", messages: [] });
+    fake.compaction(id, "asked");
+    fake.context(id, 10, 200_000);
+    fake.endTurn(id);
   }
 
   function streamed(

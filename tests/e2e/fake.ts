@@ -427,6 +427,7 @@ export async function installFakeCore(
           images?: Parameters<FakeIntegrated["send"]>[3],
         ) => integrated().send(id, message, text, images),
         integratedInterrupt: async (id: string) => integrated().interrupt(id),
+        integratedCompact: async (id: string) => integrated().compact(id),
         integratedAnswer: async (
           id: string,
           request: string,
