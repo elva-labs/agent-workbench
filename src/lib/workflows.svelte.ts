@@ -313,7 +313,7 @@ function keep() {
     workflows.refused = refused;
     try {
       const stored = await core().settingsGet();
-      adoptWorkflows(stored.settings.workflows);
+      if (!stored.unreadable) adoptWorkflows(stored.settings.workflows);
     } catch {
       // A core that cannot say what it holds leaves the window as it is.
     }

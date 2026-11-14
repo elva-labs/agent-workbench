@@ -660,9 +660,12 @@ export interface UserStyles {
 }
 
 /** The settings, and whether a file held them: none held means the window
-    has not yet handed over what it kept before there was a file. */
+    has not yet handed over what it kept before there was a file. A file
+    that is there and does not parse, empty or cut short, is `unreadable`,
+    and its settings are the defaults and say nothing about the file. */
 export interface StoredSettings {
   stored: boolean;
+  unreadable?: boolean;
   settings: Settings;
 }
 

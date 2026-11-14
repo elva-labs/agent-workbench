@@ -13,6 +13,8 @@ const state = {
   changed: null as ((settings: Settings) => void) | null,
   noCore: false,
   refuse: null as string | null,
+  /** The file is there and does not parse. */
+  unreadable: false,
   hookCalls: [] as string[],
 };
 
@@ -38,8 +40,9 @@ vi.mock("$lib/core", () => ({
     async settingsGet(): Promise<StoredSettings> {
       if (state.noCore) throw new Error("no core");
       // Answered with the file as it was when it was read.
-      const answer: StoredSettings =
-        state.stored === null
+      const answer: StoredSettings = state.unreadable
+        ? { stored: true, unreadable: true, settings: DEFAULTS }
+        : state.stored === null
           ? { stored: false, settings: DEFAULTS }
           : { stored: true, settings: state.stored };
       if (!state.holdingRead) return answer;
@@ -48,7 +51,11 @@ vi.mock("$lib/core", () => ({
     settingsSet(change: Partial<Settings>): Promise<Settings> {
       if (state.noCore) return Promise.reject(new Error("no core"));
       state.sets.push(change);
-      if (state.refuse !== null) return Promise.reject(new Error(state.refuse));
+      if (state.refuse !== null) {
+        const refusal = new Error(state.refuse);
+        if (!state.holding) return Promise.reject(refusal);
+        return new Promise((_, reject) => state.held.push(() => reject(refusal)));
+      }
       const next = { ...(state.stored ?? DEFAULTS), ...change };
       state.stored = next;
       if (!state.holding) return Promise.resolve(next);
@@ -99,6 +106,7 @@ beforeEach(() => {
   state.changed = null;
   state.noCore = false;
   state.refuse = null;
+  state.unreadable = false;
   state.hookCalls = [];
   localStorage.clear();
   resetPersist();
@@ -222,6 +230,67 @@ describe("followSettings", () => {
     expect(theme.palette).toBe("indigo");
     expect(Object.keys(accounts.list)).toEqual(["Work"]);
     expect(accounts.overrides).toEqual({ "/p": "Work" });
+  });
+
+  it("takes the file's read when the news that overtook it was let pass and its write was refused", async () => {
+    state.stored = { ...DEFAULTS, look: "terminal" };
+    state.holdingRead = true;
+    state.holding = true;
+    state.refuse = "the disk is full";
+    const following = followSettings();
+    await vi.waitFor(() => expect(state.heldRead).not.toBeNull());
+    // A change made before the first read answers is on its way, news of
+    // another change arrives meanwhile and is let pass, and the write is
+    // then refused: nothing has been taken yet.
+    setPalette("amber");
+    state.changed?.({ ...DEFAULTS, look: "terminal", palette: "indigo" });
+    expect(theme.look).toBe("modern");
+    state.held.forEach((release) => release());
+    await settle();
+    state.heldRead?.();
+    await following;
+    expect(theme.look).toBe("terminal");
+    expect(theme.palette).toBe("teal");
+  });
+
+  it("counts a write's answer as heard, so the older read does not undo it", async () => {
+    state.stored = { ...DEFAULTS };
+    state.holdingRead = true;
+    state.holding = true;
+    const following = followSettings();
+    await vi.waitFor(() => expect(state.heldRead).not.toBeNull());
+    setPalette("amber");
+    // Something else wrote the look after the read and before the answer.
+    state.stored = { ...(state.stored ?? DEFAULTS), look: "terminal" };
+    state.held.forEach((release) => release());
+    await settle();
+    expect(theme.look).toBe("terminal");
+    state.heldRead?.();
+    await following;
+    expect(theme.look).toBe("terminal");
+    expect(theme.palette).toBe("amber");
+  });
+
+  it("keeps what it has when the core could not read the file, and takes the file once it is whole", async () => {
+    localStorage.setItem("workbench.palette", "indigo");
+    loadTheme();
+    state.stored = { ...DEFAULTS, palette: "rose" };
+    state.unreadable = true;
+    await followSettings();
+    expect(theme.palette).toBe("indigo");
+    expect(state.sets).toEqual([]);
+    state.changed?.({ ...DEFAULTS, palette: "rose" });
+    expect(theme.palette).toBe("rose");
+  });
+
+  it("does not hand over its copy to a file that could not be read", async () => {
+    localStorage.setItem("workbench.palette", "indigo");
+    loadTheme();
+    state.stored = null;
+    state.unreadable = true;
+    await followSettings();
+    expect(state.sets).toEqual([]);
+    expect(theme.palette).toBe("indigo");
   });
 
   it("stops listening when told to", async () => {

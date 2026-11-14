@@ -58,22 +58,30 @@ export function adopt(settings: Settings) {
  * window on its own copy.
  */
 export async function followSettings(): Promise<() => void> {
-  onSettled(adopt);
+  // The core announces every change to the file from the moment the window
+  // listens, so settings taken by the time the first read answers are as
+  // new as that answer or newer: the file may have changed after it was
+  // read, with the news of it arriving first. The read is then passed over.
+  // Only settings the window took count: news let pass because a write is
+  // in flight is not taken, and the answer to that write is.
+  let heard = false;
+  onSettled((settings) => {
+    heard = true;
+    adopt(settings);
+  });
   let stop = () => {};
   const stopStyles = await followStyles();
   try {
-    // The core announces every change to the file from the moment the
-    // window listens, so news heard by the time the first read answers is
-    // as new as that answer or newer: the file may have changed after it
-    // was read, with the news of it arriving first. The read is then
-    // passed over.
-    let heard = false;
     stop = await core().onSettingsChanged((settings) => {
+      if (sending()) return;
       heard = true;
-      if (!sending()) adopt(settings);
+      adopt(settings);
     });
     const found = await core().settingsGet();
-    if (!heard) {
+    // A file that could not be read whole says nothing about the settings:
+    // the window keeps what it has, and takes the file when the core
+    // announces a whole one.
+    if (!heard && !found.unreadable) {
       if (found.stored) adopt(found.settings);
       else adopt(await core().settingsSet(currentSettings()));
     }
