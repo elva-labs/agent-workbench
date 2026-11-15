@@ -163,7 +163,7 @@ describe("what a report says", () => {
     expect(resetWhen(at(130.5), NOW)).toBe("in 2 h 10 min");
     expect(resetWhen(at(180), NOW)).toBe("in 3 h");
     expect(resetWhen(NOW + 5_000, NOW)).toBe("in 1 min");
-    const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     // Later today, tomorrow, and within the week by its day.
     const evening = new Date(2026, 10, 16, 21, 0).getTime();
     expect(resetWhen(evening, NOW)).toBe(`today ${time(evening)}`);
@@ -172,6 +172,9 @@ describe("what a report says", () => {
     const thursday = new Date(2026, 10, 19, 9, 0).getTime();
     expect(resetWhen(thursday, NOW)).toBe(`Thursday ${time(thursday)}`);
     expect(resetWhen(thursday, NOW, true)).toBe(`Thu ${time(thursday)}`);
+    // An hour is written as it is said, with no leading zero.
+    const early = new Date(2026, 10, 17, 7, 5).getTime();
+    expect(resetWhen(early, NOW)).not.toMatch(/ 0\d/);
   });
 
   it("puts reached and reset into the popover's words", () => {
@@ -192,7 +195,13 @@ describe("what a report says", () => {
 
   it("says how old the figures are, and from fifteen minutes that they are old", () => {
     const at = (seconds: number) => ({ readAt: seconds, takenAt: seconds });
-    expect(ageOf(at(SECONDS - 20), NOW)).toEqual({ stale: false, moved: false, short: "now", long: "just now" });
+    expect(ageOf(at(SECONDS - 20), NOW)).toEqual({
+      stale: false,
+      moved: false,
+      short: "now",
+      long: "just now",
+      newer: "just now",
+    });
     expect(ageOf(at(SECONDS - 4 * 60), NOW)).toMatchObject({ stale: false, long: "4 min ago" });
     expect(ageOf(at(SECONDS - 14 * 60), NOW)).toMatchObject({ stale: false, short: "14 min" });
     expect(ageOf(at(SECONDS - 15 * 60), NOW)).toMatchObject({ stale: true, short: "15 min" });
@@ -210,6 +219,8 @@ describe("what a report says", () => {
       stale: true,
       moved: true,
       short: "20 min",
+      long: "20 min ago",
+      newer: "1 min ago",
     });
     // With no read answered, the report's own time is all there is.
     expect(ageOf({ readAt: null, takenAt: SECONDS - 60 }, NOW)).toMatchObject({
@@ -219,11 +230,13 @@ describe("what a report says", () => {
     });
   });
 
-  it("names a plan in plain words, and one it does not know as the agent wrote it", () => {
+  it("names a plan in plain words, with its tier, and one it does not know as the agent wrote it", () => {
     expect(planName("team")).toBe("Team");
     expect(planName("max")).toBe("Max");
     expect(planName("plus")).toBe("Plus");
-    expect(planName("max_20x")).toBe("max_20x");
+    expect(planName("max_20x")).toBe("Max 20x");
+    expect(planName("default_claude_max_5x")).toBe("Max 5x");
+    expect(planName("galaxy_brain")).toBe("galaxy_brain");
     expect(planName(null)).toBeNull();
     expect(planName(" ")).toBeNull();
   });

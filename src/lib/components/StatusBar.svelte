@@ -99,7 +99,7 @@
         : `${figure.name} ${figure.percent}% used${figure.reached ? ", reached" : ""}`,
     );
     const who = account === null ? "" : `Account ${account}. `;
-    const old = age?.stale ? `. Updated ${age.long}` : "";
+    const old = age?.stale ? `. Figures from ${age.long}` : "";
     return `${who}Allowance: ${parts.join(", ")}${old}`;
   });
 
@@ -255,7 +255,9 @@
   let updated = $derived.by(() => {
     if (age === null) return "";
     if (!age.stale) return `Updated ${age.long}`;
-    const when = age.moved ? `Read in full ${age.long}, some moved since` : `Updated ${age.long}`;
+    const when = age.moved
+      ? `Some figures are from ${age.newer}, the rest from ${age.long}`
+      : `Figures from ${age.long}`;
     return `${when}. The next turn on this account updates them.`;
   });
 </script>
@@ -287,7 +289,11 @@
             data-testid="model-readout">{model}</button
           >
         {:else}
-          <span class="plain" title="The model the session runs on" data-testid="model-readout">{model}</span>
+          <span
+            class="plain"
+            title={integrated === null ? "The model the session was started on" : "The model the session runs on"}
+            data-testid="model-readout">{model}</span
+          >
         {/if}
       {/if}
       {#if model !== null && effort !== null}<span class="sepdot" aria-hidden="true">&nbsp;·&nbsp;</span>{/if}

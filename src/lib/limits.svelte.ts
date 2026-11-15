@@ -162,7 +162,7 @@ export function topFigure(figures: Figure[]): Figure | null {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function clock(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function midnight(at: number): number {
@@ -172,7 +172,7 @@ function midnight(at: number): number {
 }
 
 /** When a window resets, as a person says it: `in 2 h 10 min` within a
-    few hours, then the day and the time, `Thursday 09:00`, or `Thu 09:00`
+    few hours, then the day and the time, `Thursday 9:00`, or `Thu 9:00`
     where room is short. */
 export function resetWhen(resetsAt: number, now: number, short = false): string {
   const minutes = Math.max(1, Math.floor((resetsAt - now) / 60_000));
@@ -200,26 +200,34 @@ export function resetWords(figure: Figure, now: number): string {
   return figure.reached ? `Reached, ${when}` : when;
 }
 
+/** An age in words: `3 h` where room is short, `3 hours ago` in full. */
+function aged(ms: number): { short: string; long: string } {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 1) return { short: "now", long: "just now" };
+  if (minutes < 60) return { short: `${minutes} min`, long: `${minutes} min ago` };
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return { short: `${hours} h`, long: hours === 1 ? "an hour ago" : `${hours} hours ago` };
+  const days = Math.floor(hours / 24);
+  return { short: `${days} d`, long: days === 1 ? "a day ago" : `${days} days ago` };
+}
+
 /** How old a report's figures are by `now`: as old as its oldest, which
     is the last read the agent answered, or the report itself where no
     read was answered. A push between reads moves only the windows it
     names, so a newer figure does not make the rest newer; `moved` says a
-    push came a minute or more after the read. */
+    push came a minute or more after the read, and `newer` how old the
+    figures it moved are. */
 export function ageOf(
   report: Pick<LimitsReport, "readAt" | "takenAt">,
   now: number,
-): { stale: boolean; moved: boolean; short: string; long: string } {
-  const ms = Math.max(0, now - (report.readAt ?? report.takenAt) * 1000);
-  const moved = report.readAt !== null && report.takenAt - report.readAt >= 60;
-  const minutes = Math.floor(ms / 60_000);
-  const stale = ms >= STALE_AFTER;
-  const words = (short: string, long: string) => ({ stale, moved, short, long });
-  if (minutes < 1) return words("now", "just now");
-  if (minutes < 60) return words(`${minutes} min`, `${minutes} min ago`);
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return words(`${hours} h`, hours === 1 ? "an hour ago" : `${hours} hours ago`);
-  const days = Math.floor(hours / 24);
-  return words(`${days} d`, days === 1 ? "a day ago" : `${days} days ago`);
+): { stale: boolean; moved: boolean; short: string; long: string; newer: string } {
+  const ms = now - (report.readAt ?? report.takenAt) * 1000;
+  return {
+    stale: ms >= STALE_AFTER,
+    moved: report.readAt !== null && report.takenAt - report.readAt >= 60,
+    ...aged(ms),
+    newer: aged(now - report.takenAt * 1000).long,
+  };
 }
 
 const PLANS: Record<string, string> = {
@@ -234,9 +242,13 @@ const PLANS: Record<string, string> = {
 };
 
 /** A plan as a person reads it: the agents' own ids, `team` and `max`, as
-    Team and Max, and any other as the agent wrote it. */
+    Team and Max, with a tier after the plan as it is written, `max_20x` as
+    Max 20x, and any other as the agent wrote it. */
 export function planName(plan: string | null): string | null {
   const id = plan?.trim() ?? "";
   if (id === "") return null;
-  return PLANS[id.toLowerCase()] ?? id;
+  const words = id.split(/[\s_-]+/);
+  const known = words.findIndex((word) => PLANS[word.toLowerCase()] !== undefined);
+  if (known === -1) return id;
+  return [PLANS[words[known].toLowerCase()], ...words.slice(known + 1)].join(" ");
 }

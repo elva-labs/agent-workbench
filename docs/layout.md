@@ -104,8 +104,10 @@ moves only some of the windows.
 
 A click on the allowance opens a popover with every window: a meter, the
 share used and when it resets in words, such as `resets in 2 h 10 min` or
-`resets Thursday 09:00`, with the account and its plan above and how old
-the figures are below. How the bar's menus and the popover take the
+`resets Thursday 9:00`, with the account and its plan above and how old
+the figures are below. Where some figures moved after the last full read,
+it says how old each part is: `Some figures are from just now, the rest
+from 20 min ago`. How the bar's menus and the popover take the
 keyboard and give it back is in the [focus model](focus-model.md#the-status-bar).
 
 Short of room, the bar lets its parts go in this order: the focus and the

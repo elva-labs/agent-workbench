@@ -219,7 +219,7 @@ test.describe("the session on screen", () => {
     await expect(page.getByTestId("limits-age")).toHaveText("20 min ago");
     await page.getByTestId("account-group").click();
     await expect(page.getByTestId("allowance-updated")).toHaveText(
-      "Read in full 20 min ago, some moved since. The next turn on this account updates them.",
+      "Some figures are from just now, the rest from 20 min ago. The next turn on this account updates them.",
     );
   });
 
@@ -299,6 +299,8 @@ test.describe("a terminal session", () => {
     const model = page.getByTestId("model-readout");
     await expect(model).toHaveText("Fable");
     expect(await model.evaluate((node) => node.tagName)).toBe("SPAN");
+    // The agent may have changed it since, in its own terminal.
+    await expect(model).toHaveAttribute("title", "The model the session was started on");
     await expect(page.getByTestId("effort-readout")).toHaveCount(0);
     // No integrated session on the account has said its limits.
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
@@ -485,7 +487,7 @@ test.describe("the allowance popover", () => {
     await expect(page.getByTestId("allowance-account")).toHaveText("Claude Code");
     await expect(page.getByTestId("allowance-plan")).toHaveText("Max");
     await expect(page.getByTestId("allowance-updated")).toHaveText(
-      "Updated 3 hours ago. The next turn on this account updates them.",
+      "Figures from 3 hours ago. The next turn on this account updates them.",
     );
   });
 
