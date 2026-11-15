@@ -315,14 +315,19 @@ run, which is read before its buttons are reached.
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
+| <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
+| <kbd>Tab</kbd> or <kbd>Enter</kbd> in the slash menu | Puts the marked one in the composer, a space after it |
+| <kbd>Esc</kbd> in the slash menu | Closes the menu, keeping what is written; it stops nothing |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop
-each: the thread, where the arrows move through its folds, steps and links
-from what is in view and <kbd>Enter</kbd> opens one, and the dock's
-choices. The composer's
+each: the thread, where the arrows move through its folds, steps, links
+and Copy buttons from what is in view, each Copy after what it belongs to
+and shown while the keyboard is on it, and <kbd>Enter</kbd> opens or
+presses one, and the dock's choices. The composer's
 controls, attach, the model and the mode, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
 of their own in reading order. Focus is always drawn where the keyboard
@@ -346,6 +351,14 @@ picking and <kbd>Esc</kbd> closing it. The choice under the pointer takes
 the keyboard, so the pointer and the arrows move one mark, and the keyboard
 going anywhere else, by a chord or a press, puts the menu away and stays
 where it went.
+
+The slash menu never takes the keyboard: the composer keeps it and names the
+marked row to a screen reader, and the arrows, <kbd>Tab</kbd>,
+<kbd>Enter</kbd> and <kbd>Esc</kbd> act on the menu only while it is open
+with something in it. A key that is part of a composition, as an input
+method makes one, goes to the composition. While the agent is still
+starting, <kbd>Enter</kbd> sends nothing, so a command is not sent as text
+before the agent can take it.
 
 Every chord the app claims works from the composer as from anywhere else.
 <kbd>Cmd</kbd><kbd>F</kbd> stays the page's, as it is a terminal's.

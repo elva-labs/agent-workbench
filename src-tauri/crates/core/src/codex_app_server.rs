@@ -2457,7 +2457,10 @@ impl Driver for AppServer {
                     local(Value::Null, vec![])
                 }
             },
-            Control::Compact => {
+            Control::Compact { instructions } => {
+                if instructions.is_some() {
+                    return Err("Codex compacts without instructions".into());
+                }
                 let thread = self
                     .thread
                     .clone()
