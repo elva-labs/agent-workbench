@@ -309,6 +309,7 @@ export function closeLabel(target: CloseTarget): string {
     case "browserTab":
       return "Close Tab";
     case "viewer":
+    case "other":
       return "Close Viewer";
     case "window":
       return "Close Window";

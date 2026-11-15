@@ -472,6 +472,8 @@ describe("what close closes", () => {
     expect(closeLabel("tab")).toBe("Close Tab");
     expect(closeLabel("browserTab")).toBe("Close Tab");
     expect(closeLabel("viewer")).toBe("Close Viewer");
+    // What the agent presented, or a plugin's page, in the editor's place.
+    expect(closeLabel("other")).toBe("Close Viewer");
     expect(closeLabel("window")).toBe("Close Window");
     expect(closeLabel("dialog")).toBe("Close");
   });

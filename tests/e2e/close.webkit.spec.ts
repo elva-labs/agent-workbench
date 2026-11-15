@@ -414,3 +414,13 @@ test.describe("what is in front", () => {
     expect(await controls(page)).toEqual([]);
   });
 });
+
+for (const platform of PLATFORMS)
+  test(`says in the Keys table which chord closes from a terminal, on ${platform.name}`, async ({ page }) => {
+    await open(page, platform);
+    await page.keyboard.press(`${platform.mod}+,`);
+    await page.getByTestId("settings-tab-keys").click();
+    await expect(page.getByTestId("chord-file.close")).toHaveText(platform === MAC ? "⌘W" : "Ctrl+W");
+    if (platform === MAC) await expect(page.getByTestId("chord-also")).toHaveCount(0);
+    else await expect(page.getByTestId("chord-also")).toHaveText("Also Ctrl+Shift+W, which works in a terminal");
+  });

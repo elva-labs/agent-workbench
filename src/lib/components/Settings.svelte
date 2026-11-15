@@ -1065,7 +1065,7 @@
                     <td class="label"
                       >{action.label}{#if action.key === "file.close" && also !== null}<span
                           class="also"
-                          data-testid="chord-also">{describe(also)} too, which works in a terminal</span
+                          data-testid="chord-also">Also {describe(also)}, which works in a terminal</span
                         >{/if}</td
                     >
                     <td>
