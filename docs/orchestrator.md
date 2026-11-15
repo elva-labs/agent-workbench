@@ -82,26 +82,26 @@ account there is not is refused with the names there are. A start that
 names none runs under the account of the session that started it when that
 account was chosen for the starter itself, which is when it is not the
 account of the starter's project; the agents' own, chosen that way, is
-handed on like any other. A starter that
-runs under its project's account, or under the one for every project,
-hands nothing on, and the session runs under the account of the project it
-starts in, so a project's own login is never lost to a starter that only
-follows a default. The project's account is used as well when the
-starter's chosen account cannot be handed on: when the project is on
-another machine than the starter, where the starter's login may not be,
-and when the account is no longer in the settings. An account handed on
-that keeps no directory for the agent being started runs that agent on its
-own directory, as a blank directory does anywhere. A session resumed comes
-back under the account it ran under.
+handed on like any other. A starter that runs under its project's account,
+or under the one for every project, hands nothing on, and the session runs
+under the account of the project it starts in. The project's account is
+used as well when the starter's chosen account cannot be handed on: when
+the project is on another machine than the starter, where the starter's
+login may not be, and when the account is no longer in the settings. An
+account handed on that keeps no directory for the agent being started runs
+that agent on its own directory, as a blank directory does anywhere. A
+session resumed comes back under the account it ran under.
 
 The starter is the session whose id the call carries. An agent that was not
 told its id calls without one, as a Codex session that has not been
 resumed does, since its id is learned after its tools have started; it is
 taken to be the one session running where the call comes from that was not
-told its id, as under [following a workflow](#following-a-workflow). Where
-there is no such session or several, or the call names a session the
-window does not have, as an agent run outside the workbench may, the
-starter cannot be placed and the session runs under the project's account.
+told its id, as under [following a workflow](#following-a-workflow). An
+agent run outside the workbench that calls from such a directory is taken
+for that session too, and its starts get that session's account. Where no
+such session runs or several do, or the call names a session the window
+does not have, the starter cannot be placed and the session runs under the
+project's account.
 
 ## Following a workflow
 
@@ -200,27 +200,26 @@ and no question at all.
 
 ## What is remembered
 
-What a session started is written down by session id, with the project,
-the worktree, the agent, the name and the account, and kept between runs
-beside the sessions the app knows as its own. Under a workflow, so are the
-step and round of each, and the rounds each piece has had; those go with
-the orchestrator once it is gone from its project's past sessions. An
+What a session started is written down by session id, with the project, the
+worktree, the agent, the name and the account, and kept between runs beside
+the sessions the app knows as its own. Under a workflow, so are the step
+and round of each, and the rounds each piece has had; those go with the
+orchestrator once it is gone from its project's past sessions. An
 orchestrator closed and resumed keeps its id, so the sessions it started
 are still its own: the ones still running answer to its tools as before,
-and a row with one of its
-ids, resumed from the pane by hand, hangs under it all the same. When
-the app itself was closed, the orchestrator comes back with the other
-sessions that were open, and the sessions it started do not. `sessions`
-then lists them as stopped, after the running ones, and `start` with one
-of those ids in place of a project and prompt brings it back where it ran,
-in its worktree with its conversation. A prompt given with it is what the
-session goes on with; without one it comes up waiting for a line. The cap
-and the one-level rule apply, and a session whose worktree has since been
-cleaned up, or whose project is no longer open, is refused with the
-reason. A session the orchestrator
-stopped itself is not offered back: the stop said it was done with. The
-record lives with the window's other memory, so a wiped local storage
-forgets it, which only means the orchestrator starts afresh.
+and a row with one of its ids, resumed from the pane by hand, hangs under
+it all the same. When the app itself was closed, the orchestrator comes
+back with the other sessions that were open, and the sessions it started do
+not. `sessions` then lists them as stopped, after the running ones, and
+`start` with one of those ids in place of a project and prompt brings it
+back where it ran, in its worktree with its conversation. A prompt given
+with it is what the session goes on with; without one it comes up waiting
+for a line. The cap and the one-level rule apply, and a session whose
+worktree has since been cleaned up, or whose project is no longer open, is
+refused with the reason. A session the orchestrator stopped itself is not
+offered back: the stop said it was done with. The record lives with the
+window's other memory, so a wiped local storage forgets it, which only
+means the orchestrator starts afresh.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool

@@ -28,9 +28,9 @@ directory for either agent or both, and a session under it is started with
 the agent's variable set to the account's directory for that agent, so the
 agent logs in, reads its settings and files its transcript there. An
 account with no directory for the agent leaves the variable as it is, and
-the agent uses its own. The past sessions a project lists are read from the same
-directory. The core is given directories rather than names, so a session on
-a remote machine runs under directories on that machine.
+the agent uses its own. The past sessions a project lists are read from
+the same directory. The core is given directories rather than names, so a
+session on a remote machine runs under directories on that machine.
 
 ## Under a workflow
 
