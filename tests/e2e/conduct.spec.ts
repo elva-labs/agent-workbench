@@ -616,13 +616,29 @@ test.describe("the workflow tag", () => {
     expect((await type("[data-testid='workflow-refused'] .refused-text"))[0]).toBe(title[0]);
 
     // Narrowed, the workflow's name gives way, first cut short and then
-    // gone from the line, and the place stays whole on it.
+    // gone from the line, and the place stays whole on it. Where the app
+    // draws the window's own buttons the changes pane opens 60 wider, so the
+    // window is 60 wider for the agent to pass through the same widths.
+    const step = await page.evaluate(() => (/Win|Linux/.test(navigator.platform) ? 60 : 0));
     const sizes: { flow: number; on: boolean }[] = [];
-    for (const width of [1440, 1100, 1000, 900]) {
+    for (const width of [1440, 1100 + step, 1000 + step, 900 + step]) {
       await page.setViewportSize({ width, height: 900 });
+      // Measured once the panes have settled at the new width: the agent's
+      // width the same on two readings a frame apart. Read at once, the
+      // agent can still have the columns of the width before.
       await expect
-        .poll(async () => (await page.locator(AGENT).boundingBox())?.width)
-        .toBeLessThan(width);
+        .poll(() =>
+          page.locator(AGENT).evaluate(
+            (pane) =>
+              new Promise<boolean>((resolve) => {
+                const first = pane.getBoundingClientRect().width;
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve(pane.getBoundingClientRect().width === first)),
+                );
+              }),
+          ),
+        )
+        .toBe(true);
       const box = (await tag.boundingBox())!;
       const placed = (await role.boundingBox())!;
       expect(placed.y).toBeLessThan(box.y + box.height);
