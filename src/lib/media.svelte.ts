@@ -16,7 +16,7 @@
 import { marked } from "marked";
 import { core, type Media, type PresentRequest } from "$lib/core";
 import { forProject, sessions } from "$lib/sessions.svelte";
-import { held, projectFor, within } from "$lib/show.svelte";
+import { held, projectFor, sessionFor } from "$lib/show.svelte";
 import { activate, workspace } from "$lib/workspace.svelte";
 import { showMedia } from "$lib/files.svelte";
 
@@ -70,29 +70,11 @@ function save() {
 }
 
 /** The session the request is for, by its agent's id: the one whose token
-    the request names, or whose id a plugin names, when it is running in
-    the project; else the one running deepest in the directory the agent
-    runs in; then the active session there; then the project itself. A
-    session whose id is not known yet cannot own anything, since the id is
-    what the list is kept by. */
+    the request names, anywhere in the window, or whose id a plugin names;
+    else the project itself. A session whose id is not known yet cannot own
+    anything, since the id is what the list is kept by. */
 export function ownerFor(request: PresentRequest, project: string): string {
-  const own = forProject(project).filter((session) => session.id !== null);
-  const named =
-    own.find((session) => session.token === request.session) ??
-    own.find((session) => session.id === request.session);
-  if (named !== undefined) return named.id!;
-  const at = (session: {
-    cwd: string | null;
-    startIn: string | null;
-    project: string;
-  }) => session.cwd ?? session.startIn ?? session.project;
-  const under = own
-    .filter((session) => within(request.cwd, at(session)))
-    .sort((a, b) => at(b).length - at(a).length);
-  if (under.length > 0) return under[0].id!;
-  const active = own.find((session) => session.key === sessions.active);
-  if (active !== undefined) return active.id!;
-  return `project:${project}`;
+  return sessionFor(request)?.id ?? `project:${project}`;
 }
 
 /** The same files, in any order: the same item, whichever way the agent
