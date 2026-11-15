@@ -485,9 +485,10 @@ so it marks nothing unread, and it goes once the starter is told. Once the
 workbench has woken the starter, the same place says what woke it, `woken by
 Fix the cache`, or the first and how many more, quietly in the line's own
 colour, and the pointer resting on it says what each of them did. It stays
-through the turn the wake began and after it, and goes when a turn of the
-user's begins. Short of room it is cut before the line beside it, and never
-takes more than about half the line. Short of
+through the turn the wake began and after it, and goes when you look at the
+starter once that turn is over, as the line a row was left does, or when a
+turn of yours begins. Short of room it is cut before the line beside it,
+and never takes more than half the line. Short of
 room it gives way before anything else on the line: the words go, then
 the mark and the count, and what the sessions are doing stands, asking
 included. On a started session's line the mark is the first thing to go. A

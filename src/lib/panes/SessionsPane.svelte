@@ -1223,6 +1223,7 @@
             class="note"
             class:asking={owned ? session.needs === "permission" : kids.some(isAsking)}
             class:first-say={news.length > 0}
+            class:shares={!folded && news.length === 0 && woken !== null}
             title={line}
             data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
           >
@@ -1249,8 +1250,9 @@
             </span>
           {:else if news.length === 0 && woken !== null}
             <!-- The workbench woke it, idle, with what the sessions it
-                 started did: which, quietly where the model stands, until a
-                 turn of the user's begins. -->
+                 started did: which, quietly where the model stands, until
+                 the user looks at it with the wake's turn over, or a turn of
+                 theirs begins. -->
             <span class="meta woken" title={wokenTitle(session, woken)} data-testid="starter-woken"
               >{wokenWords(woken)}</span
             >
@@ -2614,12 +2616,17 @@
     color: var(--ink-3);
   }
 
-  /* What woke a starter gives way before the line beside it, cut short,
-     and never takes more than about half of it. */
+  /* What woke a starter and the line beside it share the room each needs,
+     each cut short by its share of what is missing, the longer more; the
+     mark keeps its first words and the start of the name. */
+  .second .note.shares {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   .meta.woken {
     flex: 0 1 auto;
-    min-width: 0;
-    max-width: 55%;
+    min-width: 8.5em;
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;

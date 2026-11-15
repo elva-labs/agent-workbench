@@ -412,12 +412,13 @@ test.describe("the orchestrator", () => {
     const woken = page.getByTestId("starter-woken");
     await expect(woken).toHaveText(`woken by ${name}`);
     await expect(page.locator(".session.starter .state")).toContainText(`woken by ${name}`);
-    // The turn the wake began keeps the mark, and so does its end; the
-    // user's next turn lets it go.
+    // With the user elsewhere, the turn the wake began keeps the mark, and
+    // so does its end; looking at the starter then lets it go.
+    await page.getByTestId("started-session").click();
     await event("session-2", "prompt");
     await event("session-2", "stop");
     await expect(woken).toHaveText(`woken by ${name}`);
-    await event("session-2", "prompt");
+    await page.locator(".session.starter [data-testid='session-row']").click();
     await expect(woken).toHaveCount(0);
     // Nothing was typed twice.
     expect((await typedInto("pty-2")).split("\r")).toHaveLength(2);

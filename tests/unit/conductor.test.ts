@@ -2088,6 +2088,24 @@ describe("waking an idle starter", () => {
     expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(2);
   });
 
+  it("keeps the starter's mark until the user looks at it with the wake's turn over", async () => {
+    const starter = idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    sessions.active = kid.key;
+    stops(kid);
+    await wakeGoes();
+    // Looked at before the wake's turn begins, and while it runs, it stays.
+    sessions.active = starter.key;
+    flushSync();
+    expect(conductor.woken[starter.key]).toBeDefined();
+    exact("caller-1", "prompt");
+    flushSync();
+    expect(conductor.woken[starter.key]).toBeDefined();
+    exact("caller-1", "stop");
+    flushSync();
+    expect(conductor.woken[starter.key]).toBeUndefined();
+  });
+
   it("never wakes a session another started, so two that started each other cannot wake each other", async () => {
     const one = idleStarter("caller-1", "pty-a");
     const two = idleStarter("caller-2", "pty-b");

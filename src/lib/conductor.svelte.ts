@@ -63,6 +63,7 @@ import {
   defaultAgent,
   drafting,
   isLive,
+  isViewed,
   keysStillIn,
   label,
   onDirected,
@@ -372,8 +373,9 @@ export const conductor = $state({
   /** How many waits each caller has held, by the caller's token: a caller
       with one is listening for its sessions itself. */
   listening: {} as Record<string, number>,
-  /** The starters the workbench woke, by the row's key, until a turn
-      begins that it did not start. */
+  /** The starters the workbench woke, by the row's key, until the user
+      looks at one once the turn its wake began is over, or a turn begins
+      that the workbench did not start. */
   woken: {} as Record<string, Woken>,
 });
 
@@ -1061,6 +1063,7 @@ export function watchStops(): () => void {
   const stop = $effect.root(() => {
     $effect(observeAll);
     $effect(planWakes);
+    $effect(forgetWoken);
   });
   return () => {
     stop();
@@ -1230,10 +1233,6 @@ function wakeNews(starter: Session): Session[] {
     hear, and calls back the ones whose starter is no longer so. */
 function planWakes() {
   void heard.version;
-  // The mark of a row that has gone goes with it.
-  untrack(() => {
-    for (const key of Object.keys(conductor.woken)) if (byKey(key) === null) delete conductor.woken[key];
-  });
   const due = new Set(
     sessions.all
       .filter((starter) => wakeable(starter) && wakeNews(starter).length > 0)
@@ -1333,6 +1332,16 @@ onTurn((session) => {
   if (wakeTurns.delete(session.key)) return;
   delete conductor.woken[session.key];
 });
+
+/** Lets a woken starter's mark go once the user has looked at it with the
+    turn its wake began over, as looking clears the line a row was left,
+    and with its row. */
+function forgetWoken() {
+  for (const key of Object.keys(conductor.woken)) {
+    const row = byKey(key);
+    if (row === null || (isViewed(row) && !row.working && !wakeTurns.has(key))) delete conductor.woken[key];
+  }
+}
 
 /** The starter's mark: the sessions it was woken for, while it is kept. */
 export function wokenBy(session: Session): Woken | null {

@@ -1823,12 +1823,9 @@ test("wakes an idle integrated starter with what a session it started said, as t
   await expect(message.locator(".who")).not.toContainText("You");
   await expect(message.locator(".bubble")).toHaveText(`${name} stopped working. Its last line: There are 214 files under src.`);
   await expect(message.getByTestId("message-sender-go")).toHaveCount(0);
-  // The wake's turn keeps the mark; the user's next message lets it go.
+  // The user is looking at the starter, so the mark goes once the wake's
+  // turn is over.
   await agent(page, `f.turn("int-1", "Merged the count.");`);
-  await expect(woken).toHaveText(`woken by ${name}`);
-  await view.getByTestId("composer-input").fill("Thanks");
-  await page.keyboard.press("Enter");
-  await agent(page, `f.turn("int-1", "You are welcome.");`);
   await expect(woken).toHaveCount(0);
 });
 
