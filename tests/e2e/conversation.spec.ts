@@ -761,12 +761,13 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await expect(page.getByTestId("conversation")).toBeVisible();
     // Started the other way, it is a pick: it follows no workflow.
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
     // New session is the workflow's orchestrator, in a terminal: the
     // choice it opens stands on the workflow.
     await page.getByTestId("new-session").click();
     await page.keyboard.press("Enter");
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
-    await expect(page.getByTestId("workflow-tag")).toBeVisible();
+    await expect(page.getByTestId("run-chip")).toBeVisible();
     await expect(page.getByTestId("conversation")).toBeHidden();
   });
 
@@ -775,7 +776,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.goto("/");
     await page.getByTestId("start-agent").click();
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
-    await expect(page.getByTestId("workflow-tag")).toBeVisible();
+    await expect(page.getByTestId("run-chip")).toBeVisible();
     await expect(page.getByTestId("conversation")).toHaveCount(0);
   });
 
@@ -790,6 +791,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await rows.filter({ hasText: "New integrated session in demo" }).click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
   });
 
   test("the project menu offers an integrated session", async ({ page }) => {
@@ -802,6 +804,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("project-menu-other").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
   });
 
   test("the settings say once that a session under a workflow runs in a terminal", async ({ page }) => {

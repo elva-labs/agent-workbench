@@ -51,12 +51,14 @@ hand stays as dragged, and a double-click on the splitter gives the
 default back. Short of room, a header's status gives way before its name,
 and goes once it would show no more than a letter or two. The agent's header
 gives way in this order: a workflow's name and a session's project and
-branch, then the status, then the session's place in the workflow, and its
-title last. Each is cut short and then goes at a letter or two, its icon or
-its tag with it. In editor mode on Windows and Linux the window controls and
-the corner leave no room for the place in the workflow beside the title, so
-it goes there, and on macOS in the terminal look it is cut a few letters
-short. A click on the
+branch, then the status, then the session's place in the workflow, or the
+words of a run's chip, and its title last. Each is cut short and then goes
+at a letter or two, its icon or its tag with it. A run's chip keeps its
+pips: once its words have gone it stands as the pips alone, and the title
+gives way to them. In editor mode on Windows and Linux the window controls
+and the corner leave no room for the place in the workflow beside the
+title, so it goes there, and on macOS in the terminal look it is cut a few
+letters short. A click on the
 corner leaves the keyboard where it was, and neither a click nor Tab moves
 the pane focus. The switch is one stop for Tab, walked with the arrows, and
 a press from the keyboard that moves the corner to another header keeps the

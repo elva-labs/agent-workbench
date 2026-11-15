@@ -144,7 +144,6 @@
   {onfocusout}
   onpointerenter={pointerIn}
   onpointerleave={pointerOut}
-  data-keep-room
 >
   <button
     bind:this={button}
@@ -155,6 +154,7 @@
     aria-expanded={open}
     aria-controls={open ? id : undefined}
     aria-label="{run.spoken} Show where the run stands"
+    data-keep-room
     data-testid="run-chip"
   >
     <span class="pips" aria-hidden="true" data-testid="run-pips"
@@ -184,7 +184,11 @@
           <span class="standing">
             {#each step.sessions as session, n (n)}
               <span class="piece" data-testid="run-piece"
-                ><span class="words-of" class:asking={session.doing === "asking"}>{session.words}</span>
+                ><span class="words-of"
+                  >{#if session.round !== null}<span class="round">{session.round}</span>{", "}{/if}<span
+                    class:asking={session.doing === "asking"}>{session.doing}</span
+                  ></span
+                >
                 ·
                 {#if session.key !== null}<button
                     class="go"
@@ -204,7 +208,7 @@
           aria-expanded={showRules}
           onclick={() => (showRules = !showRules)}
           data-testid="run-rules-toggle"
-          ><span class="chev" class:out={showRules}><Icon name="chev" size={11} /></span>The rules the orchestrator was
+          ><span class="chev"><Icon name={showRules ? "down" : "chev"} size={11} /></span>The rules the orchestrator was
           given</button
         >
         {#if showRules}
@@ -224,12 +228,12 @@
     flex: 0 1 auto;
     min-width: 0;
     display: flex;
-    margin-left: 2px;
   }
 
   .chip {
     min-width: 0;
     height: 22px;
+    margin-left: 2px;
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -361,7 +365,11 @@
     min-width: 0;
   }
 
-  .words-of.asking {
+  .round {
+    color: var(--ink);
+  }
+
+  .asking {
     color: var(--accent);
   }
 
@@ -419,11 +427,6 @@
   .chev {
     display: flex;
     color: var(--ink-3);
-    transition: transform 120ms ease;
-  }
-
-  .chev.out {
-    transform: rotate(90deg);
   }
 
   ol {
@@ -433,11 +436,5 @@
     flex-direction: column;
     gap: 6px;
     font-size: 12px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .chev {
-      transition: none;
-    }
   }
 </style>

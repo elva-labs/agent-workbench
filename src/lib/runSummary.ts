@@ -59,6 +59,8 @@ export interface StepSession {
   name: string;
   /** Its round and what it is doing: "round 2 of 4, working". */
   words: string;
+  /** Its round alone, "round 2 of 4", or null where it has none. */
+  round: string | null;
   doing: Doing;
 }
 
@@ -233,6 +235,7 @@ export function summarize(
             key: entry.key,
             name: entry.name,
             words: round === null ? entry.doing : `${round}, ${entry.doing}`,
+            round,
             doing: entry.doing,
           };
         }),

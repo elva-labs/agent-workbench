@@ -56,11 +56,22 @@ export function keeps(node: HTMLElement) {
     for (const part of [...kept(), ...rooms()]) sizes.observe(part);
   }
 
-  /** The width of a part's room: its own, less the boxes of the text it
-      keeps, which are cut short or not. */
+  /** The width of a part's room, a row of its own: its margins, border
+      and padding, the gaps between what it holds, and what it holds but
+      the text it keeps. Read from what does not shrink, so it is the same
+      however short of room the part is. */
   function roomOf(part: HTMLElement): number {
-    const inside = [...part.querySelectorAll<HTMLElement>("[data-keep]")];
-    return part.getBoundingClientRect().width - inside.reduce((sum, text) => sum + text.getBoundingClientRect().width, 0);
+    const style = getComputedStyle(part);
+    const px = (value: string) => parseFloat(value) || 0;
+    const items = [...part.children].filter((child) => getComputedStyle(child).display !== "none");
+    const own = ["marginLeft", "marginRight", "borderLeftWidth", "borderRightWidth", "paddingLeft", "paddingRight"] as const;
+    return (
+      own.reduce((sum, side) => sum + px(style[side]), 0) +
+      px(style.columnGap) * Math.max(0, items.length - 1) +
+      items
+        .filter((child) => !child.matches("[data-keep]"))
+        .reduce((sum, child) => sum + child.getBoundingClientRect().width, 0)
+    );
   }
 
   function measure() {

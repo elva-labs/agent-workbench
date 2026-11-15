@@ -74,6 +74,7 @@ import { register, resetScreens, type Screen } from "$lib/screens";
 import { outsideCaller, outsideFolder } from "$lib/senders.svelte";
 import { render } from "@testing-library/svelte";
 import ConductAsk from "$lib/components/ConductAsk.svelte";
+import Started from "$lib/components/conversation/Started.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
@@ -3137,7 +3138,13 @@ describe("starting in a workflow's shape", () => {
     run = runStanding(byKey(orch.key)!)!;
     expect(run.text).toBe("Review, round 1 of 4");
     expect(run.steps[1].sessions).toEqual([
-      { key: review.key, name: label(byKey(review.key)!), words: "round 1 of 4, working", doing: "working" },
+      {
+        key: review.key,
+        name: label(byKey(review.key)!),
+        words: "round 1 of 4, working",
+        round: "round 1 of 4",
+        doing: "working",
+      },
     ]);
     expect(run.steps[0].sessions[0]).toMatchObject({ name: "Fix the cache", words: "done" });
     // Asking for a permission is said as asking.
@@ -3151,6 +3158,20 @@ describe("starting in a workflow's shape", () => {
     expect(runStanding(byKey(orch.key)!)!.text).toBe("Done");
     // A session that follows no workflow has no run.
     expect(runStanding(byKey(work.key)!)).toBeNull();
+  });
+
+  it("shows a started row's step before its name and its round with its state in the thread", async () => {
+    orchestrating();
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    const review = await begun({ step: "Review", work: "w1", name: "Review the cache fix" }, "r1");
+    byKey(review.key)!.working = true;
+    flushSync();
+    const { getAllByTestId } = render(Started, { ids: ["w1", "r1"] });
+    expect(getAllByTestId("started-step").map((node) => node.textContent)).toEqual(["Work", "Review"]);
+    expect(getAllByTestId("started-state").map((node) => node.textContent?.trim())).toEqual([
+      "running",
+      "round 1 of 4, working",
+    ]);
   });
 
   it("turns to the round question while it waits on the user", async () => {
