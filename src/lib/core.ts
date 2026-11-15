@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   isPermissionGranted,
@@ -1961,7 +1962,7 @@ const tauriCore: Core = {
   pathRename: (root, from, to) => invoke<void>("path_rename", { root, from, to }),
   pathDelete: (root, path) => invoke<void>("path_delete", { root, path }),
   revealPath: (path) => revealItemInDir(path),
-  copyText: (text) => navigator.clipboard.writeText(text),
+  copyText: (text) => writeText(text),
   setUnsaved: (unsaved) => invoke("leave_unsaved", { unsaved }),
   setRunning: (running) => invoke("leave_running", { running }),
   async onLeaveRequested(handler) {

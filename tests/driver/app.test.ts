@@ -438,6 +438,22 @@ describe("the real app", () => {
     );
   });
 
+  // A Copy in the conversation writes to the system clipboard through the
+  // app, since not every platform's webview lets a page write there
+  // itself. The write is asked for as the window asks for it.
+  it("puts text on the system clipboard through the app", async () => {
+    const { driver } = app;
+    const written = (await driver.executeAsyncScript((done: (value: unknown) => void) => {
+      const ipc = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } })
+        .__TAURI_INTERNALS__;
+      ipc.invoke("plugin:clipboard-manager|write_text", { text: "cargo test -p core" }).then(
+        () => done({ ok: true }),
+        (error) => done({ error: String(error) }),
+      );
+    })) as { ok?: boolean; error?: string };
+    expect(written).toEqual({ ok: true });
+  });
+
   // Lines search runs git grep in the real repository.
   it("finds lines inside the files", async () => {
     const { driver } = app;
