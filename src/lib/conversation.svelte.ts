@@ -206,7 +206,8 @@ export interface Request {
 export class Conversation {
   /** The agent's id for the conversation, the one resuming takes. */
   sessionId = $state<string | null>(null);
-  /** What the agent said of itself and what it offers, once ready. */
+  /** What the agent said of itself and what it offers, once ready, with
+      its commands as they now are. */
   ready = $state<Ready | null>(null);
   settings = $state<IntegratedSettings>({ model: null, mode: null, effort: null });
   /** The efforts the model it runs on takes. */
@@ -348,6 +349,9 @@ export class Conversation {
         this.ready = event;
         this.settings = { model: event.model, mode: event.mode, effort: event.effort };
         this.efforts = [...event.efforts];
+        break;
+      case "commands":
+        if (this.ready !== null) this.ready = { ...this.ready, commands: event.commands };
         break;
       case "configured":
         if (this.current !== null && event.model !== this.settings.model)

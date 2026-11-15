@@ -424,6 +424,25 @@ describe("a conversation, from the core's events", () => {
     expect(conversation.context).toEqual({ used: 10, size: 200_000 });
   });
 
+  it("keeps the agent's commands as the last word on them says, a late window's too", () => {
+    const { fake, conversation, id } = played();
+    expect(conversation.ready?.commands.map((command) => command.name)).toContain("compact");
+    const review = {
+      name: "review",
+      description: "Review a pull request",
+      hint: "[pr]",
+      skill: true,
+      builtin: true,
+      source: null,
+    };
+    fake.commands(id, [review]);
+    expect(conversation.ready?.commands).toEqual([review]);
+    expect(conversation.ready?.sessionId).toBe("integrated-session-1");
+    const late = new Conversation(() => 0);
+    late.restore(fake.snapshot(id));
+    expect(late.ready?.commands).toEqual([review]);
+  });
+
   it("draws notices and errors, and takes a retry off once the turn goes on", () => {
     const { fake, conversation, id, send } = played();
     fake.notice(id, "Fell back to Sonnet", "warning");

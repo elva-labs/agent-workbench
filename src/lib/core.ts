@@ -321,6 +321,20 @@ export interface IntegratedLimitWindow {
   severity: "normal" | "warning" | "reached" | null;
 }
 
+/** A slash command or skill the agent takes at the start of a message,
+    named without its slash. `hint` is what it takes after its name;
+    `skill` says it is a skill rather than a command, as far as the agent
+    has said; `builtin` that it is the agent's own; `source` where one that
+    is not comes from, in the agent's words. */
+export interface IntegratedCommand {
+  name: string;
+  description: string | null;
+  hint: string | null;
+  skill: boolean;
+  builtin: boolean;
+  source: string | null;
+}
+
 /** A session's news, by `type`. Text, thinking, tool calls, plans and
     requests carry `parent`: the tool call that started the subagent they
     belong to, or null in the main conversation. */
@@ -344,8 +358,11 @@ export type IntegratedEventBody =
       }[];
       modes: { value: string; name: string; description: string | null }[];
       efforts: string[];
-      commands: { name: string; description: string | null; hint: string | null }[];
+      commands: IntegratedCommand[];
     }
+  /** The slash commands and skills changed, or the agent said more of
+      which is which; all of them as they now are. */
+  | { type: "commands"; commands: IntegratedCommand[] }
   /** The model, mode or effort changed; all as they now are. */
   | {
       type: "configured";
@@ -1208,9 +1225,10 @@ export interface Core {
   /** Stops the running turn. Queued messages stay queued. The turn's end
       arrives as an event afterwards. */
   integratedInterrupt(id: string): Promise<void>;
-  /** Compacts the conversation, in the agent's own way. Resolves once
-      asked; `compacting` and `compacted` follow. */
-  integratedCompact(id: string): Promise<void>;
+  /** Compacts the conversation, in the agent's own way, with what the
+      summary should keep where the agent takes that. Resolves once asked;
+      `compacting` and `compacted` follow. */
+  integratedCompact(id: string, instructions?: string): Promise<void>;
   /** Answers a permission request with a choice it offered; `message`
       goes with a choice that takes one. */
   integratedAnswer(
@@ -1690,7 +1708,8 @@ const tauriCore: Core = {
   integratedSend: (id, message, text, images) =>
     invoke<void>("integrated_send", { id, message, text, images: images ?? [] }),
   integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
-  integratedCompact: (id) => invoke<void>("integrated_compact", { id }),
+  integratedCompact: (id, instructions) =>
+    invoke<void>("integrated_compact", { id, instructions: instructions ?? null }),
   integratedAnswer: (id, request, choice, message) =>
     invoke<void>("integrated_answer", {
       id,

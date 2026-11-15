@@ -47,6 +47,7 @@ describe("the seam's integrated sessions", () => {
     await seam.integratedSend("int-1", M2, "again");
     await seam.integratedInterrupt("int-1");
     await seam.integratedCompact("int-1");
+    await seam.integratedCompact("int-1", "keep the API notes");
     await seam.integratedAnswer("int-1", "r-1", "deny", "not that");
     await seam.integratedAnswer("int-1", "r-2", "allowSession");
     await seam.integratedReply("int-1", "q-1", [["Red"], ["my own words"]]);
@@ -79,7 +80,8 @@ describe("the seam's integrated sessions", () => {
       ],
       ["integrated_send", { id: "int-1", message: M2, text: "again", images: [] }],
       ["integrated_interrupt", { id: "int-1" }],
-      ["integrated_compact", { id: "int-1" }],
+      ["integrated_compact", { id: "int-1", instructions: null }],
+      ["integrated_compact", { id: "int-1", instructions: "keep the API notes" }],
       [
         "integrated_answer",
         { id: "int-1", request: "r-1", choice: "deny", message: "not that" },
@@ -428,7 +430,7 @@ describe("the scripted integrated session", () => {
     expect(heard.find((event) => event.type === "compacted")).toMatchObject({ reason: "asked" });
     expect(heard.find((event) => event.type === "context")).toMatchObject({ used: 10 });
     expect(states(heard).at(-1)).toBe("idle");
-    expect(fake.calls.at(-1)).toEqual({ method: "compact", id });
+    expect(fake.calls.at(-1)).toEqual({ method: "compact", id, instructions: null });
   });
 
   it("echoes a message with its text and images, and later states without them", () => {

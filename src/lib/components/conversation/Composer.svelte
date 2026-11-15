@@ -3,11 +3,14 @@
   import { core, type IntegratedImage } from "$lib/core";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
-  import { interrupt, linkFor, send } from "$lib/integrated.svelte";
+  import { compact, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import { choose, modeChoices, modelChoices } from "$lib/settingChoices";
   import { modelName, tokens } from "$lib/thread";
+  import { pieces } from "$lib/completion";
+  import { complete, named, slashGroups, slashWord, sourceOf, waitingHint } from "$lib/slash";
   import ChoiceMenu from "../ChoiceMenu.svelte";
+  import CompletionMenu, { rowId } from "./CompletionMenu.svelte";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
   import { shown } from "$lib/unseen";
@@ -21,6 +24,13 @@
    * Enter sends and Shift+Enter breaks the line. Escape stops a running
    * turn; with none running it is the app's. Up from an empty composer
    * reaches what the agent waits on, when it waits on something.
+   *
+   * A slash typed as the first thing in a message opens the agent's
+   * commands and skills over the composer, for an agent that lists them:
+   * typing narrows them, the arrows mark one, and Tab or Enter puts it in
+   * the field, its argument hint waiting after it until something is
+   * typed. Escape puts the menu away and stops nothing. A message that is
+   * the compact command compacts through the agent's own compaction.
    */
   interface Props {
     sessionKey: string;
@@ -36,9 +46,12 @@
     /** Whether the session runs on the agent's default model, the user
         having chosen none. */
     defaultModel?: boolean;
+    /** Whether the agent lists slash commands once ready. */
+    slash?: boolean;
   }
 
-  let { sessionKey, conversation, agent, ready, active, onDock, defaultModel = false }: Props = $props();
+  let { sessionKey, conversation, agent, ready, active, onDock, defaultModel = false, slash = false }: Props =
+    $props();
 
   let link = $derived(linkFor(sessionKey));
   let field = $state<HTMLTextAreaElement | null>(null);
@@ -49,6 +62,89 @@
   /** It was opened with the pointer rather than a key. */
   let byPointer = $state(false);
   let reading = $state(0);
+
+  // ---- slash commands ----
+
+  /** Where the caret is in the field, as last seen. */
+  let caret = $state(0);
+  let focused = $state(false);
+  /** The message as it stood when Escape put the menu away: the menu stays
+      away until the message changes. */
+  let dismissed = $state<string | null>(null);
+  /** The row marked by a key or the pointer, for the word it was marked in;
+      a new word marks its best match. */
+  let marked = $state({ query: "", index: 0 });
+
+  let commands = $derived(conversation.ready?.commands ?? []);
+  let word = $derived(slash && focused && dismissed !== link.draft ? slashWord(link.draft, caret) : null);
+  let groups = $derived(word === null || conversation.ready === null ? [] : slashGroups(commands, word.query));
+  let matches = $derived(groups.flatMap((group) => group.matches));
+  /** What the menu shows, when it is open: the agent's list, a word that
+      nothing matches, or the agent not ready to list anything yet. */
+  let slashMenu = $derived<"list" | "none" | "starting" | null>(
+    word === null
+      ? null
+      : conversation.ready === null
+        ? "starting"
+        : matches.length > 0
+          ? "list"
+          : commands.length > 0
+            ? "none"
+            : null,
+  );
+  let marking = $derived(
+    word !== null && marked.query === word.query ? Math.min(marked.index, Math.max(0, matches.length - 1)) : 0,
+  );
+  /** The argument hint after a command just put in the field. */
+  let ghost = $derived(slash && slashMenu === null ? waitingHint(link.draft, commands) : null);
+  let menuId = $derived(`slash-${sessionKey.replace(/[^\w-]/g, "_")}`);
+
+  function seen() {
+    if (field !== null) caret = field.selectionStart;
+  }
+
+  function mark(index: number) {
+    marked = { query: word?.query ?? "", index };
+  }
+
+  /** Puts the command at that place in the menu in the field, a space
+      after it, with the caret there. */
+  function completeAt(index: number) {
+    const command = matches[index]?.item;
+    if (command === undefined || word === null) return;
+    const done = complete(link.draft, word, command.name);
+    link.draft = done.text;
+    caret = done.caret;
+    void tick().then(() => {
+      field?.focus();
+      field?.setSelectionRange(done.caret, done.caret);
+    });
+  }
+
+  /** The keys the menu takes while it is open; true when one was taken. */
+  function menuKey(e: KeyboardEvent): boolean {
+    if (slashMenu === null || e.isComposing || e.keyCode === 229) return false;
+    const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      dismissed = link.draft;
+      return true;
+    }
+    if (slashMenu !== "list" || !plain) return false;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      mark((marking + step + matches.length) % matches.length);
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      completeAt(marking);
+      return true;
+    }
+    return false;
+  }
 
   let running = $derived(conversation.current !== null || conversation.working);
   let hasWords = $derived(link.draft.trim() !== "" || link.images.length > 0);
@@ -88,6 +184,14 @@
       return;
     }
     digit = null;
+    const asked = slash && link.images.length === 0 ? named(link.draft, commands) : null;
+    if (asked?.command.name === "compact") {
+      if (compact(sessionKey, asked.rest)) {
+        link.draft = "";
+        void tick().then(grow);
+      }
+      return;
+    }
     const id = send(sessionKey, link.draft, link.images);
     if (id === null) return;
     link.draft = "";
@@ -100,6 +204,7 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    if (menuKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -284,6 +389,38 @@
 </script>
 
 <div class="composer" bind:this={box} data-drop={sessionKey} data-testid="composer">
+  {#if slashMenu !== null}
+    <CompletionMenu
+      id={menuId}
+      label="Commands and skills"
+      groups={groups.map((group) => ({ label: group.label, items: group.matches }))}
+      active={marking}
+      key={(match) => match.item.name}
+      action="complete"
+      onpick={completeAt}
+      onpoint={mark}
+      testid="slash-menu"
+    >
+      {#snippet row(match)}
+        <span class="cmd-name" data-testid="slash-name"
+          >/{#each pieces(match.item.name, match.marks) as piece, at (at)}{#if piece.hit}<b><Plain text={piece.text} /></b
+              >{:else}<Plain text={piece.text} />{/if}{/each}{#if match.item.hint !== null}<span class="cmd-hint"
+              ><Plain text={match.item.hint} /></span
+            >{/if}</span
+        >
+        <span class="cmd-about"><Plain text={match.item.description ?? ""} /></span>
+        <span class="cmd-source"><Plain text={sourceOf(match.item)} /></span>
+      {/snippet}
+      {#snippet empty()}
+        {#if slashMenu === "starting"}
+          {agent} is still starting. Its commands show here once it is ready.
+        {:else}
+          No command or skill is called <code><Plain text={link.draft.slice(0, word?.end ?? 0)} /></code>.
+          <kbd>↵</kbd> sends it as a message.
+        {/if}
+      {/snippet}
+    </CompletionMenu>
+  {/if}
   {#if link.images.length > 0 || reading > 0}
     <div class="attached" data-testid="attachments">
       {#each link.images as image, at (at)}
@@ -297,26 +434,47 @@
       {#if reading > 0}<span class="reading">Reading…</span>{/if}
     </div>
   {/if}
-  <textarea
-    bind:this={field}
-    bind:value={link.draft}
-    {onkeydown}
-    {onpaste}
-    rows="1"
-    placeholder={conversation.open.length > 0
-      ? "↑ to answer, or write a message"
-      : conversation.entries.length === 0
-        ? `Tell ${agent} what to do`
-        : `Reply to ${agent}`}
-    aria-label="Message to {agent}"
-    data-testid="composer-input"
-  ></textarea>
+  <div class="write">
+    <textarea
+      bind:this={field}
+      bind:value={link.draft}
+      {onkeydown}
+      {onpaste}
+      oninput={seen}
+      onkeyup={seen}
+      onpointerup={seen}
+      onselect={seen}
+      onfocus={() => {
+        focused = true;
+        seen();
+      }}
+      onblur={() => (focused = false)}
+      rows="1"
+      placeholder={conversation.open.length > 0
+        ? "↑ to answer, or write a message"
+        : conversation.entries.length === 0
+          ? `Tell ${agent} what to do`
+          : `Reply to ${agent}`}
+      aria-label="Message to {agent}"
+      aria-autocomplete={slash ? "list" : undefined}
+      aria-controls={slashMenu === "list" ? menuId : undefined}
+      aria-activedescendant={slashMenu === "list" ? rowId(menuId, marking) : undefined}
+      data-testid="composer-input"
+    ></textarea>
+    {#if ghost !== null}
+      <div class="ghost" aria-hidden="true" data-testid="slash-hint">
+        <span class="typed">{link.draft}</span><Plain text={ghost} />
+      </div>
+    {/if}
+  </div>
   {#if digit !== null}
     <p class="hint" data-testid="composer-digit">
       “{digit}” would go to {agent} as a message, not as an answer. Press ↑ to answer, or Enter again to send it.
     </p>
   {:else if held}
     <p class="hint" data-testid="composer-held">Sends once the images are read.</p>
+  {:else if link.compactAsked && running && !conversation.compacting}
+    <p class="hint" data-testid="composer-compact">Compacts once {agent} is done with this turn.</p>
   {/if}
   <div class="bar">
     <button class="chip bare" tabindex="0" onclick={() => picker?.click()} aria-label="Attach images" title="Attach images" data-testid="attach"
@@ -389,6 +547,11 @@
     {#if link.configureError !== null}
       <span class="error" title={shown(link.configureError)}>Not changed: <Plain text={link.configureError} /></span>
     {/if}
+    {#if link.compactError !== null}
+      <span class="error" title={shown(link.compactError)} data-testid="compact-error"
+        >Not compacted: <Plain text={link.compactError} /></span
+      >
+    {/if}
     <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
     {#if running}
       <button class="round stop" tabindex="0" onclick={stop} aria-label="Stop" title="Stop the agent (Esc)" data-testid="stop"
@@ -411,6 +574,7 @@
 
 <style>
   .composer {
+    position: relative;
     max-width: 740px;
     margin: 0 auto;
     display: flex;
@@ -449,6 +613,78 @@
 
   textarea::placeholder {
     color: var(--ink-2);
+  }
+
+  /* The argument hint of a command just put in the field, drawn after what
+     is written as if typed there, in grey. */
+  .write {
+    position: relative;
+    display: flex;
+  }
+
+  .ghost {
+    position: absolute;
+    inset: 0;
+    padding: 0 2px;
+    font-size: var(--conv-size);
+    line-height: 1.5;
+    color: var(--ink-3);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .ghost .typed {
+    visibility: hidden;
+  }
+
+  /* A command in the menu: its name with the letters typed marked and its
+     argument hint, what it does, and where it comes from. */
+  .cmd-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--mono);
+    font-size: calc(var(--row-size) - 0.5px);
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .cmd-name b {
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .cmd-hint {
+    margin-left: 6px;
+    color: var(--ink-3);
+  }
+
+  .cmd-about {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cmd-source {
+    font-size: calc(var(--meta-size) - 0.5px);
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  /* In a narrow pane the name and what it does keep the room. */
+  @container conversation (max-width: 420px) {
+    .cmd-source {
+      display: none;
+    }
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: calc(var(--row-size) - 0.5px);
+    color: var(--ink);
   }
 
   .hint {

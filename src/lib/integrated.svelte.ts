@@ -61,6 +61,11 @@ export class Link {
   images = $state<IntegratedImage[]>([]);
   /** Why the model could not be changed, until it next is. */
   configureError = $state<string | null>(null);
+  /** Why the conversation could not be compacted, until it next is. */
+  compactError = $state<string | null>(null);
+  /** A compaction was asked for and has not begun: it waits for the turn
+      that runs. */
+  compactAsked = $state(false);
   /** Events heard while a snapshot is on its way. */
   held: IntegratedEventBody[] | null = null;
   /** An attach on its way, for a start to wait on. */
@@ -159,6 +164,7 @@ function claim(id: string): IntegratedEventBody[] {
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const before = link.conversation.state;
   link.conversation.apply(body);
+  if (body.type === "compacting" || body.type === "compacted" || body.type === "ended") link.compactAsked = false;
   if (body.type === "message" || body.type === "turnStarted" || body.type === "ended")
     settleNotes(key, link);
   const session = byKey(key);
@@ -505,6 +511,23 @@ export function send(
       settleNotes(key, link);
     });
   return id;
+}
+
+/** Compacts the conversation through the agent's own compaction, with
+    what the summary should keep. True when it was asked. */
+export function compact(key: string, instructions = ""): boolean {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null) return false;
+  const words = instructions.trim();
+  link.compactError = null;
+  link.compactAsked = true;
+  core()
+    .integratedCompact(link.handle, words === "" ? undefined : words)
+    .catch((error) => {
+      link.compactAsked = false;
+      link.compactError = message(error);
+    });
+  return true;
 }
 
 /** Stops the running turn. Messages that wait go on waiting. */

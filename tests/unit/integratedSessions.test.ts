@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   answer,
+  compact,
   configure,
   conversationOf,
   handleOf,
@@ -45,7 +46,7 @@ async function install(options: FakeIntegratedOptions = {}) {
     integratedSend: async (id: string, message: string, text: string, images?: never[]) =>
       fake.send(id, message, text, images),
     integratedInterrupt: async (id: string) => fake.interrupt(id),
-    integratedCompact: async (id: string) => fake.compact(id),
+    integratedCompact: async (id: string, instructions?: string) => fake.compact(id, instructions),
     integratedAnswer: async (id: string, request: string, choice: never, message?: string) =>
       fake.answer(id, request, choice, message),
     integratedReply: async (id: string, request: string, answers: string[][] | null) =>
@@ -211,6 +212,35 @@ describe("an integrated session behind its row", () => {
     await configure(session.key, { model: "haiku" });
     expect(conversationOf(session.key).settings.model).toBe("haiku");
     expect(session.model).toBe("haiku");
+  });
+
+  it("compacts with what the summary should keep, saying it waits while a turn runs", async () => {
+    const { session, handle } = await started();
+    const link = linkFor(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    expect(compact(session.key, "  keep the API notes ")).toBe(true);
+    expect(link.compactAsked).toBe(true);
+    await settled();
+    expect(fake.calls.at(-1)).toEqual({ method: "compact", id: handle, instructions: "keep the API notes" });
+    expect(link.compactAsked).toBe(true);
+    fake.endTurn(handle);
+    await settled();
+    await settled();
+    expect(conversationOf(session.key).entries.at(-1)).toMatchObject({ kind: "compaction", done: true });
+    expect(link.compactAsked).toBe(false);
+    expect(compact("no-such-row")).toBe(false);
+  });
+
+  it("says why a compaction was refused", async () => {
+    await install();
+    const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    const link = linkFor(session.key);
+    compact(session.key, "keep it");
+    await settled();
+    expect(link.compactAsked).toBe(false);
+    expect(link.compactError).toBe("Codex compacts without instructions");
   });
 
   it("says why an answer was refused and lets it be tried again", async () => {
