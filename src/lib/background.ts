@@ -1,0 +1,658 @@
+/**
+ * A background of the user's own, and the guard that keeps every text on
+ * it readable.
+ *
+ * A background is one to three dots on a colour pad, each a hue and how
+ * much colour, from none at the centre to the rim. It says nothing about
+ * lightness: the appearance sets that, light or dark, so one background is
+ * painted for both and switching between them can leave nothing hard to
+ * read. The rim is capped per appearance, so the strongest choice is still
+ * a tint. Strength says how far the background shows through the chrome's
+ * own ground, and grain lays a fine speckle over it.
+ *
+ * Two or three colours make a gradient across the window: the first two run
+ * from the top left down to the foot, mixed in OKLCH so the middle never
+ * greys out, and a third glows from the top right. A harmony keeps the dots
+ * a fixed turn of the hue apart, so dragging the first carries the others.
+ *
+ * The background tints the chrome only, and every surface that holds text
+ * to read stays solid. The guard judges each kind of text on a tinted part
+ * at the worst point of the gradient behind it, grain included, and draws
+ * the text a step stronger, towards black in light and white in dark, just
+ * as far as it takes to hold 4.5:1. Lines on or beside a tinted part are the
+ * ink let through at one amount for the whole window, so they take the
+ * colour of what they cross and stand off it at least as far as today's
+ * lines stand off the plain chrome.
+ *
+ * Everything here is arithmetic; painting it into the page is the theme's.
+ */
+
+export type Appearance = "light" | "dark";
+export type Look = "modern" | "terminal";
+export type Harmony = "single" | "complementary" | "analogous" | "triad" | "free";
+
+/** A place on the pad: the hue in degrees, and how much colour from none
+    at the centre to the rim at 1. */
+export interface Dot {
+  hue: number;
+  chroma: number;
+}
+
+export interface Background {
+  dots: Dot[];
+  harmony: Harmony;
+  /** How far the background shows through the chrome's ground, 0.1 to 1. */
+  strength: number;
+  /** How strong the speckle over it is, 0 to 1. */
+  grain: number;
+}
+
+export const MOST_DOTS = 3;
+export const LEAST_STRENGTH = 0.1;
+/** The most strength the terminal look takes, and it takes no grain. */
+export const TERMINAL_STRENGTH = 0.5;
+/** How far a speck of grain darkens or lightens, at full grain. */
+export const GRAIN_SPECK = 0.14;
+/** The contrast every text on a tinted part holds, at its worst point. */
+export const LEAST_CONTRAST = 4.5;
+/** What the guard aims for: a hair above, so a worst point between the
+    places it samples, or a step of rounding, still holds the least. */
+const AIM = LEAST_CONTRAST + 0.05;
+
+/** The lightness each appearance paints at, and the most colour it takes at
+    the rim, in OKLCH. */
+export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
+  light: { lightness: 0.94, chroma: 0.066 },
+  dark: { lightness: 0.235, chroma: 0.075 },
+};
+
+/** The harmonies, in the order the picker shows them: each a turn of the
+    hue from the first dot for every dot. */
+export const HARMONIES: { name: Exclude<Harmony, "free">; label: string; offsets: number[] }[] = [
+  { name: "single", label: "Single", offsets: [0] },
+  { name: "complementary", label: "Complementary", offsets: [0, 180] },
+  { name: "analogous", label: "Analogous", offsets: [0, 40, -40] },
+  { name: "triad", label: "Triad", offsets: [0, 120, 240] },
+];
+
+/** What a background starts with when the first dot is placed. */
+export const FIRST = { strength: 0.6, grain: 0.25 };
+
+/** The ready-made backgrounds: colours only, so choosing one keeps the
+    strength and grain already chosen. */
+export const READY_MADE: { name: string; label: string; dots: Dot[]; harmony: Harmony }[] = [
+  { name: "lagoon", label: "Lagoon", harmony: "free", dots: [{ hue: 192, chroma: 0.9 }, { hue: 252, chroma: 0.8 }] },
+  { name: "tide", label: "Tide", harmony: "single", dots: [{ hue: 200, chroma: 0.75 }] },
+  { name: "dusk", label: "Dusk", harmony: "free", dots: [{ hue: 282, chroma: 0.85 }, { hue: 352, chroma: 0.8 }] },
+  { name: "ember", label: "Ember", harmony: "free", dots: [{ hue: 62, chroma: 0.9 }, { hue: 18, chroma: 0.75 }] },
+  {
+    name: "orchard",
+    label: "Orchard",
+    harmony: "analogous",
+    dots: [
+      { hue: 140, chroma: 0.8 },
+      { hue: 180, chroma: 0.8 },
+      { hue: 100, chroma: 0.8 },
+    ],
+  },
+  {
+    name: "aurora",
+    label: "Aurora",
+    harmony: "triad",
+    dots: [
+      { hue: 185, chroma: 0.85 },
+      { hue: 305, chroma: 0.85 },
+      { hue: 65, chroma: 0.85 },
+    ],
+  },
+  { name: "fog", label: "Fog", harmony: "single", dots: [{ hue: 250, chroma: 0.3 }] },
+];
+
+/* ---------------------------------------------------------------------- */
+/* The rules a background is kept by. The core keeps the same ones.        */
+/* ---------------------------------------------------------------------- */
+
+const FIELDS = ["dots", "harmony", "strength", "grain"];
+const HARMONY_NAMES: Harmony[] = ["single", "complementary", "analogous", "triad", "free"];
+
+function inRange(value: unknown, least: number, most: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= least && value <= most;
+}
+
+/** How many dots a harmony holds, or null for any number. */
+export function dotsOf(harmony: Harmony): number | null {
+  return HARMONIES.find((known) => known.name === harmony)?.offsets.length ?? null;
+}
+
+/** A background as the rules take it, or the reason it will not do. Left
+    out, the harmony is free and the strength and grain are what a new one
+    starts with. */
+export function checkBackground(value: unknown): Background {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("A background is a table of dots, a harmony, a strength and grain.");
+  }
+  const fields = value as Record<string, unknown>;
+  const other = Object.keys(fields).find((field) => !FIELDS.includes(field));
+  if (other !== undefined) {
+    throw new Error(`A background has dots, harmony, strength and grain, not ${other}.`);
+  }
+  const dots = fields.dots;
+  if (!Array.isArray(dots) || dots.length < 1 || dots.length > MOST_DOTS) {
+    throw new Error(`A background has one to ${MOST_DOTS} dots.`);
+  }
+  const checked = dots.map((dot) => {
+    const { hue, chroma, ...rest } = (typeof dot === "object" && dot !== null ? dot : {}) as Record<
+      string,
+      unknown
+    >;
+    if (Object.keys(rest).length > 0 || !inRange(hue, 0, 360) || hue === 360 || !inRange(chroma, 0, 1)) {
+      throw new Error("A dot is a hue from 0 up to 360 degrees and a chroma from 0 to 1.");
+    }
+    return { hue, chroma };
+  });
+  const harmony = fields.harmony ?? "free";
+  if (!HARMONY_NAMES.includes(harmony as Harmony)) {
+    throw new Error(`harmony is one of ${HARMONY_NAMES.join(", ")}, not ${JSON.stringify(harmony)}.`);
+  }
+  const count = dotsOf(harmony as Harmony);
+  if (count !== null && count !== checked.length) {
+    throw new Error(
+      `A ${harmony} harmony holds ${count === 1 ? "one dot" : `${count} dots`}; free holds any number.`,
+    );
+  }
+  const strength = fields.strength ?? FIRST.strength;
+  if (!inRange(strength, LEAST_STRENGTH, 1)) {
+    throw new Error(`strength is from ${LEAST_STRENGTH} to 1, not ${JSON.stringify(strength)}.`);
+  }
+  const grain = fields.grain ?? FIRST.grain;
+  if (!inRange(grain, 0, 1)) {
+    throw new Error(`grain is from 0 to 1, not ${JSON.stringify(grain)}.`);
+  }
+  return { dots: checked, harmony: harmony as Harmony, strength, grain };
+}
+
+/** The backgrounds in a table that pass the rules, the rest left out. */
+export function validBackgrounds(value: unknown): Record<string, Background> {
+  const out: Record<string, Background> = {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return out;
+  for (const [name, background] of Object.entries(value)) {
+    try {
+      out[name] = checkBackground(background);
+    } catch {
+      // A background that does not pass is not painted.
+    }
+  }
+  return out;
+}
+
+/** A background with its numbers rounded as they are kept: whole degrees,
+    and hundredths for the rest. */
+export function rounded(background: Background): Background {
+  const hundredths = (value: number) => Math.round(value * 100) / 100;
+  return {
+    dots: background.dots.map((dot) => ({
+      hue: Math.round(dot.hue) % 360,
+      chroma: hundredths(Math.min(1, Math.max(0, dot.chroma))),
+    })),
+    harmony: background.harmony,
+    strength: hundredths(Math.min(1, Math.max(LEAST_STRENGTH, background.strength))),
+    grain: hundredths(Math.min(1, Math.max(0, background.grain))),
+  };
+}
+
+export function sameBackground(a: Background | null, b: Background | null): boolean {
+  return JSON.stringify(a === null ? null : rounded(a)) === JSON.stringify(b === null ? null : rounded(b));
+}
+
+/** The ready-made a background's colours are, if any. */
+export function readyMadeOf(background: Background | null): string | null {
+  if (background === null) return null;
+  const own = rounded(background);
+  const found = READY_MADE.find(
+    (ready) =>
+      ready.harmony === own.harmony &&
+      ready.dots.length === own.dots.length &&
+      ready.dots.every((dot, at) => dot.hue === own.dots[at].hue && dot.chroma === own.dots[at].chroma),
+  );
+  return found?.name ?? null;
+}
+
+/** A background in a few words, as the user reads it in a question. */
+export function describeBackground(background: Background | null): string {
+  if (background === null) return "None";
+  const ready = READY_MADE.find((known) => known.name === readyMadeOf(background));
+  const colours =
+    ready?.label ?? (background.dots.length === 1 ? "One colour" : `${background.dots.length} colours`);
+  const percent = (value: number) => `${Math.round(value * 100)}%`;
+  return `${colours}, strength ${percent(background.strength)}, grain ${percent(background.grain)}`;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Moving the dots.                                                        */
+/* ---------------------------------------------------------------------- */
+
+const turn = (hue: number) => ((hue % 360) + 360) % 360;
+
+/** The dots a harmony spreads from the first one. */
+export function withHarmony(background: Background, harmony: Exclude<Harmony, "free">): Background {
+  const first = background.dots[0];
+  const offsets = HARMONIES.find((known) => known.name === harmony)!.offsets;
+  return {
+    ...background,
+    harmony,
+    dots: offsets.map((offset) => ({ hue: turn(first.hue + offset), chroma: first.chroma })),
+  };
+}
+
+/** One dot moved. While a harmony holds, the first carries the others
+    with it; moving any other sets the harmony free. */
+export function moveDot(background: Background, index: number, dot: Dot): Background {
+  const placed = { hue: turn(dot.hue), chroma: Math.min(1, Math.max(0, dot.chroma)) };
+  if (index === 0 && background.harmony !== "free") {
+    return withHarmony({ ...background, dots: [placed, ...background.dots.slice(1)] }, background.harmony);
+  }
+  const dots = background.dots.map((old, at) => (at === index ? placed : old));
+  return { ...background, dots, harmony: index === 0 ? background.harmony : "free" };
+}
+
+/** A dot more, up to three. One becomes a complementary pair and a pair in
+    harmony a triad; a free pair gains a dot in the widest gap of hue. */
+export function addDot(background: Background): Background {
+  const count = background.dots.length;
+  if (count >= MOST_DOTS) return background;
+  if (background.harmony === "single") return withHarmony(background, "complementary");
+  if (background.harmony === "complementary") return withHarmony(background, "triad");
+  const hues = background.dots.map((dot) => dot.hue).sort((a, b) => a - b);
+  let widest = { from: hues[hues.length - 1], gap: hues[0] + 360 - hues[hues.length - 1] };
+  for (let at = 1; at < hues.length; at++) {
+    const gap = hues[at] - hues[at - 1];
+    if (gap > widest.gap) widest = { from: hues[at - 1], gap };
+  }
+  const dot = { hue: turn(Math.round(widest.from + widest.gap / 2)), chroma: background.dots[0].chroma };
+  return { ...background, dots: [...background.dots, dot], harmony: "free" };
+}
+
+/** A dot taken away; taking the last leaves no background. */
+export function removeDot(background: Background, index: number): Background | null {
+  const dots = background.dots.filter((_, at) => at !== index);
+  if (dots.length === 0) return null;
+  return { ...background, dots, harmony: dots.length === 1 ? "single" : "free" };
+}
+
+/* ---------------------------------------------------------------------- */
+/* Colour arithmetic: sRGB, OKLab and OKLCH, and contrast as WCAG has it.  */
+/* ---------------------------------------------------------------------- */
+
+/** A colour as sRGB channels from 0 to 255, not rounded. */
+export type Rgb = [number, number, number];
+/** A colour in OKLab. */
+export type Lab = [number, number, number];
+
+const clamp = (value: number, least: number, most: number) => Math.min(most, Math.max(least, value));
+
+export function hexToRgb(hex: string): Rgb {
+  let digits = hex.replace("#", "");
+  if (digits.length === 3) digits = [...digits].map((digit) => digit + digit).join("");
+  return [0, 2, 4].map((at) => parseInt(digits.slice(at, at + 2), 16)) as Rgb;
+}
+
+export function rgbToHex(rgb: Rgb): string {
+  return `#${rgb.map((value) => Math.round(clamp(value, 0, 255)).toString(16).padStart(2, "0")).join("")}`;
+}
+
+const toLinear = (value: number) => {
+  const c = value / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
+
+const toGamma = (linear: number) => {
+  const x = clamp(linear, 0, 1);
+  return 255 * (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055);
+};
+
+function linearToLab([r, g, b]: Rgb): Lab {
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+function labToLinear([L, a, b]: Lab): Rgb {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+}
+
+export const rgbToLab = (rgb: Rgb): Lab => linearToLab(rgb.map(toLinear) as Rgb);
+export const labToRgb = (lab: Lab): Rgb => labToLinear(lab).map(toGamma) as Rgb;
+
+function lchToLab(L: number, C: number, hue: number): Lab {
+  const angle = (hue * Math.PI) / 180;
+  return [L, C * Math.cos(angle), C * Math.sin(angle)];
+}
+
+function labToLch([L, a, b]: Lab): [number, number, number] {
+  return [L, Math.hypot(a, b), turn((Math.atan2(b, a) * 180) / Math.PI)];
+}
+
+const inGamut = (linear: Rgb) => linear.every((value) => value >= -1e-4 && value <= 1 + 1e-4);
+
+/** The colour at a lightness and hue with as much of the chroma asked as
+    the screen can show. */
+export function fitLch(L: number, C: number, hue: number): Lab {
+  if (inGamut(labToLinear(lchToLab(L, C, hue)))) return lchToLab(L, C, hue);
+  let low = 0;
+  let high = C;
+  for (let step = 0; step < 16; step++) {
+    const middle = (low + high) / 2;
+    if (inGamut(labToLinear(lchToLab(L, middle, hue)))) low = middle;
+    else high = middle;
+  }
+  return lchToLab(L, low, hue);
+}
+
+/** Relative luminance, as WCAG reckons it. */
+export function luminance(rgb: Rgb): number {
+  const [r, g, b] = rgb.map(toLinear);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** The contrast between two luminances, 1 to 21. */
+export const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+/** Two colours mixed in sRGB, as CSS's color-mix in srgb does. */
+export const mix = (a: Rgb, b: Rgb, t: number): Rgb => a.map((value, at) => value + (b[at] - value) * t) as Rgb;
+
+function mixLch(A: Lab, B: Lab, t: number): Lab {
+  const [La, Ca, ha] = labToLch(A);
+  const [Lb, Cb, hb] = labToLch(B);
+  let hue: number;
+  if (Ca < 1e-3) hue = hb;
+  else if (Cb < 1e-3) hue = ha;
+  else {
+    let delta = ((hb - ha + 540) % 360) - 180;
+    if (Math.abs(Math.abs(delta) - 180) < 0.5) delta = 180;
+    hue = ha + delta * t;
+  }
+  return lchToLab(La + (Lb - La) * t, Ca + (Cb - Ca) * t, hue);
+}
+
+const smooth = (t: number) => t * t * (3 - 2 * t);
+
+const rgba = (rgb: Rgb, alpha: number) =>
+  `rgba(${rgb.map((value) => Math.round(clamp(value, 0, 255))).join(", ")}, ${alpha.toFixed(3)})`;
+
+/* ---------------------------------------------------------------------- */
+/* The colours a background paints.                                        */
+/* ---------------------------------------------------------------------- */
+
+/** A dot's colour in an appearance: its lightness, and its share of the
+    rim's colour, held inside what the screen shows. */
+export function dotColour(dot: Dot, appearance: Appearance): Lab {
+  const band = BAND[appearance];
+  return fitLch(band.lightness, clamp(dot.chroma, 0, 1) * band.chroma, dot.hue);
+}
+
+/** A dot as the pad shows it: lighter and fuller than it paints, so the
+    pad reads as a colour wheel. */
+export function padColour(dot: Dot, appearance: Appearance): string {
+  return rgbToHex(labToRgb(fitLch(appearance === "light" ? 0.8 : 0.6, clamp(dot.chroma, 0, 1) * 0.15, dot.hue)));
+}
+
+/** The colour the window gets at (u, v), each 0 to 1 across and down. One
+    colour is flat. Two run from the top left down to the foot, steeply, so
+    the sessions pane carries the whole run. A third glows from the top
+    right. */
+export function field(colours: Lab[]): (u: number, v: number) => Lab {
+  if (colours.length === 1) return () => colours[0];
+  return (u, v) => {
+    const t = smooth(clamp(((u * 0.9 + v * 1.5) / 2.4 - 0.04) / 0.9, 0, 1));
+    let colour = mixLch(colours[0], colours[1], t);
+    if (colours.length > 2) {
+      const dx = (u - 0.94) * 1.6;
+      const dy = v + 0.04;
+      colour = mixLch(colour, colours[2], 0.92 * Math.exp(-(dx * dx + dy * dy) / 0.55));
+    }
+    return colour;
+  };
+}
+
+/** The gradient as pixels, RGBA, for an image stretched over the window.
+    Dithered by half a step, so a soft run does not band. */
+export function gradientPixels(colours: Lab[], width: number, height: number): Uint8ClampedArray {
+  const at = field(colours);
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  let seed = 11;
+  const noise = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const rgb = labToRgb(at(x / (width - 1), y / (height - 1)));
+      const offset = (y * width + x) * 4;
+      for (let channel = 0; channel < 3; channel++) {
+        pixels[offset + channel] = Math.round(rgb[channel] + noise());
+      }
+      pixels[offset + 3] = 255;
+    }
+  }
+  return pixels;
+}
+
+/** A tile of grain as pixels, RGBA: each pixel black or white, as opaque
+    as the grain's share of the strongest speck, at random. */
+export function grainPixels(size: number, grain: number): Uint8ClampedArray {
+  const pixels = new Uint8ClampedArray(size * size * 4);
+  let seed = 7;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let at = 0; at < size * size; at++) {
+    const shade = random() < 0.5 ? 0 : 255;
+    pixels[at * 4] = pixels[at * 4 + 1] = pixels[at * 4 + 2] = shade;
+    pixels[at * 4 + 3] = Math.round(random() * GRAIN_SPECK * grain * 255);
+  }
+  return pixels;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The guard.                                                              */
+/* ---------------------------------------------------------------------- */
+
+/** The tinted parts: the sessions pane and the settings' tab column (side),
+    the pane headers and the settings' title row (surf), the status bar
+    (status), and the terminal look's ground between its boxes (frame). */
+export type Part = "side" | "surf" | "status" | "frame";
+
+/** The kinds of text drawn on tinted parts, by the token each is drawn in. */
+export const TEXT_TOKENS = ["ink", "ink-2", "ink-3", "accent", "add", "del", "ansi-yellow"] as const;
+export type TextToken = (typeof TEXT_TOKENS)[number];
+
+/** What a background paints in one appearance and look. */
+export interface Painted {
+  /** The dots' colours in this appearance. */
+  colours: Lab[];
+  /** The strength and grain after the look's limits. */
+  strength: number;
+  grain: number;
+  /** Each tinted part's own ground, let through by the strength. */
+  grounds: Partial<Record<Part, string>>;
+  /** The text tokens on tinted parts, a step stronger where they need it. */
+  text: Record<TextToken, string>;
+  /** Every line, and the stronger marks such as a tag's outline. */
+  line: string;
+  lineStrong: string;
+  /** Each text's contrast at the worst point behind it, as asked and as
+      painted. */
+  asked: Record<TextToken, number>;
+  contrast: Record<TextToken, number>;
+}
+
+/** The plain grounds of the tinted parts in a look, as the stylesheets
+    paint them without a background. */
+export function groundsOf(colours: Record<string, string>, look: Look): Partial<Record<Part, Rgb>> {
+  const tone = (name: string) => hexToRgb(colours[name]);
+  return look === "modern"
+    ? { side: mix(tone("bg"), tone("ink"), 0.04), surf: tone("surface"), status: tone("surface") }
+    : { frame: tone("bg"), status: tone("surface-2") };
+}
+
+/** The parts text sits on in a look: the terminal look's ground holds none. */
+const TEXT_PARTS: Record<Look, Part[]> = { modern: ["side", "surf", "status"], terminal: ["status"] };
+
+/** The lightest and darkest a tinted part gets anywhere in the window,
+    grain at its strongest speck either way. */
+function extremes(
+  at: (u: number, v: number) => Lab,
+  ground: Rgb,
+  strength: number,
+  speck: number,
+): [number, number] {
+  let low = 1;
+  let high = 0;
+  for (let i = 0; i <= 24; i++) {
+    for (let j = 0; j <= 15; j++) {
+      const colour = labToRgb(at(i / 24, j / 15));
+      for (const shade of [0, -1, 1]) {
+        const specked =
+          shade === 0
+            ? colour
+            : shade < 0
+              ? (colour.map((value) => value * (1 - speck)) as Rgb)
+              : (colour.map((value) => value + (255 - value) * speck) as Rgb);
+        const y = luminance(mix(ground, specked, strength));
+        if (y < low) low = y;
+        if (y > high) high = y;
+      }
+    }
+  }
+  return [low, high];
+}
+
+/** A text's contrast at its worst point over grounds that run from one
+    luminance to another. */
+function worst(colour: string, [low, high]: [number, number]): number {
+  const y = luminance(hexToRgb(colour));
+  return y < low ? ratio(y, low) : y > high ? ratio(y, high) : 1;
+}
+
+/** A text drawn a step stronger, towards black in light and white in
+    dark, just as far as it takes to hold the least contrast. */
+function strengthen(colour: string, range: [number, number], appearance: Appearance): string {
+  if (worst(colour, range) >= AIM) return colour;
+  const from = hexToRgb(colour);
+  const to: Rgb = appearance === "light" ? [0, 0, 0] : [255, 255, 255];
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 20; step++) {
+    const middle = (low + high) / 2;
+    if (worst(rgbToHex(mix(from, to, middle)), range) >= AIM) high = middle;
+    else low = middle;
+  }
+  // Rounding to whole steps can land a hair short; go on a step at a time.
+  let amount = high;
+  while (amount < 1 && worst(rgbToHex(mix(from, to, amount)), range) < AIM) {
+    amount = Math.min(1, amount + 0.005);
+  }
+  return rgbToHex(mix(from, to, amount));
+}
+
+/** What a tinted part shows at a grid of points, grain left out. */
+function samples(at: (u: number, v: number) => Lab, ground: Rgb, strength: number): Rgb[] {
+  const out: Rgb[] = [];
+  for (let i = 0; i <= 8; i++) {
+    for (let j = 0; j <= 5; j++) out.push(mix(ground, labToRgb(at(i / 8, j / 5)), strength));
+  }
+  return out;
+}
+
+/** How much of the ink a line lets through so that at its faintest point
+    it stands off what is under it by the ratio asked. */
+function lineAmount(under: Rgb[], ink: Rgb, target: number): number {
+  const stands = (amount: number) =>
+    under.every((colour) => ratio(luminance(mix(colour, ink, amount)), luminance(colour)) >= target);
+  let low = 0;
+  let high = 0.6;
+  for (let step = 0; step < 16; step++) {
+    const middle = (low + high) / 2;
+    if (stands(middle)) high = middle;
+    else low = middle;
+  }
+  return Math.ceil(high * 1000) / 1000;
+}
+
+/** The line each look draws today: the modern look's mixed from the surface
+    and the ink, the terminal look's the rule. */
+function todayLine(colours: Record<string, string>, look: Look): Rgb {
+  return look === "modern"
+    ? mix(hexToRgb(colours.surface), hexToRgb(colours.ink), 0.18)
+    : hexToRgb(colours.rule);
+}
+
+/** What a background paints in an appearance and a look, for a palette's
+    colours, with the guard's stronger text and the lines' one amount. */
+export function paintOf(
+  background: Background,
+  appearance: Appearance,
+  look: Look,
+  colours: Record<string, string>,
+): Painted {
+  const strength = look === "terminal" ? Math.min(background.strength, TERMINAL_STRENGTH) : background.strength;
+  const grain = look === "terminal" ? 0 : background.grain;
+  const dots = background.dots.map((dot) => dotColour(dot, appearance));
+  const at = field(dots);
+  const grounds = groundsOf(colours, look);
+  const parts = Object.keys(grounds) as Part[];
+
+  let low = 1;
+  let high = 0;
+  for (const part of TEXT_PARTS[look]) {
+    const [partLow, partHigh] = extremes(at, grounds[part]!, strength, grain * GRAIN_SPECK);
+    low = Math.min(low, partLow);
+    high = Math.max(high, partHigh);
+  }
+  const text = {} as Record<TextToken, string>;
+  const asked = {} as Record<TextToken, number>;
+  const contrast = {} as Record<TextToken, number>;
+  for (const token of TEXT_TOKENS) {
+    asked[token] = worst(colours[token], [low, high]);
+    text[token] = strengthen(colours[token], [low, high], appearance);
+    contrast[token] = worst(text[token], [low, high]);
+  }
+
+  // One amount for every line in the window: the most any part needs to
+  // stand as far off it as today's line stands off its plain ground, a
+  // solid surface included.
+  const ink = hexToRgb(colours.ink);
+  const surface = hexToRgb(colours.surface);
+  const line = todayLine(colours, look);
+  const strong = hexToRgb(colours["rule-strong"]);
+  const away = (colour: Rgb, from: Rgb) => ratio(luminance(colour), luminance(from));
+  let amount = lineAmount([surface], ink, away(line, surface));
+  let strongAmount = 0;
+  const painted: Partial<Record<Part, string>> = {};
+  for (const part of parts) {
+    const ground = grounds[part]!;
+    const under = samples(at, ground, strength);
+    amount = Math.max(amount, lineAmount(under, ink, away(line, ground)));
+    strongAmount = Math.max(strongAmount, lineAmount(under, ink, away(strong, ground)));
+    painted[part] = rgba(ground, 1 - strength);
+  }
+
+  return {
+    colours: dots,
+    strength,
+    grain,
+    grounds: painted,
+    text,
+    line: rgba(ink, amount),
+    lineStrong: rgba(ink, Math.max(amount, strongAmount)),
+    asked,
+    contrast,
+  };
+}
