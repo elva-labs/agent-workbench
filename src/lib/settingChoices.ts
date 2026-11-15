@@ -1,0 +1,109 @@
+import type { Conversation } from "$lib/conversation.svelte";
+import { configure } from "$lib/integrated.svelte";
+import { modelName, offeredModel } from "$lib/thread";
+
+/**
+ * What an integrated session can be switched to, and the switch itself, for
+ * every control that offers it: the composer's chips and the status bar's
+ * model and effort. The choices are the agent's own, as it said when it was
+ * ready and as each change of model told; a tick marks the one in use.
+ */
+
+export interface Choice {
+  value: string;
+  name: string;
+  about: string | null;
+  on: boolean;
+}
+
+/** The model the session runs on, as the agent offers it where it does. */
+function inUse(conversation: Conversation): string | null {
+  const current = conversation.settings.model;
+  return offeredModel(conversation, current)?.value ?? current;
+}
+
+/** The models the agent offers. */
+export function modelChoices(conversation: Conversation): Choice[] {
+  const current = inUse(conversation);
+  return (conversation.ready?.models ?? []).map((model) => ({
+    value: model.value,
+    name: model.name ?? model.value,
+    about: model.description,
+    on: model.value === current,
+  }));
+}
+
+/** The modes the agent offers, after one it runs in from its own
+    configuration, which it does not offer and which is not to be come back
+    to once left. */
+export function modeChoices(conversation: Conversation): Choice[] {
+  const modes = conversation.ready?.modes ?? [];
+  const mode = conversation.settings.mode;
+  const own =
+    mode !== null && !modes.some((known) => known.value === mode)
+      ? [
+          {
+            value: mode,
+            name: mode,
+            about: "From the agent's own configuration. Once another mode is chosen, this one cannot be chosen again here.",
+            on: true,
+          },
+        ]
+      : [];
+  return [
+    ...own,
+    ...modes.map((known) => ({
+      value: known.value,
+      name: known.name,
+      about: known.description,
+      on: known.value === mode,
+    })),
+  ];
+}
+
+/** What an effort is called, and a line on what it does, for the efforts
+    the agents name. Any other is shown as it is written. */
+const EFFORTS: Record<string, { name: string; about: string }> = {
+  minimal: { name: "Minimal", about: "Hardly any thinking" },
+  low: { name: "Low", about: "Quick, little thinking" },
+  medium: { name: "Medium", about: "Balanced" },
+  high: { name: "High", about: "Thorough" },
+  xhigh: { name: "Extra high", about: "More thorough still" },
+  max: { name: "Max", about: "Deepest and slowest" },
+};
+
+/** An effort as it is shown in a menu: `High`. */
+export function effortName(effort: string): string {
+  return EFFORTS[effort]?.name ?? effort;
+}
+
+/** The efforts the model the session runs on takes. */
+export function effortChoices(conversation: Conversation): Choice[] {
+  const effort = conversation.settings.effort;
+  return conversation.efforts.map((value) => ({
+    value,
+    name: effortName(value),
+    about: EFFORTS[value]?.about ?? null,
+    on: value === effort,
+  }));
+}
+
+/** The model the session runs on as it is named, or null before the agent
+    has said. */
+export function modelInUse(conversation: Conversation): string | null {
+  return modelName(conversation, conversation.settings.model);
+}
+
+/** Switches the session to a model, an effort or a mode, unless it is on it
+    already. */
+export function choose(
+  key: string,
+  conversation: Conversation,
+  setting: "model" | "mode" | "effort",
+  value: string,
+) {
+  if (setting === "model") {
+    if (value !== inUse(conversation) && value !== conversation.settings.model)
+      void configure(key, { model: value });
+  } else if (value !== conversation.settings[setting]) void configure(key, { [setting]: value });
+}
