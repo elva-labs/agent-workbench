@@ -1469,6 +1469,40 @@ test.describe("the peek in editor mode", () => {
       })
       .toBeGreaterThanOrEqual(tree.x + tree.width - 1);
   });
+
+  test("stays put away by the chord when a click peeked it, however soon after", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.clock.install();
+    await installFakeCore(page);
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await flip(page);
+    const slot = page.locator(".sessions-slot");
+    await expect(slot).toHaveClass(/folded/);
+    const column = await box(page, "[data-testid='unfold-sessions']");
+    const onColumn = { x: column.x + column.width / 2, y: column.y + column.height / 2 };
+    // Time held still, so the pointer's wait before a peek is run out by
+    // the test rather than raced.
+    await page.clock.pauseAt(new Date(Date.now() + 60_000));
+    // The pointer comes to the folded column and clicks it: the pane peeks
+    // at once, and the chord puts it away from over the peek.
+    await page.mouse.move(onColumn.x, onColumn.y);
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(slot).toHaveClass(/peeking/);
+    const peek = await box(page, SESSIONS);
+    await page.mouse.move(peek.x + peek.width - 20, onColumn.y);
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(slot).not.toHaveClass(/peeking/);
+    // The wait the pointer started on its way in has ended: nothing peeks.
+    await page.clock.runFor(1000);
+    expect(await slot.evaluate((node) => node.classList.contains("peeking"))).toBe(false);
+    // The pointer resting on the column again still peeks it.
+    await page.mouse.move(peek.x + peek.width + 200, onColumn.y);
+    await page.mouse.move(onColumn.x, onColumn.y);
+    await page.clock.runFor(1000);
+    await expect(slot).toHaveClass(/peeking/);
+  });
 });
 
 test.describe("the corner and the keyboard", () => {

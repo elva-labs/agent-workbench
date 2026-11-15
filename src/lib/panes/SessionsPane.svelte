@@ -1092,12 +1092,16 @@
 
   // The pointer resting on the folded column peeks the pane over the pane
   // beside it where it peeks, and leaving the pane puts it back, unless the keyboard
-  // is in it: then Escape, Enter or the focus chord put it back. A press in
-  // the pane is noted while it lasts, so the keyboard arriving with a click
-  // is not taken for the keyboard walking the rows.
+  // is in it: then Escape, Enter or the focus chord put it back. A wait for
+  // either ends once the pane peeks or goes back some other way, a click or
+  // a chord, so a peek put away is not brought back by a pointer that came
+  // to the column before it. A press in the pane is noted while it lasts,
+  // so the keyboard arriving with a click is not taken for the keyboard
+  // walking the rows.
   $effect(() => {
     const pane = nav?.closest<HTMLElement>('[data-pane="sessions"]');
     if (!pane) return;
+    void layout.sessionsPeek;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const later = (what: () => void, after: number) => {
       if (timer !== null) clearTimeout(timer);
