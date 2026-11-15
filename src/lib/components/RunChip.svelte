@@ -237,9 +237,10 @@
     min-width: 0;
     height: 22px;
     margin-left: 2px;
+    --gap: 7px;
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--gap);
     padding: 0 7px 0 9px;
     border: 0;
     border-radius: calc(var(--radius) * 4);
@@ -311,7 +312,7 @@
      header knows the room they want back. */
   .chip:global([data-short]) .words {
     max-width: 0;
-    margin-left: -7px;
+    margin-left: calc(-1 * var(--gap));
     visibility: hidden;
   }
 

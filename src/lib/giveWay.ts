@@ -31,11 +31,12 @@ function textWidth(node: HTMLElement): number {
 /** Sets `--keep` on a header's head: the width of what in it is marked
     `data-keep`, which stays whole until the header's status has given way.
     A part marked `data-keep-room` keeps the room around the text it holds
-    as well, its icons, gaps and padding, and that room is `--least`: the
-    width the head keeps until the title has given way, once the text in
-    it has gone, and marked `data-short` while the head leaves its text
-    less than about three letters. Measured again when the head or what
-    it keeps changes size, and when what it holds changes. */
+    as well, its icons, gaps and padding. It is marked `data-short` while
+    the head leaves its text less than about three letters, and its style
+    then gives the text and the gap before it no room. What is left is
+    `--least`: the width the head keeps until the title has given way.
+    Measured again when the head or what it keeps changes size, and when
+    what it holds changes. */
 export function keeps(node: HTMLElement) {
   const sizes = new ResizeObserver(() => measure());
   const content = new MutationObserver(() => {
@@ -60,32 +61,38 @@ export function keeps(node: HTMLElement) {
   /** The width of a part's room, a row of its own: its margins, border
       and padding, the gaps between what it holds, and what it holds but
       the text it keeps. Read from what does not shrink, so it is the same
-      however short of room the part is. */
-  function roomOf(part: HTMLElement): number {
+      however short of room the part is. `least` is that room without the
+      gap that goes with the text once the part is short. */
+  function roomOf(part: HTMLElement): { room: number; least: number } {
     const style = getComputedStyle(part);
     const px = (value: string) => parseFloat(value) || 0;
     const items = [...part.children].filter((child) => getComputedStyle(child).display !== "none");
     const own = ["marginLeft", "marginRight", "borderLeftWidth", "borderRightWidth", "paddingLeft", "paddingRight"] as const;
-    return (
+    const gap = px(style.columnGap);
+    const room =
       own.reduce((sum, side) => sum + px(style[side]), 0) +
-      px(style.columnGap) * Math.max(0, items.length - 1) +
+      gap * Math.max(0, items.length - 1) +
       items
         .filter((child) => !child.matches("[data-keep]"))
-        .reduce((sum, child) => sum + child.getBoundingClientRect().width, 0)
-    );
+        .reduce((sum, child) => sum + child.getBoundingClientRect().width, 0);
+    const text = items.length > 1 && items.some((child) => child.matches("[data-keep]"));
+    return { room, least: text ? room - gap : room };
   }
 
   function measure() {
     // A pixel over, so a width laid out to a fraction short of the text
     // never cuts it.
     const text = kept().reduce((sum, part) => sum + textWidth(part), 0);
-    const room = rooms().reduce((sum, part) => sum + roomOf(part), 0);
+    const parts = rooms().map(roomOf);
+    const room = parts.reduce((sum, part) => sum + part.room, 0);
+    const least = parts.reduce((sum, part) => sum + part.least, 0);
     const width = text + room;
     node.style.setProperty("--keep", width > 0 ? `${Math.ceil(width) + 1}px` : "0px");
-    node.style.setProperty("--least", room > 0 ? `${Math.ceil(room)}px` : "0px");
+    node.style.setProperty("--least", least > 0 ? `${Math.ceil(least)}px` : "0px");
     // The text a part keeps takes no room once the head leaves it less
-    // than about three letters: decided from the head's width, which does
-    // not hang on the text's own, so hiding it moves nothing back.
+    // than about three letters: decided from the head's width against the
+    // whole room, neither of which hangs on whether the part is short, so
+    // hiding the text moves nothing back.
     const free = node.clientWidth - room;
     for (const part of rooms()) {
       const text = part.querySelector<HTMLElement>("[data-keep]");

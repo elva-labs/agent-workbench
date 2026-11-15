@@ -308,7 +308,10 @@ test.describe("the run's chip", () => {
           el !== null && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().width > 0.5;
         const head = header.closest("section")!.getBoundingClientRect();
         const pipsBox = pips.getBoundingClientRect();
+        const room = header.querySelector<HTMLElement>(".head")!.getBoundingClientRect();
+        const chip = header.querySelector<HTMLElement>("[data-testid='run-chip']")!.getBoundingClientRect();
         return {
+          slack: room.right - chip.right,
           titleCut: title.scrollWidth > title.clientWidth + 0.5,
           wordsDrawn: drawn(words),
           wordsCut: words.scrollWidth > words.clientWidth + 0.5,
@@ -334,6 +337,8 @@ test.describe("the run's chip", () => {
       // Gone, the words take no room from the title.
       if (at.titleCut) expect(at.wordsWidth, `at ${width}`).toBeLessThan(0.5);
       if (at.titleCut) expect(at.wordsDrawn, `at ${width}`).toBe(false);
+      // Nor the gap before them: the head keeps no more than the chip.
+      if (at.titleCut) expect(at.slack, `at ${width}`).toBeLessThan(1);
       if (!at.wordsDrawn) sawWordsGone = true;
     }
     expect(sawWordsGone).toBe(true);
