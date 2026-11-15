@@ -243,9 +243,11 @@
     margin: -6px 0;
   }
 
+  /* As tall as a tab with none open, so the row is there to double-click. */
   .tabs {
     flex: 1;
     min-width: 0;
+    min-height: 26px;
     display: flex;
     align-items: center;
     gap: 2px;
