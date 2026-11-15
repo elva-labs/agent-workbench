@@ -124,10 +124,16 @@ fn handshake_with(
         .clone();
     let mut out = Vec::new();
     // Out of order: the server answers as each is done.
-    out.extend(read(driver, json!({"id": thread, "result": started})).events);
-    out.extend(read(driver, json!({"id": id("model/list"), "result": models()})).events);
-    out.extend(read(driver, json!({"id": id("account/read"), "result": account})).events);
-    out.extend(read(driver, json!({"id": id("config/read"), "result": config()})).events);
+    for answer in [
+        json!({"id": thread, "result": started}),
+        json!({"id": id("model/list"), "result": models()}),
+        json!({"id": id("account/read"), "result": account}),
+        json!({"id": id("config/read"), "result": config()}),
+    ] {
+        let reading = read(driver, answer);
+        out.extend(reading.events);
+        lines.extend(written(&reading.writes));
+    }
     (lines, out)
 }
 
@@ -200,7 +206,8 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
             "account/read",
             "model/list",
             "config/read",
-            "thread/start"
+            "thread/start",
+            "account/rateLimits/read"
         ]
     );
     assert_eq!(lines[0]["params"]["clientInfo"]["name"], "agent-workbench");
@@ -284,9 +291,15 @@ fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
 #[test]
 fn signed_out_is_told_after_ready_with_the_claude_driver_s_kind() {
     let mut driver = fresh();
-    let (_, out) = handshake(
+    let (lines, out) = handshake(
         &mut driver,
         json!({"account": null, "requiresOpenaiAuth": true}),
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line["method"] == "account/rateLimits/read"),
+        "no limits to read for an account not signed in"
     );
     assert!(matches!(out[0], Event::Ready { .. }));
     assert!(
@@ -1577,7 +1590,6 @@ fn notices_are_told_apart_from_errors_and_turns() {
                 "mcpServer/startupStatus/updated",
                 json!({"name": "docs", "status": "ready"}),
             ),
-            notification("account/rateLimits/updated", json!({})),
             notification("warning", json!({"message": "  "})),
         ],
     );
@@ -2873,4 +2885,236 @@ fn trust_is_read_and_written_in_the_home_the_codex_process_runs_with() {
     let account = base.join("account");
     std::fs::create_dir_all(&account).unwrap();
     assert!(!CODEX_APP_SERVER.trusted(&home, Some(&account), &HashMap::new(), &folder));
+}
+
+/// The reads of the limits among lines written.
+fn limit_reads(lines: &[String]) -> Vec<Value> {
+    written(lines)
+        .into_iter()
+        .filter(|line| line["method"] == "account/rateLimits/read")
+        .inspect(|line| assert_eq!(line["params"], json!({"excludeResetCreditDetails": true})))
+        .collect()
+}
+
+/// A driver that is ready, and the id of the read of the limits it asked
+/// for then.
+fn ready_reading() -> (AppServer, Value) {
+    let mut driver = fresh();
+    let (lines, _) = handshake(
+        &mut driver,
+        json!({"account": {"type": "chatgpt", "email": null, "planType": "team"},
+               "requiresOpenaiAuth": true}),
+    );
+    let reads: Vec<&Value> = lines
+        .iter()
+        .filter(|line| line["method"] == "account/rateLimits/read")
+        .collect();
+    assert_eq!(reads.len(), 1, "read once ready: {lines:?}");
+    assert_eq!(
+        reads[0]["params"],
+        json!({"excludeResetCreditDetails": true})
+    );
+    (driver, reads[0]["id"].clone())
+}
+
+/// A snapshot of the limits, as Codex 0.169.0 answers a read with one.
+fn rate_limits(session: i64, week: i64) -> Value {
+    json!({"limitId": "codex", "limitName": null, "normalModelSlug": null,
+           "primary": {"usedPercent": session, "windowDurationMins": 300, "resetsAt": 1_794_746_983},
+           "secondary": {"usedPercent": week, "windowDurationMins": 10_080, "resetsAt": 1_795_333_783},
+           "credits": {"hasCredits": false, "unlimited": false, "balance": null},
+           "individualLimit": null, "spendControlReached": false, "planType": "team",
+           "rateLimitReachedType": null})
+}
+
+fn rate_limits_read(id: &Value, limits: Value) -> Value {
+    json!({"id": id, "result": {"ordinaryUsageAllowed": true, "rateLimits": limits,
+           "rateLimitsByLimitId": {"codex": limits}, "rateLimitResetCredits": null,
+           "accountId": "acct", "rateLimitUpsell": null}})
+}
+
+fn limits_told(events: &[Event]) -> Vec<(Option<String>, Vec<LimitWindow>)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Limits {
+                agent,
+                plan,
+                windows,
+                taken_at,
+            } => {
+                assert_eq!(agent, "codex");
+                assert!(taken_at.abs_diff(crate::integrated::now_seconds()) < 60);
+                Some((plan.clone(), windows.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn limit(kind: LimitKind, percent: f64, resets_at: Option<u64>) -> LimitWindow {
+    LimitWindow {
+        kind,
+        model: None,
+        percent,
+        resets_at,
+        severity: None,
+    }
+}
+
+#[test]
+fn the_limits_are_read_once_ready_and_after_each_turn() {
+    let (mut driver, id) = ready_reading();
+    let reading = read(&mut driver, rate_limits_read(&id, rate_limits(11, 37)));
+    assert!(reading.replies.is_empty(), "nothing waits on the read");
+    let told = limits_told(&reading.events);
+    assert_eq!(
+        told,
+        [(
+            Some("team".to_string()),
+            vec![
+                limit(LimitKind::Session, 11.0, Some(1_794_746_983)),
+                limit(LimitKind::Weekly, 37.0, Some(1_795_333_783)),
+            ]
+        )]
+    );
+
+    // After a turn, read again, and told whole again.
+    turn(&mut driver, M1);
+    let reading = read(&mut driver, completed("completed"));
+    let reads = limit_reads(&reading.writes);
+    assert_eq!(reads.len(), 1, "{:?}", reading.writes);
+    let told = limits_told(
+        &read(
+            &mut driver,
+            rate_limits_read(&reads[0]["id"], rate_limits(11, 37)),
+        )
+        .events,
+    );
+    assert_eq!(told.len(), 1);
+}
+
+#[test]
+fn one_read_of_the_limits_at_a_time() {
+    let (mut driver, id) = ready_reading();
+    turn(&mut driver, M1);
+    let reading = read(&mut driver, completed("completed"));
+    assert!(limit_reads(&reading.writes).is_empty(), "one is out");
+    let reading = read(&mut driver, rate_limits_read(&id, rate_limits(11, 37)));
+    assert_eq!(
+        limit_reads(&reading.writes).len(),
+        1,
+        "and goes once it is answered"
+    );
+}
+
+#[test]
+fn pushed_limits_are_merged_into_the_last_read() {
+    let (mut driver, id) = ready_reading();
+    read(&mut driver, rate_limits_read(&id, rate_limits(11, 37)));
+    let out = events(
+        &mut driver,
+        &[
+            // Sparse: the session window alone, its length left out, and
+            // the plan unknown here.
+            notification(
+                "account/rateLimits/updated",
+                json!({"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 15,
+                    "windowDurationMins": null, "resetsAt": null},
+                    "secondary": null, "planType": null, "something": "new"}}),
+            ),
+            // The same again moves nothing.
+            notification(
+                "account/rateLimits/updated",
+                json!({"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 15}}}),
+            ),
+            // Another meter's, such as a quota of one model, is not this
+            // one's.
+            notification(
+                "account/rateLimits/updated",
+                json!({"rateLimits": {"limitId": "codex_other", "limitName": "Other",
+                    "primary": {"usedPercent": 90, "windowDurationMins": 300}}}),
+            ),
+            // The week, past its end, held at a hundred.
+            notification(
+                "account/rateLimits/updated",
+                json!({"rateLimits": {"secondary": {"usedPercent": 104, "windowDurationMins": 10_080,
+                    "resetsAt": 1_795_400_000}}}),
+            ),
+            // Nothing it can read.
+            notification("account/rateLimits/updated", json!({})),
+            notification("account/rateLimits/updated", json!({"rateLimits": "soon"})),
+        ],
+    );
+    let told = limits_told(&out);
+    assert_eq!(
+        told,
+        [
+            (
+                Some("team".to_string()),
+                vec![
+                    limit(LimitKind::Session, 15.0, Some(1_794_746_983)),
+                    limit(LimitKind::Weekly, 37.0, Some(1_795_333_783)),
+                ]
+            ),
+            (
+                Some("team".to_string()),
+                vec![
+                    limit(LimitKind::Session, 15.0, Some(1_794_746_983)),
+                    limit(LimitKind::Weekly, 100.0, Some(1_795_400_000)),
+                ]
+            ),
+        ],
+        "{out:?}"
+    );
+}
+
+#[test]
+fn a_push_before_any_read_and_windows_of_other_lengths() {
+    let mut driver = ready();
+    let out = events(
+        &mut driver,
+        &[notification(
+            "account/rateLimits/updated",
+            json!({"rateLimits": {"limitId": "codex", "planType": "unknown",
+                "primary": {"usedPercent": 3, "windowDurationMins": 60},
+                "secondary": {"usedPercent": 8, "windowDurationMins": 10_080}}}),
+        )],
+    );
+    assert_eq!(
+        limits_told(&out),
+        [(None, vec![limit(LimitKind::Weekly, 8.0, None)])],
+        "an hour is no window known here, and an unknown plan is none"
+    );
+}
+
+#[test]
+fn a_read_of_the_limits_that_fails_or_is_not_understood_tells_nothing() {
+    for answer in [
+        json!({"error": {"code": -32600, "message": "codex account authentication required to read rate limits"}}),
+        json!({"result": {"rateLimits": null}}),
+        json!({"result": "what"}),
+    ] {
+        let (mut driver, id) = ready_reading();
+        let mut answer = answer.clone();
+        answer["id"] = id;
+        let reading = read(&mut driver, answer);
+        assert!(reading.events.is_empty(), "{:?}", reading.events);
+        assert!(reading.replies.is_empty());
+        // The session goes on, and the next turn's end reads again.
+        let out = turn(&mut driver, M1);
+        assert!(
+            matches!(out.last(), Some(Event::TurnStarted { .. })),
+            "{out:?}"
+        );
+        let reading = read(&mut driver, completed("completed"));
+        assert!(reading.events.iter().any(|event| matches!(
+            event,
+            Event::TurnEnded {
+                outcome: Outcome::Done,
+                ..
+            }
+        )));
+        assert_eq!(limit_reads(&reading.writes).len(), 1);
+    }
 }

@@ -276,7 +276,7 @@ fn a_session_starts_a_thread_streams_a_turn_and_stops_cleanly() {
         notify("item/agentMessage/delta", r#"{"itemId":"msg","delta":"ng"}"#),
         item("item/completed", "turn-1", r#"{"type":"agentMessage","id":"msg","text":"pong"}"#),
         notify("thread/tokenUsage/updated", &format!(r#"{{"threadId":"{THREAD}","turnId":"turn-1","tokenUsage":{{"total":{{"inputTokens":10,"cachedInputTokens":4,"outputTokens":5,"reasoningOutputTokens":1,"totalTokens":15}},"last":{{"inputTokens":10,"cachedInputTokens":4,"outputTokens":5,"reasoningOutputTokens":1,"totalTokens":15}},"modelContextWindow":258400}}}}"#)),
-        notify("account/rateLimits/updated", "{}"),
+        notify("account/rateLimits/updated", r#"{"rateLimits":{"limitId":"codex","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":null},"secondary":null,"planType":null}}"#),
         done("turn-1", "completed"),
         "drain".to_string(),
     ]
@@ -306,6 +306,7 @@ fn a_session_starts_a_thread_streams_a_turn_and_stops_cleanly() {
             "text",
             "text",
             "context",
+            "limits",
             "turnEnded"
         ]
     );
@@ -313,7 +314,8 @@ fn a_session_starts_a_thread_streams_a_turn_and_stops_cleanly() {
     assert_eq!(events[9]["text"], "pong");
     assert_eq!(events[9]["done"], true);
     assert_eq!(events[10]["size"], 258400);
-    let ended = &events[11];
+    assert_eq!(events[11]["windows"][0]["percent"], 12.0);
+    let ended = &events[12];
     assert_eq!(ended["outcome"], "done");
     assert_eq!(ended["usage"]["cachedTokens"], 4);
     assert_eq!(ended["usage"]["reasoningTokens"], 1);
@@ -384,6 +386,70 @@ fn an_account_that_is_not_signed_in_is_told_after_ready() {
     assert_eq!(kinds(&events), ["ready", "state", "error"]);
     assert_eq!(events[2]["kind"], "notLoggedIn");
     assert!(h.sessions.holds(&h.id), "the session goes on");
+    h.stop();
+}
+
+#[test]
+fn the_account_s_limits_are_read_when_ready_and_after_a_turn_and_merge_what_is_pushed() {
+    let scenario = [
+        ready_scenario(),
+        r#"expect "method":"account/rateLimits/read""#.to_string(),
+        r#"reply {"id":@ID@,"result":{"ordinaryUsageAllowed":true,"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":11,"windowDurationMins":300,"resetsAt":1794746983},"secondary":{"usedPercent":37,"windowDurationMins":10080,"resetsAt":1795333783},"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"plus","rateLimitReachedType":null},"rateLimitsByLimitId":{},"accountId":"a"}}"#.into(),
+        take("turn-1"),
+        notify("account/rateLimits/updated", r#"{"rateLimits":{"limitId":"codex","primary":{"usedPercent":19,"windowDurationMins":300,"resetsAt":null},"secondary":null,"planType":null}}"#),
+        done("turn-1", "completed"),
+        // A read that fails says nothing, and the session goes on.
+        r#"expect "method":"account/rateLimits/read""#.into(),
+        r#"reply {"id":@ID@,"error":{"code":-32600,"message":"codex account authentication required to read rate limits"}}"#.into(),
+        take("turn-2"),
+        item("item/completed", "turn-2", r#"{"type":"agentMessage","id":"msg","text":"still here"}"#),
+        done("turn-2", "completed"),
+        "drain".into(),
+    ]
+    .join("\n");
+    let h = start("limits", &scenario);
+    let read = h.until_type("limits");
+    let read = read.last().unwrap();
+    assert_eq!(read["agent"], "codex");
+    assert_eq!(read["plan"], "plus");
+    assert_eq!(
+        read["windows"],
+        json!([
+            {"kind": "session", "model": null, "percent": 11.0, "resetsAt": 1_794_746_983_u64,
+             "severity": null},
+            {"kind": "weekly", "model": null, "percent": 37.0, "resetsAt": 1_795_333_783_u64,
+             "severity": null}
+        ])
+    );
+    // A window that comes late has them too, as the event told them.
+    let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
+    let mut told = read.clone();
+    told.as_object_mut().unwrap().remove("id");
+    assert_eq!(late["limits"], told);
+
+    h.send("how much is left");
+    let events = h.until_type("turnEnded");
+    let moved = events.iter().rfind(|e| e["type"] == "limits").unwrap();
+    assert_eq!(moved["windows"][0]["percent"], 19.0);
+    assert_eq!(
+        moved["windows"][0]["resetsAt"], 1_794_746_983_u64,
+        "what the push left out stays"
+    );
+    assert_eq!(moved["windows"][1]["percent"], 37.0);
+    assert_eq!(moved["plan"], "plus");
+
+    h.send("are you there");
+    let events = h.until(|e| e["type"] == "text" && e["text"] == "still here");
+    h.until_type("turnEnded");
+    assert!(!kinds(&events).contains(&"error".to_string()), "{events:?}");
+    let told = h
+        .events()
+        .into_iter()
+        .filter(|e| e["type"] == "limits")
+        .count();
+    assert_eq!(told, 2, "nothing from the read that failed");
+    let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
+    assert_eq!(late["limits"]["windows"][0]["percent"], 19.0);
     h.stop();
 }
 
