@@ -822,6 +822,12 @@
     if (!here || !nav || nav.contains(document.activeElement)) return;
     // A question in the pane keeps the keyboard it was given.
     if (closingStrip?.contains(document.activeElement)) return;
+    // So does a stop in the header: the menu button off macOS, which Tab
+    // reaches before the rows. The header's tools are no stops; the rows
+    // walk them, and a click on one gives the rows the keyboard.
+    const owner = document.activeElement;
+    const header = nav.closest("section")?.querySelector(":scope > header");
+    if (owner instanceof HTMLElement && owner.tabIndex >= 0 && header?.contains(owner)) return;
     if (arrived) cursor = null;
     nav.focus();
   });
@@ -878,6 +884,17 @@
         if (choosing !== null && hasAccounts()) pickNext(e.key === "ArrowLeft" ? -1 : 1);
         else if (!onRail(e.key === "ArrowLeft")) return;
         break;
+      case "Tab":
+        // The keyboard leaving the pane takes an open menu with it. A peeked
+        // pane stands over the panes beside it, so Tab puts it back, as
+        // Escape does, rather than reach what is under it.
+        menuOpen = false;
+        sortOpen = false;
+        projectMenu = null;
+        if (!layout.sessionsPeek) return;
+        peekSessions(false);
+        e.preventDefault();
+        return;
       case "Escape":
         // Closes the menu or an open choice of agent, then puts a peeked
         // pane back, and goes no further: Escape elsewhere is the agent's,
@@ -1653,7 +1670,6 @@
   {#if folded}
     <button
       class="unfold"
-      tabindex="-1"
       onpointerdown={(e) => e.preventDefault()}
       onclick={unfold}
       disabled={!unfoldable}
