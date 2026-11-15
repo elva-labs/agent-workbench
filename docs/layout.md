@@ -260,6 +260,15 @@ nothing, and opening the panel on a project with no shell starts one. Typing
 `exit` closes the shell, and the project's last shell takes the panel with
 it. A shell that dies any other way keeps its place, with its exit code.
 
+The + at the head of the list is New shell: another shell in a group of its
+own, with the keyboard in it. <kbd>Cmd</kbd><kbd>T</kbd> does the same from
+anywhere in the window, <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd> on
+Windows and Linux, and opens the panel for it when it is closed; the +
+names the chord the table gives it. A row's × closes its shell, and
+<kbd>Cmd</kbd><kbd>W</kbd> closes the shell in front while the panel has the
+keyboard. A shell with something still running in it asks first, as
+[focus](focus-model.md#closing-what-is-in-front) describes.
+
 Shells come in groups, one group on screen at a time. A new shell is a group
 of its own; `split` opens one beside the current shell, in its group, taking
 half of that shell's width. The bar between two halves moves the boundary,
@@ -434,6 +443,6 @@ their edges and remembered apart from the other shapes', and a drag never
 folds or hides a pane: it stops where the editor would get less than 640.
 The column's header names the project, with the worktree a session follows,
 and holds buttons for a new file and a new folder; the editor's header holds
-its tabs and the views control. Peeked, the sessions pane covers the folded
-column and the tree's together. What the editor does is in
-[editor](editor.md).
+its tabs and the views control, and stays with no file open. Peeked, the
+sessions pane covers the folded column and the tree's together. What the
+editor does is in [editor](editor.md).

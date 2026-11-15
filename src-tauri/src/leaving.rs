@@ -1,13 +1,15 @@
-//! Leaving with unsaved edits.
+//! Leaving with work under way.
 //!
-//! While the editor holds edits not yet written, the window's close (its
-//! button, Close Window, the controls the app draws) and the app's quit
-//! (Quit in the menus, Cmd+Q) are held back, and the window is asked to put
-//! the question over the editor. The window answers at once that the
-//! question is up; without that answer soon after asking, the close or the
-//! quit goes through, so a page that cannot answer never keeps the window
-//! open. The user's answer then closes the window or quits the app, or
-//! leaves both as they are.
+//! While the editor holds edits not yet written, sessions are running or
+//! shells are open, the window's close (its button, Close Window, Close in
+//! the File menu, the controls the app draws) and the app's quit (Quit in
+//! the menus, Cmd+Q) are held back, and the window is asked: it puts the
+//! question up, or lets the window go at once when no shell has anything
+//! running in it. Closing the window ends the app, so both ask the same.
+//! The window answers at once that the question is up; without that answer
+//! soon after asking, the close or the quit goes through, so a page that
+//! cannot answer never keeps the window open. The user's answer then
+//! closes the window or quits the app, or leaves both as they are.
 //!
 //! The system's own ways of ending the app, logging out or Quit in the
 //! Dock's menu, end it without asking: the app hears of those only once it
@@ -26,11 +28,12 @@ pub const LEAVE_REQUESTED: &str = "leave_requested";
 /// the quit goes through without it.
 const HEARD_WITHIN: Duration = Duration::from_secs(3);
 
-/// What the window last said about unsaved edits, and where the questions
-/// stand.
+/// What the window last said about unsaved edits and running sessions and
+/// shells, and where the questions stand.
 #[derive(Default)]
 pub struct Leaving {
     unsaved: AtomicBool,
+    running: AtomicBool,
     /// Set once the user said to go anyway, or the window did not answer:
     /// the close or the quit that follows goes through.
     allowed: AtomicBool,
@@ -43,7 +46,8 @@ pub struct Leaving {
 impl Leaving {
     /// Whether a close or a quit is held back to ask first.
     fn holds(&self) -> bool {
-        self.unsaved.load(Ordering::SeqCst) && !self.allowed.load(Ordering::SeqCst)
+        let losing = self.unsaved.load(Ordering::SeqCst) || self.running.load(Ordering::SeqCst);
+        losing && !self.allowed.load(Ordering::SeqCst)
     }
 
     /// A new question: its number.
@@ -70,7 +74,7 @@ struct Ask {
     generation: u64,
 }
 
-/// The main window's close, held back while anything is unsaved.
+/// The main window's close, held back while anything would be lost.
 pub fn on_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     let WindowEvent::CloseRequested { api, .. } = event else {
         return;
@@ -88,7 +92,7 @@ pub fn on_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
     }
 }
 
-/// Quit, from a menu: asks first while anything is unsaved.
+/// Quit, from a menu: asks first while anything would be lost.
 pub fn quit<R: Runtime>(app: &AppHandle<R>) {
     let leaving = Arc::clone(&app.state::<Arc<Leaving>>());
     if leaving.holds() {
@@ -136,6 +140,13 @@ pub fn leave_unsaved(leaving: State<'_, Arc<Leaving>>, unsaved: bool) {
     leaving.unsaved.store(unsaved, Ordering::SeqCst);
 }
 
+/// Whether sessions are running or shells are open, as the window says
+/// each time that changes.
+#[tauri::command]
+pub fn leave_running(leaving: State<'_, Arc<Leaving>>, running: bool) {
+    leaving.running.store(running, Ordering::SeqCst);
+}
+
 /// The question is up.
 #[tauri::command]
 pub fn leave_heard(leaving: State<'_, Arc<Leaving>>, generation: u64) {
@@ -158,6 +169,18 @@ mod tests {
         assert!(!leaving.holds());
         leaving.unsaved.store(true, Ordering::SeqCst);
         assert!(leaving.holds());
+        leaving.allowed.store(true, Ordering::SeqCst);
+        assert!(!leaving.holds());
+    }
+
+    #[test]
+    fn holds_while_sessions_run_as_well() {
+        let leaving = Leaving::default();
+        leaving.running.store(true, Ordering::SeqCst);
+        assert!(leaving.holds());
+        leaving.running.store(false, Ordering::SeqCst);
+        assert!(!leaving.holds());
+        leaving.running.store(true, Ordering::SeqCst);
         leaving.allowed.store(true, Ordering::SeqCst);
         assert!(!leaving.holds());
     }

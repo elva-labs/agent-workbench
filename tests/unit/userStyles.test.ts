@@ -123,6 +123,7 @@ describe("the sheet in the page", () => {
       reason: null,
       changes: [],
       theme: null,
+      ground: null,
       css: null,
     };
     flushSync();

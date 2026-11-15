@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   bindingsFor,
+  closeAlso,
+  closeLabel,
+  closeTarget,
   isMac,
   resolveAction as resolve,
+  type CloseState,
   type KeyContext,
   type KeyState,
 } from "$lib/keymap";
 import { applyPreset, resetKeys, setBinding } from "$lib/keys.svelte";
 
-beforeEach(resetKeys);
+// The tables are macOS's, as the chords below are.
+beforeEach(() => resetKeys({ mac: true }));
 
 const mod = (key: string, extra: Partial<KeyState> = {}): KeyState => ({
   key,
@@ -272,11 +277,11 @@ describe("editor mode", () => {
     expect(resolveAction(mod("s"))).toBeNull();
   });
 
-  it("closes the tab on Cmd+W in editor mode, and leaves it to the menu elsewhere", () => {
-    expect(resolveAction(mod("w"), editor)).toEqual({ type: "closeTab" });
-    expect(resolveAction(mod("w"), tree)).toEqual({ type: "closeTab" });
-    expect(resolveAction(mod("w"), { focus: "terminal", editing: true })).toBeNull();
-    expect(resolveAction(mod("w"), { focus: "changes" })).toBeNull();
+  it("closes on Cmd+W from anywhere in editor mode, a terminal included", () => {
+    expect(resolveAction(mod("w"), editor)).toEqual({ type: "close" });
+    expect(resolveAction(mod("w"), tree)).toEqual({ type: "close" });
+    expect(resolveAction(mod("w"), { focus: "terminal", editing: true })).toEqual({ type: "close" });
+    expect(resolveAction(mod("w"), { focus: "agent", editing: true })).toEqual({ type: "close" });
   });
 
   it("finds in the file from the editor, and filters the tree from the tree", () => {
@@ -324,11 +329,11 @@ describe("editor mode", () => {
       expect(resolveAction({ key: "Escape" }, { ...tree, integrated: true })).toEqual({ type: "toEditor" });
     });
 
-    it("saves and closes the tab from the composer, which is no terminal", () => {
+    it("saves and closes from the composer, which is no terminal", () => {
       expect(resolveAction(mod("s"), composer)).toEqual({ type: "save" });
-      expect(resolveAction(mod("w"), composer)).toEqual({ type: "closeTab" });
+      expect(resolveAction(mod("w"), composer)).toEqual({ type: "close" });
       expect(resolveAction({ key: "s", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "save" });
-      expect(resolveAction({ key: "w", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "closeTab" });
+      expect(resolveAction({ key: "w", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "close" });
       // Not in agent mode, where there is nothing to save.
       expect(resolveAction(mod("s"), { focus: "agent", integrated: true })).toBeNull();
     });
@@ -343,5 +348,163 @@ describe("editor mode", () => {
     expect(setBinding("file.save", { key: "s", shift: true, alt: false })).toBeNull();
     expect(resolveAction(mod("s", { shiftKey: true }), editor)).toEqual({ type: "save" });
     expect(resolveAction(mod("s"), editor)).toBeNull();
+  });
+});
+
+describe("close", () => {
+  const ctrl = (key: string, extra: Partial<KeyState> = {}): KeyState => ({ key, ctrlKey: true, ...extra });
+
+  it("is Cmd+W from anywhere on macOS, the agent's terminal and a shell included", () => {
+    for (const focus of ["sessions", "agent", "changes", "terminal"] as const) {
+      expect(resolveAction(mod("w"), { focus })).toEqual({ type: "close" });
+    }
+    expect(resolveAction(mod("w"), { focus: "agent", reviewing: true })).toEqual({ type: "close" });
+  });
+
+  it("leaves Ctrl+W to a terminal on macOS, where it deletes a word", () => {
+    expect(resolveAction(ctrl("w"), { focus: "terminal" })).toBeNull();
+    expect(resolveAction(ctrl("w"), { focus: "agent" })).toBeNull();
+  });
+
+  it("leaves Shift+Cmd+W to the window's own Close Window", () => {
+    expect(resolveAction(mod("w", { shiftKey: true }), { focus: "terminal" })).toBeNull();
+    expect(resolveAction(mod("w", { shiftKey: true }), { focus: "changes" })).toBeNull();
+  });
+
+  describe("off macOS", () => {
+    beforeEach(() => resetKeys({ mac: false }));
+    const off = (focus: KeyContext["focus"], extra: Partial<KeyContext> = {}) => ({ focus, mac: false, ...extra });
+
+    it("is Ctrl+W outside a terminal, which keeps it", () => {
+      expect(resolveAction(ctrl("w"), off("changes"))).toEqual({ type: "close" });
+      expect(resolveAction(ctrl("w"), off("sessions"))).toEqual({ type: "close" });
+      expect(resolveAction(ctrl("w"), off("terminal"))).toBeNull();
+      expect(resolveAction(ctrl("w"), off("agent"))).toBeNull();
+      expect(resolveAction(ctrl("w"), off("agent", { editing: true }))).toBeNull();
+    });
+
+    it("is Ctrl+Shift+W too, from anywhere, a terminal included", () => {
+      for (const focus of ["sessions", "agent", "changes", "terminal"] as const) {
+        expect(resolveAction(ctrl("W", { shiftKey: true }), off(focus))).toEqual({ type: "close" });
+      }
+    });
+
+    it("moves its Shift chord with a close chord the user moves, and gives it up when that is taken", () => {
+      expect(setBinding("file.close", { key: "q", shift: false, alt: false })).toBeNull();
+      expect(resolveAction(ctrl("q", { shiftKey: true }), off("terminal"))).toEqual({ type: "close" });
+      expect(resolveAction(ctrl("w", { shiftKey: true }), off("terminal"))).toBeNull();
+      expect(setBinding("theme", { key: "q", shift: true, alt: false })).toBeNull();
+      expect(resolveAction(ctrl("q", { shiftKey: true }), off("terminal"))).toEqual({ type: "cycleTheme" });
+      expect(closeAlso(false)).toBeNull();
+    });
+
+    it("has none on macOS", () => {
+      expect(closeAlso(true)).toBeNull();
+      expect(closeAlso(false)).toEqual({ key: "w", shift: true, alt: false });
+    });
+  });
+});
+
+describe("what close closes", () => {
+  const nothing: CloseState = {
+    palette: false,
+    dialog: false,
+    question: false,
+    focus: "agent",
+    editing: false,
+    reviewing: false,
+    shell: false,
+    tab: false,
+    other: false,
+    browserTab: false,
+  };
+  const at = (state: Partial<CloseState>) => closeTarget({ ...nothing, ...state });
+
+  it("puts the palette away, or the dialog that has the keyboard, before anything under it", () => {
+    expect(at({ palette: true, focus: "terminal", shell: true })).toBe("palette");
+    expect(at({ dialog: true, editing: true, tab: true })).toBe("dialog");
+  });
+
+  it("closes nothing while a question in a strip has the keyboard", () => {
+    expect(at({ question: true, editing: true, tab: true })).toBe("nothing");
+    expect(at({ question: true, focus: "terminal", shell: true })).toBe("nothing");
+  });
+
+  it("closes the shell in front with the keyboard in the panel, in either mode", () => {
+    expect(at({ focus: "terminal", shell: true })).toBe("shell");
+    expect(at({ focus: "terminal", shell: true, editing: true, tab: true })).toBe("shell");
+    expect(at({ focus: "terminal", shell: true, reviewing: true })).toBe("shell");
+  });
+
+  it("goes past an empty panel to what is in front", () => {
+    expect(at({ focus: "terminal" })).toBe("window");
+    expect(at({ focus: "terminal", editing: true, tab: true })).toBe("tab");
+  });
+
+  it("closes the editor's tab in front in editor mode, wherever else the keyboard is", () => {
+    for (const focus of ["sessions", "agent", "changes"] as const) {
+      expect(at({ focus, editing: true, tab: true })).toBe("tab");
+    }
+  });
+
+  it("puts away what took the editor's place before its tab, and closes the browser's tab there", () => {
+    expect(at({ editing: true, tab: true, other: true })).toBe("other");
+    expect(at({ editing: true, tab: true, other: true, browserTab: true })).toBe("browserTab");
+  });
+
+  it("closes the browser's tab, or else the viewer, while reviewing", () => {
+    expect(at({ reviewing: true })).toBe("viewer");
+    expect(at({ reviewing: true, browserTab: true })).toBe("browserTab");
+    expect(at({ reviewing: true, focus: "sessions" })).toBe("viewer");
+  });
+
+  it("closes the window where nothing smaller is in front, never the session", () => {
+    for (const focus of ["sessions", "agent", "changes"] as const) {
+      expect(at({ focus })).toBe("window");
+    }
+    expect(at({ editing: true })).toBe("window");
+    // A browser shown with no viewer to show it in is not in front.
+    expect(at({ browserTab: true })).toBe("window");
+  });
+
+  it("names what it closes in the File menu", () => {
+    expect(closeLabel("shell")).toBe("Close Shell");
+    expect(closeLabel("tab")).toBe("Close Tab");
+    expect(closeLabel("browserTab")).toBe("Close Tab");
+    expect(closeLabel("viewer")).toBe("Close Viewer");
+    // What the agent presented, or a plugin's page, in the editor's place.
+    expect(closeLabel("other")).toBe("Close Viewer");
+    expect(closeLabel("window")).toBe("Close Window");
+    expect(closeLabel("dialog")).toBe("Close");
+  });
+});
+
+describe("a new shell", () => {
+  it("opens on Cmd+T from anywhere, a terminal included", () => {
+    for (const focus of ["sessions", "agent", "changes", "terminal"] as const) {
+      expect(resolveAction(mod("t"), { focus })).toEqual({ type: "newShell" });
+    }
+    expect(resolveAction(mod("t"), { focus: "changes", editing: true, inEditor: true })).toEqual({ type: "newShell" });
+  });
+
+  it("leaves Ctrl+T to a terminal on macOS", () => {
+    expect(resolveAction({ key: "t", ctrlKey: true }, { focus: "terminal" })).toBeNull();
+  });
+
+  it("opens one on Ctrl+Shift+T off macOS, leaving Ctrl+T to the terminal, and moves the theme to Ctrl+Shift+D", () => {
+    resetKeys({ mac: false });
+    const off = { focus: "terminal" as const, mac: false };
+    expect(resolveAction({ key: "T", ctrlKey: true, shiftKey: true }, off)).toEqual({ type: "newShell" });
+    expect(resolveAction({ key: "t", ctrlKey: true }, off)).toBeNull();
+    expect(resolveAction({ key: "D", ctrlKey: true, shiftKey: true }, off)).toEqual({ type: "cycleTheme" });
+  });
+});
+
+describe("the status bar", () => {
+  it("takes the keyboard on Cmd+5 from anywhere, in both presets", () => {
+    expect(resolveAction(mod("5"), { focus: "terminal" })).toEqual({ type: "focusStatus" });
+    expect(resolveAction(mod("5"), { focus: "changes", editing: true, inEditor: true })).toEqual({ type: "focusStatus" });
+    applyPreset("vim");
+    expect(resolveAction(mod("5"), { focus: "agent" })).toEqual({ type: "focusStatus" });
   });
 });

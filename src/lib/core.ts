@@ -567,7 +567,10 @@ export type IntegratedEvent = IntegratedEventBody & { id: string };
     answer, each as it was asked; `messages` those sent and not yet taken
     into a turn, in the order sent, each as its first message event told
     it, with its text and images; `limits` the account's limits as the
-    last limits event told them, null before one went out. */
+    last limits event told them, null before one went out; `resumedAt`
+    when this run of a conversation it resumed began, in milliseconds
+    since the epoch, null for one it began, and absent from a core that
+    does not say. */
 export interface IntegratedSnapshot {
   state: IntegratedState;
   turn: boolean;
@@ -577,6 +580,30 @@ export interface IntegratedSnapshot {
   requests: Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>[];
   messages: Extract<IntegratedEventBody, { type: "message" }>[];
   limits: Extract<IntegratedEventBody, { type: "limits" }> | null;
+  resumedAt?: number | null;
+}
+
+/** What a conversation said and did before a window took it up, read
+    from where its agent keeps it: the events a session of it would have
+    sent, in order, each with `at`, when it happened in milliseconds since
+    the epoch, and on a turn's start the `model` it ran on where known.
+    Long content is cut down and flagged. A last turn the agent's record
+    gives no end is left open, as one that may still run. `cut` says the
+    start of the conversation was left out, it being too long to hold. */
+export interface IntegratedHistory {
+  items: { at: number; model?: string; event: IntegratedEventBody }[];
+  cut: boolean;
+}
+
+/** Whose history `integratedHistory` reads: the session's conversation
+    id, the project, the folder under it the session ran in, and the
+    account's configuration directory. */
+export interface IntegratedHistoryOptions {
+  agent: AgentId;
+  project: string;
+  cwd?: string;
+  session: string;
+  configDir?: string;
 }
 
 /** A transition reported by an agent hook or session log, by session id:
@@ -1147,6 +1174,18 @@ export interface Settings {
       shape: Record<string, string>;
     }
   >;
+  /** The background each palette or theme keeps, by its name: one to three
+      dots, each a hue and a chroma, a harmony, a strength and grain. A
+      file from before backgrounds has none. */
+  backgrounds?: Record<
+    string,
+    {
+      dots: { hue: number; chroma: number }[];
+      harmony: "single" | "complementary" | "analogous" | "triad" | "free";
+      strength: number;
+      grain: number;
+    }
+  >;
   /** Whether the user's own stylesheet is laid over the app's. */
   userStyles: boolean;
   /** Whether a session that starts waiting for the user while the window
@@ -1247,6 +1286,9 @@ export interface Core {
   /** What a window that comes to the session late reads to catch up.
       Resolves once every event that went out before it has arrived. */
   integratedSnapshot(id: string): Promise<IntegratedSnapshot>;
+  /** What a conversation said and did before; null for an agent whose
+      history the core does not read. */
+  integratedHistory(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
   /** Ends the session. Resolves at once; `ended` follows. */
   integratedStop(id: string): Promise<void>;
   /** Every integrated session's news, each event naming its session. */
@@ -1581,6 +1623,9 @@ export interface Core {
   /** Whether the editor holds unsaved edits, for the core to ask before
       the window closes or the app quits while it does. */
   setUnsaved(unsaved: boolean): Promise<void>;
+  /** Whether sessions are running or shells are open, for the core to
+      hold the window's close or the app's quit while they are, and ask. */
+  setRunning(running: boolean): Promise<void>;
   /** The core held back the window's close or the app's quit to ask. */
   onLeaveRequested(
     handler: (ask: { kind: "window" | "quit"; generation: number }) => void,
@@ -1597,6 +1642,9 @@ export interface Core {
   menuKeys(table: Record<string, KeyChord>): Promise<void>;
   /** Which of the File menu's items can act, by action. */
   menuEnabled(state: Record<string, boolean>): Promise<void>;
+  /** What the File menu's items are called, by action: Close names what
+      it would close. */
+  menuText(state: Record<string, string>): Promise<void>;
 
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
@@ -1714,6 +1762,8 @@ const tauriCore: Core = {
       effort: settings.effort ?? null,
     }),
   integratedSnapshot: (id) => invoke<IntegratedSnapshot>("integrated_snapshot", { id }),
+  integratedHistory: (options) =>
+    invoke<IntegratedHistory | null>("integrated_history", { ...options }),
   integratedStop: (id) => invoke<void>("integrated_stop", { id }),
   async onIntegratedEvent(handler) {
     return listen<IntegratedEvent>("integrated_event", (event) =>
@@ -1969,6 +2019,7 @@ const tauriCore: Core = {
   revealPath: (path) => revealItemInDir(path),
   copyText: (text) => navigator.clipboard.writeText(text),
   setUnsaved: (unsaved) => invoke("leave_unsaved", { unsaved }),
+  setRunning: (running) => invoke("leave_running", { running }),
   async onLeaveRequested(handler) {
     return listen<{ kind: "window" | "quit"; generation: number }>("leave_requested", (event) =>
       handler(event.payload),
@@ -1981,6 +2032,7 @@ const tauriCore: Core = {
   },
   menuKeys: (table) => invoke("menu_keys", { table }),
   menuEnabled: (state) => invoke("menu_enabled", { state }),
+  menuText: (state) => invoke("menu_text", { state }),
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
   remoteConnect: (host) =>
@@ -2043,6 +2095,9 @@ const detachedCore: Core = {
   },
   async integratedSnapshot() {
     throw new Error("not connected to the workbench core");
+  },
+  async integratedHistory() {
+    return null;
   },
   async integratedStop() {},
   async onIntegratedEvent() {
@@ -2310,6 +2365,7 @@ const detachedCore: Core = {
   async revealPath() {},
   async copyText() {},
   async setUnsaved() {},
+  async setRunning() {},
   async onLeaveRequested() {
     return () => {};
   },
@@ -2320,6 +2376,7 @@ const detachedCore: Core = {
   },
   async menuKeys() {},
   async menuEnabled() {},
+  async menuText() {},
   async remoteHosts() {
     return { configured: [], saved: [] };
   },

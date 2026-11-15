@@ -9,9 +9,9 @@
   import TerminalPanel from "$lib/panes/TerminalPanel.svelte";
   import Settings from "$lib/components/Settings.svelte";
   import Remote from "$lib/components/Remote.svelte";
-  import { remote } from "$lib/remote.svelte";
+  import { closeRemote, remote } from "$lib/remote.svelte";
   import Resume from "$lib/components/Resume.svelte";
-  import { resume } from "$lib/resume.svelte";
+  import { closeResume, resume } from "$lib/resume.svelte";
   import Palette from "$lib/components/Palette.svelte";
   import { closePalette, openCommands, openGoTo, palette } from "$lib/palette.svelte";
   import ConductAsk from "$lib/components/ConductAsk.svelte";
@@ -34,16 +34,15 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
-  import { newFile } from "$lib/fileOps.svelte";
+  import { newFile, newUntitled } from "$lib/fileOps.svelte";
   import {
     activeTab,
     canSaveInFront,
-    closeFront,
+    closeTabInFront,
     findInFile,
     flipMode,
     focusFiles,
     followOwner,
-    leaveRequested,
     loadEditorSize,
     otherKindShown,
     putAwayOther,
@@ -59,18 +58,32 @@
     watchPluginUpdates,
   } from "$lib/plugins.svelte";
   import ActionInput from "$lib/components/ActionInput.svelte";
-  import { noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
+  import { cancelAction, noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
-  import { initBrowser, syncOwner } from "$lib/browser.svelte";
+  import {
+    activeTab as browserTab,
+    browser,
+    close as closeBrowserTab,
+    initBrowser,
+    syncOwner,
+  } from "$lib/browser.svelte";
   import { loadNotices } from "$lib/notice.svelte";
   import { loadZoom, zoomed } from "$lib/zoom.svelte";
   import { handle as handleDrag } from "$lib/drops.svelte";
   import { stash } from "$lib/exits";
-  import { isMac, resolveAction, type Action } from "$lib/keymap";
+  import {
+    closeAlso,
+    closeLabel,
+    closeTarget,
+    resolveAction,
+    type Action,
+    type CloseState,
+  } from "$lib/keymap";
+  import { leaveAsked, watchRunning } from "$lib/leaving.svelte";
   import { keys } from "$lib/keys.svelte";
   import { say } from "$lib/flash.svelte";
-  import { openSettings, settings } from "$lib/settings.svelte";
+  import { closeSettings, openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import {
     closeViewer,
@@ -100,7 +113,14 @@
   import { primeChime } from "$lib/chime";
   import { announce } from "$lib/notify.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
-  import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
+  import {
+    activeShell,
+    closeAsking as closeShell,
+    create as createShell,
+    cycle as cycleShell,
+    ended as shellEnded,
+    terminals,
+  } from "$lib/terminals.svelte";
   import { goTo, workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
@@ -123,7 +143,9 @@
     layout,
     peekSessions,
     peekable,
+    questionHoldsKeyboard,
     resetEditAgent,
+    returnFocus,
     resizeEditAgent,
     saveLayout,
     sessionsOpen,
@@ -155,6 +177,8 @@
   // changes.
   followOwner();
   watchProcesses();
+  // Whether sessions run, for the core to ask before the window goes.
+  watchRunning();
   watchPluginUpdates();
   // Which projects are open, told to the core of each machine they are on,
   // so the plugins running there know them.
@@ -245,10 +269,11 @@
     core()
       .onFullScreen((fullScreen) => (layout.fullScreen = fullScreen))
       .then((unlisten) => offs.push(unlisten));
-    // The core held back the window's close or the app's quit while the
-    // editor has unsaved edits: the question goes over the editor.
+    // The core held back the window's close or the app's quit while
+    // sessions run or the editor has unsaved edits: the question goes over
+    // the whole window.
     core()
-      .onLeaveRequested((ask) => leaveRequested(ask))
+      .onLeaveRequested((ask) => leaveAsked(ask))
       .then((unlisten) => offs.push(unlisten));
     // The File menu's items do what their actions do.
     core()
@@ -350,26 +375,38 @@
 
   // The native layer takes a chord back from a browser tab's page on the
   // app's behalf, so it needs the table again whenever a binding changes.
-  // Save and Close Tab are editor mode's: outside it a browser tab's page
-  // keeps them, and on macOS they reach the File menu as they would from
-  // anywhere else.
+  // Save is editor mode's: outside it a browser tab's page keeps it, and on
+  // macOS it reaches the File menu as it would from anywhere else. Close is
+  // taken back always, the chord with Shift off macOS included: it closes
+  // the tab, as in any browser.
   $effect(() => {
     const chords = Object.entries(keys.bindings)
-      .filter(([action]) => editing || (action !== "file.save" && action !== "file.close"))
+      .filter(([action]) => editing || action !== "file.save")
       .map(([, chord]) => chord);
-    void core().browserKeys(chords);
+    const also = closeAlso();
+    void core().browserKeys(also === null ? chords : [...chords, also]);
   });
 
   // The File menu's items that cannot act are greyed out: Save without a
-  // file in front to save, New File without a project. Close Tab can always
-  // act on macOS, where with no tab it closes the window.
+  // file in front to save, the new files and New Shell without a project.
+  // Close can always act: with nothing smaller in front it is the window's.
   $effect(() => {
     void core()
       .menuEnabled({
         "file.new": workspace.active !== null,
+        "file.untitled": workspace.active !== null,
+        "terminal.new": workspace.active !== null,
         "file.save": editing && canSaveInFront(),
-        "file.close": isMac() || (editing && activeTab() !== null),
+        "file.close": true,
       })
+      .catch(() => {});
+  });
+
+  // Close in the File menu names what it would close.
+  let closeName = $derived(closeLabel(closeTarget(closeState(false))));
+  $effect(() => {
+    void core()
+      .menuText({ "file.close": closeName })
       .catch(() => {});
   });
 
@@ -560,6 +597,102 @@
     );
   }
 
+  /** Whether a dialog, or a question in a strip, holds the keyboard where
+      a chord that moves it may not take it from. */
+  function keyboardHeld(): boolean {
+    return dialogUp() || questionHoldsKeyboard();
+  }
+
+  /** What close would act on now. */
+  function closeState(question: boolean): CloseState {
+    return {
+      palette: palette.open,
+      dialog: settings.open || remote.open || resume.open || pluginSections.pending !== null,
+      question,
+      focus: layout.focus,
+      editing,
+      reviewing,
+      shell: activeShell() !== null,
+      tab: activeTab() !== null,
+      other: editing && otherKindShown(),
+      browserTab: browser.showing && browserTab() !== null,
+    };
+  }
+
+  /** Closes what is in front: by the chord, from the File menu, or from
+      the palette. */
+  async function closeInFront() {
+    switch (closeTarget(closeState(questionHoldsKeyboard()))) {
+      case "nothing":
+        break;
+      case "palette":
+        closePalette();
+        break;
+      case "dialog":
+        if (settings.open) closeSettings();
+        else if (remote.open) closeRemote();
+        else if (resume.open) closeResume();
+        else cancelAction();
+        break;
+      case "shell":
+        // Closed at once, the keyboard goes to the shell in front next, or
+        // where the panel hands it once the last has gone; asked, it stays
+        // with the question.
+        if (terminals.active !== null && (await closeShell(terminals.active))) returnFocus();
+        break;
+      case "browserTab": {
+        const tab = browserTab();
+        if (tab !== null) await closeBrowserTab(tab.id).catch(() => {});
+        break;
+      }
+      case "other": {
+        // The keyboard goes back to the editor when it was in what went.
+        const inside = layout.focus === "changes";
+        putAwayOther();
+        if (inside) focusFiles("editor");
+        break;
+      }
+      case "tab":
+        closeTabInFront();
+        break;
+      case "viewer":
+        closeViewer();
+        break;
+      case "window":
+        // The core asks first while sessions run or edits are unsaved.
+        void core().windowControl("close").catch(() => {});
+        break;
+    }
+  }
+
+  /** A new shell in the project on screen, the panel opened for it, with
+      the keyboard in it. */
+  function newShell() {
+    if (workspace.active === null) {
+      say("Open a project to start a shell in");
+      return;
+    }
+    if (layout.terminalForced) {
+      say("The window is too short for the terminal");
+      return;
+    }
+    // Made before the panel opens, so opening it starts no second one.
+    createShell(workspace.active);
+    if (!terminalVisible()) toggleTerminal();
+    focusPane("terminal");
+  }
+
+  /** The keyboard to the status bar's first control, where it has one. */
+  function focusStatus() {
+    const bar = document.querySelector<HTMLElement>("[data-testid='status-bar']");
+    const first = bar?.querySelector<HTMLElement>("button:not(:disabled)") ?? null;
+    if (first === null) {
+      say("Nothing to change in the status bar");
+      return;
+    }
+    first.focus();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     const action = resolveAction(e, {
       focus: layout.focus,
@@ -580,10 +713,21 @@
       e.preventDefault();
       return;
     }
+    // A new shell, a new untitled file and the chord to the status bar move
+    // the keyboard too, and do nothing while a question in a strip holds it
+    // either.
+    if (
+      (action.type === "newShell" || action.type === "newUntitled" || action.type === "focusStatus") &&
+      keyboardHeld()
+    ) {
+      e.preventDefault();
+      return;
+    }
     // The palette holds the keyboard while it is up: only its own chords,
-    // which put it away or switch its list, get past it. The others are
-    // swallowed so the native menu does not act on them.
-    if (palette.open && action.type !== "palette" && action.type !== "goto") {
+    // which put it away or switch its list, and close, which puts it away,
+    // get past it. The others are swallowed so the native menu does not
+    // act on them.
+    if (palette.open && action.type !== "palette" && action.type !== "goto" && action.type !== "close") {
       e.preventDefault();
       return;
     }
@@ -629,13 +773,20 @@
       case "save":
         if (editing) void save();
         break;
-      case "closeTab":
-        // With no tab to close it is the window's close on macOS, as the
-        // menu's Close Tab is.
-        closeFront();
+      case "close":
+        void closeInFront();
+        break;
+      case "newShell":
+        newShell();
+        break;
+      case "focusStatus":
+        focusStatus();
         break;
       case "newFile":
         newFile();
+        break;
+      case "newUntitled":
+        newUntitled();
         break;
       case "findInFile":
         findInFile();
@@ -711,12 +862,13 @@
     }
   }
 
-  /** An item of the File menu: what its action does, except that Close Tab
-      with no tab to close is the window's close there. */
+  /** An item of the File menu: what its action does. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
+    else if (action === "file.untitled" && !palette.open && !keyboardHeld()) newUntitled();
+    else if (action === "terminal.new" && !palette.open && !keyboardHeld()) newShell();
     else if (action === "file.save" && editing) void save();
-    else if (action === "file.close") closeFront();
+    else if (action === "file.close") void closeInFront();
   }
 
   /** Whether the keyboard is in the editor, its find panel included. */
@@ -770,6 +922,7 @@
   style:--controls-inset="{CONTROLS_INSET}px"
   style:--sessions-col={sessionsColumn}
   style:--folded="{FOLDED}px"
+  style:--head-h="{sessionsHead}px"
 >
   <div class="stack" bind:clientHeight={stack}>
   <main
@@ -789,7 +942,6 @@
       class:peeking={layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
       style:--peek-w={peekWidth}
-      style:--head-h="{sessionsHead}px"
     >
       <SessionsPane />
       {#if sessionsVisible()}
@@ -831,6 +983,11 @@
       {/if}
     {/if}
   </main>
+
+  <!-- The status bar is drawn along the window's foot, and comes before
+       the terminal panel in the page so that Tab reaches its controls
+       before the panel's: the panel ends in a shell, which keeps Tab. -->
+  <StatusBar />
 
   <!-- Hidden rather than unmounted, for the same reason as the agent: the
        shells in it stay mounted, so hiding is free and showing is a fit. The
@@ -881,9 +1038,6 @@
 <RefusalBanner />
 <UserStyles />
 
-
-<StatusBar />
-
 <style>
   /* Wide enough that a pane's sharp corner stays clear of the window's
      rounded one on macOS. */
@@ -892,6 +1046,11 @@
     height: calc(100vh - 26px);
     padding: var(--frame-pad);
     background: var(--bg);
+  }
+
+  /* The terminal look's ground between the boxes carries a background. */
+  :global(:root[data-background]:not([data-look])) .frame {
+    background: linear-gradient(var(--tint-frame), var(--tint-frame)), var(--tint-backdrop);
   }
 
   .stack {
@@ -986,6 +1145,26 @@
     background: var(--surface);
   }
 
+  :global(:root[data-background][data-look="modern"])
+    .sessions-slot.folded
+    :global([data-pane="sessions"] > header) {
+    background: linear-gradient(var(--tint-surf), var(--tint-surf)), var(--tint-backdrop);
+  }
+
+  :global(:root[data-background][data-look="modern"]) .sessions-slot.folded :global([data-pane="sessions"]) {
+    background:
+      var(--edge-rule),
+      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px))
+        border-box,
+      var(--tint-backdrop);
+  }
+
+  /* The line between the sessions pane and the agent belongs to the
+     sessions pane, so with a background it is drawn over that pane's tint. */
+  :global(:root[data-background][data-look="modern"]) .sessions-slot > :global(.splitter) {
+    background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
+  }
+
   .sessions-slot.folded :global([data-pane="sessions"] > header > *) {
     visibility: hidden;
   }
@@ -996,6 +1175,14 @@
     flex: none;
     width: var(--splitter-w);
     background: linear-gradient(var(--surface) var(--head-h), transparent var(--head-h));
+  }
+
+  /* With a background the edge is drawn over the tint beside it: the
+     headers' beside the header row, the sessions pane's below it. */
+  :global(:root[data-background][data-look="modern"]) .fold-edge {
+    background:
+      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px)),
+      var(--tint-backdrop);
   }
 
   .fold-edge::after {

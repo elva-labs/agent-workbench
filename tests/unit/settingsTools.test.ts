@@ -81,6 +81,8 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
   theme.themes = {};
+  theme.backgrounds = {};
+  theme.preview = null;
   sheets.length = 0;
   refuseSheet = null;
   refuseSettings = null;
@@ -415,6 +417,75 @@ describe("a theme", () => {
     expect(changes).toEqual([{ field: "palette", label: "Palette", from: "Teal", to: "Dusk" }]);
     expect(describeSettings()).toContain("dusk (Dusk)");
     expect(describeSettings()).toMatch(/palette: teal \(one of teal, indigo, amber, rose, mono, dusk\)/);
+  });
+});
+
+describe("a background", () => {
+  const lagoon = {
+    dots: [
+      { hue: 192, chroma: 0.9 },
+      { hue: 252, chroma: 0.8 },
+    ],
+    harmony: "free",
+    strength: 0.6,
+    grain: 0.25,
+  };
+  const dusk = { name: "dusk", label: "Dusk", light: { accent: "#7a4a8c" }, dark: { accent: "#c39ad4" } };
+
+  it("is read with the palette it goes with, and its shape", () => {
+    expect(describeSettings()).toContain("background: none (kept with the palette in use");
+    theme.backgrounds = { teal: lagoon as never };
+    expect(describeSettings()).toContain(`background: ${JSON.stringify(lagoon)}`);
+    expect(describeSettings()).toMatch(/one to three dots on a colour pad/);
+  });
+
+  it("goes with the palette in use, or the one the change switches to", () => {
+    const { next, changes, ground } = plan({ background: lagoon });
+    expect(next.backgrounds).toEqual({ teal: lagoon });
+    expect(changes).toEqual([
+      { field: "background", label: "Background", from: "None", to: "Lagoon, strength 60%, grain 25%" },
+    ]);
+    expect(ground?.light).toMatch(/^linear-gradient\(135deg, #[0-9a-f]{6}, #[0-9a-f]{6}\)$/);
+    const switched = plan({ palette: "rose", background: { dots: [{ hue: 10, chroma: 1 }] } });
+    expect(Object.keys(switched.next.backgrounds!)).toEqual(["rose"]);
+    expect(switched.changes.map((change) => change.label)).toEqual(["Palette", "Background"]);
+  });
+
+  it("is taken away with null, and refused when it breaks the rules", () => {
+    theme.backgrounds = { teal: lagoon as never };
+    expect(plan({ background: null }).changes).toEqual([
+      { field: "background", label: "Background", from: "Lagoon, strength 60%, grain 25%", to: "None" },
+    ]);
+    expect(() => plan({ background: { dots: [] } })).toThrow(/one to 3 dots/);
+    expect(() => plan({ background: { ...lagoon, strength: 2 } })).toThrow(/strength is from 0.1 to 1/);
+  });
+
+  it("is kept when allowed, and put back by undo", async () => {
+    const done = handle(request("settings_change", { background: lagoon }));
+    await settle();
+    expect(settingsAsk.asking?.ground).not.toBeNull();
+    allowChange();
+    await done;
+    expect(theme.backgrounds).toEqual({ teal: lagoon });
+    expect(sets.at(-1)).toEqual({ backgrounds: { teal: lagoon } });
+    expect(document.documentElement.dataset.background).toBe("");
+    undoChange();
+    expect(theme.backgrounds).toEqual({});
+    expect(document.documentElement.dataset.background).toBeUndefined();
+  });
+
+  it("is saved with a theme, kept when the theme is saved again without one, and goes with it", async () => {
+    const done = handle(request("theme_save", { ...dusk, background: lagoon }));
+    await settle();
+    expect(settingsAsk.asking?.changes.map((change) => change.label)).toEqual(["Theme", "Palette", "Background"]);
+    expect(settingsAsk.asking?.ground?.dark).toMatch(/^linear-gradient/);
+    allowChange();
+    await done;
+    expect(theme.backgrounds).toEqual({ dusk: lagoon });
+    expect(sets.at(-1)).toMatchObject({ palette: "dusk", backgrounds: { dusk: lagoon } });
+    expect(planTheme({ ...dusk, label: "Dusk two" }).next.backgrounds).toBeUndefined();
+    setThemes({});
+    expect(theme.backgrounds).toEqual({});
   });
 });
 

@@ -143,6 +143,18 @@ struct IntegratedStartParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct IntegratedHistoryParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    session: String,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IntegratedTrustParams {
     agent: String,
     project: PathBuf,
@@ -505,6 +517,16 @@ pub fn dispatch(
             let p: IdParams = parse(params)?;
             value(core.integrated_snapshot(&p.id)?)
         }
+        "integrated_history" => {
+            let p: IntegratedHistoryParams = parse(params)?;
+            value(core.integrated_history(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                &p.session,
+                p.config_dir.as_deref(),
+            ))
+        }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;
             core.integrated_stop(&p.id)?;
@@ -764,6 +786,54 @@ mod tests {
         )
         .unwrap();
         assert_eq!(one, lists[1]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // The history of a Claude Code session goes out as the events a live
+    // one sends, each with its time; an agent with no reader here answers
+    // with none.
+    #[test]
+    fn a_conversations_history_comes_back_as_timed_events() {
+        let dir = Scratch::absent("protocol-history");
+        let project = std::path::Path::new("/projects/demo");
+        let folder = crate::transcripts::directory_for(&dir, project);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("s1.jsonl"),
+            concat!(
+                r#"{"type":"user","uuid":"u-1","parentUuid":null,"timestamp":"2026-03-04T10:00:00Z","message":{"role":"user","content":"hello"}}"#,
+                "\n",
+                r#"{"type":"assistant","uuid":"a-1","parentUuid":"u-1","timestamp":"2026-03-04T10:00:01Z","message":{"id":"m","model":"claude-sonnet-5-5","content":[{"type":"text","text":"Hi."}],"stop_reason":"end_turn"}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let params = |agent: &str| {
+            json!({
+                "agent": agent,
+                "project": "/projects/demo",
+                "session": "s1",
+                "configDir": dir.to_string_lossy(),
+            })
+        };
+        let history = dispatch(
+            &core(),
+            "integrated_history",
+            params("claude-code"),
+            no_output,
+        )
+        .unwrap();
+        assert_eq!(history["cut"], false);
+        let items = history["items"].as_array().unwrap();
+        assert_eq!(items[0]["at"], 1_772_618_400_000u64);
+        assert_eq!(items[0]["event"]["type"], "message");
+        assert_eq!(items[0]["event"]["text"], "hello");
+        assert_eq!(items[1]["event"]["type"], "turnStarted");
+        assert_eq!(items[1]["model"], "claude-sonnet-5-5");
+        assert_eq!(items[2]["event"]["type"], "text");
+        assert_eq!(items[3]["event"]["type"], "turnEnded");
+        let none = dispatch(&core(), "integrated_history", params("codex"), no_output).unwrap();
+        assert_eq!(none, Value::Null);
         std::fs::remove_dir_all(&dir).ok();
     }
 

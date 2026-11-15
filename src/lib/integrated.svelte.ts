@@ -15,6 +15,7 @@ import {
   type PermissionChoice,
 } from "$lib/core";
 import { Conversation, type Part } from "$lib/conversation.svelte";
+import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import {
   nameTaken,
   adopt,
@@ -270,6 +271,8 @@ export async function launch(key: string): Promise<void> {
   if (link.handle !== null || link.busy) return;
   link.busy = true;
   link.untrusted = false;
+  // What a resumed session said before goes above what this run says.
+  earlierAtStart(session, link.conversation);
   try {
     const started = await core().integratedStart({
       agent: session.agent,
@@ -383,13 +386,21 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
     byHandle.set(handle, key);
     link.held = claim(handle);
     try {
-      const snapshot = await core().integratedSnapshot(handle);
+      const snapshotting = core().integratedSnapshot(handle);
+      // What it said before goes above what is heard meanwhile.
+      const row = byKey(key);
+      const earlier =
+        row !== null && link.conversation.earlier === null && link.conversation.entries.length === 0
+          ? layEarlier(row, link.conversation, runFrom(snapshotting))
+          : null;
+      const snapshot = await snapshotting;
       const session = byKey(key);
       if (
         session === null ||
         (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id)
       )
         throw new Error("another session");
+      await earlier;
       const held = link.held ?? [];
       link.held = null;
       link.handle = handle;
@@ -398,8 +409,9 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       const before = link.conversation.state;
       link.conversation.restore(snapshot);
       if (snapshot.limits !== null) heardLimits(hostOf(session.project), session.account, snapshot.limits);
-      // Only a session that was spoken to has earlier messages to point at.
-      link.conversation.late = spoken;
+      // Only a session that was spoken to has earlier messages to point
+      // at, where they could not be read.
+      link.conversation.late = spoken && link.conversation.earlier !== "read";
       // The same session goes on, not one resumed from its transcript: it
       // keeps the name it had.
       session.resumedFrom = null;
