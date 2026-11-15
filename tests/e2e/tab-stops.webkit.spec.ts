@@ -8,9 +8,33 @@ import { PROJECT, installFakeCore } from "./fake";
 // with the arrows; a dialog, the palette and a question in a strip keep
 // Tab inside; a pane narrowed away or under a dialog takes none. Each walk
 // names what has the keyboard at each step, which is the same in both.
+// The walks that pass the window's own controls run as each platform the
+// app tells apart, whatever the machine.
 
 const MOD = "ControlOrMeta";
 const TREE = "[data-testid='file-tree']";
+
+/** The platforms the app tells apart, by what the browser reports. On
+    macOS the system draws the window's controls. On Linux and Windows the
+    app draws them at the end of the rightmost header, after the corner,
+    and a menu button at the start of the leftmost; each is a stop where it
+    stands. The app's chords there are Ctrl's. */
+const PLATFORMS = [
+  { name: "macOS", reported: "MacIntel", mod: "Meta", menu: [] as string[], controls: [] as string[] },
+  {
+    name: "Linux",
+    reported: "Linux x86_64",
+    mod: "Control",
+    menu: ["app-menu"],
+    controls: ["Minimize", "Maximize", "Close"],
+  },
+];
+type Platform = (typeof PLATFORMS)[number];
+
+/** The stop `holder` names `name`. */
+function stop(page: Page, name: string) {
+  return page.locator(`[data-testid="${name}"], [aria-label="${name}"]:not([data-testid])`);
+}
 
 /** What has the keyboard: its test id, else its label, else its tag. */
 function holder(page: Page) {
@@ -113,7 +137,14 @@ async function walk(page: Page, key: string, times: number) {
   return names;
 }
 
-async function open(page: Page, width = 1440) {
+/** Opens the window, taking itself for `platform` when one is given and
+    for the machine's own otherwise. */
+async function open(page: Page, width = 1440, platform?: Platform) {
+  if (platform !== undefined)
+    await page.addInitScript(
+      (reported) => Object.defineProperty(Navigator.prototype, "platform", { get: () => reported }),
+      platform.reported,
+    );
   await page.setViewportSize({ width, height: 900 });
   await installFakeCore(page, {
     open: [PROJECT],
@@ -125,24 +156,29 @@ async function open(page: Page, width = 1440) {
 
 const tree = (page: Page, name: string) => page.locator(TREE).getByText(name, { exact: true });
 
-test("walks the panes in reading order, and back", async ({ page }) => {
-  await open(page);
-  await page.getByTestId("sessions-nav").focus();
-  const forward = [
-    "Resize projects and sessions",
-    "start-other",
-    "start-agent",
-    "Resize changes",
-    "toggle-right",
-    "mode-agent",
-    "search-field",
-    "mode-files",
-    "changes-menu",
-    "file-tree",
-  ];
-  expect(await walk(page, "Tab", forward.length)).toEqual(forward);
-  expect(await walk(page, "Shift+Tab", forward.length)).toEqual([...forward.slice(0, -1).reverse(), "sessions-nav"]);
-});
+for (const platform of PLATFORMS)
+  test(`walks the panes in reading order, and back, on ${platform.name}`, async ({ page }) => {
+    await open(page, 1440, platform);
+    // From the window's first stop to its last.
+    const stops = [
+      ...platform.menu,
+      "sessions-nav",
+      "Resize projects and sessions",
+      "start-other",
+      "start-agent",
+      "Resize changes",
+      "toggle-right",
+      "mode-agent",
+      ...platform.controls,
+      "search-field",
+      "mode-files",
+      "changes-menu",
+      "file-tree",
+    ];
+    await page.getByTestId(stops[0]).focus();
+    expect(await walk(page, "Tab", stops.length - 1)).toEqual(stops.slice(1));
+    expect(await walk(page, "Shift+Tab", stops.length - 1)).toEqual(stops.slice(0, -1).reverse());
+  });
 
 test("presses a header button by Enter, and walks its menu with the arrows", async ({ page }) => {
   await open(page);
@@ -180,40 +216,51 @@ test("walks the lines found as one stop, with Up and Down", async ({ page }) => 
   await expect(page.getByTestId("search-hit").first()).toBeFocused();
 });
 
-test("walks the corner's switch with the arrows and flips the mode with Space", async ({ page }) => {
-  await open(page);
-  await page.getByTestId("search-field").focus();
-  expect(await walk(page, "Shift+Tab", 2)).toEqual(["mode-agent", "toggle-right"]);
-  await page.keyboard.press("Tab");
-  // One stop: the arrows move the keyboard, and only Space or Enter picks.
-  expect(await walk(page, "ArrowRight", 1)).toEqual(["mode-editor"]);
-  await expect(page.getByTestId("mode-readout")).toHaveText("working");
-  await expect(page.getByTestId("mode-agent")).toHaveAttribute("tabindex", "-1");
-  // Still one stop after the arrow: Shift+Tab leaves the switch at once.
-  expect(await walk(page, "Shift+Tab", 1)).toEqual(["toggle-right"]);
-  expect(await walk(page, "Tab", 2)).toEqual(["mode-agent", "search-field"]);
-  expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
-  await page.keyboard.press("ArrowRight");
-  expect(await walk(page, "Tab", 1)).toEqual(["search-field"]);
-  expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("Space");
-  await expect(page.getByTestId("mode-readout")).toHaveText("editing");
-  // The keyboard goes where the mode puts it: the tree, with nothing open.
-  await expect(page.locator(TREE)).toBeFocused();
-});
+for (const platform of PLATFORMS)
+  test(`walks the corner's switch with the arrows and flips the mode with Space, on ${platform.name}`, async ({ page }) => {
+    await open(page, 1440, platform);
+    // The stop after the switch: the window's own controls where the app
+    // draws them, else the changes pane's field.
+    const next = platform.controls[0] ?? "search-field";
+    await stop(page, next).focus();
+    expect(await walk(page, "Shift+Tab", 2)).toEqual(["mode-agent", "toggle-right"]);
+    await page.keyboard.press("Tab");
+    // One stop: the arrows move the keyboard, and only Space or Enter picks.
+    expect(await walk(page, "ArrowRight", 1)).toEqual(["mode-editor"]);
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("mode-agent")).toHaveAttribute("tabindex", "-1");
+    // Still one stop after the arrow: Shift+Tab leaves the switch at once.
+    expect(await walk(page, "Shift+Tab", 1)).toEqual(["toggle-right"]);
+    expect(await walk(page, "Tab", 2)).toEqual(["mode-agent", next]);
+    expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
+    await page.keyboard.press("ArrowRight");
+    expect(await walk(page, "Tab", 1)).toEqual([next]);
+    expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Space");
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    // The keyboard goes where the mode puts it: the tree, with nothing open.
+    await expect(page.locator(TREE)).toBeFocused();
+  });
 
-test("keeps the keyboard on the corner when its button hides the pane it stands in", async ({ page }) => {
-  await open(page);
-  await page.getByTestId("search-field").focus();
-  expect(await walk(page, "Shift+Tab", 2)).toEqual(["mode-agent", "toggle-right"]);
-  await page.keyboard.press("Enter");
-  await expect(page.locator("section[data-pane='changes']")).toHaveCount(0);
-  expect(await holder(page)).toBe("toggle-right");
-  await page.keyboard.press("Enter");
-  await expect(page.locator("section[data-pane='changes']")).toBeVisible();
-  expect(await holder(page)).toBe("toggle-right");
-});
+for (const platform of PLATFORMS)
+  test(`keeps the keyboard on the corner when its button hides the pane it stands in, on ${platform.name}`, async ({
+    page,
+  }) => {
+    await open(page, 1440, platform);
+    await stop(page, platform.controls[0] ?? "search-field").focus();
+    expect(await walk(page, "Shift+Tab", 2)).toEqual(["mode-agent", "toggle-right"]);
+    await page.keyboard.press("Enter");
+    await expect(page.locator("section[data-pane='changes']")).toHaveCount(0);
+    expect(await holder(page)).toBe("toggle-right");
+    // The corner ends the agent's header now, and the window's own
+    // controls moved with it, still after the switch.
+    expect(await walk(page, "Tab", 2)).toEqual(["mode-agent", platform.controls[0] ?? "start-other"]);
+    expect(await walk(page, "Shift+Tab", 2)).toEqual(["mode-agent", "toggle-right"]);
+    await page.keyboard.press("Enter");
+    await expect(page.locator("section[data-pane='changes']")).toBeVisible();
+    expect(await holder(page)).toBe("toggle-right");
+  });
 
 test("walks the settings, every section and its controls, and never leaves them", async ({ page }) => {
   await open(page);
@@ -336,22 +383,27 @@ test("keeps Tab in the palette's field", async ({ page }) => {
   await expect(page.getByTestId("palette-field")).toBeFocused();
 });
 
-test("reaches the folded sessions column, and Tab out of the peeked pane puts it back", async ({ page }) => {
-  await open(page);
-  await tree(page, "lib.rs").click();
-  await expect(page.locator("[data-testid='viewer']")).toBeVisible();
-  await page.locator(TREE).focus();
-  expect(await walk(page, "Tab", 3)).toEqual(["Resize the file tree", "viewer-edit", "Close the viewer"]);
-  await page.getByTestId("start-other").focus();
-  expect(await walk(page, "Shift+Tab", 1)).toEqual(["unfold-sessions"]);
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".sessions-slot.peeking")).toHaveCount(1);
-  await expect(page.getByTestId("sessions-nav")).toBeFocused();
-  // The agent's controls are under the peeked pane: Tab does not reach them.
-  await page.keyboard.press("Tab");
-  await expect(page.locator(".sessions-slot.peeking")).toHaveCount(0);
-  await expect(page.locator(TREE)).toBeFocused();
-});
+for (const platform of PLATFORMS)
+  test(`reaches the folded sessions column, and Tab out of the peeked pane puts it back, on ${platform.name}`, async ({
+    page,
+  }) => {
+    await open(page, 1440, platform);
+    await tree(page, "lib.rs").click();
+    await expect(page.locator("[data-testid='viewer']")).toBeVisible();
+    await page.locator(TREE).focus();
+    expect(await walk(page, "Tab", 3)).toEqual(["Resize the file tree", "viewer-edit", "Close the viewer"]);
+    // The menu button, where the app draws one, heads the pane beside the
+    // folded column.
+    await page.getByTestId("start-other").focus();
+    expect(await walk(page, "Shift+Tab", platform.menu.length + 1)).toEqual([...platform.menu, "unfold-sessions"]);
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".sessions-slot.peeking")).toHaveCount(1);
+    await expect(page.getByTestId("sessions-nav")).toBeFocused();
+    // The agent's controls are under the peeked pane: Tab does not reach them.
+    await page.keyboard.press("Tab");
+    await expect(page.locator(".sessions-slot.peeking")).toHaveCount(0);
+    await expect(page.locator(TREE)).toBeFocused();
+  });
 
 test("walks editor mode: the tree, the tab row and the views as one stop each", async ({ page }) => {
   await open(page, 1728);
@@ -549,22 +601,32 @@ test("Delete on a shell's row closes it only once the arrows have walked the row
   await expect.poll(() => holder(page)).not.toBeNull();
 });
 
-test("takes no Tab into a pane narrowed away or under a dialog", async ({ page }) => {
-  await open(page, 660);
-  await expect(page.locator("section[data-pane='changes']")).toHaveCount(0);
-  await expect(page.getByTestId("unfold-sessions")).toBeDisabled();
-  await page.getByTestId("start-agent").focus();
-  const names = await walk(page, "Tab", 6);
-  expect(names).not.toContain("sessions-nav");
-  expect(names).not.toContain("search-field");
-  expect(names).toContain("start-agent");
+for (const platform of PLATFORMS)
+  test(`takes no Tab into a pane narrowed away or under a dialog, on ${platform.name}`, async ({ page }) => {
+    await open(page, 660, platform);
+    await expect(page.locator("section[data-pane='changes']")).toHaveCount(0);
+    await expect(page.getByTestId("unfold-sessions")).toBeDisabled();
+    await page.getByTestId("start-agent").focus();
+    // Once round the window: the agent pane alone, its header then its
+    // body, with no sessions and no search. Past the last stop the
+    // browser's own window has the keyboard for one press.
+    const round = [
+      null,
+      ...platform.menu,
+      "toggle-right",
+      "mode-agent",
+      ...platform.controls,
+      "start-other",
+      "start-agent",
+    ];
+    expect(await walk(page, "Tab", round.length)).toEqual(round);
 
-  await page.keyboard.press(`${MOD}+,`);
-  await expect(page.getByTestId("settings")).toBeVisible();
-  const inside: boolean[] = [];
-  for (let at = 0; at < 20; at++) {
-    await page.keyboard.press(at % 3 === 2 ? "Shift+Tab" : "Tab");
-    inside.push(await page.evaluate(() => document.querySelector("[data-testid='settings']")!.contains(document.activeElement)));
-  }
-  expect(inside.every(Boolean)).toBe(true);
-});
+    await page.keyboard.press(`${platform.mod}+,`);
+    await expect(page.getByTestId("settings")).toBeVisible();
+    const inside: boolean[] = [];
+    for (let at = 0; at < 20; at++) {
+      await page.keyboard.press(at % 3 === 2 ? "Shift+Tab" : "Tab");
+      inside.push(await page.evaluate(() => document.querySelector("[data-testid='settings']")!.contains(document.activeElement)));
+    }
+    expect(inside.every(Boolean)).toBe(true);
+  });
