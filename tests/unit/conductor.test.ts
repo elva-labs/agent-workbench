@@ -770,7 +770,9 @@ describe("the account a started session runs under", () => {
       expect(row.agent).toBe("codex");
       expect(row.account).toBe("Work");
       expect(dirFor(row.account, row.agent)).toBeUndefined();
-      expect(last().content).toContain(`in ${A}, under the Work account.`);
+      expect(last().content).toContain(
+        `in ${A}, under the Work account, which has no Codex directory, so Codex uses the Default one. It has the prompt.`,
+      );
     });
 
     it("is named with no directory for the agent even where it is the project's", async () => {
@@ -929,6 +931,70 @@ describe("the account a started session runs under", () => {
       expect(conductor.asking?.prompt).toBe("Four");
       refuse();
       await settle();
+    });
+
+    it("does not cover an agent the account keeps no directory for", async () => {
+      // Work keeps Claude Code only, so Codex under Work runs on the
+      // agents' own login.
+      accounts.overrides[B] = "Home";
+      caller(A, "Work");
+      const claude = handle(
+        call(
+          "start",
+          { project: B, prompt: "One", agent: "claude-code" },
+          { session: "caller-1" },
+        ),
+      );
+      expect(accountWords(conductor.asking!.named!)).toBe(
+        "Under the Work account, not the project's own.",
+      );
+      allow();
+      await settle();
+      started(forProject(B).at(-1)!.key, "pty-1", "sid-1");
+      flushSync();
+      await claude;
+
+      // Codex under Work is asked about, and the question and the answer
+      // say what it runs on.
+      const codex = handle(
+        call(
+          "start",
+          { project: B, prompt: "Two", agent: "codex" },
+          { session: "caller-1" },
+        ),
+      );
+      expect(conductor.asking?.prompt).toBe("Two");
+      expect(accountWords(conductor.asking!.named!)).toBe(
+        "Under the Work account, not the project's own. Work has no Codex directory, so Codex uses the Default one.",
+      );
+      allow();
+      await settle();
+      const row = forProject(B).at(-1)!;
+      started(row.key, "pty-2", "sid-2");
+      flushSync();
+      await codex;
+      expect(row.agent).toBe("codex");
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(
+        `in ${B}, under the Work account, which has no Codex directory, so Codex uses the Default one. It has the prompt.`,
+      );
+
+      // That answer stands for Codex under Work from now on, and the one
+      // for Claude Code under Work still does too.
+      for (const [agent, id] of [
+        ["codex", "sid-3"],
+        ["claude-code", "sid-4"],
+      ]) {
+        const again = handle(
+          call("start", { project: B, prompt: "More", agent }, { session: "caller-1" }),
+        );
+        expect(conductor.asking).toBeNull();
+        await settle();
+        started(forProject(B).at(-1)!.key, `pty-${id}`, id);
+        flushSync();
+        await again;
+        expect(last().content).toContain(`Started session ${id}`);
+      }
     });
 
     it("lists a project once, whatever accounts it was given under", async () => {
@@ -2842,7 +2908,7 @@ describe("starting in a workflow's shape", () => {
         "Under the project's account, Work. Work has no Codex directory, so Codex uses the Default one.",
       );
       expect(last().content).toContain(
-        `Started session w1 for step "Work" in ${B}, under the project's account, Work.`,
+        `Started session w1 for step "Work" in ${B}, under the project's account, Work, which has no Codex directory, so Codex uses the Default one. It has the prompt.`,
       );
     });
   });

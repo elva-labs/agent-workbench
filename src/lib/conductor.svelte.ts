@@ -195,11 +195,20 @@ export interface Ask {
       review, the work it checks and how many rounds it has had. The user's
       yes lets this one round through. */
   round: Beyond | null;
-  /** The account the session would run under, by name; null for the
-      agents' own. */
-  account: string | null;
+  /** What the session would run on, which a standing answer is kept by.
+      Null for a round of an existing session, which neither takes a
+      standing answer nor gives one. */
+  login: Login | null;
   /** What the question says of the account, when it names it. */
   named: Named | null;
+}
+
+/** What a started session runs on: the account, by name, null for the
+    agents' own, and the agent when the account keeps no directory for it,
+    so the agent runs on its own. */
+export interface Login {
+  account: string | null;
+  bare: AgentId | null;
 }
 
 /** A round of a review past the workflow's limit, which only the user can
@@ -239,9 +248,12 @@ export function accountWords(named: Named): string {
 /** What the answer to a start says of the account, after where it runs. */
 function underWords(named: Named | null): string {
   if (named === null) return "";
-  return named.projects
+  const which = named.projects
     ? `, under the project's account, ${named.label}`
     : `, under the ${named.label} account`;
+  if (named.bare === null) return which;
+  const agent = agentLabel(named.bare);
+  return `${which}, which has no ${agent} directory, so ${agent} uses the ${OWN_LABEL} one`;
 }
 
 /** What the user answered: allowed from now on, allowed this once, or no. */
@@ -963,16 +975,15 @@ async function startFitted(
   const wants = flag(request, "worktree");
   const agent = fit?.agent ?? agentOf(request, project);
   const { account, say } = underFor(request, project, agent, wanted);
+  const bare =
+    account !== null && dirFor(account, agent) === undefined ? agent : null;
   // The account is said to the user in the question and to the caller in
   // the answer.
   const named: Named | null = say
     ? {
         label: accountLabel(account),
         projects: account === accountOf(project),
-        bare:
-          account !== null && dirFor(account, agent) === undefined
-            ? agent
-            : null,
+        bare,
       }
     : null;
   const beyond = fit?.beyond ?? null;
@@ -981,7 +992,7 @@ async function startFitted(
     project,
     prompt,
     wants,
-    account,
+    { account, bare },
     named,
     beyond,
   );
@@ -1501,7 +1512,7 @@ async function resumeSession(
         project,
         prompt ?? "",
         false,
-        entry.account ?? null,
+        null,
         null,
         beyond,
       )) === "no"
@@ -1629,7 +1640,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
           session.project,
           typed,
           false,
-          session.account,
+          null,
           null,
           beyond,
         )) === "no"
@@ -1913,21 +1924,23 @@ function agentOf(request: ConductRequest, project: string): AgentId {
 
 /**
  * Puts the question to the user, unless this caller already has a
- * standing answer for the project and the account. A question that
- * arrives while another is up waits behind it.
+ * standing answer for the project and what the session would run on. A
+ * round past a review's limit is always asked. A question that arrives
+ * while another is up waits behind it.
  */
 function askUser(
   request: ConductRequest,
   project: string,
   prompt: string,
   worktree: boolean,
-  account: string | null,
+  login: Login | null,
   named: Named | null,
   round: Beyond | null = null,
 ): Promise<Choice> {
   if (
     round === null &&
-    allowed.has(allowance(callerOf(request), project, account))
+    login !== null &&
+    allowed.has(allowance(callerOf(request), project, login))
   )
     return Promise.resolve("allow");
   const session = callingSession(request);
@@ -1938,7 +1951,7 @@ function askUser(
     prompt: prompt.split("\n")[0],
     worktree,
     round,
-    account,
+    login,
     named,
   };
   return new Promise<Choice>((settle) => {
@@ -1961,8 +1974,13 @@ function answerAsk(choice: Choice) {
   conductor.asking = null;
   pending = null;
   // A round past the limit is allowed once, whatever the button.
-  if (ask !== null && choice === "allow" && ask.round === null)
-    allowed.add(allowance(callerOf(ask.request), ask.project, ask.account));
+  if (
+    ask !== null &&
+    choice === "allow" &&
+    ask.round === null &&
+    ask.login !== null
+  )
+    allowed.add(allowance(callerOf(ask.request), ask.project, ask.login));
   settle?.(choice);
   nextAsk();
 }
@@ -2002,16 +2020,18 @@ export function revoke(callerId: string, project: string) {
   }
 }
 
-/** A standing answer: the caller, the project, and the account the
-    sessions it allowed run under. */
-type Allowance = [string, string, string | null];
+/** A standing answer: the caller, the project, and what the sessions it
+    allowed run on, the account and the agent where the account keeps no
+    directory for it. */
+type Allowance = [string, string, string | null, AgentId | null];
 
-function allowance(
-  caller: string,
-  project: string,
-  account: string | null,
-): string {
-  return JSON.stringify([caller, project, account] satisfies Allowance);
+function allowance(caller: string, project: string, login: Login): string {
+  return JSON.stringify([
+    caller,
+    project,
+    login.account,
+    login.bare,
+  ] satisfies Allowance);
 }
 
 /** Null once a row's process is up, else why it is not: the row failed,

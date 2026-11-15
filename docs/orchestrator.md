@@ -241,11 +241,14 @@ project was allowed. It says the project the round runs in, then names the
 review and the work by the names the user sees, "Review has run twice on
 Fix the cache, as many times as the workflow allows. Allow another round?",
 with Allow one more round or Stop at the limit. An allowed caller is
-remembered for that project and the account the session ran under, for as
-long as the app runs, so a later start there under another account is asked
-about again. A refusal is an answer the agent reads, not an error. Bringing
-back a session it already started is never asked about: the consent was
-given when the session was, and the resumed session is that one going on.
+remembered for that project and what the session ran on, for as long as the
+app runs: the account, and the agent too where the account keeps no
+directory for it, since that agent then runs on its own. A later start
+there under another account, or under the same account by an agent it keeps
+no directory for, is asked about again. A refusal is an answer the agent
+reads, not an error. Bringing back a session it already started is never
+asked about: the consent was given when the session was, and the resumed
+session is that one going on.
 
 Once there are accounts to tell apart, the question names the account the
 session would run under when it is not the project's own, when the starter
@@ -254,8 +257,9 @@ on, and when an account handed on keeps no directory for the agent being
 started. When the account it names keeps no directory for that agent, it
 says the agent uses its own. A round of review that would start a session
 names the account in the same cases, after the project. The answer the
-caller gets to its start names the account in the same cases, a start for a
-step of a workflow as well as any other.
+caller gets to its start names the account in the same cases and says when
+the agent uses its own directory, for a start for a step of a workflow as
+well as any other.
 
 A session started by another may not start any of its own, and no session
 may have more than eight running at a time.
