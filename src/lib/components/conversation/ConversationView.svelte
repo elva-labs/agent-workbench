@@ -44,7 +44,7 @@
       agent dropped stays in the thread, where it happened; one that never
       reached it leaves the thread for the composer. */
   function putBack(message: Message) {
-    const text = spoken(message.text).text;
+    const text = spoken(message.text, senderOf(message) === null).text;
     link.draft = link.draft.trim() === "" ? text : `${text}\n${link.draft}`;
     link.images = [...message.images, ...link.images];
     if (!message.placed) conversation.forget(message.id);

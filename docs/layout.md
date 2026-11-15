@@ -62,6 +62,65 @@ the pane focus. The switch is one stop for Tab, walked with the arrows, and
 a press from the keyboard that moves the corner to another header keeps the
 keyboard on it there.
 
+## The status bar
+
+The status bar is the row along the window's foot. From the left it names
+the pane that has the keyboard and the window's mode, then what the session
+on screen runs on, its model and its effort, then the account the session
+runs under, once accounts are named, with that account's allowance. At the
+right end stand how many sessions wait for you and, just before it, a word
+in passing, such as a new zoom, so they keep their place whatever the
+figures do. With no session on screen only the focus, the mode and those
+two remain.
+
+For an integrated session the model and the effort are what the agent last
+said it runs on. Each opens a small menu of the choices the agent offers,
+the same menu the composer opens for the model, and a choice there changes
+the session as it does from the composer. A model the agent offers with no
+efforts shows no effort at all; where nothing says which efforts the model
+takes, the effort the agent last named shows as plain text. A terminal
+session's model is the one
+the workbench started it on, as plain text, since the agent owns any change
+in its terminal; one started on the agent's own default shows none, and its
+effort is not known.
+
+The allowance is the share used of each limit window the agent reported for
+the account, as text: `5h 11%  Week 34%  Fable 52%` for the five hour window,
+the week, and the week for one model. Only the windows the account has are
+drawn, and only once an integrated session on the account has reported
+them, as [integrated sessions](integrated.md#account-limits) describes;
+nothing is fetched to fill them. The figures belong to the account on its
+machine, so a terminal session on the same account shows what an integrated
+one reported, and the newest report wins whichever session sent it. A share
+is rounded, and reads 100% only when the window is used up.
+
+A window near its end, as the agent reads it, or from 80% used where the
+agent gives no reading, takes the theme's warning tone in a heavier weight.
+One used up takes the error tone and says when it resets. A window whose
+reset time has passed reads as reset until new figures come. Figures older
+than fifteen minutes are followed by a small clock and their age. A session
+reads them when it is ready and after a turn at most every five minutes, so
+figures that old mean no turn on the account has ended in a while. The age
+is that of the last full read, since what the agent pushes during a turn
+moves only some of the windows.
+
+A click on the allowance opens a popover with every window: a meter, the
+share used and when it resets in words, such as `resets in 2 h 10 min` or
+`resets Thursday 9:00`, with the account and its plan above and how old
+the figures are below. Where some figures moved after the last full read,
+it says how old each part is: `Some figures are from just now, the rest
+from 20 min ago`. How the bar's menus and the popover take the
+keyboard and give it back is in the [focus model](focus-model.md#the-status-bar).
+
+Short of room, the bar lets its parts go in this order: the focus and the
+mode, then the word `account:`, then every figure but the one nearest its
+end, then that figure's reset time. It measures what fits rather than going
+by the window's width, and only after all four are the model and the
+account's name cut short. What waits for you is never cut. The word in
+passing takes no room in that measure, so nothing gives way for it: where
+the space before what waits is shorter than the word, the word is drawn
+over the parts before it until it goes.
+
 ## What gives way, in order
 
 The agent pane is a character grid, and below a certain width a TUI stops

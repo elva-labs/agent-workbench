@@ -15,8 +15,10 @@
 //! log is the agent's word, quarantined like the session log: a line that
 //! does not parse is skipped.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -185,6 +187,11 @@ pub const CONDUCT_TOOLS: &[&str] = &[
     "projects", "sessions", "start", "send", "stop", "wait", "read",
 ];
 
+/// The conductor's call that is no tool of the agent's: a session's prompt
+/// hook asks it as the user's message goes in, for what the sessions that
+/// session started did since it last looked.
+pub const CONDUCT_PROMPT: &str = "prompt";
+
 /// A call the agent made on one of the conductor's tools. The window
 /// answers it, and the answer goes where the tool server waits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -192,7 +199,7 @@ pub const CONDUCT_TOOLS: &[&str] = &[
 pub struct ConductRequest {
     /// What the answer file is named after, unique to this call.
     pub id: String,
-    /// One of [`CONDUCT_TOOLS`].
+    /// One of [`CONDUCT_TOOLS`], or [`CONDUCT_PROMPT`].
     pub tool: String,
     #[serde(default)]
     pub arguments: serde_json::Value,
@@ -298,6 +305,83 @@ pub struct Answer {
     pub error: Option<String>,
 }
 
+/// Where a core that hands the window its calls says it is there: written
+/// again every few seconds while it runs, with its version. A prompt hook
+/// asks the window only while this is fresh, so with no such core here, or
+/// only one that does not answer the hook, the prompt goes on at once.
+pub fn heartbeat_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("answering")
+}
+
+/// How often the heartbeat is written, and how old it may be and still say
+/// a core is there.
+pub const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
+pub const HEARTBEAT_STALE: Duration = Duration::from_secs(15);
+
+/// Writes the heartbeat, into the workbench's directory only where it is
+/// already there.
+pub fn beat(home: &Path) -> std::io::Result<()> {
+    std::fs::write(heartbeat_path(home), env!("CARGO_PKG_VERSION"))
+}
+
+/// Whether a core that hands the window its calls has written its
+/// heartbeat lately.
+pub fn answering(home: &Path) -> bool {
+    std::fs::metadata(heartbeat_path(home))
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|written| written.elapsed().map_or(true, |age| age <= HEARTBEAT_STALE))
+}
+
+/// Milliseconds since the epoch, on this machine's clock.
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+}
+
+/// How long a prompt call whose answer never came is remembered.
+const DEADLINE_KEPT: u64 = 60_000;
+
+/// The prompt calls the window has not answered yet, each with the time,
+/// in milliseconds since the epoch on this machine's clock, after which
+/// its hook no longer reads an answer. The hook and this core share the
+/// machine, and so the clock.
+#[derive(Default)]
+pub struct Deadlines(Mutex<HashMap<String, u64>>);
+
+impl Deadlines {
+    /// Keeps the deadline a prompt call carries.
+    pub fn note(&self, request: &ConductRequest) {
+        if request.tool != CONDUCT_PROMPT {
+            return;
+        }
+        let Some(deadline) = request
+            .arguments
+            .get("deadline")
+            .and_then(serde_json::Value::as_u64)
+        else {
+            return;
+        };
+        let mut kept = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = now_ms();
+        kept.retain(|_, until| until.saturating_add(DEADLINE_KEPT) > now);
+        kept.insert(request.id.clone(), deadline);
+    }
+
+    /// Whether an answer to this call may still be left: it is no prompt
+    /// call, or its hook is still waiting. The call is forgotten either way.
+    pub fn open(&self, id: &str) -> bool {
+        let mut kept = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        kept.remove(id).is_none_or(|deadline| now_ms() <= deadline)
+    }
+}
+
 pub fn requests_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("requests.jsonl")
 }
@@ -394,7 +478,8 @@ pub fn classify(line: &str) -> Option<Request> {
         }
         Request::Conduct(conduct) => {
             if !valid_id(&conduct.id)
-                || !CONDUCT_TOOLS.contains(&conduct.tool.as_str())
+                || !(CONDUCT_TOOLS.contains(&conduct.tool.as_str())
+                    || conduct.tool == CONDUCT_PROMPT)
                 || conduct.cwd.is_empty()
             {
                 return None;
@@ -663,7 +748,7 @@ mod tests {
         assert_eq!(request.arguments["prompt"], "Fix the flake");
         assert_eq!(request.cwd, "/p");
         assert_eq!(request.session.as_deref(), Some("s-1"));
-        for tool in CONDUCT_TOOLS {
+        for tool in CONDUCT_TOOLS.iter().chain([&CONDUCT_PROMPT]) {
             let line = format!(r#"{{"kind":"conduct","id":"c-1","tool":"{tool}","cwd":"/p"}}"#);
             assert!(classify(&line).is_some(), "{tool}");
         }
@@ -674,6 +759,58 @@ mod tests {
             classify(r#"{"kind":"conduct","id":"../out","tool":"start","cwd":"/p"}"#).is_none()
         );
         assert!(classify(r#"{"kind":"conduct","id":"","tool":"start","cwd":"/p"}"#).is_none());
+    }
+
+    fn prompt_call(id: &str, deadline: Option<u64>) -> ConductRequest {
+        ConductRequest {
+            id: id.to_string(),
+            tool: CONDUCT_PROMPT.to_string(),
+            arguments: match deadline {
+                Some(deadline) => serde_json::json!({ "deadline": deadline }),
+                None => serde_json::json!({}),
+            },
+            cwd: "/p".to_string(),
+            session: None,
+        }
+    }
+
+    // An answer to a prompt call may be left only while its hook still
+    // waits; any other call's answer may always be left.
+    #[test]
+    fn a_prompt_call_takes_an_answer_only_before_its_deadline() {
+        let deadlines = Deadlines::default();
+        deadlines.note(&prompt_call("waiting", Some(now_ms() + 60_000)));
+        deadlines.note(&prompt_call("gone", Some(now_ms() - 1)));
+        deadlines.note(&prompt_call("undated", None));
+        assert!(deadlines.open("waiting"));
+        assert!(!deadlines.open("gone"));
+        assert!(deadlines.open("undated"));
+        assert!(deadlines.open("a-wait-or-a-browser-call"));
+        // Forgotten once answered.
+        assert!(deadlines.open("gone"));
+    }
+
+    #[test]
+    fn the_heartbeat_says_a_core_is_there_while_it_is_fresh() {
+        let home = Scratch::new("show-heartbeat");
+        assert!(!answering(&home));
+        // Written only where the workbench's directory already is.
+        assert!(beat(&home).is_err());
+        std::fs::create_dir_all(home.join(".agent-workbench")).unwrap();
+        beat(&home).unwrap();
+        assert!(answering(&home));
+        assert_eq!(
+            std::fs::read_to_string(heartbeat_path(&home)).unwrap(),
+            env!("CARGO_PKG_VERSION")
+        );
+        let old = SystemTime::now() - HEARTBEAT_STALE - Duration::from_secs(1);
+        std::fs::File::options()
+            .write(true)
+            .open(heartbeat_path(&home))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(!answering(&home));
     }
 
     #[test]

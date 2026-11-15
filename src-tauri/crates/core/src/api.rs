@@ -82,6 +82,9 @@ pub struct Core {
     plugins: Option<crate::plugins::Plugins>,
     /// None without a home directory, for the same reason.
     settings: Option<Arc<crate::settings::Store>>,
+    /// The prompt calls the window has yet to answer, each with the time
+    /// its hook stops waiting.
+    deadlines: Arc<crate::show::Deadlines>,
 }
 
 /// The sink the core hands to the ptys and the watcher: everything reaches
@@ -146,6 +149,7 @@ impl Core {
             home,
             plugins,
             settings,
+            deadlines: Arc::default(),
         }
     }
 
@@ -302,6 +306,7 @@ impl Core {
                 let plugins = self.plugins.clone();
                 let sink = Arc::clone(&self.sink);
                 let browser_sink = Arc::clone(&self.sink);
+                let deadlines = Arc::clone(&self.deadlines);
                 crate::show::watch(
                     Arc::clone(&self.sink),
                     crate::show::requests_path(home),
@@ -310,11 +315,21 @@ impl Core {
                             plugins.call(request);
                         }
                     },
-                    move |request| events::emit(&sink, crate::show::CONDUCT_REQUEST, &request),
+                    move |request| {
+                        deadlines.note(&request);
+                        events::emit(&sink, crate::show::CONDUCT_REQUEST, &request)
+                    },
                     move |request| {
                         events::emit(&browser_sink, crate::show::BROWSER_REQUEST, &request)
                     },
                 )?;
+                // A prompt hook asks the window only while this core says it
+                // is here.
+                let beating = home.clone();
+                std::thread::spawn(move || loop {
+                    let _ = crate::show::beat(&beating);
+                    std::thread::sleep(crate::show::HEARTBEAT_EVERY);
+                });
                 // Starting the plugins reads manifests and spawns runtimes,
                 // which is not for the thread the window is being drawn on.
                 if let Some(plugins) = self.plugins.clone() {
@@ -400,11 +415,14 @@ impl Core {
         // can reach it.
         let server = match (instructions, self.home.as_deref()) {
             (None, _) => None,
-            (Some(_), Some(home)) => match hook::tool_server(home, project, agent, config_dir) {
-                hook::ToolServer::Configured => None,
-                hook::ToolServer::Named(daemon) => Some(daemon),
-                hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
-            },
+            (Some(_), Some(home)) => {
+                match hook::tool_server(home, project, agent, config_dir, &env::environment().vars)
+                {
+                    hook::ToolServer::Configured => None,
+                    hook::ToolServer::Named(daemon) => Some(daemon),
+                    hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
+                }
+            }
             (Some(_), None) => return Err(NO_TOOLS.into()),
         };
         // An agent that reads the instructions and the server from files is
@@ -709,7 +727,12 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        Ok(hook::status(home, project, accounts))
+        Ok(hook::status(
+            home,
+            project,
+            accounts,
+            &env::environment().vars,
+        ))
     }
 
     /// The status of each project, in the order given, from one read of
@@ -720,7 +743,12 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<Vec<hook::HookStatus>, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        Ok(hook::status_many(home, projects, accounts))
+        Ok(hook::status_many(
+            home,
+            projects,
+            accounts,
+            &env::environment().vars,
+        ))
     }
 
     pub fn hook_install(
@@ -729,7 +757,7 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        hook::install(home, project, accounts)
+        hook::install(home, project, accounts, &env::environment().vars)
     }
 
     pub fn hook_uninstall(
@@ -738,7 +766,7 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        hook::uninstall(home, project, accounts)
+        hook::uninstall(home, project, accounts, &env::environment().vars)
     }
 
     /// Sessions an agent has already had in this project, newest first,
@@ -754,7 +782,10 @@ impl Core {
             return Vec::new();
         };
         match agent {
-            "claude-code" => transcripts::list(&account::claude_dir(home, config_dir), project),
+            "claude-code" => transcripts::list(
+                &account::claude_dir(home, config_dir, &env::environment().vars),
+                project,
+            ),
             "codex" => codex::list(&account::codex_home(home, config_dir), project),
             _ => Vec::new(),
         }
@@ -772,9 +803,10 @@ impl Core {
             return vec![Vec::new(); projects.len()];
         };
         match agent {
-            "claude-code" => {
-                transcripts::list_many(&account::claude_dir(home, config_dir), projects)
-            }
+            "claude-code" => transcripts::list_many(
+                &account::claude_dir(home, config_dir, &env::environment().vars),
+                projects,
+            ),
             "codex" => codex::list_many(&account::codex_home(home, config_dir), projects),
             _ => vec![Vec::new(); projects.len()],
         }
@@ -864,7 +896,9 @@ impl Core {
     }
 
     /// The answer to a call on one of the conductor's tools, left where
-    /// the tool server that made the call is waiting for it.
+    /// the tool server that made the call is waiting for it. A prompt call
+    /// whose hook has stopped waiting gets none, and the window hears so:
+    /// nothing in it reached the agent.
     pub fn conduct_answer(
         &self,
         id: &str,
@@ -872,6 +906,9 @@ impl Core {
         error: Option<String>,
     ) -> Result<(), String> {
         let home = self.home.as_deref().ok_or("no home directory")?;
+        if !self.deadlines.open(id) {
+            return Err("the prompt hook stopped waiting for this answer".to_string());
+        }
         crate::show::write_answer(home, id, &crate::show::Answer { content, error })
     }
 
@@ -919,8 +956,20 @@ impl Core {
         // without them still runs, read off its output, so a failure to give
         // them is logged rather than refused.
         if let Some(home) = &self.home {
-            hook::trust_like(home, project, Path::new(&path), accounts)?;
-            if let Err(error) = hook::share(home, project, Path::new(&path), accounts) {
+            hook::trust_like(
+                home,
+                project,
+                Path::new(&path),
+                accounts,
+                &env::environment().vars,
+            )?;
+            if let Err(error) = hook::share(
+                home,
+                project,
+                Path::new(&path),
+                accounts,
+                &env::environment().vars,
+            ) {
                 eprintln!("hooks for the worktree {path}: {error}");
             }
         }
@@ -946,7 +995,7 @@ impl Core {
             claude: dir.clone().filter(|_| agent == "claude-code"),
             codex: dir.filter(|_| agent == "codex"),
         }];
-        if let Err(error) = hook::share(home, project, cwd, &accounts) {
+        if let Err(error) = hook::share(home, project, cwd, &accounts, &env::environment().vars) {
             eprintln!("hooks for the worktree {}: {error}", cwd.display());
         }
     }
@@ -974,7 +1023,7 @@ impl Core {
         // that cannot be read keeps the entry rather than turn the removal
         // into an error.
         if let Some(home) = &self.home {
-            let _ = hook::forget(home, &tree, accounts);
+            let _ = hook::forget(home, &tree, accounts, &env::environment().vars);
         }
         Ok(())
     }
@@ -1237,6 +1286,38 @@ mod tests {
     use super::*;
     use crate::events::testing::Recorder;
     use crate::scratch::Scratch;
+    use std::collections::HashMap;
+
+    // A prompt hook stops waiting at the deadline its call carries: an
+    // answer past it is not left, and the window hears it was not, so it
+    // tells nothing that did not reach the agent.
+    #[test]
+    fn leaves_no_answer_to_a_prompt_call_whose_hook_stopped_waiting() {
+        let home = Scratch::new("api-prompt-deadline");
+        let core = Core::at_home(Arc::new(Recorder::default()), Some(home.to_path_buf()));
+        let call = |id: &str, deadline: u64| crate::show::ConductRequest {
+            id: id.to_string(),
+            tool: crate::show::CONDUCT_PROMPT.to_string(),
+            arguments: serde_json::json!({ "deadline": deadline }),
+            cwd: "/p".to_string(),
+            session: None,
+        };
+        core.deadlines
+            .note(&call("late", crate::show::now_ms() - 1));
+        core.deadlines
+            .note(&call("in-time", crate::show::now_ms() + 60_000));
+        assert!(core
+            .conduct_answer("late", Some("note".into()), None)
+            .is_err());
+        assert!(!crate::show::answer_path(&home, "late").exists());
+        core.conduct_answer("in-time", Some("note".into()), None)
+            .unwrap();
+        assert!(crate::show::answer_path(&home, "in-time").exists());
+        // A wait's answer has no deadline.
+        core.conduct_answer("a-wait", Some("stopped".into()), None)
+            .unwrap();
+        assert!(crate::show::answer_path(&home, "a-wait").exists());
+    }
 
     /// A core made once the test process's environment is settled, so the
     /// shell it starts is the system's `sh` and reads no startup files.
@@ -1261,6 +1342,7 @@ mod tests {
             home: Some(home.to_path_buf()),
             plugins: None,
             settings: None,
+            deadlines: Arc::default(),
         }
     }
 
@@ -1455,7 +1537,7 @@ mod tests {
         std::fs::write(&daemon, "").unwrap();
 
         let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
-        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+        let hooked = |folder: &Path| hook::status(&home, folder, &[], &HashMap::new()).installed;
 
         // Hooks off: the worktree gets none.
         let bare = PathBuf::from(core.worktree_add(&project, "bare", &[]).unwrap());
@@ -1477,7 +1559,8 @@ mod tests {
 
         core.worktree_remove(&project, "fix", &[]).unwrap();
         assert!(!tree.exists());
-        let state = std::fs::read_to_string(account::claude_json(&home, None)).unwrap();
+        let state =
+            std::fs::read_to_string(account::claude_json(&home, None, &HashMap::new())).unwrap();
         let state: serde_json::Value = serde_json::from_str(&state).unwrap();
         let key = tree.to_string_lossy().to_string();
         assert!(state["projects"][&key]["mcpServers"]
@@ -1527,7 +1610,7 @@ mod tests {
         // that file of Codex's would have them.
         let donor = home.join("donor");
         std::fs::create_dir_all(&donor).unwrap();
-        hook::install(&home, &donor, &[]).unwrap();
+        hook::install(&home, &donor, &[], &HashMap::new()).unwrap();
         std::fs::create_dir_all(project.join(".claude")).unwrap();
         std::fs::copy(
             donor.join(".claude").join("settings.local.json"),
@@ -1548,7 +1631,7 @@ mod tests {
         core.hook_install(&project, &[]).unwrap();
         // A tree made without them, as one from before they were shared.
         let tree = PathBuf::from(git::worktree_add(&project, "old").unwrap());
-        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+        let hooked = |folder: &Path| hook::status(&home, folder, &[], &HashMap::new()).installed;
         assert!(!hooked(&tree));
 
         core.hooks_for("claude-code", &project, Some(&tree), None);

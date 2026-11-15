@@ -1,8 +1,10 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
 import { readsAsYou } from "$lib/unseen";
-import { sentAt, sentBy, starterOf } from "$lib/senders.svelte";
+import { senderOf, sentAt, sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
+import { heardLimits } from "$lib/limits.svelte";
+import { hostOf } from "$lib/remote.svelte";
 import {
   core,
   isUntrusted,
@@ -40,7 +42,8 @@ import {
  * carry before the start that hands it back has answered. Those events are
  * kept until the id is known and played then. A window that comes to a
  * session late, after a reload, keeps the events it hears while it asks for
- * the session's snapshot, plays them, and lays the snapshot over them.
+ * the session's snapshot, plays them, and lays the snapshot over them. The
+ * account's limits go to the store that keeps them by account.
  */
 
 /** What runs behind one row. */
@@ -156,6 +159,8 @@ function claim(id: string): IntegratedEventBody[] {
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const before = link.conversation.state;
   link.conversation.apply(body);
+  if (body.type === "message" || body.type === "turnStarted" || body.type === "ended")
+    settleNotes(key, link);
   const session = byKey(key);
   if (session === null) return;
   switch (body.type) {
@@ -164,6 +169,9 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       break;
     case "configured":
       session.model = body.model;
+      break;
+    case "limits":
+      heardLimits(hostOf(session.project), session.account, body);
       break;
     case "state":
       settle(session, body.state, before, link);
@@ -386,6 +394,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       for (const body of held) deliver(key, link, body);
       const before = link.conversation.state;
       link.conversation.restore(snapshot);
+      if (snapshot.limits !== null) heardLimits(hostOf(session.project), session.account, snapshot.limits);
       // Only a session that was spoken to has earlier messages to point at.
       link.conversation.late = spoken;
       // The same session goes on, not one resumed from its transcript: it
@@ -409,22 +418,71 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
   return attempt;
 }
 
+/** What goes ahead of the user's words in a message to a session, and
+    what counts it as told once the agent takes the message, from the
+    module that knows what the sessions it started have done: told by it. */
+export interface Note {
+  text: string;
+  deliver: () => void;
+}
+
+let noteFor: (key: string) => Note | null = () => null;
+
+export function notesFrom(how: (key: string) => Note | null) {
+  noteFor = how;
+}
+
+/** The notes in messages the agent has not taken yet, by the message's id,
+    with the row each went to. */
+const notes = new Map<string, { key: string; note: Note }>();
+
+/** Counts a note told once the agent has taken its message into a turn,
+    and lets it go untold when the message never reaches the agent: it
+    failed, was dropped, or the session went first. */
+function settleNotes(key: string, link: Link | undefined) {
+  for (const [id, held] of [...notes]) {
+    if (held.key !== key) continue;
+    const state = link?.conversation.messages[id]?.state;
+    if (state === "taken") {
+      notes.delete(id);
+      held.note.deliver();
+    } else if (state === undefined || state === "dropped" || state === "failed") notes.delete(id);
+  }
+}
+
+/** Whether a message from the user to this session waits for its agent to
+    take it. */
+export function userWaiting(key: string): boolean {
+  const conversation = links.get(key)?.conversation;
+  if (conversation === undefined) return false;
+  return Object.values(conversation.messages).some(
+    (message) =>
+      (message.state === "sending" || message.state === "queued" || message.state === "sent") &&
+      senderOf(message) === null,
+  );
+}
+
 /** Sends the user's message under an id of the window's own. A row with no
     name yet takes the first line of its first message. */
 /** Sends a message to the agent: the user's, or with `from` another
-    session's, which the thread then shows under that session's name. */
+    session's, which the thread then shows under that session's name. The
+    user's goes with the workbench's note on the sessions it started ahead
+    of their words, when there is one. */
 export function send(
   key: string,
-  text: string,
+  words: string,
   images: IntegratedImage[] = [],
   from: string | null = null,
 ): string | null {
   const link = links.get(key);
   const session = byKey(key);
   if (link === undefined || link.handle === null || session === null) return null;
-  if (text.trim() === "" && images.length === 0) return null;
+  if (words.trim() === "" && images.length === 0) return null;
+  const note = from === null ? noteFor(key) : null;
+  const text = note === null ? words : `${note.text}\n\n${words}`;
   const id = crypto.randomUUID();
   link.conversation.sending(id, text, images);
+  if (note !== null) notes.set(id, { key, note });
   // A message sent is the agent spoken to, by the user or by a session
   // that started it.
   session.engaged = true;
@@ -434,7 +492,7 @@ export function send(
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt.
   if (session.title === null) {
-    const line = spoken(text).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
+    const line = spoken(text, from === null).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
     const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
@@ -442,7 +500,10 @@ export function send(
   }
   core()
     .integratedSend(link.handle, id, text, images)
-    .catch((error) => link.conversation.sendFailed(id, message(error)));
+    .catch((error) => {
+      link.conversation.sendFailed(id, message(error));
+      settleNotes(key, link);
+    });
   return id;
 }
 
@@ -497,6 +558,7 @@ export async function configure(key: string, change: { model?: string; mode?: st
 function stop(session: Session) {
   const link = links.get(session.key);
   links.delete(session.key);
+  settleNotes(session.key, undefined);
   if (link?.handle === null || link === undefined) return;
   const handle = link.handle;
   byHandle.delete(handle);
@@ -519,5 +581,6 @@ export function resetIntegrated(time: () => number = Date.now) {
   byHandle.clear();
   early.clear();
   stopped.clear();
+  notes.clear();
   clock = time;
 }
