@@ -105,24 +105,37 @@ account handed on that keeps no directory for the agent being started runs
 that agent on its own directory, as a blank directory does anywhere. A
 session resumed comes back under the account it ran under.
 
-The starter is the session whose id the call carries. An agent that was not
-told its id calls without one, as a Codex session that has not been
-resumed does, since its id is learned after its tools have started; it is
-taken to be the one session running where the call comes from that was not
-told its id, as under [following a workflow](#following-a-workflow). An
-agent run outside the workbench that calls from such a directory is taken
-for that session too, and its starts get that session's account. Where no
-such session runs or several do, or the call names a session the window
-does not have, the starter cannot be placed and the session runs under the
-project's account.
+## Who is calling
 
-A call with no id that is taken for a session another session started is
-refused as that session's own call would be, with the session named. Where
-several sessions in the directory were not told their id, the call is
-refused when all of them were started by another, and when only some were it
-is asked about every time, with the question saying so, and no standing
-answer is used or given. The cap counts a call with no id by the directory
-it comes from.
+Every session the workbench starts is given a token as it starts, chosen by
+the workbench, in its environment as `WORKBENCH_SESSION`. The agent passes
+its environment on to the tool server and its hooks, so every call they
+make carries the token, for Claude Code and Codex alike, in a terminal or
+integrated, here or on another machine. A Codex session carries it from its
+first call, before Codex has told the workbench its own id. The starter is
+the session whose token the call carries, and two sessions in one directory
+are two starters, each with its own sessions, its own standing answers and
+its own cap.
+
+A session resumed has the token it had, kept by its agent's id, between
+runs of the app too, so it is the same starter as before. The agent's own
+id is what it is resumed by, and what the tools name the sessions it
+started by; no tool answers with a token.
+
+A call that names no session comes from an agent the workbench did not
+start, such as one run by hand in a project whose hooks are on, which has
+the same tools. A call whose token names a session the workbench is not
+running, one it never had or one that has stopped, cannot come from one of
+its sessions either. Either is refused by every one of the seven tools, with
+the reason, and nothing is asked: the tools serve the sessions the
+workbench runs. Such an agent is never taken for a session running where it
+calls from.
+
+The token is an identifier, not a secret: the workbench cannot see which
+process made a call. A tool server run by hand from a session's shell has
+that session's token in its environment, and an agent started from that
+shell does too; either is taken for that session, as under [following a
+workflow](#following-a-workflow).
 
 ## When the user writes to it
 
@@ -151,13 +164,13 @@ the workbench as the message goes in, with the project's hooks on (see
 [hooks](hooks.md)), for Claude Code and Codex alike. The hook waits two
 seconds at most. Its call carries the time it stops waiting, and once
 that has passed no answer is left for it and nothing is told, so the
-next message, wait or listing says it. The call is held to the agent's
-own session id: another agent started from the starter's shell, which has
-the starter's environment, gets nothing. A Codex session whose id the
-workbench has not learned yet is taken at its word, and one started
-afresh that is not an orchestrator cannot say which session it is, and
-gets no note. Codex asks the user, once in each project, to trust a hook
-that is new or changed before it runs it.
+next message, wait or listing says it. The call names the session by its
+token and is held to the agent's own session id as well: another agent
+started from the starter's shell, which has the starter's token in its
+environment, gets nothing. A Codex session whose id the workbench has not
+learned yet is taken at its token's word. A call from an agent the
+workbench did not start gets nothing. Codex asks the user, once in each
+project, to trust a hook that is new or changed before it runs it.
 
 A session that runs integrated is sent the user's message by the window,
 which puts the note in ahead of the words and shows it in the thread
@@ -249,38 +262,32 @@ new piece begins its rounds again.
 A started session remembers its step, and a review its round and the work
 it checks. `sessions` says both for each session, the stopped ones too.
 
-An agent that is not told its session's id, as Codex is not, is known by
-the directory it runs in. A call that names no session is taken to come
-from the one session running in its directory that was not told its id.
-Where that is not certain and a session running there follows a workflow,
-whether or not it was told its id, the call is refused rather than let
-through unchecked. While any session follows a workflow, so is a call
-naming a session the workbench does not run, or one that is no longer
-running and so cannot be calling, and so is a call naming none from a
-directory where no session that was not told its id runs, or where
-several do. A caller under a
-workflow is given no command but `/compact` in a line to any session it
-started, placed in the workflow or not.
+A call is held to the workflow of the session its token names, as under
+[who is calling](#who-is-calling), so a Codex orchestrator is held to its
+workflow from its first call, and a session beside it in the same
+directory is held to its own. A caller under a workflow is given no
+command but `/compact` in a line to any session it started, placed in the
+workflow or not.
 
 What this holds to is the session a call names, and the workbench cannot
 see which process made the call. A tool server run by hand from a
-session's shell that names another running session's id, one that follows
-no workflow, is taken for that session, and its starts are asked about as
-that session's are. This is no wider than the shell itself: from it an
-agent can run another copy of itself, on any model, with no tool server
-and no question at all.
+session's shell has that session's token, or can be given another running
+session's, one that follows no workflow, and is then taken for that
+session, its starts asked about as that session's are. This is no wider
+than the shell itself: from it an agent can run another copy of itself, on
+any model, with no tool server and no question at all.
 
 ## What is remembered
 
-What a session started is written down by session id, with the project, the
-worktree, the agent, the name and the account, and kept between runs beside
-the sessions the app knows as its own. Under a workflow, so are the step
-and round of each, and the rounds each piece has had; those go with the
-orchestrator once it is gone from its project's past sessions. An
-orchestrator closed and resumed keeps its id, so the sessions it started
-are still its own: the ones still running answer to its tools as before,
-and a row with one of its ids, resumed from the pane by hand, hangs under
-it all the same. When the app itself was closed, the orchestrator comes
+What a session started is written down under the starter's token, each by
+its session id, with the project, the worktree, the agent, the name and
+the account, and kept between runs beside the sessions the app knows as its
+own. Under a workflow, so are the step and round of each, and the rounds
+each piece has had; those go with the orchestrator once it is gone from its
+project's past sessions. An orchestrator closed and resumed keeps its
+token, so the sessions it started are still its own: the ones still
+running answer to its tools as before, and a row with one of its ids,
+resumed from the pane by hand, hangs under it all the same. When the app itself was closed, the orchestrator comes
 back with the other sessions that were open, and the sessions it started do
 not. `sessions` then lists them as stopped, after the running ones, and
 `start` with one of those ids in place of a project and prompt brings it
@@ -322,10 +329,9 @@ asked about: the consent was given when the session was, and the resumed
 session is that one going on.
 
 Once there are accounts to tell apart, the question names the account the
-session would run under when it is not the project's own, when the starter
-could not be placed, when the starter's chosen account could not be handed
-on, and when an account handed on keeps no directory for the agent being
-started. When the account it names keeps no directory for that agent, it
+session would run under when it is not the project's own, when the
+starter's chosen account could not be handed on, and when an account handed
+on keeps no directory for the agent being started. When the account it names keeps no directory for that agent, it
 says the agent uses its own. A round of review that would start a session
 names the account in the same cases, after the project. The answer the
 caller gets to its start names the account in the same cases and says when
@@ -333,7 +339,9 @@ the agent uses its own directory, for a start for a step of a workflow as
 well as any other.
 
 A session started by another may not start any of its own, and no session
-may have more than eight running at a time.
+may have more than eight running at a time. Both hold by the token, so a
+session started by another is held to them from its first call, whatever
+its agent.
 
 ![The question over the agent pane: which session wants to start one, in which project, the prompt it would give, and Allow this session, Once or No.](orchestrator-ask.png)
 

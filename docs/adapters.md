@@ -32,6 +32,21 @@ the agent uses its own. The past sessions a project lists are read from
 the same directory. The core is given directories rather than names, so a
 session on a remote machine runs under directories on that machine.
 
+## Naming the session to its tools
+
+Every session is given a token the workbench chose, in its environment as
+`WORKBENCH_SESSION`, with `WORKBENCH_ROLE` beside it for a session that
+directs the others. The tool server and the hooks read both, and every call
+they make names the session by its token; see [who is
+calling](orchestrator.md#who-is-calling). Claude Code passes its whole
+environment to the servers it starts. Codex passes a server only the
+variables its entry names, so wherever a Codex session has the tool
+server, from its project's configuration or named for a workflow, the
+server is named whole on its command line, its command, its arguments and
+those two variables to pass on. An entry that named only the variables,
+for a server no configuration names, would stop Codex from starting, so a
+session without the tool server is told nothing of it.
+
 ## Under a workflow
 
 A session that follows a workflow is told the workflow's instructions on
