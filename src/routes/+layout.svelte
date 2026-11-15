@@ -36,6 +36,7 @@
   import { dirKnown } from "$lib/orchestrator.svelte";
   import { listenIntegrated } from "$lib/integrated.svelte";
   import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
+  import { followTabStops } from "$lib/tabStops";
 
   let { children } = $props();
 
@@ -52,6 +53,8 @@
     loadRemembered();
     loadUsed();
     loadStarted();
+    // Tab reaches every control in WebKit as it does elsewhere.
+    const stopTabStops = followTabStops();
     const stopStops = watchStops();
     let closed = false;
     let stopSettings = () => {};
@@ -90,6 +93,7 @@
       stopOpening();
       stopReopen();
       stopIntegrated();
+      stopTabStops();
     };
   });
 </script>

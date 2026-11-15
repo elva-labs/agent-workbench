@@ -25,7 +25,7 @@
   import { diskChanged, editor, keep as keepTab, keyOf, openFile, unsavedAt } from "$lib/editor.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import {
     canDiff,
     canRender,
@@ -447,16 +447,62 @@
     enterReview();
   }
 
+  /** The "⋯" menu and its button. Open, the menu has the keyboard on the
+      choice in force, or its first item; the arrows walk it, Enter picks,
+      Escape closes it back to the button and Tab closes it on the way on. */
+  let more = $state<HTMLDivElement | null>(null);
+
+  function menuItems(): HTMLButtonElement[] {
+    return [...(more?.querySelectorAll<HTMLButtonElement>("[role^='menuitem']:not(:disabled)") ?? [])];
+  }
+
+  function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (!menuOpen) return;
+    void tick().then(() =>
+      (more?.querySelector<HTMLButtonElement>("[role='menuitemradio'][aria-checked='true']:not(:disabled)") ?? menuItems()[0])?.focus(),
+    );
+  }
+
+  /** The button again, once the menu that had the keyboard is gone, unless
+      what was picked took the keyboard somewhere else. */
+  function backToButton() {
+    void tick().then(() => {
+      const holder = document.activeElement;
+      if (holder === null || holder === document.body) more?.querySelector<HTMLButtonElement>("[data-testid='changes-menu']")?.focus();
+    });
+  }
+
   function choose(run: () => void) {
+    const keyboard = more?.querySelector(".menu")?.contains(document.activeElement) ?? false;
     run();
     menuOpen = false;
+    if (keyboard) backToButton();
   }
 
   function onMenuKeydown(e: KeyboardEvent) {
+    if (!menuOpen) return;
     if (e.key === "Escape") {
+      e.preventDefault();
       e.stopPropagation();
       menuOpen = false;
+      backToButton();
+      return;
     }
+    if (e.key === "Tab") {
+      menuOpen = false;
+      return;
+    }
+    const items = menuItems();
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: HTMLButtonElement | undefined;
+    if (e.key === "ArrowDown") next = items[(at + 1) % items.length];
+    else if (e.key === "ArrowUp") next = items[(at - 1 + items.length) % items.length];
+    else if (e.key === "Home") next = items[0];
+    else if (e.key === "End") next = items[items.length - 1];
+    else return;
+    e.preventDefault();
+    next?.focus();
   }
 
   onMount(() => {
@@ -1390,10 +1436,10 @@
       </span>
     </label>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="more" onkeydown={onMenuKeydown}>
+    <div class="more" onkeydown={onMenuKeydown} bind:this={more}>
       <button
         class="tool"
-        onclick={() => (menuOpen = !menuOpen)}
+        onclick={toggleMenu}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         aria-label="More"

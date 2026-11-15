@@ -120,9 +120,10 @@
     remembered = next;
   }
 
-  /** The arrows walk the list from whichever tab has the keyboard, along it
-      and across it, and the tab they reach takes both the column and the
-      keyboard. A chord being recorded owns every key, so they stand down. */
+  /** The tabs are one stop for Tab, on the tab shown. The arrows walk the
+      list from whichever tab has the keyboard, along it and across it, and
+      the tab they reach takes both the column and the keyboard. A chord
+      being recorded owns every key, so they stand down. */
   function onTabKeys(e: KeyboardEvent, index: number) {
     if (recording !== null) return;
     const step =
@@ -385,6 +386,7 @@
             class="tab"
             class:on={tab === item.name}
             aria-current={tab === item.name ? "page" : undefined}
+            tabindex={tab === item.name ? 0 : -1}
             onclick={() => show(item.name)}
             onkeydown={(e) => onTabKeys(e, index)}
             data-testid="settings-tab-{item.name}">{item.label}</button

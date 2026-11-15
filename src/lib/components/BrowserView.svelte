@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     activate,
     activeTab,
@@ -38,6 +38,22 @@
     if (editing) return;
     draft = current === null || current.url === "about:blank" ? "" : current.url;
   });
+
+  let tabsRow = $state<HTMLDivElement | null>(null);
+
+  /** The tabs are one stop, walked with the arrows; Delete closes the tab
+      under the keyboard, as its × does, and the keyboard stays on the row. */
+  async function onTabKeydown(e: KeyboardEvent, id: number) {
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+    e.preventDefault();
+    await close(id);
+    await tick();
+    (
+      tabsRow?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
+      tabsRow?.querySelector<HTMLElement>('[role="tab"]') ??
+      tabsRow?.querySelector<HTMLElement>("[data-testid='browser-new-tab']")
+    )?.focus();
+  }
 
   function onAddressFocus(e: FocusEvent) {
     editing = true;
@@ -198,7 +214,7 @@
   <p class="notice error" data-testid="browser-error">{errorText}</p>
 {/if}
 
-<div class="tabs" role="tablist" aria-label="Browser tabs" data-testid="browser-tabs">
+<div class="tabs" role="tablist" aria-label="Browser tabs" bind:this={tabsRow} data-testid="browser-tabs">
   {#each ownTabs() as candidate (candidate.id)}
     <div class="tab" class:active={candidate.front} data-testid="browser-tab" data-tab-id={candidate.id}>
       <button
@@ -207,6 +223,7 @@
         aria-selected={candidate.front}
         title={titleFor(candidate)}
         onclick={() => void activate(candidate.id)}
+        onkeydown={(e) => onTabKeydown(e, candidate.id)}
         data-testid="browser-tab-select"
       >
         <span class="title">{titleFor(candidate)}</span>
@@ -219,7 +236,8 @@
       >
     </div>
   {/each}
-  <button class="new-tab" aria-label="New tab" onclick={newTab} data-testid="browser-new-tab">+</button>
+  <!-- A stop of its own after the tabs, which are one. -->
+  <button class="new-tab" tabindex="0" aria-label="New tab" onclick={newTab} data-testid="browser-new-tab">+</button>
 </div>
 
 <div class="body" bind:this={bodyEl} data-testid="browser-body">

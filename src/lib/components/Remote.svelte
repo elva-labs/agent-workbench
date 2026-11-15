@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { coversBrowser } from "$lib/browser.svelte";
   import { returnFocus } from "$lib/layout.svelte";
   import { browse, choose, closeRemote, connect, pair, parentOf, pathOn, remote } from "$lib/remote.svelte";
@@ -44,6 +44,18 @@
   );
 
   let up = $derived(remote.listing === null ? null : parentOf(remote.listing.path));
+
+  /** The folders are one stop, walked with the arrows. Going into one by
+      keyboard keeps the keyboard in the list, on the first of the next. */
+  let dirs = $state<HTMLDivElement | null>(null);
+
+  async function into(path: string) {
+    const keyboard = dirs?.contains(document.activeElement) ?? false;
+    await browse(path);
+    if (!keyboard) return;
+    await tick();
+    dirs?.querySelector<HTMLElement>('[role="option"]:not(:disabled)')?.focus();
+  }
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
@@ -136,14 +148,14 @@
         </form>
       {:else if remote.listing !== null}
         <p class="path" data-testid="remote-path">{pathOn(remote.listing.path)}</p>
-        <div class="dirs">
+        <div class="dirs" role="listbox" aria-label="Folders" bind:this={dirs}>
           {#if up !== null}
-            <button class="dir up" onclick={() => browse(up!)} disabled={remote.busy} data-testid="remote-up">
+            <button class="dir up" role="option" aria-selected="false" onclick={() => into(up!)} disabled={remote.busy} data-testid="remote-up">
               ..
             </button>
           {/if}
           {#each remote.listing.dirs as dir (dir.path)}
-            <button class="dir" onclick={() => browse(dir.path)} disabled={remote.busy} data-testid="remote-dir">
+            <button class="dir" role="option" aria-selected="false" onclick={() => into(dir.path)} disabled={remote.busy} data-testid="remote-dir">
               {dir.name}
             </button>
           {:else}
