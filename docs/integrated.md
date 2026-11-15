@@ -566,8 +566,8 @@ has to do itself:
   Its state comes from these events, and the hooks' are left alone.
 - **The sessions pane and the tools.** The browser tools and the
   orchestrator's waits act only for a session the window shows as a
-  running row whose id is the conversation's id, so an integrated session
-  needs such a row for its agent's tools to work. The orchestrator's send
+  running row whose token the call names, so an integrated session needs
+  such a row for its agent's tools to work. The orchestrator's send
   reaches an integrated session as a message, and its read answers with
   what the agent last said and did. A message the user sends a session
   that started others can carry the workbench's note on them ahead of the
