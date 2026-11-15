@@ -229,6 +229,39 @@ test.describe("the window", () => {
     await expect(page.getByTestId("close-window")).toHaveCount(0);
   });
 
+  test("asks before it closes while a shell has something running, with no session", async ({ page }) => {
+    await open(page, MAC);
+    const shell = await openShell(page);
+    await running(page, shell, "npm run dev");
+    await page.locator(TREE).focus();
+    await page.keyboard.press("Meta+w");
+    const ask = page.getByTestId("close-window");
+    await expect(ask).toContainText("Close the window with 1\u00a0busy shell running?");
+    await expect(ask).toContainText("“npm run dev” is running in shell 1");
+    await expect(page.getByTestId("close-window-cancel")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(ask).toHaveCount(0);
+    expect(await controls(page)).toEqual([]);
+    // With the panel hidden, by the window's own close as much as the chord.
+    await page.keyboard.press("Meta+j");
+    await expect(page.locator(TERMINAL)).toBeHidden();
+    await page.evaluate(() =>
+      (window as unknown as { __WORKBENCH_CORE__: { windowControl: (a: string) => Promise<void> } }).__WORKBENCH_CORE__.windowControl("close"),
+    );
+    await expect(ask).toContainText("busy shell");
+    await page.getByTestId("close-window-confirm").click();
+    await expect.poll(() => controls(page)).toEqual(["close"]);
+  });
+
+  test("closes at once with only an idle shell open and no session", async ({ page }) => {
+    await open(page, MAC);
+    await openShell(page);
+    await page.locator(TREE).focus();
+    await page.keyboard.press("Meta+w");
+    await expect.poll(() => controls(page)).toEqual(["close"]);
+    await expect(page.getByTestId("close-window")).toHaveCount(0);
+  });
+
   test("closes at once with no session running", async ({ page }) => {
     await open(page, MAC);
     await page.locator(TREE).focus();

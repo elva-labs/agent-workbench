@@ -104,9 +104,9 @@ without saving apart:
   the pane folds;
 - closing the window or quitting the app, the question over the whole
   window, whatever the panes show, naming every unsaved file and counting
-  the sessions that stop with the app. While sessions run it asks with
-  nothing unsaved as well, as [focus](focus-model.md#closing-what-is-in-front)
-  describes.
+  the sessions and busy shells that stop with the app. While those run it
+  asks with nothing unsaved as well, as
+  [focus](focus-model.md#closing-what-is-in-front) describes.
 
 When a save in Save and close or Save all cannot be made, because the file
 changed on disk or could not be written, nothing is closed: that file comes

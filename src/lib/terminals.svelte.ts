@@ -350,21 +350,54 @@ export async function closeAsking(key: string, fromRow = false): Promise<boolean
   return false;
 }
 
-/** What was started at the prompt of the shell on this pty and still runs:
-    the processes right under the shell, the first started first. What they
-    started in turn goes with them and is not named. */
-async function runningIn(ptyId: string): Promise<string[]> {
+/** Programs a shell's prompt keeps running for the shell's whole life,
+    such as powerlevel10k's git status daemon: nothing the user started, so
+    neither they nor what they run are a reason to ask. */
+const HELPERS = [/^gitstatusd/];
+
+/** Shells, which count for what they run rather than for themselves: a
+    prompt's worker for its asynchronous parts is one, idle, and so is a
+    shell typed at the prompt and left there. */
+const SHELLS = new Set(["sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "pwsh", "powershell", "cmd"]);
+
+function program(name: string): string {
+  return name.replace(/^-/, "").replace(/\.exe$/i, "").toLowerCase();
+}
+
+/**
+ * What was started at the prompt of the shell on this pty and still runs,
+ * the first started first: the processes highest under the shell, leaving
+ * out a prompt's helpers with everything under them, and counting a shell
+ * started under it for what it runs. What a named process started in turn
+ * goes with it and is not named.
+ */
+export async function runningIn(ptyId: string): Promise<string[]> {
   let under: Process[];
   try {
     under = await core().ptyProcesses(ptyId);
   } catch {
     return [];
   }
-  const pids = new Set(under.map((process) => process.pid));
-  return under
+  const byPid = new Map(under.map((process) => [process.pid, process]));
+  const helped = (process: Process) => {
+    const seen = new Set<number>();
+    for (let at: Process | undefined = process; at !== undefined && !seen.has(at.pid); at = byPid.get(at.parent)) {
+      if (HELPERS.some((helper) => helper.test(program(at!.name)))) return true;
+      seen.add(at.pid);
+    }
+    return false;
+  };
+  const kept = under.filter((process) => !helped(process) && !SHELLS.has(program(process.name)));
+  const pids = new Set(kept.map((process) => process.pid));
+  return kept
     .filter((process) => !pids.has(process.parent))
     .sort((a, b) => a.started - b.started)
     .map((process) => process.command || process.name);
+}
+
+/** A command as a question names it: short enough to read at once. */
+export function shortCommand(command: string): string {
+  return command.length > 48 ? `${command.slice(0, 47).trimEnd()}…` : command;
 }
 
 /** The question's answer: close the shell after all. */

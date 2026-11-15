@@ -1569,8 +1569,8 @@ export interface Core {
   /** Whether the editor holds unsaved edits, for the core to ask before
       the window closes or the app quits while it does. */
   setUnsaved(unsaved: boolean): Promise<void>;
-  /** Whether sessions are running, for the core to ask before the window
-      closes or the app quits while they are. */
+  /** Whether sessions are running or shells are open, for the core to
+      hold the window's close or the app's quit while they are, and ask. */
   setRunning(running: boolean): Promise<void>;
   /** The core held back the window's close or the app's quit to ask. */
   onLeaveRequested(

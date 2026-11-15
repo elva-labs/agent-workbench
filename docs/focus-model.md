@@ -180,18 +180,22 @@ A shell at an idle prompt closes at once. One with something still running
 in it, a dev server say, comes to the front and asks first, by the chord,
 its row's <kbd>Delete</kbd> or its ×: the question names what runs and
 holds the keyboard on Cancel, <kbd>Escape</kbd> cancels, and either answer
-gives the keyboard back where it was, the shell or its row.
+gives the keyboard back where it was, the shell or its row. What a shell's
+prompt keeps running for itself, such as a git status daemon, does not
+count, and a shell started inside the shell counts for what it runs.
 
-Closing the window ends the app, and every session running in it. So the
-window's close, by the chord, by Close Window on
+Closing the window ends the app, and every session and shell running in it.
+So the window's close, by the chord, by Close Window on
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>, by the red button or by the
-controls the app draws, and the app's quit, ask first while a session runs
-or the editor holds unsaved edits. The question goes over the whole window.
-It says how many sessions run and how many of them wait on you, that they
-come back as rows next time to resume, and names every unsaved file, with
-Cancel holding the keyboard, so <kbd>Return</kbd> keeps everything. A row
-left from the last quit runs nothing and counts for nothing, and a window
-with nothing running closes without a question. There is no setting to turn
+controls the app draws, and the app's quit, ask first while a session runs,
+a shell has something running in it, by the rule above, or the editor
+holds unsaved edits. The question goes over the whole window. It says how
+many sessions run and how many of them wait on you, what runs in each busy
+shell, that the sessions come back as rows next time to resume, and names
+every unsaved file, with Cancel holding the keyboard, so <kbd>Return</kbd>
+keeps everything. A row left from the last quit runs nothing and counts
+for nothing, and a window with nothing running, idle shells included,
+closes without a question. There is no setting to turn
 the question off. How it is held for unsaved edits is in
 [the editor](editor.md#nothing-unsaved-goes-unasked).
 

@@ -34,6 +34,7 @@
     resizeSplit,
     select,
     share,
+    shortCommand,
     shownGroup,
     split,
     statusMessage,
@@ -108,17 +109,12 @@
   let asked = $derived(terminals.asking);
   let askedShell = $derived(asked === null ? null : byKey(asked.key));
 
-  /** A command as the question names it: short enough to read at once. */
-  function named(command: string) {
-    return command.length > 48 ? `${command.slice(0, 47).trimEnd()}…` : command;
-  }
-
   let askDetail = $derived.by(() => {
     if (asked === null) return "";
     const [first, ...rest] = asked.running;
     return rest.length === 0
-      ? `“${named(first)}” is still running in it. Closing the shell stops it.`
-      : `“${named(first)}” and ${rest.length} more are still running in it. Closing the shell stops them.`;
+      ? `“${shortCommand(first)}” is still running in it. Closing the shell stops it.`
+      : `“${shortCommand(first)}” and ${rest.length}\u00a0more are still running in it. Closing the shell stops them.`;
   });
 
   /** The question answered: the keyboard goes back to the rows when a key

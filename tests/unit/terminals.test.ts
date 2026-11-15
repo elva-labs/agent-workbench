@@ -16,6 +16,7 @@ import {
   closeAsking,
   closeProject,
   keepAsked,
+  runningIn,
   create,
   TYPE_AFTER,
   printable,
@@ -548,5 +549,32 @@ describe("closing a shell", () => {
     const unreadable = live(A, "pty-unreadable");
     expect(await closeAsking(unreadable.key)).toBe(true);
     expect(byKey(unreadable.key)).toBeNull();
+  });
+});
+
+describe("what counts as running in a shell", () => {
+  const proc = (pid: number, parent: number, name: string, command = name, started = pid) => ({
+    pid,
+    parent,
+    name,
+    command,
+    started,
+  });
+
+  it("leaves out a prompt's helper and what runs under it", async () => {
+    under["pty-a"] = [proc(11, 10, "gitstatusd-darwin-arm64"), proc(12, 11, "git", "git status")];
+    expect(await runningIn("pty-a")).toEqual([]);
+  });
+
+  it("counts a shell started under the shell for what it runs, and an idle one for nothing", async () => {
+    under["pty-a"] = [proc(11, 10, "zsh"), proc(12, 11, "npm", "npm run dev"), proc(13, 12, "node", "node vite")];
+    expect(await runningIn("pty-a")).toEqual(["npm run dev"]);
+    under["pty-b"] = [proc(11, 10, "-zsh"), proc(14, 10, "bash.exe")];
+    expect(await runningIn("pty-b")).toEqual([]);
+  });
+
+  it("still names what the user started beside a helper", async () => {
+    under["pty-a"] = [proc(11, 10, "gitstatusd-linux-x86_64"), proc(15, 10, "sleep", "sleep 600")];
+    expect(await runningIn("pty-a")).toEqual(["sleep 600"]);
   });
 });

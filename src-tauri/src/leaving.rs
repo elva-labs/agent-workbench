@@ -1,14 +1,15 @@
 //! Leaving with work under way.
 //!
-//! While the editor holds edits not yet written, or sessions are running,
-//! the window's close (its button, Close Window, Close in the File menu,
-//! the controls the app draws) and the app's quit (Quit in the menus,
-//! Cmd+Q) are held back, and the window is asked to put the question up.
-//! Closing the window ends the app, so both ask the same. The window
-//! answers at once that the question is up; without that answer soon
-//! after asking, the close or the quit goes through, so a page that cannot
-//! answer never keeps the window open. The user's answer then closes the
-//! window or quits the app, or leaves both as they are.
+//! While the editor holds edits not yet written, sessions are running or
+//! shells are open, the window's close (its button, Close Window, Close in
+//! the File menu, the controls the app draws) and the app's quit (Quit in
+//! the menus, Cmd+Q) are held back, and the window is asked: it puts the
+//! question up, or lets the window go at once when no shell has anything
+//! running in it. Closing the window ends the app, so both ask the same.
+//! The window answers at once that the question is up; without that answer
+//! soon after asking, the close or the quit goes through, so a page that
+//! cannot answer never keeps the window open. The user's answer then
+//! closes the window or quits the app, or leaves both as they are.
 //!
 //! The system's own ways of ending the app, logging out or Quit in the
 //! Dock's menu, end it without asking: the app hears of those only once it
@@ -27,8 +28,8 @@ pub const LEAVE_REQUESTED: &str = "leave_requested";
 /// the quit goes through without it.
 const HEARD_WITHIN: Duration = Duration::from_secs(3);
 
-/// What the window last said about unsaved edits and running sessions,
-/// and where the questions stand.
+/// What the window last said about unsaved edits and running sessions and
+/// shells, and where the questions stand.
 #[derive(Default)]
 pub struct Leaving {
     unsaved: AtomicBool,
@@ -139,8 +140,8 @@ pub fn leave_unsaved(leaving: State<'_, Arc<Leaving>>, unsaved: bool) {
     leaving.unsaved.store(unsaved, Ordering::SeqCst);
 }
 
-/// Whether sessions are running, as the window says each time that
-/// changes.
+/// Whether sessions are running or shells are open, as the window says
+/// each time that changes.
 #[tauri::command]
 pub fn leave_running(leaving: State<'_, Arc<Leaving>>, running: bool) {
     leaving.running.store(running, Ordering::SeqCst);
