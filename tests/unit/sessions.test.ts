@@ -98,6 +98,8 @@ function hold(host: string): () => void {
 const LAB = "ssh://ada@lab/srv/one";
 let cwdAnswer: string | null = null;
 let cwdAsks = 0;
+/** The agent whose history directory cannot be read, if any. */
+let unreadable: string | null = null;
 const spawned: SpawnOptions[] = [];
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -137,6 +139,7 @@ vi.mock("$lib/core", () => ({
     // made, whenever the answer arrives.
     transcriptsMany: async (projects: string[], agent: string, dir?: string) => {
       manyCalls.push(projects);
+      if (agent === unreadable) throw new Error("could not read");
       const answer =
         agent !== "claude-code"
           ? []
@@ -2188,6 +2191,28 @@ describe("following a workflow", () => {
     expect(heard.map((tokens) => [...tokens].sort())).toEqual([["old", "token-gone", "token-plain"]]);
     expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
     expect(Object.keys(JSON.parse(localStorage.getItem("workbench.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
+  });
+
+  it("lets go of nothing kept while one source of history cannot be read", async () => {
+    sessions.workflows["gone"] = { workflow: defaultWorkflow(), told: null, project: P };
+    sessions.tokens["gone"] = { token: "token-gone", project: P };
+    historyAnswer = [{ id: "here", title: "Still here", modified: 1, size: 100, cwd: null }];
+    const heard: string[][] = [];
+    onForgotten((tokens) => heard.push(tokens));
+    unreadable = "codex";
+    try {
+      await loadHistory(P);
+    } finally {
+      unreadable = null;
+    }
+    onForgotten(null);
+    expect(sessions.history[P]?.map((entry) => entry.id)).toEqual(["here"]);
+    expect(Object.keys(sessions.workflows)).toEqual(["gone"]);
+    expect(Object.keys(sessions.tokens)).toEqual(["gone"]);
+    expect(heard).toEqual([]);
+    // Read whole, it goes.
+    await loadHistory(P);
+    expect(sessions.tokens).toEqual({});
   });
 
   it("gives a session started with no workflow none, whatever its project follows", () => {

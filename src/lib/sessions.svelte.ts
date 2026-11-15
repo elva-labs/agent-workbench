@@ -340,16 +340,19 @@ export async function loadHistories(projects: string[]) {
             );
           } catch {
             // No history is a shorter list, never an error.
-            return group.map(() => [] as HistoryEntry[]);
+            return null;
           }
         }),
       );
+      // A source that could not be read may hold sessions the others do
+      // not list, so nothing kept is let go of on this reading.
+      const whole = lists.every((source) => source !== null);
       group.forEach((project, at) => {
         if (readings.get(project) !== ticket) return;
         // Listed once per id, as the newest: a session resumed from another
         // directory can be reported from more than one place.
         const newest = new Map<string, HistoryEntry>();
-        const entries = lists.flatMap((source) => source[at] ?? []);
+        const entries = lists.flatMap((source) => source?.[at] ?? []);
         for (const entry of entries.sort((a, b) => b.modified - a.modified)) {
           if (!newest.has(entry.id)) newest.set(entry.id, entry);
         }
@@ -360,7 +363,7 @@ export async function loadHistories(projects: string[]) {
           sessions.history[project] = next;
         readFrom.set(project, signature);
         pruneDormant(project);
-        pruneKept(project);
+        if (whole) pruneKept(project);
       });
     }),
   );
