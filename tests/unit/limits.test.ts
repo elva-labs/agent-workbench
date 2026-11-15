@@ -192,7 +192,7 @@ describe("what a report says", () => {
 
   it("says how old the figures are, and from fifteen minutes that they are old", () => {
     const at = (seconds: number) => ({ readAt: seconds, takenAt: seconds });
-    expect(ageOf(at(SECONDS - 20), NOW)).toEqual({ stale: false, short: "now", long: "just now" });
+    expect(ageOf(at(SECONDS - 20), NOW)).toEqual({ stale: false, moved: false, short: "now", long: "just now" });
     expect(ageOf(at(SECONDS - 4 * 60), NOW)).toMatchObject({ stale: false, long: "4 min ago" });
     expect(ageOf(at(SECONDS - 14 * 60), NOW)).toMatchObject({ stale: false, short: "14 min" });
     expect(ageOf(at(SECONDS - 15 * 60), NOW)).toMatchObject({ stale: true, short: "15 min" });
@@ -208,10 +208,15 @@ describe("what a report says", () => {
     // the push did not name are twenty minutes old.
     expect(ageOf({ readAt: SECONDS - 20 * 60, takenAt: SECONDS - 60 }, NOW)).toMatchObject({
       stale: true,
+      moved: true,
       short: "20 min",
     });
     // With no read answered, the report's own time is all there is.
-    expect(ageOf({ readAt: null, takenAt: SECONDS - 60 }, NOW)).toMatchObject({ stale: false, long: "1 min ago" });
+    expect(ageOf({ readAt: null, takenAt: SECONDS - 60 }, NOW)).toMatchObject({
+      stale: false,
+      moved: false,
+      long: "1 min ago",
+    });
   });
 
   it("names a plan in plain words, and one it does not know as the agent wrote it", () => {

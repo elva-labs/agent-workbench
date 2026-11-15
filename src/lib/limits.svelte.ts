@@ -203,21 +203,23 @@ export function resetWords(figure: Figure, now: number): string {
 /** How old a report's figures are by `now`: as old as its oldest, which
     is the last read the agent answered, or the report itself where no
     read was answered. A push between reads moves only the windows it
-    names, so a newer figure does not make the rest newer. */
+    names, so a newer figure does not make the rest newer; `moved` says a
+    push came a minute or more after the read. */
 export function ageOf(
   report: Pick<LimitsReport, "readAt" | "takenAt">,
   now: number,
-): { stale: boolean; short: string; long: string } {
+): { stale: boolean; moved: boolean; short: string; long: string } {
   const ms = Math.max(0, now - (report.readAt ?? report.takenAt) * 1000);
+  const moved = report.readAt !== null && report.takenAt - report.readAt >= 60;
   const minutes = Math.floor(ms / 60_000);
   const stale = ms >= STALE_AFTER;
-  if (minutes < 1) return { stale, short: "now", long: "just now" };
-  if (minutes < 60) return { stale, short: `${minutes} min`, long: `${minutes} min ago` };
+  const words = (short: string, long: string) => ({ stale, moved, short, long });
+  if (minutes < 1) return words("now", "just now");
+  if (minutes < 60) return words(`${minutes} min`, `${minutes} min ago`);
   const hours = Math.floor(minutes / 60);
-  if (hours < 24)
-    return { stale, short: `${hours} h`, long: hours === 1 ? "an hour ago" : `${hours} hours ago` };
+  if (hours < 24) return words(`${hours} h`, hours === 1 ? "an hour ago" : `${hours} hours ago`);
   const days = Math.floor(hours / 24);
-  return { stale, short: `${days} d`, long: days === 1 ? "a day ago" : `${days} days ago` };
+  return words(`${days} d`, days === 1 ? "a day ago" : `${days} days ago`);
 }
 
 const PLANS: Record<string, string> = {

@@ -203,6 +203,10 @@ test.describe("the session on screen", () => {
     // the other windows are from, is twenty minutes old.
     await report(page, THREE, { age: 0, read: 20 * 60 + 30 });
     await expect(page.getByTestId("limits-age")).toHaveText("20 min ago");
+    await page.getByTestId("account-group").click();
+    await expect(page.getByTestId("allowance-updated")).toHaveText(
+      "Read in full 20 min ago, some moved since. The next turn on this account updates them.",
+    );
   });
 
   test("shows only the windows a Codex account has", async ({ page }) => {

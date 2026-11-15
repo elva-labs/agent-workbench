@@ -232,13 +232,12 @@
       .filter((part) => part !== null)
       .join(" · "),
   );
-  let updated = $derived(
-    age === null
-      ? ""
-      : age.stale
-        ? `Updated ${age.long}. The next turn on this account updates them.`
-        : `Updated ${age.long}`,
-  );
+  let updated = $derived.by(() => {
+    if (age === null) return "";
+    if (!age.stale) return `Updated ${age.long}`;
+    const when = age.moved ? `Read in full ${age.long}, some moved since` : `Updated ${age.long}`;
+    return `${when}. The next turn on this account updates them.`;
+  });
 </script>
 
 {#snippet clock()}
