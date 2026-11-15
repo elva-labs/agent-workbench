@@ -415,11 +415,14 @@ impl Core {
         // can reach it.
         let server = match (instructions, self.home.as_deref()) {
             (None, _) => None,
-            (Some(_), Some(home)) => match hook::tool_server(home, project, agent, config_dir) {
-                hook::ToolServer::Configured => None,
-                hook::ToolServer::Named(daemon) => Some(daemon),
-                hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
-            },
+            (Some(_), Some(home)) => {
+                match hook::tool_server(home, project, agent, config_dir, &env::environment().vars)
+                {
+                    hook::ToolServer::Configured => None,
+                    hook::ToolServer::Named(daemon) => Some(daemon),
+                    hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
+                }
+            }
             (Some(_), None) => return Err(NO_TOOLS.into()),
         };
         // An agent that reads the instructions and the server from files is
@@ -724,7 +727,12 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        Ok(hook::status(home, project, accounts))
+        Ok(hook::status(
+            home,
+            project,
+            accounts,
+            &env::environment().vars,
+        ))
     }
 
     /// The status of each project, in the order given, from one read of
@@ -735,7 +743,12 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<Vec<hook::HookStatus>, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        Ok(hook::status_many(home, projects, accounts))
+        Ok(hook::status_many(
+            home,
+            projects,
+            accounts,
+            &env::environment().vars,
+        ))
     }
 
     pub fn hook_install(
@@ -744,7 +757,7 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        hook::install(home, project, accounts)
+        hook::install(home, project, accounts, &env::environment().vars)
     }
 
     pub fn hook_uninstall(
@@ -753,7 +766,7 @@ impl Core {
         accounts: &[account::Dirs],
     ) -> Result<hook::HookStatus, String> {
         let home = self.home.as_ref().ok_or("no home directory")?;
-        hook::uninstall(home, project, accounts)
+        hook::uninstall(home, project, accounts, &env::environment().vars)
     }
 
     /// Sessions an agent has already had in this project, newest first,
@@ -769,7 +782,10 @@ impl Core {
             return Vec::new();
         };
         match agent {
-            "claude-code" => transcripts::list(&account::claude_dir(home, config_dir), project),
+            "claude-code" => transcripts::list(
+                &account::claude_dir(home, config_dir, &env::environment().vars),
+                project,
+            ),
             "codex" => codex::list(&account::codex_home(home, config_dir), project),
             _ => Vec::new(),
         }
@@ -787,9 +803,10 @@ impl Core {
             return vec![Vec::new(); projects.len()];
         };
         match agent {
-            "claude-code" => {
-                transcripts::list_many(&account::claude_dir(home, config_dir), projects)
-            }
+            "claude-code" => transcripts::list_many(
+                &account::claude_dir(home, config_dir, &env::environment().vars),
+                projects,
+            ),
             "codex" => codex::list_many(&account::codex_home(home, config_dir), projects),
             _ => vec![Vec::new(); projects.len()],
         }
@@ -939,8 +956,20 @@ impl Core {
         // without them still runs, read off its output, so a failure to give
         // them is logged rather than refused.
         if let Some(home) = &self.home {
-            hook::trust_like(home, project, Path::new(&path), accounts)?;
-            if let Err(error) = hook::share(home, project, Path::new(&path), accounts) {
+            hook::trust_like(
+                home,
+                project,
+                Path::new(&path),
+                accounts,
+                &env::environment().vars,
+            )?;
+            if let Err(error) = hook::share(
+                home,
+                project,
+                Path::new(&path),
+                accounts,
+                &env::environment().vars,
+            ) {
                 eprintln!("hooks for the worktree {path}: {error}");
             }
         }
@@ -966,7 +995,7 @@ impl Core {
             claude: dir.clone().filter(|_| agent == "claude-code"),
             codex: dir.filter(|_| agent == "codex"),
         }];
-        if let Err(error) = hook::share(home, project, cwd, &accounts) {
+        if let Err(error) = hook::share(home, project, cwd, &accounts, &env::environment().vars) {
             eprintln!("hooks for the worktree {}: {error}", cwd.display());
         }
     }
@@ -994,7 +1023,7 @@ impl Core {
         // that cannot be read keeps the entry rather than turn the removal
         // into an error.
         if let Some(home) = &self.home {
-            let _ = hook::forget(home, &tree, accounts);
+            let _ = hook::forget(home, &tree, accounts, &env::environment().vars);
         }
         Ok(())
     }
@@ -1257,6 +1286,7 @@ mod tests {
     use super::*;
     use crate::events::testing::Recorder;
     use crate::scratch::Scratch;
+    use std::collections::HashMap;
 
     // A prompt hook stops waiting at the deadline its call carries: an
     // answer past it is not left, and the window hears it was not, so it
@@ -1507,7 +1537,7 @@ mod tests {
         std::fs::write(&daemon, "").unwrap();
 
         let core = Core::at_home(Arc::new(Recorder::default()), Some(home.clone()));
-        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+        let hooked = |folder: &Path| hook::status(&home, folder, &[], &HashMap::new()).installed;
 
         // Hooks off: the worktree gets none.
         let bare = PathBuf::from(core.worktree_add(&project, "bare", &[]).unwrap());
@@ -1529,7 +1559,8 @@ mod tests {
 
         core.worktree_remove(&project, "fix", &[]).unwrap();
         assert!(!tree.exists());
-        let state = std::fs::read_to_string(account::claude_json(&home, None)).unwrap();
+        let state =
+            std::fs::read_to_string(account::claude_json(&home, None, &HashMap::new())).unwrap();
         let state: serde_json::Value = serde_json::from_str(&state).unwrap();
         let key = tree.to_string_lossy().to_string();
         assert!(state["projects"][&key]["mcpServers"]
@@ -1579,7 +1610,7 @@ mod tests {
         // that file of Codex's would have them.
         let donor = home.join("donor");
         std::fs::create_dir_all(&donor).unwrap();
-        hook::install(&home, &donor, &[]).unwrap();
+        hook::install(&home, &donor, &[], &HashMap::new()).unwrap();
         std::fs::create_dir_all(project.join(".claude")).unwrap();
         std::fs::copy(
             donor.join(".claude").join("settings.local.json"),
@@ -1600,7 +1631,7 @@ mod tests {
         core.hook_install(&project, &[]).unwrap();
         // A tree made without them, as one from before they were shared.
         let tree = PathBuf::from(git::worktree_add(&project, "old").unwrap());
-        let hooked = |folder: &Path| hook::status(&home, folder, &[]).installed;
+        let hooked = |folder: &Path| hook::status(&home, folder, &[], &HashMap::new()).installed;
         assert!(!hooked(&tree));
 
         core.hooks_for("claude-code", &project, Some(&tree), None);
