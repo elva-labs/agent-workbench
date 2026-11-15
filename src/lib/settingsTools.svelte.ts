@@ -14,6 +14,8 @@
  * A theme of the user's own is saved the same way: checked against the
  * rules the core keeps it by and for being readable, then shown to the
  * user as swatches with the switch to it, and kept only if they allow it.
+ * A background goes with a palette or a theme, and is shown on the same
+ * swatches.
  *
  * So is the user's own stylesheet: checked against the rules the core
  * keeps it by, then shown to the user as the sheet itself, and written and
@@ -24,9 +26,18 @@
  */
 
 import { noteSent } from "$lib/persist";
+import {
+  checkBackground,
+  describeBackground,
+  rounded,
+  swatchOf,
+  type Background,
+} from "$lib/background";
+import { coloursOf } from "$lib/paletteColours";
 import { core, type SettingsRequest, type UnreadWorkflow } from "$lib/core";
 import {
   COLOUR_TOKENS,
+  DEFAULTS,
   SHAPE_TOKENS,
   checkTheme,
   readability,
@@ -70,6 +81,7 @@ import {
   PALETTES,
   TERMINAL_FONTS,
   setLook,
+  setBackgrounds,
   setMono,
   setPalette,
   setSans,
@@ -98,6 +110,8 @@ interface Next {
   palette?: string;
   /** The whole set of the user's own themes, when a theme is saved. */
   themes?: Record<string, CustomTheme>;
+  /** The whole set of backgrounds, by palette and theme, when one moves. */
+  backgrounds?: Record<string, Background>;
   userStyles?: boolean;
   /** The user's stylesheet, whole, when one is written. */
   css?: string;
@@ -114,8 +128,11 @@ export interface Ask {
   caller: string;
   reason: string | null;
   changes: Change[];
-  /** A theme being saved, to be shown as swatches. */
+  /** A theme being saved, or the palette a background goes with, to be
+      shown as swatches. */
   theme: CustomTheme | null;
+  /** The background the swatches stand on, for each appearance. */
+  ground: { light: string; dark: string } | null;
   /** A stylesheet being written, to be shown as it is. */
   css: string | null;
 }
@@ -234,6 +251,7 @@ export function describeSettings(): string {
     `appearance: ${theme.choice} (one of ${names(APPEARANCES)})`,
     `look: ${theme.look} (one of ${names(LOOKS)})`,
     `palette: ${theme.palette} (one of ${names(palettes())})`,
+    `background: ${backgroundOf(theme.palette)} (kept with the palette in use; settings_change's background argument sets it, null takes it away)`,
     `terminalFont: ${theme.mono} (one of ${names(TERMINAL_FONTS)})`,
     `interfaceFont: ${theme.sans} (one of ${names(INTERFACE_FONTS)})`,
     `keyPreset: ${keys.preset} (one of ${Object.keys(PRESETS).join(", ")}; custom once a chord differs from both)`,
@@ -251,7 +269,8 @@ export function describeSettings(): string {
       SHAPE_TOKENS,
     )
       .map(([token, most]) => `${token} up to ${most}px`)
-      .join(", ")}. A token left out keeps the default palette's value.`,
+      .join(", ")}. A token left out keeps the default palette's value. Its background argument keeps a background with it.`,
+    "A background tints the chrome behind the sessions pane, the headers and the status bar: one to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim, a harmony (single, complementary, analogous, triad, or free), a strength from 0.1 to 1 and grain from 0 to 1. The appearance sets how light it paints, so one background serves light and dark, and the window keeps every text on it readable.",
     "",
     ...describeWorkflows(),
     "",
@@ -265,6 +284,21 @@ export function describeSettings(): string {
     "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the accounts, how long past sessions stay listed, how sessions run, the notifications and the chime are the user's to change, in the settings.",
   ];
   return lines.join("\n");
+}
+
+/** A palette's background as the agent reads it: as it is kept, or none. */
+function backgroundOf(palette: string): string {
+  return Object.hasOwn(theme.backgrounds, palette) ? JSON.stringify(theme.backgrounds[palette]) : "none";
+}
+
+/** The backgrounds with one palette's set or taken away. */
+function withBackground(
+  backgrounds: Record<string, Background>,
+  palette: string,
+  value: unknown,
+): Record<string, Background> {
+  const { [palette]: _was, ...others } = backgrounds;
+  return value === null ? others : { ...others, [palette]: rounded(checkBackground(value)) };
 }
 
 /** The workflows as the agent reads them, with the shape it writes one in. */
@@ -333,7 +367,12 @@ function oneOf<Name extends string>(
  * leave has no chord twice and none the agent needs. Throws the reason
  * when something will not do.
  */
-export function plan(args: Record<string, unknown>): { next: Next; changes: Change[] } {
+export function plan(args: Record<string, unknown>): {
+  next: Next;
+  changes: Change[];
+  theme?: CustomTheme;
+  ground?: { light: string; dark: string } | null;
+} {
   const next: Next = {};
   for (const [field, value] of Object.entries(args)) {
     switch (field) {
@@ -363,6 +402,8 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
       case "userStyles":
         if (typeof value !== "boolean") throw new Error("userStyles is true or false.");
         next.userStyles = value;
+        break;
+      case "background":
         break;
       default:
         if (USERS_OWN.has(field)) {
@@ -410,12 +451,40 @@ export function plan(args: Record<string, unknown>): { next: Next; changes: Chan
     next.keys = table;
   }
 
+  // The background goes with the palette the change leaves.
+  if ("background" in args) {
+    next.backgrounds = withBackground(theme.backgrounds, next.palette ?? theme.palette, args.background);
+  }
+
   const planned = planWorkflows(args);
   if (planned !== null) next.workflows = planned.change;
 
+  const swatches = swatchesOf(next);
   return {
     next,
     changes: [...changesOf(next), ...(planned === null ? [] : planned.changes)],
+    ...(swatches === null ? {} : swatches),
+  };
+}
+
+/** The palette a change leaves in use, as swatches: its colours, and the
+    background it keeps there. */
+function swatchesOf(next: Next): { theme: CustomTheme; ground: { light: string; dark: string } } | null {
+  if (next.backgrounds === undefined) return null;
+  const palette = next.palette ?? theme.palette;
+  const themes = next.themes ?? theme.themes;
+  const kept = Object.hasOwn(next.backgrounds, palette) ? next.backgrounds[palette] : null;
+  const colours = (appearance: "light" | "dark") => coloursOf(palette, appearance, themes);
+  const ground = (appearance: "light" | "dark") =>
+    kept === null ? colours(appearance).bg : swatchOf(kept, colours(appearance));
+  return {
+    theme: {
+      label: palettes().find((known) => known.name === palette)?.label ?? themes[palette]?.label ?? palette,
+      light: colours("light"),
+      dark: colours("dark"),
+      shape: themes[palette]?.shape ?? {},
+    },
+    ground: { light: ground("light"), dark: ground("dark") },
   };
 }
 
@@ -536,6 +605,26 @@ function changesOf(next: Next): Change[] {
       nameOf(INTERFACE_FONTS, next.interfaceFont),
     );
   }
+  if (next.backgrounds !== undefined) {
+    const known = [
+      ...palettes(),
+      ...Object.entries(next.themes ?? {}).map(([name, custom]) => ({ name, label: custom.label })),
+    ];
+    const shown = next.palette ?? theme.palette;
+    const before = theme.backgrounds;
+    const after = next.backgrounds;
+    for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const from = Object.hasOwn(before, name) ? before[name] : null;
+      const to = Object.hasOwn(after, name) ? after[name] : null;
+      if (JSON.stringify(from) === JSON.stringify(to)) continue;
+      changes.push({
+        field: name === shown ? "background" : `background.${name}`,
+        label: name === shown ? "Background" : `Background of ${nameOf(known, name)}`,
+        from: describeBackground(from),
+        to: describeBackground(to),
+      });
+    }
+  }
   if (next.userStyles !== undefined) {
     const said = (on: boolean) => (on ? "On" : "Off");
     line("userStyles", "Custom styles", said(userStyles.on), said(next.userStyles));
@@ -587,11 +676,12 @@ export function planTheme(args: Record<string, unknown>): {
   next: Next;
   changes: Change[];
   theme: CustomTheme;
+  ground: { light: string; dark: string } | null;
 } {
   const name = typeof args.name === "string" ? args.name.trim() : "";
   const fields: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(args)) {
-    if (field === "name" || field === "reason") continue;
+    if (field === "name" || field === "reason" || field === "background") continue;
     fields[field] = value;
   }
   const saved = checkTheme(name, fields);
@@ -600,6 +690,8 @@ export function planTheme(args: Record<string, unknown>): {
   const before = theme.themes[name];
   const same = before !== undefined && JSON.stringify(before) === JSON.stringify(saved);
   const next: Next = { themes: { ...theme.themes, [name]: saved }, palette: name };
+  // Left out, a theme saved again keeps the background it had.
+  if ("background" in args) next.backgrounds = withBackground(theme.backgrounds, name, args.background);
   const changes: Change[] = [];
   if (!same) {
     changes.push({
@@ -618,7 +710,24 @@ export function planTheme(args: Record<string, unknown>): {
       to: saved.label,
     });
   }
-  return { next, changes, theme: saved };
+  if (next.backgrounds !== undefined) {
+    const from = Object.hasOwn(theme.backgrounds, name) ? theme.backgrounds[name] : null;
+    const to = Object.hasOwn(next.backgrounds, name) ? next.backgrounds[name] : null;
+    if (JSON.stringify(from) !== JSON.stringify(to)) {
+      changes.push({ field: "background", label: "Background", from: describeBackground(from), to: describeBackground(to) });
+    }
+  }
+  const kept = Object.hasOwn(next.backgrounds ?? theme.backgrounds, name)
+    ? (next.backgrounds ?? theme.backgrounds)[name]
+    : null;
+  const ground =
+    kept === null
+      ? null
+      : {
+          light: swatchOf(kept, { ...DEFAULTS.light, ...saved.light }),
+          dark: swatchOf(kept, { ...DEFAULTS.dark, ...saved.dark }),
+        };
+  return { next, changes, theme: saved, ground };
 }
 
 /**
@@ -668,13 +777,14 @@ async function change(
     next: Next;
     changes: Change[];
     theme?: CustomTheme;
+    ground?: { light: string; dark: string } | null;
     css?: string;
   },
 ): Promise<Answered> {
   // Checked now, so a change that will not do is refused without a wait.
   planned(request.arguments ?? {});
   return inTurn(async () => {
-    const { next, changes, theme: shown, css } = planned(request.arguments ?? {});
+    const { next, changes, theme: shown, ground, css } = planned(request.arguments ?? {});
     if (changes.length === 0) {
       return said("Nothing to change: the settings are already so.");
     }
@@ -683,7 +793,7 @@ async function change(
         ? request.arguments.reason.trim()
         : null;
     const caller = callerOf(request);
-    let asked = { next, changes, theme: shown, css };
+    let asked = { next, changes, theme: shown, ground, css };
     // The change is planned again once it is allowed, against the settings
     // as they are by then; if what it would do has moved meanwhile, the user
     // is asked again about what it now does.
@@ -696,6 +806,7 @@ async function change(
           reason,
           changes: question.changes,
           theme: question.theme ?? null,
+          ground: question.ground ?? null,
           css: question.css ?? null,
         };
         pending = settle;
@@ -707,7 +818,7 @@ async function change(
       if (now.changes.length === 0) {
         return said("Nothing to change: the settings are already so.");
       }
-      asked = { next: now.next, changes: now.changes, theme: now.theme, css: now.css };
+      asked = { next: now.next, changes: now.changes, theme: now.theme, ground: now.ground, css: now.css };
       if (JSON.stringify(now.changes) === JSON.stringify(question.changes)) break;
     }
     const { undo, notSaved } = await take(asked.next);
@@ -734,6 +845,7 @@ async function change(
 function storedAs(field: string): string {
   if (field === "keyPreset" || field.startsWith("keys.")) return "keys";
   if (field === "theme") return "themes";
+  if (field === "background" || field.startsWith("background.")) return "backgrounds";
   return field;
 }
 
@@ -770,13 +882,17 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
     interfaceFont: theme.sans,
     keys: { ...keys.bindings },
     themes: { ...theme.themes },
+    backgrounds: { ...theme.backgrounds },
     userStyles: userStyles.on,
   };
   const answered = noteSent();
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
-  if (next.themes !== undefined) setThemes(next.themes, next.palette);
-  else if (next.palette !== undefined) setPalette(next.palette);
+  if (next.themes !== undefined) setThemes(next.themes, next.palette, next.backgrounds);
+  else {
+    if (next.palette !== undefined) setPalette(next.palette);
+    if (next.backgrounds !== undefined) setBackgrounds(next.backgrounds);
+  }
   if (next.terminalFont !== undefined) setMono(next.terminalFont);
   if (next.interfaceFont !== undefined) setSans(next.interfaceFont);
   if (next.keys !== undefined) setBindings(next.keys);
@@ -794,8 +910,11 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
     if (next.appearance !== undefined && made("appearance")) setTheme(before.appearance);
     if (next.look !== undefined && made("look")) setLook(before.look);
     if (next.themes !== undefined) {
-      if (made("themes")) setThemes(before.themes, before.palette);
-    } else if (next.palette !== undefined && made("palette")) setPalette(before.palette);
+      if (made("themes")) setThemes(before.themes, before.palette, before.backgrounds);
+    } else {
+      if (next.palette !== undefined && made("palette")) setPalette(before.palette);
+      if (next.backgrounds !== undefined && made("backgrounds")) setBackgrounds(before.backgrounds);
+    }
     if (next.terminalFont !== undefined && made("terminalFont")) setMono(before.terminalFont);
     if (next.interfaceFont !== undefined && made("interfaceFont")) setSans(before.interfaceFont);
     if (next.keys !== undefined && made("keys")) setBindings(before.keys);

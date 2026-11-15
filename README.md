@@ -54,7 +54,8 @@ state at a glance, and projects on other machines over ssh.
   difference. See [remote](docs/remote.md).
 - **The look.** Modern to begin with, the panes flush on one surface;
   terminal for mono chrome and panes drawn as boxes. Light, dark or whatever
-  the desktop is set to, five palettes, and the terminal's font and the
+  the desktop is set to, five palettes, a background of your own behind the
+  chrome that keeps every text readable, and the terminal's font and the
   interface's chosen apart. See [settings](docs/settings.md).
 - **Keyboard first.** The agent owns the keyboard. The app claims a few
   modifier chords, all of them yours to change. One goes to any session or

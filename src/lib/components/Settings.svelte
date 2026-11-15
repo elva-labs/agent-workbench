@@ -80,6 +80,7 @@
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
+  import BackgroundPicker from "$lib/components/BackgroundPicker.svelte";
   import UnreadEntries from "$lib/components/UnreadEntries.svelte";
   import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
 
@@ -526,6 +527,10 @@
               in <code>~/.agent-workbench/settings.json</code>.
             </p>
           {/if}
+
+          <h3>Background</h3>
+          <UnreadEntries field="backgrounds" />
+          <BackgroundPicker />
 
           <h3>Custom styles</h3>
           <UnreadEntries field="userStyles" />
