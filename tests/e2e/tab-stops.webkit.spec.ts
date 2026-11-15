@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { PROJECT, installFakeCore } from "./fake";
 
 // The window by keyboard alone, in WebKit as well as Chromium. WebKit, the
@@ -49,8 +49,55 @@ function ringed(page: Page) {
     // A row of a list is marked as the tree's cursor is, inside its edge.
     if (style.boxShadow.includes(accent)) return true;
     if (style.outlineStyle === "none" || style.outlineStyle === "auto" || parseFloat(style.outlineWidth) === 0) return false;
+    // A check box paints its own box over a ring drawn inside its edge.
+    if (owner.matches("input[type='checkbox'], input[type='radio']") && parseFloat(style.outlineOffset) < 0) return false;
     return style.outlineColor === accent;
   });
+}
+
+/** How many CSS pixels on each side of `target`, outside its own box,
+    change when it loses the keyboard: the part of its ring that can be
+    seen there. Read from the screen, so a ring hidden under what the
+    control paints, or cut off by what holds it, counts for nothing. */
+async function ringOutside(page: Page, target: Locator) {
+  const box = (await target.boundingBox())!;
+  const pad = 6;
+  const clip = { x: box.x - pad, y: box.y - pad, width: box.width + 2 * pad, height: box.height + 2 * pad };
+  const ringed = (await page.screenshot({ clip })).toString("base64");
+  await target.evaluate((element) => (element as HTMLElement).blur());
+  const bare = (await page.screenshot({ clip })).toString("base64");
+  return page.evaluate(
+    async ({ shots, pad, box }) => {
+      const pixels = async (base64: string) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${base64}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        return context.getImageData(0, 0, canvas.width, canvas.height);
+      };
+      const [a, b] = await Promise.all(shots.map(pixels));
+      // The shot is in device pixels: the control's box within it, scaled.
+      const scale = a.width / (box.width + 2 * pad);
+      const [left, top, right, bottom] = [pad * scale, pad * scale, (pad + box.width) * scale, (pad + box.height) * scale];
+      const changed = { top: 0, bottom: 0, left: 0, right: 0 };
+      for (let y = 0; y < a.height; y++)
+        for (let x = 0; x < a.width; x++) {
+          const side = y < top ? "top" : y >= bottom ? "bottom" : x < left ? "left" : x >= right ? "right" : null;
+          if (side === null) continue;
+          const at = (y * a.width + x) * 4;
+          const diff =
+            Math.abs(a.data[at] - b.data[at]) + Math.abs(a.data[at + 1] - b.data[at + 1]) + Math.abs(a.data[at + 2] - b.data[at + 2]);
+          if (diff > 60) changed[side] += 1;
+        }
+      const css = (count: number) => Math.round(count / (scale * scale));
+      return { top: css(changed.top), bottom: css(changed.bottom), left: css(changed.left), right: css(changed.right) };
+    },
+    { shots: [ringed, bare], pad, box },
+  );
 }
 
 /** Presses `key` `times` times and names what has the keyboard after
@@ -214,6 +261,41 @@ test("walks the settings, every section and its controls, and never leaves them"
   // Enter on a button presses it.
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("settings")).toHaveCount(0);
+});
+
+test("rings a check box outside its box, checked or not, in both looks and themes", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press(`${MOD}+,`);
+  await expect(page.getByTestId("settings")).toBeVisible();
+  const box = page.getByTestId("workflow-start-only");
+  for (const look of ["modern", "terminal"])
+    for (const theme of ["light", "dark"]) {
+      await page.getByTestId("settings-tab-appearance").click();
+      await page.getByTestId(`look-${look}`).click();
+      await page.getByTestId(`theme-${theme}`).click();
+      await page.getByTestId("settings-tab-workflows").click();
+      for (const checked of [true, false]) {
+        await expect(box).toBeChecked({ checked });
+        await box.focus();
+        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press("Tab");
+        await expect(box).toBeFocused();
+        await expect.poll(() => ringed(page), { message: `the ring on the box, ${look} ${theme}` }).toBe(true);
+        const sides = await ringOutside(page, box);
+        for (const [side, seen] of Object.entries(sides))
+          expect(seen, `the ring's ${side}, ${look} ${theme}, checked ${checked}`).toBeGreaterThan(10);
+        await box.focus();
+        await page.keyboard.press("Space");
+      }
+      // A step's check box, in the step's own part.
+      const any = page.getByTestId("step-model-any");
+      await any.focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      await expect(any).toBeFocused();
+      for (const [side, seen] of Object.entries(await ringOutside(page, any)))
+        expect(seen, `the step box's ring's ${side}, ${look} ${theme}`).toBeGreaterThan(10);
+    }
 });
 
 test("walks a dialog's own buttons round its ends", async ({ page }) => {

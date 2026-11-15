@@ -682,14 +682,20 @@
     padding: 0 2px 2px 0;
   }
 
+  /* A part that scrolls clips what is drawn past its edges, so it keeps
+     room round its content for the focus ring of a control at the edge,
+     and stands out by as much, so the content stays where it is. */
   .rest,
   .below {
     min-height: 0;
     overflow-y: auto;
+    padding: 4px 4px 0;
+    margin: -4px -4px 0;
   }
 
   .rest {
     grid-area: rest;
+    padding-bottom: 4px;
   }
 
   .below {
