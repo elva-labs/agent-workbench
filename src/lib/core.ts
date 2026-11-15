@@ -506,14 +506,20 @@ export type IntegratedEventBody =
       agent last reported them, with the plan where it names one. `agent`
       is the agent's id, as a start names it; the account is the
       session's, which the core does not name. Sent when the agent answers
-      a read of them, after it is ready and after each turn, and when what
-      it pushes during a turn changes them. `takenAt` is when, in seconds
-      since the epoch. */
+      a read of them, once it is ready and after a turn once the last read
+      is five minutes old, and when what it pushes during a turn changes
+      them. A read gives every window and the plan, and a push moves only
+      the windows it names: `readAt` is when the last read was taken, null
+      before one, and `takenAt` when a figure last moved, so every figure
+      was taken between the two, and the oldest is as old as `readAt`, or
+      `takenAt` where no read was answered. Both are in seconds since the
+      epoch. */
   | {
       type: "limits";
       agent: string;
       plan: string | null;
       windows: IntegratedLimitWindow[];
+      readAt: number | null;
       takenAt: number;
     }
   /** Something the agent says that is neither an error nor part of a

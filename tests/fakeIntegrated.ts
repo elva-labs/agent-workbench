@@ -67,14 +67,14 @@ export interface FakeIntegratedOptions {
     session working, a task the agent says it reports keeps the session
     working until its report's turn ends, long output is cut down and says
     so, and a snapshot holds what a window that comes late cannot read
-    elsewhere, the account's last limits among it. `ready` goes out before `start` returns, as it may from the
-    core, and an interrupt's end of turn comes after the call. What the
-    agent says within a turn is the test's to script, through `emit` and
-    the helpers built on it. A session started with no model says the
-    model it resolved its default to, as the core does. A session of Codex
-    is shaped as the core's Codex driver says one is: it makes its own ids,
-    offers its own models and modes, and withdraws what a turn asked when
-    the turn ends, with no answer. */
+    elsewhere, the account's last limits among it. `ready` goes out before
+    `start` returns, as it may from the core, and an interrupt's end of
+    turn comes after the call. What the agent says within a turn is the
+    test's to script, through `emit` and the helpers built on it. A session
+    started with no model says the model it resolved its default to, as the
+    core does. A session of Codex is shaped as the core's Codex driver says
+    one is: it makes its own ids, offers its own models and modes, and
+    withdraws what a turn asked when the turn ends, with no answer. */
 export interface FakeIntegrated {
   /** Every call, in order. */
   calls: IntegratedCall[];
@@ -198,11 +198,13 @@ export interface FakeIntegrated {
   context(id: string, used: number | null, size: number | null): void;
   /** The account's limits as the agent reports them, whole: each window
       with no model, reset time or severity unless it says otherwise,
-      under no plan, taken now. The agent is the session's. */
+      under no plan, taken now by a read. A push names `readAt`, the time
+      of the read before it, or null where there was none. The agent is
+      the session's. */
   limits(
     id: string,
     windows: (Pick<IntegratedLimitWindow, "kind" | "percent"> & Partial<IntegratedLimitWindow>)[],
-    options?: { plan?: string | null; takenAt?: number },
+    options?: { plan?: string | null; takenAt?: number; readAt?: number | null },
   ): void;
   /** Something the agent says outside a turn. */
   notice(id: string, message: string, level?: "info" | "warning"): void;
@@ -859,6 +861,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
 
     limits(id, windows, limitOptions = {}) {
       const session = live(id);
+      const takenAt = limitOptions.takenAt ?? Math.floor(Date.now() / 1000);
       fake.emit(id, {
         type: "limits",
         agent: session.codex ? "codex" : "claude-code",
@@ -869,7 +872,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           severity: null,
           ...window,
         })),
-        takenAt: limitOptions.takenAt ?? Math.floor(Date.now() / 1000),
+        readAt: limitOptions.readAt === undefined ? takenAt : limitOptions.readAt,
+        takenAt,
       });
     },
 

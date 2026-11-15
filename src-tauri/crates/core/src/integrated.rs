@@ -361,11 +361,16 @@ pub enum Event {
     /// used, and the plan where the agent names it. `agent` is the agent's
     /// id, as a start names it; the account is the session's own. Sent when
     /// the agent answers a read of them, and when what it pushes changes
-    /// them. `takenAt` is when, in seconds since the epoch.
+    /// them. A read gives every window and the plan, and a push moves only
+    /// the windows it names: `readAt` is when the last read the agent
+    /// answered was taken, null before one, and `takenAt` when a figure
+    /// last moved, so every figure was taken between the two. Both are in
+    /// seconds since the epoch.
     Limits {
         agent: String,
         plan: Option<String>,
         windows: Vec<LimitWindow>,
+        read_at: Option<u64>,
         taken_at: u64,
     },
     /// Something the agent says that is neither an error nor part of a
@@ -499,6 +504,44 @@ pub enum LimitSeverity {
     Warning,
     /// At the end of the window, or past it.
     Reached,
+}
+
+/// How long a read of the limits stands for. Apart from the read made once
+/// the agent is ready, one is asked after a turn only once the last one
+/// asked is this old, since what the agent pushes during a turn moves the
+/// session window and the week in between. A read the agent never answers
+/// holds back none for longer than this.
+pub(crate) const LIMITS_AGE: Duration = Duration::from_secs(5 * 60);
+
+/// The most windows a limits event carries, and the longest model name it
+/// gives, in bytes.
+const LIMIT_WINDOWS: usize = 8;
+const MODEL_KEEP: usize = 64;
+
+/// Whether a read of the limits is due, given when the last one was asked.
+pub(crate) fn limits_due(asked: Option<Instant>) -> bool {
+    asked.is_none_or(|asked| asked.elapsed() >= LIMITS_AGE)
+}
+
+/// Windows as a limits event may carry them: in the order of their kinds,
+/// one of each kind and model, the first the agent gave, with a model's
+/// name cut short, and no more than [`LIMIT_WINDOWS`] of them.
+pub(crate) fn kept_windows(windows: impl IntoIterator<Item = LimitWindow>) -> Vec<LimitWindow> {
+    let mut kept: Vec<LimitWindow> = Vec::new();
+    for mut window in windows {
+        if let Some(model) = &mut window.model {
+            cut(model, MODEL_KEEP);
+        }
+        if !kept
+            .iter()
+            .any(|known| known.kind == window.kind && known.model == window.model)
+        {
+            kept.push(window);
+        }
+    }
+    kept.sort_by_key(|window| window.kind);
+    kept.truncate(LIMIT_WINDOWS);
+    kept
 }
 
 /// The time now, in seconds since the epoch, for limit figures taken now.
@@ -3496,7 +3539,7 @@ mod tests {
                     kind: LimitKind::Session,
                     model: None,
                     percent,
-                    resets_at: Some(1_794_738_000),
+                    resets_at: Some(1_900_000_000),
                     severity: Some(LimitSeverity::Normal),
                 },
                 LimitWindow {
@@ -3507,7 +3550,8 @@ mod tests {
                     severity: Some(LimitSeverity::Reached),
                 },
             ],
-            taken_at: 1_794_730_000,
+            read_at: Some(1_899_990_000),
+            taken_at: 1_899_990_600,
         };
         let (tracker, _) = tracked(vec![turn(&[])]);
         assert!(tracker.snapshot().limits.is_none(), "none before any");
@@ -3522,10 +3566,11 @@ mod tests {
         assert_eq!(
             serde_json::to_value(tracker.snapshot()).unwrap()["limits"],
             serde_json::json!({
-                "type": "limits", "agent": "claude-code", "plan": "max", "takenAt": 1_794_730_000,
+                "type": "limits", "agent": "claude-code", "plan": "max",
+                "readAt": 1_899_990_000, "takenAt": 1_899_990_600,
                 "windows": [
                     {"kind": "session", "model": null, "percent": 20.0,
-                     "resetsAt": 1_794_738_000, "severity": "normal"},
+                     "resetsAt": 1_900_000_000, "severity": "normal"},
                     {"kind": "weeklyScoped", "model": "Fable", "percent": 100.0,
                      "resetsAt": null, "severity": "reached"}
                 ]

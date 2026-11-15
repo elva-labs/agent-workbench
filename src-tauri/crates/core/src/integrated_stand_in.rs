@@ -750,23 +750,20 @@ fn unknown_lines_are_skipped_and_unhandled_requests_refused() {
 }
 
 #[test]
-fn the_account_s_limits_are_read_when_ready_and_after_a_turn_and_move_with_its_responses() {
+fn the_account_s_limits_are_read_when_ready_and_move_with_its_responses() {
     let scenario = [
         READY,
         r#"expect "subtype":"get_usage""#,
-        r#"reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"seven_day_opus":null,"limits":[{"kind":"session","group":"session","percent":11,"severity":"normal","resets_at":"2026-11-15T10:20:00+00:00","scope":null,"is_active":false},{"kind":"weekly_all","group":"weekly","percent":37,"severity":"normal","resets_at":"2026-11-19T18:00:00+00:00","scope":null,"is_active":true}]}}}}"#,
+        r#"reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"seven_day_opus":null,"limits":[{"kind":"session","group":"session","percent":20,"severity":"normal","resets_at":"2030-01-01T05:00:00+00:00","scope":null,"is_active":false},{"kind":"weekly_all","group":"weekly","percent":40,"severity":"normal","resets_at":"2030-01-05T00:00:00+00:00","scope":null,"is_active":true}]}}}}"#,
         r#"expect "type":"user""#,
         TAKE,
         INIT,
-        r#"say {"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.8,"resetsAt":1794738000},"uuid":"r1","session_id":"s"}"#,
+        r#"say {"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.5,"resetsAt":1893474000},"uuid":"r1","session_id":"s"}"#,
         DONE,
-        // A read that fails says nothing, and the session goes on.
-        r#"expect "subtype":"get_usage""#,
-        r#"reply {"type":"control_response","response":{"subtype":"error","request_id":"@ID@","error":"get_usage is not supported in this context"}}"#,
+        // A turn that ends soon after the read asks for none of its own.
         r#"expect "type":"user""#,
         TAKE,
         INIT,
-        r#"say {"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"still here"}]},"parent_tool_use_id":null}"#,
         DONE,
         "drain",
     ]
@@ -779,14 +776,15 @@ fn the_account_s_limits_are_read_when_ready_and_after_a_turn_and_move_with_its_r
     assert_eq!(
         read["windows"],
         json!([
-            {"kind": "session", "model": null, "percent": 11.0, "resetsAt": 1_794_738_000_u64,
+            {"kind": "session", "model": null, "percent": 20.0, "resetsAt": 1_893_474_000_u64,
              "severity": "normal"},
-            {"kind": "weekly", "model": null, "percent": 37.0, "resetsAt": 1_795_111_200_u64,
+            {"kind": "weekly", "model": null, "percent": 40.0, "resetsAt": 1_893_801_600_u64,
              "severity": "normal"}
         ])
     );
     let taken_at = read["takenAt"].as_u64().unwrap();
     assert!(taken_at.abs_diff(now_seconds()) < 60);
+    assert_eq!(read["readAt"], taken_at, "a read gives every figure");
     // A window that comes late has them too, as the event told them.
     let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
     let mut told = read.clone();
@@ -796,30 +794,49 @@ fn the_account_s_limits_are_read_when_ready_and_after_a_turn_and_move_with_its_r
     h.send("how much is left");
     let events = h.until_type("turnEnded");
     let moved = events.iter().rfind(|e| e["type"] == "limits").unwrap();
-    assert_eq!(moved["windows"][0]["percent"], 80.0);
+    assert_eq!(moved["windows"][0]["percent"], 50.0);
     assert_eq!(moved["windows"][0]["severity"], "warning");
-    assert_eq!(moved["windows"][1]["percent"], 37.0, "the week as read");
+    assert_eq!(moved["windows"][1]["percent"], 40.0, "the week as read");
     assert_eq!(moved["plan"], "max");
+    assert_eq!(moved["readAt"], taken_at, "the read is as old as it was");
 
-    h.send("are you there");
-    let events = h.until(|e| e["type"] == "text" && e["text"] == "still here");
+    h.send("and now");
     h.until_type("turnEnded");
-    assert!(!kinds(&events).contains(&"error".to_string()), "{events:?}");
-    let told: Vec<Value> = h
-        .events()
-        .into_iter()
-        .filter(|e| e["type"] == "limits")
-        .collect();
-    assert_eq!(told.len(), 2, "nothing from the read that failed");
     let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
-    assert_eq!(late["limits"]["windows"][0]["percent"], 80.0);
+    assert_eq!(late["limits"]["windows"][0]["percent"], 50.0);
     let reads = h
         .stdin()
         .into_iter()
         .filter(|line| line["request"]["subtype"] == "get_usage")
         .inspect(|line| assert_eq!(line["request"]["skip_behaviors"], true))
         .count();
-    assert!(reads >= 2, "read when ready and after the first turn");
+    assert_eq!(reads, 1, "read when ready, and not again so soon");
+    h.stop();
+}
+
+#[test]
+fn a_read_of_the_limits_that_fails_says_nothing_and_the_session_goes_on() {
+    let scenario = [
+        READY,
+        r#"expect "subtype":"get_usage""#,
+        r#"reply {"type":"control_response","response":{"subtype":"error","request_id":"@ID@","error":"get_usage is not supported in this context"}}"#,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        r#"say {"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"still here"}]},"parent_tool_use_id":null}"#,
+        DONE,
+        "drain",
+    ]
+    .join("\n");
+    let h = start("limits-refused", &scenario);
+    h.until_type("ready");
+    h.send("are you there");
+    let events = h.until(|e| e["type"] == "text" && e["text"] == "still here");
+    h.until_type("turnEnded");
+    assert!(!kinds(&events).contains(&"error".to_string()), "{events:?}");
+    assert!(!kinds(&h.events()).contains(&"limits".to_string()));
+    let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
+    assert_eq!(late["limits"], Value::Null);
     h.stop();
 }
 

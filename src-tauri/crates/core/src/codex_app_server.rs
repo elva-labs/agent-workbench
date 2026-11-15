@@ -25,6 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde_json::{json, Map, Value};
 
@@ -34,10 +35,10 @@ use crate::adapter::{
 use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
-    now_seconds, percent, ChangeKind, Choice, CompactReason, Control, Driver, ErrorKind, Event,
-    FileChange, Hunk, Image, Launch, LimitKind, LimitWindow, MessageState, ModeInfo, ModelInfo,
-    NoticeLevel, Offer, Outcome, PlanStep, Prepared, Protocol, Question, QuestionOption, Reading,
-    Sending, StepStatus, ToolKind, Usage,
+    kept_windows, limits_due, now_seconds, percent, ChangeKind, Choice, CompactReason, Control,
+    Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch, LimitKind, LimitWindow,
+    MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep, Prepared, Protocol,
+    Question, QuestionOption, Reading, Sending, StepStatus, ToolKind, Usage,
 };
 
 pub struct CodexAppServer;
@@ -55,6 +56,12 @@ const AGENT: &str = "codex";
 /// and of the week.
 const SESSION_MINUTES: u64 = 300;
 const WEEK_MINUTES: u64 = 10_080;
+
+/// What is kept of a snapshot of the limits, and of each of its two
+/// windows.
+const LIMITS_KEYS: &[&str] = &["limitId", "planType"];
+const WINDOWS: &[&str] = &["primary", "secondary"];
+const WINDOW_KEYS: &[&str] = &["usedPercent", "windowDurationMins", "resetsAt"];
 
 /// The oldest Codex whose app-server this driver has been run against.
 const OLDEST: (u64, u64, u64) = (0, 168, 0);
@@ -715,10 +722,10 @@ struct AppServer {
     /// The account's limits as Codex last answered a read of them, with
     /// what it pushed since merged in.
     rate_limits: Option<Value>,
-    /// A read of the limits is out, and another is wanted once it is
-    /// answered.
-    rate_limits_asked: bool,
-    rate_limits_again: bool,
+    /// When the last read of the limits was asked, and when the last one
+    /// answered was taken, in seconds since the epoch.
+    rate_limits_asked: Option<Instant>,
+    read_at: Option<u64>,
 }
 
 /// How much of a line too long to read is kept to name what it was.
@@ -730,43 +737,51 @@ fn text(value: &Value) -> Option<String> {
 
 /// The plan and the windows of a snapshot of the limits. Codex calls its
 /// windows primary and secondary, which says nothing of how long each is,
-/// so each is named by its length; one of another length is left out.
+/// so each is named by its length; one of another length is left out, and
+/// of two of one length the primary is kept.
 fn limit_windows(limits: &Value) -> (Option<String>, Vec<LimitWindow>) {
-    let mut windows: Vec<LimitWindow> = ["primary", "secondary"]
-        .iter()
-        .filter_map(|name| {
-            let window = &limits[name];
-            let kind = match window["windowDurationMins"].as_u64()? {
-                SESSION_MINUTES => LimitKind::Session,
-                WEEK_MINUTES => LimitKind::Weekly,
-                _ => return None,
-            };
-            Some(LimitWindow {
-                kind,
-                model: None,
-                percent: percent(window["usedPercent"].as_f64()?)?,
-                resets_at: window["resetsAt"].as_u64(),
-                severity: None,
-            })
+    let windows = WINDOWS.iter().filter_map(|name| {
+        let window = &limits[name];
+        let kind = match window["windowDurationMins"].as_u64()? {
+            SESSION_MINUTES => LimitKind::Session,
+            WEEK_MINUTES => LimitKind::Weekly,
+            _ => return None,
+        };
+        Some(LimitWindow {
+            kind,
+            model: None,
+            percent: percent(window["usedPercent"].as_f64()?)?,
+            resets_at: window["resetsAt"].as_u64(),
+            severity: None,
         })
-        .collect();
-    windows.sort_by_key(|window| window.kind);
+    });
     let plan = text(&limits["planType"]).filter(|plan| plan != "unknown");
-    (plan, windows)
+    (plan, kept_windows(windows))
 }
 
-/// Lays what an update holds over what was known: a null leaves what was
-/// there, and an object is merged field by field.
+/// Lays the fields kept of an update over what was known: a null, or a
+/// value of a shape not known here, leaves what was there, and a window is
+/// merged field by field.
 fn merge(known: &mut Value, update: &Value) {
-    let (Some(known), Some(update)) = (known.as_object_mut(), update.as_object()) else {
-        return;
-    };
-    for (key, value) in update {
-        match (known.get_mut(key), value) {
-            (_, Value::Null) => {}
-            (Some(was @ Value::Object(_)), Value::Object(_)) => merge(was, value),
-            _ => {
-                known.insert(key.clone(), value.clone());
+    if !known.is_object() {
+        *known = json!({});
+    }
+    for key in LIMITS_KEYS {
+        if let Some(value) = update[key].as_str() {
+            known[key] = json!(value);
+        }
+    }
+    for name in WINDOWS {
+        let Some(fields) = update[name].as_object() else {
+            continue;
+        };
+        if !known[name].is_object() {
+            known[name] = json!({});
+        }
+        for field in WINDOW_KEYS {
+            match fields.get(*field) {
+                Some(Value::Null) | None => {}
+                Some(value) => known[name][field] = value.clone(),
             }
         }
     }
@@ -1102,22 +1117,19 @@ impl AppServer {
             context_told: (None, None),
             skipped_head: Vec::new(),
             rate_limits: None,
-            rate_limits_asked: false,
-            rate_limits_again: false,
+            rate_limits_asked: None,
+            read_at: None,
         }
     }
 
-    /// Asks Codex for the account's limits, one read at a time. Codex
-    /// answers its requests as each is done, so a read holds nothing up.
+    /// Asks Codex for the account's limits, once the thread is ready and
+    /// then after a turn once the last read is old enough. Codex answers its
+    /// requests as each is done, so a read holds nothing up.
     fn ask_rate_limits(&mut self, out: &mut Reading) {
-        if self.signed_out {
+        if self.signed_out || !limits_due(self.rate_limits_asked) {
             return;
         }
-        if self.rate_limits_asked {
-            self.rate_limits_again = true;
-            return;
-        }
-        self.rate_limits_asked = true;
+        self.rate_limits_asked = Some(Instant::now());
         // The details of the credits that reset a limit are a read of
         // their own, which the limits do not need.
         let (line, _) = self.request(
@@ -1128,40 +1140,42 @@ impl AppServer {
         out.writes.push(line);
     }
 
-    /// The limits as they now stand, taken now.
-    fn limits(&self) -> Option<Event> {
+    /// The limits as they now stand, the last figure of them taken at
+    /// `taken_at`.
+    fn limits(&self, taken_at: u64) -> Option<Event> {
         let (plan, windows) = limit_windows(self.rate_limits.as_ref()?);
         Some(Event::Limits {
             agent: AGENT.to_string(),
             plan,
             windows,
-            taken_at: now_seconds(),
+            read_at: self.read_at,
+            taken_at,
         })
     }
 
     /// Codex pushes what changed of the limits, leaving out what it does
     /// not know then, which is merged into the last read and told when it
-    /// changes what was told. A push for a meter other than the one read,
-    /// such as a quota of one model, is left out.
+    /// changes what was told. Only a push for the meter the read named is
+    /// merged: one before any read, or after a read that named no meter,
+    /// could be another's, such as a quota of one model.
     fn rate_limits_updated(&mut self, update: &Value, out: &mut Reading) {
-        if !update.is_object() {
+        let Some(limits) = &mut self.rate_limits else {
+            return;
+        };
+        let Some(known) = limits["limitId"].as_str() else {
+            return;
+        };
+        if !update.is_object()
+            || update["limitId"]
+                .as_str()
+                .is_some_and(|pushed| pushed != known)
+        {
             return;
         }
-        let known = self
-            .rate_limits
-            .as_ref()
-            .and_then(|limits| limits["limitId"].as_str());
-        if let (Some(known), Some(pushed)) = (known, update["limitId"].as_str()) {
-            if known != pushed {
-                return;
-            }
-        }
-        let before = self.rate_limits.as_ref().map(limit_windows);
-        let limits = self.rate_limits.get_or_insert_with(|| json!({}));
+        let before = limit_windows(limits);
         merge(limits, update);
-        let after = limit_windows(limits);
-        if before.as_ref() != Some(&after) {
-            out.events.extend(self.limits());
+        if limit_windows(limits) != before {
+            out.events.extend(self.limits(now_seconds()));
         }
     }
 
@@ -1448,15 +1462,15 @@ impl AppServer {
             Sent::RateLimits => {
                 // Nothing waits on it, and a read that fails or answers in
                 // a shape not known here leaves the limits as they were.
-                self.rate_limits_asked = false;
                 if let Ok(result) = &reply {
                     if result["rateLimits"].is_object() {
-                        self.rate_limits = Some(result["rateLimits"].clone());
-                        out.events.extend(self.limits());
+                        let mut limits = json!({});
+                        merge(&mut limits, &result["rateLimits"]);
+                        self.rate_limits = Some(limits);
+                        let now = now_seconds();
+                        self.read_at = Some(now);
+                        out.events.extend(self.limits(now));
                     }
-                }
-                if std::mem::take(&mut self.rate_limits_again) {
-                    self.ask_rate_limits(out);
                 }
             }
             Sent::Compact => {

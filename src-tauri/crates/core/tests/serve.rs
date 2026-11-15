@@ -214,7 +214,7 @@ for request in initialize get_settings get_usage; do
   read -r line
   id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
   case "$request" in
-    get_usage) body='{"subscription_type":"pro","rate_limits":{"limits":[{"kind":"session","percent":12,"severity":"normal","resets_at":"2026-11-15T10:20:00+00:00"}]}}' ;;
+    get_usage) body='{"subscription_type":"pro","rate_limits":{"limits":[{"kind":"session","percent":20,"severity":"normal","resets_at":"2030-01-01T05:00:00+00:00"}]}}' ;;
     *) body='{}' ;;
   esac
   printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":%s}}\n' "$id" "$body"
@@ -292,7 +292,7 @@ while read -r line; do :; done
         assert!(events.lock().unwrap().iter().any(|(_, payload)| {
             payload["type"] == "limits"
                 && payload["agent"] == "claude-code"
-                && payload["windows"][0]["percent"] == 12.0
+                && payload["windows"][0]["percent"] == 20.0
         }));
         connection
             .call(
@@ -318,7 +318,7 @@ while read -r line; do :; done
         assert_eq!(snapshot["limits"]["plan"], "pro");
         assert_eq!(
             snapshot["limits"]["windows"][0]["resetsAt"],
-            1_794_738_000_u64
+            1_893_474_000_u64
         );
         connection
             .call("integrated_stop", json!({ "id": id }))
