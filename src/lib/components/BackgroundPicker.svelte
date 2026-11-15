@@ -64,8 +64,9 @@
   );
   let ready = $derived(readyMadeOf(shown));
   let terminal = $derived(theme.look === "terminal");
-  /** The harmony chosen, and the ready-made: each row is one stop for Tab,
-      on the one chosen or else the first, walked with the arrows. */
+  /** The harmony chosen, and the ready-made. Each row walks its own items
+      and chooses as it goes, so it gives them their tab indexes itself:
+      one stop for Tab, on the one chosen or else the first. */
   let harmonyAt = $derived(HARMONIES.findIndex((known) => known.name === shown?.harmony));
   let readyAt = $derived(
     shown === null ? 0 : READY_MADE.findIndex((known) => known.name === ready) + 1,
@@ -383,7 +384,6 @@
       <button
         type="button"
         class="tool"
-        tabindex="0"
         onclick={add}
         disabled={shown !== null && shown.dots.length >= MOST_DOTS}
         aria-label="Add a colour"
@@ -395,7 +395,6 @@
         type="button"
         class="tool"
         class:with-chip={shown !== null}
-        tabindex="0"
         onclick={() => remove()}
         disabled={shown === null}
         aria-label="Remove colour {chosenAt + 1}"
@@ -503,7 +502,6 @@
       <input
         id="background-strength"
         type="range"
-        tabindex="0"
         min="10"
         max="100"
         step="5"
@@ -525,7 +523,6 @@
       <input
         id="background-grain"
         type="range"
-        tabindex="0"
         min="0"
         max="100"
         step="5"

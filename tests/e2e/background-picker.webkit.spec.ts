@@ -1,11 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
 
-// The background picker by keyboard alone, in WebKit as well as Chromium:
-// WebKit, the app's webview on macOS, passes over a control on Tab unless
-// it is made a stop. The pad, each dot, the add and remove buttons and the
-// sliders are stops; the harmonies and the ready-made row are one stop
-// each, walked with the arrows.
+// The background picker by keyboard alone, in WebKit, the app's webview on
+// macOS, as well as Chromium. The pad, each dot, the add and remove buttons
+// and the sliders are stops; the harmonies and the ready-made row are one
+// stop each, walked with the arrows.
 
 const MOD = "ControlOrMeta";
 
