@@ -499,7 +499,11 @@ test("says nothing is at work under a run that was interrupted, though a message
 });
 
 test("keeps the thread's text clear of the edges in a narrow agent pane", async ({ page }) => {
-  await page.setViewportSize({ width: 700, height: 800 });
+  // The narrowest window that keeps the changes pane beside the agent on
+  // every platform: on Windows and Linux its least width leaves room for
+  // the window's own buttons, and a narrower window folds it, giving the
+  // agent the width.
+  await page.setViewportSize({ width: 762, height: 800 });
   await openIntegrated(page);
   await agent(page, `f.turn("${H}", "A reply that runs long enough to wrap in a narrow pane, so its edges show.");`);
   const pane = (await page.locator(AGENT).boundingBox())!;

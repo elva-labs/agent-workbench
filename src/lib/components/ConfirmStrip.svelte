@@ -14,13 +14,66 @@
     action: string;
     onConfirm: () => void;
     onCancel: () => void;
+    /** A way out that keeps what would go, such as saving first. */
+    alternative?: { label: string; onClick: () => void } | null;
+    /** The way out is the answer to give: it is drawn filled, and the
+        destructive action quietly beside Cancel. */
+    safe?: boolean;
     testid: string;
   }
 
-  let { question, detail = null, action, onConfirm, onCancel, testid }: Props = $props();
+  let {
+    question,
+    detail = null,
+    action,
+    onConfirm,
+    onCancel,
+    alternative = null,
+    safe = false,
+    testid,
+  }: Props = $props();
 
   function cancelFirst(node: HTMLElement) {
     node.focus();
+  }
+
+  /** Three buttons that do not fit on one line stand in a column, one
+      group, rather than wrap two and one. */
+  let stacked = $state(false);
+
+  /** Measures the buttons at their own widths, in a row, and stacks them
+      when the strip has less room than that. The width in a row is taken
+      while they are in one, and the strip is measured again on a resize. */
+  function fit(node: HTMLElement) {
+    const strip = node.parentElement!;
+    let row = 0;
+    // Widths to the fraction of a pixel: a whole-pixel sum rounds a row
+    // that is a fraction too wide down to one that fits.
+    const measure = () => {
+      if (!stacked) {
+        const buttons = [...node.children] as HTMLElement[];
+        const gap = parseFloat(getComputedStyle(node).columnGap) || 0;
+        row = buttons.reduce((sum, button) => sum + button.getBoundingClientRect().width, 0) + gap * (buttons.length - 1);
+      }
+      const style = getComputedStyle(strip);
+      const room = strip.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      stacked = row > room;
+    };
+    measure();
+    // A frame later, so what the column does to the strip's height is not
+    // seen in the same round of resize notices.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    });
+    observer.observe(strip);
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+      },
+    };
   }
 
   function keys(event: KeyboardEvent) {
@@ -37,10 +90,28 @@
     <b>{question}</b>
     {#if detail}<span>{detail}</span>{/if}
   </p>
-  <div class="actions">
-    <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
-    <button type="button" class="go" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
-  </div>
+  {#snippet buttons()}
+    {#if safe && alternative !== null}
+      <button type="button" class="quiet" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
+      <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+      <button type="button" class="save" onclick={alternative.onClick} data-testid="{testid}-alternative"
+        >{alternative.label}</button
+      >
+    {:else}
+      <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+      {#if alternative !== null}
+        <button type="button" class="cancel" onclick={alternative.onClick} data-testid="{testid}-alternative"
+          >{alternative.label}</button
+        >
+      {/if}
+      <button type="button" class="go" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
+    {/if}
+  {/snippet}
+  {#if alternative !== null}
+    <div class="actions" class:stacked use:fit data-testid="{testid}-actions">{@render buttons()}</div>
+  {:else}
+    <div class="actions">{@render buttons()}</div>
+  {/if}
 </div>
 
 <style>
@@ -70,13 +141,32 @@
     color: var(--ink);
   }
 
+  /* In a narrow pane the buttons wrap to rows of their own, each on one
+     line. */
   .actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
     margin-left: auto;
   }
 
+  /* Three that do not fit on one line: a column the strip's width, in the
+     order they stand in a row, each button as wide as the others. */
+  .actions.stacked {
+    flex: 1 1 100%;
+    flex-direction: column;
+    align-items: stretch;
+    margin-left: 0;
+  }
+
+  .actions.stacked button {
+    margin: 0;
+    padding-block: 5px;
+  }
+
   button {
+    white-space: nowrap;
     padding: 4px 10px;
     border: 0;
     border-radius: var(--radius);
@@ -97,6 +187,19 @@
   .go {
     background: var(--del);
     color: var(--surface);
+  }
+
+  /* Where keeping is the answer: it is filled in the accent, and the
+     destructive one sits apart, as words in the warning's colour. */
+  .save {
+    background: var(--accent);
+    color: var(--surface);
+  }
+
+  .quiet {
+    margin-right: auto;
+    background: none;
+    color: var(--del);
   }
 
   button:focus-visible {

@@ -244,7 +244,7 @@ pub fn diff(root: &Path, file: &str) -> Result<FileDiff, String> {
 
 /// A path inside the worktree, and nothing else: the frontend only ever asks
 /// for paths git listed, but the core is the one that has to make that true.
-fn inside_worktree(file: &str) -> Result<&Path, String> {
+pub(crate) fn inside_worktree(file: &str) -> Result<&Path, String> {
     use std::path::Component;
 
     let path = Path::new(file);

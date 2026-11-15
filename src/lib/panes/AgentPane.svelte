@@ -2,6 +2,7 @@
   import { shown } from "$lib/thread";
   import HooksNotice from "$lib/components/HooksNotice.svelte";
   import WorkflowTagButton from "$lib/components/WorkflowTagButton.svelte";
+  import { letters } from "$lib/giveWay";
   import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
@@ -244,10 +245,14 @@
   {/if}
   {#if current !== null && integrated}
     <span class="crumb" title={current.project} data-testid="conversation-project"
-      ><Icon name="folder" size={13} />{projectLabel(current.project)}</span
+      ><Icon name="folder" size={13} /><span class="crumb-text" use:letters={projectLabel(current.project)}
+        >{projectLabel(current.project)}</span
+      ></span
     >
     {#if branch !== null}
-      <span class="crumb" data-testid="conversation-branch"><Icon name="branch" size={13} />{branch}</span>
+      <span class="crumb" data-testid="conversation-branch"
+        ><Icon name="branch" size={13} /><span class="crumb-text" use:letters={branch}>{branch}</span></span
+      >
     {/if}
   {/if}
 {/snippet}
@@ -336,14 +341,17 @@
     background: var(--surface);
   }
 
+  /* The session's project and branch give way before the workflow tag
+     beside them, cut short and then gone with their icon at a letter or
+     two. */
   .crumb {
+    flex: 0 1000000 auto;
     display: flex;
     align-items: center;
     gap: 5px;
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
     font-family: var(--chrome);
     font-size: var(--meta-size);
     letter-spacing: var(--label-track);
@@ -353,6 +361,16 @@
 
   .crumb + .crumb {
     margin-left: 6px;
+  }
+
+  .crumb-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .crumb:has(:global(.crumb-text.cut)) {
+    visibility: hidden;
   }
 
   /* Sits over the terminal rather than replacing it: the buffer of a stopped

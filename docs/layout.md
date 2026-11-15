@@ -1,9 +1,9 @@
 # Layout
 
-Two shapes, one transition, and rules for what gives way when the window is
-too small.
+Three shapes, the transitions between them, and rules for what gives way
+when the window is too small.
 
-## The two shapes
+## The three shapes
 
 **Working** is three panes: projects and sessions, the agent, the changes.
 The agent takes whatever the side panes do not.
@@ -14,10 +14,19 @@ content takes the rest. You enter it by opening a file or with
 <kbd>Cmd</kbd><kbd>D</kbd>, and leave it with <kbd>Esc</kbd>, the same chord,
 or the control in the viewer's bar.
 
+**Editing** is the window's other mode: the file tree and a plain text
+editor take the middle, and the agent moves to the right pane and keeps
+running. A two-part switch, Agent and Editor, flips between working and
+editing, and so does <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd> or the
+command palette. The mode belongs to the window and is remembered across a
+restart. Reviewing stays what it is in agent mode; [editor
+mode](#editor-mode) has the editing shape's own rules, and
+[editor](editor.md) what the editor does.
+
 The viewer is a pane rather than a sheet over the terminal. A sheet traps
 focus and hides what you were watching; a pane takes its room from somewhere
-real. The tree is the same component in both shapes, so it keeps its scroll
-position, open folders and selection across the transition.
+real. The tree is the same component in all three shapes, so it keeps its
+scroll position, open folders and selection across the transitions.
 
 Opening a file costs the agent one resize: the pane opens at six tenths of
 the window, or wider when it and the sessions pane already came to more, and
@@ -26,26 +35,60 @@ nothing. Drag the viewer's splitter and the
 app stops sizing it for you; working and reviewing widths, and the tree
 column, are remembered separately.
 
+## The corner
+
+The switch and a button that shows and hides the right pane stand at the
+end of the rightmost pane's header, so they are in the same place in both
+modes whatever the panes under them do. The right pane is the changes pane
+in agent mode and the agent while editing; the button and
+<kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is, and in a window
+too narrow to show it at all the status bar says so. On Windows and Linux
+the window controls the app draws come after them, and the right pane's
+widths are 60 pixels more in both modes: the changes pane opens at 400 and
+never goes below 320, so the corner and the window controls never cover
+each other, and the agent opens at 480 while editing. A width dragged by
+hand stays as dragged, and a double-click on the splitter gives the
+default back. Short of room, a header's status gives way before its name,
+and goes once it would show no more than a letter or two. The agent's header
+gives way in this order: a workflow's name and a session's project and
+branch, then the status, then the session's place in the workflow, and its
+title last. Each is cut short and then goes at a letter or two, its icon or
+its tag with it. In editor mode on Windows and Linux the window controls and
+the corner leave no room for the place in the workflow beside the title, so
+it goes there, and on macOS in the terminal look it is cut a few letters
+short. A click on the
+corner leaves the keyboard where it was, and neither a click nor Tab moves
+the pane focus.
+
 ## What gives way, in order
 
 The agent pane is a character grid, and below a certain width a TUI stops
 being usable. It is the last pane to lose room and the only one that can
 never be closed.
 
-| Content width | Layout                                        |
-| ------------- | --------------------------------------------- |
-| 812 and up    | All three panes                               |
-| 682 to 812    | Sessions folds                                |
-| Under 682     | Changes folds away too, agent beside the fold |
+| Content width | Windows and Linux | Layout                                        |
+| ------------- | ----------------- | --------------------------------------------- |
+| 812 and up    | 872 and up        | All three panes                               |
+| 682 to 812    | 742 to 872        | Sessions folds                                |
+| Under 682     | Under 742         | Changes folds away too, agent beside the fold |
 
 The window's minimum width is that 682 plus the frame's padding, which stays
 under half of a 1440-wide display so macOS split-screen still accepts the
 window. A unit test keeps the window configuration and the layout's numbers
-in step.
+in step. On Windows and Linux the changes pane needs 60 pixels more, so at
+the window's minimum it folds away and the agent stands beside the fold.
 
 Within a shape, the changes pane gives width up before the sessions pane.
 The sessions pane opens 300 pixels wide, room for a session's name beside
 its time, and keeps whatever width it is dragged to.
+
+While editing the editor comes before the agent. When the window cannot give
+the editor 640 pixels with everything open, the sessions pane folds, forced
+and not remembered, and peeks from its column as it does while reviewing.
+Then the tree column goes, and then the agent is hidden rather than squeezed
+below its minimum. The agent and the tree give way down to their own
+minimums before they go. At 1440 wide the sessions pane is folded while
+editing; everything is open from 1618, and from 1678 on Windows and Linux.
 
 ## Folded, not gone
 
@@ -65,6 +108,9 @@ all there is and there is nothing to open.
 
 Reviewing folds the pane as part of its shape, so opening it for real there
 closes the viewer, which is what <kbd>Cmd</kbd><kbd>B</kbd> still does.
+Editing folds it only in a window too narrow for it beside the editor, and
+there the column peeks it the same way, <kbd>Cmd</kbd><kbd>B</kbd> included,
+since there is nowhere to open it into.
 Instead the pane peeks: the pointer resting on the column, a click on it,
 or <kbd>Cmd</kbd><kbd>1</kbd> draws the pane at its open width over the
 agent pane, with the column, the viewer and the agent exactly where they
@@ -82,7 +128,11 @@ A pane can be folded or missing for two reasons, and they are kept apart:
 - **forced**: the window cannot hold it. Transient, never persisted.
 
 Without the distinction, one stint in split-screen would permanently forget
-that you like the sessions pane open.
+that you like the sessions pane open. The same holds for the tree column and
+the agent while editing: hidden by the window, they come back when it grows,
+and narrowed by it, they widen again to the width chosen, which a squeeze
+never replaces; the agent hidden with its toggle stays hidden until asked
+for.
 
 ## Hiding is free, resizing is not
 
@@ -119,16 +169,20 @@ rather than squeezes, and its shells are measured once it arrives. In the
 sessions pane a row that goes fades where it stands, and the rows below it
 close the gap rather than jump into it; a row that arrives fades in.
 
+Flipping between agent mode and editor mode puts the panes in another
+order, so no column eases into it: the layout lands in a single step, the
+agent is told one new size per flip, and none while it is hidden.
+
 None of this happens when the system asks for reduced motion. Panes and rows
 are then simply where they end up.
 
 ## The terminal panel
 
-Under either shape sits a strip for plain shells, the way an editor keeps a
+Under every shape sits a strip for plain shells, the way an editor keeps a
 terminal below the editors. <kbd>Cmd</kbd><kbd>J</kbd> shows and hides it,
 <kbd>Cmd</kbd><kbd>4</kbd> focuses it, and opening it gives it focus.
-Reviewing neither opens nor closes it, and it keeps its height across both
-shapes.
+Reviewing and editing neither open nor close it, and it keeps its height
+across the shapes.
 
 The panel takes its height from the panes above it, one pty resize for the
 agent when it opens and one when it closes. It follows the same rules as the
@@ -156,8 +210,9 @@ with the others; below 140px it stops giving way and the shells keep 320px.
 
 On macOS the window has no title bar. The traffic lights sit over the header
 of whichever pane is at the left edge, sessions normally, the agent once that
-pane is closed or folded, the viewer when reviewing hides the agent too, and
-that pane's header is inset so its title clears them. The app measures that
+pane is closed or folded, the viewer when reviewing hides the agent too, the
+files pane while editing once the sessions pane folds, and that pane's
+header is inset so its title clears them. The app measures that
 header once the look has painted and again when the look changes, and places
 the buttons on its middle; since macOS lays the title bar out again whenever
 it likes, it listens for the buttons' frames changing and puts them back each
@@ -173,7 +228,7 @@ to zoom.
 
 On Windows and Linux the window is undecorated and the app draws minimize,
 maximize and close at the end of the rightmost pane's header, where the
-platform has them. The pane headers are drag regions there too, and the
+platform has them, after [the corner](#the-corner). The pane headers are drag regions there too, and the
 platform keeps the resize borders. A menu button at the start of the
 leftmost header pops the native menu with Settings and Quit in it, since
 a menu bar would sit in the row the app took.
@@ -200,6 +255,9 @@ panel's shell when the panel has the keyboard, and the agent on screen
 otherwise. On a keyboard where = needs Shift, or where + has a key of its
 own, <kbd>Cmd</kbd> with either zooms in as well.
 
+While the editor has the keyboard the same chords step its text, over the
+same range, and its size is kept in the window's storage.
+
 Each terminal has its own size. A larger size fits fewer rows and columns,
 so the terminal measures its grid again and tells the process, as a change
 of [font](settings.md#font) does. The status bar names the new size.
@@ -210,7 +268,8 @@ file.
 
 ## The field above the tree
 
-The changes pane's toolbar is a search field. What is typed narrows the tree
+The changes pane's toolbar is a search field, across the pane, or at the
+top of the tree's column in editor mode. What is typed narrows the tree
 to the paths holding every word of it, in any order, with every folder on
 the way open. In **lines** mode it is searched for inside the files, and the
 hits stand in for the tree: a row per file and a row per hit, the match
@@ -302,3 +361,17 @@ to put the document away, so switching away and back finds it open. This
 holds across projects and worktrees: a session working in a worktree, or
 in another project, gets its document back although the switch gave the
 changes pane a different tree to list.
+
+## Editor mode
+
+The changes pane becomes the files pane: the tree keeps a column on the
+left, 240 pixels to begin with, and lists every file; the editor takes the
+rest. The agent's pane on the right opens at 420, wider on Windows and Linux
+as [the corner](#the-corner) says. Both widths are dragged at
+their edges and remembered apart from the other shapes', and a drag never
+folds or hides a pane: it stops where the editor would get less than 640.
+The column's header names the project, with the worktree a session follows,
+and holds buttons for a new file and a new folder; the editor's header holds
+its tabs and the views control. Peeked, the sessions pane covers the folded
+column and the tree's together. What the editor does is in
+[editor](editor.md).

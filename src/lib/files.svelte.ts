@@ -642,7 +642,8 @@ export function clear() {
   files.content = null;
   files.error = null;
   files.loading = false;
-  files.scope = "changed";
+  // Editor mode lists every file; agent mode starts on what changed.
+  files.scope = layout.mode === "editing" ? "all" : "changed";
   files.query = "";
   files.mode = "files";
   files.hits = [];

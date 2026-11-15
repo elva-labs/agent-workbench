@@ -249,3 +249,99 @@ describe("Escape", () => {
     ).toBeNull();
   });
 });
+
+describe("editor mode", () => {
+  const editor: Partial<KeyContext> = { focus: "changes", editing: true, inEditor: true };
+  const tree: Partial<KeyContext> = { focus: "changes", editing: true, inEditor: false };
+
+  it("flips the mode on Shift+Cmd+E from anywhere, a terminal included", () => {
+    expect(resolveAction(mod("e", { shiftKey: true }))).toEqual({ type: "toggleMode" });
+    expect(resolveAction(mod("E", { shiftKey: true }), editor)).toEqual({ type: "toggleMode" });
+  });
+
+  it("starts a new file on Alt+Cmd+N, read from the key's place", () => {
+    // macOS spells Option+N as a dead key; the chord is the key it sits on.
+    expect(resolveAction(mod("Dead", { altKey: true, code: "KeyN" }))).toEqual({ type: "newFile" });
+    expect(resolveAction(mod("n", { altKey: true, code: "KeyN" }), tree)).toEqual({ type: "newFile" });
+  });
+
+  it("saves on Cmd+S anywhere in editor mode but a terminal", () => {
+    expect(resolveAction(mod("s"), editor)).toEqual({ type: "save" });
+    expect(resolveAction(mod("s"), tree)).toEqual({ type: "save" });
+    expect(resolveAction(mod("s"), { focus: "agent", editing: true })).toBeNull();
+    expect(resolveAction(mod("s"))).toBeNull();
+  });
+
+  it("closes the tab on Cmd+W in editor mode, and leaves it to the menu elsewhere", () => {
+    expect(resolveAction(mod("w"), editor)).toEqual({ type: "closeTab" });
+    expect(resolveAction(mod("w"), tree)).toEqual({ type: "closeTab" });
+    expect(resolveAction(mod("w"), { focus: "terminal", editing: true })).toBeNull();
+    expect(resolveAction(mod("w"), { focus: "changes" })).toBeNull();
+  });
+
+  it("finds in the file from the editor, and filters the tree from the tree", () => {
+    expect(resolveAction(mod("f"), editor)).toEqual({ type: "findInFile" });
+    expect(resolveAction(mod("f"), tree)).toEqual({ type: "find", mode: "files" });
+  });
+
+  it("leaves every chord on an arrow key to the editor", () => {
+    expect(resolveAction(mod("ArrowDown", { shiftKey: true }), editor)).toBeNull();
+    expect(resolveAction(mod("ArrowUp", { shiftKey: true }), editor)).toBeNull();
+    expect(resolveAction(mod("ArrowDown", { shiftKey: true }), tree)).toEqual({ type: "cycle", direction: 1 });
+  });
+
+  it("keeps the app's other chords while the editor has the keyboard", () => {
+    expect(resolveAction(mod("1"), editor)).toEqual({ type: "focus", pane: "sessions" });
+    expect(resolveAction(mod("e"), editor)).toEqual({ type: "toggleView" });
+  });
+
+  it("leaves Cmd+D to the editor, and does nothing with it elsewhere in editor mode", () => {
+    expect(resolveAction(mod("d"), editor)).toBeNull();
+    expect(resolveAction(mod("d"), tree)).toBeNull();
+    expect(resolveAction(mod("d"), { focus: "changes" })).toEqual({ type: "toggleReview" });
+  });
+
+  it("leaves Escape to the editor, and sends it there from the panes around it", () => {
+    expect(resolveAction({ key: "Escape" }, editor)).toBeNull();
+    expect(resolveAction({ key: "Escape" }, tree)).toEqual({ type: "toEditor" });
+    expect(resolveAction({ key: "Escape" }, { focus: "sessions", editing: true })).toEqual({ type: "toEditor" });
+    expect(resolveAction({ key: "Escape" }, { focus: "agent", editing: true })).toBeNull();
+  });
+
+  describe("with an integrated session beside the editor", () => {
+    const composer: Partial<KeyContext> = { focus: "agent", editing: true, integrated: true };
+
+    it("hands the keyboard back to the editor on Escape from the composer", () => {
+      expect(resolveAction({ key: "Escape" }, composer)).toEqual({ type: "toEditor" });
+      // Agent mode is as main has it: the viewer closes, and otherwise
+      // nothing happens.
+      expect(resolveAction({ key: "Escape" }, { focus: "agent", reviewing: true, integrated: true })).toEqual({ type: "exitReview" });
+      expect(resolveAction({ key: "Escape" }, { focus: "agent", integrated: true })).toBeNull();
+    });
+
+    it("leaves Escape to the editor, and sends it there from the tree, as with a terminal", () => {
+      expect(resolveAction({ key: "Escape" }, { ...editor, integrated: true })).toBeNull();
+      expect(resolveAction({ key: "Escape" }, { ...tree, integrated: true })).toEqual({ type: "toEditor" });
+    });
+
+    it("saves and closes the tab from the composer, which is no terminal", () => {
+      expect(resolveAction(mod("s"), composer)).toEqual({ type: "save" });
+      expect(resolveAction(mod("w"), composer)).toEqual({ type: "closeTab" });
+      expect(resolveAction({ key: "s", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "save" });
+      expect(resolveAction({ key: "w", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "closeTab" });
+      // Not in agent mode, where there is nothing to save.
+      expect(resolveAction(mod("s"), { focus: "agent", integrated: true })).toBeNull();
+    });
+
+    it("leaves the find chord free in the composer, and flips the mode from it", () => {
+      expect(resolveAction(mod("f"), composer)).toBeNull();
+      expect(resolveAction(mod("e", { shiftKey: true }), composer)).toEqual({ type: "toggleMode" });
+    });
+  });
+
+  it("follows a chord the user moved", () => {
+    expect(setBinding("file.save", { key: "s", shift: true, alt: false })).toBeNull();
+    expect(resolveAction(mod("s", { shiftKey: true }), editor)).toEqual({ type: "save" });
+    expect(resolveAction(mod("s"), editor)).toBeNull();
+  });
+});

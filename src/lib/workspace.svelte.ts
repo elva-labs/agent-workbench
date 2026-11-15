@@ -9,6 +9,7 @@ import {
   activeSession,
   byKey,
   closeProject,
+  ownerGone,
   create,
   forProject,
   select,
@@ -268,6 +269,7 @@ async function openRequested() {
 /** Removes a project from the window, stopping everything running in it. */
 export function close(path: string) {
   closeProject(path);
+  ownerGone(`project:${path}`);
   closeShells(path);
   void closeOwner({ kind: "project", path });
   workspace.open = workspace.open.filter((project) => project.path !== path);
