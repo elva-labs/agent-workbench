@@ -170,6 +170,29 @@ async function sceneReport(driver: WebDriver, selector: string) {
   }, selector) as Promise<string>;
 }
 
+/** What the window held when a step in editor mode did not happen: its
+    size, the panes' and the tree column's widths, the tree and what it
+    lists, the field above it and which search it is set to. */
+async function editingReport(driver: WebDriver) {
+  return driver.executeScript(() => {
+    const width = (selector: string) => {
+      const el = document.querySelector(selector);
+      return el === null ? "none" : String(Math.round(el.getBoundingClientRect().width));
+    };
+    const trees = document.querySelectorAll<HTMLElement>("[data-testid='file-tree']");
+    const fields = [...document.querySelectorAll<HTMLInputElement>("[data-testid='search-field']")];
+    const checked = document.querySelector("[data-testid='mode-files']")?.getAttribute("aria-checked");
+    return [
+      `window ${window.innerWidth}x${window.innerHeight}`,
+      `mode ${document.querySelector("[data-testid='mode-readout']")?.textContent}`,
+      `widths sessions ${width("section[data-pane='sessions']")}, changes ${width("section[data-pane='changes']")}, agent ${width("section[data-pane='agent']")}, tree column ${width("[data-testid='tree-column']")}`,
+      `trees ${trees.length}, the first listing ${JSON.stringify(trees[0]?.innerText.slice(0, 200) ?? null)}`,
+      `tree column ${JSON.stringify((document.querySelector<HTMLElement>("[data-testid='tree-column']")?.innerText ?? "").slice(0, 200))}`,
+      `fields ${JSON.stringify(fields.map((field) => field.value))}, files search ${checked}`,
+    ].join("; ");
+  }) as Promise<string>;
+}
+
 const TREE = "[data-testid='file-tree']";
 const CHANGES = "section[data-pane='changes']";
 /** The plugin source the tier adds: a directory with two plugins in it,
@@ -439,6 +462,26 @@ describe("the real app", () => {
   it("edits and saves a file in editor mode through the core", async () => {
     const { driver } = app;
     const mode = () => textOf(driver, "[data-testid='mode-readout']");
+    try {
+      await editInEditorMode(driver, mode);
+    } catch (error) {
+      throw new Error(`${(error as Error).message}; ${await editingReport(driver)}`);
+    } finally {
+      // Back in agent mode whatever happened above: the tests after this
+      // one start there.
+      if ((await mode()) === "editing") {
+        await (await located(driver, "[data-testid='mode-agent']")).click();
+        await driver.wait(async () => (await mode()) === "working", 10_000);
+      }
+    }
+  });
+
+  async function editInEditorMode(driver: WebDriver, mode: () => Promise<string>) {
+    // The field above the tree can still hold what the test before searched
+    // for: WebDriver's clear empties the input on screen and fires no input
+    // event, so the query stays and the tree stays narrowed by it. Escape in
+    // the field clears the query, as it does for a user.
+    await (await located(driver, "[data-testid='search-field']")).sendKeys(Key.ESCAPE);
     await (await located(driver, "[data-testid='mode-editor']")).click();
     await driver.wait(async () => (await mode()) === "editing", 10_000);
     const sides = (await driver.executeScript(() => {
@@ -515,7 +558,7 @@ describe("the real app", () => {
 
     await (await located(driver, "[data-testid='mode-agent']")).click();
     await driver.wait(async () => (await mode()) === "working", 10_000);
-  });
+  }
 
   // The agent's show tool, through the daemon as the agent would call it:
   // one JSON-RPC exchange on its stdin, and the viewer opens on the lines.
