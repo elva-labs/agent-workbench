@@ -139,6 +139,12 @@ test("walks the corner's switch with the arrows and flips the mode with Space", 
   // One stop: the arrows move the keyboard, and only Space or Enter picks.
   expect(await walk(page, "ArrowRight", 1)).toEqual(["mode-editor"]);
   await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  await expect(page.getByTestId("mode-agent")).toHaveAttribute("tabindex", "-1");
+  // Still one stop after the arrow: Shift+Tab leaves the switch at once.
+  expect(await walk(page, "Shift+Tab", 1)).toEqual(["toggle-right"]);
+  expect(await walk(page, "Tab", 2)).toEqual(["mode-agent", "search-field"]);
+  expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
+  await page.keyboard.press("ArrowRight");
   expect(await walk(page, "Tab", 1)).toEqual(["search-field"]);
   expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
   await page.keyboard.press("ArrowRight");

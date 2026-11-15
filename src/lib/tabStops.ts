@@ -96,9 +96,11 @@ function rove(group: HTMLElement) {
   for (const item of items) give(item, item === stop ? "0" : "-1");
 }
 
-/** Gives a control with no tab index of its own the one the rule says. */
+/** Gives a control with no tab index of its own the one the rule says. An
+    index the rule gave is weighed again each time, so a control that has
+    come into a list or out of one is given what it is now. */
 function mark(element: HTMLElement, groups: Set<HTMLElement>) {
-  if (element.hasAttribute("tabindex") || element.closest(TERMINAL) !== null) return;
+  if (ownIndex(element) || element.closest(TERMINAL) !== null) return;
   const list = element.closest<HTMLElement>(LIST);
   if (list === null) {
     give(element, "0");
@@ -269,8 +271,13 @@ export function tabWithin(e: KeyboardEvent, root: HTMLElement) {
   else nextStop(stops, active, e.shiftKey).focus();
 }
 
-function onKeydown(e: KeyboardEvent) {
+/** Counted before anything else sees the key, so one a component stops
+    still counts. */
+function onAnyKey() {
   presses += 1;
+}
+
+function onKeydown(e: KeyboardEvent) {
   if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.key === "Tab") {
     onTab(e);
@@ -312,13 +319,19 @@ export function followTabStops(root: HTMLElement = document.body): () => void {
     attributes: true,
     attributeFilter: ["tabindex", "role", "aria-checked", "aria-selected", "disabled", "aria-disabled"],
   });
+  // Keys are handled after the page's own handlers, which may take them.
+  // Keys are counted, and moves of the keyboard followed, on the way down,
+  // where a part of the page that stops them on the way up, as the corner
+  // keeps its focus from the pane, cannot hide them.
+  document.addEventListener("keydown", onAnyKey, true);
   document.addEventListener("keydown", onKeydown);
-  document.addEventListener("focusin", onFocusIn);
-  document.addEventListener("focusout", onFocusOut);
+  document.addEventListener("focusin", onFocusIn, true);
+  document.addEventListener("focusout", onFocusOut, true);
   return () => {
     observer.disconnect();
+    document.removeEventListener("keydown", onAnyKey, true);
     document.removeEventListener("keydown", onKeydown);
-    document.removeEventListener("focusin", onFocusIn);
-    document.removeEventListener("focusout", onFocusOut);
+    document.removeEventListener("focusin", onFocusIn, true);
+    document.removeEventListener("focusout", onFocusOut, true);
   };
 }

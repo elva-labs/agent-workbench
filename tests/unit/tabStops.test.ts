@@ -167,6 +167,35 @@ describe("the tab stop rule", () => {
     expect(document.activeElement).toBe(two);
   });
 
+  it("weighs again an index it gave, once the control is in a list or out of one", async () => {
+    document.body.innerHTML = `<div id="wrap"><button id="b">Go</button></div>`;
+    await settle();
+    expect(index("b")).toBe("0");
+    document.getElementById("wrap")!.setAttribute("role", "menu");
+    await settle();
+    expect(index("b")).toBe("-1");
+    document.body.append(document.getElementById("b")!);
+    await settle();
+    expect(index("b")).toBe("0");
+  });
+
+  it("keeps a list one stop after an arrow when its focus is stopped on the way up", async () => {
+    document.body.innerHTML = `
+      <div id="corner">
+        <div role="radiogroup">
+          <button id="one" role="radio" aria-checked="true">One</button>
+          <button id="two" role="radio" aria-checked="false">Two</button>
+        </div>
+      </div>`;
+    await settle();
+    document.getElementById("corner")!.addEventListener("focusin", (e) => e.stopPropagation());
+    const one = document.getElementById("one")!;
+    one.focus();
+    key(one, "ArrowRight");
+    expect(document.activeElement?.id).toBe("two");
+    expect([index("one"), index("two")]).toEqual(["-1", "0"]);
+  });
+
   it("stands down for a key the list's owner handled", async () => {
     document.body.innerHTML = `
       <div role="radiogroup" id="group">
