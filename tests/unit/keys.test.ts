@@ -320,3 +320,78 @@ describe("the editor's chords", () => {
     });
   });
 });
+
+describe("the chords that differ by platform", () => {
+  const macOld = () => {
+    resetKeys({ mac: true });
+    const table: Record<string, unknown> = { ...PRESETS.default };
+    delete table["terminal.new"];
+    delete table["focus.status"];
+    return table as Record<string, ReturnType<typeof chord>>;
+  };
+
+  it("open a shell on Cmd+T on macOS, and on Ctrl+Shift+T elsewhere, where the theme moves to Shift+D", () => {
+    resetKeys({ mac: true });
+    expect(chordFor("terminal.new")).toEqual(chord("t"));
+    expect(chordFor("theme")).toEqual(chord("t", true));
+    resetKeys({ mac: false });
+    expect(chordFor("terminal.new")).toEqual(chord("t", true));
+    expect(chordFor("theme")).toEqual(chord("d", true));
+    for (const name of ["default", "vim"] as const) expect(tableProblem(PRESETS[name])).toBeNull();
+  });
+
+  it("move a stored table's theme off the new shell's chord off macOS, and keep the preset", () => {
+    const stored = macOld();
+    resetKeys({ mac: false });
+    adoptKeys(stored);
+    expect(chordFor("terminal.new")).toEqual(chord("t", true));
+    expect(chordFor("theme")).toEqual(chord("d", true));
+    expect(keys.preset).toBe("default");
+    expect(tableProblem(keys.bindings)).toBeNull();
+  });
+
+  it("leave a stored table's theme where it is on macOS, and give the new shell Cmd+T", () => {
+    const stored = macOld();
+    adoptKeys(stored);
+    expect(chordFor("theme")).toEqual(chord("t", true));
+    expect(chordFor("terminal.new")).toEqual(chord("t"));
+    expect(keys.preset).toBe("default");
+  });
+
+  it("leave a theme the user moved where it is", () => {
+    const stored = { ...macOld(), theme: chord("y", true) };
+    resetKeys({ mac: false });
+    adoptKeys(stored);
+    expect(chordFor("theme")).toEqual(chord("y", true));
+    expect(chordFor("terminal.new")).toEqual(chord("t", true));
+  });
+
+  it("name close as what is in front, among the app's", () => {
+    expect(ACTIONS.find(({ key }) => key === "file.close")).toEqual({
+      key: "file.close",
+      label: "Close what is in front",
+      group: "App",
+    });
+    // Each group stands together, once.
+    const groups = ACTIONS.map(({ group }) => group).filter((group, at, all) => group !== all[at - 1]);
+    expect(new Set(groups).size).toBe(groups.length);
+  });
+});
+
+describe("the status bar's chord", () => {
+  it("is 5 in both presets, on every platform", () => {
+    for (const mac of [true, false]) {
+      resetKeys({ mac });
+      expect(PRESETS.default["focus.status"]).toEqual(chord("5"));
+      expect(PRESETS.vim["focus.status"]).toEqual(chord("5"));
+    }
+  });
+
+  it("is given to a stored table that never had it", () => {
+    const table: Record<string, unknown> = { ...PRESETS.default };
+    delete table["focus.status"];
+    adoptKeys(table as Record<string, ReturnType<typeof chord>>);
+    expect(chordFor("focus.status")).toEqual(chord("5"));
+    expect(keys.preset).toBe("default");
+  });
+});
