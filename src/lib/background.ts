@@ -4,10 +4,12 @@
  *
  * A background is one to three dots on a colour pad, each a hue and how
  * much colour, from none at the centre to the rim. It says nothing about
- * lightness: the appearance sets that, light or dark, so one background is
- * painted for both and switching between them can leave nothing hard to
- * read. The rim is capped per appearance, so the strongest choice is still
- * a tint. Strength says how far the background shows through the chrome's
+ * lightness: the chrome it lies on sets that, light or dark, so one
+ * background is painted for both appearances and switching between them
+ * can leave nothing hard to read. Whether the chrome is light or dark is
+ * read from its own colours, not from the appearance's name, so a theme
+ * that is dark in both appearances is painted dark in both. The rim is
+ * capped for each, so the strongest choice is still a tint. Strength says how far the background shows through the chrome's
  * own ground, and grain lays a fine speckle over it.
  *
  * Two or three colours make a gradient across the window: the first two run
@@ -18,8 +20,8 @@
  * The background tints the chrome only, and every surface that holds text
  * to read stays solid. The guard judges each kind of text on a tinted part
  * at the worst point of the gradient behind it, grain included, and draws
- * the text a step stronger, towards black in light and white in dark, just
- * as far as it takes to hold 4.5:1. Lines on or beside a tinted part are the
+ * the text a step stronger, towards black on a light chrome and white on a
+ * dark one, just as far as it takes to hold 4.5:1. Lines on or beside a tinted part are the
  * ink let through at one amount for the whole window, so they take the
  * colour of what they cross and stand off it at least as far as today's
  * lines stand off the plain chrome.
@@ -66,9 +68,14 @@ const AIM = LEAST_CONTRAST + 0.05;
     a fill with more ink. */
 export const FILL = { ink: 0.07, accent: 0.14 };
 const GUARD_FILL = { ink: 0.12, accent: 0.16 };
+// The guard reads text over one fill at a time. A fill laid over another,
+// such as a hovered row inside a chosen one, can leave ink-2, ink-3 and
+// the accent a little under 4.5:1 at the worst point, so no text in those
+// tokens sits on stacked fills; a part that stacks them has to be read
+// here as well.
 
-/** The lightness each appearance paints at, and the most colour it takes at
-    the rim, in OKLCH. */
+/** The lightness a light and a dark chrome paint at, and the most colour
+    each takes at the rim, in OKLCH. */
 export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
   light: { lightness: 0.94, chroma: 0.066 },
   dark: { lightness: 0.235, chroma: 0.075 },
@@ -403,10 +410,19 @@ const rgba = (rgb: Rgb, alpha: number) =>
 /* The colours a background paints.                                        */
 /* ---------------------------------------------------------------------- */
 
-/** A dot's colour in an appearance: its lightness, and its share of the
-    rim's colour, held inside what the screen shows. */
-export function dotColour(dot: Dot, appearance: Appearance): Lab {
-  const band = BAND[appearance];
+/** Whether a palette's chrome is painted as light or dark: the band that
+    carries its ground away from its ink. It is read from the colours, so a
+    theme dark in both appearances is painted dark in both, and its text
+    strengthened towards white. */
+export function toneOf(colours: Record<string, string>): Appearance {
+  const ground = (luminance(hexToRgb(colours.bg)) + luminance(hexToRgb(colours.surface))) / 2;
+  return luminance(hexToRgb(colours.ink)) < ground ? "light" : "dark";
+}
+
+/** A dot's colour on a light or a dark chrome: its lightness, and its
+    share of the rim's colour, held inside what the screen shows. */
+export function dotColour(dot: Dot, tone: Appearance): Lab {
+  const band = BAND[tone];
   return fitLch(band.lightness, clamp(dot.chroma, 0, 1) * band.chroma, dot.hue);
 }
 
@@ -417,11 +433,12 @@ export function padColour(dot: Dot, appearance: Appearance): string {
 }
 
 /** A background as a small swatch shows it: its colours laid over a
-    ground at its strength, run corner to corner. */
-export function swatchOf(background: Background, appearance: Appearance, ground: string): string {
-  const under = hexToRgb(ground);
+    palette's ground at its strength, run corner to corner. */
+export function swatchOf(background: Background, palette: Record<string, string>): string {
+  const under = hexToRgb(palette.bg);
+  const tone = toneOf(palette);
   const colours = background.dots.map((dot) =>
-    rgbToHex(mix(under, labToRgb(dotColour(dot, appearance)), background.strength)),
+    rgbToHex(mix(under, labToRgb(dotColour(dot, tone)), background.strength)),
   );
   return colours.length === 1 ? colours[0] : `linear-gradient(135deg, ${colours.join(", ")})`;
 }
@@ -605,12 +622,18 @@ function worst(colour: string, [low, high]: [number, number]): number {
   return y < low ? ratio(y, low) : y > high ? ratio(y, high) : 1;
 }
 
-/** A text drawn a step stronger, towards black in light and white in
-    dark, just as far as it takes to hold the least contrast. */
-function strengthen(colour: string, range: [number, number], appearance: Appearance): string {
+/** A text drawn a step stronger, towards black on a light chrome and
+    white on a dark one, just as far as it takes to hold the least
+    contrast. Where that end cannot hold it and the other end does better,
+    it heads for the other. */
+function strengthen(colour: string, range: [number, number], tone: Appearance): string {
   if (worst(colour, range) >= AIM) return colour;
   const from = hexToRgb(colour);
-  const to: Rgb = appearance === "light" ? [0, 0, 0] : [255, 255, 255];
+  const black: Rgb = [0, 0, 0];
+  const white: Rgb = [255, 255, 255];
+  const [towards, away] = tone === "light" ? [black, white] : [white, black];
+  const reach = (end: Rgb) => worst(rgbToHex(end), range);
+  const to = reach(towards) >= AIM || reach(towards) >= reach(away) ? towards : away;
   let low = 0;
   let high = 1;
   for (let step = 0; step < 20; step++) {
@@ -658,17 +681,13 @@ function todayLine(colours: Record<string, string>, look: Look): Rgb {
     : hexToRgb(colours.rule);
 }
 
-/** What a background paints in an appearance and a look, for a palette's
-    colours, with the guard's stronger text and the lines' one amount. */
-export function paintOf(
-  background: Background,
-  appearance: Appearance,
-  look: Look,
-  colours: Record<string, string>,
-): Painted {
+/** What a background paints in a look over a palette's colours in one
+    appearance, with the guard's stronger text and the lines' one amount. */
+export function paintOf(background: Background, look: Look, colours: Record<string, string>): Painted {
   const strength = look === "terminal" ? Math.min(background.strength, TERMINAL_STRENGTH) : background.strength;
   const grain = look === "terminal" ? 0 : background.grain;
-  const dots = background.dots.map((dot) => dotColour(dot, appearance));
+  const tone = toneOf(colours);
+  const dots = background.dots.map((dot) => dotColour(dot, tone));
   const at = field(dots);
   const grounds = groundsOf(colours, look);
   const parts = Object.keys(grounds) as Part[];
@@ -692,7 +711,7 @@ export function paintOf(
   const contrast = {} as Record<TextToken, number>;
   for (const token of TEXT_TOKENS) {
     asked[token] = worst(colours[token], [low, high]);
-    text[token] = strengthen(colours[token], [low, high], appearance);
+    text[token] = strengthen(colours[token], [low, high], tone);
     contrast[token] = worst(text[token], [low, high]);
   }
 

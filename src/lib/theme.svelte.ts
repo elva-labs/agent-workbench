@@ -405,7 +405,7 @@ function paintBackground() {
   const css = backgroundCss(
     background,
     colours,
-    imagesOf(background, only === null ? ["light", "dark"] : [only.appearance]),
+    imagesOf(background, only === null ? colours : { [only.appearance]: colours[only.appearance] }),
     only,
   );
   if (sheet.textContent !== css) sheet.textContent = css;

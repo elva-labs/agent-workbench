@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Background } from "$lib/background";
+import { hexToRgb, luminance, type Background } from "$lib/background";
 import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
 import { coloursOf } from "$lib/paletteColours";
 import {
@@ -82,7 +82,19 @@ describe("the stylesheet a background is painted from", () => {
     );
     const none = backgroundCss(LAGOON, colours, { light: null, dark: null, grain: null });
     expect(none).not.toContain("tint-image");
-    expect(imagesOf(LAGOON)).toEqual({ light: null, dark: null, grain: null });
+    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, grain: null });
+  });
+
+  it("paints a theme that is dark in both appearances dark in both, its text lighter", () => {
+    const night = { light: colours.dark, dark: colours.dark };
+    const single = { ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" as const };
+    const sheet = backgroundCss(single, night, images);
+    const light = block(sheet, ':root[data-background][data-look="modern"]');
+    const dark = block(sheet, ':root[data-background][data-look="modern"][data-theme="dark"]');
+    expect(light).toEqual(dark);
+    const flat = /linear-gradient\((#[0-9a-f]{6}),/.exec(light["tint-backdrop"])![1];
+    expect(luminance(hexToRgb(flat))).toBeLessThan(0.05);
+    expect(luminance(hexToRgb(light["tint-ink-3"]))).toBeGreaterThanOrEqual(luminance(hexToRgb(colours.dark["ink-3"])));
   });
 });
 

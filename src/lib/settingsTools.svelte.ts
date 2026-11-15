@@ -476,7 +476,7 @@ function swatchesOf(next: Next): { theme: CustomTheme; ground: { light: string; 
   const kept = Object.hasOwn(next.backgrounds, palette) ? next.backgrounds[palette] : null;
   const colours = (appearance: "light" | "dark") => coloursOf(palette, appearance, themes);
   const ground = (appearance: "light" | "dark") =>
-    kept === null ? colours(appearance).bg : swatchOf(kept, appearance, colours(appearance).bg);
+    kept === null ? colours(appearance).bg : swatchOf(kept, colours(appearance));
   return {
     theme: {
       label: palettes().find((known) => known.name === palette)?.label ?? themes[palette]?.label ?? palette,
@@ -724,8 +724,8 @@ export function planTheme(args: Record<string, unknown>): {
     kept === null
       ? null
       : {
-          light: swatchOf(kept, "light", saved.light.bg ?? DEFAULTS.light.bg),
-          dark: swatchOf(kept, "dark", saved.dark.bg ?? DEFAULTS.dark.bg),
+          light: swatchOf(kept, { ...DEFAULTS.light, ...saved.light }),
+          dark: swatchOf(kept, { ...DEFAULTS.dark, ...saved.dark }),
         };
   return { next, changes, theme: saved, ground };
 }

@@ -103,13 +103,15 @@ the palette's accent. The harmonies and the ready-made row are one stop
 each, walked with the arrows.
 
 One choice serves light and dark. The pad sets the hue and how much
-colour, and the appearance sets how light it paints, so switching between
-them cannot leave anything hard to read, and the rim of the pad is held
-where the strongest choice is still a tint. Text on a tinted part is judged
-at the worst point of the gradient behind it, grain included, and drawn a
-step stronger, darker in light and lighter in dark, where it would fall
-under a contrast of 4.5 to 1, so every text holds that, quiet text
-included. A hovered or chosen row on a tinted part lets the ink or the
+colour, and the chrome it lies on sets how light it paints: light on a
+light chrome and dark on a dark one, read from the palette's own colours,
+so a theme that is dark in both appearances is painted dark in both.
+Switching between them cannot leave anything hard to read, and the rim of
+the pad is held where the strongest choice is still a tint. Text on a
+tinted part is judged at the worst point of the gradient behind it, grain
+included, and drawn a step stronger, darker on a light chrome and lighter
+on a dark one, where it would fall under a contrast of 4.5 to 1, so every
+text holds that, quiet text included. A hovered or chosen row on a tinted part lets the ink or the
 accent through rather than laying a solid patch over the tint, and is
 judged the same way.
 

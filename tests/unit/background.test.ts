@@ -30,6 +30,7 @@ import {
   rgbToLab,
   rounded,
   sameBackground,
+  toneOf,
   validBackgrounds,
   withHarmony,
   type Appearance,
@@ -37,8 +38,46 @@ import {
   type Look,
   type Rgb,
 } from "$lib/background";
-import { DEFAULTS } from "$lib/customThemes";
+import { DEFAULTS, readability, type CustomTheme } from "$lib/customThemes";
 import { PALETTE_COLOURS, coloursOf } from "$lib/paletteColours";
+
+/** Themes of the user's own that the appearance's name does not describe:
+    dark in both appearances, light in both, and two grey ones with text of
+    either kind. */
+const SLATE = {
+  bg: "#4f5459",
+  surface: "#575c62",
+  "surface-2": "#5f656b",
+  rule: "#6b7178",
+  "rule-strong": "#7a8088",
+  ink: "#ffffff",
+  "ink-2": "#f1f3f5",
+  "ink-3": "#e3e6ea",
+  accent: "#ffd166",
+  add: "#b8f5c8",
+  del: "#ffd0d0",
+  "ansi-yellow": "#ffe08a",
+};
+const PEWTER = {
+  bg: "#a9aeb3",
+  surface: "#b4b9be",
+  "surface-2": "#a0a5aa",
+  rule: "#999ea3",
+  "rule-strong": "#8a8f94",
+  ink: "#000000",
+  "ink-2": "#15181b",
+  "ink-3": "#24282c",
+  accent: "#0f2f5c",
+  add: "#0f3a1c",
+  del: "#4a0f18",
+  "ansi-yellow": "#3a2c00",
+};
+const THEMES: Record<string, CustomTheme> = {
+  night: { label: "Night", light: DEFAULTS.dark, dark: DEFAULTS.dark, shape: {} },
+  paper: { label: "Paper", light: DEFAULTS.light, dark: DEFAULTS.light, shape: {} },
+  slate: { label: "Slate", light: SLATE, dark: SLATE, shape: {} },
+  pewter: { label: "Pewter", light: PEWTER, dark: PEWTER, shape: {} },
+};
 
 const background = (dots: [number, number][], rest: Partial<Background> = {}): Background => ({
   dots: dots.map(([hue, chroma]) => ({ hue, chroma })),
@@ -173,16 +212,29 @@ describe("moving the dots", () => {
 });
 
 describe("the colours a background paints", () => {
-  it("are as light as the appearance says wherever the dot is, and a tint at the rim", () => {
-    for (const appearance of ["light", "dark"] as Appearance[]) {
+  it("are as light as a light or a dark chrome says wherever the dot is, and a tint at the rim", () => {
+    for (const tone of ["light", "dark"] as Appearance[]) {
       for (let hue = 0; hue < 360; hue += 15) {
         for (const chroma of [0, 0.5, 1]) {
-          const [L, a, b] = dotColour({ hue, chroma }, appearance);
-          expect(L).toBeCloseTo(BAND[appearance].lightness, 6);
-          expect(Math.hypot(a, b)).toBeLessThanOrEqual(BAND[appearance].chroma * chroma + 1e-9);
+          const [L, a, b] = dotColour({ hue, chroma }, tone);
+          expect(L).toBeCloseTo(BAND[tone].lightness, 6);
+          expect(Math.hypot(a, b)).toBeLessThanOrEqual(BAND[tone].chroma * chroma + 1e-9);
         }
       }
     }
+  });
+
+  it("take the band of the chrome they lie on, whatever the appearance is called", () => {
+    for (const palette of Object.keys(PALETTE_COLOURS)) {
+      expect(toneOf(coloursOf(palette, "light"))).toBe("light");
+      expect(toneOf(coloursOf(palette, "dark"))).toBe("dark");
+    }
+    expect(toneOf(coloursOf("night", "light", THEMES))).toBe("dark");
+    expect(toneOf(coloursOf("paper", "dark", THEMES))).toBe("light");
+    expect(toneOf(coloursOf("slate", "light", THEMES))).toBe("dark");
+    expect(toneOf(coloursOf("pewter", "dark", THEMES))).toBe("light");
+    const night = paintOf(background([[200, 1]]), "modern", coloursOf("night", "light", THEMES));
+    expect(night.colours[0][0]).toBeCloseTo(BAND.dark.lightness, 6);
   });
 
   it("run as a gradient between two colours and glow a third from the top right", () => {
@@ -295,51 +347,69 @@ function lowestContrast(painted: ReturnType<typeof paintOf>, grounds: Rgb[], col
   return low;
 }
 
+/** What the guard is swept over: every palette in each appearance, and
+    each theme in the appearance its name does not describe. */
+const SWEPT: [string, Appearance][] = [
+  ...PALETTES.flatMap((palette) => APPEARANCES.map((appearance) => [palette, appearance] as [string, Appearance])),
+  ["night", "light"],
+  ["paper", "dark"],
+  ["slate", "light"],
+  ["pewter", "dark"],
+];
+
 describe("the guard", () => {
   const choices = everyChoice();
 
-  for (const palette of PALETTES) {
+  it("is swept over themes that are readable on their own", () => {
+    for (const theme of Object.values(THEMES)) expect(readability(theme)).toBeNull();
+  });
+
+  for (const [palette, appearance] of SWEPT) {
     for (const look of LOOKS) {
-      for (const appearance of APPEARANCES) {
-        it(`keeps every text at 4.5:1 or more, ${palette}, ${look}, ${appearance}`, () => {
-          const colours = coloursOf(palette, appearance);
-          const grounds = groundsOf(colours, look);
-          const texts = look === "modern" ? [grounds.side!, grounds.surf!, grounds.status!] : [grounds.status!];
-          for (const choice of choices) {
-            for (const strength of [0.3, 1]) {
-              const painted = paintOf({ ...choice, strength }, appearance, look, colours);
-              const low = lowestContrast(painted, texts, colours);
-              for (const token of TEXT_TOKENS) {
-                if (low[token] < LEAST_CONTRAST) {
-                  throw new Error(
-                    `${token} at ${low[token].toFixed(3)}:1 with ${JSON.stringify(choice.dots)} at ${strength}`,
-                  );
-                }
+      it(`keeps every text at 4.5:1 or more, the way it already leans, ${palette}, ${look}, ${appearance}`, () => {
+        const colours = coloursOf(palette, appearance, THEMES);
+        const grounds = groundsOf(colours, look);
+        const texts = look === "modern" ? [grounds.side!, grounds.surf!, grounds.status!] : [grounds.status!];
+        // Text lighter than its chrome only ever gets lighter, and darker
+        // text darker, so a light glyph on an accent stays readable too.
+        const ground = (luminance(hexToRgb(colours.bg)) + luminance(hexToRgb(colours.surface))) / 2;
+        const lighter = luminance(hexToRgb(colours.ink)) > ground;
+        for (const choice of choices) {
+          for (const strength of [0.1, 0.3, 1]) {
+            const painted = paintOf({ ...choice, strength }, look, colours);
+            const low = lowestContrast(painted, texts, colours);
+            for (const token of TEXT_TOKENS) {
+              const own = luminance(hexToRgb(colours[token]));
+              const now = luminance(hexToRgb(painted.text[token]));
+              if (low[token] < LEAST_CONTRAST || (lighter ? now < own : now > own)) {
+                throw new Error(
+                  `${token} at ${low[token].toFixed(3)}:1, ${own.toFixed(3)} to ${now.toFixed(3)}, with ${JSON.stringify(choice.dots)} at ${strength}`,
+                );
               }
             }
           }
-        });
-      }
+        }
+      });
     }
   }
 
   it("leaves a text that already holds as it is, and draws one that does not a step stronger", () => {
     const colours = coloursOf("teal", "light");
-    const painted = paintOf(background([[200, 1]], { strength: 1 }), "light", "modern", colours);
+    const painted = paintOf(background([[200, 1]], { strength: 1 }), "modern", colours);
     expect(painted.text.ink).toBe(colours.ink);
     expect(painted.asked["ink-3"]).toBeLessThan(LEAST_CONTRAST);
     expect(painted.contrast["ink-3"]).toBeGreaterThanOrEqual(LEAST_CONTRAST);
     expect(luminance(hexToRgb(painted.text["ink-3"]))).toBeLessThan(luminance(hexToRgb(colours["ink-3"])));
-    const dark = paintOf(background([[200, 1]], { strength: 1 }), "dark", "modern", coloursOf("teal", "dark"));
+    const dark = paintOf(background([[200, 1]], { strength: 1 }), "modern", coloursOf("teal", "dark"));
     expect(luminance(hexToRgb(dark.text["ink-3"]))).toBeGreaterThan(luminance(hexToRgb(DEFAULTS.dark["ink-3"])));
   });
 
   it("holds the terminal look at half strength with no grain", () => {
-    const painted = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "dark", "terminal", coloursOf("rose", "dark"));
+    const painted = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "terminal", coloursOf("rose", "dark"));
     expect(painted.strength).toBe(TERMINAL_STRENGTH);
     expect(painted.grain).toBe(0);
     expect(Object.keys(painted.grounds).sort()).toEqual(["frame", "status"]);
-    const modern = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "dark", "modern", coloursOf("rose", "dark"));
+    const modern = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "modern", coloursOf("rose", "dark"));
     expect(modern.strength).toBe(0.9);
     expect(Object.keys(modern.grounds).sort()).toEqual(["side", "status", "surf"]);
   });
@@ -361,7 +431,7 @@ describe("the lines on a background", () => {
               : hexToRgb(colours.rule);
           const grounds = groundsOf(colours, look);
           for (const choice of [background([[30, 1]]), background([[192, 1], [300, 1]], { strength: 1 })]) {
-            const painted = paintOf(choice, appearance, look, colours);
+            const painted = paintOf(choice, look, colours);
             for (const ground of Object.values(grounds)) {
               const target = ratio(luminance(today), luminance(ground!));
               for (let i = 0; i <= 10; i++) {
@@ -387,7 +457,7 @@ describe("the lines on a background", () => {
         const colours = coloursOf(palette, appearance);
         const ink = hexToRgb(colours.ink);
         const grounds = groundsOf(colours, "modern");
-        const painted = paintOf(background([[192, 1], [300, 1]], { strength: 1, grain: 1 }), appearance, "modern", colours);
+        const painted = paintOf(background([[192, 1], [300, 1]], { strength: 1, grain: 1 }), "modern", colours);
         for (const ground of Object.values(grounds)) {
           for (let i = 0; i <= 10; i++) {
             const under = shown(painted, ground!, i / 10, 1 - i / 10, 0);

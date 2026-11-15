@@ -315,7 +315,7 @@
     if (background === null) {
       return { colours, grounds: null, gradient: null, text: colours };
     }
-    const painted = paintOf(background, at, look, colours);
+    const painted = paintOf(background, look, colours);
     const tones = painted.colours.map((lab) => rgbToHex(labToRgb(lab)));
     const gradient = tones.length === 1 ? tones[0] : `linear-gradient(160deg, ${tones.join(", ")})`;
     return { colours, grounds: painted.grounds, gradient, text: { ...colours, ...painted.text } };

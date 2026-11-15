@@ -6,6 +6,7 @@ import {
   labToRgb,
   paintOf,
   rgbToHex,
+  toneOf,
   type Appearance,
   type Background,
   type Look,
@@ -100,7 +101,7 @@ export function backgroundCss(
     only !== null && only.appearance !== appearance
       ? []
       : looks.map(
-          (look) => [look, valuesOf(paintOf(background, appearance, look, colours[appearance]), appearance, images)] as const,
+          (look) => [look, valuesOf(paintOf(background, look, colours[appearance]), appearance, images)] as const,
         );
   for (const [look, values] of sets("light")) css += block(SELECTORS[look], values);
   const dark = sets("dark");
@@ -155,18 +156,21 @@ function remembered(key: string, draw: () => string | null): string | null {
   return url;
 }
 
-/** The images a background needs: a gradient for each appearance asked
-    for where it has more than one colour, and the grain's tile where it
-    has grain. */
+/** The images a background needs: a gradient for each appearance it is
+    given the palette's colours for, where it has more than one colour, and
+    the grain's tile where it has grain. */
 export function imagesOf(
   background: Background,
-  appearances: Appearance[] = ["light", "dark"],
+  palettes: Partial<Record<Appearance, Record<string, string>>>,
 ): Images {
   const images: Images = { light: null, dark: null, grain: null };
   if (!drawable()) return images;
   if (background.dots.length > 1) {
-    for (const appearance of appearances) {
-      const colours = background.dots.map((dot) => dotColour(dot, appearance));
+    for (const appearance of ["light", "dark"] as const) {
+      const palette = palettes[appearance];
+      if (palette === undefined) continue;
+      const tone = toneOf(palette);
+      const colours = background.dots.map((dot) => dotColour(dot, tone));
       const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
       images[appearance] = remembered(key, () =>
         toUrl(gradientPixels(colours, IMAGE.width, IMAGE.height), IMAGE.width, IMAGE.height),
