@@ -59,6 +59,14 @@ export const LEAST_CONTRAST = 4.5;
     places it samples, or a step of rounding, still holds the least. */
 const AIM = LEAST_CONTRAST + 0.05;
 
+/** How much of the ink a hovered row or a field lays over a tinted part,
+    and how much of the accent a chosen row lays over it, so they stay part
+    of the tint rather than solid patches on it. The guard reads text on
+    them at a little more than either, which covers a control that mixes
+    a fill with more ink. */
+export const FILL = { ink: 0.07, accent: 0.14 };
+const GUARD_FILL = { ink: 0.12, accent: 0.16 };
+
 /** The lightness each appearance paints at, and the most colour it takes at
     the rim, in OKLCH. */
 export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
@@ -487,6 +495,9 @@ export interface Painted {
   /** Every line, and the stronger marks such as a tag's outline. */
   line: string;
   lineStrong: string;
+  /** What a hovered row or a field, and a chosen row, lay over the tint. */
+  fill: string;
+  fillAccent: string;
   /** Each text's contrast at the worst point behind it, as asked and as
       painted. */
   asked: Record<TextToken, number>;
@@ -506,26 +517,27 @@ export function groundsOf(colours: Record<string, string>, look: Look): Partial<
 const TEXT_PARTS: Record<Look, Part[]> = { modern: ["side", "surf", "status"], terminal: ["status"] };
 
 /** The lightest and darkest a tinted part gets anywhere in the window,
-    grain at its strongest speck either way. */
+    grain at its strongest speck either way, bare or under a fill. */
 function extremes(
-  at: (u: number, v: number) => Lab,
+  grid: Rgb[],
   ground: Rgb,
   strength: number,
   speck: number,
+  fills: [Rgb, number][],
 ): [number, number] {
   let low = 1;
   let high = 0;
-  for (let i = 0; i <= 24; i++) {
-    for (let j = 0; j <= 15; j++) {
-      const colour = labToRgb(at(i / 24, j / 15));
-      for (const shade of [0, -1, 1]) {
-        const specked =
-          shade === 0
-            ? colour
-            : shade < 0
-              ? (colour.map((value) => value * (1 - speck)) as Rgb)
-              : (colour.map((value) => value + (255 - value) * speck) as Rgb);
-        const y = luminance(mix(ground, specked, strength));
+  for (const colour of grid) {
+    for (const shade of speck > 0 ? [0, -1, 1] : [0]) {
+      const specked =
+        shade === 0
+          ? colour
+          : shade < 0
+            ? (colour.map((value) => value * (1 - speck)) as Rgb)
+            : (colour.map((value) => value + (255 - value) * speck) as Rgb);
+      const shown = mix(ground, specked, strength);
+      for (const under of [shown, ...fills.map(([fill, amount]) => mix(shown, fill, amount))]) {
+        const y = luminance(under);
         if (y < low) low = y;
         if (y > high) high = y;
       }
@@ -562,11 +574,11 @@ function strengthen(colour: string, range: [number, number], appearance: Appeara
   return rgbToHex(mix(from, to, amount));
 }
 
-/** What a tinted part shows at a grid of points, grain left out. */
-function samples(at: (u: number, v: number) => Lab, ground: Rgb, strength: number): Rgb[] {
+/** The background's colour at a grid of points across the window. */
+function gridOf(at: (u: number, v: number) => Lab, across: number, down: number): Rgb[] {
   const out: Rgb[] = [];
-  for (let i = 0; i <= 8; i++) {
-    for (let j = 0; j <= 5; j++) out.push(mix(ground, labToRgb(at(i / 8, j / 5)), strength));
+  for (let i = 0; i <= across; i++) {
+    for (let j = 0; j <= down; j++) out.push(labToRgb(at(i / across, j / down)));
   }
   return out;
 }
@@ -609,10 +621,17 @@ export function paintOf(
   const grounds = groundsOf(colours, look);
   const parts = Object.keys(grounds) as Part[];
 
+  const ink = hexToRgb(colours.ink);
+  const accent = hexToRgb(colours.accent);
+  const fills: [Rgb, number][] = [
+    [ink, GUARD_FILL.ink],
+    [accent, GUARD_FILL.accent],
+  ];
+  const grid = dots.length === 1 ? [labToRgb(dots[0])] : gridOf(at, 24, 15);
   let low = 1;
   let high = 0;
   for (const part of TEXT_PARTS[look]) {
-    const [partLow, partHigh] = extremes(at, grounds[part]!, strength, grain * GRAIN_SPECK);
+    const [partLow, partHigh] = extremes(grid, grounds[part]!, strength, grain * GRAIN_SPECK, fills);
     low = Math.min(low, partLow);
     high = Math.max(high, partHigh);
   }
@@ -628,7 +647,6 @@ export function paintOf(
   // One amount for every line in the window: the most any part needs to
   // stand as far off it as today's line stands off its plain ground, a
   // solid surface included.
-  const ink = hexToRgb(colours.ink);
   const surface = hexToRgb(colours.surface);
   const line = todayLine(colours, look);
   const strong = hexToRgb(colours["rule-strong"]);
@@ -636,9 +654,10 @@ export function paintOf(
   let amount = lineAmount([surface], ink, away(line, surface));
   let strongAmount = 0;
   const painted: Partial<Record<Part, string>> = {};
+  const coarse = dots.length === 1 ? grid : gridOf(at, 8, 5);
   for (const part of parts) {
     const ground = grounds[part]!;
-    const under = samples(at, ground, strength);
+    const under = coarse.map((colour) => mix(ground, colour, strength));
     amount = Math.max(amount, lineAmount(under, ink, away(line, ground)));
     strongAmount = Math.max(strongAmount, lineAmount(under, ink, away(strong, ground)));
     painted[part] = rgba(ground, 1 - strength);
@@ -652,6 +671,8 @@ export function paintOf(
     text,
     line: rgba(ink, amount),
     lineStrong: rgba(ink, Math.max(amount, strongAmount)),
+    fill: rgba(ink, FILL.ink),
+    fillAccent: rgba(accent, FILL.accent),
     asked,
     contrast,
   };

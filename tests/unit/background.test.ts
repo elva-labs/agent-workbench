@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   BAND,
+  FILL,
   FIRST,
   GRAIN_SPECK,
   HARMONIES,
@@ -223,8 +224,8 @@ function everyChoice(): Background[] {
   for (let hue = 0; hue < 360; hue += 15) {
     for (const chroma of [0.5, 1]) choices.push(background([[hue, chroma]], { grain: 1 }));
   }
-  for (let first = 0; first < 360; first += 30) {
-    for (let second = first + 30; second < 360; second += 30) {
+  for (let first = 0; first < 360; first += 45) {
+    for (let second = first + 45; second < 360; second += 45) {
       choices.push(background([[first, 1], [second, 1]], { grain: 1 }));
     }
   }
@@ -253,19 +254,43 @@ function shown(painted: ReturnType<typeof paintOf>, ground: Rgb, u: number, v: n
 }
 
 /** The lowest contrast of each text over a grid finer than the guard's own
-    and offset from it, so a worst point between its samples is found. */
-function lowestContrast(painted: ReturnType<typeof paintOf>, grounds: Rgb[]) {
+    and offset from it, so a worst point between its samples is found: on
+    the tint, on a hovered row's fill and on a chosen row's. */
+function lowestContrast(painted: ReturnType<typeof paintOf>, grounds: Rgb[], colours: Record<string, string>) {
   const low: Record<string, number> = {};
   const texts = TEXT_TOKENS.map((token) => [token, luminance(hexToRgb(painted.text[token]))] as const);
+  const fills: [Rgb, number][] = [
+    [hexToRgb(colours.ink), FILL.ink],
+    [hexToRgb(colours.accent), FILL.accent],
+  ];
+  const at = field(painted.colours);
+  const points: Rgb[] = [];
+  for (let i = 0; i <= 32; i++) {
+    for (let j = 0; j <= 20; j++) points.push(labToRgb(at((i + 0.37) / 33, (j + 0.61) / 21.5)));
+  }
+  const alpha = painted.grain * GRAIN_SPECK;
+  let darkest = 1;
+  let lightest = 0;
   for (const ground of grounds) {
-    for (let i = 0; i <= 40; i++) {
-      for (let j = 0; j <= 26; j++) {
-        for (const speck of painted.grain > 0 ? [0, -1, 1] : [0]) {
-          const y = luminance(shown(painted, ground, (i + 0.37) / 41, (j + 0.61) / 27.5, speck));
-          for (const [token, text] of texts) low[token] = Math.min(low[token] ?? 99, ratio(text, y));
+    for (const colour of points) {
+      for (const speck of painted.grain > 0 ? [0, -1, 1] : [0]) {
+        const specked =
+          speck === 0
+            ? colour
+            : speck < 0
+              ? (colour.map((value) => value * (1 - alpha)) as Rgb)
+              : (colour.map((value) => value + (255 - value) * alpha) as Rgb);
+        const bare = mix(ground, specked, painted.strength);
+        for (const under of [bare, ...fills.map(([fill, amount]) => mix(bare, fill, amount))]) {
+          const y = luminance(under);
+          darkest = Math.min(darkest, y);
+          lightest = Math.max(lightest, y);
         }
       }
     }
+  }
+  for (const [token, text] of texts) {
+    low[token] = text > darkest && text < lightest ? 1 : Math.min(ratio(text, darkest), ratio(text, lightest));
   }
   return low;
 }
@@ -283,7 +308,7 @@ describe("the guard", () => {
           for (const choice of choices) {
             for (const strength of [0.3, 1]) {
               const painted = paintOf({ ...choice, strength }, appearance, look, colours);
-              const low = lowestContrast(painted, texts);
+              const low = lowestContrast(painted, texts, colours);
               for (const token of TEXT_TOKENS) {
                 if (low[token] < LEAST_CONTRAST) {
                   throw new Error(

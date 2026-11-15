@@ -2228,6 +2228,12 @@
     background: var(--pane-bg);
   }
 
+  /* With a background the header that stays in view carries the pane's
+     tint, so the rows still pass under it and nothing shows a seam. */
+  :global(:root[data-background][data-look="modern"]) .proj > .project {
+    background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
+  }
+
   .project-row {
     padding-top: calc(var(--row-pad-y) + 2px);
     gap: 7px;

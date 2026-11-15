@@ -21,6 +21,7 @@
   import "$lib/styles/palettes.css";
   import "$lib/styles/fonts.css";
   import "$lib/styles/looks.css";
+  import "$lib/styles/background.css";
 
   import { onMount } from "svelte";
   import { loadTheme } from "$lib/theme.svelte";

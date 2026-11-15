@@ -1135,6 +1135,18 @@ export interface Settings {
       shape: Record<string, string>;
     }
   >;
+  /** The background each palette or theme keeps, by its name: one to three
+      dots, each a hue and a chroma, a harmony, a strength and grain. A
+      file from before backgrounds has none. */
+  backgrounds?: Record<
+    string,
+    {
+      dots: { hue: number; chroma: number }[];
+      harmony: "single" | "complementary" | "analogous" | "triad" | "free";
+      strength: number;
+      grain: number;
+    }
+  >;
   /** Whether the user's own stylesheet is laid over the app's. */
   userStyles: boolean;
   /** Whether a session that starts waiting for the user while the window
