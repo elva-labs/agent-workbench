@@ -62,9 +62,12 @@ their row. Two steps, so nothing running is archived by accident. On the
 keyboard, Delete does either for the row under the cursor.
 
 Closing a session also closes the browser tabs it owns; see
-[browser](browser.md#whose-tabs-they-are). Closing a session or a project
-whose editor tabs hold the only copy of unsaved edits asks first, at the
-top of the pane; see [the editor](editor.md#nothing-unsaved-goes-unasked).
+[browser](browser.md#whose-tabs-they-are), and the shells opened beside it;
+see [the terminal panel](layout.md#the-terminal-panel). Closing a session
+or a project whose editor tabs hold the only copy of unsaved edits asks
+first, at the top of the pane; see
+[the editor](editor.md#nothing-unsaved-goes-unasked). So does closing one
+while a shell that goes with it has something running, naming what runs.
 
 The kill lives in one place: closing a session stops its pty and clears the
 id, and the terminal's own teardown does not, so a second signal never lands
@@ -395,6 +398,22 @@ where it happened. The sessions an agent started with the workbench's start
 tool show under its run as rows, each with its state, name and model and a
 way to open it.
 
+Five things in the thread can be copied whole, each with a quiet Copy that
+shows while the pointer is over it or the keyboard is on the Copy: the
+user's message, a reply as Markdown, a code block, a command and a
+command's output. A message is copied as its words, without what the
+workbench added to it. A reply is everything the agent said in that run,
+its text joined, without its work or the sessions it started. A code block,
+at the top or in a list or a quote, is its code without the fences, and a
+command is the command alone, from a Copy drawn over the end of its step's
+row, before its status, so at rest the row is the command's. A click, Enter
+or Space copies what is there at that moment, so a reply still coming is
+copied as far as it has come, and the word turns to Copied for a moment,
+which a screen reader is told once. Copying leaves the scroll and the
+keyboard where they were, and nothing moves when a Copy appears. The text reaches the system clipboard through the app rather than
+the page, the same on macOS, Linux and Windows. Selecting text and the Edit
+menu's Copy work as they do anywhere else.
+
 A permission the agent asks for docks over the composer rather than in the
 thread: who asks, the agent or one of its subagents, and what for, with the
 choices the core offers. It says the agent asks to run a command only for a
@@ -465,10 +484,32 @@ the agent works its Send button is a Stop button, and a message sent
 meanwhile stands under the thread, marked as waiting, until the turn that
 takes it. While the agent waits on an answer the composer says Up reaches
 it, and a lone digit sent then goes only on a second Enter, so it is not
-sent as a message by surprise. A message that was not delivered, refused by
-the agent or never sent, can be put back in the composer. What is being written
-stays with its session while another is on screen. The keys are in
+sent as a message by surprise. A message that was not delivered, refused
+by the agent or never sent, can be put back in the composer. What is being
+written stays with its session while another is on screen. The keys are in
 [focus](focus-model.md#an-integrated-session).
+
+A slash typed as the first thing in the composer opens a menu over the
+thread of the agent's slash commands, then its skills, for an agent that
+lists them, as Claude Code does; Codex lists none, so there a slash is
+text. Each shows its argument hint, what it does, and where it comes from:
+built in, a project, the user, a plugin or an MCP server. Typing narrows
+the list to names that begin with what was typed, then names with a later
+word that does, and marks the letters that match; the first is marked.
+Taking one puts it in the composer with a space after it, and its argument
+hint waits in grey after the caret until something is typed; a second
+Enter sends it. Before the agent has listed its commands the menu says so
+and fills in place once it has, and until then a message that begins with
+a slash is not sent. A word nothing matches is said to go as a message,
+and the menu closes at the first space. Which entries are skills the agent
+says when its first turn starts, so until then those that are not its own
+are listed as skills. An MCP server's prompt is offered by the name a
+message gives it, which starts with `mcp__`. The compact command does not
+go as a message: the conversation is compacted through the agent's own
+compaction, with any words after the command for the summary to keep, and
+while a turn runs the composer says it waits for the turn to end. A
+compaction that fails says so in the thread, with the agent's reason, and
+words that could not be sent to compact go back in the composer.
 
 The row's id is the conversation's id as the agent says it once ready, so
 the agent's own tools find the row. Its state, working, asking or idle,

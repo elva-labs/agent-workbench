@@ -70,8 +70,15 @@ import {
   followHistory,
   launch,
   workflowFor,
+  byToken,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import {
+  byKey as shellByKey,
+  create as createShell,
+  reset as resetShells,
+  started as shellStarted,
+} from "$lib/terminals.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 
 const A = "/home/ada/dev/one";
@@ -97,6 +104,8 @@ function hold(host: string): () => void {
 const LAB = "ssh://ada@lab/srv/one";
 let cwdAnswer: string | null = null;
 let cwdAsks = 0;
+/** The agent whose history directory cannot be read, if any. */
+let unreadable: string | null = null;
 const spawned: SpawnOptions[] = [];
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -136,6 +145,7 @@ vi.mock("$lib/core", () => ({
     // made, whenever the answer arrives.
     transcriptsMany: async (projects: string[], agent: string, dir?: string) => {
       manyCalls.push(projects);
+      if (agent === unreadable) throw new Error("could not read");
       const answer =
         agent !== "claude-code"
           ? []
@@ -155,6 +165,7 @@ beforeEach(() => {
   resetWorkflows();
   spawned.length = 0;
   reset();
+  resetShells();
   resetAttention();
   resetAccounts();
   resetZoom();
@@ -374,6 +385,22 @@ describe("closing", () => {
     const session = live(A, "pty-1");
     close(session.key);
     expect(tabsClosed).toEqual([{ kind: "session", key: session.key }]);
+  });
+
+  it("closes the shells opened beside the session, and keeps those of a session that only stopped", async () => {
+    const stopped = live(A, "pty-1");
+    const keep = createShell({ project: A, session: stopped.key });
+    shellStarted(keep.key, "pty-s1");
+    ended({ id: "pty-1", code: 0, clean: true });
+    const session = live(A, "pty-2");
+    const shell = createShell({ project: A, session: session.key });
+    shellStarted(shell.key, "pty-s2");
+    const own = createShell({ project: A, session: null });
+    close(session.key);
+    await vi.waitFor(() => expect(killed).toContain("pty-s2"));
+    expect(shellByKey(shell.key)).toBeNull();
+    expect(shellByKey(keep.key)).not.toBeNull();
+    expect(shellByKey(own.key)).not.toBeNull();
   });
 
   it("closes the tabs of every session when its project is closed, and keeps those of a session that only stopped", () => {
@@ -956,6 +983,94 @@ describe("an agent that mints its own id", () => {
   it("falls back to an installed agent when the preferred one is gone", () => {
     create(A, null, "codex");
     expect(defaultAgent(A)).toBe("claude-code");
+  });
+});
+
+describe("the token a session's tools name it by", () => {
+  beforeEach(() => {
+    localStorage.removeItem("workbench.tokens");
+  });
+
+  const codexToo = () =>
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+
+  it("is the window's own, given to the agent as it starts, and is not the agent's id", async () => {
+    const session = create(A);
+    const token = session.token;
+    expect(token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)?.token).toBe(token);
+    expect(session.id).toBe("sid-1");
+    expect(session.token).toBe(token);
+    // Two sessions in one folder are two tokens.
+    expect(create(A).token).not.toBe(token);
+  });
+
+  it("names a Codex session from the start, and is kept by its id once that is known", async () => {
+    codexToo();
+    const session = create(A, null, "codex");
+    const token = session.token;
+    expect(started(session.key, "pty-1", null)).toBe(true);
+    expect(session.id).toBeNull();
+    expect(byToken(token)?.key).toBe(session.key);
+    identified("pty-1", "cx-1", null);
+    expect(session.token).toBe(token);
+    expect(sessions.tokens["cx-1"]).toEqual({ token, project: A });
+  });
+
+  it("is the same for the session resumed, after a restart too", async () => {
+    codexToo();
+    const session = create(A, null, "codex");
+    started(session.key, "pty-1", null);
+    identified("pty-1", "cx-1", null);
+    const token = session.token;
+    close(session.key);
+    reset();
+    loadRemembered();
+    const back = create(A, "cx-1", "codex");
+    expect(back.token).toBe(token);
+    await launch(back.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "cx-1", token });
+  });
+
+  it("is the agent's id for a session from before there were tokens, which needs nothing kept", () => {
+    const back = create(A, "old-1");
+    expect(back.token).toBe("old-1");
+    started(back.key, "pty-1", "old-1");
+    expect(sessions.tokens["old-1"]).toBeUndefined();
+  });
+
+  it("is kept for neither of two live sessions found to have one id, and the session resumed by it is neither", () => {
+    codexToo();
+    const one = create(A, null, "codex");
+    started(one.key, "pty-1", null);
+    const two = create(A, null, "codex");
+    started(two.key, "pty-2", null);
+    // Both started in one folder close together, and both were found to
+    // be the newest thread there.
+    identified("pty-1", "cx-same", null);
+    expect(sessions.tokens["cx-same"]?.token).toBe(one.token);
+    identified("pty-2", "cx-same", null);
+    const kept = sessions.tokens["cx-same"]?.token;
+    expect(kept).not.toBe(one.token);
+    expect(kept).not.toBe(two.token);
+    close(one.key);
+    close(two.key);
+    const back = create(A, "cx-same", "codex");
+    expect(back.token).toBe(kept);
+    expect([one.token, two.token]).not.toContain(back.token);
+  });
+
+  it("is never one that a live row holds already", () => {
+    const first = create(A, "sid-9");
+    started(first.key, "pty-1", "sid-9");
+    const second = create(A, "sid-9");
+    expect(second.token).not.toBe(first.token);
+    // A row that has stopped gives its token up to the one resumed.
+    ended({ id: "pty-1", code: 0, clean: true });
+    const third = create(A, "sid-9");
+    expect(third.token).toBe(first.token);
+    expect(byToken(first.token)?.key).toBe(third.key);
   });
 });
 
@@ -2049,8 +2164,14 @@ describe("following a workflow", () => {
     expect(statusMessage(row)).toContain('followed the workflow "Gone", which is gone');
     // It has not started: it waits on the user's word, and says so.
     expect(statusLabel(row)).toBe("waiting for your choice");
+    // A shell opened beside the row goes on beside the one resumed in its
+    // place, with its number.
+    const shell = createShell({ project: P, session: row.key });
+    shellStarted(shell.key, "pty-beside");
     const without = resumeWithout(row.key)!;
     expect(byKey(row.key)).toBeNull();
+    expect(shellByKey(shell.key)).toMatchObject({ session: without.key, ordinal: 1 });
+    expect(killed).not.toContain("pty-beside");
     await launch(without.key, 80, 24, () => {});
     expect(spawned.at(-1)).toMatchObject({ session: "old" });
     expect(spawned.at(-1)).not.toHaveProperty("instructions");
@@ -2082,15 +2203,45 @@ describe("following a workflow", () => {
     sessions.workflows["gone"] = { workflow: defaultWorkflow(), told: null, project: P };
     sessions.workflows["here"] = { workflow: defaultWorkflow(), told: null, project: P };
     sessions.workflows["elsewhere"] = { workflow: defaultWorkflow(), told: null, project: "/other" };
+    sessions.workflows["old"] = { workflow: defaultWorkflow(), told: null, project: P };
+    // Their tokens, but for the one from before there were tokens, whose
+    // token is its id; and a session with no workflow, gone as well.
+    for (const id of ["gone", "here", "elsewhere", "plain"])
+      sessions.tokens[id] = { token: `token-${id}`, project: id === "elsewhere" ? "/other" : P };
     historyAnswer = [{ id: "here", title: "Still here", modified: 1, size: 100, cwd: null }];
     const heard: string[][] = [];
-    onForgotten((ids) => heard.push(ids));
+    onForgotten((tokens) => heard.push(tokens));
     await loadHistory(P);
     onForgotten(null);
     expect(Object.keys(sessions.workflows).sort()).toEqual(["elsewhere", "here"]);
-    // What its workflow ran is let go of with it.
-    expect(heard).toEqual([["gone"]]);
+    expect(Object.keys(sessions.tokens).sort()).toEqual(["elsewhere", "here"]);
+    // What their workflows ran, kept under their tokens, is let go of with
+    // them.
+    expect(heard.map((tokens) => [...tokens].sort())).toEqual([["old", "token-gone", "token-plain"]]);
     expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
+    expect(Object.keys(JSON.parse(localStorage.getItem("workbench.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
+  });
+
+  it("lets go of nothing kept while one source of history cannot be read", async () => {
+    sessions.workflows["gone"] = { workflow: defaultWorkflow(), told: null, project: P };
+    sessions.tokens["gone"] = { token: "token-gone", project: P };
+    historyAnswer = [{ id: "here", title: "Still here", modified: 1, size: 100, cwd: null }];
+    const heard: string[][] = [];
+    onForgotten((tokens) => heard.push(tokens));
+    unreadable = "codex";
+    try {
+      await loadHistory(P);
+    } finally {
+      unreadable = null;
+    }
+    onForgotten(null);
+    expect(sessions.history[P]?.map((entry) => entry.id)).toEqual(["here"]);
+    expect(Object.keys(sessions.workflows)).toEqual(["gone"]);
+    expect(Object.keys(sessions.tokens)).toEqual(["gone"]);
+    expect(heard).toEqual([]);
+    // Read whole, it goes.
+    await loadHistory(P);
+    expect(sessions.tokens).toEqual({});
   });
 
   it("gives a session started with no workflow none, whatever its project follows", () => {

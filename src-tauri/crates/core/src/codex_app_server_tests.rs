@@ -15,6 +15,7 @@ fn launch_with<'a>(
         project: Path::new("/work/demo"),
         env: vars,
         session: None,
+        token: None,
         resume: false,
         model: None,
         mode: None,
@@ -267,6 +268,7 @@ fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
     let mut driver = launch_with(&vars, |launch| {
         launch.session = Some("thread-old");
+        launch.token = Some("token-old");
         launch.resume = true;
         launch.tool_server = Some(Box::leak(server.into_boxed_path()));
     });
@@ -284,7 +286,30 @@ fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     assert_eq!(resume["params"]["approvalsReviewer"], "user");
     assert_eq!(
         resume["params"]["config"]["mcp_servers"]["agent_workbench"]["env"],
-        json!({"WORKBENCH_SESSION": "thread-old"})
+        json!({"WORKBENCH_SESSION": "token-old"})
+    );
+}
+
+#[test]
+fn a_fresh_thread_s_tool_server_is_told_the_session_before_codex_names_it() {
+    let vars = HashMap::new();
+    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let mut driver = launch_with(&vars, |launch| {
+        launch.token = Some("token-fresh");
+        launch.tool_server = Some(Box::leak(server.into_boxed_path()));
+    });
+    let opening = written(&driver.opening());
+    let reading = read(
+        &mut driver,
+        json!({"id": opening[0]["id"], "result": {"userAgent": "agent-workbench/0.169.0"}}),
+    );
+    let start = written(&reading.writes)
+        .into_iter()
+        .find(|line| line["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(
+        start["params"]["config"]["mcp_servers"]["agent_workbench"]["env"],
+        json!({"WORKBENCH_SESSION": "token-fresh"})
     );
 }
 
@@ -1502,9 +1527,21 @@ fn model_effort_and_mode_are_settled_here_and_go_with_the_next_turn() {
 }
 
 #[test]
+fn compaction_with_instructions_is_refused() {
+    let mut driver = ready();
+    let refused = driver.control(&Control::Compact {
+        instructions: Some("keep the notes".into()),
+    });
+    assert!(refused.is_err(), "Codex's compaction takes none");
+}
+
+#[test]
 fn compaction_asked_for_is_a_turn_of_the_agent_s_own() {
     let mut driver = ready();
-    let Sending::Request { line, key } = driver.control(&Control::Compact).unwrap() else {
+    let Sending::Request { line, key } = driver
+        .control(&Control::Compact { instructions: None })
+        .unwrap()
+    else {
         panic!("a request");
     };
     let line: Value = serde_json::from_str(&line).unwrap();
@@ -1685,6 +1722,7 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         project: &dir,
         env: &vars,
         session: Some("thread-old"),
+        token: Some("token-old"),
         resume: true,
         model: None,
         mode: Some("auto"),
@@ -1713,8 +1751,8 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         .collect();
     assert_eq!(env["CODEX_HOME"], home.to_string_lossy());
     assert_eq!(
-        env["WORKBENCH_SESSION"], "thread-old",
-        "its own, not the parent's"
+        env["WORKBENCH_SESSION"], "token-old",
+        "its own token, not the parent's nor the thread's"
     );
 
     let bad = Launch {

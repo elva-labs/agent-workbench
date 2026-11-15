@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   isPermissionGranted,
@@ -116,6 +117,9 @@ export interface SpawnOptions {
   cwd?: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
+  /** What the session's tools name it by, given to the agent's
+      environment. */
+  token?: string;
   /** The first prompt, for a fresh session started with one. */
   prompt?: string;
   /** The model to run on, by the name the agent takes on its command
@@ -164,6 +168,8 @@ export interface IntegratedStartOptions {
   cwd?: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
+  /** What the session's tools name it by, as for `spawn`. */
+  token?: string;
   /** The model to run on, by the name the agent takes. */
   model?: string;
   /** The mode to start in, one of those `ready` lists. */
@@ -321,6 +327,20 @@ export interface IntegratedLimitWindow {
   severity: "normal" | "warning" | "reached" | null;
 }
 
+/** A slash command or skill the agent takes at the start of a message,
+    named without its slash. `hint` is what it takes after its name;
+    `skill` says it is a skill rather than a command, as far as the agent
+    has said; `builtin` that it is the agent's own; `source` where one that
+    is not comes from, in the agent's words. */
+export interface IntegratedCommand {
+  name: string;
+  description: string | null;
+  hint: string | null;
+  skill: boolean;
+  builtin: boolean;
+  source: string | null;
+}
+
 /** A session's news, by `type`. Text, thinking, tool calls, plans and
     requests carry `parent`: the tool call that started the subagent they
     belong to, or null in the main conversation. */
@@ -344,8 +364,11 @@ export type IntegratedEventBody =
       }[];
       modes: { value: string; name: string; description: string | null }[];
       efforts: string[];
-      commands: { name: string; description: string | null; hint: string | null }[];
+      commands: IntegratedCommand[];
     }
+  /** The slash commands and skills changed, or the agent said more of
+      which is which; all of them as they now are. */
+  | { type: "commands"; commands: IntegratedCommand[] }
   /** The model, mode or effort changed; all as they now are. */
   | {
       type: "configured";
@@ -499,6 +522,9 @@ export type IntegratedEventBody =
       tokensBefore: number | null;
       tokensAfter: number | null;
     }
+  /** Compacting failed and the conversation is as it was, with why where
+      the agent says. */
+  | { type: "compactFailed"; error: string | null }
   /** How much of the context window the conversation takes, and how big
       the window is, in tokens, where the agent reports either. */
   | { type: "context"; used: number | null; size: number | null }
@@ -620,7 +646,8 @@ export interface ShowRequest {
   to: number;
   note: string | null;
   cwd: string;
-  /** The agent's session id, when the agent's environment named one. */
+  /** The token of the session the agent runs as, when its environment
+      named one; from a plugin, the agent's own id for the session. */
   session: string | null;
 }
 
@@ -643,6 +670,8 @@ export interface TerminalRequest {
 export interface NotifyRequest {
   text: string;
   cwd: string;
+  /** The token of the session the agent runs as, when its environment
+      named one; from a plugin, the agent's own id for the session. */
   session: string | null;
 }
 
@@ -665,7 +694,8 @@ export interface ConductRequest {
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which project it is in. */
   cwd: string;
-  /** The session the calling agent runs as, when its environment named one. */
+  /** The token of the session the calling agent runs as, when its
+      environment named one. */
   session: string | null;
 }
 
@@ -690,7 +720,8 @@ export interface BrowserRequest {
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which project it is in. */
   cwd: string;
-  /** The session the calling agent runs as, when its environment named one. */
+  /** The token of the session the calling agent runs as, when its
+      environment named one. */
   session: string | null;
 }
 
@@ -704,7 +735,8 @@ export interface SettingsRequest {
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which machine waits. */
   cwd: string;
-  /** The session the calling agent runs as, when its environment named one. */
+  /** The token of the session the calling agent runs as, when its
+      environment named one. */
   session: string | null;
 }
 
@@ -892,7 +924,8 @@ export interface PresentRequest {
   files: string[];
   caption: string | null;
   cwd: string;
-  /** The agent's session id, when the agent's environment named one. */
+  /** The token of the session the agent runs as, when its environment
+      named one; from a plugin, the agent's own id for the session. */
   session: string | null;
 }
 
@@ -1247,9 +1280,10 @@ export interface Core {
   /** Stops the running turn. Queued messages stay queued. The turn's end
       arrives as an event afterwards. */
   integratedInterrupt(id: string): Promise<void>;
-  /** Compacts the conversation, in the agent's own way. Resolves once
-      asked; `compacting` and `compacted` follow. */
-  integratedCompact(id: string): Promise<void>;
+  /** Compacts the conversation, in the agent's own way, with what the
+      summary should keep where the agent takes that. Resolves once asked;
+      `compacting` and `compacted` follow. */
+  integratedCompact(id: string, instructions?: string): Promise<void>;
   /** Answers a permission request with a choice it offered; `message`
       goes with a choice that takes one. */
   integratedAnswer(
@@ -1732,7 +1766,8 @@ const tauriCore: Core = {
   integratedSend: (id, message, text, images) =>
     invoke<void>("integrated_send", { id, message, text, images: images ?? [] }),
   integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
-  integratedCompact: (id) => invoke<void>("integrated_compact", { id }),
+  integratedCompact: (id, instructions) =>
+    invoke<void>("integrated_compact", { id, instructions: instructions ?? null }),
   integratedAnswer: (id, request, choice, message) =>
     invoke<void>("integrated_answer", {
       id,
@@ -2005,7 +2040,7 @@ const tauriCore: Core = {
   pathRename: (root, from, to) => invoke<void>("path_rename", { root, from, to }),
   pathDelete: (root, path) => invoke<void>("path_delete", { root, path }),
   revealPath: (path) => revealItemInDir(path),
-  copyText: (text) => navigator.clipboard.writeText(text),
+  copyText: (text) => writeText(text),
   setUnsaved: (unsaved) => invoke("leave_unsaved", { unsaved }),
   setRunning: (running) => invoke("leave_running", { running }),
   async onLeaveRequested(handler) {

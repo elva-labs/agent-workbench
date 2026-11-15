@@ -32,6 +32,32 @@ the agent uses its own. The past sessions a project lists are read from
 the same directory. The core is given directories rather than names, so a
 session on a remote machine runs under directories on that machine.
 
+## Naming the session to its tools
+
+Every session is given a token the workbench chose, in its environment as
+`WORKBENCH_SESSION`, with `WORKBENCH_ROLE` beside it for a session that
+directs the others. The tool server and the hooks read both, and every call
+they make names the session by its token; see [who is
+calling](orchestrator.md#who-is-calling). Claude Code passes its whole
+environment to the servers it starts. Codex passes a server only the
+variables its entry names, so wherever a Codex session has the tool
+server, from its project's configuration or named for a workflow, the
+server is named whole on its command line, its command, its arguments and
+those two variables to pass on. An entry that named only the variables,
+for a server no configuration names, would stop Codex from starting, so a
+session without the tool server is told nothing of it. On Windows a Codex
+installed as a script is not told the server either; see [under a
+workflow](#under-a-workflow).
+
+Codex passes a server the variables its entry names from 0.47.0 on. An
+older Codex takes the entry without a word and passes the server none of
+them, so every call its sessions make names no session, and is taken for
+one from [an agent the workbench did not
+start](orchestrator.md#who-is-calling). A session under a workflow could
+then direct nothing, so one on a Codex older than 0.47.0 is refused,
+saying to update; the version is what `codex --version` prints, and a
+Codex whose version cannot be read is started all the same.
+
 ## Under a workflow
 
 A session that follows a workflow is told the workflow's instructions on
@@ -82,7 +108,14 @@ interpreter, which ends a command at its first line break. Claude Code's
 command line holds only file names there. Codex would lose all but the
 first line of the instructions, so a Codex session under a workflow is
 refused on Windows, saying so. A session with no workflow starts as the
-table above says.
+table above says. The interpreter also takes the first and the last quote
+off a line with more than two, which cuts short a script path with a space
+in it, and the settings that name the tool server to Codex hold quotes. So
+a Codex installed as a script is not told the server on Windows: it starts
+the server from its own configuration, which passes the server none of
+the session's variables, and every call the session makes names no
+session. The workbench takes such a call for one from [an agent it did
+not start](orchestrator.md#who-is-calling).
 
 ## Detection
 

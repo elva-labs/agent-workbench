@@ -153,6 +153,7 @@ fn start_in(
         project: &dir,
         env: &vars,
         session: Some(&session),
+        token: None,
         resume: false,
         model: Some("haiku"),
         mode: Some("default"),
@@ -328,6 +329,7 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     let before = now_millis();
     let h = start_with("command", &format!("{READY}\ndrain"), |launch| {
         launch.resume = true;
+        launch.token = Some("token-command");
         launch.tool_server = Some(Box::leak(server.clone().into_boxed_path()));
         launch.config_dir = Some(Box::leak(config.clone().into_boxed_path()));
         launch.orchestrator = true;
@@ -377,7 +379,10 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
     let has = |line: &str| env.lines().any(|l| l == line);
     assert!(!env.lines().any(|l| l.starts_with("CLAUDECODE=")), "{env}");
-    assert!(has(&format!("WORKBENCH_SESSION={}", h.session)), "{env}");
+    // The tools are told the session by the workbench's token for it,
+    // never by the agent's own id, and never by the parent's.
+    assert!(has("WORKBENCH_SESSION=token-command"), "{env}");
+    assert!(!has(&format!("WORKBENCH_SESSION={}", h.session)), "{env}");
     assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
     assert!(
         has(&format!("CLAUDE_CONFIG_DIR={}", config.display())),
@@ -1163,6 +1168,7 @@ fn a_missing_agent_explains_itself() {
         project: std::path::Path::new("/tmp"),
         env: &vars,
         session: Some("s"),
+        token: None,
         resume: false,
         model: None,
         mode: None,
@@ -1198,6 +1204,7 @@ fn real_claude_holds_a_short_turn() {
         project: &dir,
         env: &environment.vars,
         session: Some(&session),
+        token: None,
         resume: false,
         model: Some("haiku"),
         mode: Some("default"),

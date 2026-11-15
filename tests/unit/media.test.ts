@@ -11,6 +11,7 @@ import {
   render,
   renderSaid,
   resetMedia,
+  saidBlocks,
   settled,
 } from "$lib/media.svelte";
 import { closeViewer, files } from "$lib/files.svelte";
@@ -85,42 +86,52 @@ describe("whose media it is", () => {
     started(a.key, "pty-1", "s1");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
-    // Two sessions in one directory: the request says which.
+    // Two sessions in one directory: the request's token says which.
+    expect(
+      ownerFor(request(["/one/x.png"], "/one", null, b.token), "/one"),
+    ).toBe("s2");
+    expect(
+      ownerFor(request(["/one/x.png"], "/one", null, a.token), "/one"),
+    ).toBe("s1");
+    // A plugin names the session by its id.
     expect(ownerFor(request(["/one/x.png"], "/one", null, "s2"), "/one")).toBe(
       "s2",
     );
-    expect(ownerFor(request(["/one/x.png"], "/one", null, "s1"), "/one")).toBe(
-      "s1",
-    );
-    // A session of another project is not the owner, whatever it is named.
-    expect(ownerFor(request(["/one/x.png"], "/one", null, "s9"), "/one")).toBe(
-      "s1",
-    );
   });
 
-  it("is the session running where the agent runs, else the project", async () => {
+  it("is the project for a call that names no session the window knows, wherever it is made", () => {
     const a = create("/one");
     started(a.key, "pty-1", "s1");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
-    await located(b.key, "/one/.claude/worktrees/w");
-    expect(
-      ownerFor(request(["/one/x.png"], "/one/.claude/worktrees/w"), "/one"),
-    ).toBe("s2");
-    expect(
-      ownerFor(request(["/one/x.png"], "/one/.claude/worktrees/w/sub"), "/one"),
-    ).toBe("s2");
-    // The active session in the project when none is at that directory.
     select(a.key);
-    expect(ownerFor(request(["/one/x.png"], "/elsewhere"), "/one")).toBe("s1");
-    resetSessions();
-    expect(ownerFor(request(["/one/x.png"]), "/one")).toBe("project:/one");
+    // Nothing is taken from the folder or from the session on screen.
+    for (const session of [null, "made-up"]) {
+      expect(ownerFor(request(["/one/x.png"], "/one", null, session), "/one")).toBe(
+        "project:/one",
+      );
+    }
+  });
+
+  it("is the session that presents a file of a nested project", () => {
+    workspace.open.push(repo("/one/sub"));
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const nested = create("/one/sub");
+    started(nested.key, "pty-2", "s2");
+    presented(request(["/one/sub/x.png"], "/one", "Shot.", a.token));
+    expect(itemsFor("s1")).toHaveLength(1);
+    expect(itemsFor("s1")[0].project).toBe("/one/sub");
+    expect(itemsFor("s2")).toEqual([]);
+    expect(itemsFor("project:/one/sub")).toEqual([]);
   });
 
   it("falls to the project while the session's id is not known", () => {
     const fresh = create("/one");
     select(fresh.key);
-    expect(ownerFor(request(["/one/x.png"]), "/one")).toBe("project:/one");
+    expect(
+      ownerFor(request(["/one/x.png"], "/one", null, fresh.token), "/one"),
+    ).toBe("project:/one");
   });
 });
 
@@ -129,7 +140,10 @@ describe("presenting", () => {
     workspace.active = "/two";
     const session = create("/one");
     started(session.key, "pty-1", "s1");
-    presented(request(["/one/a.png", "/one/b.pdf"]), 1_700_000_000_000);
+    presented(
+      request(["/one/a.png", "/one/b.pdf"], "/one", "Shots.", session.token),
+      1_700_000_000_000,
+    );
     expect(workspace.active).toBe("/one");
     expect(files.media?.files).toEqual(["/one/a.png", "/one/b.pdf"]);
     expect(layout.mode).toBe("reviewing");
@@ -159,26 +173,28 @@ describe("presenting", () => {
   it("keeps one item for the same files, newest, with the latest caption", () => {
     const session = create("/one");
     started(session.key, "pty-1", "s1");
-    presented(request(["/one/draft.md"], "/one", "First."), 1_700_000_000_000);
-    presented(request(["/one/other.png"], "/one", "Other."), 1_700_000_001_000);
+    const mine = (files: string[], caption: string | null = "Shots.") =>
+      request(files, "/one", caption, session.token);
+    presented(mine(["/one/draft.md"], "First."), 1_700_000_000_000);
+    presented(mine(["/one/other.png"], "Other."), 1_700_000_001_000);
     const first = itemsFor("s1")[1];
     // The same file again, however it is listed: the item, not another.
-    presented(request(["/one/draft.md"], "/one", "Second."), 1_700_000_002_000);
+    presented(mine(["/one/draft.md"], "Second."), 1_700_000_002_000);
     expect(itemsFor("s1")).toHaveLength(2);
     expect(itemsFor("s1")[0].id).toBe(first.id);
     expect(itemsFor("s1")[0].caption).toBe("Second.");
     expect(itemsFor("s1")[0].at).toBe(1_700_000_002);
     expect(files.media?.id).toBe(first.id);
     // A set is the same set in any order; a different set is another item.
-    presented(request(["/one/b.png", "/one/a.png"]), 1_700_000_003_000);
-    presented(request(["/one/a.png", "/one/b.png"]), 1_700_000_004_000);
-    presented(request(["/one/a.png"]), 1_700_000_005_000);
+    presented(mine(["/one/b.png", "/one/a.png"]), 1_700_000_003_000);
+    presented(mine(["/one/a.png", "/one/b.png"]), 1_700_000_004_000);
+    presented(mine(["/one/a.png"]), 1_700_000_005_000);
     expect(itemsFor("s1")).toHaveLength(4);
     expect(itemsFor("s1")[1].files).toEqual(["/one/a.png", "/one/b.png"]);
     // Another session's item is its own.
     const other = create("/one");
     started(other.key, "pty-2", "s2");
-    presented(request(["/one/draft.md"], "/one", "Theirs.", "s2"));
+    presented(request(["/one/draft.md"], "/one", "Theirs.", other.token));
     expect(itemsFor("s1")).toHaveLength(4);
     expect(itemsFor("s2")).toHaveLength(1);
   });
@@ -269,6 +285,41 @@ describe("what an agent says in a conversation", () => {
     expect(html).toContain("&lt;img");
     expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
   });
+
+  it("is drawn a block at a time as it is drawn whole, reference links and raw HTML included", () => {
+    const md = [
+      "## The plan\n\nRead [the docs][d] first, then <b>this</b>:",
+      "- one\n- two\n\n  still two",
+      "```rust\nlet x = 1;\n```",
+      "| a | b |\n| - | - |\n| 1 | 2 |",
+      "> quoted ![chart](https://example.com/c.png)",
+      "    indented code",
+      "[d]: https://example.com/docs",
+    ].join("\n\n");
+    const blocks = saidBlocks(md);
+    expect(blocks.join("")).toBe(renderSaid(md));
+    expect(blocks.join("")).toContain('<a href="https://example.com/docs"');
+  });
+
+  it("puts every code block in a box of its own, at the top, in a list and in a quote", () => {
+    const box = document.createElement("div");
+    box.innerHTML = renderSaid("```sh\nnpm test\n```\n\n1. Run this:\n\n   ```sh\n   npm run check\n   ```\n\n> ```\n> quoted\n> ```\n\n    indented");
+    const codes = [...box.querySelectorAll("div.code[data-copy-host='code']")];
+    expect(codes.map((code) => code.querySelector("pre code")?.textContent)).toEqual([
+      "npm test\n",
+      "npm run check\n",
+      "quoted\n",
+      "indented\n",
+    ]);
+    expect(box.querySelectorAll("pre")).toHaveLength(4);
+    expect(codes.map((code) => code.closest("li, blockquote")?.tagName ?? null)).toEqual([null, "LI", "BLOCKQUOTE", null]);
+  });
+
+  it("draws a code block whose fence is still open as far as it has come", () => {
+    const box = document.createElement("div");
+    box.innerHTML = saidBlocks("Run:\n\n```sh\nnpm te").join("");
+    expect(box.querySelector("div.code pre code")?.textContent).toBe("npm te\n");
+  });
 });
 
 describe("Markdown that is still being written", () => {
@@ -322,6 +373,7 @@ describe("Markdown that is still being written", () => {
     for (const now of prefixes(text)) {
       const kept = settled(now);
       expect(renderSaid(now.slice(0, kept)) + renderSaid(now.slice(kept))).toBe(renderSaid(now));
+      expect([...saidBlocks(now.slice(0, kept)), ...saidBlocks(now.slice(kept))]).toEqual(saidBlocks(now));
     }
   });
 });

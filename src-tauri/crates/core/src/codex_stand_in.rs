@@ -146,6 +146,7 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         project: &dir,
         env: &vars,
         session: None,
+        token: None,
         resume: false,
         model: None,
         mode: None,
@@ -352,6 +353,7 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
         &format!("{}\ndrain", ready_scenario()),
         |launch| {
             launch.session = Some("019a-old");
+            launch.token = Some("token-old");
             launch.resume = true;
             launch.mode = Some("read-only");
             launch.model = Some("gpt-b");
@@ -364,7 +366,7 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
     let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
     let has = |line: &str| env.lines().any(|l| l == line);
     assert!(has(&format!("CODEX_HOME={}", home.display())), "{env}");
-    assert!(has("WORKBENCH_SESSION=019a-old"), "{env}");
+    assert!(has("WORKBENCH_SESSION=token-old"), "{env}");
     assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
     let resume = &h.sent("thread/resume")[0]["params"];
     assert_eq!(resume["threadId"], "019a-old");
@@ -375,7 +377,7 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
         json!({
             "command": server.to_string_lossy(),
             "args": ["mcp"],
-            "env": {"WORKBENCH_SESSION": "019a-old", "WORKBENCH_ROLE": "orchestrator"},
+            "env": {"WORKBENCH_SESSION": "token-old", "WORKBENCH_ROLE": "orchestrator"},
             "default_tools_approval_mode": "approve",
         })
     );
@@ -840,7 +842,7 @@ fn compaction_notices_and_a_retry() {
 }
 
 fn integrated_compact(h: &Harness) {
-    control(&h.sessions, &h.id, &Control::Compact).unwrap();
+    control(&h.sessions, &h.id, &Control::Compact { instructions: None }).unwrap();
 }
 
 #[test]
@@ -1240,6 +1242,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
             project: &work,
             env: &environment.vars,
             session,
+            token: Some("token-real"),
             resume: session.is_some(),
             model: None,
             mode: Some("read-only"),
@@ -1414,9 +1417,8 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     assert_eq!(events.last().unwrap()["outcome"], "done");
     let env = std::fs::read_to_string(base.join("server-env")).unwrap_or_default();
     println!(
-        "the tool server had WORKBENCH_SESSION: {}",
-        env.lines()
-            .any(|l| l == format!("WORKBENCH_SESSION={thread}"))
+        "the tool server had the session's token: {}",
+        env.lines().any(|l| l == "WORKBENCH_SESSION=token-real")
     );
     assert_eq!(h.stop()["clean"], true);
 }

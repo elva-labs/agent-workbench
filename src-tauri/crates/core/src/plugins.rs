@@ -361,9 +361,11 @@ static LAUNCHES: AtomicU64 = AtomicU64::new(0);
 type Key = (String, String);
 
 /// An agent's pty as the runtime follows it: the session it runs, known at
-/// the spawn or found afterwards, and the project it belongs to.
+/// the spawn or found afterwards, the token the workbench gave it, and the
+/// project it belongs to.
 struct Pty {
     session: Option<String>,
+    token: Option<String>,
     project: String,
 }
 
@@ -761,9 +763,17 @@ impl Plugins {
     }
 
     /// An agent's pty started in a project. The session is None for an
-    /// agent that mints its own id, which `session_identified` brings.
-    pub fn session_started(&self, pty_id: &str, session: Option<&str>, project: &str) {
-        self.inner.session_started(pty_id, session, project);
+    /// agent that mints its own id, which `session_identified` brings. The
+    /// token is what the session's tools name it by, which a plugin is
+    /// never shown: a call from those tools reaches it under the session.
+    pub fn session_started(
+        &self,
+        pty_id: &str,
+        session: Option<&str>,
+        token: Option<&str>,
+        project: &str,
+    ) {
+        self.inner.session_started(pty_id, session, token, project);
     }
 
     /// The id an agent minted for a session of its own, once it is known.
@@ -1905,13 +1915,20 @@ impl Inner {
         if !self.knows(&request.source) {
             return;
         }
+        // The tool server names the calling session by its token. A plugin
+        // knows sessions by the agent's own id, which the session events
+        // carry, so the call names that, or none where it is not known.
+        let session = request
+            .session
+            .as_deref()
+            .and_then(|token| self.session_of(token));
         let message = serde_json::json!({
             "type": "tool",
             "id": request.id,
             "name": request.tool,
             "arguments": request.arguments,
             "project": request.cwd,
-            "session": request.session,
+            "session": session,
         });
         if let Err(error) = self.send(&request.source, &request.plugin, &message) {
             let _ = crate::show::write_answer(
@@ -2347,11 +2364,29 @@ impl Inner {
         }
     }
 
-    fn session_started(&self, pty_id: &str, session: Option<&str>, project: &str) {
+    /// The agent's own id for the session the tools name by this token,
+    /// when a session this core started has both.
+    fn session_of(&self, token: &str) -> Option<String> {
+        self.ptys
+            .lock()
+            .expect("plugins lock")
+            .values()
+            .find(|pty| pty.token.as_deref() == Some(token))
+            .and_then(|pty| pty.session.clone())
+    }
+
+    fn session_started(
+        &self,
+        pty_id: &str,
+        session: Option<&str>,
+        token: Option<&str>,
+        project: &str,
+    ) {
         self.ptys.lock().expect("plugins lock").insert(
             pty_id.to_string(),
             Pty {
                 session: session.map(str::to_string),
+                token: token.map(str::to_string),
                 project: project.to_string(),
             },
         );
@@ -2380,6 +2415,7 @@ impl Inner {
         let Some(Pty {
             session: Some(session),
             project,
+            ..
         }) = gone
         else {
             return;
@@ -3027,7 +3063,8 @@ while IFS= read -r line; do
     *'"type":"stop"'*) exit 0;;
     *'"type":"tool"'*)
       id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-      printf '{"type":"result","id":"%s","content":"pong"}\n' "$id"
+      session=$(printf '%s' "$line" | sed -n 's/.*"session":"\([^"]*\)".*/\1/p')
+      printf '{"type":"result","id":"%s","content":"pong%s"}\n' "$id" "${session:+ $session}"
       ;;
   esac
 done
@@ -3062,15 +3099,19 @@ done
         assert_eq!(listed[0].tool, "ping");
         assert_eq!(plugins.tools(), listed);
 
-        let call = |id: &str, plugin: &str| ToolRequest {
+        // The calling session's tools name it by its token; the plugin
+        // hears the agent's own id, as the session events give it.
+        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), "/p");
+        let call_from = |id: &str, plugin: &str, token: &str| ToolRequest {
             id: id.to_string(),
             source: added.id.clone(),
             plugin: plugin.to_string(),
             tool: "ping".to_string(),
             arguments: serde_json::json!({ "text": "hi" }),
             cwd: "/p".to_string(),
-            session: Some("s-1".to_string()),
+            session: Some(token.to_string()),
         };
+        let call = |id: &str, plugin: &str| call_from(id, plugin, "t-1");
         plugins.call(call("call-1", "echo"));
         let answer = |id: &str| -> Option<Answer> {
             for _ in 0..50 {
@@ -3082,8 +3123,12 @@ done
             None
         };
         let answered = answer("call-1").expect("the plugin answered");
-        assert_eq!(answered.content.as_deref(), Some("pong"));
+        assert_eq!(answered.content.as_deref(), Some("pong s-1"));
         assert_eq!(answered.error, None);
+        // A token no session here was given names no session at all.
+        plugins.call(call_from("call-3", "echo", "t-unknown"));
+        let unnamed = answer("call-3").expect("the plugin answered");
+        assert_eq!(unnamed.content.as_deref(), Some("pong"));
 
         // A plugin that is not running is answered at once.
         plugins.call(call("call-2", "missing"));
@@ -3893,9 +3938,9 @@ run = ["sh", "main.sh"]
 
         // A session whose id is known at the spawn, one whose agent minted
         // its own, and a shell, which is no session at all.
-        plugins.session_started("pty-1", Some("s-1"), "/two");
+        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), "/two");
         plugins.session_ended("pty-1");
-        plugins.session_started("pty-2", None, "/three");
+        plugins.session_started("pty-2", None, Some("t-2"), "/three");
         plugins.session_identified("pty-2", "s-2");
         plugins.session_ended("pty-3");
         let sessions = wait(7);

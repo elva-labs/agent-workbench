@@ -341,7 +341,7 @@ describe("what picking does in go to", () => {
     started(starter.key, "pty-1", "starter-1");
     const kid = create(C);
     started(kid.key, "pty-2", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     activate(A);
     sessions.active = starter.key;
     const row = (path: string) =>
@@ -373,7 +373,7 @@ describe("what picking does in go to", () => {
     started(starter.key, "pty-1", "starter-1");
     const kid = create(C);
     started(kid.key, "pty-2", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     activate(C);
     sessions.active = kid.key;
     expect(onScreen()).toBe(A);
@@ -635,7 +635,7 @@ describe("a new session", () => {
     started(starter.key, "pty-1", "starter-1");
     const kid = create(C);
     started(kid.key, "pty-2", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     kid.changedAt = Date.now();
     activate(C);
     sessions.active = kid.key;

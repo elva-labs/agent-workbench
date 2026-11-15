@@ -24,6 +24,7 @@ import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
+import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
@@ -51,6 +52,11 @@ export interface Session {
   /** Stable for the lifetime of the row, unlike the pty id which only exists
       once the process is actually up. */
   key: string;
+  /** What the session's tools name it by: chosen by the window, given to
+      the agent's environment when it starts, and the same for a session
+      resumed. Every call its tools make carries it, so the window knows
+      which session called. Not a secret: an identifier. */
+  token: string;
   /** The project this session belongs to, as an absolute path. */
   project: string;
   /** Which agent is running in it. */
@@ -136,14 +142,11 @@ export interface Session {
   error: string | null;
   /** Set once the terminal has been created, so it is only built once. */
   mounted: boolean;
-  /** Whether the agent was given the session's id in its environment, so
-      every tool call it makes names the session. An agent that mints its
-      own id was not, and its calls are placed by where it runs. */
-  told: boolean;
 }
 
 const MINE_KEY = "workbench.mine";
 const NAMES_KEY = "workbench.names";
+const TOKENS_KEY = "workbench.tokens";
 const PREFERRED_KEY = "workbench.agents";
 const WORKFLOWS_KEY = "workbench.workflows";
 
@@ -158,6 +161,13 @@ export interface KeptWorkflow {
   workflow: unknown;
   told: string | null;
   project: string | null;
+}
+
+/** A session's token as it is kept, and its project, so it goes once the
+    session is gone from the project's history. */
+export interface KeptToken {
+  token: string;
+  project: string;
 }
 
 /** A past session, whose it is, and the account it ran under: the name
@@ -191,6 +201,11 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
+  /** The token each session's tools name it by, with the project it runs
+      in, by the agent's id for the session, kept between runs, so a session
+      resumed is named as it was and still owns what was kept under its
+      token. */
+  tokens: {} as Record<string, KeptToken>,
   /** What is kept of the workflow each session follows, by session id. A
       session that follows none is not here. */
   workflows: {} as Record<string, KeptWorkflow>,
@@ -326,16 +341,19 @@ export async function loadHistories(projects: string[]) {
             );
           } catch {
             // No history is a shorter list, never an error.
-            return group.map(() => [] as HistoryEntry[]);
+            return null;
           }
         }),
       );
+      // A source that could not be read may hold sessions the others do
+      // not list, so nothing kept is let go of on this reading.
+      const whole = lists.every((source) => source !== null);
       group.forEach((project, at) => {
         if (readings.get(project) !== ticket) return;
         // Listed once per id, as the newest: a session resumed from another
         // directory can be reported from more than one place.
         const newest = new Map<string, HistoryEntry>();
-        const entries = lists.flatMap((source) => source[at] ?? []);
+        const entries = lists.flatMap((source) => source?.[at] ?? []);
         for (const entry of entries.sort((a, b) => b.modified - a.modified)) {
           if (!newest.has(entry.id)) newest.set(entry.id, entry);
         }
@@ -346,7 +364,7 @@ export async function loadHistories(projects: string[]) {
           sessions.history[project] = next;
         readFrom.set(project, signature);
         pruneDormant(project);
-        pruneKept(project);
+        if (whole) pruneKept(project);
       });
     }),
   );
@@ -541,6 +559,24 @@ export function loadRemembered() {
     // Nothing is named, then.
   }
   try {
+    const raw = localStorage.getItem(TOKENS_KEY);
+    if (raw !== null) {
+      const stored: unknown = JSON.parse(raw);
+      if (typeof stored === "object" && stored !== null) {
+        const tokens: Record<string, KeptToken> = {};
+        for (const [id, kept] of Object.entries(stored)) {
+          if (typeof kept !== "object" || kept === null) continue;
+          const { token, project } = kept as Record<string, unknown>;
+          if (typeof token === "string" && token !== "" && typeof project === "string")
+            tokens[id] = { token, project };
+        }
+        sessions.tokens = tokens;
+      }
+    }
+  } catch {
+    // No token is kept, then: a session resumed is named by its id.
+  }
+  try {
     const raw = localStorage.getItem(WORKFLOWS_KEY);
     if (raw !== null) {
       const stored: unknown = JSON.parse(raw);
@@ -677,26 +713,38 @@ function toldAfresh(id: string, workflow: Workflow | null): boolean {
 }
 
 /** Lets go of what is kept for the sessions of a project that are gone
-    from its history: no row has them, and the agent lists them no more.
-    A history that came back empty may be one that could not be read, and
-    takes nothing away. */
+    from its history, their workflows and their tokens: no row has them,
+    and the agent lists them no more. A history that came back empty may be
+    one that could not be read, and takes nothing away. */
 function pruneKept(project: string) {
   const listed = new Set((sessions.history[project] ?? []).map((entry) => entry.id));
   if (listed.size === 0) return;
   const rows = new Set(sessions.all.map((session) => session.id));
-  const gone = Object.entries(sessions.workflows)
-    .filter(([id, kept]) => kept.project === project && !listed.has(id) && !rows.has(id))
+  const gone = (id: string, of: string | null) => of === project && !listed.has(id) && !rows.has(id);
+  const workflows = Object.entries(sessions.workflows)
+    .filter(([id, kept]) => gone(id, kept.project))
     .map(([id]) => id);
-  if (gone.length === 0) return;
-  for (const id of gone) delete sessions.workflows[id];
-  saveKept();
-  forgotten(gone);
+  const tokens = Object.entries(sessions.tokens)
+    .filter(([id, kept]) => gone(id, kept.project))
+    .map(([id]) => id);
+  if (workflows.length === 0 && tokens.length === 0) return;
+  // What else is kept for them is kept under their tokens, which for a
+  // session from before there were tokens is its id.
+  const callers = [...new Set([...workflows, ...tokens])].map(
+    (id) => sessions.tokens[id]?.token ?? id,
+  );
+  for (const id of workflows) delete sessions.workflows[id];
+  for (const id of tokens) delete sessions.tokens[id];
+  if (workflows.length > 0) saveKept();
+  if (tokens.length > 0) saveTokens();
+  forgotten(callers);
 }
 
-let forgotten: (ids: string[]) => void = () => {};
+let forgotten: (tokens: string[]) => void = () => {};
 
-/** Hears the ids of sessions whose kept workflow went with them. */
-export function onForgotten(handler: ((ids: string[]) => void) | null) {
+/** Hears the tokens of sessions gone from their project's history, whose
+    kept workflow or token went with them. */
+export function onForgotten(handler: ((tokens: string[]) => void) | null) {
   forgotten = handler ?? (() => {});
 }
 
@@ -705,6 +753,80 @@ export function onForgotten(handler: ((ids: string[]) => void) | null) {
 function orchestratorModel(workflow: Workflow): string | null {
   const { agent, model } = workflow.orchestrator;
   return agent === "codex" && model === CODEX_DEFAULT ? null : model;
+}
+
+/**
+ * The token a new row's tools name it by. A session resumed has the one it
+ * had, kept by its id, so it is the same session to everything kept under
+ * that token; one from before there were tokens has its id, which is what
+ * was kept under it then. A fresh session has a new one, and so does a
+ * session whose token a live row holds already: two rows never answer to
+ * one token at once.
+ */
+function tokenFor(resumedFrom: string | null): string {
+  const kept =
+    resumedFrom === null ? null : (sessions.tokens[resumedFrom]?.token ?? resumedFrom);
+  if (kept !== null && !sessions.all.some((row) => row.token === kept && isLive(row)))
+    return kept;
+  return crypto.randomUUID();
+}
+
+/**
+ * Keeps a row's token by the agent's id for it, once that is known, for the
+ * session resumed later to be named the same.
+ *
+ * An id that a live row has already is found for two sessions at once, as
+ * two Codex sessions started in one folder close together can be, whose id
+ * the window finds by folder and time. Neither row's token is kept for it:
+ * the id is kept a token of its own that neither holds, so the session
+ * resumed by that id owns nothing either of them started.
+ */
+export function keepToken(session: Session) {
+  const id = session.id;
+  if (id === null) return;
+  const twice = sessions.all.some(
+    (row) => row.key !== session.key && row.id === id && isLive(row),
+  );
+  if (twice) {
+    sessions.tokens[id] = { token: crypto.randomUUID(), project: session.project };
+    saveTokens();
+    return;
+  }
+  if (sessions.tokens[id]?.token === session.token) return;
+  // A session from before there were tokens is named by its id, which
+  // needs nothing kept.
+  if (session.token === id && sessions.tokens[id] === undefined) return;
+  sessions.tokens[id] = { token: session.token, project: session.project };
+  saveTokens();
+}
+
+function saveTokens() {
+  try {
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(sessions.tokens));
+  } catch {
+    // Non-fatal: the session resumed after a restart is named by its id.
+  }
+}
+
+/** The row whose tools name it by this token: the live one, where a row
+    that has stopped holds it as well. Null for a token no row has. */
+export function byToken(token: string | null): Session | null {
+  if (token === null) return null;
+  let found: Session | null = null;
+  for (const session of sessions.all) {
+    if (session.token !== token) continue;
+    if (isLive(session)) return session;
+    found ??= session;
+  }
+  return found;
+}
+
+/** The running row whose tools name it by this token. Null for a token no
+    running row has: a stopped session is not calling, so what a process
+    left over from it asks for is done for none of the rows. */
+export function runningByToken(token: string | null): Session | null {
+  const row = byToken(token);
+  return row !== null && isLive(row) ? row : null;
 }
 
 function rememberName(id: string, name: string) {
@@ -938,6 +1060,7 @@ export function identified(
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   session.id = sessionId;
+  keepToken(session);
   identifiedZoom(session.key, sessionId);
   adopt(session.project, sessionId);
   rememberWorkflow(session);
@@ -1176,8 +1299,11 @@ export function resumeWithout(key: string): Session | null {
     project,
   };
   saveKept();
-  close(key);
-  return create(project, id, agent, startIn, null, model, account, null);
+  // The row resumed in its place keeps the shells opened beside this one.
+  close(key, true);
+  const next = create(project, id, agent, startIn, null, model, account, null);
+  handOver(key, { project, session: next.key });
+  return next;
 }
 
 /** Whether a new session has nothing to pick between: one agent to run
@@ -1236,6 +1362,7 @@ function row(
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
     key: `s${++counter}`,
+    token: tokenFor(resumedFrom),
     project,
     agent,
     kind,
@@ -1268,7 +1395,6 @@ function row(
     exitCode: null,
     error: null,
     mounted: false,
-    told: false,
   };
 }
 
@@ -1319,6 +1445,7 @@ export async function launch(
         project: session.project,
         cwd: session.startIn ?? undefined,
         session: session.resumedFrom ?? undefined,
+        token: session.token,
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
         configDir: dirFor(session.account, session.agent),
@@ -1364,10 +1491,10 @@ export function started(
   session.ptyId = ptyId;
   session.startedAt = Date.now();
   session.status = "running";
-  session.told = sessionId !== null;
   changed(session);
   if (sessionId !== null) {
     session.id = sessionId;
+    keepToken(session);
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
     rememberWorkflow(session);
@@ -1448,7 +1575,9 @@ export function onIntegratedClose(handler: (session: Session) => void) {
   stopIntegrated = handler;
 }
 
-export function close(key: string) {
+/** Closes a row. Its shells go with it, unless they are kept for the row
+    that takes its place: see `handOver`. */
+export function close(key: string, keepShells = false) {
   const session = byKey(key);
   if (session === null) return;
   if (session.kind === "integrated") stopIntegrated(session);
@@ -1481,11 +1610,15 @@ export function close(key: string) {
   if (session.id !== null) loadHistory(session.project);
   ownerGone(key);
 
-  if (sessions.active !== key) return;
-  // Prefer another session in the same project, so closing one does not throw
-  // you into a different project's work.
-  const sibling = forProject(session.project)[0] ?? sessions.all[0] ?? null;
-  sessions.active = sibling?.key ?? null;
+  if (sessions.active === key) {
+    // Prefer another session in the same project, so closing one does not
+    // throw you into a different project's work.
+    const sibling = forProject(session.project)[0] ?? sessions.all[0] ?? null;
+    sessions.active = sibling?.key ?? null;
+  }
+  // The shells opened beside the session go with the row, once whoever is
+  // shown next is chosen.
+  if (!keepShells) void closeShells(key);
 }
 
 export function closeProject(project: string) {
@@ -1938,6 +2071,7 @@ export function reset() {
   loading.clear();
   sessions.mine = {};
   sessions.names = {};
+  sessions.tokens = {};
   sessions.workflows = {};
   pending.clear();
   sessions.preferred = {};

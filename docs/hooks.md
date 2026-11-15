@@ -113,7 +113,8 @@ one viewer holds one thing, so only the agent's latest call is kept. This
 goes for `diff`, `present`, `terminal` and the browser's `browser_open` as
 well. A call from the session on screen opens at once, as does one from a
 session the window does not know, an agent run in a terminal outside the
-app, except that the browser's tab then belongs to the project it runs in.
+app, except that the browser's tab then belongs to the project it runs in,
+and the terminal to the session or project on screen.
 
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
@@ -136,7 +137,8 @@ closes a file.
 
 ![The agent draws the request flow: a Mermaid diagram and a latency chart open in the viewer, one under the other, with the caption above and the call on the media list under the tree.](tools-present.gif) A link in a document opens outside the app; HTML written
 into a document shows as the text it is. What was presented stays on the media
-list of the session it came from, a section under the file tree with a
+list of the session whose token the call names, or of the project when the
+call names no session the window knows, a section under the file tree with a
 divider to drag and a header that folds it away, one row per set of files
 under its caption, to open again after a restart too. The same files
 presented again take their row to the top with the new caption rather than
@@ -166,7 +168,9 @@ Two more are for the agent to hand something over rather than show it.
 `terminal` opens a new terminal in the panel with a command typed at the
 prompt and not run, from the directory the agent works in: a dev server or
 a watch the user asked for, which they start with Enter and keep. The
-agent is told to run its own commands itself.
+terminal belongs to the agent's session and goes with it; see
+[the terminal panel](layout.md#the-terminal-panel). The agent is told to
+run its own commands itself.
 
 ![The agent types npm run dev into a new terminal; the user presses Enter and the server comes up under the panes.](tools-terminal.gif)
 

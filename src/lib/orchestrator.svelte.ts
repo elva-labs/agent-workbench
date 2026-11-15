@@ -71,14 +71,14 @@ export function isAsking(session: Session): boolean {
   return isLive(session) && session.needs === "permission";
 }
 
-/** The rows by session id and by key together, the first row in the
-    window's order taking a name two of them answer to. */
+/** The rows by token, the live one taking a token a row that has
+    stopped holds as well, else the first in the window's order. */
 const named = $derived.by(() => {
   const index = new Map<string, Session>();
   for (const session of sessions.all) {
-    if (session.id !== null && !index.has(session.id))
-      index.set(session.id, session);
-    if (!index.has(session.key)) index.set(session.key, session);
+    const held = index.get(session.token);
+    if (held === undefined || (!isLive(held) && isLive(session)))
+      index.set(session.token, session);
   }
   return index;
 });
@@ -113,16 +113,13 @@ const tree = $derived.by(() => {
   return { parents, children, started, own };
 });
 
-/** The row a starter's id names, other than the session's own. */
-function starterOf(session: Session, id: string): Session | null {
-  const found = named.get(id);
+/** The row a starter's token names, other than the session's own. */
+function starterOf(session: Session, token: string): Session | null {
+  const found = named.get(token);
   if (found === undefined) return null;
   if (found !== session) return found;
   return (
-    sessions.all.find(
-      (candidate) =>
-        candidate !== session && (candidate.id === id || candidate.key === id),
-    ) ?? null
+    sessions.all.find((candidate) => candidate !== session && candidate.token === token) ?? null
   );
 }
 
@@ -134,7 +131,7 @@ export function summary(session: Session): {
   asking: number;
   working: boolean;
 } {
-  const started = tree.started.get(session.id ?? session.key) ?? [];
+  const started = tree.started.get(session.token) ?? [];
   return {
     running: started.filter(isLive).length,
     asking: started.filter(isAsking).length,

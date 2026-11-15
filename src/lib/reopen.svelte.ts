@@ -1,5 +1,5 @@
 import type { AgentId } from "$lib/core";
-import { startedFor } from "$lib/conductor.svelte";
+import { carryOver, startedFor } from "$lib/conductor.svelte";
 import { handleOf, reattach } from "$lib/integrated.svelte";
 import {
   activeSession,
@@ -110,6 +110,21 @@ function write(open: Open[], active: string | null) {
   }
 }
 
+/** Whether the window has settled on what is on screen as it starts: the
+    projects on this machine are back, with the sessions that were open in
+    them, and the one on screen is chosen. */
+export const startup = $state({ settled: false });
+
+/** Settles the start once the restore does, whether it brought everything
+    back or failed on the way: what waits on the start must not wait for
+    the life of the window. */
+export function settleWhen(restored: Promise<unknown>): Promise<void> {
+  const settle = () => {
+    startup.settled = true;
+  };
+  return restored.then(settle, settle);
+}
+
 /**
  * Brings back the sessions that were open, in the projects that are, and
  * from then on keeps the record current. Call once the projects on this
@@ -126,6 +141,9 @@ export function reopen(
   conductor: Promise<string | null> | null = null,
 ): () => void {
   const { open, active } = read();
+  // What an earlier version kept of an open session's starts under the
+  // folder it called from is that session's from here.
+  carryOver(open);
   let conductorDir: string | null = null;
   const here = (project: string) => isOpen(project) || (conductorDir !== null && project === conductorDir);
   const bring = (entry: Open) => {
@@ -172,6 +190,7 @@ export function reopen(
   let held = $state(waiting);
   for (const entry of open) bring(entry);
   front(workspace.active);
+  startup.settled = true;
 
   let stopped = false;
   if (conductor !== null)

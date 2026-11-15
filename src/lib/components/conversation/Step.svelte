@@ -2,6 +2,7 @@
   import type { TextPart, ToolCall } from "$lib/conversation.svelte";
   import { openFolds, toggle } from "$lib/folds";
   import { answered, foldKey, glyph, inputPath, span, stepTitle } from "$lib/thread";
+  import Copy from "./Copy.svelte";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
@@ -12,7 +13,8 @@
    * One step of the agent's work: a tool call, or a stretch of thinking.
    * The row says what it did to what, and how it went; opened, it shows
    * the input, the output as it came, the files it changed, and for a
-   * subagent what that subagent said and did.
+   * subagent what that subagent said and did. A command has a Copy drawn
+   * over its row's end and another on its output.
    */
   interface Props {
     part: ToolCall | TextPart;
@@ -24,6 +26,7 @@
   const folds = openFolds();
   let fold = $derived(foldKey("step", part));
   let open = $derived(folds().has(fold));
+  const id = $props.id();
 
   let title = $derived(
     part.kind === "tool"
@@ -67,6 +70,9 @@
     },
   );
 
+  /** The command a step ran, as typed, once its input is whole. */
+  let command = $derived(input !== null && "command" in input ? input.command : null);
+
   let output = $derived(
     part.kind === "tool" ? (part.done ? (part.result ?? part.output) : part.output) : "",
   );
@@ -74,27 +80,41 @@
 </script>
 
 <div class="step" class:open data-testid="step" data-tool={part.kind === "tool" ? part.tool : "thinking"}>
-  <button
-    class="row"
-    tabindex="-1"
-    data-thread-item
-    onclick={() => toggle(folds(), fold)}
-    aria-expanded={open}
-    data-testid="step-row"
-  >
-    <span class="chev"><Icon name="chev" size={12} /></span>
-    <span class="glyph"><Icon name={glyph(part.kind === "tool" ? part.tool : "thinking")} size={13} /></span>
-    <span class="title">
-      <span class="verb"
-        >{#each title.lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<Plain text={piece.name} />{/if}{/each}</span
-      >
-      {#if title.object !== null}<code class="object"><Plain text={title.object} /></code>{/if}
-      {#if part.kind === "tool" && part.inputTruncated}<span class="cut-mark" data-testid="step-cut">cut short</span>{/if}
-    </span>
-    {#if status !== null}
-      <span class="status {status.tone}" data-testid="step-status">{status.text}</span>
+  <!-- The row's button reaches over the whole line, its status too, so a
+       click anywhere on it folds, but on the Copy, which stands above it. -->
+  <div class="head" data-copy-host="command" data-testid="step-head">
+    <button
+      class="row"
+      tabindex="-1"
+      data-thread-item
+      onclick={() => toggle(folds(), fold)}
+      aria-expanded={open}
+      aria-describedby={status !== null ? `${id}-status` : undefined}
+      data-testid="step-row"
+    >
+      <span class="chev"><Icon name="chev" size={12} /></span>
+      <span class="glyph"><Icon name={glyph(part.kind === "tool" ? part.tool : "thinking")} size={13} /></span>
+      <span class="title">
+        <span class="verb"
+          >{#each title.lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<Plain text={piece.name} />{/if}{/each}</span
+        >
+        {#if title.object !== null}<code class="object"><Plain text={title.object} /></code>{/if}
+        {#if part.kind === "tool" && part.inputTruncated}<span class="cut-mark" data-testid="step-cut">cut short</span>{/if}
+      </span>
+    </button>
+    {#if command !== null || status !== null}
+      <!-- The status at the row's end, and the Copy drawn over the end of
+           the title just before it, so at rest the title has the row. -->
+      <span class="end">
+        {#if command !== null}
+          <Copy label="Copy command" text={() => command ?? ""} host="command" place="overlay" testid="copy-command" />
+        {/if}
+        {#if status !== null}
+          <span class="status {status.tone}" id="{id}-status" data-testid="step-status">{status.text}</span>
+        {/if}
+      </span>
     {/if}
-  </button>
+  </div>
 
   {#if open}
     <div class="detail" data-testid="step-detail">
@@ -152,7 +172,10 @@
           {/if}
         {/if}
         {#if output !== "" && part.tool !== "edit"}
-          <pre class="block output" class:bad={part.error} data-testid="step-output"><Plain text={output} /></pre>
+          <div class="copyable" data-copy-host="output">
+            <pre class="block output" class:bad={part.error} data-testid="step-output"><Plain text={output} /></pre>
+            <Copy label="Copy output" text={() => output} host="output" place="corner" testid="copy-output" />
+          </div>
         {/if}
         {#if part.truncated || part.inputTruncated}
           <p class="cut">Some of this was cut short on its way to the window.</p>
@@ -172,7 +195,8 @@
     min-width: 0;
   }
 
-  .row {
+  .head {
+    position: relative;
     width: calc(100% + 12px);
     display: flex;
     align-items: center;
@@ -180,20 +204,56 @@
     padding: 3px 6px;
     margin: 0 -6px;
     box-sizing: border-box;
-    border: 0;
     border-radius: var(--radius-sm);
-    background: none;
     color: var(--ink-2);
-    font: inherit;
     font-size: var(--conv-small);
-    text-align: left;
-    cursor: pointer;
     min-width: 0;
   }
 
-  .row:hover {
+  .head:hover {
     background: var(--surface-2);
     color: var(--ink);
+  }
+
+  .row {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .row::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-sm);
+  }
+
+  .row:focus-visible {
+    outline: none;
+  }
+
+  .row:focus-visible::after {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /* Clicks pass through to the row's button under it, but on the Copy. */
+  .end {
+    position: relative;
+    flex: none;
+    pointer-events: none;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
   }
 
   .glyph {
@@ -238,6 +298,7 @@
 
   .status {
     flex: none;
+    margin-left: 4px;
     font-size: var(--conv-fine);
     color: var(--ink-2);
     font-variant-numeric: tabular-nums;
@@ -257,7 +318,7 @@
     transition: transform 0.15s;
   }
 
-  .open > .row .chev {
+  .open > .head .chev {
     transform: rotate(90deg);
   }
 
@@ -305,6 +366,11 @@
     color: var(--ink-3);
     user-select: none;
     -webkit-user-select: none;
+  }
+
+  .copyable {
+    position: relative;
+    min-width: 0;
   }
 
   .output {

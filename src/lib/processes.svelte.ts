@@ -1,22 +1,19 @@
 /**
- * What runs under the sessions and shells of the project on screen: the
- * dev server the agent typed for you, the test run it started, listed in a
- * section under the tree and stopped from there. Read from the core on a
- * timer while the changes pane is up, slower while the section is folded
- * since only its count shows then.
+ * What runs under the session on screen and its shells: the dev server the
+ * agent typed for you, the test run it started, listed in a section under
+ * the tree and stopped from there. The project's own shells, the ones
+ * opened with no session on screen, are listed too, under the project's
+ * name, as the terminal panel lists them. Read from the core on a timer
+ * while the changes pane is up, slower while the section is folded since
+ * only its count shows then.
  */
 
+import { untrack } from "svelte";
 import { core, type Process } from "$lib/core";
 import { changesVisible, layout } from "$lib/layout.svelte";
-import {
-  forProject as sessionsOf,
-  label as sessionLabel,
-} from "$lib/sessions.svelte";
-import {
-  forProject as shellsOf,
-  label as shellLabel,
-} from "$lib/terminals.svelte";
-import { workspace } from "$lib/workspace.svelte";
+import { activeSession, label as sessionLabel } from "$lib/sessions.svelte";
+import { besideOf, label as shellLabel, ownerOnScreen, ownShells, withOwner } from "$lib/terminals.svelte";
+import { projectLabel } from "$lib/workspace.svelte";
 
 export interface ProcessRow extends Process {
   /** The pty the process runs under, on whichever machine. */
@@ -32,23 +29,35 @@ export const processes = $state({
 export const POLL_OPEN = 2000;
 export const POLL_FOLDED = 6000;
 
-/** The ptys to look under: the active project's running sessions and
-    shells, with what each is called. */
+/** The ptys to look under, with what each is called: the session on
+    screen while it runs, its running shells, and the project's own running
+    shells, named after the project beside a session. With no session on
+    screen, the project's own alone. */
 export function owners(): { ptyId: string; owner: string }[] {
-  const project = workspace.active;
-  if (project === null) return [];
   const list: { ptyId: string; owner: string }[] = [];
-  for (const session of sessionsOf(project)) {
-    if (session.ptyId !== null && session.status === "running") {
-      list.push({ ptyId: session.ptyId, owner: sessionLabel(session) });
-    }
+  const session = activeSession();
+  if (session !== null && session.ptyId !== null && session.status === "running") {
+    list.push({ ptyId: session.ptyId, owner: sessionLabel(session) });
   }
-  for (const shell of shellsOf(project)) {
+  for (const shell of ownShells()) {
     if (shell.ptyId !== null && shell.status === "running") {
       list.push({ ptyId: shell.ptyId, owner: shellLabel(shell) });
     }
   }
+  for (const shell of besideOf(ownerOnScreen())) {
+    if (shell.ptyId !== null && shell.status === "running") {
+      list.push({ ptyId: shell.ptyId, owner: withOwner(shell) });
+    }
+  }
   return list;
+}
+
+/** What the section says with nothing running: whose processes it lists. */
+export function emptyText(): string {
+  const owner = ownerOnScreen();
+  if (owner === null || owner.session === null) return "Nothing running in the project's shells.";
+  if (besideOf(owner).length === 0) return "Nothing running under this session or its shells.";
+  return `Nothing running under this session, its shells or those of ${projectLabel(owner.project)}.`;
 }
 
 let reading = 0;
@@ -75,14 +84,21 @@ export async function refresh() {
 export function watchProcesses() {
   $effect(() => {
     const delay = layout.processesOpen ? POLL_OPEN : POLL_FOLDED;
-    const project = workspace.active;
-    if (project === null || !changesVisible()) {
+    // Read here so a session or shell coming up, or going, or another
+    // session coming on screen, reads the list again at once rather than at
+    // the next tick.
+    const list = owners();
+    if (list.length === 0 || !changesVisible()) {
       processes.rows = [];
       return;
     }
-    // Read here so a session or shell coming up, or going, reads the list
-    // again at once rather than at the next tick.
-    owners();
+    // What is no longer looked under goes at once, so a switch shows only
+    // the new session's while its own are read.
+    const ptys = new Set(list.map((owner) => owner.ptyId));
+    untrack(() => {
+      const kept = processes.rows.filter((row) => ptys.has(row.ptyId));
+      if (kept.length !== processes.rows.length) processes.rows = kept;
+    });
     void refresh();
     const timer = setInterval(() => void refresh(), delay);
     return () => clearInterval(timer);

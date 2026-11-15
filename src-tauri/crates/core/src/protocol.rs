@@ -101,6 +101,8 @@ struct SpawnParams {
     #[serde(default)]
     session: Option<String>,
     #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
     model: Option<String>,
@@ -125,6 +127,8 @@ struct IntegratedStartParams {
     cwd: Option<PathBuf>,
     #[serde(default)]
     session: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -168,6 +172,13 @@ struct IntegratedSendParams {
     text: String,
     #[serde(default)]
     images: Vec<crate::integrated::Image>,
+}
+
+#[derive(Deserialize)]
+struct IntegratedCompactParams {
+    id: String,
+    #[serde(default)]
+    instructions: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -438,6 +449,7 @@ pub fn dispatch(
                 &p.project,
                 p.cwd.as_deref(),
                 p.session,
+                p.token.as_deref(),
                 p.prompt.as_deref(),
                 p.model.as_deref(),
                 p.config_dir.as_deref(),
@@ -456,6 +468,7 @@ pub fn dispatch(
                 &p.project,
                 p.cwd.as_deref(),
                 p.session,
+                p.token.as_deref(),
                 p.model.as_deref(),
                 p.mode.as_deref(),
                 p.effort.as_deref(),
@@ -484,8 +497,8 @@ pub fn dispatch(
             Ok(Value::Null)
         }
         "integrated_compact" => {
-            let p: IdParams = parse(params)?;
-            core.integrated_compact(&p.id)?;
+            let p: IntegratedCompactParams = parse(params)?;
+            core.integrated_compact(&p.id, p.instructions.as_deref())?;
             Ok(Value::Null)
         }
         "integrated_answer" => {

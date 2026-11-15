@@ -16,7 +16,7 @@ import {
   sessions,
   type Session,
 } from "$lib/sessions.svelte";
-import { closeProject as closeShells, follow } from "$lib/terminals.svelte";
+import { closeProject as closeShells } from "$lib/terminals.svelte";
 import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
 
 /**
@@ -137,7 +137,6 @@ export function activate(path: string) {
   const own = forProject(path);
   if (own.length > 0) sessions.active = own[own.length - 1].key;
   else sessions.active = null;
-  follow(path);
 
   save();
   const project = workspace.open.find((candidate) => candidate.path === path);
@@ -268,6 +267,9 @@ async function openRequested() {
 
 /** Removes a project from the window, stopping everything running in it. */
 export function close(path: string) {
+  // The sessions go first, then every shell of the project at once: a
+  // session's busy shells are stopped here before the read its closing
+  // starts can hand them on to the project.
   closeProject(path);
   ownerGone(`project:${path}`);
   closeShells(path);

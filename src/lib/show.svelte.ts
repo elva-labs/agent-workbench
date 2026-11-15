@@ -28,8 +28,8 @@ import type {
 import { openFile } from "$lib/editor.svelte";
 import { showDiff, showRange } from "$lib/files.svelte";
 import { focusPane, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
-import { byKey, forProject, noted, sessions } from "$lib/sessions.svelte";
-import { create as createShell } from "$lib/terminals.svelte";
+import { byKey, isLive, noted, runningByToken, sessions, type Session } from "$lib/sessions.svelte";
+import { create as createShell, ownerOnScreen as shellOwner } from "$lib/terminals.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
 
 /** Whether `path` is `root` or under it. */
@@ -69,7 +69,7 @@ export async function showPlace(request: ShowRequest) {
 export async function showRequested(request: ShowRequest) {
   const project = projectFor(request);
   if (project === null) return;
-  if (held(request, project, () => openPlace(request, project))) return;
+  if (held(request, () => openPlace(request, project))) return;
   await openPlace(request, project);
 }
 
@@ -103,7 +103,7 @@ export async function diffRequested(request: DiffRequest) {
     }
     await showDiff(relative, request.note);
   };
-  if (held(request, project, open)) return;
+  if (held(request, open)) return;
   await open();
 }
 
@@ -120,7 +120,9 @@ export function projectOf(cwd: string): string | null {
 }
 
 /** Opens a terminal in the project with the command typed at the prompt,
-    from the directory the agent runs in when that is not the project. */
+    from the directory the agent runs in when that is not the project. The
+    shell belongs to the calling session; a call from no session the window
+    knows opens it beside what is on screen, as one opened by hand. */
 export function terminalRequested(request: TerminalRequest) {
   const project = projectOf(request.cwd);
   if (project === null) return;
@@ -131,41 +133,32 @@ export function terminalRequested(request: TerminalRequest) {
       inside === null || inside === ""
         ? request.command
         : `cd '${inside.replace(/'/g, "'\\''")}' && ${request.command}`;
-    createShell(project, command);
+    const caller = sessionFor(request);
+    const owner = caller === null ? shellOwner() : { project, session: caller.key };
+    if (owner === null) return;
+    createShell(owner, command);
     if (!terminalVisible()) toggleTerminal();
     else focusPane("terminal");
   };
-  if (held(request, project, open)) return;
+  if (held(request, open)) return;
   open();
 }
 
-/** The session a request is from: the one it names, else the one running
-    deepest where the agent runs, else the project's active one. A request
-    that names no session cannot be from a session whose agent was told its
-    id, so those are passed over: an agent started outside the workbench in
-    the project's directory, with the same tools, is not one of its rows. */
-export function sessionFor(
-  request: { cwd: string; session: string | null },
-  project: string,
-) {
-  const own = forProject(project);
-  const named = own.find(
-    (session) => session.id !== null && session.id === request.session,
+/** The session a request is from: the running row whose token it names, in
+    whichever project, or the running row whose id a plugin names. A
+    request that names no session, or one no running row answers to, is
+    from none of the workbench's: each session it starts names itself in
+    every call, so an agent started outside it in the project's directory,
+    with the same tools, is not one of its rows, nor is a call naming a
+    token the window never gave out, nor one left over from a session that
+    has stopped. */
+export function sessionFor(request: { session: string | null }): Session | null {
+  if (request.session === null) return null;
+  return (
+    runningByToken(request.session) ??
+    sessions.all.find((session) => session.id === request.session && isLive(session)) ??
+    null
   );
-  if (named !== undefined) return named;
-  const could = own.filter(
-    (session) => request.session !== null || !session.told,
-  );
-  const at = (session: {
-    cwd: string | null;
-    startIn: string | null;
-    project: string;
-  }) => session.cwd ?? session.startIn ?? session.project;
-  const under = could
-    .filter((session) => within(request.cwd, at(session)))
-    .sort((a, b) => at(b).length - at(a).length);
-  if (under.length > 0) return under[0];
-  return could.find((session) => session.key === sessions.active) ?? null;
 }
 
 /** What each session's agent asked to open while the user was looking at
@@ -175,11 +168,8 @@ const heldOpens = new Map<string, () => void | Promise<void>>();
 /** The request's session when it is one the window knows and the user is
     looking at another: what it asks to open waits. Null when the request is
     from the session on screen, or from no session the window knows. */
-export function elsewhere(
-  request: { cwd: string; session: string | null },
-  project: string,
-) {
-  const session = sessionFor(request, project);
+export function elsewhere(request: { session: string | null }) {
+  const session = sessionFor(request);
   if (session === null || session.key === sessions.active) return null;
   return session;
 }
@@ -189,11 +179,10 @@ export function elsewhere(
     the request is from the session on screen, or from no session the window
     knows: the caller opens it now. */
 export function held(
-  request: { cwd: string; session: string | null },
-  project: string,
+  request: { session: string | null },
   open: () => void | Promise<void>,
 ): boolean {
-  const session = elsewhere(request, project);
+  const session = elsewhere(request);
   if (session === null) return false;
   heldOpens.set(session.key, open);
   return true;
@@ -220,7 +209,7 @@ export function resetHeld() {
 export function notified(request: NotifyRequest) {
   const project = projectOf(request.cwd);
   if (project === null) return;
-  const session = sessionFor(request, project);
+  const session = sessionFor(request);
   if (session === null) return;
   noted(session.key, request.text);
 }
@@ -242,6 +231,6 @@ export function referenced(key: string, path: string, line: number) {
     to: line,
     note: null,
     cwd: base,
-    session: session.id,
+    session: session.token,
   });
 }

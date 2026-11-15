@@ -41,11 +41,14 @@ pub enum Surface {
 pub struct LaunchCtx<'a> {
     pub project: &'a Path,
     pub env: &'a HashMap<String, String>,
-    /// The session's id when the workbench knows it before the process is
-    /// up: given to the agent's environment as `WORKBENCH_SESSION`, which
-    /// the agent passes on to the MCP server it starts, so a request the
-    /// server logs names the session it came from.
+    /// The agent's id for the session when the workbench knows it before
+    /// the process is up: one it chose, or the one it resumes.
     pub session: Option<&'a str>,
+    /// The token the workbench chose for the session: given to the agent's
+    /// environment as `WORKBENCH_SESSION`, which the agent passes on to the
+    /// tool server it starts, so every call the server makes names the
+    /// session it came from.
+    pub token: Option<&'a str>,
     /// The first thing the user, or the session that started this one,
     /// has to say: given on the command line, so the agent has it from
     /// the start rather than typed at it while it is still coming up.
@@ -80,6 +83,11 @@ pub struct LaunchCtx<'a> {
     /// A file naming the same server, for an agent that reads its server
     /// configuration from one.
     pub server_file: Option<&'a Path>,
+    /// The workbench's tool server when the agent's own configuration for
+    /// the directory already points at it. An agent that passes its servers
+    /// only the variables it is told to is told the server again here, with
+    /// the session's variables to pass on.
+    pub configured: Option<&'a Path>,
     /// For a resumed session, whether what it is told now differs from what
     /// its conversation was first given, no instructions at all among
     /// them. Claude Code records what it was first told and gives that on
@@ -113,7 +121,8 @@ pub const CODEX_NO_SUBAGENTS: &[&str] = &[
 pub const SERVER_NAME: &str = "agent-workbench";
 pub const CODEX_SERVER_KEY: &str = "agent_workbench";
 
-/// The variable that names the session to the tools the agent starts.
+/// The variable that names the session to the tools the agent starts: the
+/// token the workbench chose for it.
 pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
 
 /// The variable that says what the session is for, when it is for anything
@@ -158,6 +167,14 @@ pub trait AgentAdapter: Send + Sync {
     fn reads_files(&self) -> bool {
         false
     }
+
+    /// Whether the agent passes its tool server only the variables the
+    /// server's entry names, so a session's server that its configuration
+    /// names is named again on the command line with the session's
+    /// variables.
+    fn names_server_vars(&self) -> bool {
+        false
+    }
 }
 
 /// Variables that identify the *parent* Claude Code session rather than the
@@ -172,7 +189,7 @@ pub trait AgentAdapter: Send + Sync {
 /// `CLAUDECODE` marks a process as running inside Claude Code, and the
 /// agent refuses or misbehaves under it. `WORKBENCH_SESSION` names the
 /// parent's own session to its tools; a session of the workbench's gets its
-/// own instead.
+/// own token instead.
 ///
 /// Configuration variables under the same prefix are deliberately kept, since
 /// those are the user's and are meant to be inherited.
@@ -324,25 +341,69 @@ fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
 /// through the command interpreter loses every line of them after the first.
 pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex takes a workflow's instructions only on its command line, which Windows cuts short, so a session on Codex cannot follow a workflow here. Choose Claude Code for the workflow's orchestrator, or pick Codex to start it alone.";
 
+/// The first Codex that passes a server the variables its entry names,
+/// which is how a session on Codex names itself to the workbench's tools.
+pub const CODEX_NAMES_ITSELF: (u64, u64, u64) = (0, 47, 0);
+
+/// Why a session on an older Codex does not follow a workflow: its calls
+/// would name no session, so it could not direct one.
+pub const CODEX_TOO_OLD: &str = "This Codex is older than 0.47.0, which passes the workbench's tool server none of the session's variables, so its calls cannot say which session they come from and it cannot direct a workflow. Update Codex, or choose Claude Code for the workflow's orchestrator.";
+
+/// The version of the Codex at `binary`, from what `codex --version`
+/// prints: `codex-cli 0.169.0`. None when it cannot be run or prints no
+/// version.
+fn codex_version(
+    binary: &Path,
+    project: &Path,
+    vars: &HashMap<String, String>,
+) -> Option<(u64, u64, u64)> {
+    let mut command = process(binary, vars);
+    prepare_process(&mut command, project, vars);
+    let output = command.arg("--version").output().ok()?;
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .rev()
+        .find_map(crate::codex_app_server::numbers)
+}
+
 /// The same for Codex, which takes each as a setting of its configuration:
 /// the instructions as developer instructions, its own subagent tools taken
 /// away, and the tool server as one of its servers. Codex has no setting
 /// that reads developer instructions from a file, so they go on the command
 /// line, which is refused on Windows.
-fn codex_workflow(ctx: &LaunchCtx, windows: bool) -> Result<Vec<String>, String> {
+///
+/// Codex starts a server with only the variables its entry names, so the
+/// server is named whole wherever the session has it, with the variables
+/// that say which session it serves among those passed on: an entry that
+/// named only the variables, where no configuration Codex reads names the
+/// server, would stop Codex from starting.
+///
+/// A Codex the command interpreter runs, a script on Windows, is not told
+/// the server its configuration already names. Each setting of the server
+/// holds quotes, and the interpreter takes the first and the last quote off
+/// a line that has more than two, which cuts a script path with a space in
+/// it short. Codex then starts the server from its configuration alone, and
+/// the session's calls name no session.
+fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<String>, String> {
     if windows && ctx.instructions.is_some() {
         return Err(CODEX_WORKFLOW_ON_WINDOWS.into());
     }
     // A JSON string is a TOML basic string as well: quoted, on one line,
     // with the same escapes.
     let text = |value: &str| serde_json::Value::from(value).to_string();
+    let configured = ctx.configured.filter(|_| !(windows && script));
     let mut settings = Vec::new();
-    if let Some(server) = ctx.server {
+    if let Some(server) = ctx.server.or(configured) {
         settings.push(format!(
             "mcp_servers.{CODEX_SERVER_KEY}.command={}",
             text(&server.to_string_lossy())
         ));
         settings.push(format!("mcp_servers.{CODEX_SERVER_KEY}.args=[\"mcp\"]"));
+        settings.push(format!(
+            "mcp_servers.{CODEX_SERVER_KEY}.env_vars=[{}, {}]",
+            text(SESSION_VAR),
+            text(ROLE_VAR)
+        ));
     }
     if ctx.start_only {
         settings.extend(CODEX_NO_SUBAGENTS.iter().map(|setting| setting.to_string()));
@@ -396,12 +457,12 @@ pub const CLAUDE_CONFIG_VAR: &str = "CLAUDE_CONFIG_DIR";
 /// The variable Codex reads its home from.
 pub const CODEX_HOME_VAR: &str = "CODEX_HOME";
 
-/// Puts the session's id in the agent's environment when it is known, and
-/// its role when it has one. The agent passes both on to the tool server it
-/// starts, which is where they are read.
+/// Puts the session's token in the agent's environment, and its role when
+/// it has one. The agent passes both on to the tool server it starts, which
+/// is where they are read.
 fn name_session(command: &mut CommandBuilder, ctx: &LaunchCtx) {
-    if let Some(session) = ctx.session {
-        command.env(SESSION_VAR, session);
+    if let Some(token) = ctx.token {
+        command.env(SESSION_VAR, token);
     }
     if ctx.orchestrator {
         command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
@@ -471,6 +532,30 @@ impl Codex {
 
         Ok(Surface::Pty(command))
     }
+
+    /// Refuses a session that follows a workflow on a Codex too old to name
+    /// itself to its tools. A Codex whose version cannot be read is let
+    /// through: its calls naming no session cost it its starts and sends,
+    /// nothing more.
+    fn names_itself(&self, ctx: &LaunchCtx) -> Result<(), String> {
+        if ctx.instructions.is_none() {
+            return Ok(());
+        }
+        let Some(binary) = self.detect(ctx.env) else {
+            return Ok(());
+        };
+        match codex_version(&binary, ctx.project, ctx.env) {
+            Some(version) if version < CODEX_NAMES_ITSELF => Err(CODEX_TOO_OLD.into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether the Codex found is a script, which Windows runs through the
+    /// command interpreter.
+    fn script(&self, ctx: &LaunchCtx) -> bool {
+        self.detect(ctx.env)
+            .is_some_and(|binary| is_shell_script(&binary))
+    }
 }
 
 impl AgentAdapter for Codex {
@@ -483,13 +568,15 @@ impl AgentAdapter for Codex {
     }
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
-        let workflow = codex_workflow(ctx, cfg!(windows))?;
+        let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
+        self.names_itself(ctx)?;
         let args = workflow.iter().map(String::as_str).collect();
         self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        let workflow = codex_workflow(ctx, cfg!(windows))?;
+        let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
+        self.names_itself(ctx)?;
         let mut args = vec!["resume", session];
         args.extend(workflow.iter().map(String::as_str));
         self.command(ctx, &with_prompt(ctx, args))
@@ -510,6 +597,10 @@ impl AgentAdapter for Codex {
 
     fn takes_id(&self) -> bool {
         false
+    }
+
+    fn names_server_vars(&self) -> bool {
+        true
     }
 }
 
@@ -596,6 +687,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -604,6 +696,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
@@ -643,6 +736,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: Some("abc"),
+            token: None,
             prompt: Some("--dangerously-skip-permissions and fix it"),
             model: None,
             orchestrator: false,
@@ -651,6 +745,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let argv = |surface: Surface| {
@@ -697,6 +792,7 @@ mod tests {
             env: &vars,
             config_dir: Some(own),
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -705,6 +801,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
@@ -741,6 +838,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: Some("abc"),
+            token: None,
             prompt: Some("Go on with the cache test"),
             model: Some("sonnet"),
             orchestrator: false,
@@ -749,6 +847,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let argv = |surface: Surface| {
@@ -819,6 +918,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: Some("abc"),
+            token: None,
             prompt: Some("Fix the flaky test"),
             model: Some("fable"),
             orchestrator: true,
@@ -827,6 +927,7 @@ mod tests {
             start_only: true,
             server: Some(server),
             server_file: Some(named),
+            configured: None,
             afresh: false,
         };
         let argv = |surface: Surface| {
@@ -886,13 +987,16 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
             "-c".to_string(),
+            "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
+                .to_string(),
+            "-c".to_string(),
             "features.multi_agent=false".to_string(),
             "-c".to_string(),
             "features.multi_agent_v2.disable_native_tools=true".to_string(),
             "-c".to_string(),
             r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#.to_string(),
         ];
-        assert_eq!(codex_workflow(&ctx, false).unwrap(), codex_settings);
+        assert_eq!(codex_workflow(&ctx, false, false).unwrap(), codex_settings);
         let tail = ["--model", "fable", "--", "Fix the flaky test"].map(str::to_string);
         if !cfg!(windows) {
             assert_eq!(
@@ -911,7 +1015,7 @@ mod tests {
         }
         // On Windows the instructions would be cut at their first line.
         assert_eq!(
-            codex_workflow(&ctx, true).unwrap_err(),
+            codex_workflow(&ctx, true, false).unwrap_err(),
             CODEX_WORKFLOW_ON_WINDOWS
         );
 
@@ -921,6 +1025,7 @@ mod tests {
             start_only: false,
             server: None,
             server_file: None,
+            configured: None,
             model: None,
             prompt: None,
             ..ctx
@@ -935,7 +1040,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            codex_workflow(&ctx, false).unwrap(),
+            codex_workflow(&ctx, false, false).unwrap(),
             [
                 "-c",
                 r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#
@@ -968,7 +1073,7 @@ mod tests {
             instructions_file: None,
             ..ctx
         };
-        assert!(codex_workflow(&plain, true).unwrap().is_empty());
+        assert!(codex_workflow(&plain, true, false).unwrap().is_empty());
         // Resumed with no workflow where its conversation was first given
         // one, Claude Code is told to let go of what it recorded, and given
         // nothing in its place.
@@ -976,6 +1081,7 @@ mod tests {
             afresh: true,
             start_only: false,
             server_file: None,
+            configured: None,
             ..plain
         };
         assert_eq!(
@@ -1032,14 +1138,22 @@ mod tests {
     }
 
     #[test]
-    fn names_the_session_to_the_agent_when_it_is_known() {
+    fn names_the_session_to_its_tools_by_the_workbench_s_token() {
         let dir = fake_claude("adapter-session");
+        let codex = dir.join("codex");
+        std::fs::write(&codex, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
             config_dir: None,
             session: Some("abc-123"),
+            token: Some("token-1"),
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1048,6 +1162,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
@@ -1055,13 +1170,27 @@ mod tests {
             command
                 .get_env(SESSION_VAR)
                 .map(|v| v.to_string_lossy().to_string()),
-            Some("abc-123".to_string())
+            Some("token-1".to_string())
+        );
+        // An agent that mints its own id has the token all the same, from
+        // the start.
+        let fresh = LaunchCtx {
+            session: None,
+            ..ctx
+        };
+        let Surface::Pty(command) = Codex.launch(&fresh, "").unwrap();
+        assert_eq!(
+            command
+                .get_env(SESSION_VAR)
+                .map(|v| v.to_string_lossy().to_string()),
+            Some("token-1".to_string())
         );
         let unnamed = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
             config_dir: None,
-            session: None,
+            session: Some("abc-123"),
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1070,10 +1199,132 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
-        let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
+        let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "abc-123").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
+    }
+
+    #[test]
+    fn codex_passes_the_session_s_variables_to_the_tool_server_it_has() {
+        let vars = HashMap::new();
+        let daemon = Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote");
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: None,
+            token: Some("token-1"),
+            prompt: None,
+            model: None,
+            orchestrator: false,
+            instructions: None,
+            instructions_file: None,
+            start_only: false,
+            server: None,
+            server_file: None,
+            configured: None,
+            afresh: false,
+        };
+        // No server anywhere: nothing is said of one, since an entry Codex
+        // cannot start would stop the session from starting.
+        assert!(codex_workflow(&ctx, false, false).unwrap().is_empty());
+        // The project's configuration names it: it is named again, whole,
+        // with the variables Codex is to pass on.
+        let configured = LaunchCtx {
+            configured: Some(daemon),
+            ..ctx
+        };
+        let whole = [
+            "-c".to_string(),
+            format!(
+                "mcp_servers.agent_workbench.command=\"{}\"",
+                daemon.display()
+            ),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
+                .to_string(),
+        ];
+        assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
+        assert_eq!(codex_workflow(&configured, true, false).unwrap(), whole);
+        // A script on Windows is told nothing of it: the interpreter would
+        // cut the script's path short at the settings' quotes.
+        assert!(codex_workflow(&configured, true, true).unwrap().is_empty());
+        // Elsewhere a script is run as itself and takes the settings.
+        assert_eq!(codex_workflow(&configured, false, true).unwrap(), whole);
+        // Claude Code passes its servers its whole environment, so it is
+        // told nothing more.
+        let dir = fake_claude("adapter-configured");
+        let path = vars_with_path(&dir);
+        let claude = LaunchCtx {
+            env: &path,
+            ..configured
+        };
+        let Surface::Pty(command) = ClaudeCode.launch(&claude, "abc").unwrap();
+        assert!(command
+            .get_argv()
+            .iter()
+            .all(|arg| !arg.to_string_lossy().contains("mcp")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_workflow_on_a_codex_too_old_to_name_its_session() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Scratch::new("adapter-codex-version");
+        let bin = dir.join("codex");
+        let vars = vars_with_path(&dir);
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: None,
+            token: Some("token-1"),
+            prompt: None,
+            model: None,
+            orchestrator: true,
+            instructions: Some("Direct the work."),
+            instructions_file: None,
+            start_only: false,
+            server: None,
+            server_file: None,
+            configured: None,
+            afresh: false,
+        };
+        let says = |text: &str| {
+            std::fs::write(&bin, format!("#!/bin/sh\necho '{text}'\n")).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        says("codex-cli 0.46.0");
+        assert_eq!(
+            Codex.launch(&ctx, "").err(),
+            Some(CODEX_TOO_OLD.to_string())
+        );
+        assert_eq!(
+            Codex.resume(&ctx, "abc").err(),
+            Some(CODEX_TOO_OLD.to_string())
+        );
+        // Without a workflow it starts, its calls naming no session.
+        let plain = LaunchCtx {
+            instructions: None,
+            orchestrator: false,
+            ..ctx
+        };
+        assert!(Codex.launch(&plain, "").is_ok());
+        for version in [
+            "codex-cli 0.47.0",
+            "codex-cli 0.169.0",
+            "codex-cli 1.0.0-alpha.1",
+        ] {
+            says(version);
+            assert!(Codex.launch(&ctx, "").is_ok(), "{version}");
+        }
+        // A version it cannot read lets it through.
+        says("");
+        assert!(Codex.launch(&ctx, "").is_ok());
     }
 
     #[test]
@@ -1095,6 +1346,7 @@ mod tests {
                 env: &vars,
                 config_dir: None,
                 session: Some("abc"),
+                token: None,
                 prompt: None,
                 model: None,
                 orchestrator,
@@ -1103,6 +1355,7 @@ mod tests {
                 server: None,
                 instructions_file: None,
                 server_file: None,
+                configured: None,
                 afresh: false,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
@@ -1129,6 +1382,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1137,6 +1391,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
@@ -1153,6 +1408,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1161,6 +1417,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1183,6 +1440,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1191,6 +1449,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1219,6 +1478,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1227,6 +1487,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1252,6 +1513,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1260,6 +1522,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1280,6 +1543,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1288,6 +1552,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 

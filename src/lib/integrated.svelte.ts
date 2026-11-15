@@ -21,6 +21,7 @@ import {
   adopt,
   byKey,
   failed,
+  keepToken,
   loadHistory,
   named,
   noted,
@@ -62,6 +63,11 @@ export class Link {
   images = $state<IntegratedImage[]>([]);
   /** Why the model could not be changed, until it next is. */
   configureError = $state<string | null>(null);
+  /** Why the conversation could not be compacted, until it next is. */
+  compactError = $state<string | null>(null);
+  /** A compaction was asked for while a turn ran, and waits for it to
+      end. */
+  compactAsked = $state(false);
   /** Events heard while a snapshot is on its way. */
   held: IntegratedEventBody[] | null = null;
   /** An attach on its way, for a start to wait on. */
@@ -160,6 +166,14 @@ function claim(id: string): IntegratedEventBody[] {
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const before = link.conversation.state;
   link.conversation.apply(body);
+  if (
+    body.type === "compacting" ||
+    body.type === "compacted" ||
+    body.type === "compactFailed" ||
+    body.type === "turnEnded" ||
+    body.type === "ended"
+  )
+    link.compactAsked = false;
   if (body.type === "message" || body.type === "turnStarted" || body.type === "ended")
     settleNotes(key, link);
   const session = byKey(key);
@@ -188,6 +202,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
 function identify(session: Session, id: string) {
   if (session.id === id) return;
   session.id = id;
+  keepToken(session);
   adopt(session.project, id);
 }
 
@@ -277,6 +292,7 @@ export async function launch(key: string): Promise<void> {
       project: session.project,
       cwd: session.startIn ?? undefined,
       session: session.resumedFrom ?? undefined,
+      token: session.token,
       model: session.model ?? undefined,
       mode: startMode(session, link),
       configDir: dirFor(session.account, session.agent),
@@ -517,6 +533,25 @@ export function send(
       settleNotes(key, link);
     });
   return id;
+}
+
+/** Compacts the conversation through the agent's own compaction, with
+    what the summary should keep. Resolves true once the core has asked
+    for it, and false when it could not, saying why. */
+export async function compact(key: string, instructions = ""): Promise<boolean> {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null) return false;
+  const words = instructions.trim();
+  link.compactError = null;
+  link.compactAsked = link.conversation.current !== null;
+  try {
+    await core().integratedCompact(link.handle, words === "" ? undefined : words);
+    return true;
+  } catch (error) {
+    link.compactAsked = false;
+    link.compactError = message(error);
+    return false;
+  }
 }
 
 /** Stops the running turn. Messages that wait go on waiting. */

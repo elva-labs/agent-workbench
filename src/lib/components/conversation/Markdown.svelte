@@ -1,16 +1,20 @@
 <script lang="ts">
   import { core } from "$lib/core";
-  import { renderSaid, settled } from "$lib/media.svelte";
-  import { untrack } from "svelte";
+  import { saidBlocks, settled } from "$lib/media.svelte";
+  import { mount, tick, unmount } from "svelte";
+  import Copy from "./Copy.svelte";
 
   /**
    * What the agent wrote, as a reader sees it: the same Markdown the viewer
    * renders for a presented document, links opening outside the window and
    * an image from an address shown as a link to it rather than fetched.
-   * While it streams it is drawn again at most once a frame, and a caret
+   * While it streams it is drawn again at most once a frame, a block at a
+   * time: the blocks before the last are rendered once and stay as they
+   * are, only the last is rendered again as words come, and a caret
    * stands where the next words will come, so the text grows in place.
-   * Only its last block is drawn again: the blocks before it are whole, and
-   * stay as they were drawn, a selection in them with them.
+   * Every code block, at the top or in a list or a quote, has a Copy in its
+   * top corner that copies its code; one in a block that is done keeps its
+   * Copy, and the keyboard on it, while the words after it still come.
    */
   interface Props {
     text: string;
@@ -41,66 +45,70 @@
     if (frame !== null) cancelAnimationFrame(frame);
   });
 
-  let box = $state<HTMLDivElement | null>(null);
+  /** The whole blocks of a reply that streams: their text and what they
+      render as, so they are rendered once. */
+  let kept = { text: "", blocks: [] as string[] };
 
-  /** The whole blocks drawn so far: their text, their HTML, and how many
-      nodes they are at the head of the box. */
-  let kept = { text: "", html: "", nodes: 0 };
-
-  $effect(() => {
-    const node = box;
+  let blocks = $derived.by(() => {
     const now = shown;
-    const growing = streaming;
-    if (node !== null) untrack(() => draw(node, now, growing));
+    // Whole, a reply is rendered whole once more, so a reference link
+    // finds an address defined after it.
+    if (!streaming) {
+      kept = { text: "", blocks: [] };
+      return saidBlocks(now);
+    }
+    if (!now.startsWith(kept.text)) kept = { text: "", blocks: [] };
+    let rest = now.slice(kept.text.length);
+    const whole = settled(rest);
+    if (whole > 0) {
+      kept = { text: kept.text + rest.slice(0, whole), blocks: [...kept.blocks, ...saidBlocks(rest.slice(0, whole))] };
+      rest = rest.slice(whole);
+    }
+    return [...kept.blocks, ...saidBlocks(rest)];
   });
 
-  function draw(node: HTMLDivElement, now: string, growing: boolean) {
-    if (!now.startsWith(kept.text)) {
-      kept = { text: "", html: "", nodes: 0 };
-      node.replaceChildren();
-    }
-    let rest = now.slice(kept.text.length);
-    if (growing) {
-      const whole = settled(rest);
-      if (whole > 0) {
-        const html = renderSaid(rest.slice(0, whole));
-        trim(node);
-        kept = { text: kept.text + rest.slice(0, whole), html: kept.html + html, nodes: kept.nodes + add(node, html) };
-        rest = rest.slice(whole);
+  let box = $state<HTMLDivElement | null>(null);
+
+  /** The Copy put in each code block's box, by the box. A box goes when
+      its block is drawn again, and its Copy with it. */
+  const copies = new Map<HTMLElement, ReturnType<typeof mount>>();
+
+  /** The code a block's box holds, as written. */
+  function codeIn(code: HTMLElement): string {
+    return (code.querySelector("pre code")?.textContent ?? "").replace(/\n$/, "");
+  }
+
+  // A link is walked with the arrows in the thread, which is one stop for
+  // Tab, rather than being a stop of its own; and each code block gets its
+  // Copy.
+  $effect(() => {
+    blocks;
+    const node = box;
+    // After the text is drawn again, which can be a turn after this runs.
+    void tick().then(() => {
+      for (const link of node?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) link.tabIndex = -1;
+      for (const [code, copy] of copies)
+        if (!code.isConnected || node === null || !node.contains(code)) {
+          void unmount(copy);
+          copies.delete(code);
+        }
+      for (const code of node?.querySelectorAll<HTMLElement>("div.code[data-copy-host='code']") ?? []) {
+        if (copies.has(code)) continue;
+        copies.set(
+          code,
+          mount(Copy, {
+            target: code,
+            props: { label: "Copy", name: "Copy the code", text: () => codeIn(code), host: "code", place: "corner", testid: "copy-code" },
+          }),
+        );
       }
-      trim(node);
-      add(node, renderSaid(rest));
-      return;
-    }
-    // Whole: drawn once more only where it reads differently from what is
-    // kept, as a reference to a link defined further down would.
-    const html = renderSaid(now);
-    const tail = kept.nodes > 0 ? renderSaid(rest) : null;
-    trim(node);
-    if (tail !== null && kept.html + tail === html) add(node, tail);
-    else {
-      kept = { text: "", html: "", nodes: 0 };
-      node.replaceChildren();
-      add(node, html);
-    }
-  }
+    });
+  });
 
-  /** Takes away what is drawn after the kept blocks. */
-  function trim(node: HTMLDivElement) {
-    while (node.childNodes.length > kept.nodes) node.lastChild!.remove();
-  }
-
-  /** Draws HTML at the end of the box, and says how many nodes it drew. A
-      link is walked with the arrows in the thread, which is one stop for
-      Tab, rather than being a stop of its own. */
-  function add(node: HTMLDivElement, html: string): number {
-    const made = document.createElement("template");
-    made.innerHTML = html;
-    for (const link of made.content.querySelectorAll<HTMLAnchorElement>("a[href]")) link.tabIndex = -1;
-    const count = made.content.childNodes.length;
-    node.append(made.content);
-    return count;
-  }
+  $effect(() => () => {
+    for (const copy of copies.values()) void unmount(copy);
+    copies.clear();
+  });
 
   function onclick(e: MouseEvent) {
     const anchor = (e.target as HTMLElement | null)?.closest("a");
@@ -113,7 +121,11 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown"></div>
+<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown">
+  {#each blocks as block, at (at)}
+    {@html block}
+  {/each}
+</div>
 
 <style>
   .md {
@@ -183,6 +195,15 @@
     line-height: 1.5;
   }
 
+  .md :global(.code) {
+    position: relative;
+    margin: 0 0 0.7em;
+  }
+
+  .md :global(.code > pre) {
+    margin: 0;
+  }
+
   .md :global(pre code) {
     padding: 0;
     background: none;
@@ -236,7 +257,7 @@
 
   /* Where the next words will come. Inside the last paragraph or line
      while there is one, so the text does not move when it arrives. */
-  .streaming > :global(:last-child:not(ul):not(ol):not(table):not(pre))::after,
+  .streaming > :global(:last-child:not(ul):not(ol):not(table):not(pre):not(.code))::after,
   .streaming > :global(:is(ul, ol):last-child > li:last-child)::after {
     content: "";
     display: inline-block;

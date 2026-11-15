@@ -80,7 +80,13 @@
     readWorktrees,
     removable,
   } from "$lib/orchestrator.svelte";
-  import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
+  import {
+    elapsed,
+    emptyText as emptyProcesses,
+    processes,
+    stop as stopProcess,
+    type ProcessRow,
+  } from "$lib/processes.svelte";
   import {
     askFor,
     grouped as groupedSections,
@@ -641,7 +647,7 @@
     const session = activeSession();
     return session !== null && isConductor(session) ? session : null;
   });
-  let started = $derived(conducting === null ? [] : startedBy(conducting.id ?? conducting.key));
+  let started = $derived(conducting === null ? [] : startedBy(conducting.token));
   let asking = $derived(started.filter(isAsking).length);
   let boardMeta = $derived(
     `${started.length} session${started.length === 1 ? "" : "s"}${asking === 0 ? "" : `, ${asking} asking`}`,
@@ -670,7 +676,7 @@
   let boardNav = $state<HTMLDivElement | null>(null);
   /** The projects this orchestrator may start sessions in without being
       asked, each with the × that takes the standing answer back. */
-  let allowedHere = $derived(conducting === null ? [] : allowedProjects(conducting.id ?? conducting.key));
+  let allowedHere = $derived(conducting === null ? [] : allowedProjects(conducting.token));
   /** The row with the send field under it: one at a time, and only while
       that session is running. */
   let sending = $state<string | null>(null);
@@ -742,7 +748,7 @@
   }
 
   function stopEveryStarted() {
-    if (conducting !== null) stopAll(conducting.id ?? conducting.key);
+    if (conducting !== null) stopAll(conducting.token);
   }
 
   /** The line under a started session's name: where it runs, what it is
@@ -770,7 +776,7 @@
   /** The next start this caller makes in that project is put to the user. */
   function revokeProject(project: string) {
     if (conducting === null) return;
-    revoke(conducting.id ?? conducting.key, project);
+    revoke(conducting.token, project);
   }
 
   function stopRow(session: Session) {
@@ -1184,7 +1190,7 @@
               </button>
               {#if layout.processesOpen}
                 {#if processes.rows.length === 0}
-                  <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
+                  <p class="section-empty" data-testid="processes-empty">{emptyProcesses()}</p>
                 {:else}
                   <ul class="rows">
                     {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}

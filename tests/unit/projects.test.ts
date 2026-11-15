@@ -244,7 +244,7 @@ describe("a session hanging under its starter", () => {
     started(starter.key, "pty-1", "starter-1");
     const kid = create(project);
     started(kid.key, "pty-2", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     return { starter, kid };
   }
 

@@ -20,6 +20,7 @@ import {
   revealed,
   place,
   phraseText,
+  replyMarkdown,
   address,
   nowDoing,
   runningCall,
@@ -673,5 +674,32 @@ describe("what the thread holds, drawn or not", () => {
     expect(matches(c, "COUNTER").map((one) => one.id)).toEqual(["m-1", "c-1", "c-3", "b-1"]);
     expect(matches(c, "count.ts").map((one) => one.id)).toEqual(["c-1", "b-1"]);
     expect(matches(c, "")).toEqual([]);
+  });
+});
+
+describe("a reply copied as Markdown", () => {
+  const text = (block: string, said: string, kind: "text" | "thinking" = "text"): TextPart => ({
+    kind,
+    block,
+    text: said,
+    done: true,
+    gap: false,
+    at: 0,
+    until: 0,
+  });
+
+  it("is what the agent said, its text parts joined, without its thinking or its work", () => {
+    const tool = { kind: "tool", call: "c1", tool: "command" } as unknown as ToolCall;
+    const parts: Part[] = [
+      text("a", "\n\nThe cache lives in memory.\n"),
+      text("b", "I should check the version.", "thinking"),
+      tool,
+      text("c", "    indented code\n\nDone.  \n"),
+    ];
+    expect(replyMarkdown(parts)).toBe("The cache lives in memory.\n\n    indented code\n\nDone.");
+  });
+
+  it("is empty for a run that only worked", () => {
+    expect(replyMarkdown([text("a", "", "text"), text("b", "hmm", "thinking")])).toBe("");
   });
 });

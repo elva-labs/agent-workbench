@@ -253,11 +253,48 @@ describe("a call from a session the user is not looking at", () => {
     expect(workspace.active).toBe("/two");
     select(a.key);
     switched(a.key);
-    expect(shells).toEqual([["/one", "npm run dev"]]);
+    expect(shells).toEqual([[{ project: "/one", session: a.key }, "npm run dev"]]);
     expect(workspace.active).toBe("/one");
   });
 
-  it("holds a call from a session known only by where it runs", async () => {
+  it("gives the terminal to the session its token names, and one from no session the window knows to what is on screen", () => {
+    workspace.open.push(repo("/one"), repo("/two"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    terminalRequested({ command: "npm run dev", cwd: "/one", session: a.token });
+    expect(shells).toEqual([[{ project: "/one", session: a.key }, "npm run dev"]]);
+    shells.length = 0;
+    // An agent run outside the app, in the project with a session on
+    // screen, and in one with none.
+    terminalRequested({ command: "make", cwd: "/one", session: null });
+    expect(shells).toEqual([[{ project: "/one", session: a.key }, "make"]]);
+    shells.length = 0;
+    terminalRequested({ command: "vite", cwd: "/two", session: null });
+    expect(workspace.active).toBe("/two");
+    expect(shells).toEqual([[{ project: "/two", session: null }, "vite"]]);
+  });
+
+  it("holds a call from a session by its token, in whichever open project it works", async () => {
+    workspace.open.push(repo("/one"), repo("/one/sub"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    await located(a.key, "/one/sub");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    await showRequested({ ...place(a.token, "/one/sub/src/a.rs"), cwd: "/one/sub" });
+    expect(shown).toEqual([]);
+    select(a.key);
+    switched(a.key);
+    await Promise.resolve();
+    expect(shown).toHaveLength(1);
+  });
+
+  // A token no row answers to, stale or made up, is from no session the
+  // window knows, wherever the call runs: its line lands on no row and what
+  // it asks to open opens at once.
+  it("places a call naming a token no row has on no session, and opens it at once", async () => {
     workspace.open.push(repo("/one"));
     workspace.active = "/one";
     const a = create("/one");
@@ -265,14 +302,30 @@ describe("a call from a session the user is not looking at", () => {
     await located(a.key, "/one/.claude/worktrees/w");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
+    notified({ text: "Done", cwd: "/one", session: "stale-or-forged-token" });
+    notified({ text: "Done", cwd: "/one/.claude/worktrees/w", session: "stale-or-forged-token" });
+    expect(sessions.all.map((session) => session.note)).toEqual([null, null]);
     await showRequested({
-      ...place("unknown", "/one/.claude/worktrees/w/src/a.rs"),
+      ...place("stale-or-forged-token", "/one/.claude/worktrees/w/src/a.rs"),
       cwd: "/one/.claude/worktrees/w",
     });
-    expect(shown).toEqual([]);
-    select(a.key);
-    switched(a.key);
-    await Promise.resolve();
+    expect(shown).toHaveLength(1);
+    terminalRequested({ command: "ls", cwd: "/one", session: "stale-or-forged-token" });
+    expect(shells).toHaveLength(1);
+  });
+
+  it("places a call from a session that has stopped on no session, and opens it at once", async () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    const stopped = sessions.all.find((session) => session.key === a.key)!;
+    stopped.status = "exited";
+    notified({ text: "Done", cwd: "/one", session: a.token });
+    expect(stopped.note).toBeNull();
+    await showRequested({ ...place(a.token), cwd: "/one" });
     expect(shown).toHaveLength(1);
   });
 
@@ -286,10 +339,11 @@ describe("a call from a session the user is not looking at", () => {
     expect(workspace.active).toBe("/one");
   });
 
-  // A session the workbench started was told its id, so a request naming
-  // none is not from it: an agent run by hand in the project's directory
-  // has the same tools, and its line belongs on no row.
-  it("places a nameless call only on a session that was not told its id", async () => {
+  // Each session the workbench starts names itself by its token in every
+  // call, so a request naming none is from none of them: an agent run by
+  // hand in the project's directory has the same tools, and its line
+  // belongs on no row.
+  it("places a nameless call on no session, and a session's own by its token", async () => {
     workspace.open.push(repo("/one"));
     workspace.active = "/one";
     const a = create("/one");
@@ -301,10 +355,12 @@ describe("a call from a session the user is not looking at", () => {
     expect(sessions.all.map((session) => session.note)).toEqual([null, null]);
     await showRequested({ ...place("s9"), session: null });
     expect(shown).toEqual([["src/a.rs", 3, 5, "Here."]]);
-    // An agent that mints its own id was told none: the call is its.
+    // A Codex session whose id is not known yet is no exception.
     const c = create("/one", null, "codex");
     started(c.key, "pty-3", null);
     notified({ text: "Tests green", cwd: "/one", session: null });
+    expect(sessions.all.map((session) => session.note)).toEqual([null, null, null]);
+    notified({ text: "Tests green", cwd: "/one", session: c.token });
     expect(sessions.all.map((session) => session.note)).toEqual([
       null,
       null,

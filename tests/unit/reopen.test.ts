@@ -2,7 +2,7 @@ import { flushSync } from "svelte";
 import type { SpawnOptions } from "$lib/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
-import { reopen } from "$lib/reopen.svelte";
+import { reopen, settleWhen, startup } from "$lib/reopen.svelte";
 import {
   activeSession,
   close,
@@ -84,6 +84,23 @@ function live(project: string, id: string) {
   started(session.key, `pty-${id}`, id);
   return session;
 }
+
+describe("settling the start", () => {
+  it("settles once the restore does, and when it fails on the way as well", async () => {
+    startup.settled = false;
+    await settleWhen(Promise.resolve());
+    expect(startup.settled).toBe(true);
+    startup.settled = false;
+    await settleWhen(Promise.reject(new Error("the restore threw")));
+    expect(startup.settled).toBe(true);
+  });
+
+  it("is settled by bringing the sessions back", () => {
+    startup.settled = false;
+    stop = reopen();
+    expect(startup.settled).toBe(true);
+  });
+});
 
 describe("keeping the record", () => {
   it("records the live sessions and the one on screen", () => {
@@ -244,6 +261,20 @@ describe("coming back", () => {
     stop = reopen();
     flushSync();
     expect(record().open.map((item) => item.id)).toEqual(["one", "two"]);
+  });
+
+  it("hands what an earlier version kept under a folder to the one Codex session that was open there", () => {
+    conductor.started = {
+      [A]: [{ id: "kid", project: B, worktree: null, agent: "codex", name: null }],
+    };
+    onRecord([{ ...entry(A, "codex-a"), agent: "codex" }, entry(A, "claude-a")], null);
+    stop = reopen();
+    const back = forProject(A).find((session) => session.id === "codex-a")!;
+    // It comes back named by its id, as a session from before there were
+    // tokens, and what the folder held is its.
+    expect(back.token).toBe("codex-a");
+    expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid"]);
+    expect(conductor.started["claude-a"]).toBeUndefined();
   });
 
   it("reads a corrupt record as nothing open", () => {
