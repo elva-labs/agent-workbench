@@ -204,20 +204,20 @@ impl Protocol for ClaudeStream {
         &self,
         home: &Path,
         config_dir: Option<&Path>,
-        _: &HashMap<String, String>,
+        env: &HashMap<String, String>,
         folder: &Path,
     ) -> bool {
-        hook::claude_trusts(&state_file(home, config_dir), folder)
+        hook::claude_trusts(&state_file(home, config_dir, env), folder)
     }
 
     fn trust(
         &self,
         home: &Path,
         config_dir: Option<&Path>,
-        _: &HashMap<String, String>,
+        env: &HashMap<String, String>,
         folder: &Path,
     ) -> Result<(), String> {
-        hook::claude_trust(&state_file(home, config_dir), folder)
+        hook::claude_trust(&state_file(home, config_dir, env), folder)
     }
 }
 
@@ -234,14 +234,13 @@ fn write_private(file: &Path, contents: &[u8]) -> std::io::Result<()> {
     options.open(file)?.write_all(contents)
 }
 
-/// The file Claude Code keeps its state in, trust among it: in the
-/// account's configuration directory, or in the home directory for its
-/// own.
-fn state_file(home: &Path, config_dir: Option<&Path>) -> PathBuf {
-    match config_dir {
-        Some(dir) => dir.join(".claude.json"),
-        None => home.join(".claude.json"),
-    }
+/// The file Claude Code keeps its state in, trust among it, as a process
+/// started with `env` finds it: in the account's configuration directory,
+/// else where the environment's `CLAUDE_CONFIG_DIR` puts it, else in the
+/// home directory.
+fn state_file(home: &Path, config_dir: Option<&Path>, env: &HashMap<String, String>) -> PathBuf {
+    let dir = config_dir.map(|dir| dir.to_string_lossy().to_string());
+    crate::account::claude_json(home, dir.as_deref(), env)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3324,5 +3323,37 @@ mod tests {
             .is_err());
         let plain: Value = serde_json::from_str(&stream.message(M3, "hi", &[]).unwrap()).unwrap();
         assert_eq!(plain["message"]["content"], "hi");
+    }
+
+    #[test]
+    fn trust_is_read_and_written_in_the_directory_the_claude_process_runs_with() {
+        let base = crate::scratch::Scratch::new("claude-trust-dir");
+        let home = base.join("home");
+        let shell = base.join("shell-claude");
+        let folder = base.join("work");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&shell).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        let env = HashMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            shell.to_string_lossy().to_string(),
+        )]);
+        // The home's own state trusts the folder; the one the launch
+        // environment names does not.
+        hook::claude_trust(&home.join(".claude.json"), &folder).unwrap();
+        assert!(!CLAUDE_STREAM.trusted(&home, None, &env, &folder));
+        CLAUDE_STREAM.trust(&home, None, &env, &folder).unwrap();
+        assert!(shell.join(".claude.json").exists());
+        assert!(CLAUDE_STREAM.trusted(&home, None, &env, &folder));
+
+        // With no variable, or an empty one, the home's own.
+        assert!(CLAUDE_STREAM.trusted(&home, None, &HashMap::new(), &folder));
+        let empty = HashMap::from([("CLAUDE_CONFIG_DIR".to_string(), String::new())]);
+        assert!(CLAUDE_STREAM.trusted(&home, None, &empty, &folder));
+
+        // An account's directory wins over the environment.
+        let account = base.join("account");
+        std::fs::create_dir_all(&account).unwrap();
+        assert!(!CLAUDE_STREAM.trusted(&home, Some(&account), &env, &folder));
     }
 }

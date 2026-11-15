@@ -21,6 +21,7 @@
 //! it back yet beyond the watcher noticing it moved, so a growing log would be
 //! a growing log of nothing.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -110,8 +111,15 @@ pub enum ToolServer {
 /// Where a session in `dir` finds the tool server: the daemon, when there is
 /// one here, named on the command line unless the agent's own configuration
 /// for the directory already points at it. `config_dir` is the account's
-/// directory for the agent, spelled as the settings spell it.
-pub fn tool_server(home: &Path, dir: &Path, agent: &str, config_dir: Option<&str>) -> ToolServer {
+/// directory for the agent, spelled as the settings spell it, and `env` the
+/// environment the agent is started with.
+pub fn tool_server(
+    home: &Path,
+    dir: &Path,
+    agent: &str,
+    config_dir: Option<&str>,
+    env: &HashMap<String, String>,
+) -> ToolServer {
     let daemon = daemon_path(home);
     if !daemon.is_file() {
         return ToolServer::Missing;
@@ -123,7 +131,7 @@ pub fn tool_server(home: &Path, dir: &Path, agent: &str, config_dir: Option<&str
                 .unwrap_or_else(|_| dir.to_path_buf())
                 .to_string_lossy()
                 .to_string();
-            read_settings(&account::claude_json(home, config_dir))
+            read_settings(&account::claude_json(home, config_dir, env))
                 .get("projects")
                 .and_then(|projects| projects.get(&key))
                 .and_then(|project| project.get("mcpServers"))
@@ -317,8 +325,13 @@ fn session_entry(home: &Path) -> Value {
 
 /// Installed is all of ours in Claude Code's settings. The Codex file is
 /// written alongside and not asked about: a project without Codex has none.
-pub fn status(home: &Path, project: &Path, accounts: &[Dirs]) -> HookStatus {
-    status_many(home, &[project.to_path_buf()], accounts)
+pub fn status(
+    home: &Path,
+    project: &Path,
+    accounts: &[Dirs],
+    env: &HashMap<String, String>,
+) -> HookStatus {
+    status_many(home, &[project.to_path_buf()], accounts, env)
         .pop()
         .expect("one answer for one project")
 }
@@ -326,7 +339,12 @@ pub fn status(home: &Path, project: &Path, accounts: &[Dirs]) -> HookStatus {
 /// The status of each project, in the order given. Each account's Claude
 /// Code state, which can be large, is read and parsed once for all of
 /// them, and only when a project with the hooks in place needs it.
-pub fn status_many(home: &Path, projects: &[PathBuf], accounts: &[Dirs]) -> Vec<HookStatus> {
+pub fn status_many(
+    home: &Path,
+    projects: &[PathBuf],
+    accounts: &[Dirs],
+    env: &HashMap<String, String>,
+) -> Vec<HookStatus> {
     let daemon_here = daemon_path(home).is_file();
     let events = events_path(home).to_string_lossy().to_string();
     let mut servers: Option<Vec<Map<String, Value>>> = None;
@@ -344,7 +362,7 @@ pub fn status_many(home: &Path, projects: &[PathBuf], accounts: &[Dirs]) -> Vec<
             // up to date by the next install.
             let installed = hooks
                 && (!daemon_here || {
-                    let states = servers.get_or_insert_with(|| read_servers(home, accounts));
+                    let states = servers.get_or_insert_with(|| read_servers(home, accounts, env));
                     has_server(states, home, project)
                 });
             HookStatus {
@@ -368,6 +386,7 @@ pub fn trust_like(
     project: &Path,
     worktree: &Path,
     accounts: &[Dirs],
+    env: &HashMap<String, String>,
 ) -> Result<(), String> {
     let canonical = |path: &Path| {
         dunce::canonicalize(path)
@@ -376,7 +395,7 @@ pub fn trust_like(
             .to_string()
     };
     let (from, to) = (canonical(project), canonical(worktree));
-    for claude in account::claude_jsons(home, accounts) {
+    for claude in account::claude_jsons(home, accounts, env) {
         trust_claude(&claude, &from, &to)?;
     }
     for codex in account::codex_homes(home, accounts) {
@@ -716,7 +735,12 @@ fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
 /// Each account's state is read and written once, however many worktrees
 /// there are, and loses the server of any worktree of the project's that
 /// git no longer lists or whose folder is gone.
-pub fn install(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookStatus, String> {
+pub fn install(
+    home: &Path,
+    project: &Path,
+    accounts: &[Dirs],
+    env: &HashMap<String, String>,
+) -> Result<HookStatus, String> {
     add_hooks(home, project, &[])?;
     let listed = sharing(project);
     let mut trees = Vec::new();
@@ -734,7 +758,7 @@ pub fn install(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookSta
     if daemon_path(home).is_file() {
         let mut folders = vec![project.to_path_buf()];
         folders.extend(trees.iter().map(|(tree, _)| tree.clone()));
-        claude_servers(home, accounts, &folders, gone)?;
+        claude_servers(home, accounts, env, &folders, gone)?;
         point_codex(home, project)?;
         for (tree, leave) in &trees {
             if !leave.contains(&CODEX_CONFIG) {
@@ -742,10 +766,10 @@ pub fn install(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookSta
             }
         }
     } else {
-        claude_servers(home, accounts, &[], gone)?;
+        claude_servers(home, accounts, env, &[], gone)?;
     }
     exclude_from_git(project);
-    Ok(status(home, project, accounts))
+    Ok(status(home, project, accounts, env))
 }
 
 /// Whether the project has the hooks in its own settings, whatever else is
@@ -772,6 +796,7 @@ pub fn share(
     project: &Path,
     worktree: &Path,
     accounts: &[Dirs],
+    env: &HashMap<String, String>,
 ) -> Result<bool, String> {
     if !has_hooks(home, project) || !shares_with(project, worktree) {
         return Ok(false);
@@ -780,7 +805,7 @@ pub fn share(
     add_hooks(home, worktree, &leave)?;
     touch_events(home)?;
     if daemon_path(home).is_file() {
-        claude_servers(home, accounts, &[worktree.to_path_buf()], |_| false)?;
+        claude_servers(home, accounts, env, &[worktree.to_path_buf()], |_| false)?;
         if !leave.contains(&CODEX_CONFIG) {
             point_codex(home, worktree)?;
         }
@@ -792,9 +817,14 @@ pub fn share(
 /// Takes out of the agents' own state what [`share`] put there for a
 /// worktree that is gone: the server Claude Code was pointed at for it. Its
 /// own files went with it.
-pub fn forget(home: &Path, worktree: &Path, accounts: &[Dirs]) -> Result<(), String> {
+pub fn forget(
+    home: &Path,
+    worktree: &Path,
+    accounts: &[Dirs],
+    env: &HashMap<String, String>,
+) -> Result<(), String> {
     let key = state_key(worktree);
-    claude_servers(home, accounts, &[], |other| other == key)
+    claude_servers(home, accounts, env, &[], |other| other == key)
 }
 
 /// The worktrees the workbench made for the project that it shares its
@@ -930,8 +960,12 @@ fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
 
 /// The `projects` of each account's Claude Code state, in the order of the
 /// accounts, each file read and parsed once.
-fn read_servers(home: &Path, accounts: &[Dirs]) -> Vec<Map<String, Value>> {
-    account::claude_jsons(home, accounts)
+fn read_servers(
+    home: &Path,
+    accounts: &[Dirs],
+    env: &HashMap<String, String>,
+) -> Vec<Map<String, Value>> {
+    account::claude_jsons(home, accounts, env)
         .iter()
         .map(|claude| {
             #[cfg(test)]
@@ -971,13 +1005,14 @@ fn has_server(states: &[Map<String, Value>], home: &Path, project: &Path) -> boo
 fn claude_servers(
     home: &Path,
     accounts: &[Dirs],
+    env: &HashMap<String, String>,
     add: &[PathBuf],
     drop: impl Fn(&str) -> bool,
 ) -> Result<(), String> {
     let daemon = daemon_path(home).to_string_lossy().to_string();
     let entry = json!({ "type": "stdio", "command": daemon, "args": ["mcp"] });
     let add: Vec<String> = add.iter().map(|folder| state_key(folder)).collect();
-    for claude in account::claude_jsons(home, accounts) {
+    for claude in account::claude_jsons(home, accounts, env) {
         if add.is_empty() && !claude.exists() {
             continue;
         }
@@ -1138,7 +1173,12 @@ fn exclude_from_git(project: &Path) {
 /// be read keeps what is in them. Each account's state is read and written
 /// once, and loses the server of the project and of every folder in its
 /// worktrees' folder, listed by git or not.
-pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookStatus, String> {
+pub fn uninstall(
+    home: &Path,
+    project: &Path,
+    accounts: &[Dirs],
+    env: &HashMap<String, String>,
+) -> Result<HookStatus, String> {
     remove_hooks(home, project, &[])?;
     let mut trees = Vec::new();
     for tree in sharing(project) {
@@ -1149,14 +1189,16 @@ pub fn uninstall(home: &Path, project: &Path, accounts: &[Dirs]) -> Result<HookS
     }
     let own = state_key(project);
     let bases = worktree_bases(project);
-    claude_servers(home, accounts, &[], |key| key == own || under(&bases, key))?;
+    claude_servers(home, accounts, env, &[], |key| {
+        key == own || under(&bases, key)
+    })?;
     unpoint_codex(project)?;
     for (tree, leave) in &trees {
         if !leave.contains(&CODEX_CONFIG) {
             let _ = unpoint_codex(tree);
         }
     }
-    Ok(status(home, project, accounts))
+    Ok(status(home, project, accounts, env))
 }
 
 /// Removes our entries from the agents' settings files in a folder, all
@@ -1306,7 +1348,7 @@ mod tests {
     }
 
     fn claude_json_path(home: &Path) -> PathBuf {
-        account::claude_json(home, None)
+        account::claude_json(home, None, &HashMap::new())
     }
 
     fn fixture(name: &str) -> (Scratch, Scratch) {
@@ -1321,7 +1363,7 @@ mod tests {
         let (home, project) = fixture("server-pending");
         for agent in ["claude-code", "codex"] {
             assert_eq!(
-                tool_server(&home, &project, agent, None),
+                tool_server(&home, &project, agent, None, &HashMap::new()),
                 ToolServer::Missing,
                 "{agent}"
             );
@@ -1329,15 +1371,15 @@ mod tests {
         with_daemon(&home);
         for agent in ["claude-code", "codex"] {
             assert_eq!(
-                tool_server(&home, &project, agent, None),
+                tool_server(&home, &project, agent, None, &HashMap::new()),
                 ToolServer::Named(daemon_path(&home)),
                 "{agent}"
             );
         }
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         for agent in ["claude-code", "codex"] {
             assert_eq!(
-                tool_server(&home, &project, agent, None),
+                tool_server(&home, &project, agent, None, &HashMap::new()),
                 ToolServer::Configured,
                 "{agent}"
             );
@@ -1345,9 +1387,51 @@ mod tests {
         // Another account's Claude Code state was not written, so a session
         // under it still needs the server named.
         assert_eq!(
-            tool_server(&home, &project, "claude-code", Some("~/.claude-work")),
+            tool_server(
+                &home,
+                &project,
+                "claude-code",
+                Some("~/.claude-work"),
+                &HashMap::new()
+            ),
             ToolServer::Named(daemon_path(&home))
         );
+    }
+
+    #[test]
+    fn the_server_is_read_and_written_in_the_directory_the_launch_environment_names() {
+        let (home, project) = fixture("launch-dir");
+        let daemon = daemon_path(&home);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+        let shell = home.join("shell-claude");
+        let env = HashMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            shell.to_string_lossy().to_string(),
+        )]);
+        let state = shell.join(".claude.json");
+
+        install(&home, &project, &[], &env).unwrap();
+        assert!(state.exists(), "written where the agent reads it");
+        assert!(
+            !home.join(".claude.json").exists(),
+            "nothing under the home"
+        );
+        assert!(status(&home, &project, &[], &env).installed);
+        assert_eq!(
+            tool_server(&home, &project, "claude-code", None, &env),
+            ToolServer::Configured
+        );
+        // Under the app's own environment the same project is not set up.
+        let none = HashMap::new();
+        assert!(!status(&home, &project, &[], &none).installed);
+        assert_eq!(
+            tool_server(&home, &project, "claude-code", None, &none),
+            ToolServer::Named(daemon_path(&home))
+        );
+
+        uninstall(&home, &project, &[], &env).unwrap();
+        assert!(!status(&home, &project, &[], &env).installed);
     }
 
     #[test]
@@ -1360,7 +1444,7 @@ mod tests {
             "{\"projects\": {\"/a\": {\"hasTrust",
         )
         .unwrap();
-        let error = install(&home, &project, &[]).unwrap_err();
+        let error = install(&home, &project, &[], &HashMap::new()).unwrap_err();
         assert!(error.contains("leaving it alone"), "{error}");
         assert_eq!(
             std::fs::read_to_string(claude_json_path(&home)).unwrap(),
@@ -1370,7 +1454,7 @@ mod tests {
         std::fs::write(claude_json_path(&home), "{}").unwrap();
         std::fs::create_dir_all(settings_path(&project).parent().unwrap()).unwrap();
         std::fs::write(settings_path(&project), "[1, 2").unwrap();
-        let error = install(&home, &project, &[]).unwrap_err();
+        let error = install(&home, &project, &[], &HashMap::new()).unwrap_err();
         assert!(error.contains("leaving it alone"), "{error}");
         assert_eq!(
             std::fs::read_to_string(settings_path(&project)).unwrap(),
@@ -1747,7 +1831,7 @@ mod tests {
 
         // Neither agent has been told anything: nothing is written, and a
         // missing Codex config is left missing.
-        trust_like(&home, &project, &worktree, &[]).unwrap();
+        trust_like(&home, &project, &worktree, &[], &HashMap::new()).unwrap();
         assert!(!claude_json_path(&home).exists());
         assert!(!crate::codex::home(&home).join("config.toml").exists());
 
@@ -1772,7 +1856,7 @@ mod tests {
             ),
         )
         .unwrap();
-        trust_like(&home, &project, &worktree, &[]).unwrap();
+        trust_like(&home, &project, &worktree, &[], &HashMap::new()).unwrap();
         let state = read_settings(&claude_json_path(&home));
         assert_eq!(
             state["projects"][key(&worktree)]["hasTrustDialogAccepted"],
@@ -1792,7 +1876,7 @@ mod tests {
         let other = Scratch::new("hook-trust-other");
         let tree = other.join("tree");
         std::fs::create_dir_all(&tree).unwrap();
-        trust_like(&home, &other, &tree, &[]).unwrap();
+        trust_like(&home, &other, &tree, &[], &HashMap::new()).unwrap();
         let state = read_settings(&claude_json_path(&home));
         assert!(state["projects"].get(key(&tree)).is_none());
     }
@@ -1804,15 +1888,15 @@ mod tests {
     #[test]
     fn reports_not_installed_when_there_are_no_settings() {
         let (home, project) = fixture("none");
-        assert!(!status(&home, &project, &[]).installed);
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     #[test]
     fn keeps_both_files_out_of_the_repository() {
         let (home, project) = fixture("exclude");
         git2::Repository::init(&project).unwrap();
-        install(&home, &project, &[]).unwrap();
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
         let ours: Vec<&str> = exclude
             .lines()
@@ -1827,7 +1911,7 @@ mod tests {
         git2::Repository::init(&project).unwrap();
         let sub = project.join("packages").join("app");
         std::fs::create_dir_all(&sub).unwrap();
-        install(&home, &sub, &[]).unwrap();
+        install(&home, &sub, &[], &HashMap::new()).unwrap();
         let exclude = std::fs::read_to_string(project.join(".git/info/exclude")).unwrap();
         assert!(exclude.contains("/packages/app/.claude/settings.local.json"));
     }
@@ -1850,7 +1934,7 @@ mod tests {
             "model = \"o3\"\n\n[mcp_servers.other]\ncommand = \"other\"\n",
         )
         .unwrap();
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let key = dunce::canonicalize(&project)
             .unwrap()
@@ -1869,7 +1953,7 @@ mod tests {
         assert!(codex.contains("[mcp_servers.agent_workbench]"));
         assert!(codex.contains("args = [\"mcp\"]"));
 
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let state = read_settings(&claude_json_path(&home));
         assert!(state["projects"][&key]["mcpServers"]
             .get("agent-workbench")
@@ -1883,19 +1967,19 @@ mod tests {
     fn a_codex_config_of_only_the_server_goes_with_it() {
         let (home, project) = fixture("server-only");
         with_daemon(&home);
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(project.join(".codex/config.toml").exists());
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!project.join(".codex/config.toml").exists());
     }
 
     #[test]
     fn without_a_daemon_here_only_the_hooks_go_in() {
         let (home, project) = fixture("no-daemon");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!claude_json_path(&home).exists());
         assert!(!project.join(".codex/config.toml").exists());
-        assert!(status(&home, &project, &[]).installed);
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     // Hooks from before there was a server: once a daemon is here, they
@@ -1903,25 +1987,29 @@ mod tests {
     #[test]
     fn a_daemon_arriving_later_asks_for_the_server() {
         let (home, project) = fixture("daemon-later");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         with_daemon(&home);
-        assert!(!status(&home, &project, &[]).installed);
-        install(&home, &project, &[]).unwrap();
-        assert!(status(&home, &project, &[]).installed);
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     #[test]
     fn installs_and_reports_itself() {
         let (home, project) = fixture("install");
-        assert!(install(&home, &project, &[]).unwrap().installed);
-        assert!(status(&home, &project, &[]).installed);
+        assert!(
+            install(&home, &project, &[], &HashMap::new())
+                .unwrap()
+                .installed
+        );
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     // The untracked settings file, so nobody finds this in a diff.
     #[test]
     fn writes_to_settings_local_not_the_shared_one() {
         let (home, project) = fixture("local");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         assert!(project.join(".claude/settings.local.json").exists());
         assert!(!project.join(".claude/settings.json").exists());
@@ -1930,7 +2018,7 @@ mod tests {
     #[test]
     fn only_reacts_to_tools_that_change_files() {
         let (home, project) = fixture("matcher");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let entry = &settings_of(&project)["hooks"]["PostToolUse"][0];
         assert_eq!(entry["matcher"], MATCHER);
@@ -1940,7 +2028,7 @@ mod tests {
     #[test]
     fn writes_outside_the_project() {
         let (home, project) = fixture("outside");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let command = settings_of(&project)["hooks"]["PostToolUse"][0]["hooks"][0]["command"]
             .as_str()
@@ -1969,8 +2057,8 @@ mod tests {
     #[test]
     fn installing_twice_adds_one_entry() {
         let (home, project) = fixture("twice");
-        install(&home, &project, &[]).unwrap();
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         assert_eq!(
             settings_of(&project)["hooks"]["PostToolUse"]
@@ -1992,7 +2080,7 @@ mod tests {
         )
         .unwrap();
 
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let settings = settings_of(&project);
         assert_eq!(settings["model"], "opus");
         assert_eq!(settings["permissions"]["allow"][0], "Bash(ls:*)");
@@ -2008,14 +2096,14 @@ mod tests {
         )
         .unwrap();
 
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let entries = settings_of(&project)["hooks"]["PostToolUse"]
             .as_array()
             .unwrap()
             .clone();
         assert_eq!(entries.len(), 2);
 
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let after = settings_of(&project)["hooks"]["PostToolUse"]
             .as_array()
             .unwrap()
@@ -2027,16 +2115,20 @@ mod tests {
     #[test]
     fn uninstalling_removes_it() {
         let (home, project) = fixture("uninstall");
-        install(&home, &project, &[]).unwrap();
-        assert!(!uninstall(&home, &project, &[]).unwrap().installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(
+            !uninstall(&home, &project, &[], &HashMap::new())
+                .unwrap()
+                .installed
+        );
     }
 
     // Nothing left behind that was not there before.
     #[test]
     fn uninstalling_the_only_hook_leaves_no_empty_scaffolding() {
         let (home, project) = fixture("scaffolding");
-        install(&home, &project, &[]).unwrap();
-        uninstall(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
 
         let settings = settings_of(&project);
         assert!(settings.get("hooks").is_none(), "{settings}");
@@ -2045,7 +2137,11 @@ mod tests {
     #[test]
     fn uninstalling_when_it_was_never_there_is_not_an_error() {
         let (home, project) = fixture("absent");
-        assert!(!uninstall(&home, &project, &[]).unwrap().installed);
+        assert!(
+            !uninstall(&home, &project, &[], &HashMap::new())
+                .unwrap()
+                .installed
+        );
     }
 
     #[test]
@@ -2056,13 +2152,13 @@ mod tests {
 
         // The file may be one being written, or one the user is mid-way
         // through: it is theirs, and not ours to start over.
-        let error = install(&home, &project, &[]).unwrap_err();
+        let error = install(&home, &project, &[], &HashMap::new()).unwrap_err();
         assert!(error.contains("leaving it alone"), "{error}");
         assert_eq!(
             std::fs::read_to_string(settings_path(&project)).unwrap(),
             "{ not json"
         );
-        assert!(!status(&home, &project, &[]).installed);
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     #[test]
@@ -2084,7 +2180,7 @@ mod tests {
     #[test]
     fn installing_creates_the_events_file() {
         let (home, project) = fixture("touch");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(events_path(&home).exists());
     }
 
@@ -2106,7 +2202,7 @@ mod tests {
     #[test]
     fn installs_the_session_hooks_for_both_agents() {
         let (home, project) = fixture("sessions");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let claude = settings_of(&project);
         for event in ["UserPromptSubmit", "Stop", "Notification"] {
@@ -2124,17 +2220,17 @@ mod tests {
                 .contains("sessions.jsonl"));
         }
         assert!(activity_path(&home).exists());
-        assert!(status(&home, &project, &[]).installed);
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     #[test]
     fn uninstalling_takes_the_session_hooks_too_and_an_empty_codex_file_with_them() {
         let (home, project) = fixture("sessions-off");
-        install(&home, &project, &[]).unwrap();
-        uninstall(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(settings_of(&project).get("hooks").is_none());
         assert!(!codex_hooks_path(&project).exists());
-        assert!(!status(&home, &project, &[]).installed);
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
     }
 
     #[test]
@@ -2146,10 +2242,10 @@ mod tests {
             r#"{"description":"mine","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#,
         )
         .unwrap();
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let hooks = codex_hooks_of(&project);
         assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 2);
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let hooks = codex_hooks_of(&project);
         assert_eq!(hooks["description"], "mine");
         assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 1);
@@ -2159,13 +2255,13 @@ mod tests {
     #[test]
     fn is_not_installed_until_every_hook_is_there() {
         let (home, project) = fixture("partial");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let mut settings = read_settings(&settings_path(&project));
         remove_entries(&mut settings, "Stop", &home);
         write_settings(&settings_path(&project), &settings).unwrap();
-        assert!(!status(&home, &project, &[]).installed);
-        install(&home, &project, &[]).unwrap();
-        assert!(status(&home, &project, &[]).installed);
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
     }
     /// A repository with one commit, holding `files` as given.
     fn committed(project: &Path, files: &[(&str, &str)]) {
@@ -2221,10 +2317,10 @@ mod tests {
         with_daemon(&home);
         let theirs = "model = \"o3\"\n";
         committed(&project, &[(CODEX_CONFIG, theirs)]);
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
-        assert!(share(&home, &project, &tree, &[]).unwrap());
+        assert!(share(&home, &project, &tree, &[], &HashMap::new()).unwrap());
 
         assert!(
             has_hooks(&home, &tree),
@@ -2254,7 +2350,7 @@ mod tests {
         committed(&project, &[]);
 
         let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
-        assert!(!share(&home, &project, &tree, &[]).unwrap());
+        assert!(!share(&home, &project, &tree, &[], &HashMap::new()).unwrap());
         assert!(!tree.join(".claude").exists());
         assert!(!tree.join(".codex").exists());
         assert!(!claude_json_path(&home).exists());
@@ -2269,14 +2365,14 @@ mod tests {
         with_daemon(&home);
         committed(&project, &[]);
         let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
-        assert!(!share(&home, &project, &tree, &[]).unwrap());
+        assert!(!share(&home, &project, &tree, &[], &HashMap::new()).unwrap());
 
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(has_hooks(&home, &tree));
         assert!(server_for(&home, &tree).is_some());
         assert_eq!(porcelain(&tree), "");
 
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!has_hooks(&home, &tree));
         assert!(!codex_hooks_path(&tree).exists());
         assert!(server_for(&home, &tree).is_none());
@@ -2290,15 +2386,15 @@ mod tests {
         let (home, project) = fixture("share-gone");
         with_daemon(&home);
         committed(&project, &[]);
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
-        share(&home, &project, &tree, &[]).unwrap();
+        share(&home, &project, &tree, &[], &HashMap::new()).unwrap();
 
         // The hooks' files are no work of the tree's: it still goes.
         crate::git::worktree_remove(&project, "fix").unwrap();
         assert!(!tree.exists());
         assert!(server_for(&home, &tree).is_some());
-        forget(&home, &tree, &[]).unwrap();
+        forget(&home, &tree, &[], &HashMap::new()).unwrap();
         assert!(server_for(&home, &tree).is_none());
         assert!(
             server_for(&home, &project).is_some(),
@@ -2328,16 +2424,16 @@ mod tests {
         std::fs::remove_dir_all(&gone).unwrap();
         std::fs::remove_file(hollow.join(".git")).unwrap();
 
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!gone.exists(), "the deleted folder stays deleted");
         assert!(!hollow.join(".claude").exists());
         assert!(!hollow.join(".codex").exists());
         assert!(server_for(&home, &gone).is_none());
         assert!(server_for(&home, &hollow).is_none());
-        assert!(!share(&home, &project, &gone, &[]).unwrap());
+        assert!(!share(&home, &project, &gone, &[], &HashMap::new()).unwrap());
         assert!(!gone.exists());
 
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!gone.exists());
     }
 
@@ -2354,12 +2450,12 @@ mod tests {
         std::fs::write(project.join("main.rs"), "fn main() {}\n").unwrap();
         committed(&repo, &[]);
         let exclude = repo.join(".git").join("info").join("exclude");
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let excluded = std::fs::read_to_string(&exclude).unwrap();
 
         let tree = PathBuf::from(crate::git::worktree_add(&project, "fix").unwrap());
-        assert!(!share(&home, &project, &tree, &[]).unwrap());
-        install(&home, &project, &[]).unwrap();
+        assert!(!share(&home, &project, &tree, &[], &HashMap::new()).unwrap());
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!tree.join(".claude").exists());
         assert!(!tree.join(".codex").exists());
         assert!(server_for(&home, &tree).is_none());
@@ -2375,7 +2471,7 @@ mod tests {
         std::fs::write(repo.join(CODEX_CONFIG), "model = \"o3\"\n").unwrap();
         assert!(porcelain(&repo).contains("?? .codex/config.toml"));
 
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert_eq!(std::fs::read_to_string(&exclude).unwrap(), excluded);
         assert!(porcelain(&repo).contains("?? .codex/config.toml"));
     }
@@ -2404,11 +2500,11 @@ mod tests {
         let (home, project) = fixture("share-stale");
         with_daemon(&home);
         committed(&project, &[]);
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         let kept = PathBuf::from(crate::git::worktree_add(&project, "kept").unwrap());
         let removed = PathBuf::from(crate::git::worktree_add(&project, "removed").unwrap());
-        share(&home, &project, &kept, &[]).unwrap();
-        share(&home, &project, &removed, &[]).unwrap();
+        share(&home, &project, &kept, &[], &HashMap::new()).unwrap();
+        share(&home, &project, &removed, &[], &HashMap::new()).unwrap();
         let removed_key = state_key(&removed);
         git_in(
             &project,
@@ -2440,7 +2536,7 @@ mod tests {
             json!({ "mcpServers": { SERVER_NAME: { "command": "z" } } }),
         );
 
-        install(&home, &project, &[]).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(project_state(&home, &removed_key)["mcpServers"]
             .get(SERVER_NAME)
             .is_none());
@@ -2463,7 +2559,7 @@ mod tests {
             &old,
             json!({ "mcpServers": { SERVER_NAME: { "command": "x" } } }),
         );
-        uninstall(&home, &project, &[]).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(server_for(&home, &kept).is_none());
         assert!(project_state(&home, &old)["mcpServers"]
             .get(SERVER_NAME)
@@ -2498,17 +2594,17 @@ mod tests {
 
         assert_eq!(
             changes_during(|| {
-                install(&home, &project, &accounts).unwrap();
+                install(&home, &project, &accounts, &HashMap::new()).unwrap();
             }),
             2
         );
         for tree in &trees {
             assert!(has_hooks(&home, tree));
-            assert!(status(&home, tree, &accounts).installed);
+            assert!(status(&home, tree, &accounts, &HashMap::new()).installed);
         }
         assert_eq!(
             changes_during(|| {
-                uninstall(&home, &project, &accounts).unwrap();
+                uninstall(&home, &project, &accounts, &HashMap::new()).unwrap();
             }),
             2
         );
@@ -2559,9 +2655,9 @@ mod tests {
         let (home, projects) = many_projects("batch-same", 4);
         with_daemon(&home);
         let accounts = work_account();
-        install(&home, &projects[0], &accounts).unwrap();
+        install(&home, &projects[0], &accounts, &HashMap::new()).unwrap();
         // Hooks without the server, as a setup from before the server has.
-        install(&home, &projects[1], &accounts).unwrap();
+        install(&home, &projects[1], &accounts, &HashMap::new()).unwrap();
         let mut state = read_settings(&claude_json_path(&home));
         let key = dunce::canonicalize(&projects[1]).unwrap();
         state["projects"]
@@ -2570,10 +2666,10 @@ mod tests {
             .remove(key.to_string_lossy().as_ref());
         write_settings(&claude_json_path(&home), &state).unwrap();
 
-        let batch = status_many(&home, &projects, &accounts);
+        let batch = status_many(&home, &projects, &accounts, &HashMap::new());
         assert_eq!(batch.len(), projects.len());
         for (project, answer) in projects.iter().zip(&batch) {
-            let alone = status(&home, project, &accounts);
+            let alone = status(&home, project, &accounts, &HashMap::new());
             assert_eq!(answer.installed, alone.installed);
             assert_eq!(answer.settings, alone.settings);
             assert_eq!(answer.events, alone.events);
@@ -2590,16 +2686,16 @@ mod tests {
         with_daemon(&home);
         let accounts = work_account();
         for project in projects.iter() {
-            install(&home, project, &accounts).unwrap();
+            install(&home, project, &accounts, &HashMap::new()).unwrap();
         }
 
         let alone = reads_during(|| {
             for project in projects.iter() {
-                assert!(status(&home, project, &accounts).installed);
+                assert!(status(&home, project, &accounts, &HashMap::new()).installed);
             }
         });
         let batch = reads_during(|| {
-            let answers = status_many(&home, &projects, &accounts);
+            let answers = status_many(&home, &projects, &accounts, &HashMap::new());
             assert!(answers.iter().all(|answer| answer.installed));
         });
         assert_eq!(alone, 60);
@@ -2612,7 +2708,7 @@ mod tests {
         let (home, projects) = many_projects("batch-none", 5);
         with_daemon(&home);
         let reads = reads_during(|| {
-            let answers = status_many(&home, &projects, &[]);
+            let answers = status_many(&home, &projects, &[], &HashMap::new());
             assert!(answers.iter().all(|answer| !answer.installed));
         });
         assert_eq!(reads, 0);
@@ -2629,24 +2725,24 @@ mod tests {
         let (home, projects) = many_projects("batch-shared", 2);
         with_daemon(&home);
         let installed = |home: &Path| -> Vec<bool> {
-            status_many(home, &projects, &[])
+            status_many(home, &projects, &[], &HashMap::new())
                 .iter()
                 .map(|answer| answer.installed)
                 .collect()
         };
         assert_eq!(installed(&home), [false, false]);
-        install(&home, &projects[0], &[]).unwrap();
+        install(&home, &projects[0], &[], &HashMap::new()).unwrap();
         assert_eq!(installed(&home), [true, false]);
-        install(&home, &projects[1], &[]).unwrap();
+        install(&home, &projects[1], &[], &HashMap::new()).unwrap();
         assert_eq!(installed(&home), [true, true]);
-        uninstall(&home, &projects[0], &[]).unwrap();
+        uninstall(&home, &projects[0], &[], &HashMap::new()).unwrap();
         assert_eq!(installed(&home), [false, true]);
     }
 
     #[test]
     fn a_batch_of_none_is_none() {
         let (home, _) = fixture("batch-empty");
-        assert!(status_many(&home, &[], &[]).is_empty());
+        assert!(status_many(&home, &[], &[], &HashMap::new()).is_empty());
     }
 
     #[test]
@@ -2655,7 +2751,7 @@ mod tests {
         let (home, projects) = many_projects("concurrent", count);
         with_daemon(&home);
         let accounts = work_account();
-        let states = account::claude_jsons(&home, &accounts);
+        let states = account::claude_jsons(&home, &accounts, &HashMap::new());
         let folders: Vec<PathBuf> = (0..count * 2)
             .map(|at| home.join("trusted").join(format!("folder-{at}")))
             .collect();
@@ -2670,9 +2766,9 @@ mod tests {
                     let (home, accounts) = (&home, &accounts);
                     scope.spawn(move || {
                         if remove {
-                            uninstall(home, project, accounts).unwrap();
+                            uninstall(home, project, accounts, &HashMap::new()).unwrap();
                         } else {
-                            install(home, project, accounts).unwrap();
+                            install(home, project, accounts, &HashMap::new()).unwrap();
                         }
                     });
                 }
@@ -2689,7 +2785,7 @@ mod tests {
                 .all(|state| folders.iter().all(|folder| claude_trusts(state, folder)))
         };
         let all = |home: &Path| -> Vec<bool> {
-            status_many(home, &projects, &accounts)
+            status_many(home, &projects, &accounts, &HashMap::new())
                 .iter()
                 .map(|answer| answer.installed)
                 .collect()
@@ -2707,7 +2803,7 @@ mod tests {
         assert_eq!(all(&home), expected);
         assert!(kept
             .iter()
-            .all(|project| status(&home, project, &accounts).installed));
+            .all(|project| status(&home, project, &accounts, &HashMap::new()).installed));
         assert!(trusted(&folders), "a trust write was lost beside removals");
     }
 }
