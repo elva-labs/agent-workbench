@@ -257,7 +257,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     fake.turn(core, "All done.");
     flushSync();
     await waited;
-    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: All done.`);
+    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."`);
   });
 
   describe("the account it runs under", () => {
@@ -350,12 +350,12 @@ describe("the orchestrator's tools with an integrated session", () => {
       send(key, "How is it going?");
       const text = sentTexts().at(-1)!;
       expect(text).toBe(
-        `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: the scan is done\n\nHow is it going?`,
+        `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: "the scan is done"\n\nHow is it going?`,
       );
       expect(spoken(text, true)).toEqual({
         text: "How is it going?",
         instructions: null,
-        reports: "Session kid-1 stopped working. Its last line: the scan is done",
+        reports: 'Session kid-1 stopped working. Its last line: "the scan is done"',
       });
       // The row is named by the user's words, not the note.
       expect(byKey(key)!.title).toBe("How is it going?");
@@ -418,13 +418,13 @@ describe("the orchestrator's tools with an integrated session", () => {
         kid.working = false;
         flushSync();
         await vi.advanceTimersByTimeAsync(WAKE_AFTER);
-        const text = `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: the scan is done`;
+        const text = `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: "the scan is done"`;
         expect(wakes()).toEqual([text]);
         const message = Object.values(conversationOf(key).messages).at(-1)!;
         expect(senderOf(message)).toEqual({ id: null, key: null, name: "Workbench", workbench: true });
         expect(userWaiting(key)).toBe(false);
         expect(wakeShown(text, (id) => (id === "kid-1" ? label(kid) : null))).toBe(
-          `${label(kid)} stopped working. Its last line: the scan is done`,
+          `${label(kid)} stopped working. Its last line: "the scan is done"`,
         );
         // Told as it is sent, and its row says what woke it.
         expect(unheard(byKey(key)!)).toEqual([]);

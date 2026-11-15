@@ -1388,7 +1388,8 @@ function describe(session: Session): string {
   if (place !== null) parts.push(placeText(place));
   parts.push(stateOf(session));
   if (untold(session)) parts.push("not reported to you yet");
-  if (session.note !== null) parts.push(`last line: ${session.note}`);
+  const line = quotedLine(session.note);
+  if (line !== null) parts.push(`last line: ${line}`);
   return parts.join("  ");
 }
 
@@ -2406,13 +2407,22 @@ function restText(session: Session, called: string): string {
     as the core cuts a line left on a row. */
 export const LINE_CAP = 120;
 
-/** What a session last left for its row: its own words, on one line and
-    cut short, so they read as a line of the answer and nothing more. */
+/** What a session last left for its row, in the words a tool answers
+    with. */
 function lastLine(session: Session): string {
-  const line = session.note === null ? "" : oneLine(session.note);
-  if (line === "") return "It has left no line.";
+  const line = quotedLine(session.note);
+  return line === null ? "It has left no line." : `Its last line: ${line}`;
+}
+
+/** A session's own words as an answer quotes them: on one line, cut
+    short, and in double quotes, any quote mark of their own turned
+    single, so nothing in them closes the quote and reads as a line of the
+    answer's own, the workbench's or the user's. Null for no words. */
+function quotedLine(note: string | null): string | null {
+  const line = note === null ? "" : oneLine(note).replace(/["\u201c\u201d\u201e\u201f]/g, "'");
+  if (line === "") return null;
   const chars = [...line];
-  return `Its last line: ${chars.length > LINE_CAP ? `${chars.slice(0, LINE_CAP - 1).join("")}…` : line}`;
+  return `"${chars.length > LINE_CAP ? `${chars.slice(0, LINE_CAP - 1).join("")}…` : line}"`;
 }
 
 /** The id of the session that started this one, when one did: the row's
