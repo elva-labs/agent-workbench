@@ -60,16 +60,15 @@ of a caller's sessions answers first with a stop the caller has not been
 told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
-telling anything; what the user's message says instead is under
-[when the user writes to it](#when-the-user-writes-to-it). `read` answers
-with the last lines on a session's screen, as you would see them, whether
-or not it has ever been on screen; for an
-integrated session, which has no screen, with what its agent last said and
-did, a line for each step, and what it is doing or waiting for now; each
-message in it, and each that waits for the turn, is said to be the user's
-or the session's that sent it. A
-message one session sends another shows in that session's thread under the
-sender's name, never as the user's. `stop`
+telling anything; what the user's message says instead is under [when the
+user writes to it](#when-the-user-writes-to-it). `read` answers with the
+last lines on a session's screen, as you would see them, whether or not it
+has ever been on screen; for an integrated session, which has no screen,
+with what its agent last said and did, a line for each step, and what it is
+doing or waiting for now; each message in it, and each that waits for the
+turn, is said to be the user's or the session's that sent it. A message one
+session sends another shows in that session's thread under the sender's
+name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
 their row, rather than leaving a row of it under the project.
 A session `start` starts runs in a terminal or integrated as the
@@ -142,10 +141,10 @@ still held answers for the sessions it watches, so the note leaves those
 out and gives the rest. A message with nothing to tell goes as it is.
 Nothing is typed into its terminal, and no turn is started for it.
 
-The note counts as telling, as a wait's answer does, once it has reached
-the agent, and not before, so a report is never counted told without being
-read. The next wait or listing does not say it again; a session that has
-since come to rest another way is news again.
+The note counts as telling, as a wait's answer does, only once the hook has
+the answer or the agent has taken the message. The next wait or listing
+does not say it again; a session that has since come to rest another way
+is news again.
 
 A session in a terminal is given the note by its prompt hook, which asks
 the workbench as the message goes in, with the project's hooks on (see
@@ -388,13 +387,12 @@ where it gets the note. It is the starter's to read, not yours to answer,
 so it marks nothing unread, and it goes once the starter is told. Short of
 room it gives way before anything else on the line: the words go, then
 the mark and the count, and what the sessions are doing stands, asking
-included. On a started session's line the mark is the first thing to go.
-A starter can be folded, from the chevron at the end
-of its second line or with Left on the keyboard, and Right lets them out
-again: folded, its second line says what they are doing whatever the agent
-left, with a small dot for each where the model stands otherwise. Left on a
-started session moves the cursor up to its starter. Nothing about the fold
-is remembered.
+included. On a started session's line the mark is the first thing to go. A
+starter can be folded, from the chevron at the end of its second line or
+with Left on the keyboard, and Right lets them out again: folded, its second
+line says what they are doing whatever the agent left, with a small dot for
+each where the model stands otherwise. Left on a started session moves the
+cursor up to its starter. Nothing about the fold is remembered.
 
 The orchestrator's changes pane, headed Orchestrator, shows the sessions it
 started instead
