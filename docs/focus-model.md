@@ -322,6 +322,20 @@ menu, <kbd>Enter</kbd> picks or makes, <kbd>Esc</kbd> backs out, and the
 strips start on Cancel. When they go, the keyboard goes back to the tree or
 the editor it came from.
 
+## The status bar
+
+The model, the effort and the allowance in the [status
+bar](layout.md#the-status-bar) are window chrome: a press on one leaves the
+pane focus where it was. What it opens holds the keyboard while it is up: a
+menu starts on the choice in use and is walked with the arrows,
+<kbd>Home</kbd> and <kbd>End</kbd>, <kbd>Enter</kbd> picking, and the popover
+takes the keyboard itself. <kbd>Escape</kbd>, a pick, or a press elsewhere
+puts either away, and the keyboard goes back where it was before it opened,
+the composer or a terminal included. <kbd>Tab</kbd> from either goes on to
+the next control of the bar. The three are stops of their own after the
+rest of the window, WebKit included, and open on <kbd>Enter</kbd> or
+<kbd>Space</kbd>.
+
 ## What focus looks like
 
 The focused pane is marked in the accent, its title with it, and the status
