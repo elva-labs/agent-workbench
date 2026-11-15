@@ -1014,6 +1014,27 @@ describe("the token a session's tools name it by", () => {
     expect(sessions.tokens["old-1"]).toBeUndefined();
   });
 
+  it("is kept for neither of two live sessions found to have one id, and the session resumed by it is neither", () => {
+    codexToo();
+    const one = create(A, null, "codex");
+    started(one.key, "pty-1", null);
+    const two = create(A, null, "codex");
+    started(two.key, "pty-2", null);
+    // Both started in one folder close together, and both were found to
+    // be the newest thread there.
+    identified("pty-1", "cx-same", null);
+    expect(sessions.tokens["cx-same"]?.token).toBe(one.token);
+    identified("pty-2", "cx-same", null);
+    const kept = sessions.tokens["cx-same"]?.token;
+    expect(kept).not.toBe(one.token);
+    expect(kept).not.toBe(two.token);
+    close(one.key);
+    close(two.key);
+    const back = create(A, "cx-same", "codex");
+    expect(back.token).toBe(kept);
+    expect([one.token, two.token]).not.toContain(back.token);
+  });
+
   it("is never one that a live row holds already", () => {
     const first = create(A, "sid-9");
     started(first.key, "pty-1", "sid-9");

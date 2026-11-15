@@ -767,11 +767,27 @@ function tokenFor(resumedFrom: string | null): string {
   return crypto.randomUUID();
 }
 
-/** Keeps a row's token by the agent's id for it, once that is known, for
-    the session resumed later to be named the same. */
+/**
+ * Keeps a row's token by the agent's id for it, once that is known, for the
+ * session resumed later to be named the same.
+ *
+ * An id that a live row has already is found for two sessions at once, as
+ * two Codex sessions started in one folder close together can be, whose id
+ * the window finds by folder and time. Neither row's token is kept for it:
+ * the id is kept a token of its own that neither holds, so the session
+ * resumed by that id owns nothing either of them started.
+ */
 export function keepToken(session: Session) {
   const id = session.id;
   if (id === null) return;
+  const twice = sessions.all.some(
+    (row) => row.key !== session.key && row.id === id && isLive(row),
+  );
+  if (twice) {
+    sessions.tokens[id] = { token: crypto.randomUUID(), project: session.project };
+    saveTokens();
+    return;
+  }
   if (sessions.tokens[id]?.token === session.token) return;
   // A session from before there were tokens is named by its id, which
   // needs nothing kept.
