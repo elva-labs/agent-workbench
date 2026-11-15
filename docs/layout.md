@@ -434,6 +434,6 @@ their edges and remembered apart from the other shapes', and a drag never
 folds or hides a pane: it stops where the editor would get less than 640.
 The column's header names the project, with the worktree a session follows,
 and holds buttons for a new file and a new folder; the editor's header holds
-its tabs and the views control, and stays with no file open. Peeked, the sessions pane covers the folded
-column and the tree's together. What the editor does is in
-[editor](editor.md).
+its tabs and the views control, and stays with no file open. Peeked, the
+sessions pane covers the folded column and the tree's together. What the
+editor does is in [editor](editor.md).

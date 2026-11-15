@@ -12,9 +12,10 @@
 //! The editor's items, New File, New File in Tree, Save and Close Tab, do
 //! what an action of the window's chord table does, so the window does it:
 //! the item says which action. New File is an untitled file, named when it
-//! is saved; New File in Tree names one in the tree first. On the menu bar each carries the chord the table gives its action,
-//! sent over whenever the table changes, so a chord the user moves moves the
-//! item's with it and the bar never claims a chord the table gives elsewhere.
+//! is saved; New File in Tree names one in the tree first. On the menu bar
+//! each carries the chord the table gives its action, sent over whenever
+//! the table changes, so a chord the user moves moves the item's with it
+//! and the bar never claims a chord the table gives elsewhere.
 //! The popup's items carry none: a menu attached to no window answers no
 //! keys, and the window answers the chords itself.
 //!
