@@ -34,9 +34,10 @@ use crate::adapter::{
 use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
-    ChangeKind, Choice, CompactReason, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image,
-    Launch, MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep, Prepared,
-    Protocol, Question, QuestionOption, Reading, Sending, StepStatus, ToolKind, Usage,
+    now_seconds, percent, ChangeKind, Choice, CompactReason, Control, Driver, ErrorKind, Event,
+    FileChange, Hunk, Image, Launch, LimitKind, LimitWindow, MessageState, ModeInfo, ModelInfo,
+    NoticeLevel, Offer, Outcome, PlanStep, Prepared, Protocol, Question, QuestionOption, Reading,
+    Sending, StepStatus, ToolKind, Usage,
 };
 
 pub struct CodexAppServer;
@@ -46,6 +47,14 @@ pub static CODEX_APP_SERVER: CodexAppServer = CodexAppServer;
 /// The name the workbench gives itself in the handshake. Codex files the
 /// threads it starts under it, as their originator.
 const CLIENT_NAME: &str = "agent-workbench";
+
+/// The agent's id, as a start names it, on the limits it reports.
+const AGENT: &str = "codex";
+
+/// The length in minutes of the window a session of work is metered by,
+/// and of the week.
+const SESSION_MINUTES: u64 = 300;
+const WEEK_MINUTES: u64 = 10_080;
 
 /// The oldest Codex whose app-server this driver has been run against.
 const OLDEST: (u64, u64, u64) = (0, 168, 0);
@@ -260,6 +269,8 @@ enum Sent {
     /// An interrupt asked for before the turn had an id, sent once it did.
     LateInterrupt,
     Compact,
+    /// A read of the account's limits, which nothing waits on.
+    RateLimits,
 }
 
 /// What a request from the server is, by what its answer takes.
@@ -700,6 +711,14 @@ struct AppServer {
     /// The start of a line too long to read, from which the item it
     /// completes can be named.
     skipped_head: Vec<u8>,
+
+    /// The account's limits as Codex last answered a read of them, with
+    /// what it pushed since merged in.
+    rate_limits: Option<Value>,
+    /// A read of the limits is out, and another is wanted once it is
+    /// answered.
+    rate_limits_asked: bool,
+    rate_limits_again: bool,
 }
 
 /// How much of a line too long to read is kept to name what it was.
@@ -707,6 +726,50 @@ const HEAD_KEEP: usize = 4096;
 
 fn text(value: &Value) -> Option<String> {
     value.as_str().map(str::to_string)
+}
+
+/// The plan and the windows of a snapshot of the limits. Codex calls its
+/// windows primary and secondary, which says nothing of how long each is,
+/// so each is named by its length; one of another length is left out.
+fn limit_windows(limits: &Value) -> (Option<String>, Vec<LimitWindow>) {
+    let mut windows: Vec<LimitWindow> = ["primary", "secondary"]
+        .iter()
+        .filter_map(|name| {
+            let window = &limits[name];
+            let kind = match window["windowDurationMins"].as_u64()? {
+                SESSION_MINUTES => LimitKind::Session,
+                WEEK_MINUTES => LimitKind::Weekly,
+                _ => return None,
+            };
+            Some(LimitWindow {
+                kind,
+                model: None,
+                percent: percent(window["usedPercent"].as_f64()?)?,
+                resets_at: window["resetsAt"].as_u64(),
+                severity: None,
+            })
+        })
+        .collect();
+    windows.sort_by_key(|window| window.kind);
+    let plan = text(&limits["planType"]).filter(|plan| plan != "unknown");
+    (plan, windows)
+}
+
+/// Lays what an update holds over what was known: a null leaves what was
+/// there, and an object is merged field by field.
+fn merge(known: &mut Value, update: &Value) {
+    let (Some(known), Some(update)) = (known.as_object_mut(), update.as_object()) else {
+        return;
+    };
+    for (key, value) in update {
+        match (known.get_mut(key), value) {
+            (_, Value::Null) => {}
+            (Some(was @ Value::Object(_)), Value::Object(_)) => merge(was, value),
+            _ => {
+                known.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 /// The key a request from the server is known by in the events: its id
@@ -1038,6 +1101,67 @@ impl AppServer {
             context: (None, None),
             context_told: (None, None),
             skipped_head: Vec::new(),
+            rate_limits: None,
+            rate_limits_asked: false,
+            rate_limits_again: false,
+        }
+    }
+
+    /// Asks Codex for the account's limits, one read at a time. Codex
+    /// answers its requests as each is done, so a read holds nothing up.
+    fn ask_rate_limits(&mut self, out: &mut Reading) {
+        if self.signed_out {
+            return;
+        }
+        if self.rate_limits_asked {
+            self.rate_limits_again = true;
+            return;
+        }
+        self.rate_limits_asked = true;
+        // The details of the credits that reset a limit are a read of
+        // their own, which the limits do not need.
+        let (line, _) = self.request(
+            Sent::RateLimits,
+            "account/rateLimits/read",
+            json!({ "excludeResetCreditDetails": true }),
+        );
+        out.writes.push(line);
+    }
+
+    /// The limits as they now stand, taken now.
+    fn limits(&self) -> Option<Event> {
+        let (plan, windows) = limit_windows(self.rate_limits.as_ref()?);
+        Some(Event::Limits {
+            agent: AGENT.to_string(),
+            plan,
+            windows,
+            taken_at: now_seconds(),
+        })
+    }
+
+    /// Codex pushes what changed of the limits, leaving out what it does
+    /// not know then, which is merged into the last read and told when it
+    /// changes what was told. A push for a meter other than the one read,
+    /// such as a quota of one model, is left out.
+    fn rate_limits_updated(&mut self, update: &Value, out: &mut Reading) {
+        if !update.is_object() {
+            return;
+        }
+        let known = self
+            .rate_limits
+            .as_ref()
+            .and_then(|limits| limits["limitId"].as_str());
+        if let (Some(known), Some(pushed)) = (known, update["limitId"].as_str()) {
+            if known != pushed {
+                return;
+            }
+        }
+        let before = self.rate_limits.as_ref().map(limit_windows);
+        let limits = self.rate_limits.get_or_insert_with(|| json!({}));
+        merge(limits, update);
+        let after = limit_windows(limits);
+        if before.as_ref() != Some(&after) {
+            out.events.extend(self.limits());
         }
     }
 
@@ -1180,6 +1304,7 @@ impl AppServer {
                 message: NOT_LOGGED_IN.to_string(),
             });
         }
+        self.ask_rate_limits(out);
     }
 
     /// An answer to a request this side sent.
@@ -1320,6 +1445,20 @@ impl AppServer {
             }
             Sent::Interrupt => out.replies.push((id.to_string(), reply)),
             Sent::LateInterrupt => {}
+            Sent::RateLimits => {
+                // Nothing waits on it, and a read that fails or answers in
+                // a shape not known here leaves the limits as they were.
+                self.rate_limits_asked = false;
+                if let Ok(result) = &reply {
+                    if result["rateLimits"].is_object() {
+                        self.rate_limits = Some(result["rateLimits"].clone());
+                        out.events.extend(self.limits());
+                    }
+                }
+                if std::mem::take(&mut self.rate_limits_again) {
+                    self.ask_rate_limits(out);
+                }
+            }
             Sent::Compact => {
                 if reply.is_err() {
                     self.compact_asked = false;
@@ -1454,6 +1593,7 @@ impl AppServer {
             duration_ms: turn["durationMs"].as_u64(),
             usage,
         });
+        self.ask_rate_limits(out);
     }
 
     /// The tool call an item is, with the agent's name for it, its kind and
@@ -1906,6 +2046,7 @@ impl AppServer {
                 };
                 self.notice(NoticeLevel::Warning, Some(message), out);
             }
+            "account/rateLimits/updated" => self.rate_limits_updated(&params["rateLimits"], out),
             _ => {}
         }
     }

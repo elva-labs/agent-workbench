@@ -356,6 +356,18 @@ pub enum Event {
         used: Option<u64>,
         size: Option<u64>,
     },
+    /// The usage limits of the account the session runs under, whole, as
+    /// the agent last reported them: each window with how much of it is
+    /// used, and the plan where the agent names it. `agent` is the agent's
+    /// id, as a start names it; the account is the session's own. Sent when
+    /// the agent answers a read of them, and when what it pushes changes
+    /// them. `takenAt` is when, in seconds since the epoch.
+    Limits {
+        agent: String,
+        plan: Option<String>,
+        windows: Vec<LimitWindow>,
+        taken_at: u64,
+    },
     /// Something the agent says that is neither an error nor part of a
     /// turn: that it fell back to another model, that its instructions are
     /// long, that something it uses is going away.
@@ -450,6 +462,57 @@ pub enum CompactReason {
     Asked,
     /// The context window was full.
     Full,
+}
+
+/// One window of an account's usage limits. `model` names the model a
+/// `weeklyScoped` window counts alone; `percent` is how much of the window
+/// is used, 0 to 100; `resetsAt` when it starts over, in seconds since the
+/// epoch, where the agent says; `severity` how near its end the agent
+/// reads it, where it gives a reading.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitWindow {
+    pub kind: LimitKind,
+    pub model: Option<String>,
+    pub percent: f64,
+    pub resets_at: Option<u64>,
+    pub severity: Option<LimitSeverity>,
+}
+
+/// Which window a limit counts over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LimitKind {
+    /// The five hours a session of work is metered over.
+    Session,
+    /// The week, over every model.
+    Weekly,
+    /// The week, for one model alone.
+    WeeklyScoped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LimitSeverity {
+    Normal,
+    /// Near the end of the window.
+    Warning,
+    /// At the end of the window, or past it.
+    Reached,
+}
+
+/// The time now, in seconds since the epoch, for limit figures taken now.
+pub(crate) fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs())
+        .unwrap_or_default()
+}
+
+/// A percent the agent gave, held to 0 to 100. None for one that is not a
+/// number.
+pub(crate) fn percent(value: f64) -> Option<f64> {
+    value.is_finite().then(|| value.clamp(0.0, 100.0))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -862,7 +925,8 @@ pub struct Settings {
 /// ready; `requests` every permission request and question still waiting
 /// for an answer, each as it was asked; `messages` every message sent and
 /// not yet taken into a turn, in the order sent, each as its first message
-/// event told it, with its text and images.
+/// event told it, with its text and images; `limits` the account's limits
+/// as the last limits event told them, null before one went out.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -873,6 +937,7 @@ pub struct Snapshot {
     pub ready: Option<Event>,
     pub requests: Vec<Event>,
     pub messages: Vec<Event>,
+    pub limits: Option<Event>,
 }
 
 /// The state of a session as its events say it, and the bookkeeping that
@@ -925,6 +990,8 @@ struct Tracker {
     efforts: Vec<String>,
     /// The ready event, as it went out.
     ready: Option<Event>,
+    /// The last limits event, as it went out.
+    limits: Option<Event>,
     state: Option<SessionState>,
 }
 
@@ -1116,6 +1183,7 @@ impl Tracker {
             }
             Event::Compacting => self.compacting = true,
             Event::Compacted { .. } => self.compacting = false,
+            Event::Limits { .. } => self.limits = Some(event.clone()),
             _ => {}
         }
         out.push(event);
@@ -1164,6 +1232,7 @@ impl Tracker {
                 .iter()
                 .filter_map(|message| self.told.get(message).cloned())
                 .collect(),
+            limits: self.limits.clone(),
         }
     }
 
@@ -3415,6 +3484,53 @@ mod tests {
         let later = snapshot(&bench.sessions, "int-bench").unwrap();
         assert!(later.requests.is_empty() && later.messages.is_empty());
         assert_eq!(later.state, SessionState::Working);
+    }
+
+    #[test]
+    fn the_snapshot_holds_the_limits_last_told() {
+        let limits = |percent: f64| Event::Limits {
+            agent: "claude-code".into(),
+            plan: Some("max".into()),
+            windows: vec![
+                LimitWindow {
+                    kind: LimitKind::Session,
+                    model: None,
+                    percent,
+                    resets_at: Some(1_794_738_000),
+                    severity: Some(LimitSeverity::Normal),
+                },
+                LimitWindow {
+                    kind: LimitKind::WeeklyScoped,
+                    model: Some("Fable".into()),
+                    percent: 100.0,
+                    resets_at: None,
+                    severity: Some(LimitSeverity::Reached),
+                },
+            ],
+            taken_at: 1_794_730_000,
+        };
+        let (tracker, _) = tracked(vec![turn(&[])]);
+        assert!(tracker.snapshot().limits.is_none(), "none before any");
+        let (tracker, out) = tracked(vec![limits(10.0), limits(20.0)]);
+        let told: Vec<&Event> = out
+            .iter()
+            .filter(|event| matches!(event, Event::Limits { .. }))
+            .collect();
+        assert_eq!(told, [&limits(10.0), &limits(20.0)], "each goes out");
+        assert_eq!(tracker.snapshot().limits, Some(limits(20.0)));
+        assert_eq!(tracker.state(), SessionState::Idle, "and changes no state");
+        assert_eq!(
+            serde_json::to_value(tracker.snapshot()).unwrap()["limits"],
+            serde_json::json!({
+                "type": "limits", "agent": "claude-code", "plan": "max", "takenAt": 1_794_730_000,
+                "windows": [
+                    {"kind": "session", "model": null, "percent": 20.0,
+                     "resetsAt": 1_794_738_000, "severity": "normal"},
+                    {"kind": "weeklyScoped", "model": "Fable", "percent": 100.0,
+                     "resetsAt": null, "severity": "reached"}
+                ]
+            })
+        );
     }
 
     #[test]
