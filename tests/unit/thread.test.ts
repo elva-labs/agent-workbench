@@ -675,6 +675,34 @@ describe("what the thread holds, drawn or not", () => {
     expect(matches(c, "count.ts").map((one) => one.id)).toEqual(["c-1", "b-1"]);
     expect(matches(c, "")).toEqual([]);
   });
+
+  it("holds an input as its step shows it, a change's lines and a message still waiting, and not the error said where it resumes", () => {
+    const c = conversation();
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-2", state: "sent", error: null, text: "Fix the path", images: [] },
+      { type: "turnStarted", messages: ["m-2"] },
+      { type: "toolStarted", call: "c-4", parent: null, name: "Edit", kind: "edit" },
+      {
+        type: "toolInput", call: "c-4", parent: null, delta: null, truncated: false,
+        input: { file_path: "C:\\repo\\src\\count.ts", old_string: 'say("hi")', new_string: 'say("bye")' },
+      },
+      {
+        type: "toolFinished", call: "c-4", parent: null, output: "", error: false, truncated: false,
+        changes: [{ path: "C:\\repo\\src\\count.ts", kind: "update", to: null, content: null, truncated: false,
+          hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-say("hi")', '+say("farewell")'] }] }],
+      },
+      { type: "message", message: "m-3", state: "queued", error: null, text: "And the tests", images: [] },
+    ];
+    for (const event of events) c.apply(event);
+    expect(matches(c, "C:\\repo\\src").map((one) => one.id)).toEqual(["c-4"]);
+    expect(matches(c, 'say("bye")').map((one) => one.id)).toEqual(["c-4"]);
+    expect(matches(c, 'say("farewell")').map((one) => one.id)).toEqual(["c-4"]);
+    expect(locate(c, "m-3")).toMatchObject({ entry: null, folds: [] });
+    const over = conversation();
+    over.apply({ type: "error", kind: "process", message: "the agent crashed" });
+    over.apply({ type: "ended", code: 1, clean: false });
+    expect(matches(over, "crashed")).toEqual([]);
+  });
 });
 
 describe("a reply copied as Markdown", () => {

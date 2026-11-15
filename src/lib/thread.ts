@@ -770,9 +770,24 @@ export function foldKey(kind: "work" | "step", part: ToolCall | TextPart): strin
     that must open for it to show, outermost first. */
 export interface Held {
   id: string;
-  entry: string;
+  /** Null for a message waiting under the thread, which is always drawn. */
+  entry: string | null;
   folds: string[];
   text: string;
+}
+
+/** A call's input as its step shows it: a field's name and its value,
+    the value as written when it is text. */
+function inputWords(part: ToolCall): string {
+  if (!part.inputDone) return part.inputText;
+  const value = part.input;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || Array.isArray(value)) return JSON.stringify(value, null, 2);
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, field]) => field !== null && field !== undefined && field !== "")
+    .map(([name, field]) => `${name.replace(/_/g, " ")}\n${typeof field === "string" ? field : JSON.stringify(field, null, 2)}`)
+    .join("\n");
 }
 
 /** Everything the thread holds, in the order it is drawn, folded work and
@@ -797,20 +812,33 @@ export function held(conversation: Conversation): Held[] {
             out.push({ id: part.block, entry, folds: work, text: part.text });
             continue;
           }
-          const input = part.inputDone ? JSON.stringify(part.input ?? "") : part.inputText;
-          out.push({ id: part.call, entry, folds: work, text: [part.name, input, part.result ?? part.output].join("\n") });
+          // A change's lines as its diff shows them, without their marks,
+          // and a new file's content.
+          const changes = part.changes.flatMap((change) => [
+            change.path,
+            change.content ?? "",
+            ...change.hunks.flatMap((hunk) => hunk.lines.map((line) => line.slice(1))),
+          ]);
+          const text = [part.name, inputWords(part), part.result ?? part.output, ...changes].join("\n");
+          out.push({ id: part.call, entry, folds: work, text });
           walk(part.parts, entry, [...work, foldKey("step", part)]);
         }
       }
     }
   };
-  for (const entry of conversation.entries) {
+  const entries = conversation.entries;
+  const last = entries[entries.length - 1];
+  // The error a session ended with is said where it offers to resume, not
+  // in the thread.
+  const endedWith = conversation.ended !== null && last?.kind === "note" && last.tone === "error" ? last.key : null;
+  for (const entry of entries) {
     if (entry.kind === "user") {
       const message = conversation.messages[entry.message];
       if (message !== undefined) out.push({ id: message.id, entry: entry.key, folds: [], text: spoken(message.text, true).text });
     } else if (entry.kind === "agent") walk(entry.parts, entry.key, []);
-    else if (entry.kind === "note") out.push({ id: entry.key, entry: entry.key, folds: [], text: entry.text });
+    else if (entry.kind === "note" && entry.key !== endedWith) out.push({ id: entry.key, entry: entry.key, folds: [], text: entry.text });
   }
+  for (const message of conversation.waiting) out.push({ id: message.id, entry: null, folds: [], text: spoken(message.text, true).text });
   return out;
 }
 
