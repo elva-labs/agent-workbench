@@ -48,12 +48,15 @@
   /** The whole blocks of a reply that streams: their text and what they
       render as, so they are rendered once. */
   let kept = { text: "", blocks: [] as string[] };
+  /** A line that defines where a reference link leads. */
+  const DEFINES = /^ {0,3}\[[^\]\n]+\]:/m;
 
   let blocks = $derived.by(() => {
     const now = shown;
-    // Whole, a reply is rendered whole once more, so a reference link
-    // finds an address defined after it.
-    if (!streaming) {
+    // Whole, a reply is rendered whole once more, and one that defines a
+    // reference link is rendered whole as it streams, so the link finds an
+    // address defined after it as soon as it comes.
+    if (!streaming || DEFINES.test(now)) {
       kept = { text: "", blocks: [] };
       return saidBlocks(now);
     }
