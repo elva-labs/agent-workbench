@@ -571,6 +571,9 @@ has to do itself:
   running row whose id is the conversation's id, so an integrated session
   needs such a row for its agent's tools to work. The orchestrator's send
   reaches an integrated session as a message, and its read answers with
-  what the agent last said and did.
+  what the agent last said and did. A message the user sends a session
+  that started others can carry the workbench's note on them ahead of the
+  user's words, which the window shows apart; see
+  [orchestrator](orchestrator.md#when-the-user-writes-to-it).
   Past sessions are listed from the transcripts, integrated ones among
   them.

@@ -140,9 +140,16 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        // Run by a prompt hook, whose output the agent reads: with no home
+        // there is nothing to say, and saying nothing lets the prompt go.
+        Some("reports") => {
+            if let Some(home) = workbench_core::api::home_directory() {
+                workbench_core::mcp::prompt_hook(&home);
+            }
+        }
         Some("--version" | "version") => println!("{}", env!("CARGO_PKG_VERSION")),
         _ => {
-            eprintln!("usage: agent-workbench-remote serve | connect [--host <address>] [--port <n>] | mcp | version");
+            eprintln!("usage: agent-workbench-remote serve | connect [--host <address>] [--port <n>] | mcp | reports | version");
             std::process::exit(2);
         }
     }

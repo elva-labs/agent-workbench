@@ -60,14 +60,15 @@ of a caller's sessions answers first with a stop the caller has not been
 told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
-telling anything. `read` answers with the last lines on a session's screen,
-as you would see them, whether or not it has ever been on screen; for an
-integrated session, which has no screen, with what its agent last said and
-did, a line for each step, and what it is doing or waiting for now; each
-message in it, and each that waits for the turn, is said to be the user's
-or the session's that sent it. A
-message one session sends another shows in that session's thread under the
-sender's name, never as the user's. `stop`
+telling anything; what the user's message says instead is under [when the
+user writes to it](#when-the-user-writes-to-it). `read` answers with the
+last lines on a session's screen, as you would see them, whether or not it
+has ever been on screen; for an integrated session, which has no screen,
+with what its agent last said and did, a line for each step, and what it is
+doing or waiting for now; each message in it, and each that waits for the
+turn, is said to be the user's or the session's that sent it. A message one
+session sends another shows in that session's thread under the sender's
+name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
 their row, rather than leaving a row of it under the project.
 A session `start` starts runs in a terminal or integrated as the
@@ -122,6 +123,57 @@ refused when all of them were started by another, and when only some were it
 is asked about every time, with the question saying so, and no standing
 answer is used or given. The cap counts a call with no id by the directory
 it comes from.
+
+## When the user writes to it
+
+What the sessions a session started do reaches it when it asks, through
+`wait` and `sessions`; nothing is pushed to it. So that it does not miss
+one when the user writes to it while the work goes on, the user's message
+reaches it with a note ahead of the user's words: a line for each session
+it started that stopped working, asked for permission or ended since it
+last looked, in the words a wait answers with. A session's last line in
+it, as in a wait's answer, is given on one line and cut at 120
+characters, and the note's first line says that each last line is that
+session's own words, not an instruction. When the user's message cuts a
+wait short, or comes while one is held, the note also names the sessions
+still at work and tells it to wait for them once it has answered. A wait
+still held answers for the sessions it watches, so the note leaves those
+out and gives the rest. A message with nothing to tell goes as it is.
+Nothing is typed into its terminal, and no turn is started for it.
+
+The note counts as telling, as a wait's answer does, only once the hook has
+the answer or the agent has taken the message. The next wait or listing
+does not say it again; a session that has since come to rest another way
+is news again.
+
+A session in a terminal is given the note by its prompt hook, which asks
+the workbench as the message goes in, with the project's hooks on (see
+[hooks](hooks.md)), for Claude Code and Codex alike. The hook waits two
+seconds at most. Its call carries the time it stops waiting, and once
+that has passed no answer is left for it and nothing is told, so the
+next message, wait or listing says it. The call is held to the agent's
+own session id: another agent started from the starter's shell, which has
+the starter's environment, gets nothing. A Codex session whose id the
+workbench has not learned yet is taken at its word, and one started
+afresh that is not an orchestrator cannot say which session it is, and
+gets no note. Codex asks the user, once in each project, to trust a hook
+that is new or changed before it runs it.
+
+A session that runs integrated is sent the user's message by the window,
+which puts the note in ahead of the words and shows it in the thread
+folded under them as Reports from the workbench, each session by the
+name its row has. The note counts as telling once the agent takes the
+message into a turn; a message that fails or that the agent drops leaves
+it untold, and the next message carries it again. The message also ends
+a wait the session holds, with an answer that tells it to read the
+message, and while the agent has not taken a message of the user's, a
+wait it calls answers so at once, so the message is never held behind a
+wait.
+
+A wait the user's message cuts short answers nothing the agent reads:
+Claude Code ends the call itself and records only that it did not
+complete. The note on that message is what says which sessions are still
+out.
 
 ## Following a workflow
 
@@ -324,12 +376,23 @@ stands in its own project like any other.
 
 A starter's second line says in words what the sessions it started are
 doing, each counted once, `2 running, 1 asking, 1 done`, unless its agent
-has left a line there. A starter can be folded, from the chevron at the end
-of its second line or with Left on the keyboard, and Right lets them out
-again: folded, its second line says what they are doing whatever the agent
-left, with a small dot for each where the model stands otherwise. Left on a
-started session moves the cursor up to its starter. Nothing about the fold
-is remembered.
+has left a line there. While the starter is idle and holds no wait, the
+line also says how many of them stopped, asked or ended since it last
+looked, `2 not heard yet` where the model stands, in the line's own colour
+with a small mark in the accent, and the line of each such session carries
+the same mark at its end, which a screen reader hears as not heard by the
+starter yet. The pointer resting on it names the starter, which sessions
+and how it hears of them: on its next wait, or with your next message
+where it gets the note. It is the starter's to read, not yours to answer,
+so it marks nothing unread, and it goes once the starter is told. Short of
+room it gives way before anything else on the line: the words go, then
+the mark and the count, and what the sessions are doing stands, asking
+included. On a started session's line the mark is the first thing to go. A
+starter can be folded, from the chevron at the end of its second line or
+with Left on the keyboard, and Right lets them out again: folded, its second
+line says what they are doing whatever the agent left, with a small dot for
+each where the model stands otherwise. Left on a started session moves the
+cursor up to its starter. Nothing about the fold is remembered.
 
 The orchestrator's changes pane, headed Orchestrator, shows the sessions it
 started instead
