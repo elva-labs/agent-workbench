@@ -1,5 +1,6 @@
 import type { AgentId } from "$lib/core";
 import { startedFor } from "$lib/conductor.svelte";
+import { handleOf, reattach } from "$lib/integrated.svelte";
 import {
   activeSession,
   forProject,
@@ -22,8 +23,12 @@ import {
  * kept current as rows come and go. A row closed by hand leaves it; a quit
  * leaves it as it was. On the next start each comes back as a dormant row
  * in its project, and only the one on screen starts: the rest start when
- * they are selected. A session another session started is not on record:
- * it is the caller's to bring back, and the caller's list offers it.
+ * they are selected. A terminal session another session started is not on
+ * record: it is the caller's to bring back, and the caller's list offers
+ * it. An integrated one is, as any other is: the core goes on running it
+ * through a reload, and a window that dropped its row would leave an agent
+ * running that no row shows. It comes back under the session that started
+ * it, which the caller's own record still says.
  */
 
 const KEY = "workbench.open";
@@ -38,6 +43,16 @@ interface Open {
   /** The account it ran under, by name; null for the agents' own. A record
       from before there were accounts has none, which reads as null. */
   account?: string | null;
+  /** How it ran. A record from before there were integrated sessions has
+      none, which reads as a terminal. */
+  kind?: "terminal" | "integrated";
+  /** The core's id for an integrated session while it ran, which a window
+      reloaded while the core still runs it takes it up by. */
+  handle?: string | null;
+  /** Whether the session had been spoken to, so a session taken up again
+      says it has earlier messages only when it has. A record from before
+      says nothing, which reads as spoken to. */
+  spoken?: boolean;
 }
 
 function onRecord(session: Session): boolean {
@@ -46,13 +61,13 @@ function onRecord(session: Session): boolean {
     (session.status === "dormant" ||
       session.status === "starting" ||
       session.status === "running") &&
-    startedFor(session.key) === null
+    (session.kind === "integrated" || startedFor(session.key) === null)
   );
 }
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account } = entry as Record<
+  const { project, id, agent, startIn, model, account, kind, handle, spoken } = entry as Record<
     string,
     unknown
   >;
@@ -62,7 +77,10 @@ function isOpenEntry(entry: unknown): entry is Open {
     (agent === "claude-code" || agent === "codex") &&
     (startIn === null || typeof startIn === "string") &&
     (model === null || typeof model === "string") &&
-    (account === undefined || account === null || typeof account === "string")
+    (account === undefined || account === null || typeof account === "string") &&
+    (kind === undefined || kind === "terminal" || kind === "integrated") &&
+    (handle === undefined || handle === null || typeof handle === "string") &&
+    (spoken === undefined || typeof spoken === "boolean")
   );
 }
 
@@ -103,19 +121,29 @@ function write(open: Open[], active: string | null) {
  */
 export function reopen(
   arriving: ReadonlyMap<string, Promise<void>> = new Map(),
+  /** The orchestrator's directory once it is known: its sessions are on
+      record like any project's, though it is never an open project. */
+  conductor: Promise<string | null> | null = null,
 ): () => void {
   const { open, active } = read();
+  let conductorDir: string | null = null;
+  const here = (project: string) => isOpen(project) || (conductorDir !== null && project === conductorDir);
   const bring = (entry: Open) => {
-    if (!isOpen(entry.project)) return;
+    if (!here(entry.project)) return;
     if (sessions.all.some((session) => session.id === entry.id)) return;
-    reopened(
+    const row = reopened(
       entry.project,
       entry.id,
       entry.agent,
       entry.startIn,
       entry.model,
       entry.account ?? null,
+      entry.kind ?? "terminal",
     );
+    // A window reloaded while the core still runs the session takes it up
+    // where it is; after a restart there is nothing to take up, and the
+    // row waits to be resumed like any other.
+    if (row.kind === "integrated" && entry.handle) void reattach(row.key, entry.handle, entry.spoken ?? true);
   };
   // The session on screen at the quit, when its project is the one in front
   // and nothing else is on screen; otherwise the project's most recent, as
@@ -135,14 +163,25 @@ export function reopen(
     restoredInFront();
   };
 
+  // A session in a folder that is not open may be the orchestrator's, which
+  // is known only once the core says where it is: it stays on record until
+  // then.
   const waiting = open.filter(
-    (entry) => !isOpen(entry.project) && arriving.has(entry.project),
+    (entry) => !isOpen(entry.project) && (arriving.has(entry.project) || conductor !== null),
   );
   let held = $state(waiting);
   for (const entry of open) bring(entry);
   front(workspace.active);
 
   let stopped = false;
+  if (conductor !== null)
+    void conductor.then((dir) => {
+      if (stopped) return;
+      conductorDir = dir;
+      const theirs = held.filter((entry) => entry.project === dir);
+      held = held.filter((entry) => entry.project !== dir && arriving.has(entry.project));
+      for (const entry of theirs) bring(entry);
+    });
   for (const [project, arrived] of arriving) {
     const settle = () => {
       if (stopped) return;
@@ -170,6 +209,8 @@ export function reopen(
             startIn: session.startIn,
             model: session.model,
             account: session.account,
+            kind: session.kind,
+            ...(session.kind === "integrated" ? { handle: handleOf(session.key), spoken: session.engaged } : {}),
           })),
           ...held,
         ],

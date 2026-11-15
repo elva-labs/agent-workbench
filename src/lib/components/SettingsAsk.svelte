@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Plain from "$lib/components/conversation/Plain.svelte";
   import { coversBrowser } from "$lib/browser.svelte";
   import { DEFAULTS, type CustomTheme } from "$lib/customThemes";
   import {
@@ -37,7 +38,7 @@
           <span class="from">{change.from}</span>
           <span class="arrow" aria-hidden="true">→</span>
           <span class="sr">to</span>
-          <span class="to">{change.to}</span>
+          <span class="to"><Plain text={change.to} /></span>
         </li>
       {/each}
     </ul>

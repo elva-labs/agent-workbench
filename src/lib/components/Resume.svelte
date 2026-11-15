@@ -6,6 +6,7 @@
   import { returnFocus } from "$lib/layout.svelte";
   import { closeResume, offered, pickResume, resume } from "$lib/resume.svelte";
   import { ago, historyLabel } from "$lib/sessions.svelte";
+  import { shown } from "$lib/unseen";
   import { workspace } from "$lib/workspace.svelte";
 
   /**
@@ -110,7 +111,7 @@
             role="option"
             aria-selected={index === cursor}
             onclick={() => pickResume(entry)}
-            title={entry.title ?? entry.id}
+            title={shown(entry.title ?? entry.id)}
             data-testid="resume-row"
           >
             <span class="label">{historyLabel(entry)}</span>
@@ -277,5 +278,11 @@
     padding: 10px;
     font-size: 12px;
     color: var(--ink-3);
+  }
+
+  /* A session's name and its last line are the agent's or a caller's text:
+     set apart, so nothing in them turns the row around. */
+  .label {
+    unicode-bidi: isolate;
   }
 </style>

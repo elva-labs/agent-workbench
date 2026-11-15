@@ -9,6 +9,7 @@
     close as closeSession,
     create,
     defaultAgent,
+    otherWay,
     historyFor,
     historyLabel,
     isLive,
@@ -63,6 +64,7 @@
   } from "$lib/layout.svelte";
   import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
+  import { shown } from "$lib/unseen";
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
@@ -356,8 +358,24 @@
   let projectItems = $derived.by((): MenuItem[] => {
     if (projectMenu === null) return [];
     const path = projectMenu.path;
+    const agent = defaultAgent(path);
+    const other = otherWay(path);
     return [
       { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
+      // One session the other way from New session, alone.
+      ...(other === null
+        ? []
+        : [
+            {
+              id: "project-menu-other",
+              label: other === "integrated" ? "New integrated session" : "New session in a terminal",
+              disabled: !isReady(),
+              run: () => {
+                wake(path);
+                startSession(path, agent, accountOf(path), null, other);
+              },
+            },
+          ]),
       {
         id: "close-project",
         label: "Close project",
@@ -1178,7 +1196,7 @@
       tabindex="-1"
       onclick={() => resume(path, transcript)}
       disabled={!isReady()}
-      title={transcript.title ?? transcript.id}
+      title={shown(transcript.title ?? transcript.id)}
       data-testid="past-session"
     >
       <span class="dot"></span>
@@ -3030,5 +3048,12 @@
 
   .dismiss:hover {
     color: var(--ink);
+  }
+
+  /* A session's name and its last line are the agent's or a caller's text:
+     set apart, so nothing in them turns the row around. */
+  .label,
+  .note {
+    unicode-bidi: isolate;
   }
 </style>
