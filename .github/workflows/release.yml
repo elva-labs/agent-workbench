@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: checks
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Every place that carries the version, suffix included, before
       # anything is built from them: the app refuses a daemon whose version
@@ -95,7 +95,7 @@ jobs:
             os: macos-latest
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: dtolnay/rust-toolchain@stable
@@ -195,7 +195,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # A version with a pre-release suffix is left out of the two formats
       # that cannot carry it: the MSI takes numeric versions only, and an

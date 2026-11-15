@@ -76,7 +76,7 @@ jobs:
     name: Frontend
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -107,7 +107,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.gate.outputs.other == 'true' && '["ubuntu-24.04", "windows-latest", "macos-latest"]' || '["ubuntu-24.04"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -134,7 +134,7 @@ jobs:
     name: Real app (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build and driver dependencies
         run: |
           sudo apt-get update
@@ -181,7 +181,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.other == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
