@@ -308,7 +308,7 @@ pub struct Answer {
 /// Where a core that hands the window its calls says it is there: written
 /// again every few seconds while it runs, with its version. A prompt hook
 /// asks the window only while this is fresh, so with no such core here, or
-/// only one from before there was a prompt call, the prompt goes on at once.
+/// only one that does not answer the hook, the prompt goes on at once.
 pub fn heartbeat_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("answering")
 }

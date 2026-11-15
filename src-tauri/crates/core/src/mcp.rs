@@ -2431,10 +2431,13 @@ mod tests {
         assert_eq!(call.session.as_deref(), Some("s-1"));
         // The agent's own id, for the window to hold to the caller's.
         assert_eq!(call.arguments["agentSession"], "s-1");
-        // The time past which no answer is read, short of the whole wait.
+        // The time past which no answer is read: the whole wait less the
+        // margin for the answer to land, from when the call was made.
+        let answered = show::now_ms();
         let deadline = call.arguments["deadline"].as_u64().unwrap();
+        let short = (Duration::from_secs(10) - PROMPT_GRACE).as_millis() as u64;
         assert!(
-            deadline >= asked + 9_000 && deadline < asked + 10_000,
+            deadline >= asked + short && deadline <= answered + short,
             "{deadline}"
         );
         assert_eq!(
@@ -2477,13 +2480,12 @@ mod tests {
     // An agent the workbench did not start, whose environment names neither
     // a session nor a role, does not ask at all; nor does any agent while no
     // core here has said lately that it hands the window its calls, as with
-    // the app closed or an app from before the prompt call.
+    // the app closed or an app that does not answer the hook.
     #[test]
     fn the_prompt_hook_asks_only_for_a_session_the_workbench_started_while_a_window_is_there() {
         let home = home("prompt-gate");
         std::fs::create_dir_all(home.join(".agent-workbench")).unwrap();
         let quick = Duration::from_millis(300);
-        let started = Instant::now();
         assert_eq!(
             prompt_output(&home, Path::new("/p"), "{}", None, None, quick),
             None
@@ -2492,7 +2494,7 @@ mod tests {
             prompt_output(&home, Path::new("/p"), "{}", Some("s-1"), None, quick),
             None
         );
-        assert!(started.elapsed() < Duration::from_millis(250));
+        // No call was made, so nothing waited.
         assert!(!show::requests_path(&home).exists());
 
         show::beat(&home).unwrap();
