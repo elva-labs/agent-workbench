@@ -60,7 +60,15 @@
     ownFor,
     parentOf,
   } from "$lib/orchestrator.svelte";
-  import { placeOf, startedFor, unheard, wokenBy, type Woken } from "$lib/conductor.svelte";
+  import {
+    placeOf,
+    startedFor,
+    unheard,
+    WAKES_MAX,
+    wakesSpent,
+    wokenBy,
+    type Woken,
+  } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
@@ -527,15 +535,20 @@
       starter.kind === "integrated" ||
       isInstalled(starter.project) ||
       starter.project === orchestrator.dir;
-    return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. It hears on its next wait${told ? ", or with your next message" : ""}.`;
+    const hears = `It hears on its next wait${told ? ", or with your next message" : ""}.`;
+    const woken = wakesSpent(starter)
+      ? ` The workbench has woken it ${WAKES_MAX} times in a row, and wakes it again only after a turn it did not start, such as one of yours.`
+      : "";
+    return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. ${hears}${woken}`;
   }
 
-  /** What a woken starter's row says woke it: the session, or the first
-      and how many more. Each by the name its row has now, or had then. */
-  function wokenWords(woken: Woken): string {
-    const [first, ...rest] = woken.by.map(wokenName);
-    if (rest.length === 0) return `woken by ${first}`;
-    return rest.length === 1 ? `woken by ${first} and ${rest[0]}` : `woken by ${first} and ${rest.length} more`;
+  /** What a woken starter's row says woke it: the session, by the name its
+      row has now, or had then, or how many sessions when there were more.
+      Short of room the name is cut; the count never is. */
+  function wokenWords(woken: Woken): { name: string | null; count: string | null } {
+    return woken.by.length === 1
+      ? { name: wokenName(woken.by[0]), count: null }
+      : { name: null, count: `${woken.by.length} sessions` };
   }
 
   function wokenName(by: Woken["by"][number]): string {
@@ -1253,8 +1266,14 @@
                  started did: which, quietly where the model stands, until
                  the user looks at it with the wake's turn over, or a turn of
                  theirs begins. -->
-            <span class="meta woken" title={wokenTitle(session, woken)} data-testid="starter-woken"
-              >{wokenWords(woken)}</span
+            {@const words = wokenWords(woken)}
+            <span
+              class="meta woken"
+              class:counted={words.count !== null}
+              title={wokenTitle(session, woken)}
+              data-testid="starter-woken"
+              ><span class="woken-by">{"woken by "}</span
+              >{#if words.name !== null}<span class="woken-name">{words.name}</span>{:else}{words.count}{/if}</span
             >
           {:else if news.length === 0 && session.model !== null}
             <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
@@ -1264,9 +1283,9 @@
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
       <span class="state told"
-        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, {wokenWords(
+        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, woken by {wokenWords(
             woken,
-          )}{/if}</span
+          ).name ?? wokenWords(woken).count}{/if}</span
       >
     </button>
     {#if kids.length > 0}
@@ -2616,18 +2635,34 @@
     color: var(--ink-3);
   }
 
-  /* What woke a starter and the line beside it share the room each needs,
-     each cut short by its share of what is missing, the longer more; the
-     mark keeps its first words and the start of the name. */
+  /* What woke a starter gives way before the line beside it, down to
+     "woken by" and the first letters of the name; how many sessions woke
+     it is never cut. Its shrink so outweighs the line's that the line
+     gives not a fraction of a pixel, which would cut its last letter,
+     until the mark is down to its least. */
   .second .note.shares {
     flex: 1 1 auto;
     min-width: 0;
   }
 
   .meta.woken {
-    flex: 0 1 auto;
-    min-width: 8.5em;
-    display: block;
+    flex: 0 1000 auto;
+    min-width: calc(13ch + 10px);
+    overflow: hidden;
+    gap: 0;
+  }
+
+  .meta.woken.counted {
+    flex: none;
+  }
+
+  .woken-by {
+    flex: none;
+    white-space: pre;
+  }
+
+  .woken-name {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
