@@ -115,7 +115,7 @@ describe("where a drop lands", () => {
     register(session.key, host(session.key), agent.handle);
 
     const shell = fakeTerminal();
-    const tab = createShell("/p");
+    const tab = createShell({ project: "/p", session: session.key });
     shellStarted(tab.key, "pty-2");
     register(tab.key, host(tab.key), shell.handle);
 

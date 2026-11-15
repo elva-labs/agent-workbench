@@ -113,7 +113,8 @@ one viewer holds one thing, so only the agent's latest call is kept. This
 goes for `diff`, `present`, `terminal` and the browser's `browser_open` as
 well. A call from the session on screen opens at once, as does one from a
 session the window does not know, an agent run in a terminal outside the
-app, except that the browser's tab then belongs to the project it runs in.
+app, except that the browser's tab then belongs to the project it runs in,
+and the terminal to the session or project on screen.
 
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
@@ -167,7 +168,9 @@ Two more are for the agent to hand something over rather than show it.
 `terminal` opens a new terminal in the panel with a command typed at the
 prompt and not run, from the directory the agent works in: a dev server or
 a watch the user asked for, which they start with Enter and keep. The
-agent is told to run its own commands itself.
+terminal belongs to the agent's session and goes with it; see
+[the terminal panel](layout.md#the-terminal-panel). The agent is told to
+run its own commands itself.
 
 ![The agent types npm run dev into a new terminal; the user presses Enter and the server comes up under the panes.](tools-terminal.gif)
 
