@@ -1,10 +1,12 @@
 <script lang="ts">
   /**
-   * The question before the window closes or the app quits while the editor
-   * holds unsaved edits. It is drawn over the whole window, whatever the
-   * panes under it show, and tells the core it is up from here, once it is
-   * on the page: the core takes that as the question being in front of the
-   * user, and lets the window go when it does not hear it.
+   * The question before the window closes or the app quits while sessions
+   * run or the editor holds unsaved edits. It says what goes: how many
+   * sessions stop, how many of them wait on the user, and every unsaved
+   * file. It is drawn over the whole window, whatever the panes under it
+   * show, and tells the core it is up from here, once it is on the page:
+   * the core takes that as the question being in front of the user, and
+   * lets the window go when it does not hear it. Cancel has the keyboard.
    */
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
   import { coversBrowser } from "$lib/browser.svelte";
@@ -16,9 +18,12 @@
     saveAllAndLeave,
     unsavedNames,
   } from "$lib/editor.svelte";
+  import { running, runningAside, runningQuestion } from "$lib/leaving.svelte";
 
   let ask = $derived(editor.asking?.kind === "leave" ? editor.asking : null);
   let names = $derived(ask === null ? [] : unsavedNames());
+  let live = $derived(running());
+  let busy = $derived(ask === null ? null : runningQuestion(ask.leave, live));
 
   /** Says the question numbered `generation` is on the page: each time a
       new one is drawn, a close asked again while it is up included. */
@@ -33,19 +38,30 @@
 
 {#if ask !== null}
   <div class="leave" use:coversBrowser use:heard={ask.generation} data-testid="leave-ask">
-    <ConfirmStrip
-      question={ask.leave === "quit" ? "Quit with unsaved edits?" : "Close the window with unsaved edits?"}
-      detail="{names.length === 1 ? '1 file has' : `${names.length} files have`} edits not yet saved: {names.join(', ')}."
-      action={ask.leave === "quit" ? "Quit without saving" : "Close without saving"}
-      alternative={{
-        label: ask.leave === "quit" ? "Save all and quit" : "Save all and close",
-        onClick: () => void saveAllAndLeave(),
-      }}
-      safe
-      onConfirm={leaveWithoutSaving}
-      onCancel={leaveCancelled}
-      testid="close-window"
-    />
+    {#if names.length > 0}
+      <ConfirmStrip
+        question={ask.leave === "quit" ? "Quit with unsaved edits?" : "Close the window with unsaved edits?"}
+        detail="{names.length === 1 ? '1 file has' : `${names.length} files have`} edits not yet saved: {names.join(', ')}.{runningAside(live)}"
+        action={ask.leave === "quit" ? "Quit without saving" : "Close without saving"}
+        alternative={{
+          label: ask.leave === "quit" ? "Save all and quit" : "Save all and close",
+          onClick: () => void saveAllAndLeave(),
+        }}
+        safe
+        onConfirm={leaveWithoutSaving}
+        onCancel={leaveCancelled}
+        testid="close-window"
+      />
+    {:else if busy !== null}
+      <ConfirmStrip
+        question={busy.question}
+        detail={busy.detail}
+        action={busy.action}
+        onConfirm={leaveWithoutSaving}
+        onCancel={leaveCancelled}
+        testid="close-window"
+      />
+    {/if}
   </div>
 {/if}
 

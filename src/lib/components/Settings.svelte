@@ -24,6 +24,7 @@
     type ActionKey,
     type PresetName,
   } from "$lib/keys.svelte";
+  import { closeAlso } from "$lib/keymap";
   import { returnFocus } from "$lib/layout.svelte";
   import { closeSettings, settings } from "$lib/settings.svelte";
   import {
@@ -345,6 +346,10 @@
     const text = resetBinding(action);
     problem = text === null ? null : { action, text };
   }
+
+  /** Off macOS, the close chord with Shift added, which closes from a
+      terminal too. */
+  const also = $derived(closeAlso());
 
   const groups = $derived(
     ACTIONS.reduce<{ name: string; actions: typeof ACTIONS }[]>((out, action) => {
@@ -1057,7 +1062,12 @@
                 <tr class="group"><th colspan="3">{group.name}</th></tr>
                 {#each group.actions as action (action.key)}
                   <tr class:problem={problem?.action === action.key}>
-                    <td class="label">{action.label}</td>
+                    <td class="label"
+                      >{action.label}{#if action.key === "file.close" && also !== null}<span
+                          class="also"
+                          data-testid="chord-also">{describe(also)} too, which works in a terminal</span
+                        >{/if}</td
+                    >
                     <td>
                       <button
                         class="chord"
@@ -1545,6 +1555,12 @@
 
   .bindings td.label {
     width: 60%;
+  }
+
+  .also {
+    display: block;
+    font-size: 11.5px;
+    color: var(--ink-3);
   }
 
   .chord {

@@ -352,12 +352,14 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         onFullScreen: async () => () => {},
         // Leaving with unsaved edits and the File menu: nothing to ask here.
         setUnsaved: async () => {},
+        setRunning: async () => {},
         onLeaveRequested: async () => () => {},
         leaveHeard: async () => {},
         leaveConfirmed: async () => {},
         onMenuAction: async () => () => {},
         menuKeys: async () => {},
         menuEnabled: async () => {},
+        menuText: async () => {},
         worktreeAdd: async (project: string, name: string) =>
           `${project}/${name}`,
         setSelection: async () => {},

@@ -9,18 +9,20 @@
 //! Choosing Settings either way tells the window, which opens its settings
 //! view.
 //!
-//! The File menu's items, New File, New Shell, Save and Close Tab, do what
-//! an action of the window's chord table does, so the window does it: the
-//! item says which action. On the menu bar each carries the chord the table gives its action,
-//! sent over whenever the table changes, so a chord the user moves moves the
-//! item's with it and the bar never claims a chord the table gives elsewhere.
-//! The popup's items carry none: a menu attached to no window answers no
-//! keys, and the window answers the chords itself.
+//! The File menu's items, New File, New Shell, Save and Close, do what an
+//! action of the window's chord table does, so the window does it: the item
+//! says which action. On the menu bar each carries the chord the table gives
+//! its action, sent over whenever the table changes, so a chord the user
+//! moves moves the item's with it and the bar never claims a chord the table
+//! gives elsewhere. The popup's items carry none: a menu attached to no
+//! window answers no keys, and the window answers the chords itself. Close
+//! closes what is in front, and the window names it as that changes, Close
+//! Tab, Close Shell or Close Window, in both.
 //!
 //! Quit and Close Window are the app's own items rather than the system's,
-//! so they can ask first while the editor holds unsaved edits; see
-//! [`crate::leaving`]. Close Window is on Shift+Cmd+W, since Cmd+W closes
-//! the editor's tab in front.
+//! so they can ask first while sessions run or the editor holds unsaved
+//! edits; see [`crate::leaving`]. Close Window is on Shift+Cmd+W, since
+//! Cmd+W closes what is in front.
 //!
 //! Both also carry Turn Off Custom Styles, which turns the user's own
 //! stylesheet off in the settings file itself. It works whatever that
@@ -45,12 +47,13 @@ const QUIT_ID: &str = "quit";
 const CLOSE_WINDOW_ID: &str = "close-window";
 
 /// The File menu's items: the action of the chord table each does, and its
-/// name in the menu. The id of each item is its action.
+/// name in the menu until the window names it. The id of each item is its
+/// action.
 const FILE_ITEMS: [(&str, &str); 4] = [
     ("file.new", "New File"),
     ("terminal.new", "New Shell"),
     ("file.save", "Save"),
-    ("file.close", "Close Tab"),
+    ("file.close", "Close"),
 ];
 
 /// The chords the table starts with for the File menu's items on the menu
@@ -63,9 +66,14 @@ const FILE_DEFAULTS: [(&str, &str); 4] = [
 ];
 
 /// The menu bar's File items, kept to set the chord each shows and
-/// answers, and whether each can act.
+/// answers, whether each can act and what each is called.
 #[derive(Default)]
 pub struct FileItems(Mutex<Vec<(String, MenuItem<Wry>)>>);
+
+/// The popup's File items, kept to set whether each can act and what each
+/// is called.
+#[derive(Default)]
+pub struct PopupItems(Mutex<Vec<(String, MenuItem<Wry>)>>);
 
 /// The menu bar's items with chords of their own rather than an action's:
 /// Settings, which shows the chord the table gives settings, and Close
@@ -159,6 +167,13 @@ pub fn install(app: &App) -> tauri::Result<()> {
         ],
     )?;
     app.manage(AppMenu(popup));
+    app.manage(PopupItems(Mutex::new(
+        FILE_ITEMS
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .zip(editing)
+            .collect(),
+    )));
     app.manage(FileItems::default());
     app.manage(FixedItems::default());
 
@@ -242,11 +257,33 @@ fn set_chord(item: &MenuItem<Wry>, chord: Option<&str>) -> Result<(), String> {
 #[tauri::command]
 pub fn menu_enabled(
     items: State<'_, FileItems>,
+    popup: State<'_, PopupItems>,
     state: HashMap<String, bool>,
 ) -> Result<(), String> {
-    for (action, item) in items.0.lock().unwrap().iter() {
-        let enabled = state.get(action).copied().unwrap_or(true);
-        item.set_enabled(enabled).map_err(|e| e.to_string())?;
+    for list in [&items.0, &popup.0] {
+        for (action, item) in list.lock().unwrap().iter() {
+            let enabled = state.get(action).copied().unwrap_or(true);
+            item.set_enabled(enabled).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// What the File menu's items are called, by action, as the window says
+/// each time that changes: Close names what it would close. An action the
+/// window does not name keeps its item's name.
+#[tauri::command]
+pub fn menu_text(
+    items: State<'_, FileItems>,
+    popup: State<'_, PopupItems>,
+    state: HashMap<String, String>,
+) -> Result<(), String> {
+    for list in [&items.0, &popup.0] {
+        for (action, item) in list.lock().unwrap().iter() {
+            if let Some(text) = state.get(action) {
+                item.set_text(text).map_err(|e| e.to_string())?;
+            }
+        }
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-import { core, type SessionEnded } from "$lib/core";
+import { core, type Process, type SessionEnded } from "$lib/core";
 import { claim } from "$lib/exits";
 import { hideTerminal } from "$lib/layout.svelte";
 
@@ -55,9 +55,22 @@ export function printable(text: string): string {
 /** Narrower than this and a split shell shows a prompt and little else. */
 export const MIN_SPLIT = 200;
 
+/** The question before a shell is closed with something running in it. */
+export interface ShellAsk {
+  key: string;
+  /** What was started at its prompt and still runs, the first started
+      first: each command as the system has it. */
+  running: string[];
+  /** A key on the shell's row asked, so the keyboard goes back to the
+      rows once it is answered. */
+  fromRow: boolean;
+}
+
 export const terminals = $state({
   all: [] as Shell[],
   active: null as string | null,
+  /** The question over the panel, if one is up. */
+  asking: null as ShellAsk | null,
 });
 
 let counter = 0;
@@ -108,8 +121,12 @@ export function label(shell: Shell): string {
   return `shell ${shell.ordinal}`;
 }
 
+/** Brings a shell to the front. A question about another shell is put
+    away, as the editor's is when another tab comes forward. */
 export function select(key: string) {
-  if (byKey(key) !== null) terminals.active = key;
+  if (byKey(key) === null) return;
+  terminals.active = key;
+  if (terminals.asking !== null && terminals.asking.key !== key) terminals.asking = null;
 }
 
 /** Steps to the next or previous shell of the project, in list order and
@@ -119,7 +136,7 @@ export function cycle(project: string, direction: 1 | -1): boolean {
   if (own.length < 2) return false;
   const at = own.findIndex((shell) => shell.key === terminals.active);
   const next = at === -1 ? 0 : (at + direction + own.length) % own.length;
-  terminals.active = own[next].key;
+  select(own[next].key);
   return true;
 }
 
@@ -175,7 +192,7 @@ function add(
   };
   terminals.all.splice(at, 0, shell);
   const live = terminals.all[at];
-  terminals.active = live.key;
+  select(live.key);
   return live;
 }
 
@@ -311,6 +328,57 @@ export function close(key: string) {
   remove(shell);
 }
 
+/**
+ * Closes a shell as the user asked, by a chord, its row's Delete or its ×.
+ * One with something still running in it, a dev server say, asks first:
+ * the shell comes to the front and the question goes over the panel. One
+ * at an idle prompt closes at once. True when it closed.
+ */
+export async function closeAsking(key: string, fromRow = false): Promise<boolean> {
+  const shell = byKey(key);
+  if (shell === null) return true;
+  const running = shell.ptyId === null || shell.status !== "running" ? [] : await runningIn(shell.ptyId);
+  // Gone, or asked about already, while the core was asked.
+  if (byKey(key) === null) return true;
+  if (terminals.asking?.key === key) return false;
+  if (running.length === 0) {
+    close(key);
+    return true;
+  }
+  select(key);
+  terminals.asking = { key, running, fromRow };
+  return false;
+}
+
+/** What was started at the prompt of the shell on this pty and still runs:
+    the processes right under the shell, the first started first. What they
+    started in turn goes with them and is not named. */
+async function runningIn(ptyId: string): Promise<string[]> {
+  let under: Process[];
+  try {
+    under = await core().ptyProcesses(ptyId);
+  } catch {
+    return [];
+  }
+  const pids = new Set(under.map((process) => process.pid));
+  return under
+    .filter((process) => !pids.has(process.parent))
+    .sort((a, b) => a.started - b.started)
+    .map((process) => process.command || process.name);
+}
+
+/** The question's answer: close the shell after all. */
+export function closeAsked() {
+  const asked = terminals.asking;
+  terminals.asking = null;
+  if (asked !== null) close(asked.key);
+}
+
+/** The question's answer: keep the shell. */
+export function keepAsked() {
+  terminals.asking = null;
+}
+
 /** The project is going, and the panel with what it shows next, not away. */
 export function closeProject(project: string) {
   if (activeShell()?.project === project) terminals.active = null;
@@ -324,6 +392,7 @@ export function closeProject(project: string) {
  * what closing the shell asked for.
  */
 function remove(shell: Shell) {
+  if (terminals.asking?.key === shell.key) terminals.asking = null;
   const wasActive = terminals.active === shell.key;
   const group = groupOf(shell.key);
   const at = group.indexOf(shell);
@@ -363,6 +432,7 @@ export function statusMessage(shell: Shell): string {
 export function reset() {
   terminals.all = [];
   terminals.active = null;
+  terminals.asking = null;
   counter = 0;
   groups = 0;
   ordinals = {};

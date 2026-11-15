@@ -12,7 +12,10 @@ import {
   activeShell,
   byKey,
   close,
+  closeAsked,
+  closeAsking,
   closeProject,
+  keepAsked,
   create,
   TYPE_AFTER,
   printable,
@@ -60,9 +63,15 @@ vi.mock("$lib/core", () => ({
     write: async (id: string, data: string) => {
       written.push([id, data]);
     },
+    // What runs under a pty, as a test planted it.
+    ptyProcesses: async (id: string) => {
+      if (id === "pty-unreadable") throw "no such pty";
+      return under[id] ?? [];
+    },
   }),
 }));
 const written: [string, string][] = [];
+let under: Record<string, { pid: number; parent: number; name: string; command: string; started: number }[]> = {};
 /** Each spawned shell's output callback, to play a prompt into. */
 const outputs: ((bytes: Uint8Array) => void)[] = [];
 
@@ -91,6 +100,7 @@ beforeEach(() => {
   outputs.length = 0;
   spawned = 0;
   spawnError = null;
+  under = {};
   open();
 });
 
@@ -469,5 +479,74 @@ describe("closing", () => {
     expect(forProject(A)).toHaveLength(0);
     expect(forProject(B)).toHaveLength(1);
     expect(terminalVisible()).toBe(true);
+  });
+});
+
+describe("closing a shell", () => {
+  const dev = (pid: number, parent: number, command: string, started: number) => ({
+    pid,
+    parent,
+    name: command.split(" ")[0],
+    command,
+    started,
+  });
+
+  it("closes one at an idle prompt at once", async () => {
+    const shell = live(A, "pty-a");
+    expect(await closeAsking(shell.key)).toBe(true);
+    expect(byKey(shell.key)).toBeNull();
+    expect(killed).toEqual(["pty-a"]);
+    expect(terminals.asking).toBeNull();
+  });
+
+  it("asks first about one with something running, naming what was started at its prompt", async () => {
+    const shell = live(A, "pty-a");
+    // The shell's own pid is 10; npm started node under it.
+    under["pty-a"] = [dev(12, 10, "npm run dev", 200), dev(13, 12, "node vite", 201), dev(11, 10, "sleep 30", 100)];
+    expect(await closeAsking(shell.key, true)).toBe(false);
+    expect(byKey(shell.key)).not.toBeNull();
+    expect(terminals.asking).toEqual({ key: shell.key, running: ["sleep 30", "npm run dev"], fromRow: true });
+    closeAsked();
+    expect(byKey(shell.key)).toBeNull();
+    expect(terminals.asking).toBeNull();
+  });
+
+  it("keeps the shell when the answer is to keep it", async () => {
+    const shell = live(A, "pty-a");
+    under["pty-a"] = [dev(12, 10, "npm run dev", 200)];
+    await closeAsking(shell.key);
+    keepAsked();
+    expect(byKey(shell.key)).not.toBeNull();
+    expect(terminals.asking).toBeNull();
+    expect(killed).toEqual([]);
+  });
+
+  it("brings the shell asked about to the front, and puts the question away when another comes forward", async () => {
+    const first = live(A, "pty-a");
+    const second = live(A, "pty-b");
+    under["pty-a"] = [dev(12, 10, "npm run dev", 200)];
+    await closeAsking(first.key);
+    expect(terminals.active).toBe(first.key);
+    select(second.key);
+    expect(terminals.asking).toBeNull();
+    expect(byKey(first.key)).not.toBeNull();
+  });
+
+  it("puts the question away when the shell goes by itself", async () => {
+    const shell = live(A, "pty-a");
+    under["pty-a"] = [dev(12, 10, "npm run dev", 200)];
+    await closeAsking(shell.key);
+    ended({ id: "pty-a", code: 0, clean: true });
+    expect(terminals.asking).toBeNull();
+  });
+
+  it("closes at once a shell that is not running, or whose processes cannot be read", async () => {
+    const crashed = live(A, "pty-c");
+    ended({ id: "pty-c", code: 1, clean: false });
+    expect(await closeAsking(crashed.key)).toBe(true);
+    expect(byKey(crashed.key)).toBeNull();
+    const unreadable = live(A, "pty-unreadable");
+    expect(await closeAsking(unreadable.key)).toBe(true);
+    expect(byKey(unreadable.key)).toBeNull();
   });
 });

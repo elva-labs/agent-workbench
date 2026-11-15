@@ -4,6 +4,7 @@ import {
   chordFor,
   chordFromEvent,
   describe,
+  sameChord,
   type ActionKey,
   type Chord,
 } from "$lib/keys.svelte";
@@ -32,14 +33,16 @@ export { isMac };
  * The editor is a text field of the app's own, and keeps what a text field
  * needs while it has the keyboard: Escape, every chord on an arrow key,
  * which moves or selects there, and the viewer's chord, which selects the
- * next occurrence there. Find there is find in the file. Save and close tab
- * are editor mode's, from anywhere but a terminal, where on Windows and
- * Linux the same Ctrl chords are the process's.
+ * next occurrence there. Find there is find in the file. Save is editor
+ * mode's, from anywhere but a terminal, where on Windows and Linux the same
+ * Ctrl chord is the process's. Close closes what is in front, from
+ * anywhere on macOS; elsewhere a terminal keeps Ctrl+W and closes on the
+ * chord with Shift added.
  *
  * An integrated session has no terminal: its composer stops a running turn
  * on Escape and lets the key through when none runs, and then it closes the
  * viewer while reviewing, goes back to the editor in editor mode, and does
- * nothing else. Save and close tab are the app's from it, and find is left
+ * nothing else. Save and close are the app's from it, and find is left
  * free there.
  */
 
@@ -57,8 +60,8 @@ export type Action =
   | { type: "newFile" }
   /** The file in front in the editor written to disk. */
   | { type: "save" }
-  /** The editor's tab in front closed, or the window on macOS with none. */
-  | { type: "closeTab" }
+  /** What is in front closed: see `closeTarget`. */
+  | { type: "close" }
   /** A new shell in the terminal panel, with the keyboard in it. */
   | { type: "newShell" }
   /** Find in the file in the editor. */
@@ -137,7 +140,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   findLines: { type: "find", mode: "lines" },
   "file.new": { type: "newFile" },
   "file.save": { type: "save" },
-  "file.close": { type: "closeTab" },
+  "file.close": { type: "close" },
   "terminal.new": { type: "newShell" },
   theme: { type: "cycleTheme" },
   settings: { type: "openSettings" },
@@ -189,7 +192,10 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
     const plain = plainEquals(chord);
     if (plain !== null) action = actionOf(plain);
   }
-  if (action === null) return null;
+  if (action === null) {
+    const also = closeAlso(mac);
+    return also !== null && sameChord(chord, also) ? ACTION_OF["file.close"] : null;
+  }
   // Filtering the tree is the changes pane's own: in a terminal the same
   // chord is the process's, Ctrl+F most of all. In the editor it finds in
   // the file.
@@ -198,16 +204,114 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   // The viewer's chord has no viewer to open in editor mode; in the editor
   // it is the editor's own.
   if (action === "review" && ctx.editing) return null;
-  // Saving and closing a tab are editor mode's, from anywhere but a
-  // terminal: the tree, the editor, and an integrated session's composer,
-  // which is a text field with no use for them. A terminal keeps the
-  // chords: Ctrl+S and Ctrl+W are the process's on Windows and Linux. On
-  // macOS the File menu answers what the page lets through, so Cmd+W still
-  // closes the window there.
+  // Saving is editor mode's, from anywhere but a terminal: the tree, the
+  // editor, and an integrated session's composer, which is a text field
+  // with no use for it. A terminal keeps the chord: Ctrl+S is the
+  // process's on Windows and Linux. On macOS the File menu answers what the
+  // page lets through. Close is the app's from anywhere on macOS, where no
+  // process has Cmd+W; elsewhere a terminal keeps Ctrl+W, which deletes a
+  // word there, and `closeAlso` closes from it instead.
   const terminal = isTerminal(ctx.focus) && !(ctx.focus === "agent" && ctx.integrated);
   if (action === "file.save" && (!ctx.editing || terminal)) return null;
-  if (action === "file.close" && (!ctx.editing || terminal)) return null;
+  if (action === "file.close" && !mac && terminal) return null;
   return ACTION_OF[action];
+}
+
+/** Off macOS, the close chord with Shift added, which closes as well, from
+    anywhere: it is the one a terminal lets through, as Ctrl+Shift+T opens a
+    shell from one. None on macOS, where the close chord is never a
+    process's, nor when the close chord has Shift already or another action
+    holds the shifted one. */
+export function closeAlso(mac: boolean = isMac()): Chord | null {
+  if (mac) return null;
+  const close = chordFor("file.close");
+  if (close.shift) return null;
+  const also = { ...close, shift: true };
+  return actionOf(also) === null ? also : null;
+}
+
+/** What close acts on, the first of these that holds. */
+export type CloseTarget =
+  /** The palette, put away as Escape does. */
+  | "palette"
+  /** A dialog that holds the keyboard, closed as Escape does. */
+  | "dialog"
+  /** Nothing: a question in a strip holds the keyboard, and a second
+      press neither answers it nor reaches past it. */
+  | "nothing"
+  /** The shell in front, with the keyboard in the terminal panel. */
+  | "shell"
+  /** The browser's tab in front, while the browser is shown. */
+  | "browserTab"
+  /** In editor mode, what took the editor's place: what the agent
+      presented, or a plugin's page. */
+  | "other"
+  /** The editor's tab in front. */
+  | "tab"
+  /** The viewer, while reviewing. */
+  | "viewer"
+  /** The window, which asks first while sessions run or edits are
+      unsaved. */
+  | "window";
+
+export interface CloseState {
+  /** The palette is up. */
+  palette: boolean;
+  /** A dialog that holds the keyboard is up: the settings, the remote or
+      resume lists, or an action's input. */
+  dialog: boolean;
+  /** A question in a strip has the keyboard. */
+  question: boolean;
+  focus: PaneId;
+  editing: boolean;
+  reviewing: boolean;
+  /** The terminal panel has a shell in front. */
+  shell: boolean;
+  /** The editor has a tab in front. */
+  tab: boolean;
+  /** In editor mode, something other than a file takes the editor's
+      place: what the agent presented, a plugin's page, or the browser. */
+  other: boolean;
+  /** The browser is what the viewer or the editor's place shows, with a
+      tab in front. */
+  browserTab: boolean;
+}
+
+/**
+ * What close closes. It is the thing in front, wherever the keyboard is,
+ * except that the terminal panel holding the keyboard puts its shell in
+ * front. It never closes a session: a session is closed from its row,
+ * which says what goes with it. Where nothing smaller is in front, it is
+ * the window, and the window asks first while anything would be lost.
+ */
+export function closeTarget(state: CloseState): CloseTarget {
+  if (state.palette) return "palette";
+  if (state.dialog) return "dialog";
+  if (state.question) return "nothing";
+  if (state.focus === "terminal" && state.shell) return "shell";
+  if (state.editing) {
+    if (state.other) return state.browserTab ? "browserTab" : "other";
+    return state.tab ? "tab" : "window";
+  }
+  if (state.reviewing) return state.browserTab ? "browserTab" : "viewer";
+  return "window";
+}
+
+/** The close item's name in the File menu, for what it would close. */
+export function closeLabel(target: CloseTarget): string {
+  switch (target) {
+    case "shell":
+      return "Close Shell";
+    case "tab":
+    case "browserTab":
+      return "Close Tab";
+    case "viewer":
+      return "Close Viewer";
+    case "window":
+      return "Close Window";
+    default:
+      return "Close";
+  }
 }
 
 export interface Binding {

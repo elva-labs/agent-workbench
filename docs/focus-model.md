@@ -35,7 +35,7 @@ default preset:
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
 | <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>                                | A new file in the tree, in editor mode                      |
 | <kbd>Cmd</kbd><kbd>S</kbd>                                              | Save the file in front, in editor mode                      |
-| <kbd>Cmd</kbd><kbd>W</kbd>                                              | Close the editor's tab in front, in editor mode             |
+| <kbd>Cmd</kbd><kbd>W</kbd>                                              | Close what is in front: see [closing](#closing-what-is-in-front) |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>T</kbd>                              | Cycle theme: light, dark, system                            |
 | <kbd>Cmd</kbd><kbd>=</kbd> / <kbd>-</kbd> / <kbd>0</kbd>                | Zoom the terminal, or the editor, that has focus in, out, or back |
 | <kbd>Cmd</kbd><kbd>P</kbd>                                              | Go to a session or project                                  |
@@ -72,8 +72,8 @@ panel toggles on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>J</kbd>, and sessions
 step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The command
 palette opens on <kbd>Cmd</kbd><kbd>;</kbd> there, since
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> steps sessions. Going to a session
-or project stays on <kbd>Cmd</kbd><kbd>P</kbd>, and the editor's chords and
-a new shell's are the default's.
+or project stays on <kbd>Cmd</kbd><kbd>P</kbd>, and the editor's chords,
+close and a new shell's are the default's.
 
 A chord with <kbd>Alt</kbd> is read from the key's place on the keyboard,
 since on macOS <kbd>Option</kbd> turns a letter into another character.
@@ -151,6 +151,55 @@ a palette and <kbd>Cmd</kbd><kbd>.</kbd> does nothing, so the keyboard stays
 where the dialog has it. Answering the question gives the keyboard back to
 the pane that has the focus.
 
+## Closing what is in front
+
+<kbd>Cmd</kbd><kbd>W</kbd> closes what is in front, wherever the keyboard is,
+and never more than that. It closes the first of these that holds:
+
+- the palette, or a dialog that holds the keyboard, as Escape does;
+- nothing, while a question in a strip holds the keyboard: a second press
+  neither answers it nor reaches past it;
+- the shell in front, while the terminal panel has the keyboard;
+- the browser's tab in front, while the browser is shown, in the viewer or
+  in the editor's place;
+- in editor mode, what the agent presented or a plugin's page in the
+  editor's place, else the editor's tab in front, from the agent's terminal
+  or conversation as much as from the tree;
+- while reviewing, the viewer;
+- otherwise the window.
+
+It never closes a session: a session is closed from its row, which says
+what goes with it. Close in the File menu does the same as the chord, and
+is named for what it would close: Close Tab, Close Shell, Close Viewer or
+Close Window.
+
+A shell at an idle prompt closes at once. One with something still running
+in it, a dev server say, comes to the front and asks first, by the chord,
+its row's <kbd>Delete</kbd> or its ×: the question names what runs and
+holds the keyboard on Cancel, <kbd>Escape</kbd> cancels, and either answer
+gives the keyboard back where it was, the shell or its row.
+
+Closing the window ends the app, and every session running in it. So the
+window's close, by the chord, by Close Window on
+<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>, by the red button or by the
+controls the app draws, and the app's quit, ask first while a session runs
+or the editor holds unsaved edits. The question goes over the whole window.
+It says how many sessions run and how many of them wait on you, that they
+come back as rows next time to resume, and names every unsaved file, with
+Cancel holding the keyboard, so <kbd>Return</kbd> keeps everything. A row
+left from the last quit runs nothing and counts for nothing, and a window
+with nothing running closes without a question. There is no setting to turn
+the question off. How it is held for unsaved edits is in
+[the editor](editor.md#nothing-unsaved-goes-unasked).
+
+On Windows and Linux the chord is <kbd>Ctrl</kbd><kbd>W</kbd> outside a
+terminal, which keeps it, since it deletes a word there;
+<kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>W</kbd> closes from anywhere, a terminal
+included, as in a terminal emulator. A close chord moved in the settings
+takes its Shift form with it, unless another action holds that. On macOS
+a terminal keeps <kbd>Ctrl</kbd><kbd>W</kbd> and
+<kbd>Cmd</kbd><kbd>W</kbd> is the app's from everywhere.
+
 ## What the app never claims
 
 - **<kbd>Tab</kbd> does not move focus between panes.** It is completion
@@ -161,7 +210,8 @@ the pane that has the focus.
 - **<kbd>Ctrl</kbd> chords belong to the agent** on macOS, where the app
   modifier is <kbd>Cmd</kbd>. On Windows and Linux the modifier is
   <kbd>Ctrl</kbd>, so the bound chords are taken from the terminal there,
-  and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them.
+  and <kbd>Ctrl+C</kbd> and <kbd>Ctrl+R</kbd> are never among them, nor
+  <kbd>Ctrl+W</kbd>, which closes only outside a terminal.
 - **<kbd>Esc</kbd> belongs to whichever terminal has focus.** The agent needs
   it, and so does a shell in the panel, and the editor keeps its own. An
   integrated session's composer takes it to stop a running turn. A pane that
@@ -206,7 +256,8 @@ control a stop as it is drawn, by one rule for the whole window:
 - **A shell's row** in the terminal panel goes to its shell: a click,
   <kbd>Enter</kbd> or <kbd>Space</kbd> on it shows the shell and puts the
   keyboard in it. <kbd>Delete</kbd> closes the shell under the keyboard,
-  as its × does, and the keyboard stays on the rows.
+  as its × does, asking first when something runs in it, and the keyboard
+  stays on the rows.
 - **A menu** opens with the keyboard on the choice in force, or its first
   item. The arrows walk it, <kbd>Enter</kbd> picks, <kbd>Esc</kbd> closes it
   back to its button, and <kbd>Tab</kbd> closes it on the way on. A list
@@ -360,17 +411,16 @@ selects to the end of the file there rather than stepping sessions, and
 <kbd>Tab</kbd> indents. The other chords are the app's as anywhere, and
 <kbd>Cmd</kbd><kbd>F</kbd> finds in the file there.
 
-Save and close tab work from anywhere in editor mode but a terminal: from
-the tree as well as the editor, and from an integrated session's composer,
-which is a text field with no use for them. A terminal keeps their chords, since on
-Windows and Linux <kbd>Ctrl</kbd><kbd>S</kbd> and <kbd>Ctrl</kbd><kbd>W</kbd>
-are the process's. On macOS <kbd>Cmd</kbd><kbd>W</kbd> with no tab to close,
-in editor mode or out of it, closes the window, and a chord the page lets
-through reaches the [File menu](editor.md#the-file-menu), whose items carry
-the same chords, so <kbd>Cmd</kbd><kbd>S</kbd> saves from a terminal too.
-Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>. With the
-keyboard in a browser tab's page, the two are the app's only in editor
-mode; outside it they reach the menu as from anywhere else.
+Save works from anywhere in editor mode but a terminal: from the tree as
+well as the editor, and from an integrated session's composer, which is a
+text field with no use for it. A terminal keeps its chord, since on Windows
+and Linux <kbd>Ctrl</kbd><kbd>S</kbd> is the process's. On macOS a chord the
+page lets through reaches the [File menu](editor.md#the-file-menu), whose
+items carry the same chords, so <kbd>Cmd</kbd><kbd>S</kbd> saves from a
+terminal too. With the keyboard in a browser tab's page, Save is the app's
+only in editor mode; outside it it reaches the menu as from anywhere else.
+Close closes the tab in front from anywhere in editor mode, as
+[closing what is in front](#closing-what-is-in-front) says.
 
 <kbd>Esc</kbd> in the tree, the sessions pane or an integrated session's
 composer with no turn running hands the keyboard back to the editor, where

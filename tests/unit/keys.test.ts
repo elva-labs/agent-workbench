@@ -364,4 +364,15 @@ describe("the chords that differ by platform", () => {
     expect(chordFor("theme")).toEqual(chord("y", true));
     expect(chordFor("terminal.new")).toEqual(chord("t", true));
   });
+
+  it("name close as what is in front, among the app's", () => {
+    expect(ACTIONS.find(({ key }) => key === "file.close")).toEqual({
+      key: "file.close",
+      label: "Close what is in front",
+      group: "App",
+    });
+    // Each group stands together, once.
+    const groups = ACTIONS.map(({ group }) => group).filter((group, at, all) => group !== all[at - 1]);
+    expect(new Set(groups).size).toBe(groups.length);
+  });
 });
