@@ -36,19 +36,20 @@ const settingsWith = (workflow: typeof PLAN_WORK_REVIEW) => ({
 
 let calls = 0;
 
-/** A call from the orchestrator, answered before this returns. */
-async function call(page: Page, tool: string, args: Record<string, unknown>) {
+/** A call from the orchestrator, answered before this returns, with its
+    answer. */
+async function call(page: Page, tool: string, args: Record<string, unknown>, session = "session-1") {
   const id = `c-${++calls}`;
   await page.evaluate(
-    ({ project, id, tool, args }) =>
+    ({ project, id, tool, args, session }) =>
       (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
         id,
         tool,
         arguments: args,
         cwd: project,
-        session: "session-1",
+        session,
       }),
-    { project: PROJECT, id, tool, args },
+    { project: PROJECT, id, tool, args, session },
   );
   const ask = page.getByTestId("conduct-allow");
   await expect
@@ -59,6 +60,10 @@ async function call(page: Page, tool: string, args: Record<string, unknown>) {
       return answers.some((answer) => answer.id === id);
     })
     .toBe(true);
+  const answers = await page.evaluate(
+    () => (window as unknown as { __conductAnswers: { id: string; content: string | null }[] }).__conductAnswers,
+  );
+  return answers.find((answer) => answer.id === id)!.content ?? "";
 }
 
 /** What a session's hooks say it is doing: prompt is at work, stop at rest. */
@@ -84,6 +89,58 @@ async function begin(page: Page, workflow = PLAN_WORK_REVIEW) {
   await page.goto("/");
   await page.getByTestId("start-agent").click();
   await expect(chip(page)).toBeVisible();
+}
+
+/** Narrows the agent pane step by step, checking the header gives way in
+    turn: the status, then the chip's words with the gap before them and
+    anything beside them in the head, and the title last, the pips always
+    inside the pane. */
+async function narrows(page: Page) {
+  const state = () =>
+    page.evaluate((AGENT) => {
+      const header = document.querySelector(`${AGENT} header`)!;
+      const title = header.querySelector<HTMLElement>(".title")!;
+      const words = header.querySelector<HTMLElement>("[data-testid='run-words']")!;
+      const pips = header.querySelector<HTMLElement>("[data-testid='run-pips']")!;
+      const meta = header.querySelector<HTMLElement>(".meta");
+      const drawn = (el: HTMLElement | null) =>
+        el !== null && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().width > 0.5;
+      const head = header.closest("section")!.getBoundingClientRect();
+      const pipsBox = pips.getBoundingClientRect();
+      const room = header.querySelector<HTMLElement>(".head")!.getBoundingClientRect();
+      const chip = header.querySelector<HTMLElement>("[data-testid='run-chip']")!.getBoundingClientRect();
+      return {
+        slack: room.right - chip.right,
+        titleCut: title.scrollWidth > title.clientWidth + 0.5,
+        wordsDrawn: drawn(words),
+        wordsCut: words.scrollWidth > words.clientWidth + 0.5,
+        wordsWidth: words.getBoundingClientRect().width,
+        metaDrawn: drawn(meta),
+        pipsInside: pipsBox.width > 20 && pipsBox.right <= head.right - 8,
+      };
+    }, AGENT);
+  const wide = await state();
+  expect(wide).toMatchObject({ titleCut: false, wordsDrawn: true, wordsCut: false, pipsInside: true });
+  // The pane narrowed under it.
+  let sawWordsGone = false;
+  for (const width of [380, 300, 240, 200, 150]) {
+    await page.locator(AGENT).evaluate((pane, width) => {
+      (pane as HTMLElement).style.flex = `0 0 ${width}px`;
+      (pane as HTMLElement).style.width = `${width}px`;
+      (pane as HTMLElement).style.minWidth = `${width}px`;
+    }, width);
+    await expect.poll(async () => (await page.locator(AGENT).boundingBox())!.width).toBeLessThan(width + 1);
+    const at = await state();
+    expect(at.pipsInside, `at ${width}`).toBe(true);
+    if (at.wordsCut || !at.wordsDrawn) expect(at.metaDrawn, `at ${width}`).toBe(false);
+    // Gone, the words take no room from the title.
+    if (at.titleCut) expect(at.wordsWidth, `at ${width}`).toBeLessThan(0.5);
+    if (at.titleCut) expect(at.wordsDrawn, `at ${width}`).toBe(false);
+    // Nor the gap before them: the head keeps no more than the chip.
+    if (at.titleCut) expect(at.slack, `at ${width}`).toBeLessThan(1);
+    if (!at.wordsDrawn) sawWordsGone = true;
+  }
+  expect(sawWordsGone).toBe(true);
 }
 
 test.describe("the run's chip", () => {
@@ -297,51 +354,7 @@ test.describe("the run's chip", () => {
     await call(page, "start", { project: PROJECT, prompt: "Filter", step: "Work", name: "Palette filter" });
     await event(page, "session-3", "prompt");
     await expect(words(page)).toHaveText("2 in Work");
-    const state = () =>
-      page.evaluate((AGENT) => {
-        const header = document.querySelector(`${AGENT} header`)!;
-        const title = header.querySelector<HTMLElement>(".title")!;
-        const words = header.querySelector<HTMLElement>("[data-testid='run-words']")!;
-        const pips = header.querySelector<HTMLElement>("[data-testid='run-pips']")!;
-        const meta = header.querySelector<HTMLElement>(".meta");
-        const drawn = (el: HTMLElement | null) =>
-          el !== null && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().width > 0.5;
-        const head = header.closest("section")!.getBoundingClientRect();
-        const pipsBox = pips.getBoundingClientRect();
-        const room = header.querySelector<HTMLElement>(".head")!.getBoundingClientRect();
-        const chip = header.querySelector<HTMLElement>("[data-testid='run-chip']")!.getBoundingClientRect();
-        return {
-          slack: room.right - chip.right,
-          titleCut: title.scrollWidth > title.clientWidth + 0.5,
-          wordsDrawn: drawn(words),
-          wordsCut: words.scrollWidth > words.clientWidth + 0.5,
-          wordsWidth: words.getBoundingClientRect().width,
-          metaDrawn: drawn(meta),
-          pipsInside: pipsBox.width > 20 && pipsBox.right <= head.right - 8,
-        };
-      }, AGENT);
-    const wide = await state();
-    expect(wide).toMatchObject({ titleCut: false, wordsDrawn: true, wordsCut: false, pipsInside: true });
-    // The pane narrowed under it.
-    let sawWordsGone = false;
-    for (const width of [380, 300, 240, 200, 150]) {
-      await page.locator(AGENT).evaluate((pane, width) => {
-        (pane as HTMLElement).style.flex = `0 0 ${width}px`;
-        (pane as HTMLElement).style.width = `${width}px`;
-        (pane as HTMLElement).style.minWidth = `${width}px`;
-      }, width);
-      await expect.poll(async () => (await page.locator(AGENT).boundingBox())!.width).toBeLessThan(width + 1);
-      const at = await state();
-      expect(at.pipsInside, `at ${width}`).toBe(true);
-      if (at.wordsCut || !at.wordsDrawn) expect(at.metaDrawn, `at ${width}`).toBe(false);
-      // Gone, the words take no room from the title.
-      if (at.titleCut) expect(at.wordsWidth, `at ${width}`).toBeLessThan(0.5);
-      if (at.titleCut) expect(at.wordsDrawn, `at ${width}`).toBe(false);
-      // Nor the gap before them: the head keeps no more than the chip.
-      if (at.titleCut) expect(at.slack, `at ${width}`).toBeLessThan(1);
-      if (!at.wordsDrawn) sawWordsGone = true;
-    }
-    expect(sawWordsGone).toBe(true);
+    await narrows(page);
   });
 });
 
@@ -365,5 +378,79 @@ test.describe("a started session's place", () => {
     await expect(rules).toBeVisible();
     await tag.click();
     await expect(rules).toHaveCount(0);
+  });
+});
+
+test.describe("an integrated orchestrator's thread", () => {
+  /** Runs a script against the fake integrated agent, as `f`. */
+  const agent = (page: Page, script: string) =>
+    page.evaluate((script) => {
+      const f = (window as unknown as { __integrated: unknown }).__integrated;
+      new Function("f", script)(f);
+    }, script);
+  const ORCHESTRATOR = "integrated-session-1";
+
+  /** A start the orchestrator makes in its turn: the tool call in the
+      thread, the call the core delivers, and the call's answer. */
+  async function started(page: Page, args: Record<string, unknown>) {
+    await agent(
+      page,
+      `window.__startCall = f.startTool("int-1", "mcp__agent-workbench__start", ${JSON.stringify({ project: PROJECT, ...args })}, { kind: "mcp" });`,
+    );
+    const content = await call(page, "start", { project: PROJECT, ...args }, ORCHESTRATOR);
+    await agent(page, `f.finishTool("int-1", window.__startCall, ${JSON.stringify(content)});`);
+  }
+
+  test("shows each started session's step, and its round with what it is doing", async ({ page }) => {
+    calls = 0;
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { ...settingsWith(PLAN_WORK_REVIEW), integrated: ["claude-code"] },
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(words(page)).toHaveText("Plan, work, review");
+    await page.getByTestId("composer-input").fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("int-1");`);
+
+    await started(page, { prompt: "Fix the flaky cache test", step: "Work", name: "Fix the cache" });
+    await agent(page, `f.startTurn("int-2"); f.endTurn("int-2");`);
+    await started(page, { prompt: "Review the fix", step: "Review", work: "integrated-session-2", name: "Review the cache fix" });
+    await agent(page, `f.startTurn("int-3");`);
+
+    const thread = page.getByTestId("conversation");
+    const rows = thread.getByTestId("started-session");
+    await expect(rows).toHaveCount(2);
+    // The step before the name, and the round, where there is one, with
+    // what the session is doing.
+    await expect(thread.getByTestId("started-step")).toHaveText(["Work", "Review"]);
+    await expect(rows.nth(0)).toContainText("Fix the cache");
+    await expect(rows.nth(1)).toContainText("Review the cache fix");
+    await expect(rows.nth(1).getByTestId("started-state")).toHaveText("round 1 of 4, working");
+    await expect(words(page)).toHaveText("Review, round 1 of 4");
+    // The step stands in a column of its own: the names start level.
+    const names = await rows.locator(".name").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().left));
+    expect(Math.abs(names[0] - names[1])).toBeLessThan(1);
+
+    // The review rests, and the work is sent back: its row says the round.
+    await agent(page, `f.endTurn("int-3");`);
+    await call(page, "send", { session: "integrated-session-2", text: "Make it smaller" }, ORCHESTRATOR);
+    await agent(page, `f.startTurn("int-2");`);
+    await expect(rows.nth(0).getByTestId("started-state")).toHaveText("round 2 of 4, working");
+    await expect(words(page)).toHaveText("Work, round 2 of 4");
+  });
+
+  test("gives way in its header beside the project and branch, the title last", async ({ page }) => {
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { ...settingsWith(PLAN_WORK_REVIEW), integrated: ["claude-code"] },
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+    await expect(words(page)).toHaveText("Plan, work, review");
+    await narrows(page);
   });
 });
