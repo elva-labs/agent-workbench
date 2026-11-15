@@ -149,7 +149,9 @@ first.
 
 While a dialog, or a question over the agent pane, is up, neither chord opens
 a palette and <kbd>Cmd</kbd><kbd>.</kbd> does nothing, so the keyboard stays
-where the dialog has it. Answering the question gives the keyboard back to
+where the dialog has it. A new shell and the chord to the status bar do
+nothing either while a dialog or a question in a strip holds the keyboard.
+Answering the question gives the keyboard back to
 the pane that has the focus.
 
 ## Closing what is in front

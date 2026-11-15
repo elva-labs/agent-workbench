@@ -162,3 +162,39 @@ test("lists the chord in the Keys settings, and follows it when moved", async ({
   await expect(page.locator(ROW)).toHaveCount(1);
   await expect(page.getByTestId("new-terminal")).toHaveAttribute("title", "New shell (⌘⌥T)");
 });
+
+/** What the window asked of its controls: a close, a quit. */
+const controls = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __windowControls?: string[] }).__windowControls ?? []);
+
+const inSettings = (page: Page) =>
+  page.evaluate(() => document.activeElement?.closest("[data-testid='settings']") != null);
+
+test("makes no shell under the settings, which keep the keyboard", async ({ page }) => {
+  await open(page, PLATFORMS[0]);
+  await page.keyboard.press("Meta+,");
+  await expect(page.getByTestId("settings")).toBeVisible();
+  await expect.poll(() => inSettings(page)).toBe(true);
+  await page.keyboard.press("Meta+t");
+  expect(await inSettings(page)).toBe(true);
+  // Escape is the settings', not a shell's.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("settings")).toHaveCount(0);
+  await expect(page.locator(TERMINAL)).toBeHidden();
+  await expect(page.locator(ROW)).toHaveCount(0);
+});
+
+test("makes no shell while the window's question holds the keyboard, and Return still cancels", async ({ page }) => {
+  await open(page, PLATFORMS[0]);
+  await startSession(page);
+  await page.keyboard.press("Meta+w");
+  const cancel = page.getByTestId("close-window-cancel");
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Meta+t");
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("close-window")).toHaveCount(0);
+  await expect(page.locator(TERMINAL)).toBeHidden();
+  await expect(page.locator(ROW)).toHaveCount(0);
+  expect(await controls(page)).toEqual([]);
+});

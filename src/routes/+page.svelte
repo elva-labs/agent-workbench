@@ -143,6 +143,7 @@
     layout,
     peekSessions,
     peekable,
+    questionHoldsKeyboard,
     resetEditAgent,
     returnFocus,
     resizeEditAgent,
@@ -595,10 +596,10 @@
     );
   }
 
-  /** Whether a question in a strip has the keyboard: one put in a pane
-      before something is taken away. */
-  function questionHasKeyboard(): boolean {
-    return document.activeElement?.closest('[role="alertdialog"]') != null;
+  /** Whether a dialog, or a question in a strip, holds the keyboard where
+      a chord that moves it may not take it from. */
+  function keyboardHeld(): boolean {
+    return dialogUp() || questionHoldsKeyboard();
   }
 
   /** What close would act on now. */
@@ -620,7 +621,7 @@
   /** Closes what is in front: by the chord, from the File menu, or from
       the palette. */
   async function closeInFront() {
-    switch (closeTarget(closeState(questionHasKeyboard()))) {
+    switch (closeTarget(closeState(questionHoldsKeyboard()))) {
       case "nothing":
         break;
       case "palette":
@@ -700,16 +701,20 @@
       integrated: activeSession()?.kind === "integrated",
     });
     if (!action) return;
-    // Opening the palette, the jump and the chord to the status bar move
-    // the keyboard, so with a dialog up they do nothing and the webview
-    // gets nothing from them either. The chord still puts an open palette
-    // away.
+    // Opening the palette and the jump move the keyboard, so with a dialog up
+    // they do nothing and the webview gets nothing from them either. The
+    // chord still puts an open palette away.
     if (
       (action.type === "attention" ||
-        action.type === "focusStatus" ||
         ((action.type === "palette" || action.type === "goto") && !palette.open)) &&
       dialogUp()
     ) {
+      e.preventDefault();
+      return;
+    }
+    // A new shell and the chord to the status bar move the keyboard too,
+    // and do nothing while a question in a strip holds it either.
+    if ((action.type === "newShell" || action.type === "focusStatus") && keyboardHeld()) {
       e.preventDefault();
       return;
     }
@@ -852,7 +857,7 @@
   /** An item of the File menu: what its action does. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
-    else if (action === "terminal.new") newShell();
+    else if (action === "terminal.new" && !palette.open && !keyboardHeld()) newShell();
     else if (action === "file.save" && editing) void save();
     else if (action === "file.close") void closeInFront();
   }

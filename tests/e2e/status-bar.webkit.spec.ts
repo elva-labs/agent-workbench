@@ -256,3 +256,15 @@ test("says so when the bar has nothing to reach", async ({ page }) => {
   await page.keyboard.press(`${MOD}+5`);
   await expect(page.getByTestId("flash-readout")).toHaveText("Nothing to change in the status bar");
 });
+
+test("leaves the keyboard on the window's question on its chord", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press(`${MOD}+w`);
+  const cancel = page.getByTestId("close-window-cancel");
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press(`${MOD}+5`);
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("close-window")).toHaveCount(0);
+  await expect(page.getByTestId("composer-input")).toBeFocused();
+});
