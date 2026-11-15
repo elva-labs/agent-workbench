@@ -9,8 +9,8 @@ use std::sync::Once;
 /// What a test isolates beyond the variables that name a repository, which
 /// the core's own list holds: the config an identity and a caller's settings
 /// come from, and the directory Claude Code keeps its state in, which a
-/// developer's terminal may name. A test run from inside a git command (a rebase `--exec`, a hook,
-/// a bisect) inherits them, and git would then act on the caller's repository.
+/// developer's terminal may name. A test run from inside a git command (a
+/// rebase `--exec`, a hook, a bisect) inherits them, and git would then act on the caller's repository.
 const ALSO_ISOLATED: &[&str] = &[
     "GIT_CONFIG",
     "GIT_CONFIG_COUNT",

@@ -121,8 +121,11 @@ Print mode skips the agent's own question of whether a folder's files are
 to be trusted, and a trusted folder's hooks and MCP servers run. So before
 it starts a session, the core reads the record that question writes: the
 `hasTrustDialogAccepted` entry for the folder, or for a folder above it,
-in the state file of the account the session runs under. A start in a
-folder with no such entry fails with an error of its own kind, which the
+in the state file of the account the session runs under. For a session
+under no account that is the state file in the `CLAUDE_CONFIG_DIR` of the
+environment the Claude Code process starts with, else `.claude.json` in
+the user's home; the tool server's entry and the hooks' check of it use
+the same file. A start in a folder with no such entry fails with an error of its own kind, which the
 window can tell from other failures. The window asks the user, and on a
 yes the trust command writes the entry for the folder, where the agent's
 own question would have, and the session can start. A worktree the
