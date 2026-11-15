@@ -373,7 +373,7 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Condvar, Mutex};
     use std::thread;
 
     use workbench_core::browser::capture::{begin, CaptureView, Frame, ViewState, WindowState};
@@ -421,13 +421,53 @@ mod tests {
         }
     }
 
+    /// How long a stuck call of the fake stays stuck if nothing releases it.
+    /// Far beyond every wait a test runs with, so the capture always gives up
+    /// first however slow the machine is.
+    const STUCK: Duration = Duration::from_secs(60);
+
+    /// A one-way latch the tests and the fake signal each other through.
+    struct Gate {
+        open: Mutex<bool>,
+        changed: Condvar,
+    }
+
+    impl Gate {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                open: Mutex::new(false),
+                changed: Condvar::new(),
+            })
+        }
+
+        fn open(&self) {
+            *self.open.lock().unwrap() = true;
+            self.changed.notify_all();
+        }
+
+        fn is_open(&self) -> bool {
+            *self.open.lock().unwrap()
+        }
+
+        /// Waits until the gate is open, for at most `max`, and says whether
+        /// it is.
+        fn wait(&self, max: Duration) -> bool {
+            let open = self.open.lock().unwrap();
+            *self
+                .changed
+                .wait_timeout_while(open, max, |open| !*open)
+                .unwrap()
+                .0
+        }
+    }
+
     /// How the fake snapshot answers.
     #[derive(Clone, Copy)]
     enum Answer {
         Image,
         Error,
-        /// Only after this long.
-        Late(Duration),
+        /// Only once the test lets it, as for a slow page.
+        Gated,
         /// Not at all, as for a page stuck in a loop.
         Never,
     }
@@ -440,6 +480,12 @@ mod tests {
         stuck: bool,
         /// The view's state as the snapshot saw it.
         seen: Arc<Mutex<Option<ViewState>>>,
+        /// Opened by the test to let every stuck call of the fake return.
+        release: Arc<Gate>,
+        /// Opened by the fake once its snapshot has begun.
+        reached: Arc<Gate>,
+        /// Opened by the fake when a call held by `release` has returned.
+        returned: Arc<Gate>,
     }
 
     impl Fake {
@@ -454,6 +500,9 @@ mod tests {
                 window: WindowState::ON_SHOW,
                 stuck: false,
                 seen: Arc::default(),
+                release: Gate::new(),
+                reached: Gate::new(),
+                returned: Gate::new(),
             }
         }
     }
@@ -468,6 +517,11 @@ mod tests {
         ) -> Result<(), String> {
             let view = self.view.clone();
             let (kind, window, seen) = (self.answer, self.window, Arc::clone(&self.seen));
+            let (release, reached, returned) = (
+                Arc::clone(&self.release),
+                Arc::clone(&self.reached),
+                Arc::clone(&self.returned),
+            );
             thread::spawn(move || {
                 match begin(&view, window, size) {
                     Ok(revealed) => {
@@ -480,23 +534,26 @@ mod tests {
                     }
                 }
                 *seen.lock().unwrap() = Some(view.state());
+                reached.open();
                 let result = match kind {
                     Answer::Image => Ok(vec![1, 2, 3]),
                     Answer::Error => Err("the snapshot failed".to_string()),
-                    Answer::Late(after) => {
-                        thread::sleep(after);
+                    Answer::Gated => {
+                        release.wait(STUCK);
                         Ok(vec![1])
                     }
                     Answer::Never => {
                         // Holds the sender so the capture sees no answer
                         // rather than a dropped channel.
-                        thread::sleep(Duration::from_secs(30));
+                        release.wait(STUCK);
+                        returned.open();
                         drop(answer);
                         return;
                     }
                 };
                 pending.end(&view);
                 let _ = answer.send(result);
+                returned.open();
             });
             Ok(())
         }
@@ -504,10 +561,12 @@ mod tests {
         fn end(&self, pending: Arc<Pending>, done: Sender<()>) -> Result<(), String> {
             let view = self.view.clone();
             let stuck = self.stuck;
+            let (release, returned) = (Arc::clone(&self.release), Arc::clone(&self.returned));
             thread::spawn(move || {
                 pending.end(&view);
                 if stuck {
-                    thread::sleep(Duration::from_secs(30));
+                    release.wait(STUCK);
+                    returned.open();
                 }
                 let _ = done.send(());
             });
@@ -546,13 +605,11 @@ mod tests {
         capture
     }
 
-    /// How long until `views` can be taken, from now.
-    fn time_to_lock(views: &tauri::async_runtime::Mutex<()>) -> Duration {
-        let asked = Instant::now();
+    /// Takes `views` once it is free, waiting for as long as that takes.
+    fn lock_when_free(views: &tauri::async_runtime::Mutex<()>) {
         tauri::async_runtime::block_on(async {
             let _guard = views.lock().await;
         });
-        asked.elapsed()
     }
 
     #[test]
@@ -578,14 +635,17 @@ mod tests {
 
     #[test]
     fn a_snapshot_that_never_answers_is_given_up_on_with_the_view_put_back() {
-        let fake = Fake::new(Answer::Late(Duration::from_millis(400)));
+        let fake = Fake::new(Answer::Gated);
         let view = fake.view.clone();
+        let (release, returned) = (Arc::clone(&fake.release), Arc::clone(&fake.returned));
         let (result, after, free) = run(fake, QUICK);
         assert_eq!(result.unwrap_err(), "timed out taking the screenshot");
         assert_eq!(after, HIDDEN);
         assert!(free);
+        assert!(!returned.is_open(), "the snapshot was still unanswered");
         // The late answer finds nothing left to put back.
-        thread::sleep(Duration::from_millis(500));
+        release.open();
+        assert!(returned.wait(STUCK));
         assert_eq!(view.state(), HIDDEN);
     }
 
@@ -602,19 +662,19 @@ mod tests {
     #[test]
     fn the_views_stay_held_until_the_view_is_back() {
         let views = Arc::new(tauri::async_runtime::Mutex::new(()));
-        let fake = Fake::new(Answer::Late(Duration::from_millis(300)));
+        let fake = Fake::new(Answer::Gated);
         let view = fake.view.clone();
+        let (release, reached) = (Arc::clone(&fake.release), Arc::clone(&fake.reached));
         let capture = capture_on_a_thread(&views, fake, WAITS);
-        thread::sleep(Duration::from_millis(100));
+        assert!(reached.wait(STUCK), "the snapshot has begun");
         // An open, a switch or a close waits here meanwhile.
         assert!(views.try_lock().is_err());
         assert!(!view.state().hidden, "the view is out for its snapshot");
-        let other = tauri::async_runtime::block_on(async {
-            let _guard = views.lock().await;
-            view.state()
-        });
+        release.open();
+        lock_when_free(&views);
         assert_eq!(
-            other, HIDDEN,
+            view.state(),
+            HIDDEN,
             "the next change finds the view back in place"
         );
         assert!(capture.join().unwrap().is_ok());
@@ -623,11 +683,15 @@ mod tests {
     #[test]
     fn a_tab_taken_where_it_is_lets_the_views_go_at_once() {
         let views = Arc::new(tauri::async_runtime::Mutex::new(()));
-        let fake = Fake::at(SHOWN, Answer::Late(Duration::from_millis(500)));
+        let fake = Fake::at(SHOWN, Answer::Gated);
+        let (release, returned) = (Arc::clone(&fake.release), Arc::clone(&fake.returned));
         let capture = capture_on_a_thread(&views, fake, WAITS);
-        // A switch made while the snapshot is still being taken goes ahead.
-        assert!(time_to_lock(&views) < Duration::from_millis(250));
+        // A switch made while the snapshot is still being taken goes ahead:
+        // the views come free with the snapshot held back.
+        lock_when_free(&views);
+        assert!(!returned.is_open(), "the snapshot is still under way");
         assert!(!capture.is_finished(), "the snapshot is still under way");
+        release.open();
         assert_eq!(capture.join().unwrap().unwrap(), vec![1]);
     }
 
@@ -635,15 +699,19 @@ mod tests {
     fn a_revealed_tab_whose_snapshot_never_answers_lets_the_views_go_within_the_cap() {
         let views = Arc::new(tauri::async_runtime::Mutex::new(()));
         let fake = Fake::new(Answer::Never);
-        let view = fake.view.clone();
-        let capture = capture_on_a_thread(&views, fake, WAITS);
-        let waited = time_to_lock(&views);
-        assert!(
-            waited <= WAITS.revealed + Duration::from_millis(500),
-            "the views were held for {waited:?}"
+        let (view, release, returned) = (
+            fake.view.clone(),
+            Arc::clone(&fake.release),
+            Arc::clone(&fake.returned),
         );
-        assert!(WAITS.revealed <= Duration::from_secs(3));
+        let capture = capture_on_a_thread(&views, fake, QUICK);
+        // The views come free while the snapshot is still stuck, so they are
+        // not held until it answers.
+        lock_when_free(&views);
+        assert!(!returned.is_open(), "the snapshot is still stuck");
         assert_eq!(view.state(), HIDDEN, "the view is back before they go");
+        assert!(WAITS.revealed <= Duration::from_secs(3));
+        release.open();
         assert_eq!(
             capture.join().unwrap().unwrap_err(),
             "timed out taking the screenshot"
@@ -655,17 +723,19 @@ mod tests {
         let views = Arc::new(tauri::async_runtime::Mutex::new(()));
         let mut fake = Fake::new(Answer::Never);
         fake.stuck = true;
-        let waits = Waits {
-            put_back: Duration::from_millis(200),
-            ..QUICK
-        };
-        let capture = capture_on_a_thread(&views, fake, waits);
-        let waited = time_to_lock(&views);
-        assert!(
-            waited <= waits.revealed + waits.put_back + Duration::from_millis(300),
-            "the views were held for {waited:?}"
+        let (view, release, returned) = (
+            fake.view.clone(),
+            Arc::clone(&fake.release),
+            Arc::clone(&fake.returned),
         );
+        let capture = capture_on_a_thread(&views, fake, QUICK);
+        // The views come free while the put back is still stuck, so they are
+        // not held until it answers.
+        lock_when_free(&views);
+        assert!(!returned.is_open(), "the put back is still stuck");
+        assert_eq!(view.state(), HIDDEN, "the view was put back before they go");
         assert!(WAITS.put_back <= Duration::from_secs(1));
+        release.open();
         assert!(capture.join().unwrap().is_err());
     }
 }
