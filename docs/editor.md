@@ -25,9 +25,9 @@ one buffer, so an edit made beside one is there beside the other.
 The tab in front is always in view and keeps its whole name. The others
 show their close button only under the pointer and narrow before the row
 overflows, no further than a short name; past that the row scrolls, and an
-edge with tabs past it fades. The × on a tab, a middle-click, Close
-Tab in the File menu or <kbd>Cmd</kbd><kbd>W</kbd> closes it, and the tab
-beside it comes to the front.
+edge with tabs past it fades. The × on a tab, a middle-click, Close in
+the File menu or <kbd>Cmd</kbd><kbd>W</kbd> closes it, and the tab beside it
+comes to the front.
 
 The row stays with no file open, and a double-click on it where no tab is
 starts an [untitled file](#untitled-files).
@@ -149,7 +149,10 @@ without saving apart:
   open, the question in the sessions pane, which goes, closing nothing, if
   the pane folds;
 - closing the window or quitting the app, the question over the whole
-  window, whatever the panes show, naming every unsaved file.
+  window, whatever the panes show, naming every unsaved file and counting
+  the sessions and busy shells that stop with the app. While those run it
+  asks with nothing unsaved as well, as
+  [focus](focus-model.md#closing-what-is-in-front) describes.
 
 When a save in Save and close or Save all cannot be made, because the file
 changed on disk or could not be written, nothing is closed: that file comes
@@ -165,28 +168,29 @@ session's tabs is shown beside the session on screen while its path is
 asked, and its tab goes from there once it is written. Untitled files are
 not kept across a restart, since the editor reopens no tabs.
 
-The core takes the window's question as heard only once it is drawn; if it
-is not drawn soon, the close or the quit goes through rather than keep the
-window open. The system's own ways of ending the app, logging out
+The core holds the close or the quit while the window says something
+would be lost, and takes the window's question as heard only once it is
+drawn; if it is not drawn soon, the close or the quit goes through rather
+than keep the window open. The system's own ways of ending the app, logging out
 or Quit in the Dock's menu, end it without asking. A session that goes
 without the user closing it, such as one an orchestrator stopped, hands any
 tab with the only copy of unsaved edits to the tabs shown next.
 
 ## The File menu
 
-On macOS a File menu holds New File, New File in Tree, Save and Close Tab,
-each showing and answering the chord its action has in the [chord
-table](focus-model.md): move a chord there and the menu's moves with it.
-New File starts an [untitled file](#untitled-files), and New File in Tree
-names one in the tree first. Save is greyed out outside editor mode, or
-without a file in front to save, and both new files without a project.
-Close Tab with no tab
-in front, or in agent mode, closes the window, as its chord does in every
-Mac window. Close Window in the Window menu is on
-<kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>, and Settings shows the chord the
-table gives it; when the table gives Shift+Cmd+W to an action, Close Window
-shows no chord. On Windows and Linux the menu button at the top left holds
-the same four items.
+On macOS a File menu holds New File, New File in Tree, New Shell, Save and
+Close, each showing and answering the chord its action has in the
+[chord table](focus-model.md): move a chord there and the menu's moves with
+it. New File starts an [untitled file](#untitled-files), and New File in
+Tree names one in the tree first. Save is greyed out outside editor mode,
+or without a file in front to save, and the new files and New Shell without
+a project. Close closes what is in front, as its chord does, and is named
+for it: Close Tab, Close Shell, Close Viewer or Close Window; see
+[focus](focus-model.md#closing-what-is-in-front). Close Window in the Window
+menu is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd> and asks first the same
+way, and Settings shows the chord the table gives it; when the table gives
+Shift+Cmd+W to an action, Close Window shows no chord. On Windows and Linux
+the menu button at the top left holds the same five items, named the same.
 
 ## New files and the row menu
 

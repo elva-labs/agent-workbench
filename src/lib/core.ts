@@ -1569,6 +1569,9 @@ export interface Core {
   /** Whether the editor holds unsaved edits, for the core to ask before
       the window closes or the app quits while it does. */
   setUnsaved(unsaved: boolean): Promise<void>;
+  /** Whether sessions are running or shells are open, for the core to
+      hold the window's close or the app's quit while they are, and ask. */
+  setRunning(running: boolean): Promise<void>;
   /** The core held back the window's close or the app's quit to ask. */
   onLeaveRequested(
     handler: (ask: { kind: "window" | "quit"; generation: number }) => void,
@@ -1585,6 +1588,9 @@ export interface Core {
   menuKeys(table: Record<string, KeyChord>): Promise<void>;
   /** Which of the File menu's items can act, by action. */
   menuEnabled(state: Record<string, boolean>): Promise<void>;
+  /** What the File menu's items are called, by action: Close names what
+      it would close. */
+  menuText(state: Record<string, string>): Promise<void>;
 
   /** Machines to offer: the ssh configuration's and the app's own. */
   remoteHosts(): Promise<RemoteHosts>;
@@ -1957,6 +1963,7 @@ const tauriCore: Core = {
   revealPath: (path) => revealItemInDir(path),
   copyText: (text) => navigator.clipboard.writeText(text),
   setUnsaved: (unsaved) => invoke("leave_unsaved", { unsaved }),
+  setRunning: (running) => invoke("leave_running", { running }),
   async onLeaveRequested(handler) {
     return listen<{ kind: "window" | "quit"; generation: number }>("leave_requested", (event) =>
       handler(event.payload),
@@ -1969,6 +1976,7 @@ const tauriCore: Core = {
   },
   menuKeys: (table) => invoke("menu_keys", { table }),
   menuEnabled: (state) => invoke("menu_enabled", { state }),
+  menuText: (state) => invoke("menu_text", { state }),
 
   remoteHosts: () => invoke<RemoteHosts>("remote_hosts"),
   remoteConnect: (host) =>
@@ -2298,6 +2306,7 @@ const detachedCore: Core = {
   async revealPath() {},
   async copyText() {},
   async setUnsaved() {},
+  async setRunning() {},
   async onLeaveRequested() {
     return () => {};
   },
@@ -2308,6 +2317,7 @@ const detachedCore: Core = {
   },
   async menuKeys() {},
   async menuEnabled() {},
+  async menuText() {},
   async remoteHosts() {
     return { configured: [], saved: [] };
   },

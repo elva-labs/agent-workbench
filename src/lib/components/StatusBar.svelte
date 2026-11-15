@@ -192,6 +192,19 @@
     if (next !== null && !layer?.contains(next) && open === "allowance") drop();
   }
 
+  /** Escape on one of the bar's controls, with nothing open, gives the
+      keyboard back to the pane that has the focus, as it is given back
+      when what opened goes. */
+  function onBarKey(e: KeyboardEvent) {
+    if (e.key !== "Escape" || open !== null || e.defaultPrevented) return;
+    const target = e.target as HTMLElement | null;
+    if (target === null || !target.matches("button") || !bar?.contains(target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    target.blur();
+    returnFocus();
+  }
+
   /** Escape, Enter and Space put the popover away as its control does,
       and Tab stops on the control. */
   function onPopoverKey(e: KeyboardEvent) {
@@ -266,7 +279,8 @@
   <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 4.5V8l2.2 1.4" /></svg>
 {/snippet}
 
-<footer class="status no-select" bind:this={bar} use:fits={STEPS} data-testid="status-bar">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<footer class="status no-select" bind:this={bar} use:fits={STEPS} onkeydown={onBarKey} data-testid="status-bar">
   <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>
   <span class="mode" data-testid="mode-readout">{layout.mode}</span>
   {#if session !== null && (model !== null || effort !== null || account !== null || figures.length > 0)}
@@ -442,7 +456,14 @@
 </footer>
 
 <style>
+  /* At the window's foot wherever it stands in the page, under the
+     dialogs and over the panes, which its menus open across. */
   .status {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
     display: flex;
     align-items: center;
     gap: 14px;

@@ -1,28 +1,30 @@
 //! The native menus.
 //!
 //! On macOS a menu bar: Settings under the app menu with the standard
-//! accelerator, a File menu for the editor, an Edit menu, without which copy
+//! accelerator, a File menu, an Edit menu, without which copy
 //! and paste have no key equivalents in the webview, and a Window menu. On
 //! Windows and Linux the window is undecorated and a bar would sit in the row
 //! the app took, so there is a native popup instead, opened from a button at
-//! the top left of the window: the editor's items, Settings, and Quit.
+//! the top left of the window: the File menu's items, Settings, and Quit.
 //! Choosing Settings either way tells the window, which opens its settings
 //! view.
 //!
-//! The editor's items, New File, New File in Tree, Save and Close Tab, do
-//! what an action of the window's chord table does, so the window does it:
-//! the item says which action. New File is an untitled file, named when it
-//! is saved; New File in Tree names one in the tree first. On the menu bar
-//! each carries the chord the table gives its action, sent over whenever
-//! the table changes, so a chord the user moves moves the item's with it
-//! and the bar never claims a chord the table gives elsewhere.
-//! The popup's items carry none: a menu attached to no window answers no
-//! keys, and the window answers the chords itself.
+//! The File menu's items, New File, New File in Tree, New Shell, Save and
+//! Close, do what an action of the window's chord table does, so the window
+//! does it: the item says which action. New File is an untitled file, named
+//! when it is saved; New File in Tree names one in the tree first. On the
+//! menu bar each carries the chord the table gives its action, sent over
+//! whenever the table changes, so a chord the user moves moves the item's
+//! with it and the bar never claims a chord the table gives elsewhere. The
+//! popup's items carry none: a menu attached to no window answers no keys,
+//! and the window answers the chords itself. Close closes what is in front,
+//! and the window names it as that changes, Close Tab, Close Shell or Close
+//! Window, in both.
 //!
 //! Quit and Close Window are the app's own items rather than the system's,
-//! so they can ask first while the editor holds unsaved edits; see
-//! [`crate::leaving`]. Close Window is on Shift+Cmd+W, since Cmd+W closes
-//! the editor's tab in front.
+//! so they can ask first while sessions run or the editor holds unsaved
+//! edits; see [`crate::leaving`]. Close Window is on Shift+Cmd+W, since
+//! Cmd+W closes what is in front.
 //!
 //! Both also carry Turn Off Custom Styles, which turns the user's own
 //! stylesheet off in the settings file itself. It works whatever that
@@ -46,28 +48,36 @@ const STYLES_OFF_ID: &str = "styles-off";
 const QUIT_ID: &str = "quit";
 const CLOSE_WINDOW_ID: &str = "close-window";
 
-/// The editor's items: the action of the chord table each does, and its
-/// name in the menu. The id of each item is its action.
-const FILE_ITEMS: [(&str, &str); 4] = [
+/// The File menu's items: the action of the chord table each does, and its
+/// name in the menu until the window names it. The id of each item is its
+/// action.
+const FILE_ITEMS: [(&str, &str); 5] = [
     ("file.untitled", "New File"),
     ("file.new", "New File in Tree…"),
+    ("terminal.new", "New Shell"),
     ("file.save", "Save"),
-    ("file.close", "Close Tab"),
+    ("file.close", "Close"),
 ];
 
-/// The chords the table starts with for the editor's items, until the
-/// window sends its own.
-const FILE_DEFAULTS: [(&str, &str); 4] = [
+/// The chords the table starts with for the File menu's items on the menu
+/// bar, until the window sends its own.
+const FILE_DEFAULTS: [(&str, &str); 5] = [
     ("file.untitled", "CmdOrCtrl+N"),
     ("file.new", "Alt+CmdOrCtrl+N"),
+    ("terminal.new", "CmdOrCtrl+T"),
     ("file.save", "CmdOrCtrl+S"),
     ("file.close", "CmdOrCtrl+W"),
 ];
 
-/// The menu bar's editor items, kept to set the chord each shows and
-/// answers, and whether each can act.
+/// The menu bar's File items, kept to set the chord each shows and
+/// answers, whether each can act and what each is called.
 #[derive(Default)]
 pub struct FileItems(Mutex<Vec<(String, MenuItem<Wry>)>>);
+
+/// The popup's File items, kept to set whether each can act and what each
+/// is called.
+#[derive(Default)]
+pub struct PopupItems(Mutex<Vec<(String, MenuItem<Wry>)>>);
 
 /// The menu bar's items with chords of their own rather than an action's:
 /// Settings, which shows the chord the table gives settings, and Close
@@ -127,7 +137,7 @@ fn quit_item(handle: &AppHandle, text: &str, chord: bool) -> tauri::Result<MenuI
     MenuItem::with_id(handle, QUIT_ID, text, true, chord.then_some("CmdOrCtrl+Q"))
 }
 
-/// The editor's items, with the chords the table starts with or none.
+/// The File menu's items, with the chords the table starts with or none.
 fn file_items(handle: &AppHandle, chords: bool) -> tauri::Result<Vec<MenuItem<Wry>>> {
     FILE_ITEMS
         .iter()
@@ -153,6 +163,7 @@ pub fn install(app: &App) -> tauri::Result<()> {
             &editing[1],
             &editing[2],
             &editing[3],
+            &editing[4],
             &PredefinedMenuItem::separator(handle)?,
             &settings_item(handle)?,
             &styles_off_item(handle)?,
@@ -161,6 +172,13 @@ pub fn install(app: &App) -> tauri::Result<()> {
         ],
     )?;
     app.manage(AppMenu(popup));
+    app.manage(PopupItems(Mutex::new(
+        FILE_ITEMS
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .zip(editing)
+            .collect(),
+    )));
     app.manage(FileItems::default());
     app.manage(FixedItems::default());
 
@@ -208,7 +226,7 @@ pub fn accelerator(chord: &Chord) -> Option<String> {
     Some(format!("{}+{key}", parts.join("+")))
 }
 
-/// The chord table, for the menu bar's editor items and Settings to show
+/// The chord table, for the menu bar's File items and Settings to show
 /// and answer the chords their actions have, and for Close Window to give
 /// its own up when the table uses it.
 #[tauri::command]
@@ -239,16 +257,38 @@ fn set_chord(item: &MenuItem<Wry>, chord: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// Which of the editor's items can act, by action, as the window says
+/// Which of the File menu's items can act, by action, as the window says
 /// each time that changes: an item that cannot is greyed out.
 #[tauri::command]
 pub fn menu_enabled(
     items: State<'_, FileItems>,
+    popup: State<'_, PopupItems>,
     state: HashMap<String, bool>,
 ) -> Result<(), String> {
-    for (action, item) in items.0.lock().unwrap().iter() {
-        let enabled = state.get(action).copied().unwrap_or(true);
-        item.set_enabled(enabled).map_err(|e| e.to_string())?;
+    for list in [&items.0, &popup.0] {
+        for (action, item) in list.lock().unwrap().iter() {
+            let enabled = state.get(action).copied().unwrap_or(true);
+            item.set_enabled(enabled).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// What the File menu's items are called, by action, as the window says
+/// each time that changes: Close names what it would close. An action the
+/// window does not name keeps its item's name.
+#[tauri::command]
+pub fn menu_text(
+    items: State<'_, FileItems>,
+    popup: State<'_, PopupItems>,
+    state: HashMap<String, String>,
+) -> Result<(), String> {
+    for list in [&items.0, &popup.0] {
+        for (action, item) in list.lock().unwrap().iter() {
+            if let Some(text) = state.get(action) {
+                item.set_text(text).map_err(|e| e.to_string())?;
+            }
+        }
     }
     Ok(())
 }
@@ -280,10 +320,11 @@ fn menu_bar(app: &App) -> tauri::Result<Menu<Wry>> {
         &[
             &editing[0],
             &editing[1],
-            &PredefinedMenuItem::separator(handle)?,
             &editing[2],
             &PredefinedMenuItem::separator(handle)?,
             &editing[3],
+            &PredefinedMenuItem::separator(handle)?,
+            &editing[4],
         ],
     )?;
     *app.state::<FileItems>().0.lock().unwrap() = FILE_ITEMS
@@ -399,7 +440,22 @@ mod tests {
     }
 
     #[test]
-    fn every_editor_item_starts_on_its_chord() {
+    fn the_file_menu_reads_new_files_new_shell_save_close() {
+        let names: Vec<&str> = FILE_ITEMS.iter().map(|(_, name)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "New File",
+                "New File in Tree…",
+                "New Shell",
+                "Save",
+                "Close"
+            ]
+        );
+    }
+
+    #[test]
+    fn every_file_item_starts_on_its_chord() {
         for (action, _) in FILE_ITEMS {
             assert!(
                 FILE_DEFAULTS.iter().any(|(id, _)| *id == action),

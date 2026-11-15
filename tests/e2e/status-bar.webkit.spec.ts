@@ -179,3 +179,92 @@ for (const [control, option] of [
     expect(await marked(page, option)).toEqual(["Haiku"]);
     await page.keyboard.press("Escape");
   });
+
+// With the terminal panel open the bar is still reached: it comes before
+// the panel in the walk, since the panel ends in a shell that keeps Tab,
+// and its chord puts the keyboard on its first control from anywhere, a
+// shell and the editor included. Escape there gives the keyboard back.
+
+const MOD = "ControlOrMeta";
+const TREE = "[data-testid='file-tree']";
+
+/** Opens the terminal panel, with the keyboard in its shell. */
+async function openPanel(page: Page) {
+  await page.keyboard.press(`${MOD}+j`);
+  await expect(page.getByTestId("terminal-row")).toHaveCount(1);
+  await expect.poll(() => focused(page)).toBe("textarea");
+}
+
+const label = (page: Page) =>
+  page.evaluate(() => {
+    const owner = document.activeElement as HTMLElement | null;
+    return owner?.getAttribute("data-testid") ?? owner?.getAttribute("aria-label") ?? null;
+  });
+
+test("reaches the bar by Tab before the terminal panel, with the panel open", async ({ page }) => {
+  await open(page);
+  await openPanel(page);
+  await page.locator(TREE).focus();
+  const walked: (string | null)[] = [];
+  for (let presses = 0; presses < 40 && (await focused(page)) !== "model-readout"; presses += 1) {
+    await page.keyboard.press("Tab");
+    walked.push(await label(page));
+  }
+  expect(await focused(page)).toBe("model-readout");
+  expect(walked).not.toContain("new-terminal");
+  expect(walked).not.toContain("Terminal input");
+  await page.keyboard.press("Tab");
+  expect(await focused(page)).toBe("effort-readout");
+  await page.keyboard.press("Tab");
+  expect(await focused(page)).toBe("account-group");
+  // Then the panel, its own controls before its shell.
+  await page.keyboard.press("Tab");
+  expect(await label(page)).toBe("Resize the terminal");
+  await page.keyboard.press("Tab");
+  expect(await focused(page)).toBe("new-terminal");
+});
+
+test("goes to the bar on its chord from a shell, and Escape gives the keyboard back to the shell", async ({ page }) => {
+  await open(page);
+  await openPanel(page);
+  await page.keyboard.press(`${MOD}+5`);
+  expect(await focused(page)).toBe("model-readout");
+  expect(await visiblyFocused(page)).toBe(true);
+  // Window chrome: the pane keeps the focus.
+  await expect(page.getByTestId("focus-readout")).toHaveText("focus: terminal");
+  await page.keyboard.press("Escape");
+  await expect.poll(() => label(page)).toBe("Terminal input");
+  await expect(page.getByTestId("status-model-menu")).toHaveCount(0);
+});
+
+test("goes to the bar on its chord from the editor in editor mode, and back to it on Escape", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press(`${MOD}+Shift+e`);
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
+  await page.locator(TREE).getByText("README.md", { exact: true }).dblclick();
+  await page.locator(".cm-content").click();
+  await page.keyboard.press(`${MOD}+5`);
+  expect(await focused(page)).toBe("model-readout");
+  await page.keyboard.press("Escape");
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest(".cm-editor") != null)).toBe(true);
+});
+
+test("says so when the bar has nothing to reach", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT] });
+  await page.goto("/");
+  await expect(page.locator("section[data-pane='agent']")).toBeVisible();
+  await page.keyboard.press(`${MOD}+5`);
+  await expect(page.getByTestId("flash-readout")).toHaveText("Nothing to change in the status bar");
+});
+
+test("leaves the keyboard on the window's question on its chord", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press(`${MOD}+w`);
+  const cancel = page.getByTestId("close-window-cancel");
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press(`${MOD}+5`);
+  await expect(cancel).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("close-window")).toHaveCount(0);
+  await expect(page.getByTestId("composer-input")).toBeFocused();
+});

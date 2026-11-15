@@ -70,7 +70,6 @@ import {
   toggleRightPane,
 } from "$lib/layout.svelte";
 import { lineEdits } from "$lib/lineDiff";
-import { isMac } from "$lib/platform";
 import { lastSegment } from "$lib/paths";
 import { pathOn } from "$lib/remote.svelte";
 import { onOwnerGone, sessions } from "$lib/sessions.svelte";
@@ -1232,13 +1231,6 @@ export function closeTabInFront() {
   if (layout.mode !== "editing" || tab === null || otherKindShown()) return false;
   closeTab(tabKey(tab));
   return true;
-}
-
-/** Close Tab in the menu. With no tab to close it is the window's close on
-    macOS, where its chord is the one every window closes on. */
-export function closeFront() {
-  if (closeTabInFront()) return;
-  if (isMac()) void core().windowControl("close").catch(() => {});
 }
 
 /** Keeps the core told whether anything is unsaved, so it knows whether
