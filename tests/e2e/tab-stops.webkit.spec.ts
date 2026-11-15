@@ -22,8 +22,9 @@ function holder(page: Page) {
 }
 
 /** Whether the keyboard's place is drawn in the app's own look: a ring in
-    the accent, never the browser's own; a splitter's line lit in the
-    accent; a list's cursor on its row; a text field's caret. */
+    the accent, never the browser's own, or a row's edge in it; a
+    splitter's line lit in the accent; a list's cursor on its row; a text
+    field's caret. */
 function ringed(page: Page) {
   return page.evaluate(() => {
     const owner = document.activeElement as HTMLElement | null;
@@ -44,8 +45,11 @@ function ringed(page: Page) {
     if (owner.getAttribute("role") === "separator")
       return getComputedStyle(owner, "::after").backgroundColor === colour(root.getPropertyValue("--splitter-hover").trim());
     const style = getComputedStyle(owner);
+    const accent = colour(root.getPropertyValue("--accent").trim());
+    // A row of a list is marked as the tree's cursor is, inside its edge.
+    if (style.boxShadow.includes(accent)) return true;
     if (style.outlineStyle === "none" || style.outlineStyle === "auto" || parseFloat(style.outlineWidth) === 0) return false;
-    return style.outlineColor === colour(root.getPropertyValue("--accent").trim());
+    return style.outlineColor === accent;
   });
 }
 
@@ -110,6 +114,21 @@ test("presses a header button by Enter, and walks its menu with the arrows", asy
   await page.keyboard.press("Tab");
   await expect(page.getByTestId("changes-menu-items")).toHaveCount(0);
   expect(await holder(page)).toBe("file-tree");
+});
+
+test("walks the lines found as one stop, with Up and Down", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("mode-lines").click();
+  await page.getByTestId("search-field").fill("use std");
+  await expect(page.getByTestId("search-hit")).toHaveCount(3);
+  await page.getByTestId("search-field").focus();
+  expect(await walk(page, "Tab", 3)).toEqual(["mode-lines", "changes-menu", "search-hit"]);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("search-hit").nth(1)).toBeFocused();
+  expect(await walk(page, "Shift+Tab", 1)).toEqual(["changes-menu"]);
+  // The stop goes back to the first hit once the keyboard has left.
+  expect(await walk(page, "Tab", 1)).toEqual(["search-hit"]);
+  await expect(page.getByTestId("search-hit").first()).toBeFocused();
 });
 
 test("walks the corner's switch with the arrows and flips the mode with Space", async ({ page }) => {

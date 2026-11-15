@@ -53,8 +53,8 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="results" onkeydown={onKeydown} data-testid="search-results">
+<!-- One stop for Tab: Up and Down walk the hits. -->
+<div class="results" role="listbox" aria-label="Lines found" tabindex="-1" onkeydown={onKeydown} data-testid="search-results">
   {#if files.searching && files.hits.length === 0}
     <p class="note">Searching…</p>
   {:else if files.hits.length === 0}
@@ -67,7 +67,7 @@
     </div>
     {#each group.hits as hit (hit.line)}
       {@const p = parts(hit.text)}
-      <button class="hit" onclick={() => onOpen(hit.path, hit.line)} data-testid="search-hit">
+      <button class="hit" role="option" aria-selected="false" onclick={() => onOpen(hit.path, hit.line)} data-testid="search-hit">
         <span class="num">{hit.line}</span>
         <span class="text">{p.before}<mark>{p.match}</mark>{p.after}</span>
       </button>
@@ -139,6 +139,11 @@
   .hit:focus-visible {
     background: var(--surface-2);
     outline: none;
+  }
+
+  /* The keyboard's hit is marked as the tree's cursor is. */
+  .hit:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .num {
