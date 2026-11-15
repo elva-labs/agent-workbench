@@ -59,6 +59,7 @@
     parentOf,
   } from "$lib/orchestrator.svelte";
   import { placeOf, startedFor, unheard } from "$lib/conductor.svelte";
+  import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -510,15 +511,21 @@
   }
 
   /** What a starter's row says of the sessions it started that stopped,
-      asked or ended since it last looked: how many, and on hover which. */
+      asked or ended since it last looked: how many, and on hover which,
+      and how it hears of them. Your next message tells it only where the
+      workbench gives it the note: running integrated, or with hooks. */
   function newsWords(news: Session[]): string {
-    return news.length === 1 ? "1 new report" : `${news.length} new reports`;
+    return `${news.length} not heard yet`;
   }
 
-  function newsTitle(news: Session[]): string {
+  function newsTitle(starter: Session, news: Session[]): string {
     const what = (kid: Session) =>
       !isLive(kid) ? "ended" : kid.needs === "permission" ? "is asking" : "stopped";
-    return `Since it last looked: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}.`;
+    const told =
+      starter.kind === "integrated" ||
+      isInstalled(starter.project) ||
+      starter.project === orchestrator.dir;
+    return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. It hears on its next wait${told ? ", or with your next message" : ""}.`;
   }
 
   function toggleKids(key: string) {
@@ -1137,13 +1144,19 @@
           <span
             class="note"
             class:asking={owned ? session.needs === "permission" : kids.some(isAsking)}
+            class:first-say={news.length > 0}
             title={line}
             data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
           >
           {#if news.length > 0}
             <!-- What it has not heard from the sessions it started, while it
-                 is idle with no wait held, quietly where the model stands. -->
-            <span class="meta news" title={newsTitle(news)} data-testid="starter-news">{newsWords(news)}</span>
+                 is idle with no wait held, quietly where the model stands.
+                 Short of room it gives way before the line beside it: the
+                 words go first, then the dot and the count. -->
+            <span class="news" title={newsTitle(session, news)} data-testid="starter-news"
+              ><span class="news-gap"></span><span class="news-count">{news.length}</span
+              ><span class="news-words">{" not heard yet"}</span></span
+            >
           {/if}
           {#if folded}
             <!-- Folded, each session it started is a dot where the model
@@ -1246,17 +1259,23 @@
               {:else if !isAsking(kid) && kid.model !== null}
                 <span class="model" data-testid="started-model">{modelLabel(kid.model)}</span>
               {/if}
+              {#if news.includes(kid)}
+                <!-- What its starter has not heard, which the starter's row
+                     counts: last on the line, so it goes before the rest. -->
+                <span
+                  class="news-mark"
+                  title="{label(parent)} has not heard this yet"
+                  data-testid="started-news"
+                ></span>
+              {/if}
             </span>
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
             {/if}
-            {#if news.includes(kid)}
-              <!-- The report its starter has not heard, which the starter's
-                   row counts. -->
-              <span class="news-mark" title="Its starter has not seen this yet" data-testid="started-news"></span>
-            {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
-            <span class="state told">{statusLabel(kid)}</span>
+            <span class="state told"
+              >{statusLabel(kid)}{#if news.includes(kid)}, not heard by {label(parent)} yet{/if}</span
+            >
           </button>
           <span class="actions">
             <button
@@ -3007,12 +3026,42 @@
   /* What a starter has not heard from the sessions it started: a step
      above the model it stands in for, with a small mark in the accent. It
      is the starter's to read, not yours to answer, so it stays quiet. */
-  .meta.news {
+  /* Beside the count, the line takes the room it needs first, and gives
+     any up only once the count has none left. */
+  .second .note.first-say {
+    flex: 0 1 auto;
+  }
+
+  /* It takes only the room the line beside it leaves, and inside it what
+     does not fit wraps onto a line out of sight, so what goes goes whole:
+     the words first, then the dot and the count. */
+  .news {
+    flex: 1 1 0;
+    min-width: 0;
+    height: calc(var(--label-size) * 1.35);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: baseline;
+    overflow: hidden;
+    white-space: pre;
     color: var(--ink-2);
   }
 
-  .meta.news::before,
-  .news-mark {
+  /* Holds the line's baseline, and the line itself once the rest has gone. */
+  .news-gap::before {
+    content: "\200b";
+  }
+
+  .news-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+  }
+
+  .news-count::before,
+  .news-mark::before {
     content: "";
     flex: none;
     width: 5px;
@@ -3021,13 +3070,14 @@
     background: var(--accent);
   }
 
-  .meta.news::before {
-    margin-right: 2px;
-  }
-
-  /* On the started session's own line, beside its time. */
+  /* At the end of the started session's line, beside its time, and the
+     first thing on it to go. */
   .news-mark {
-    margin-left: 8px;
+    flex: none;
+    align-self: center;
+    display: flex;
+    margin-left: auto;
+    padding-left: 8px;
   }
 
   /* A starter folded: a small dot for each session it started. */
