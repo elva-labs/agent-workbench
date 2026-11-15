@@ -6,11 +6,21 @@ import {
   type PastSessions,
   type Settings,
   type Transcript,
+  type Workflow,
 } from "$lib/core";
 import { accountOf, dirFor, names } from "$lib/accounts.svelte";
+import { CODEX_DEFAULT } from "$lib/models";
+import { orchestratorPrompt } from "$lib/workflowInstructions";
+import {
+  readWorkflow,
+  startsOnly,
+  workflowNamed,
+  workflowOf,
+  workflowsKnown,
+} from "$lib/workflows.svelte";
 import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
-import { AGENTS, installed } from "$lib/agent.svelte";
+import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
@@ -73,6 +83,18 @@ export interface Session {
       one was chosen for the session. Null for the agents' own
       directories. */
   account: string | null;
+  /** The workflow the session follows, as it was when this run of it
+      started: it directs the others by it. Null for none. A change to the
+      settings does not reach a session while it runs; a resumed one takes
+      the workflow's version of the day. */
+  workflow: Workflow | null;
+  /** Whether the workflow it follows was deleted since, so it follows the
+      copy it kept. */
+  workflowGone: boolean;
+  /** The name of a workflow a resumed session followed that is gone, and
+      whose kept copy no longer reads: the user says whether it goes on
+      without one. Null otherwise. */
+  workflowLost: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -118,6 +140,20 @@ export interface Session {
 const MINE_KEY = "workbench.mine";
 const NAMES_KEY = "workbench.names";
 const PREFERRED_KEY = "workbench.agents";
+const WORKFLOWS_KEY = "workbench.workflows";
+
+/** What is kept of the workflow a session follows: the workflow as its
+    last run started on it, as it was written, since it may no longer read,
+    or null for none by the user's word, given when the one it followed was
+    lost;
+    the instructions its conversation was first given, which an agent that
+    records them keeps until told otherwise; and the project, so what is
+    kept goes once the session is gone from it. */
+export interface KeptWorkflow {
+  workflow: unknown;
+  told: string | null;
+  project: string | null;
+}
 
 /** A past session, whose it is, and the account it ran under: the name
     of the account whose directory holds it, or null for the agents' own.
@@ -150,6 +186,9 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
+  /** What is kept of the workflow each session follows, by session id. A
+      session that follows none is not here. */
+  workflows: {} as Record<string, KeptWorkflow>,
   /** How long a past session stays listed under its project. Older than
       that, it goes behind the fold with the rest of the history, where it
       is still there to resume and to search. */
@@ -302,6 +341,7 @@ export async function loadHistories(projects: string[]) {
           sessions.history[project] = next;
         readFrom.set(project, signature);
         pruneDormant(project);
+        pruneKept(project);
       });
     }),
   );
@@ -481,6 +521,32 @@ export function loadRemembered() {
     // Nothing is named, then.
   }
   try {
+    const raw = localStorage.getItem(WORKFLOWS_KEY);
+    if (raw !== null) {
+      const stored: unknown = JSON.parse(raw);
+      if (typeof stored === "object" && stored !== null) {
+        const kept: Record<string, KeptWorkflow> = {};
+        for (const [id, entry] of Object.entries(stored)) {
+          if (typeof entry !== "object" || entry === null) continue;
+          const { workflow, told, project } = entry as Record<string, unknown>;
+          // A record of the workflow alone is the workflow, first told as
+          // it reads.
+          kept[id] =
+            "workflow" in entry
+              ? {
+                  workflow,
+                  told: typeof told === "string" ? told : null,
+                  project: typeof project === "string" ? project : null,
+                }
+              : { workflow: entry, told: null, project: null };
+        }
+        sessions.workflows = kept;
+      }
+    }
+  } catch {
+    // No session follows a workflow, then.
+  }
+  try {
     const raw = localStorage.getItem(PREFERRED_KEY);
     if (raw !== null) {
       const stored: unknown = JSON.parse(raw);
@@ -496,6 +562,129 @@ export function loadRemembered() {
   } catch {
     // No preference, then.
   }
+}
+
+/** A workflow as it was kept, or null when it no longer reads. */
+export function storedWorkflow(value: unknown): Workflow | null {
+  if (value === null || value === undefined) return null;
+  try {
+    return readWorkflow(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the workflow a session follows by its id, now that it has one:
+    the version this run started on, and the instructions the conversation
+    was first given, which stay those of its first run. */
+function rememberWorkflow(session: Session) {
+  if (session.id === null || session.workflow === null) return;
+  const before = sessions.workflows[session.id];
+  const workflow = $state.snapshot(session.workflow) as Workflow;
+  sessions.workflows[session.id] = {
+    workflow,
+    told: before === undefined ? orchestratorPrompt(workflow) : firstTold(before),
+    project: session.project,
+  };
+  saveKept();
+}
+
+function saveKept() {
+  try {
+    localStorage.setItem(WORKFLOWS_KEY, JSON.stringify(sessions.workflows));
+  } catch {
+    // Non-fatal: a resumed session follows no workflow.
+  }
+}
+
+/** The instructions a session's conversation was first given. A record
+    that does not say is taken to be its kept workflow's. */
+function firstTold(kept: KeptWorkflow): string | null {
+  if (kept.told !== null) return kept.told;
+  const read = storedWorkflow(kept.workflow);
+  return read === null ? null : orchestratorPrompt(read);
+}
+
+/** The workflow a session with this id followed, as it was kept, when it
+    still reads. */
+export function workflowFor(id: string): Workflow | null {
+  const kept = sessions.workflows[id];
+  return kept === undefined ? null : storedWorkflow(kept.workflow);
+}
+
+/** What a session resumed by its id follows. */
+export type Resumed =
+  /** A workflow, or none. `gone` when it is the copy the session kept of
+      a workflow deleted since. */
+  | { workflow: Workflow | null; gone: boolean }
+  /** The workflow it followed is gone and its kept copy no longer reads:
+      the user is asked. */
+  | { lost: string };
+
+/**
+ * What a resumed session follows: the workflow it followed, as the settings
+ * have it now, by name; the copy it kept, when that workflow was deleted;
+ * and when the copy no longer reads either, a question for the user rather
+ * than no workflow.
+ */
+export function resumedWorkflow(id: string): Resumed {
+  const kept = sessions.workflows[id];
+  if (kept === undefined || kept.workflow === null) return { workflow: null, gone: false };
+  const raw = kept.workflow;
+  const name =
+    typeof raw === "object" && raw !== null && typeof (raw as { name?: unknown }).name === "string"
+      ? (raw as { name: string }).name
+      : null;
+  const current = name === null ? undefined : workflowNamed(name);
+  if (current !== undefined) return { workflow: current, gone: false };
+  const copy = storedWorkflow(raw);
+  if (copy !== null) return { workflow: copy, gone: true };
+  return { lost: name ?? "it followed" };
+}
+
+/** Whether a resumed session is told afresh: what it is told now, a
+    workflow's instructions or none, differs from what its conversation was
+    first given, which an agent that records it would otherwise keep. A
+    session with nothing kept was given no workflow. */
+function toldAfresh(id: string, workflow: Workflow | null): boolean {
+  const kept = sessions.workflows[id];
+  if (kept === undefined) return false;
+  const now = workflow === null ? null : orchestratorPrompt(workflow);
+  const told = firstTold(kept);
+  // A kept record that no longer says what it was told was told a
+  // workflow's instructions all the same.
+  return told === null ? true : told !== now;
+}
+
+/** Lets go of what is kept for the sessions of a project that are gone
+    from its history: no row has them, and the agent lists them no more.
+    A history that came back empty may be one that could not be read, and
+    takes nothing away. */
+function pruneKept(project: string) {
+  const listed = new Set((sessions.history[project] ?? []).map((entry) => entry.id));
+  if (listed.size === 0) return;
+  const rows = new Set(sessions.all.map((session) => session.id));
+  const gone = Object.entries(sessions.workflows)
+    .filter(([id, kept]) => kept.project === project && !listed.has(id) && !rows.has(id))
+    .map(([id]) => id);
+  if (gone.length === 0) return;
+  for (const id of gone) delete sessions.workflows[id];
+  saveKept();
+  forgotten(gone);
+}
+
+let forgotten: (ids: string[]) => void = () => {};
+
+/** Hears the ids of sessions whose kept workflow went with them. */
+export function onForgotten(handler: ((ids: string[]) => void) | null) {
+  forgotten = handler ?? (() => {});
+}
+
+/** The model a workflow's orchestrator runs on, as the agent's command
+    line takes it: none for Codex's own default. */
+function orchestratorModel(workflow: Workflow): string | null {
+  const { agent, model } = workflow.orchestrator;
+  return agent === "codex" && model === CODEX_DEFAULT ? null : model;
 }
 
 function rememberName(id: string, name: string) {
@@ -716,6 +905,7 @@ export function identified(
   session.id = sessionId;
   identifiedZoom(session.key, sessionId);
   adopt(session.project, sessionId);
+  rememberWorkflow(session);
   replayActivity(sessionId);
   if (title !== null) named(session.key, title);
 }
@@ -832,31 +1022,115 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * Adds a session row and starts it. The row exists before the process does so
  * the pane has something to render while it comes up, and so a failure to
  * start has somewhere to be reported.
+ *
+ * A session runs one of two ways: under a workflow, on the workflow's
+ * orchestrator, or as one agent with no workflow. What was picked is what
+ * starts. A workflow given starts under it; null starts the agent alone.
+ * Left out, a resumed session follows the workflow it followed before, and a
+ * new one follows its project's workflow when nothing was picked: the agent
+ * left out, or nothing there to pick between, one agent installed and no
+ * accounts. An agent picked from several starts alone. A workflow whose
+ * orchestrator runs on an agent that is not installed is refused on the row.
  */
 export function create(
   project: string,
   resumedFrom: string | null = null,
-  agent: AgentId = defaultAgent(project),
+  agent?: AgentId,
   startIn: string | null = null,
   prompt: string | null = null,
   model: string | null = null,
   account: string | null = accountOf(project),
+  workflow?: Workflow | null,
 ): Session {
-  prefer(project, agent);
+  // A resumed session left to follow what it followed before finds out
+  // what that is when it starts, once the window has the workflows.
+  const resolving = workflow === undefined && resumedFrom !== null;
+  const following =
+    workflow !== undefined
+      ? workflow
+      : resumedFrom !== null
+        ? null
+        : agent === undefined || nothingToPick()
+          ? workflowOf(project)
+          : null;
+  let runs: AgentId = agent ?? defaultAgent(project);
+  if (following !== null) {
+    if (resumedFrom === null) runs = following.orchestrator.agent;
+    if (model === null && runs === following.orchestrator.agent)
+      model = orchestratorModel(following);
+  }
+  const missing =
+    following !== null && resumedFrom === null && !installed().includes(runs)
+      ? `The workflow "${following.name}" runs its orchestrator on ${agentLabel(runs)}, which is not installed here. Pick an agent to start one alone, or choose another workflow for this project in the settings.`
+      : null;
+  if (missing === null) prefer(project, runs);
   const live = added(
     row(
       project,
       resumedFrom,
-      agent,
+      runs,
       startIn,
       prompt,
       model,
       account,
-      "starting",
+      missing === null ? "starting" : "failed",
+      following,
     ),
   );
+  if (missing !== null) live.error = missing;
+  if (resolving) pending.add(live.key);
   sessions.active = live.key;
   return live;
+}
+
+/** The rows of resumed sessions that find out what they follow when they
+    start. */
+const pending = new Set<string>();
+
+/** Gives a resumed row the workflow it follows from here, and the
+    orchestrator's model where it runs on the orchestrator's agent and
+    names none. A workflow lost to the user's question fails the row with
+    it. */
+function takeUp(session: Session, id: string) {
+  const resumed = resumedWorkflow(id);
+  if ("lost" in resumed) {
+    session.workflowLost = resumed.lost;
+    session.status = "failed";
+    session.error = `This session followed the workflow "${resumed.lost}", which is gone, and the copy it kept no longer reads. Resume it without a workflow, or start a new session.`;
+    changed(session);
+    return;
+  }
+  const { workflow, gone } = resumed;
+  session.workflow = workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow);
+  session.workflowGone = gone;
+  if (workflow === null) return;
+  if (session.model === null && session.agent === workflow.orchestrator.agent)
+    session.model = orchestratorModel(workflow);
+}
+
+/** Resumes a session whose workflow was lost, with no workflow, in place
+    of the row that asked. The user's word is kept, so the session is not
+    asked about again, along with what its conversation was first told, so
+    it goes on being told afresh. */
+export function resumeWithout(key: string): Session | null {
+  const session = byKey(key);
+  if (session === null || session.workflowLost === null || session.id === null) return null;
+  const { project, id, agent, startIn, model, account } = session;
+  const before = sessions.workflows[id];
+  sessions.workflows[id] = {
+    workflow: null,
+    told: before === undefined ? null : firstTold(before),
+    project,
+  };
+  saveKept();
+  close(key);
+  return create(project, id, agent, startIn, null, model, account, null);
+}
+
+/** Whether a new session has nothing to pick between: one agent to run
+    and no accounts to run it under. */
+function nothingToPick(): boolean {
+  return installed().length <= 1 && names().length === 0;
 }
 
 /**
@@ -872,10 +1146,14 @@ export function reopened(
   startIn: string | null,
   model: string | null,
   account: string | null,
+  workflow: Workflow | null = null,
+  resolve = true,
 ): Session {
-  return added(
-    row(project, id, agent, startIn, null, model, account, "dormant"),
+  const live = added(
+    row(project, id, agent, startIn, null, model, account, "dormant", workflow),
   );
+  if (resolve) pending.add(live.key);
+  return live;
 }
 
 /** Starts the process behind a row that was open when the app last quit:
@@ -896,6 +1174,7 @@ function row(
   model: string | null,
   account: string | null,
   status: SessionStatus,
+  workflow: Workflow | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
@@ -914,6 +1193,10 @@ function row(
     prompt,
     model,
     account,
+    workflow:
+      workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow),
+    workflowGone: false,
+    workflowLost: null,
     worktree: null,
     working: false,
     engaged: prompt !== null,
@@ -956,8 +1239,21 @@ export async function launch(
   rows: number,
   onOutput: (bytes: Uint8Array) => void,
 ): Promise<boolean> {
-  const session = byKey(key);
-  if (session === null) return false;
+  let session = byKey(key);
+  // A row refused before it started has no process to start.
+  if (session === null || session.status !== "starting") return false;
+  if (pending.delete(key) && session.resumedFrom !== null) {
+    await workflowsKnown();
+    session = byKey(key);
+    if (session === null || session.status !== "starting") return false;
+    takeUp(session, session.resumedFrom!);
+    if (session.status !== "starting") return false;
+  }
+  // Resumed with other instructions than its conversation was first given,
+  // or with none where it was given some, the agent lets go of the ones it
+  // recorded.
+  const afresh =
+    session.resumedFrom !== null && toldAfresh(session.resumedFrom, session.workflow);
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -968,6 +1264,13 @@ export async function launch(
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
         configDir: dirFor(session.account, session.agent),
+        ...(session.workflow === null
+          ? {}
+          : {
+              instructions: orchestratorPrompt(session.workflow),
+              startOnly: startsOnly(session.workflow),
+            }),
+        ...(afresh ? { afresh: true } : {}),
         cols,
         rows,
       },
@@ -1009,6 +1312,7 @@ export function started(
     session.id = sessionId;
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
+    rememberWorkflow(session);
     replayActivity(sessionId);
   }
 
@@ -1136,6 +1440,9 @@ export function statusMessage(session: Session): string {
 /** The word shown in the pane header. */
 export function statusLabel(session: Session | null): string {
   if (session === null) return "no session";
+  // A session whose workflow is lost has not started: it waits on the
+  // user to say how it goes on.
+  if (session.workflowLost !== null) return "waiting for your choice";
   switch (session.status) {
     case "dormant":
       return "was open, starts when selected";
@@ -1547,6 +1854,8 @@ export function reset() {
   loading.clear();
   sessions.mine = {};
   sessions.names = {};
+  sessions.workflows = {};
+  pending.clear();
   sessions.preferred = {};
   sessions.pastSessions = "forever";
   counter = 0;

@@ -12,7 +12,7 @@
 
 import { adoptAccounts, accountsSettings } from "$lib/accounts.svelte";
 import { core, type Settings, type StoredSettings } from "$lib/core";
-import { adoptWorkflows, workflowsSettings } from "$lib/workflows.svelte";
+import { adoptWorkflows, knowWorkflows, workflowsSettings } from "$lib/workflows.svelte";
 import { adoptHooks, hooksSettings } from "$lib/hook.svelte";
 import { adoptPastSessions, pastSessionsSettings } from "$lib/sessions.svelte";
 import { adoptInactiveAfter, inactiveAfterSettings } from "$lib/projects.svelte";
@@ -78,6 +78,16 @@ function held(): Settings {
  * window on its own copy.
  */
 export async function followSettings(): Promise<() => void> {
+  try {
+    return await follow();
+  } finally {
+    // Whatever the core said, a file it could not read included, the window
+    // goes on with the workflows it has.
+    knowWorkflows();
+  }
+}
+
+async function follow(): Promise<() => void> {
   // The core announces every change to the file from the moment the window
   // listens, so settings taken by the time the first read answers are as
   // new as that answer or newer: the file may have changed after it was

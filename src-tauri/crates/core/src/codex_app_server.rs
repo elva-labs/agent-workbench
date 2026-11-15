@@ -1084,7 +1084,7 @@ impl AppServer {
             config.insert(
                 "mcp_servers".into(),
                 json!({
-                    hook::CODEX_SERVER_KEY: {
+                    crate::adapter::CODEX_SERVER_KEY: {
                         "command": server.to_string_lossy(),
                         "args": ["mcp"],
                         "env": env,

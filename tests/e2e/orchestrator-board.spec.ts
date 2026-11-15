@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, NO_WORKFLOW, installFakeCore } from "./fake";
 
 /**
  * The changes pane, for a session that directs others.
@@ -158,7 +158,7 @@ async function putWorktrees(page: Page) {
 
 test.describe("the orchestrator's board", () => {
   test.beforeEach(async ({ page }) => {
-    await installFakeCore(page, { open: [ORCHESTRATOR, PROJECT] });
+    await installFakeCore(page, { open: [ORCHESTRATOR, PROJECT], settings: NO_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     // The orchestrator's own session, in the directory the workbench keeps

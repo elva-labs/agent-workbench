@@ -34,6 +34,7 @@ import { activate, bringForward, onScreen, reset as resetWorkspace, startSession
 import { projects, resetProjects } from "$lib/projects.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import "$lib/orchestrator.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -67,6 +68,8 @@ beforeEach(() => {
   resetKeys();
   resetPalette();
   resetAccounts();
+  // No workflows unless a test has some.
+  resetWorkflows();
   agent.availability = "ready";
   agent.installed = ["claude-code"];
   attention.focused = true;
@@ -507,6 +510,98 @@ function choose(label: string, alone = false) {
   if (item === undefined) throw new Error(`nothing called ${label}`);
   return pickItem(item, alone);
 }
+
+describe("how a new session runs", () => {
+  const quick = () => ({
+    ...defaultWorkflow(),
+    name: "Quick fix",
+    steps: [defaultWorkflow().steps[0]],
+  });
+
+  it("asks nothing more and starts the agent at once, with one agent and no workflow turned on", () => {
+    adoptWorkflows(undefined);
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+    const outcome = beginNew(A);
+    if (outcome.type === "close") outcome.then();
+    expect(outcome.type).toBe("close");
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null, model: null });
+  });
+
+  it("asks nothing more in a project that follows no workflow, whatever another project chose", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: { "/elsewhere": "Build and review" } });
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+    const outcome = beginNew(A);
+    if (outcome.type === "close") outcome.then();
+    expect(outcome.type).toBe("close");
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null });
+    // Nor where the project chose none over the default.
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: { [A]: null } });
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual([]);
+  });
+
+  it("offers the workflows above the agents where the project follows one, even with one agent installed", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(stepsLeft([{ kind: "project", path: A }])).toEqual(["agent"]);
+    beginNew(A);
+    const items = stepItems("");
+    expect(items.map((item) => [item.group, item.label])).toEqual([
+      ["Workflows", "Build and review"],
+      ["One agent, no workflow", "Claude Code"],
+    ]);
+    const [flow] = items;
+    expect(flow.kind === "choice" && flow.detail).toBe("Fable directs, Sonnet works, Opus reviews");
+    expect(flow.kind === "choice" && flow.end).toBe("default");
+    expect(startingId()).toBe("workflow:Build and review");
+    // Picked, the one agent starts alone, though the project follows a
+    // workflow.
+    const outcome = choose("Claude Code");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", workflow: null, model: null });
+  });
+
+  it("says whether the project chose its workflow or follows the default", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    beginNew(A);
+    const ends = () => stepItems("").map((item) => (item.kind === "choice" ? item.end : null));
+    expect(ends()).toEqual(["default", ""]);
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: { [A]: "Build and review" } });
+    expect(ends()).toEqual(["project's workflow", ""]);
+  });
+
+  it("puts the project's workflow first, marked, with the cursor on it, and starts under it", () => {
+    adoptWorkflows({ list: [quick(), defaultWorkflow()], default: null, overrides: { [A]: "Build and review" } });
+    beginNew(A);
+    const items = stepItems("");
+    expect(items.map((item) => item.label)).toEqual(["Build and review", "Quick fix", "Claude Code"]);
+    expect(items.map((item) => (item.kind === "choice" ? item.end : null))).toEqual([
+      "project's workflow",
+      "",
+      "",
+    ]);
+    expect(startingId()).toBe("workflow:Build and review");
+    const outcome = choose("Build and review");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[0]).toMatchObject({ project: A, agent: "claude-code", model: "fable" });
+    expect(sessions.all[0].workflow?.name).toBe("Build and review");
+  });
+
+  it("starts under another workflow picked, and alone on an agent picked", () => {
+    agent.installed = ["claude-code", "codex"];
+    adoptWorkflows({ list: [defaultWorkflow(), quick()], default: "Build and review", overrides: {} });
+    beginNew(A);
+    let outcome = choose("Quick fix");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[0].workflow?.name).toBe("Quick fix");
+    beginNew(A);
+    outcome = choose("Codex");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[1]).toMatchObject({ agent: "codex", workflow: null });
+    beginNew(A);
+    outcome = choose("Claude Code");
+    if (outcome.type === "close") outcome.then();
+    expect(sessions.all[2]).toMatchObject({ agent: "claude-code", workflow: null, model: null });
+  });
+});
 
 describe("a new session", () => {
   const spawned = () => sessions.all.map((session) => ({ ...session }));
