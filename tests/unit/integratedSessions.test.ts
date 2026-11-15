@@ -73,6 +73,7 @@ async function started(options: { prompt?: string; resumedFrom?: string } = {}) 
     options.prompt ?? null,
     null,
     null,
+    undefined,
     "integrated",
   );
   await launch(session.key);
@@ -241,7 +242,7 @@ describe("an integrated session behind its row", () => {
   });
 
   it("stops an agent whose row was closed while it came up", async () => {
-    const session = create(PROJECT, null, "claude-code", null, null, null, null, "integrated");
+    const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     const coming = launch(session.key);
     close(session.key);
     await coming;
@@ -251,7 +252,7 @@ describe("an integrated session behind its row", () => {
 
   it("asks before a folder that is not trusted, and starts once trusted", async () => {
     fake.untrusted.add(PROJECT);
-    const session = create(PROJECT, null, "claude-code", null, null, null, null, "integrated");
+    const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     await launch(session.key);
     expect(linkFor(session.key).untrusted).toBe(true);
     expect(byKey(session.key)!.status).toBe("failed");
@@ -298,7 +299,7 @@ describe("an integrated session behind its row", () => {
   });
 
   it("fails with the core's reason when the start fails otherwise", async () => {
-    const session = create(PROJECT, null, "claude-code", null, null, null, null, "integrated");
+    const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     (window as unknown as { __WORKBENCH_CORE__: { integratedStart: () => Promise<never> } }).__WORKBENCH_CORE__.integratedStart =
       async () => {
         throw new Error("claude was not found on your PATH");
@@ -366,7 +367,7 @@ describe("the mode a session starts in", () => {
   it("is the agent's safe one, never left to its own configuration", async () => {
     const { session } = await started();
     expect(fake.calls[0]).toMatchObject({ method: "start", options: { mode: "default" } });
-    const codex = create(PROJECT, null, "codex", null, null, null, null, "integrated");
+    const codex = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
     await launch(codex.key);
     expect(fake.calls.filter((call) => call.method === "start")[1]).toMatchObject({ options: { agent: "codex", mode: "read-only" } });
     expect(session.kind).toBe("integrated");

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { shown } from "$lib/thread";
   import HooksNotice from "$lib/components/HooksNotice.svelte";
+  import WorkflowTagButton from "$lib/components/WorkflowTagButton.svelte";
   import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
@@ -28,6 +29,7 @@
     rang,
     sessions,
     statusLabel,
+    resumeWithout,
     statusMessage,
     titled,
     wake,
@@ -36,6 +38,7 @@
   import { otherKind, type SessionKind } from "$lib/sessionKind.svelte";
   import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
+  import { conductor, dismissRefusal, workflowTag } from "$lib/conductor.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
   import { touch } from "$lib/projects.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
@@ -105,6 +108,10 @@
       stale = true;
     };
   });
+
+  /** The workflow the session on screen is part of, and its place in it. */
+  let tag = $derived(current === null ? null : workflowTag(current));
+  let refusal = $derived(current === null ? null : (conductor.refusals[current.key] ?? null));
 
   // A session that was open when the app quit starts once it is the one
   // this pane shows.
@@ -189,7 +196,7 @@
     const project = workspace.active;
     if (project === null || firstAgent === null) return;
     touch(project);
-    create(project, null, firstAgent, null, null, null, accountOf(project), kind);
+    create(project, null, firstAgent, null, null, null, accountOf(project), undefined, kind);
   }
 
   /** Escape backs out of the choice while one of its buttons has focus.
@@ -230,8 +237,11 @@
   </div>
 {/snippet}
 
-{#snippet where()}
-  {#if current !== null}
+{#snippet head()}
+  {#if tag !== null}
+    <WorkflowTagButton {tag} />
+  {/if}
+  {#if current !== null && integrated}
     <span class="crumb" title={current.project} data-testid="conversation-project"
       ><Icon name="folder" size={13} />{projectLabel(current.project)}</span
     >
@@ -241,8 +251,21 @@
   {/if}
 {/snippet}
 
-<Pane id="agent" {title} meta={meta} head={integrated ? where : undefined}>
+<Pane id="agent" {title} {meta} head={tag !== null || integrated ? head : undefined}>
   <div class="wrap" bind:this={wrap}>
+    {#if refusal !== null && current !== null}
+      <!-- What the workflow refused the agent, said to the user too. -->
+      <p class="refused" data-testid="workflow-refused">
+        <span class="refused-lead">Start refused</span>
+        <span class="refused-text">{refusal}</span>
+        <button
+          class="refused-close"
+          onclick={() => dismissRefusal(current!.key)}
+          aria-label="Dismiss"
+          data-testid="workflow-refused-dismiss">×</button
+        >
+      </p>
+    {/if}
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
          is visible, so its PTY keeps its size and coming back to it costs
@@ -288,6 +311,13 @@
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{statusMessage(current)}</p>
+        {#if current.workflowLost !== null}
+          <!-- The workflow this session followed is gone with its copy:
+               going on without one is the user's to say. -->
+          <button class="without" onclick={() => resumeWithout(current!.key)} data-testid="resume-without-workflow"
+            >Resume without a workflow</button
+          >
+        {/if}
         {#if current.status !== "starting"}
           {@render starters()}
         {/if}
@@ -337,6 +367,48 @@
     padding: 10px var(--pane-pad);
     border-top: 1px solid var(--rule);
     background: var(--surface-2);
+  }
+
+  /* One line over the top of the terminal, cut short. */
+  .refused {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0;
+    padding: 6px var(--pane-pad);
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface-2);
+    font-family: var(--chrome);
+    font-size: var(--row-size);
+    color: var(--ink-2);
+  }
+  .refused-lead {
+    flex: none;
+    font-size: var(--meta-size);
+    letter-spacing: var(--label-track-tight);
+    text-transform: var(--label-case);
+    color: var(--accent);
+  }
+  .refused-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The whole of it while the pointer or the keyboard is on it. */
+  .refused:hover .refused-text,
+  .refused:focus-within .refused-text {
+    white-space: normal;
+  }
+  .refused-close {
+    border: 0;
+    background: none;
+    color: var(--ink-3);
+    cursor: pointer;
   }
 
   .message {

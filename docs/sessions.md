@@ -317,7 +317,12 @@ button. The + and New session start the agent's own way, so nothing is
 asked of someone who never changes it. An integrated session is driven through the core in messages, as
 [integrated](integrated.md) describes, and is a row like any other: it is
 listed, stopped with its ×, brought back after a restart and resumed the
-same way.
+same way. A session under a
+[workflow](orchestrator.md#following-a-workflow) runs in a terminal
+whatever the setting, since its orchestrator is told the workflow as its
+process starts, and so does one resumed from a session that followed one.
+A session started integrated by name is a pick, as an agent picked is, and
+runs alone whatever the project follows.
 
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,

@@ -3,7 +3,8 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import { allow, conductor, handle, resetConductor, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated, send } from "$lib/integrated.svelte";
-import { byKey, create, forProject, reset as resetSessions, sessions } from "$lib/sessions.svelte";
+import { byKey, create, forProject, reset as resetSessions, sessions, started } from "$lib/sessions.svelte";
+import { defaultWorkflow } from "$lib/workflows.svelte";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -32,7 +33,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** An integrated session the caller started, up and running. */
 async function own() {
-  const row = create(A, null, "claude-code", null, null, null, null, "integrated");
+  const row = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
   conductor.startedBy[row.key] = A;
   await launch(row.key);
   return { key: row.key, id: byKey(row.key)!.id!, handle: handleOf(row.key)! };
@@ -123,6 +124,25 @@ describe("the orchestrator's tools with an integrated session", () => {
     await handle(second);
     expect(answerTo(second)?.content).toContain("the message waits for its turn");
     expect(fake.events.findLast((event) => event.type === "message")).toMatchObject({ state: "queued" });
+  });
+
+  it("holds a caller under a workflow to its rules with an integrated session too", async () => {
+    // An orchestrator under a workflow, which runs in a terminal, starts an
+    // integrated session.
+    const orchestrator = create(A, null, "claude-code", null, null, null, null, defaultWorkflow());
+    expect(orchestrator.kind).toBe("terminal");
+    started(orchestrator.key, "pty-orchestrator", "orchestrator");
+    const { key, id } = await own();
+    conductor.startedBy[key] = "orchestrator";
+    const asked = (text: string): ConductRequest => ({ ...call("send", { session: id, text }), session: "orchestrator" });
+    const command = asked("/model opus");
+    await handle(command);
+    expect(answerTo(command)?.error).toContain("You follow a workflow, so the workbench gives the sessions you reach no command but /compact");
+    expect(fake.calls.some((made) => made.method === "send")).toBe(false);
+    const words = asked("Tell me how it goes");
+    await handle(words);
+    expect(answerTo(words)).toMatchObject({ error: null });
+    expect(fake.calls.find((made) => made.method === "send")).toMatchObject({ text: "Tell me how it goes" });
   });
 
   it("tells another session's message from the user's by its id alone, never by its words", async () => {

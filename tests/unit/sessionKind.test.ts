@@ -26,6 +26,7 @@ import { reopen } from "$lib/reopen.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { resetConductor } from "$lib/conductor.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
 const sets = vi.hoisted(() => [] as Partial<Settings>[]);
 
@@ -131,7 +132,7 @@ describe("a session's kind", () => {
     setKind("claude-code", "integrated");
     expect(create(PROJECT, null, "claude-code").kind).toBe("integrated");
     expect(create(PROJECT, null, "codex").kind).toBe("terminal");
-    const once = create(PROJECT, null, "claude-code", null, null, null, null, "terminal");
+    const once = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "terminal");
     expect(once.kind).toBe("terminal");
     // The next one follows the setting again.
     expect(create(PROJECT, null, "claude-code").kind).toBe("integrated");
@@ -141,7 +142,7 @@ describe("a session's kind", () => {
     const stopped: string[] = [];
     onIntegratedClose((session) => stopped.push(session.key));
     const terminal = create(PROJECT, null, "claude-code");
-    const integrated = create(PROJECT, null, "claude-code", null, null, null, null, "integrated");
+    const integrated = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     close(terminal.key);
     close(integrated.key);
     expect(stopped).toEqual([integrated.key]);
@@ -151,7 +152,7 @@ describe("a session's kind", () => {
   it("leaves an integrated session's state to its own events, whatever the hooks say", () => {
     const terminal = create(PROJECT, null, "claude-code");
     started(terminal.key, "pty-1", "terminal-id");
-    const integrated = create(PROJECT, null, "claude-code", null, null, null, null, "integrated");
+    const integrated = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     integrated.id = "integrated-id";
     integrated.status = "running";
     exact("terminal-id", "prompt");
@@ -166,7 +167,7 @@ describe("a session's kind", () => {
   it("comes back after a restart as it ran", () => {
     workspace.open.push({ path: PROJECT, name: "demo", repository: PROJECT, isGit: true });
     workspace.active = PROJECT;
-    const integrated = create(PROJECT, null, "claude-code", null, null, null, null, "integrated");
+    const integrated = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     integrated.id = "integrated-id";
     integrated.status = "running";
     const terminal = create(PROJECT, null, "claude-code");
@@ -192,5 +193,33 @@ describe("a session's kind", () => {
 
   it("reads a record from before there were integrated sessions as a terminal", () => {
     expect(reopened(PROJECT, "old", "claude-code", null, null, null).kind).toBe("terminal");
+  });
+});
+
+describe("a session under a workflow", () => {
+  afterEach(() => resetWorkflows());
+
+  it("runs in a terminal, the one way its orchestrator is told the workflow", () => {
+    setKind("claude-code", "integrated");
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(PROJECT);
+    expect(session.workflow?.name).toBe("Build and review");
+    expect(session.kind).toBe("terminal");
+    // An agent picked from several runs alone, the way its setting says.
+    expect(create(PROJECT, null, "claude-code").kind).toBe("integrated");
+  });
+
+  it("is not one started integrated by name, which runs alone", () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    expect(session.workflow).toBeNull();
+    expect(session.kind).toBe("integrated");
+  });
+
+  it("resumed from one that followed a workflow, runs in a terminal again", () => {
+    setKind("claude-code", "integrated");
+    sessions.workflows["followed"] = { workflow: defaultWorkflow(), told: null, project: PROJECT };
+    expect(create(PROJECT, "followed", "claude-code").kind).toBe("terminal");
+    expect(create(PROJECT, "plain", "claude-code").kind).toBe("integrated");
   });
 });
