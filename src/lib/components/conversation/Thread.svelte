@@ -417,6 +417,18 @@
       {/if}
       {#if words.text !== ""}<p><Plain text={words.text} /></p>{/if}
     </div>
+    {#if words.reports !== null}
+      {@const shown = `${said.id}:reports`}
+      <button
+        class="link instructions"
+        tabindex="-1"
+        data-thread-item
+        onclick={() => (unfolded[shown] = !unfolded[shown])}
+        aria-expanded={unfolded[shown] === true}
+        data-testid="workbench-reports">Reports from the workbench</button
+      >
+      {#if unfolded[shown]}<p class="state reports" data-testid="workbench-reports-text">{words.reports}</p>{/if}
+    {/if}
     {#if words.instructions !== null}
       <button
         class="link instructions"
@@ -589,6 +601,10 @@
 
   .link.instructions:hover {
     color: var(--ink);
+  }
+
+  .state.reports {
+    white-space: pre-line;
   }
 
   .you.waiting .bubble {

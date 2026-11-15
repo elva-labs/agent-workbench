@@ -10,6 +10,8 @@ import {
   PIECE,
   PIECE_EVERY,
   OUTCOME_ASK,
+  REPORTS_HEAD,
+  USER_WROTE,
   accountWords,
   allow,
   allowedProjects,
@@ -29,6 +31,7 @@ import {
   dismissRefusal,
   stopAll,
   typeWhole,
+  unheard,
   AMBIGUOUS,
   NOWHERE,
   UNPLACED,
@@ -1486,6 +1489,181 @@ describe("a started session nobody looks at", () => {
     streams(row.key, WORK_WINDOWS);
     expect(row.working).toBe(true);
   });
+});
+
+describe("telling a starter as the user writes to it", () => {
+  /** A session that stopped working, which its caller has not heard. */
+  function stoppedOne(ptyId: string, id: string, note: string | null = null) {
+    const row = own(A, ptyId, id, "caller-1");
+    row.working = true;
+    flushSync();
+    row.working = false;
+    row.note = note;
+    flushSync();
+    return row;
+  }
+
+  const prompt = (extra: Partial<ConductRequest> = { session: "caller-1" }) =>
+    handle(call("prompt", {}, extra));
+
+  it("tells a stop the caller has not heard, once, ahead of the user's words", async () => {
+    stoppedOne("pty-1", "sid-1", "the cache is fixed");
+    await prompt();
+    expect(last().content).toBe(
+      `${REPORTS_HEAD}\nSession sid-1 stopped working. Its last line: the cache is fixed`,
+    );
+    await prompt();
+    expect(last().content).toBe("");
+    // Told there is told: the next wait does not answer with it again.
+    const again = handle(call("wait", { seconds: 5 }, { session: "caller-1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    await again;
+    expect(last().content).toContain("Nothing happened");
+  });
+
+  it("says a line for each that stopped, asked or ended, and nothing of one at work", async () => {
+    stoppedOne("pty-1", "sid-1");
+    const asking = own(A, "pty-2", "sid-2", "caller-1");
+    asking.working = true;
+    flushSync();
+    exact("sid-2", "permission");
+    const gone = own(A, "pty-3", "sid-3", "caller-1");
+    gone.working = true;
+    flushSync();
+    gone.status = "exited";
+    const busy = own(A, "pty-4", "sid-4", "caller-1");
+    busy.working = true;
+    flushSync();
+    await prompt();
+    expect(last().content).toBe(
+      [
+        REPORTS_HEAD,
+        "Session sid-1 stopped working. It has left no line.",
+        "Session sid-2 is asking for permission. It has left no line.",
+        "Session sid-3 exited. It has left no line.",
+      ].join("\n"),
+    );
+  });
+
+  it("says nothing to a session that started none, nor of another caller's", async () => {
+    stoppedOne("pty-1", "sid-1");
+    await prompt({ session: "caller-2" });
+    expect(last().content).toBe("");
+    await prompt({ session: null });
+    expect(last().content).toBe("");
+  });
+
+  it("tells a caller that names no session what the one untold session in its directory started", async () => {
+    const calling = create(A, null, "codex", null);
+    started(calling.key, "pty-0", null);
+    const row = own(A, "pty-1", "sid-1", A);
+    row.working = true;
+    flushSync();
+    row.working = false;
+    flushSync();
+    await prompt({ session: null });
+    expect(last().content).toContain("Session sid-1 stopped working.");
+  });
+
+  it("tells nothing past a wait still held, which answers for them, and says what is still out", async () => {
+    const busy = own(A, "pty-1", "sid-1", "caller-1");
+    busy.working = true;
+    flushSync();
+    const waiting = call("wait", {}, { session: "caller-1" });
+    const held = handle(waiting);
+    await settle();
+    await prompt();
+    expect(last().content).toBe(
+      `${REPORTS_HEAD}\nStill at work when the user wrote: sid-1. Call wait to hear from them once you have answered.`,
+    );
+    // The message cuts the wait short; the next one is not told again.
+    cancelled(waiting.id);
+    await held;
+    await prompt();
+    expect(last().content).toBe("");
+  });
+
+  it("says which are still out after a wait the user's message cut short", async () => {
+    const busy = own(A, "pty-1", "sid-1", "caller-1");
+    busy.working = true;
+    const other = own(A, "pty-2", "sid-2", "caller-1");
+    other.working = true;
+    flushSync();
+    const waiting = call("wait", {}, { session: "caller-1" });
+    const held = handle(waiting);
+    await settle();
+    cancelled(waiting.id);
+    await held;
+    expect(answers).toHaveLength(0);
+    other.working = false;
+    flushSync();
+    await prompt();
+    expect(last().content).toBe(
+      [
+        REPORTS_HEAD,
+        "Session sid-2 stopped working. It has left no line.",
+        "Still at work when the user wrote: sid-1. Call wait to hear from them once you have answered.",
+      ].join("\n"),
+    );
+    // Said once: the cut is not news again.
+    await prompt();
+    expect(last().content).toBe("");
+  });
+
+  it("forgets a cut wait once the caller waits again", async () => {
+    const busy = own(A, "pty-1", "sid-1", "caller-1");
+    busy.working = true;
+    flushSync();
+    const first = call("wait", {}, { session: "caller-1" });
+    const held = handle(first);
+    await settle();
+    cancelled(first.id);
+    await held;
+    const again = handle(call("wait", { seconds: 5 }, { session: "caller-1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    await again;
+    await prompt();
+    expect(last().content).toBe("");
+  });
+});
+
+describe("what a starter's row says it has to read", () => {
+  it("lists a stop it has not heard while it is idle with no wait held", async () => {
+    const starter = live(A, "pty-0", "caller-1");
+    const row = stopped(own(A, "pty-1", "sid-1", "caller-1"));
+    expect(unheard(starter)).toEqual([row]);
+    starter.working = true;
+    expect(unheard(starter)).toEqual([]);
+    starter.working = false;
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    flushSync();
+    expect(unheard(starter)).toEqual([]);
+  });
+
+  it("lists nothing while the starter holds a wait, which will answer it", async () => {
+    const starter = live(A, "pty-0", "caller-1");
+    const row = own(A, "pty-1", "sid-1", "caller-1");
+    row.working = true;
+    flushSync();
+    const waiting = call("wait", {}, { session: "caller-1" });
+    const held = handle(waiting);
+    await settle();
+    expect(unheard(starter)).toEqual([]);
+    cancelled(waiting.id);
+    await held;
+    row.working = false;
+    flushSync();
+    expect(unheard(starter)).toEqual([row]);
+  });
+
+  /** A session that worked and then stopped. */
+  function stopped(row: ReturnType<typeof own>) {
+    row.working = true;
+    flushSync();
+    row.working = false;
+    flushSync();
+    return row;
+  }
 });
 
 describe("waiting", () => {

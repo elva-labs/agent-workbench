@@ -591,11 +591,13 @@ export interface ConductCancel {
 
 /** A call an agent made on one of the conductor's tools: what one session
     asks about the projects, the sessions, and the ones it starts. The
-    window answers each one, by id, except a wait the agent gave up on. */
+    window answers each one, by id, except a wait the agent gave up on.
+    `prompt` is no tool of the agent's: the agent's prompt hook asks it as
+    the user's message goes in, for what the sessions it started have done. */
 export interface ConductRequest {
   /** What the answer is named after, unique to this call. */
   id: string;
-  tool: "projects" | "sessions" | "start" | "send" | "stop" | "wait" | "read";
+  tool: "projects" | "sessions" | "start" | "send" | "stop" | "wait" | "read" | "prompt";
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which project it is in. */
   cwd: string;

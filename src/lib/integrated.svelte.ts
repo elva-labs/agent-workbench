@@ -409,20 +409,32 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
   return attempt;
 }
 
+/** What goes ahead of the user's words in a message to a session, from the
+    module that knows what the sessions it started have done: told by it. */
+let noteFor: (key: string) => string | null = () => null;
+
+export function notesFrom(how: (key: string) => string | null) {
+  noteFor = how;
+}
+
 /** Sends the user's message under an id of the window's own. A row with no
     name yet takes the first line of its first message. */
 /** Sends a message to the agent: the user's, or with `from` another
-    session's, which the thread then shows under that session's name. */
+    session's, which the thread then shows under that session's name. The
+    user's goes with the workbench's note on the sessions it started ahead
+    of their words, when there is one. */
 export function send(
   key: string,
-  text: string,
+  words: string,
   images: IntegratedImage[] = [],
   from: string | null = null,
 ): string | null {
   const link = links.get(key);
   const session = byKey(key);
   if (link === undefined || link.handle === null || session === null) return null;
-  if (text.trim() === "" && images.length === 0) return null;
+  if (words.trim() === "" && images.length === 0) return null;
+  const note = from === null ? noteFor(key) : null;
+  const text = note === null ? words : `${note}\n\n${words}`;
   const id = crypto.randomUUID();
   link.conversation.sending(id, text, images);
   // A message sent is the agent spoken to, by the user or by a session
