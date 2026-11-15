@@ -949,6 +949,17 @@
 
   input[type="range"]:disabled {
     opacity: 0.45;
+  /* A contrast theme leaves out the colours a slider is drawn with here,
+     so the system draws the sliders itself. */
+  @media (forced-colors: active) {
+    input[type="range"],
+    input[type="range"]::-webkit-slider-runnable-track,
+    input[type="range"]::-webkit-slider-thumb {
+      appearance: auto;
+      -webkit-appearance: auto;
+    }
+  }
+
     cursor: default;
   }
 
