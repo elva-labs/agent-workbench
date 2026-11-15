@@ -19,6 +19,7 @@
   import RefusalBanner from "$lib/components/RefusalBanner.svelte";
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
+  import StatusBar from "$lib/components/StatusBar.svelte";
   import {
     cancelled as conductCancelled,
     conductor,
@@ -68,7 +69,7 @@
   import { stash } from "$lib/exits";
   import { isMac, resolveAction, type Action } from "$lib/keymap";
   import { keys } from "$lib/keys.svelte";
-  import { flash, say } from "$lib/flash.svelte";
+  import { say } from "$lib/flash.svelte";
   import { openSettings, settings } from "$lib/settings.svelte";
   import { cycleTheme, theme } from "$lib/theme.svelte";
   import {
@@ -95,7 +96,6 @@
     unreadCount,
     viewed,
   } from "$lib/sessions.svelte";
-  import { accountLabel, hasAccounts } from "$lib/accounts.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
   import { primeChime } from "$lib/chime";
   import { announce } from "$lib/notify.svelte";
@@ -882,23 +882,7 @@
 <UserStyles />
 
 
-<footer class="status no-select">
-  <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>
-  <span class="mode" data-testid="mode-readout">{layout.mode}</span>
-  <!-- Whose login the active session runs under, once there are accounts
-       to tell apart. -->
-  {#if hasAccounts() && activeSession() !== null}
-    <span class="account" data-testid="account-readout"
-      >account: {accountLabel(activeSession()?.account ?? null)}</span
-    >
-  {/if}
-  {#if unreadCount() > 0}
-    <span class="waiting" data-testid="waiting-readout">
-      {unreadCount()} waiting for you
-    </span>
-  {/if}
-  <span class="flash" role="status" data-testid="flash-readout">{flash.text ?? ""}</span>
-</footer>
+<StatusBar />
 
 <style>
   /* Wide enough that a pane's sharp corner stays clear of the window's
@@ -1041,45 +1025,5 @@
   .agent-slot :global(.pane) {
     flex: 1;
     min-width: 0;
-  }
-
-  .status {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    height: 26px;
-    padding: 0 12px;
-    border-top: 1px solid var(--status-rule);
-    background: var(--status-bg);
-    font-family: var(--chrome);
-    font-size: var(--status-size);
-    color: var(--ink-3);
-    white-space: nowrap;
-    overflow: hidden;
-  }
-
-  .focus {
-    color: var(--accent);
-  }
-
-  .mode,
-  .account {
-    color: var(--ink-3);
-  }
-
-
-
-  .waiting {
-    color: var(--accent);
-  }
-  .flash {
-    color: var(--accent);
-  }
-
-
-
-  /* The status bar is the first thing to lose room; drop the least useful
-     reminders rather than letting the row clip mid-word. */
-  @media (max-width: 1100px) {
   }
 </style>
