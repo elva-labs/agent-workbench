@@ -25,18 +25,24 @@ function calls(page: Page): Promise<{ method: string; [field: string]: unknown }
 }
 
 /** The account's limits as the agent reports them, with reset times given
-    in seconds from now. */
-async function report(page: Page, windows: Window[], options: { plan?: string; age?: number; id?: string } = {}) {
+    in seconds from now: taken `age` seconds ago, by a read `read` seconds
+    ago, or `read: null` where no read was answered. Without `read`, a read
+    took them. */
+async function report(
+  page: Page,
+  windows: Window[],
+  options: { plan?: string; age?: number; read?: number | null; id?: string } = {},
+) {
   await page.evaluate(
-    ({ id, windows, plan, age }) => {
+    ({ id, windows, plan, age, read }) => {
       const now = Math.floor(Date.now() / 1000);
       (window as unknown as { __integrated: { limits: (...args: unknown[]) => void } }).__integrated.limits(
         id,
         windows.map((window) => ({ ...window, resetsAt: window.resetsAt === undefined ? null : now + window.resetsAt })),
-        { plan: plan ?? null, takenAt: now - age },
+        { plan: plan ?? null, takenAt: now - age, readAt: read === null ? null : now - (read ?? age) },
       );
     },
-    { id: options.id ?? H, windows, plan: options.plan, age: options.age ?? 0 },
+    { id: options.id ?? H, windows, plan: options.plan, age: options.age ?? 0, read: options.read },
   );
 }
 
@@ -175,13 +181,28 @@ test.describe("the session on screen", () => {
     await expect(figure(page, "weekly")).toHaveAttribute("data-tone", "warn");
   });
 
-  test("shows a clock and the age once the figures are old", async ({ page }) => {
+  test("shows a clock and the age once the figures are fifteen minutes old", async ({ page }) => {
     await open(page, { accounts: WORK });
     await report(page, THREE, { age: 3 * HOUR + 60 });
     await expect(page.getByTestId("limits-age")).toHaveText("3 h ago");
     await expect(page.getByTestId("limits-age").locator("svg")).toBeVisible();
-    await report(page, THREE, { age: 9 * 60 });
+    // Each report newer than the last, as the store keeps only the newest.
+    await report(page, THREE, { age: 15 * 60 + 30 });
+    await expect(page.getByTestId("limits-age")).toHaveText("15 min ago");
+    await report(page, THREE, { age: 14 * 60 });
     await expect(page.getByTestId("limits-age")).toHaveCount(0);
+  });
+
+  test("counts the age from the last read, not from a push since", async ({ page }) => {
+    await open(page, { accounts: WORK });
+    // With no read answered, a push's own time is all there is.
+    await report(page, THREE, { age: 60, read: null });
+    await expect(page.getByTestId("limit-figure")).toHaveCount(3);
+    await expect(page.getByTestId("limits-age")).toHaveCount(0);
+    // A push just now moved the session window; the read before it, which
+    // the other windows are from, is twenty minutes old.
+    await report(page, THREE, { age: 0, read: 20 * 60 + 30 });
+    await expect(page.getByTestId("limits-age")).toHaveText("20 min ago");
   });
 
   test("shows only the windows a Codex account has", async ({ page }) => {

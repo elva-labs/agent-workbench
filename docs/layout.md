@@ -93,7 +93,11 @@ A window near its end, as the agent reads it, or from 80% used where the
 agent gives no reading, takes the theme's warning tone in a heavier weight.
 One used up takes the error tone and says when it resets. A window whose
 reset time has passed reads as reset until new figures come. Figures older
-than ten minutes are followed by a small clock and their age.
+than fifteen minutes are followed by a small clock and their age. A session
+reads them when it is ready and after a turn at most every five minutes, so
+figures that old mean no turn on the account has ended in a while. The age
+is that of the last full read, since what the agent pushes during a turn
+moves only some of the windows.
 
 A click on the allowance opens a popover with every window: a meter, the
 share used and when it resets in words, such as `resets in 2 h 10 min` or

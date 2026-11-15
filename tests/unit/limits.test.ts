@@ -27,6 +27,7 @@ function report(over: Partial<LimitsReport> = {}): LimitsReport {
     type: "limits",
     agent: "claude-code",
     plan: "team",
+    readAt: SECONDS,
     takenAt: SECONDS,
     windows: [window({ kind: "session", percent: 11 })],
     ...over,
@@ -44,9 +45,23 @@ describe("the store of limits", () => {
     // A report taken before the one held, arriving late, is let go.
     heardLimits(null, "Work", report({ takenAt: SECONDS + 10, windows: [window({ kind: "session", percent: 25 })] }));
     expect(limitsOf(null, "claude-code", "Work")?.windows[0].percent).toBe(30);
-    // One taken at the same second is the later word.
+    // One taken at the same second is the later word, unless its read is
+    // the older.
     heardLimits(null, "Work", report({ takenAt: SECONDS + 60, windows: [window({ kind: "session", percent: 31 })] }));
     expect(limitsOf(null, "claude-code", "Work")?.windows[0].percent).toBe(31);
+    heardLimits(
+      null,
+      "Work",
+      report({ readAt: SECONDS - 600, takenAt: SECONDS + 60, windows: [window({ kind: "session", percent: 32 })] }),
+    );
+    expect(limitsOf(null, "claude-code", "Work")?.windows[0].percent).toBe(31);
+    // A push after the read is newer, and keeps the read it came after.
+    heardLimits(
+      null,
+      "Work",
+      report({ readAt: SECONDS, takenAt: SECONDS + 120, windows: [window({ kind: "session", percent: 33 })] }),
+    );
+    expect(limitsOf(null, "claude-code", "Work")).toMatchObject({ readAt: SECONDS, takenAt: SECONDS + 120 });
   });
 
   it("keeps each machine's, agent's and account's figures apart", () => {
@@ -175,15 +190,28 @@ describe("what a report says", () => {
     expect(resetWords(scoped, NOW)).toMatch(/^Reset at /);
   });
 
-  it("says how old the figures are, and from ten minutes that they are old", () => {
-    expect(ageOf(SECONDS - 20, NOW)).toEqual({ stale: false, short: "now", long: "just now" });
-    expect(ageOf(SECONDS - 4 * 60, NOW)).toMatchObject({ stale: false, long: "4 min ago" });
-    expect(ageOf(SECONDS - 10 * 60, NOW)).toMatchObject({ stale: true, short: "10 min" });
-    expect(ageOf(SECONDS - 3 * 3600, NOW)).toMatchObject({ stale: true, short: "3 h", long: "3 hours ago" });
-    expect(ageOf(SECONDS - 3600, NOW).long).toBe("an hour ago");
-    expect(ageOf(SECONDS - 2 * 86_400, NOW)).toMatchObject({ short: "2 d", long: "2 days ago" });
+  it("says how old the figures are, and from fifteen minutes that they are old", () => {
+    const at = (seconds: number) => ({ readAt: seconds, takenAt: seconds });
+    expect(ageOf(at(SECONDS - 20), NOW)).toEqual({ stale: false, short: "now", long: "just now" });
+    expect(ageOf(at(SECONDS - 4 * 60), NOW)).toMatchObject({ stale: false, long: "4 min ago" });
+    expect(ageOf(at(SECONDS - 14 * 60), NOW)).toMatchObject({ stale: false, short: "14 min" });
+    expect(ageOf(at(SECONDS - 15 * 60), NOW)).toMatchObject({ stale: true, short: "15 min" });
+    expect(ageOf(at(SECONDS - 3 * 3600), NOW)).toMatchObject({ stale: true, short: "3 h", long: "3 hours ago" });
+    expect(ageOf(at(SECONDS - 3600), NOW).long).toBe("an hour ago");
+    expect(ageOf(at(SECONDS - 2 * 86_400), NOW)).toMatchObject({ short: "2 d", long: "2 days ago" });
     // Figures from a clock a little ahead are new, not from the future.
-    expect(ageOf(SECONDS + 30, NOW).long).toBe("just now");
+    expect(ageOf(at(SECONDS + 30), NOW).long).toBe("just now");
+  });
+
+  it("counts the age from the last read, since a push between reads moves only some figures", () => {
+    // A push a minute ago on top of a read twenty minutes ago: the figures
+    // the push did not name are twenty minutes old.
+    expect(ageOf({ readAt: SECONDS - 20 * 60, takenAt: SECONDS - 60 }, NOW)).toMatchObject({
+      stale: true,
+      short: "20 min",
+    });
+    // With no read answered, the report's own time is all there is.
+    expect(ageOf({ readAt: null, takenAt: SECONDS - 60 }, NOW)).toMatchObject({ stale: false, long: "1 min ago" });
   });
 
   it("names a plan in plain words, and one it does not know as the agent wrote it", () => {

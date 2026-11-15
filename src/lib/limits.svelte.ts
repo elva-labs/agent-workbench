@@ -26,16 +26,23 @@ function keyOf(host: string | null, agent: string, account: string | null): stri
   return JSON.stringify([host, agent, account]);
 }
 
-/** Takes a report of the limits of an account on a machine. One taken
-    before the report already held is let go. */
+/** Takes a report of the limits of an account on a machine. One whose
+    figures last moved before the held report's did is let go; of two that
+    moved at the same second, the one with the later read stands. */
 export function heardLimits(host: string | null, account: string | null, report: LimitsReport) {
   const key = keyOf(host, report.agent, account);
   const held = known[key];
-  if (held !== undefined && held.takenAt > report.takenAt) return;
+  if (
+    held !== undefined &&
+    (held.takenAt > report.takenAt ||
+      (held.takenAt === report.takenAt && (held.readAt ?? 0) > (report.readAt ?? 0)))
+  )
+    return;
   known[key] = {
     type: "limits",
     agent: report.agent,
     plan: report.plan,
+    readAt: report.readAt,
     takenAt: report.takenAt,
     windows: report.windows.map((window) => ({ ...window })),
   };
@@ -77,8 +84,11 @@ export interface Figure {
 /** From this share used a window is near its end, where the agent gives
     no reading of its own. */
 export const WARN_FROM = 80;
-/** Figures older than this say how old they are. */
-export const STALE_AFTER = 10 * 60_000;
+/** Figures older than this say how old they are. A session reads them
+    once it is ready and after a turn at most every five minutes, so
+    figures this old mean no session on the account has finished a turn
+    for a while. */
+export const STALE_AFTER = 15 * 60_000;
 
 const ORDER: IntegratedLimitWindow["kind"][] = ["session", "weekly", "weeklyScoped"];
 
@@ -190,9 +200,15 @@ export function resetWords(figure: Figure, now: number): string {
   return figure.reached ? `Reached, ${when}` : when;
 }
 
-/** How old figures taken at `takenAt`, in seconds, are by `now`. */
-export function ageOf(takenAt: number, now: number): { stale: boolean; short: string; long: string } {
-  const ms = Math.max(0, now - takenAt * 1000);
+/** How old a report's figures are by `now`: as old as its oldest, which
+    is the last read the agent answered, or the report itself where no
+    read was answered. A push between reads moves only the windows it
+    names, so a newer figure does not make the rest newer. */
+export function ageOf(
+  report: Pick<LimitsReport, "readAt" | "takenAt">,
+  now: number,
+): { stale: boolean; short: string; long: string } {
+  const ms = Math.max(0, now - (report.readAt ?? report.takenAt) * 1000);
   const minutes = Math.floor(ms / 60_000);
   const stale = ms >= STALE_AFTER;
   if (minutes < 1) return { stale, short: "now", long: "just now" };

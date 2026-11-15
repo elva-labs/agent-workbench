@@ -79,7 +79,7 @@
   let report = $derived(session === null ? null : limitsOf(hostOf(session.project), session.agent, session.account));
   let figures = $derived(report === null ? [] : figuresOf(report, now));
   let top = $derived(topFigure(figures));
-  let age = $derived(report === null ? null : ageOf(report.takenAt, now));
+  let age = $derived(report === null ? null : ageOf(report, now));
 
   /** What a figure says in the bar: its share, or that it has reset. */
   function share(figure: Figure): string {
