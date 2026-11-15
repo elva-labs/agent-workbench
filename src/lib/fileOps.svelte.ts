@@ -16,9 +16,9 @@
  * this machine only.
  *
  * An untitled file starts in the folder the cursor is in, and saving it
- * asks for a path from the top of the tree in a field over the editor,
- * held to the same refusals as a name in the tree. A file already at the
- * path is replaced only once that is asked and answered.
+ * asks for a path from the top of the tree it was started in, in a field
+ * over the editor, held to the same refusals as a name in the tree. A file
+ * already at the path is replaced only once that is asked and answered.
  */
 
 import { core } from "$lib/core";
@@ -141,33 +141,41 @@ export function savePathFor(value: string): { path: string } | { problem: string
   return pathFor(null, text);
 }
 
-/** Enter in the field naming an untitled file: written at that path,
-    unless the path will not do or holds a file already, which asks
-    whether to replace it first. */
+/** Why a path holding a file open with unsaved edits will not do, or null. */
+function heldOpen(root: string, path: string): string | null {
+  return editor.buffers[keyOf(root, path)]?.dirty
+    ? `${path} is open with unsaved edits. Save or close it first.`
+    : null;
+}
+
+/** Enter in the field naming an untitled file: written at that path in
+    the tree it was started in, unless the path will not do or holds a
+    file already, which asks whether to replace it first. */
 export async function commitSaveAs() {
   const asked = editor.savingAs;
-  const root = watchRoot();
-  if (asked === null || asked.busy || asked.replace !== null || root === null) return;
+  if (asked === null || asked.busy || asked.replace !== null) return;
   const target = savePathFor(asked.value);
   if ("problem" in target) {
     asked.problem = target.problem;
     return;
   }
-  if (editor.buffers[keyOf(root, target.path)]?.dirty) {
-    asked.problem = `${target.path} is open with unsaved edits. Save or close it first.`;
+  const held = heldOpen(asked.root, target.path);
+  if (held !== null) {
+    asked.problem = held;
     return;
   }
-  await writeAs(root, target.path, false);
+  await writeAs(asked.root, target.path, false);
 }
 
 /** Replace, on the question about a file already at the path. */
 export async function confirmReplace() {
   const asked = editor.savingAs;
-  const root = watchRoot();
-  if (asked === null || asked.busy || asked.replace === null || root === null) return;
-  await writeAs(root, asked.replace, true);
+  if (asked === null || asked.busy || asked.replace === null) return;
+  await writeAs(asked.root, asked.replace, true);
 }
 
+/** Writes the untitled file. Once written the tree, when it is the one on
+    screen, is read again to show the file, and the field goes. */
 async function writeAs(root: string, path: string, overwrite: boolean) {
   const asked = editor.savingAs!;
   asked.busy = true;
@@ -186,9 +194,11 @@ async function writeAs(root: string, path: string, overwrite: boolean) {
     asked.replace = path;
     return;
   }
-  await refresh();
-  await treeSettled();
-  reveal(path);
+  if (watchRoot() === root) {
+    await refresh();
+    await treeSettled();
+    reveal(path);
+  }
   asked.busy = false;
   endSaveAs(written);
 }

@@ -90,13 +90,17 @@ with the edit view only, and carries the dot once something is typed in it.
 One with nothing typed closes without a question; one with text asks as any
 unsaved file does.
 
+An untitled file belongs to the tree it was started in, the project's own
+or the worktree of the session beside it, and is saved there whichever
+project is on screen when it is saved.
+
 Saving it, by <kbd>Cmd</kbd><kbd>S</kbd>, Save in the File menu or Save and
 close in a question, asks for a path first, in a field over the editor. The
-field holds a path from the top of the project: the folder the tree's
-cursor was in when the file was started, then its name, selected so that
-typing replaces it. <kbd>Enter</kbd> or Save writes it, slashes making the
-folders on the way, and <kbd>Esc</kbd> or Cancel puts the field away with
-the file still untitled. The field refuses what the tree's name field
+field names the project and holds a path from its top: the folder the
+tree's cursor was in when the file was started, then its name, selected so
+that typing replaces it. <kbd>Enter</kbd> or Save writes it, slashes making
+the folders on the way, and <kbd>Esc</kbd> or Cancel puts the field away
+with the file still untitled. The field refuses what the tree's name field
 refuses, and a path that leaves the project: an absolute one, one from the
 home folder, or one that steps up out of the top. A path that holds a file
 already asks whether to replace it, and one open with unsaved edits is
@@ -152,8 +156,10 @@ An untitled file with text is asked about in the same way. Save and close
 asks for its path, and closes it once written. Save all writes the files
 that have names, then asks each untitled file's path in turn with that file
 in front, and closes or quits once all are written; putting a field away
-stops it there, and the status bar says so. Untitled files are not kept
-across a restart, since the editor reopens no tabs.
+stops it there, and the status bar says so. An untitled file from another
+session's tabs is shown beside the session on screen while its path is
+asked, and its tab goes from there once it is written. Untitled files are
+not kept across a restart, since the editor reopens no tabs.
 
 The core takes the window's question as heard only once it is drawn; if it
 is not drawn soon, the close or the quit goes through rather than keep the

@@ -1,10 +1,11 @@
 <script lang="ts">
   /**
    * The path asked for before an untitled file is first written, put over
-   * the editor: a path from the top of the project, the folder the file was
-   * started in already written and its name selected to type over. Enter
-   * or Save writes it, and Escape or Cancel puts the field away with the
-   * file still untitled. A path that will not do says why under the field;
+   * the editor: a path from the top of the project the file was started
+   * in, which the field names, the folder it was started in already
+   * written and its name selected to type over. Enter or Save writes it,
+   * and Escape or Cancel puts the field away with the file still
+   * untitled. A path that will not do says why under the field;
    * one that holds a file already asks whether to replace it, and Cancel
    * there comes back to the field.
    *
@@ -15,11 +16,13 @@
   import { cancelSaveAs, editor, keepName, setSaveAsName } from "$lib/editor.svelte";
   import { commitSaveAs, confirmReplace } from "$lib/fileOps.svelte";
   import { tabWithin } from "$lib/tabStops";
-  import { projectLabel, workspace } from "$lib/workspace.svelte";
+  import { projectLabel } from "$lib/workspace.svelte";
 
   let asked = $derived(editor.savingAs);
   let name = $derived(asked === null ? "" : (editor.buffers[asked.key]?.path ?? ""));
-  let project = $derived(workspace.active === null ? "" : projectLabel(workspace.active));
+  // The project the file was started in, which it is written to, whichever
+  // is on screen.
+  let project = $derived(asked === null ? "" : projectLabel(asked.project));
 
   /** The field takes the keyboard each time it is put up, with the file's
       name selected up to its extension, so typing replaces the name and
@@ -74,7 +77,7 @@
       <label class="what" for="save-as-path">Save {name} as</label>
       <div class="field">
         <span class="box" class:wrong={asked.problem !== null}>
-          {#if project !== ""}<span class="root" title={project}>{project}/</span>{/if}
+          {#if project !== ""}<span class="root" title={project} data-testid="save-as-root">{project}/</span>{/if}
           <input
             id="save-as-path"
             value={asked.value}

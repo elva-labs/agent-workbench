@@ -31,9 +31,10 @@
  * An untitled file is a buffer with no file behind it, in a tab named
  * Untitled, Untitled 2 and so on. No tree holds it, so nothing reads,
  * watches or lists it, and the viewer's record, which the agent's tools
- * read, names no file while it is in front. Saving it asks for a path in
- * the tree first; once written it is that file, its tab and its history
- * kept.
+ * read, names no file while it is in front. It belongs to the tree it was
+ * started in, whichever is on screen later. Saving it asks for a path in
+ * that tree first; once written it is that file, its tab kept and its
+ * history with it.
  */
 
 import { tick, untrack } from "svelte";
@@ -144,6 +145,10 @@ export interface Closing {
 export interface SaveAs {
   /** The untitled file's buffer, or the file's once it is written. */
   key: string;
+  /** The tree the file is written to: the one it was started in. */
+  root: string;
+  /** The project it was started in, by its path, to name in the field. */
+  project: string;
   /** What the field holds: a path from the top of the tree. */
   value: string;
   /** Why the path will not do, under the field. */
@@ -231,8 +236,10 @@ function bump(key: string) {
     older read that comes back after a newer one is dropped. */
 const reads = new Map<string, number>();
 
-/** The folder each untitled file was started in, where saving it starts. */
-const homes = new Map<string, string | null>();
+/** Where each untitled file was started: the project, the tree it is
+    written to whichever is on screen when it is saved, and the folder in
+    that tree saving it starts in, null for the top. */
+const homes = new Map<string, { project: string; root: string; folder: string | null }>();
 
 /** What follows once the path asked for is given and the file written, or
     the field put away without it; and whether the keyboard goes back to
@@ -608,13 +615,17 @@ function freeName(): string {
 
 /**
  * A new untitled file in a tab after the one in front, brought to the
- * front with the keyboard in it. `folder` is the folder of the tree that
- * saving it starts in, null for the top. From agent mode the window flips
- * to the editor first. Nothing without a project.
+ * front with the keyboard in it. It belongs to the tree on screen, which
+ * it is written to when saved; `folder` is the folder of that tree saving
+ * it starts in, null for the top. From agent mode the window flips to the
+ * editor first. Nothing without a tree to write it to.
  */
 export function openUntitled(folder: string | null) {
-  if (workspace.active === null) return;
+  if (workspace.active === null || watchRoot() === null) return;
   enterEditor(() => {
+    const project = workspace.active;
+    const root = watchRoot();
+    if (project === null || root === null) return;
     const name = freeName();
     const key = keyOf(UNTITLED, name);
     editor.buffers[key] = {
@@ -631,7 +642,7 @@ export function openUntitled(folder: string | null) {
     const state = stateFor("");
     states.set(key, state);
     saved.set(key, state.doc);
-    homes.set(key, folder);
+    homes.set(key, { project, root, folder });
     const at = editor.tabs.findIndex((tab) => tabKey(tab) === editor.active);
     editor.tabs.splice(at === -1 ? editor.tabs.length : at + 1, 0, {
       root: UNTITLED,
@@ -651,22 +662,25 @@ let namings = 0;
 
 /**
  * Puts up the field for the path to write an untitled file to, over the
- * editor with the file in front: the folder it was started in, and its
- * name. `then` follows once it is written, with the file's key; `cancelled`
- * once the field is put away without it.
+ * editor with the file in front: a path in the tree it was started in,
+ * from the folder it was started in, and its name. `then` follows once it
+ * is written, with the file's key; `cancelled` once the field is put away
+ * without it.
  */
 export function askName(key: string, after: NonNullable<typeof afterNaming> = {}) {
   const buffer = editor.buffers[key];
-  if (buffer === undefined || buffer.root !== UNTITLED) return;
+  const home = homes.get(key);
+  if (buffer === undefined || buffer.root !== UNTITLED || home === undefined) return;
   if (editor.asking?.kind === "close") editor.asking = null;
   if (editor.active !== key && editor.tabs.some((tab) => tabKey(tab) === key)) bringForward(key);
   if (editor.savingAs?.key === key) return;
   if (editor.savingAs !== null) putNamingAway();
-  const folder = homes.get(key) ?? null;
   namings += 1;
   editor.savingAs = {
     key,
-    value: folder === null ? buffer.path : `${folder}/${buffer.path}`,
+    root: home.root,
+    project: home.project,
+    value: home.folder === null ? buffer.path : `${home.folder}/${buffer.path}`,
     problem: null,
     busy: false,
     replace: null,
@@ -1150,12 +1164,18 @@ function nameInTurn(keys: string[], what: string, done: () => void) {
   }
   const key = keys[at];
   const name = editor.buffers[key].path;
-  bringOut(key, () =>
+  bringOut(key, (borrowed) => {
+    const shownBefore = new Set(editor.tabs.map(tabKey));
     askName(key, {
-      then: () => nameInTurn(keys.slice(at + 1), what, done),
+      then: (written) => {
+        // A tab brought from another session's tabs goes once written:
+        // the file stays open beside the session it was started in.
+        if (borrowed && !shownBefore.has(written)) dropTab(written);
+        nameInTurn(keys.slice(at + 1), what, done);
+      },
       cancelled: () => say(`${what}: ${name} was not saved`),
-    }),
-  );
+    });
+  });
 }
 
 /** The user's answer to the window or the app going: stay. */
@@ -1186,16 +1206,18 @@ function stopped(what: string, keys: string[]) {
 }
 
 /** Brings a buffer's tab to the front beside whichever session is on
-    screen, in editor mode, then does `then`. */
-function bringOut(key: string, then?: () => void) {
+    screen, in editor mode, then does `then`, told whether the tab was
+    brought in from another's tabs. */
+function bringOut(key: string, then?: (borrowed: boolean) => void) {
   const buffer = editor.buffers[key];
   if (buffer === undefined) return;
   const show = () => {
-    if (!editor.tabs.some((tab) => tabKey(tab) === key)) {
+    const borrowed = !editor.tabs.some((tab) => tabKey(tab) === key);
+    if (borrowed) {
       editor.tabs.push({ root: buffer.root, path: buffer.path, preview: false, view: "edit", note: null });
     }
     void activate(key);
-    then?.();
+    then?.(borrowed);
   };
   if (layout.mode === "editing") show();
   else enterEditor(show);

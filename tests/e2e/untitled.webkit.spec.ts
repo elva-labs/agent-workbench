@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installFakeCore } from "./fake";
+import { installFakeCore, PROJECT } from "./fake";
 
 /**
  * An untitled file in editor mode, in WebKit as well as Chromium: started
@@ -10,6 +10,7 @@ import { installFakeCore } from "./fake";
 
 const MOD = "ControlOrMeta";
 const TREE = "[data-testid='file-tree']";
+const SESSIONS = "section[data-pane='sessions']";
 const ROW = "[data-testid='tab-row'] [role='tablist']";
 
 const tab = (page: Page, path: string) => page.locator(`[data-testid='editor-tab'][data-path='${path}']`);
@@ -38,6 +39,11 @@ function writes(page: Page) {
   return page.evaluate(
     () => (window as unknown as { __writes?: { file: string; text: string; overwrite: boolean }[] }).__writes ?? [],
   );
+}
+
+/** The tree each write went to, in order. */
+function writeRoots(page: Page) {
+  return page.evaluate(() => (window as unknown as { __writeRoots?: string[] }).__writeRoots ?? []);
 }
 
 function controls(page: Page) {
@@ -225,6 +231,66 @@ test.describe("saving an untitled file", () => {
     await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(".cm-content")).toBeFocused();
     expect(await writes(page)).toEqual([]);
+  });
+});
+
+test.describe("an untitled file of another project", () => {
+  const TWO = "/home/ada/dev/two";
+
+  /** Untitled text started beside demo, in the folder of the file the
+      tree's cursor is on, then two brought to the front. */
+  async function startInDemo(page: Page) {
+    await page.setViewportSize({ width: 1728, height: 900 });
+    await installFakeCore(page, { open: [PROJECT, TWO] });
+    await page.goto("/");
+    await expect(page.locator("section[data-pane='agent']")).toBeVisible();
+    await page.locator(SESSIONS).getByText("demo", { exact: true }).click();
+    await flip(page);
+    await treeRow(page, "store.rs").click();
+    await page.keyboard.press(`${MOD}+n`);
+    await expect(page.locator(".cm-content")).toBeFocused();
+    await page.keyboard.type("from demo");
+    await page.locator(SESSIONS).getByText("two", { exact: true }).click();
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+  }
+
+  test("is written to its own project on quit from another", async ({ page }) => {
+    await startInDemo(page);
+    await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
+    await expect(page.getByTestId("close-window")).toContainText("Untitled");
+    await page.getByTestId("close-window-alternative").click();
+    const field = page.getByTestId("save-as-field");
+    await expect(field).toBeFocused();
+    await expect(page.getByTestId("save-as-root")).toHaveText("demo/");
+    await expect(field).toHaveValue("src/cache/Untitled");
+    await page.keyboard.type("note.md");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => controls(page)).toEqual(["quit"]);
+    expect(await writes(page)).toEqual([{ file: "src/cache/note.md", text: "from demo", stamp: null, overwrite: false }]);
+    expect(await writeRoots(page)).toEqual([PROJECT]);
+    // The tab shown beside two while its path was asked goes once written.
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+  });
+
+  test("is written to its own project when that project is closed from another", async ({ page }) => {
+    await startInDemo(page);
+    const head = page.locator(`${SESSIONS} [data-row="project:${PROJECT}"]`);
+    await head.hover();
+    await head.getByTestId("project-more").click();
+    await head.getByTestId("close-project").click();
+    const strip = page.getByTestId("close-owner");
+    await expect(strip).toContainText("Close demo with unsaved edits?");
+    await expect(strip).toContainText("Untitled");
+    await page.getByTestId("close-owner-alternative").click();
+    const field = page.getByTestId("save-as-field");
+    await expect(field).toBeFocused();
+    await expect(page.getByTestId("save-as-root")).toHaveText("demo/");
+    await field.fill("from-demo.md");
+    await page.keyboard.press("Enter");
+    await expect(head).toHaveCount(0);
+    expect(await writes(page)).toEqual([{ file: "from-demo.md", text: "from demo", stamp: null, overwrite: false }]);
+    expect(await writeRoots(page)).toEqual([PROJECT]);
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
   });
 });
 

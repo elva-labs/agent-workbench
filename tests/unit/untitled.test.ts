@@ -46,6 +46,8 @@ import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 const disk = new Map<string, string>();
 /** Every write and read the fake core was asked for. */
 const writes: { file: string; text: string; stamp: string | null; overwrite: boolean }[] = [];
+/** The tree each write went to, in order. */
+const writeRoots: string[] = [];
 const reads: string[] = [];
 /** The window controls the fake core was asked for. */
 const controls: string[] = [];
@@ -74,8 +76,9 @@ vi.mock("$lib/core", () => ({
       if (text === undefined) throw new Error(`${file} does not exist`);
       return { text, stamp: stampOf(text) };
     },
-    async fileWrite(_root: string, file: string, text: string, stamp: string | null, overwrite: boolean) {
+    async fileWrite(root: string, file: string, text: string, stamp: string | null, overwrite: boolean) {
       writes.push({ file, text, stamp, overwrite });
+      writeRoots.push(root);
       const refusal = writeErrors.get(file);
       if (refusal !== undefined) throw new Error(refusal);
       const current = disk.get(file);
@@ -139,6 +142,7 @@ beforeEach(async () => {
   clear();
   disk.clear();
   writes.length = 0;
+  writeRoots.length = 0;
   reads.length = 0;
   controls.length = 0;
   writeErrors.clear();
@@ -215,6 +219,13 @@ describe("an untitled file", () => {
 
   it("is not made without a project", () => {
     workspace.active = null;
+    openUntitled(null);
+    expect(editor.tabs).toEqual([]);
+  });
+
+  it("is not made without a tree to write it to", () => {
+    workspace.open.push({ ...repo("/plain"), isGit: false });
+    workspace.active = "/plain";
     openUntitled(null);
     expect(editor.tabs).toEqual([]);
   });
@@ -452,6 +463,67 @@ describe("leaving with untitled text", () => {
     setSaveAsName("kept.md");
     await commitSaveAs();
     expect(closed).toBe(true);
+  });
+});
+
+describe("an untitled file of another project", () => {
+  /** Untitled text started beside project one, with project two on
+      screen after. */
+  async function startedInOne() {
+    await ownerShown();
+    openUntitled("docs");
+    type("draft");
+    workspace.open.push(repo("/two"));
+    workspace.active = "/two";
+    await ownerShown();
+    expect(editor.tabs).toEqual([]);
+  }
+
+  it("is written to the tree it was started in on quit, and its tab goes back", async () => {
+    await startedInOne();
+    leaveRequested({ kind: "quit", generation: 1 });
+    await saveAllAndLeave();
+    expect(activeTab()?.path).toBe("Untitled");
+    expect(editor.savingAs).toMatchObject({ root: "/one", project: "/one", value: "docs/Untitled" });
+    setSaveAsName("docs/note.md");
+    await commitSaveAs();
+    expect(writeRoots).toEqual(["/one"]);
+    expect(disk.get("docs/note.md")).toBe("draft");
+    expect(controls).toEqual(["leave quit"]);
+    // The tab shown beside two goes once written; one keeps its own.
+    expect(editor.tabs).toEqual([]);
+    workspace.active = "/one";
+    await ownerShown();
+    expect(editor.tabs.map((tab) => [tab.path, tab.preview])).toEqual([["docs/note.md", false]]);
+  });
+
+  it("is written to its own project when that project is closed from another", async () => {
+    await startedInOne();
+    let closed = false;
+    closeAsking("one", ["project:/one"], () => (closed = true));
+    expect(editor.closing?.keys).toEqual([keyOf("", "Untitled")]);
+    await closingSave();
+    expect(editor.savingAs).toMatchObject({ root: "/one", project: "/one" });
+    setSaveAsName("kept.md");
+    await commitSaveAs();
+    expect(writeRoots).toEqual(["/one"]);
+    expect(closed).toBe(true);
+    expect(editor.tabs).toEqual([]);
+  });
+
+  it("is written to its own project when saved where it is shown", async () => {
+    await startedInOne();
+    leaveRequested({ kind: "window", generation: 1 });
+    await saveAllAndLeave();
+    cancelSaveAs();
+    // Stopped, it stays in front beside two; saved from there, it still
+    // goes to one.
+    expect(activeTab()?.path).toBe("Untitled");
+    void save();
+    expect(editor.savingAs?.root).toBe("/one");
+    setSaveAsName("later.md");
+    await commitSaveAs();
+    expect(writeRoots).toEqual(["/one"]);
   });
 });
 
