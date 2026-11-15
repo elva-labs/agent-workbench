@@ -108,9 +108,12 @@ replace it, and one open with unsaved edits is refused until they are
 saved or dropped. The field is the same on every platform and for a
 project on another machine.
 
-Once written it is that file: an ordinary tab on it, with its text, its
-cursor and its undo history, the tree showing it and the foot naming its
-language by its name.
+Once written it is that file: a kept tab on it in the untitled file's
+place, with its text, its cursor and its undo history, the tree showing it
+and the foot naming its language by its name. Written over a file that was
+open with nothing unsaved, it takes that file's place: the file's own tab
+beside it closes, other sessions' tabs on the file show what was written,
+and undo goes back through what was typed in the untitled file.
 
 ## Changes on disk
 

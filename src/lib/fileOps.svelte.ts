@@ -173,6 +173,12 @@ export async function commitSaveAs() {
 export async function confirmReplace() {
   const asked = editor.savingAs;
   if (asked === null || asked.busy || asked.replace === null) return;
+  const held = heldOpen(asked.root, asked.replace);
+  if (held !== null) {
+    asked.replace = null;
+    asked.problem = held;
+    return;
+  }
   await writeAs(asked.root, asked.replace, true);
 }
 

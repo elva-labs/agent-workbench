@@ -362,17 +362,25 @@ describe("saving an untitled file", () => {
     expect(editor.buffers[keyOf("/one", "src/b.rs")].dirty).toBe(false);
   });
 
-  it("replaces a file open beside it with nothing unsaved, which takes in what was written", async () => {
-    await openFile("src/b.rs", { keep: true });
+  it("replaces a file open beside it with nothing unsaved: its kept tab, text and history take the file's place", async () => {
+    await openFile("src/b.rs");
+    expect(activeTab()?.preview).toBe(true);
     openUntitled(null);
     type("mine");
     void save();
     setSaveAsName("src/b.rs");
     await commitSaveAs();
     await confirmReplace();
-    expect(editor.tabs.map((tab) => tab.path)).toEqual(["src/b.rs"]);
-    expect(stateOf(keyOf("/one", "src/b.rs"))?.doc.toString()).toBe("mine");
-    expect(editor.buffers[keyOf("/one", "src/b.rs")].dirty).toBe(false);
+    const key = keyOf("/one", "src/b.rs");
+    expect(editor.tabs.map((tab) => [tab.path, tab.preview])).toEqual([["src/b.rs", false]]);
+    expect(editor.active).toBe(key);
+    expect(stateOf(key)?.doc.toString()).toBe("mine");
+    expect(editor.buffers[key]).toMatchObject({ dirty: false, stamp: stampOf("mine") });
+    // Undo goes back through what was typed, not to what the file held.
+    mount();
+    undo(view!);
+    expect(view!.state.doc.toString()).toBe("");
+    expect(editor.buffers[key].dirty).toBe(true);
   });
 
   it("will not write over a file open with unsaved edits", async () => {

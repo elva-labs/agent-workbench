@@ -404,7 +404,9 @@ async function load(root: string, path: string) {
   try {
     const read = await core().fileRead(root, path);
     const buffer = editor.buffers[key];
-    if (buffer === undefined) return;
+    // A buffer no longer loading took its text from elsewhere meanwhile: an
+    // untitled file was written over the file.
+    if (buffer === undefined || !buffer.loading) return;
     const state = stateFor(read.text);
     states.set(key, state);
     saved.set(key, state.doc);
@@ -412,7 +414,7 @@ async function load(root: string, path: string) {
     buffer.loading = false;
   } catch (error) {
     const buffer = editor.buffers[key];
-    if (buffer === undefined) return;
+    if (buffer === undefined || !buffer.loading) return;
     buffer.error = reason(error);
     buffer.loading = false;
   }
@@ -753,10 +755,11 @@ export async function writeUntitled(
 }
 
 /**
- * An untitled file was written to `path`: every tab on it is a tab on the
- * file, one beside a tab on that file already going, and its buffer is
- * the file's, text, history and all. A file that was open already, with
- * nothing unsaved, takes in what was written instead.
+ * An untitled file was written to `path`: every tab on it is a kept tab on
+ * the file, in its place, and its buffer is the file's, text, cursor,
+ * history and all. A file that was open already, with nothing unsaved, is
+ * replaced: a tab on it beside the untitled file's goes, the other tabs on
+ * it show the untitled file's buffer, and the buffer it had goes.
  */
 function becameFile(from: string, root: string, path: string, doc: Text, stamp: string | null): string {
   const to = keyOf(root, path);
@@ -765,8 +768,9 @@ function becameFile(from: string, root: string, path: string, doc: Text, stamp: 
   const retab = (tabs: Tab[]) => {
     const at = tabs.findIndex((tab) => tabKey(tab) === from);
     if (at === -1) return;
-    if (tabs.some((tab) => tabKey(tab) === to)) tabs.splice(at, 1);
-    else tabs[at] = { root, path, preview: false, view: "edit", note: null };
+    tabs[at] = { root, path, preview: false, view: "edit", note: null };
+    const other = tabs.findIndex((tab, index) => index !== at && tabKey(tab) === to);
+    if (other !== -1) tabs.splice(other, 1);
   };
   retab(editor.tabs);
   for (const kept of owners.values()) {
@@ -776,18 +780,16 @@ function becameFile(from: string, root: string, path: string, doc: Text, stamp: 
   retab(rescued);
   if (editor.active === from) editor.active = to;
   if (editor.savingAs?.key === from) editor.savingAs.key = to;
-  if (editor.buffers[to] !== undefined) {
-    release(from);
-    if (stamp !== null) takeIn(to, doc.toString(), stamp);
-    return to;
-  }
   editor.buffers[to] = { ...buffer, root, path, saving: false };
   delete editor.buffers[from];
   for (const map of [states, saved, scrolls] as Map<string, unknown>[]) {
-    if (!map.has(from)) continue;
-    map.set(to, map.get(from));
+    if (map.has(from)) map.set(to, map.get(from));
+    else map.delete(to);
     map.delete(from);
   }
+  // A look at the disk under way for the buffer the file had lands on
+  // nothing.
+  bump(to);
   homes.delete(from);
   if (shown === from) shown = to;
   wrote(to, doc, stamp);
