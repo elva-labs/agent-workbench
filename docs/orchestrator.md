@@ -154,7 +154,10 @@ The token is an identifier, not a secret: the workbench cannot see which
 process made a call. A tool server run by hand from a session's shell has
 that session's token in its environment, and an agent started from that
 shell does too; either is taken for that session, as under [following a
-workflow](#following-a-workflow).
+workflow](#following-a-workflow). Every call is also written, with its
+token, to the request log in `~/.agent-workbench`, which any program the
+user runs can read and add to, so any agent of the user's can learn
+another session's token there and call as it.
 
 ## When the user writes to it
 
