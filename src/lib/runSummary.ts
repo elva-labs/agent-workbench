@@ -32,8 +32,10 @@ export interface RunPlace {
   round: number | null;
 }
 
-/** What a started session is doing, as the run tells it. */
-export type Doing = "working" | "asking" | "done" | "stopped";
+/** What a started session is doing, as the run tells it: at work, asking
+    for a permission, done with its turn, stopped by a crash, or ended
+    without the workbench having seen it come to rest. */
+export type Doing = "working" | "asking" | "done" | "stopped" | "ended";
 
 /** A session the orchestrator started for a step. */
 export interface RunEntry {
@@ -73,10 +75,13 @@ export type Pip = "done" | "live" | "todo";
 export interface StepSession {
   key: string | null;
   name: string;
-  /** Its round and what it is doing: "round 2 of 4, working". */
+  /** Its round and what it is doing, as the popover says it: "round 2
+      of 4, working". */
   words: string;
   /** Its round alone, "round 2 of 4", or null where it has none. */
   round: string | null;
+  /** What it is doing, in words: its doing, or "stopped at the limit". */
+  state: string;
   doing: Doing;
 }
 
@@ -101,9 +106,10 @@ export interface RunSummary {
   text: string;
   /** A round past the limit waits on the user. */
   waits: boolean;
-  /** Every piece has finished a round of the last step, and nothing is at
-      work, the orchestrator included: every pip is grey. Whether the last
-      review passed is not known. */
+  /** Every piece has finished a round of the last step, its session seen
+      to come to rest there, and nothing is at work, the orchestrator
+      included: every pip is grey. Whether the last review passed is not
+      known. */
   through: boolean;
   /** Nothing has been started for a step yet. */
   begun: boolean;
@@ -202,9 +208,10 @@ export interface RunInput {
  * steps the pieces rest in, leaving out a piece that never reached the
  * work a review checks, such as a plan the orchestrator did not carry on,
  * once another piece has. A piece the user stopped at the limit says so.
- * Once every piece has finished a round of the last step and the
- * orchestrator rests too, every pip is grey and the words say the round
- * that finished, since whether it passed is not known.
+ * Once every piece has finished a round of the last step, its session done
+ * with its turn rather than crashed or ended unseen, and the orchestrator
+ * rests too, every pip is grey and the words say the round that finished,
+ * since whether it passed is not known.
  */
 export function summarize(input: RunInput): RunSummary {
   const { workflow, entries, wait, stops, directing } = input;
@@ -258,7 +265,7 @@ export function summarize(input: RunInput): RunSummary {
     working.length === 0 &&
     !directing &&
     counted.length > 0 &&
-    counted.every((piece) => piece.stop === null && piece.at.index === last);
+    counted.every((piece) => piece.stop === null && piece.at.index === last && piece.at.entry.doing === "done");
   const shown = working.length > 0 ? working : counted;
 
   const waitAt = wait === null ? -1 : indexOf(wait.step);
@@ -317,12 +324,13 @@ export function summarize(input: RunInput): RunSummary {
         .map((item) => {
           const { entry } = item;
           const round = roundText(placeWords(workflow, entry.place));
-          const doing = stoppedAt.has(item) ? "stopped at the limit" : entry.doing;
+          const state = stoppedAt.has(item) ? "stopped at the limit" : entry.doing;
           return {
             key: entry.key,
             name: entry.name,
-            words: round === null ? doing : `${round}, ${doing}`,
+            words: round === null ? state : `${round}, ${state}`,
             round,
+            state,
             doing: entry.doing,
           };
         }),

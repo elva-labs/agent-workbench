@@ -340,6 +340,11 @@ export interface Run {
       until another round of the piece goes ahead. A version that does
       not know it reads a run without it. */
   stopped?: Record<string, number>;
+  /** The sessions, by id, the workbench last saw at rest after a turn of
+      work, so one whose row is gone, closed or not back after a restart,
+      is told apart from one cut off at work. A version that does not know
+      it reads a run without it. */
+  rested?: string[];
 }
 
 const STARTED_KEY = "workbench.started";
@@ -407,8 +412,12 @@ function loadRuns() {
     const runs: Record<string, Run> = {};
     for (const [caller, run] of Object.entries(stored)) {
       if (typeof run !== "object" || run === null) continue;
-      const { places, rounds, stopped } = run as Record<string, unknown>;
+      const { places, rounds, stopped, rested } = run as Record<string, unknown>;
       const kept: Run = { places: {}, rounds: {} };
+      if (Array.isArray(rested)) {
+        const ids = rested.filter((id): id is string => typeof id === "string");
+        if (ids.length > 0) kept.rested = [...new Set(ids)];
+      }
       for (const [key, count] of Object.entries(isRecord(stopped) ? stopped : {}))
         if (typeof count === "number" && Number.isInteger(count) && count > 0 && key.includes("\n"))
           (kept.stopped ??= {})[key] = count;
@@ -522,7 +531,23 @@ function uncountRound(caller: string, step: string, piece: string) {
 /** Keeps that the user stopped a piece at a review's limit. */
 function stopAtLimit(caller: string, beyond: Beyond) {
   const run = runOf(caller);
-  (run.stopped ??= {})[roundKey(beyond.step, beyond.piece)] = beyond.done;
+  run.stopped = { ...run.stopped, [roundKey(beyond.step, beyond.piece)]: beyond.done };
+  saveRuns();
+}
+
+/** Keeps whether a session placed in a caller's run was last seen at rest
+    after a turn of work, for when its row is gone. */
+function keepRested(caller: string, id: string, rested: boolean) {
+  const run = conductor.runs[caller];
+  if (run === undefined || !(id in run.places)) return;
+  const has = run.rested?.includes(id) ?? false;
+  if (has === rested) return;
+  if (rested) run.rested = [...(run.rested ?? []), id];
+  else {
+    const left = (run.rested ?? []).filter((known) => known !== id);
+    if (left.length > 0) run.rested = left;
+    else delete run.rested;
+  }
   saveRuns();
 }
 
@@ -969,9 +994,11 @@ export function placeTextOf(key: string): PlaceText | null {
   return { step: words.step, round: roundText(words), long: placeLong(words), short: placeShort(words) };
 }
 
-/** What a started session is doing, as the run tells it. */
-function doingOf(row: Session | null): Doing {
-  if (row === null) return "done";
+/** What a started session is doing, as the run tells it. One that no
+    longer runs, its row gone, ended or not yet started again, is done only
+    where it was last seen at rest after a turn of work. */
+function doingOf(row: Session | null, rested: boolean): Doing {
+  if (row === null) return rested ? "done" : "ended";
   switch (row.status) {
     case "crashed":
     case "failed":
@@ -982,7 +1009,7 @@ function doingOf(row: Session | null): Doing {
       if (row.needs === "permission") return "asking";
       return row.working ? "working" : "done";
     default:
-      return "done";
+      return rested ? "done" : "ended";
   }
 }
 
@@ -999,15 +1026,16 @@ export function runStanding(session: Session): RunSummary | null {
     null;
   const entries: RunEntry[] = [];
   const kept = conductor.runs[caller]?.places ?? {};
+  const rested = new Set(conductor.runs[caller]?.rested ?? []);
   for (const [id, at] of Object.entries(kept)) {
     const row = mineRow(id);
     const now = row === null ? at : (conductor.places[row.key] ?? at);
-    entries.push({ key: row?.key ?? null, id, name: workName(caller, id), place: now, doing: doingOf(row) });
+    entries.push({ key: row?.key ?? null, id, name: workName(caller, id), place: now, doing: doingOf(row, rested.has(id)) });
   }
   for (const row of startedBy(caller)) {
     const at = conductor.places[row.key];
     if (at === undefined || (row.id !== null && row.id in kept)) continue;
-    entries.push({ key: row.key, id: row.id, name: label(row), place: at, doing: doingOf(row) });
+    entries.push({ key: row.key, id: row.id, name: label(row), place: at, doing: doingOf(row, false) });
   }
   const asking = conductor.asking;
   const wait =
@@ -1104,6 +1132,14 @@ function observe(session: Session) {
     mark.told = null;
   } else mark.rest = mark.worked ? "quiet" : null;
   if (unheardMark(mark) !== before) moved();
+  // Kept with the run as well: a session that ends keeps what was last
+  // seen of it before it ended.
+  const { id } = session;
+  const caller = startedFor(key);
+  if (id !== null && caller !== null && mark.rest !== "ended") {
+    const rested = mark.rest === "quiet";
+    untrack(() => keepRested(caller, id, rested));
+  }
 }
 
 function observeAll() {
@@ -1706,7 +1742,8 @@ function pastLimit(
     Null before then, so a line to the work while its review is still at
     it is no round of its own. Whether the review passed is not known, so
     a line after a review that passed counts as work sent back all the
-    same. */
+    same. A piece the user stopped at that review's limit goes on in the
+    review's last round: no round past the stop. */
 function workRound(caller: string, workflow: Workflow, step: WorkStep, piece: string): number | null {
   const reviews = workflow.steps.filter(
     (candidate): candidate is ReviewStep => candidate.kind === "review" && sameName(candidate.backTo, step.name),
@@ -1718,6 +1755,7 @@ function workRound(caller: string, workflow: Workflow, step: WorkStep, piece: st
     if (count > had) [had, review] = [count, candidate];
   }
   if (review === null || !reviewRested(caller, review, piece, had)) return null;
+  if (conductor.runs[caller]?.stopped?.[roundKey(review.name, piece)] !== undefined) return had;
   return had + 1;
 }
 

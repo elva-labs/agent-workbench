@@ -188,10 +188,42 @@ describe("where a run stands", () => {
     expect(at.waits).toBe(false);
     expect(at.through).toBe(false);
     expect(pips(at)).toEqual(["done", "done", "live"]);
-    expect(at.steps[2].sessions[0].words).toBe("round 4 of 4, stopped at the limit");
+    expect(at.steps[2].sessions[0]).toMatchObject({
+      words: "round 4 of 4, stopped at the limit",
+      round: "round 4 of 4",
+      state: "stopped at the limit",
+      doing: "done",
+    });
     // Its work back at it, the stop is the piece's past.
     const again = [{ ...entries[0], place: work(null, 5), doing: "working" as const }, entries[1]];
     expect(run(again, { stops }).text).toBe("Work, round 5 of 4");
+  });
+
+  it("is never through on a last session that crashed or ended unseen, and says so in the popover", () => {
+    const worked = entry("w1", "Fix the cache", work(null), "done");
+    for (const doing of ["stopped", "ended"] as const) {
+      const at = run([worked, entry("r1", "Review the cache fix", review("w1", 1), doing)], { directing: false });
+      expect(at.through, doing).toBe(false);
+      expect(at.text, doing).toBe("Review, round 1 of 4");
+      expect(pips(at), doing).toEqual(["done", "done", "live"]);
+      expect(at.steps[2].sessions[0], doing).toMatchObject({ words: `round 1 of 4, ${doing}`, state: doing });
+      expect(at.spoken, doing).toContain("Review now");
+    }
+    // The same for a one-step workflow's work.
+    const one: Workflow = { ...FLOW, steps: [{ kind: "work", name: "Work", models: [], parallel: 2 }] };
+    const crashed = run([entry("w1", "Fix the cache", work(null), "stopped")], { workflow: one, directing: false });
+    expect(crashed.text).toBe("Work");
+    expect(crashed.through).toBe(false);
+    // An earlier round that crashed does not hold back a later one done.
+    const later = run(
+      [
+        entry("w1", "Fix the cache", work(null, 2), "done"),
+        entry("r0", "First review", review("w1", 1), "stopped"),
+        entry("r1", "Second review", review("w1", 2), "done"),
+      ],
+      { directing: false },
+    );
+    expect(later.text).toBe("Review, round 2 of 4 done");
   });
 
   it("keeps a step lit where a piece works while the round question waits", () => {

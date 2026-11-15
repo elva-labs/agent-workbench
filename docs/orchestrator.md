@@ -402,6 +402,14 @@ included, every pip is grey and the words say the round that finished,
 "Review, round 2 of 4 done", or how many pieces finished it, "2 done in
 Review". They never say the run is done.
 
+A round is finished only when the workbench saw its session come to rest
+after a turn of work. That is remembered with the run, so a session the
+orchestrator stopped once it was done, or one that is not back after a
+restart, is still done. A session that crashed reads stopped. One that
+ended or was closed while at work, or before it was seen to rest, reads
+ended. Neither has finished its round, and the chip names its step
+without saying done.
+
 While a round past the limit waits on the user the chip turns to the
 accent and says so, "Round 4 of 4 done, asks you", with the step of any
 piece still at work lit beside it. A piece the user stopped there, with
@@ -413,7 +421,8 @@ said to be skipped.
 
 A popover under the chip says what stands in each step: the latest session
 of each piece there, by its name, with its round and whether it is
-working, asking, done or stopped at the limit, and the name opens that
+working, asking, done, stopped, ended or stopped at the limit, and the
+name opens that
 session; a step passed with nothing run for it says skipped. The rules the
 orchestrator was given are folded at its foot. It shows when the pointer
 rests on the chip, and a click, Enter or Space holds it open, the one the
@@ -429,8 +438,10 @@ round, so work sent back once reads "Work, round 2 of 4". A line to the
 work while its review is still at it, such as an answer to the review's
 question, is no round of its own. The workbench cannot tell work sent back
 from a line after a review that passed, such as one asking for a commit,
-so that too reads as the next round. The most counts the first pass: a
-review that sends the work back three times at most has four rounds. A
+so that too reads as the next round. Work the user stopped at the limit
+goes on in the last round, never past it, so it reads "Stopped at round 4
+of 4" again once it rests. The most counts the first pass: a review that
+sends the work back three times at most has four rounds. A
 round of work is remembered with the run, as a review's is, and so is a
 stop at the limit.
 

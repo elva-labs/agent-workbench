@@ -3144,6 +3144,7 @@ describe("starting in a workflow's shape", () => {
         name: label(byKey(review.key)!),
         words: "round 1 of 4, working",
         round: "round 1 of 4",
+        state: "working",
         doing: "working",
       },
     ]);
@@ -3229,7 +3230,7 @@ describe("starting in a workflow's shape", () => {
     expect(run.text).not.toContain("Stopped");
   });
 
-  it("keeps a stop when a review started past the limit is refused, and when one resumed is", async () => {
+  it("keeps a stop when a review started past the limit is refused", async () => {
     orchestrating(limitOne());
     await begun({ step: "Work", name: "Fix the cache" }, "w1");
     await begun({ step: "Review", work: "w1" }, "r1");
@@ -3239,6 +3240,108 @@ describe("starting in a workflow's shape", () => {
     refuse();
     await asking;
     expect(conductor.runs[tok("orch")].stopped).toEqual({ "review\nw1": 2 });
+  });
+
+  it("keeps a stop when a review resumed past the limit is refused", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    await begun({ step: "Review", work: "w1" }, "r1");
+    await begun({ step: "Review", work: "w1" }, "r2");
+    ended({ id: "pty-r2", code: 0, clean: true });
+    flushSync();
+    const asking = handle(from({ session: "r2", prompt: "Look once more" }));
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", piece: "w1", done: 2 });
+    refuse();
+    await asking;
+    expect(conductor.runs[tok("orch")].stopped).toEqual({ "review\nw1": 2 });
+  });
+
+  it("keeps work sent a line after the user's stop in the review's last round", async () => {
+    const orch = orchestrating(limitOne());
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    reviewed(work);
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    await sent("w1", "Make it smaller");
+    expect(placeOf(work.key)?.round).toBe(2);
+    reviewed(work);
+    await sent("r1", "Look again");
+    reviewed(review);
+    const asking = handle(call("send", { session: "r1", text: "And once more" }, { session: "orch" }));
+    await settle();
+    refuse();
+    await asking;
+    // Told to wrap up, the work is in no round past the one the user
+    // stopped at.
+    await sent("w1", "The reviews are stopped. Commit what you have.");
+    expect(placeOf(work.key)?.round).toBe(2);
+    byKey(work.key)!.working = true;
+    byKey(orch.key)!.working = false;
+    flushSync();
+    expect(runStanding(byKey(orch.key)!)!.text).toBe("Work, round 2 of 2");
+    byKey(work.key)!.working = false;
+    flushSync();
+    expect(runStanding(byKey(orch.key)!)!.text).toBe("Stopped at round 2 of 2");
+  });
+
+  it("says a round is done only of a session seen at rest, its row gone or the app restarted", async () => {
+    let orch = orchestrating();
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    reviewed(work);
+    // A review stopped while at work ended unseen.
+    const first = await begun({ step: "Review", work: "w1" }, "r1");
+    byKey(first.key)!.working = true;
+    flushSync();
+    await handle(call("stop", { session: "r1" }, { session: "orch" }));
+    byKey(orch.key)!.working = false;
+    flushSync();
+    let run = runStanding(byKey(orch.key)!)!;
+    expect(run.through).toBe(false);
+    expect(run.text).toBe("Review, round 1 of 4");
+    expect(run.steps[1].sessions[0]).toMatchObject({ state: "ended", key: null });
+    // One stopped once it came to rest is done with its round.
+    const second = await begun({ step: "Review", work: "w1" }, "r2");
+    reviewed(second);
+    await handle(call("stop", { session: "r2" }, { session: "orch" }));
+    byKey(orch.key)!.working = false;
+    flushSync();
+    expect(runStanding(byKey(orch.key)!)!.text).toBe("Review, round 2 of 4 done");
+    // Read back after a restart: still done.
+    restarted();
+    orch = orchestrating();
+    byKey(orch.key)!.working = false;
+    flushSync();
+    expect(runStanding(byKey(orch.key)!)!.text).toBe("Review, round 2 of 4 done");
+    expect(conductor.runs[tok("orch")].rested).toEqual(expect.arrayContaining(["w1", "r2"]));
+    // A review at work when the app closed is not.
+    const third = await begun({ step: "Review", work: "w1" }, "r3");
+    byKey(third.key)!.working = true;
+    flushSync();
+    restarted();
+    orch = orchestrating();
+    byKey(orch.key)!.working = false;
+    flushSync();
+    run = runStanding(byKey(orch.key)!)!;
+    expect(run.text).toBe("Review, round 3 of 4");
+    expect(run.steps[1].sessions[0].state).toBe("ended");
+    expect(conductor.runs[tok("orch")].rested).not.toContain("r3");
+  });
+
+  it("says a crashed review as stopped, and its round as not done", async () => {
+    const orch = orchestrating();
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    reviewed(work);
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    byKey(review.key)!.working = true;
+    flushSync();
+    ended({ id: "pty-r1", code: 1, clean: false });
+    byKey(orch.key)!.working = false;
+    flushSync();
+    const run = runStanding(byKey(orch.key)!)!;
+    expect(run.text).toBe("Review, round 1 of 4");
+    expect(run.through).toBe(false);
+    expect(run.steps[1].sessions[0].state).toBe("stopped");
   });
 
   it("turns to the round question while it waits on the user", async () => {

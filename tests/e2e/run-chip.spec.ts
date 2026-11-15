@@ -212,6 +212,41 @@ test.describe("the run's chip", () => {
     await expect(words(page)).toHaveText("Stopped at round 2 of 2");
     expect(await pips(page)).toEqual(["done", "done", "live"]);
     expect(await colour()).toBe(quiet);
+    // The popover says the same of the review.
+    await chip(page).click();
+    await expect(page.getByTestId("run-step").nth(2)).toHaveText(/Review\s*round 2 of 2, stopped at the limit ·/);
+  });
+
+  test("says a round done only of a session seen at rest, after a restart too", async ({ page }) => {
+    await begin(page);
+    await call(page, "start", { project: PROJECT, prompt: "Fix it", step: "Work", name: "Fix the cache" });
+    await event(page, "session-2", "prompt");
+    await event(page, "session-2", "stop");
+    await call(page, "start", { project: PROJECT, prompt: "Review it", step: "Review", work: "session-2", name: "Review the cache fix" });
+    await event(page, "session-3", "prompt");
+    // Closed by the user while at work: its round has not finished.
+    const row = page.getByTestId("started-session").filter({ hasText: "Review the cache fix" });
+    await row.hover();
+    await row.locator("..").getByTestId("close-session").click();
+    await expect(row).toHaveCount(0);
+    await event(page, "session-1", "stop");
+    await expect(words(page)).toHaveText("Review, round 1 of 4");
+    expect(await pips(page)).toEqual(["done", "done", "live"]);
+    await chip(page).click();
+    await expect(page.getByTestId("run-step").nth(2)).toHaveText(/Review\s*round 1 of 4, ended · Review the cache fix/);
+    await page.keyboard.press("Escape");
+
+    // Another round seen to its rest is done, and still is once the app
+    // comes back without its rows.
+    await event(page, "session-1", "prompt");
+    await call(page, "start", { project: PROJECT, prompt: "Review it again", step: "Review", work: "session-2", name: "Review again" });
+    await event(page, "session-4", "prompt");
+    await event(page, "session-4", "stop");
+    await event(page, "session-1", "stop");
+    await expect(words(page)).toHaveText("Review, round 2 of 4 done");
+    await page.reload();
+    await expect(words(page)).toHaveText("Review, round 2 of 4 done");
+    expect(await pips(page)).toEqual(["done", "done", "done"]);
   });
 
   test("opens from the keyboard, names its state in words, and gives the keyboard back on Escape", async ({ page }) => {

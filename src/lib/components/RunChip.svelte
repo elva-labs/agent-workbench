@@ -189,7 +189,7 @@
               <span class="piece" data-testid="run-piece"
                 ><span class="words-of"
                   >{#if session.round !== null}<span class="round">{session.round}</span>{", "}{/if}<span
-                    class:asking={session.doing === "asking"}>{session.doing}</span
+                    class:asking={session.doing === "asking"}>{session.state}</span
                   ></span
                 >
                 ·
