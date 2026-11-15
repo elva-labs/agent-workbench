@@ -68,8 +68,8 @@ export function starterOf(key: string): string | null {
 
 export interface Sender {
   /** The sending session's id, as the tools name it, where the window
-      knows it; else what the message was sent under. */
-  id: string;
+      knows it. */
+  id: string | null;
   name: string;
   /** Its row, when the window has one to go to. */
   key: string | null;
@@ -83,7 +83,9 @@ export function sessionName(id: string): string | null {
 }
 
 /** Who sent a message: null for the user. A sender the window has no row
-    for is named by the id the tools know it by. */
+    for is named by the id the tools know it by, where the window still
+    keeps it, and otherwise as another session: what the message was sent
+    under may be a token, which no one is shown. */
 export function senderOf(message: { id: string }): Sender | null {
   const from = senders.byMessage[message.id] ?? null;
   if (from === null) return null;
@@ -92,11 +94,18 @@ export function senderOf(message: { id: string }): Sender | null {
     sessions.all.find((candidate) => candidate.id === from) ??
     null;
   const id =
-    row?.id ?? Object.entries(sessions.tokens).find(([, kept]) => kept.token === from)?.[0] ?? from;
+    row?.id ?? Object.entries(sessions.tokens).find(([, kept]) => kept.token === from)?.[0] ?? null;
   return {
     id,
     key: row?.key ?? null,
-    name: row !== null ? label(row) : from.startsWith("/") ? `an agent in ${lastSegment(from)}` : `session ${id}`,
+    name:
+      row !== null
+        ? label(row)
+        : from.startsWith("/")
+          ? `an agent in ${lastSegment(from)}`
+          : id !== null
+            ? `session ${id}`
+            : "another session",
   };
 }
 
