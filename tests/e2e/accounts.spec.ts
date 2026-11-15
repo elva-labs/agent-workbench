@@ -270,3 +270,163 @@ test.describe("a new session from the palette with accounts", () => {
     await expect(page.getByTestId("account-readout")).toHaveText("account: Default");
   });
 });
+
+/** A call on the start tool, as the core delivers one. */
+async function startCall(
+  page: Page,
+  id: string,
+  args: Record<string, unknown>,
+  session: string | null,
+) {
+  await page.evaluate(
+    ({ id, args, session, project }) =>
+      (
+        window as unknown as { __conductRequest: (call: unknown) => void }
+      ).__conductRequest({
+        id,
+        tool: "start",
+        arguments: args,
+        cwd: project,
+        session,
+      }),
+    { id, args, session, project: PROJECT },
+  );
+}
+
+/** What a call was answered with, once it has been. */
+const answerTo = (page: Page, id: string) =>
+  page.evaluate(
+    (id) =>
+      (
+        window as unknown as {
+          __conductAnswers?: { id: string; content: string | null; error: string | null }[];
+        }
+      ).__conductAnswers?.find((answer) => answer.id === id) ?? null,
+    id,
+  );
+
+test.describe("a session started by a session under another account", () => {
+  test("runs under the starting session's account, not the project's", async ({ page }) => {
+    // The project runs under the agents' own, and there is an account to
+    // start a session under instead.
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { accounts: { ...WORK, overrides: {} } },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.getByTestId("project-account")).toHaveCount(0);
+
+    // The user's own session, started under Work from the palette.
+    await page.keyboard.press(`${MOD}+Shift+P`);
+    await page.keyboard.type("new session in");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.locator("[data-testid='palette-row'][aria-selected='true']"),
+    ).toContainText("Work");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
+    await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
+
+    // That session starts another and names no account.
+    await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, "session-1");
+    // The question says the account, since it is not the project's own.
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask.getByTestId("conduct-account")).toHaveText(
+      "Under the Work account, not the project's own.",
+    );
+    await page.getByTestId("conduct-allow").click();
+    await expect(ask).toHaveCount(0);
+
+    // The new session's agent is pointed at the same account's directory,
+    // and the caller is told the account too.
+    await expect.poll(() => spawns(page)).toHaveLength(2);
+    expect((await spawns(page))[1].prompt).toContain("Fix the flaky test");
+    expect((await spawns(page))[1].configDir).toBe("~/.claude-work");
+    await expect
+      .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
+      .toContain(`in ${PROJECT}, under the Work account.`);
+
+    // Its row, under the session that started it, says the account too.
+    await expect(page.getByTestId("started-account")).toHaveText("as Work");
+  });
+
+  test("names the project's account when it cannot tell which session asks", async ({
+    page,
+  }) => {
+    await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+
+    // A call that names no session, from where no session runs.
+    await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, null);
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask.getByTestId("conduct-account")).toHaveText(
+      "Under the project's account, Work.",
+    );
+    await page.getByTestId("conduct-once").click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
+    await expect
+      .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
+      .toContain(`in ${PROJECT}, under the project's account, Work.`);
+  });
+});
+
+test.describe("a started session's row", () => {
+  test.beforeEach(async ({ page }) => {
+    // Rows that fade in are measured where they end up.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { accounts: { ...WORK, overrides: {} } },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    // An orchestrator, under the account its project follows: session-1.
+    await page.getByTestId("sessions-menu").click();
+    await page.getByTestId("menu-orchestrator").click();
+    await page.getByTestId("agent-option").click();
+    await expect(page.locator(AGENT)).toContainText("running");
+  });
+
+  test("names its account after its name when it is not the project's", async ({ page }) => {
+    const start = async (id: string, name: string, account?: string) => {
+      await startCall(
+        page,
+        id,
+        { project: PROJECT, prompt: "Go", name, agent: "claude-code", model: "sonnet", ...(account ? { account } : {}) },
+        "session-1",
+      );
+      const allow = page.getByTestId("conduct-allow");
+      await expect(allow).toBeVisible();
+      await allow.click();
+      await expect.poll(() => answerTo(page, id)).not.toBeNull();
+    };
+    await start("o-1", "Bump the client", "Work");
+    await start("o-2", "Check the palette");
+
+    const work = page.getByTestId("started-session").filter({ hasText: "Bump the client" });
+    const own = page.getByTestId("started-session").filter({ hasText: "Check the palette" });
+    await expect(work.getByTestId("started-account")).toHaveText("as Work");
+    await expect(work.getByTestId("started-account")).toBeVisible();
+    // The project's own account goes unsaid.
+    await expect(own).toBeVisible();
+    await expect(own.getByTestId("started-account")).toHaveCount(0);
+
+    // On the row's one line, after the name and before the model, in the
+    // quiet ink the model has.
+    const name = (await work.locator(".label").boundingBox())!;
+    const tag = (await work.getByTestId("started-account").boundingBox())!;
+    const model = (await work.getByTestId("started-model").boundingBox())!;
+    expect(tag.x).toBeGreaterThanOrEqual(name.x + name.width - 1);
+    expect(model.x).toBeGreaterThanOrEqual(tag.x + tag.width - 1);
+    expect(Math.abs(tag.y + tag.height / 2 - (name.y + name.height / 2))).toBeLessThan(3);
+    const ink = (testid: string) =>
+      work.getByTestId(testid).evaluate((el) => getComputedStyle(el).color);
+    expect(await ink("started-account")).toBe(await ink("started-model"));
+  });
+});

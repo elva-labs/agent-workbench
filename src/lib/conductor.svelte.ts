@@ -9,9 +9,9 @@
  * Starting a session is the one call the user is brought into. The first
  * time a caller asks to start one in a project the window puts the
  * question up and holds the call until it is answered, and an allowed
- * caller is remembered for that project until the board takes it back or
- * the window goes. Calls that arrive while a question is up wait their
- * turn.
+ * caller is remembered for that project and the account its sessions run
+ * under until the board takes it back or the window goes. Calls that
+ * arrive while a question is up wait their turn.
  *
  * A session may start others, and those may not start any of their own:
  * one level deep, and no more than the cap at a time, so a loop of agents
@@ -29,7 +29,17 @@
  * per piece of work, up to the most the review sends the work back.
  */
 
-import { accountOf, accounts, dirsOf, names } from "$lib/accounts.svelte";
+import {
+  accountLabel,
+  accountOf,
+  accounts,
+  dirFor,
+  dirsOf,
+  hasAccounts,
+  names,
+  OWN_LABEL,
+} from "$lib/accounts.svelte";
+import { agentLabel } from "$lib/agent.svelte";
 import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
@@ -51,6 +61,7 @@ import {
 } from "$lib/sessions.svelte";
 import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
 import { CODEX_DEFAULT } from "$lib/models";
+import { hostOf } from "$lib/remote.svelte";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { stepFacts } from "$lib/workflows.svelte";
 import { screen, takesPaste } from "$lib/screens";
@@ -187,6 +198,20 @@ export interface Ask {
       review, the work it checks and how many rounds it has had. The user's
       yes lets this one round through. */
   round: Beyond | null;
+  /** What the session would run on, which a standing answer is kept by.
+      Null for a round of an existing session, which neither takes a
+      standing answer nor gives one. */
+  login: Login | null;
+  /** What the question says of the account, when it names it. */
+  named: Named | null;
+}
+
+/** What a started session runs on: the account, by name, null for the
+    agents' own, and the agent when the account keeps no directory for it,
+    so the agent runs on its own. */
+export interface Login {
+  account: string | null;
+  bare: AgentId | null;
 }
 
 /** A round of a review past the workflow's limit, which only the user can
@@ -199,6 +224,39 @@ export interface Beyond {
   name: string;
   done: number;
   limit: number;
+}
+
+/** The account a started session runs under, as the question and the
+    answer name it. */
+export interface Named {
+  /** The account as it is shown: its name, or Default for the agents' own. */
+  label: string;
+  /** Whether it is the account the project runs under. */
+  projects: boolean;
+  /** The agent being started, when the account keeps no directory for it
+      and the agent runs on its own. */
+  bare: AgentId | null;
+}
+
+/** What the question says of the account a session would run under. */
+export function accountWords(named: Named): string {
+  const which = named.projects
+    ? `Under the project's account, ${named.label}.`
+    : `Under the ${named.label} account, not the project's own.`;
+  if (named.bare === null) return which;
+  const agent = agentLabel(named.bare);
+  return `${which} ${named.label} has no ${agent} directory, so ${agent} uses the ${OWN_LABEL} one.`;
+}
+
+/** What the answer to a start says of the account, after where it runs. */
+function underWords(named: Named | null): string {
+  if (named === null) return "";
+  const which = named.projects
+    ? `, under the project's account, ${named.label}`
+    : `, under the ${named.label} account`;
+  if (named.bare === null) return which;
+  const agent = agentLabel(named.bare);
+  return `${which}, which has no ${agent} directory, so ${agent} uses the ${OWN_LABEL} one`;
 }
 
 /** What the user answered: allowed from now on, allowed this once, or no. */
@@ -520,7 +578,7 @@ function remembered(caller: string, id: string): Started | null {
     handled once. */
 const seen = new Set<string>();
 const SEEN = 500;
-/** Callers with a standing answer, by caller and project. */
+/** Callers with a standing answer, by caller, project and account. */
 const allowed = new SvelteSet<string>();
 /** Questions waiting for the one on screen to be answered. */
 const queue: { ask: Ask; settle: (choice: Choice) => void }[] = [];
@@ -872,7 +930,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     );
   if (!workspace.open.some((open) => open.path === project))
     return refused(`No project at ${project} is open in the workbench.`);
-  // An account is one the user named in the settings, or the project's.
+  // An account is one the user named in the settings.
   const wanted = text(request, "account");
   if (wanted !== null && !(wanted in accounts.list))
     return refused(
@@ -880,7 +938,6 @@ async function startSession(request: ConductRequest): Promise<Answered> {
         ? "There are no accounts in the workbench's settings; leave the account out."
         : `There is no account called ${wanted}. The accounts are ${names().join(", ")}.`,
     );
-  const account = wanted ?? accountOf(project);
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
@@ -898,7 +955,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   if (fit !== null && "refusal" in fit) return refused(fit.refusal);
   let started = false;
   try {
-    const answer = await startFitted(request, project, prompt, name, account, caller, fit);
+    const answer = await startFitted(request, project, prompt, name, wanted, caller, fit);
     started = answer.error === null;
     return answer;
   } finally {
@@ -906,19 +963,43 @@ async function startSession(request: ConductRequest): Promise<Answered> {
   }
 }
 
-/** The rest of a start, once it has been held to the caller's workflow. */
+/** The rest of a start, once it has been held to the caller's workflow:
+    the account it runs under, which turns on the agent the step chose, the
+    question, and the session itself. */
 async function startFitted(
   request: ConductRequest,
   project: string,
   prompt: string,
   name: string | null,
-  account: string | null,
+  wanted: string | null,
   caller: string,
   fit: Fit | null,
 ): Promise<Answered> {
   const wants = flag(request, "worktree");
+  const agent = fit?.agent ?? agentOf(request, project);
+  const { account, say } = underFor(request, project, agent, wanted);
+  const bare =
+    account !== null && dirFor(account, agent) === undefined ? agent : null;
+  // The account is said to the user in the question and to the caller in
+  // the answer.
+  const named: Named | null = say
+    ? {
+        label: accountLabel(account),
+        projects: account === accountOf(project),
+        bare,
+      }
+    : null;
   const beyond = fit?.beyond ?? null;
-  if ((await askUser(request, project, prompt, wants, beyond)) === "no")
+  const answer = await askUser(
+    request,
+    project,
+    prompt,
+    wants,
+    { account, bare },
+    named,
+    beyond,
+  );
+  if (answer === "no")
     return {
       ...refused(
         beyond === null
@@ -947,7 +1028,6 @@ async function startFitted(
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
-  const agent = fit?.agent ?? agentOf(request, project);
   const session = create(
     project,
     null,
@@ -1003,15 +1083,70 @@ async function startFitted(
       : "";
   if (fit === null)
     return said(
-      `Started session ${id} in ${where}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
+      `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${id} for ${placeText(at)} in ${where}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
+    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
   );
+}
+
+/**
+ * The account a start runs under, and whether the question and the answer
+ * name it.
+ *
+ * An account the start names is the one. Otherwise the caller's own is
+ * handed on when it was chosen for the caller's session, which is when it
+ * is not the account of the caller's project; a caller that runs under its
+ * project's, the one for every project included, hands nothing on, and the
+ * session runs under the account of the project it starts in. That is the
+ * project's as well when the caller's chosen account cannot be handed on:
+ * no session can be placed as the caller, the project is on another
+ * machine than the caller, where the caller's login may not be, or the
+ * settings no longer hold the account. An account handed on that keeps no
+ * directory for the agent runs it on the agent's own, as a blank directory
+ * does anywhere.
+ *
+ * Once there are accounts to tell apart, the account is named when it is
+ * not the project's own, when the caller could not be placed or its chosen
+ * account was not handed on, and when one handed on keeps no directory for
+ * the agent.
+ */
+function underFor(
+  request: ConductRequest,
+  project: string,
+  agent: AgentId,
+  wanted: string | null,
+): { account: string | null; say: boolean } {
+  const own = accountOf(project);
+  const under = (account: string | null, anyway: boolean) => ({
+    account,
+    say: hasAccounts() && (anyway || account !== own),
+  });
+  if (wanted !== null) return under(wanted, false);
+  const calling = callingSession(request);
+  if (calling === null) return under(own, true);
+  const theirs = calling.account;
+  if (theirs === accountOf(calling.project)) return under(own, false);
+  if (hostOf(calling.project) !== hostOf(project)) return under(own, true);
+  if (theirs !== null && !(theirs in accounts.list)) return under(own, true);
+  return under(theirs, theirs !== null && dirFor(theirs, agent) === undefined);
+}
+
+/**
+ * The session a call comes from: the one it names, else the one live
+ * session running where the call does that was not told its id, and so
+ * makes its calls without one, as a Codex session that was not resumed
+ * does. Null when the call names a session the window does not have, and
+ * when no such session or more than one runs there.
+ */
+function callingSession(request: ConductRequest): Session | null {
+  if (request.session !== null) return byId(request.session);
+  const there = untoldHere(request.cwd);
+  return there.length === 1 ? there[0] : null;
 }
 
 /** What a start in a workflow's shape comes to: where the session stands,
@@ -1390,7 +1525,15 @@ async function resumeSession(
     // session was started, except for a round past the review's limit.
     if (
       beyond !== null &&
-      (await askUser(request, project, prompt ?? "", false, beyond)) === "no"
+      (await askUser(
+        request,
+        project,
+        prompt ?? "",
+        false,
+        null,
+        null,
+        beyond,
+      )) === "no"
     )
       return { ...refused(notAllowed(beyond)), byUser: true };
     if (worktree !== null && !(await treeStands(project, worktree)))
@@ -1520,7 +1663,15 @@ async function sendText(request: ConductRequest): Promise<Answered> {
       const beyond = pastLimit(caller, review, at.work ?? at.piece, done);
       if (
         beyond !== null &&
-        (await askUser(request, session.project, typed, false, beyond)) === "no"
+        (await askUser(
+          request,
+          session.project,
+          typed,
+          false,
+          null,
+          null,
+          beyond,
+        )) === "no"
       )
         return refused(notAllowed(beyond));
       if (!reachable(session)) return unreachable();
@@ -1821,20 +1972,26 @@ function agentOf(request: ConductRequest, project: string): AgentId {
 
 /**
  * Puts the question to the user, unless this caller already has a
- * standing answer for the project. A question that arrives while another
- * is up waits behind it.
+ * standing answer for the project and what the session would run on. A
+ * round past a review's limit is always asked. A question that arrives
+ * while another is up waits behind it.
  */
 function askUser(
   request: ConductRequest,
   project: string,
   prompt: string,
   worktree: boolean,
+  login: Login | null,
+  named: Named | null,
   round: Beyond | null = null,
 ): Promise<Choice> {
-  const caller = callerOf(request);
-  if (round === null && allowed.has(`${caller}\n${project}`))
+  if (
+    round === null &&
+    login !== null &&
+    allowed.has(allowance(callerOf(request), project, login))
+  )
     return Promise.resolve("allow");
-  const session = request.session === null ? null : byId(request.session);
+  const session = callingSession(request);
   const ask: Ask = {
     request,
     caller: session === null ? "A session" : label(session),
@@ -1842,6 +1999,8 @@ function askUser(
     prompt: prompt.split("\n")[0],
     worktree,
     round,
+    login,
+    named,
   };
   return new Promise<Choice>((settle) => {
     queue.push({ ask, settle });
@@ -1863,8 +2022,13 @@ function answerAsk(choice: Choice) {
   conductor.asking = null;
   pending = null;
   // A round past the limit is allowed once, whatever the button.
-  if (ask !== null && choice === "allow" && ask.round === null)
-    allowed.add(`${callerOf(ask.request)}\n${ask.project}`);
+  if (
+    ask !== null &&
+    choice === "allow" &&
+    ask.round === null &&
+    ask.login !== null
+  )
+    allowed.add(allowance(callerOf(ask.request), ask.project, ask.login));
   settle?.(choice);
   nextAsk();
 }
@@ -1886,16 +2050,36 @@ export function refuse() {
 
 /** The projects a caller may start sessions in without being asked. */
 export function allowedProjects(callerId: string): string[] {
-  const prefix = `${callerId}\n`;
-  return [...allowed]
-    .filter((entry) => entry.startsWith(prefix))
-    .map((entry) => entry.slice(prefix.length));
+  const projects: string[] = [];
+  for (const entry of allowed) {
+    const [caller, project] = JSON.parse(entry) as Allowance;
+    if (caller === callerId && !projects.includes(project))
+      projects.push(project);
+  }
+  return projects;
 }
 
 /** Takes a standing answer back: the caller's next start in that project is
-    put to the user again. */
+    put to the user again, under whichever account. */
 export function revoke(callerId: string, project: string) {
-  allowed.delete(`${callerId}\n${project}`);
+  for (const entry of [...allowed]) {
+    const [caller, held] = JSON.parse(entry) as Allowance;
+    if (caller === callerId && held === project) allowed.delete(entry);
+  }
+}
+
+/** A standing answer: the caller, the project, and what the sessions it
+    allowed run on, the account and the agent where the account keeps no
+    directory for it. */
+type Allowance = [string, string, string | null, AgentId | null];
+
+function allowance(caller: string, project: string, login: Login): string {
+  return JSON.stringify([
+    caller,
+    project,
+    login.account,
+    login.bare,
+  ] satisfies Allowance);
 }
 
 /** Null once a row's process is up, else why it is not: the row failed,
