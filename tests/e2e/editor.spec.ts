@@ -532,33 +532,49 @@ test.describe("the flip back onto what was presented", () => {
   });
 });
 
-test.describe("the agent across the flip", () => {
-  test("is told one new size per flip", async ({ page }) => {
-    await open(page, 1728);
-    await page.getByTestId("start-agent").click();
-    const cols = () =>
-      page.evaluate(
-        () =>
-          (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, { cols: number }> })
-            .__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
-      );
-    const resizes = () =>
-      page.evaluate(() => (window as unknown as { __resizes?: unknown[] }).__resizes?.length ?? 0);
-    await expect.poll(cols).toBeGreaterThan(0);
-    const wide = await cols();
-    const told = await resizes();
+// As Linux the agent's pane in agent mode is 1024 wide at this window, where
+// DejaVu Sans Mono, and Menlo drawn to its measure, fit 135.9 cells: a grid
+// that came back from the editing shape's 60 columns by a cell shared out
+// over those would be one column wider than the one it left.
+for (const linux of [false, true]) {
+  const platform = linux ? "as Linux" : "as the platform it runs on";
+  test.describe(`the agent across the flip, ${platform}`, () => {
+    test("is told one new size per flip, and comes back to the grid it had", async ({ page }) => {
+      if (linux) await asLinux(page);
+      await open(page, 1728);
+      // As Linux on a Mac the chord is Ctrl's, so the switch is clicked.
+      const turn = async () => {
+        if (!linux) return flip(page);
+        const was = await page.getByTestId("mode-readout").textContent();
+        await page.getByTestId(was === "working" ? "mode-editor" : "mode-agent").click();
+        await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
+        await settled(page);
+      };
+      await page.getByTestId("start-agent").click();
+      const cols = () =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, { cols: number }> })
+              .__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+        );
+      const resizes = () =>
+        page.evaluate(() => (window as unknown as { __resizes?: unknown[] }).__resizes?.length ?? 0);
+      await expect.poll(cols).toBeGreaterThan(0);
+      const wide = await cols();
+      const told = await resizes();
 
-    await flip(page);
-    await expect.poll(cols).toBeLessThan(wide);
-    await page.waitForTimeout(300);
-    expect(await resizes()).toBe(told + 1);
+      await turn();
+      await expect.poll(cols).toBeLessThan(wide);
+      await page.waitForTimeout(300);
+      expect(await resizes()).toBe(told + 1);
 
-    await flip(page);
-    await expect.poll(cols).toBe(wide);
-    await page.waitForTimeout(300);
-    expect(await resizes()).toBe(told + 2);
+      await turn();
+      await expect.poll(cols).toBe(wide);
+      await page.waitForTimeout(300);
+      expect(await resizes()).toBe(told + 2);
+    });
   });
-});
+}
 
 const TREE = "[data-testid='file-tree']";
 const tab = (page: Page, path: string) => page.locator(`[data-testid='editor-tab'][data-path='${path}']`);
