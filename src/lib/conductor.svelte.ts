@@ -328,9 +328,9 @@ export const conductor = $state({
   startedBy: {} as Record<string, string>,
   /** What each caller started, by the caller's token, kept between runs.
       A row whose id is here is the caller's whether or not it was started
-      in this run. Earlier versions kept a caller that named no session
-      under the folder it called from; such a list is kept as it is, and
-      is no caller's. */
+      in this run. A list an earlier version kept under the folder a caller
+      that named no session called from is kept as it is, and is no
+      caller's, since no call names a folder. */
   started: {} as Record<string, Started[]>,
   /** Where each started row stands in its caller's workflow, by the row's
       key, from the moment it is made: the place of a row with no id yet. */
@@ -577,16 +577,19 @@ function forget(caller: string, id: string) {
 const byFolder = (caller: string) => /^(?:\/|ssh:\/\/|[A-Za-z]:[\\/])/.test(caller);
 
 /** The caller of each remembered session, by the session's id: the first
-    caller listed where two remember one. A list kept under a folder is no
-    caller's, so what it holds is the user's own unless a caller's list
-    holds it too. */
+    caller listed where two remember one, a caller's own list before one
+    kept under a folder. A session a folder's list holds was started by
+    another all the same, so it starts none of its own, and no call acts
+    on it: no call names a folder. */
 const owners = $derived.by(() => {
   const index = new Map<string, string>();
-  for (const [caller, entries] of Object.entries(conductor.started)) {
-    if (byFolder(caller)) continue;
-    for (const entry of entries)
-      if (!index.has(entry.id)) index.set(entry.id, caller);
-  }
+  const lists = Object.entries(conductor.started);
+  for (const folders of [false, true])
+    for (const [caller, entries] of lists) {
+      if (byFolder(caller) !== folders) continue;
+      for (const entry of entries)
+        if (!index.has(entry.id)) index.set(entry.id, caller);
+    }
   return index;
 });
 
@@ -606,9 +609,9 @@ export interface WasOpen {
  * the Codex sessions. A folder that one Codex session among those open at
  * the last quit ran in is that session's, and its list and its workflow's
  * record are copied to the session's id, which is its token from now on.
- * A folder where none ran, or several did, is left as it was, and what it
- * holds is no caller's. The folder's own copy stays, for that earlier
- * version to go on reading.
+ * A folder where none ran, or several did, is left as it was: what it
+ * holds was started by another session, and no call acts on it. The
+ * folder's own copy stays, for that earlier version to go on reading.
  */
 export function carryOver(open: WasOpen[]) {
   let moved = false;

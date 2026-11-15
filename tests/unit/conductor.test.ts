@@ -3556,18 +3556,27 @@ describe("sessions told apart by their tokens", () => {
     cameUp(back.key, "pty-a", "codex-a");
     await handle(call("sessions", {}, { session: "codex-a" }));
     expect(last().content).toContain("kid-a");
-    // What a folder with two such sessions kept is no caller's: the
-    // session it holds is the user's own, and no call reaches it.
+    // What a folder with two such sessions kept is no caller's: no call
+    // reaches the session it holds, which was started by another all the
+    // same and starts none of its own.
     const kid = create(B, "kid-b", "codex", null, null, null, null, null);
     cameUp(kid.key, "pty-kid-b", "kid-b");
-    expect(startedFor(kid.key)).toBeNull();
+    expect(startedFor(kid.key)).toBe(B);
     const b1 = create(B, "codex-b1", "codex", null, null, null, null, null);
     cameUp(b1.key, "pty-b1", "codex-b1");
     await handle(call("stop", { session: "kid-b" }, { session: "codex-b1" }));
     expect(last().error).toContain("Session kid-b was not started by you.");
     await handle(raw("stop", { session: "kid-b" }, { cwd: B }));
     expect(last().error).toBe(OUTSIDE);
+    await handle(raw("stop", { session: "kid-b" }, { session: B, cwd: B }));
+    expect(last().error).toBe(UNKNOWN);
     expect(byKey(kid.key)).not.toBeNull();
+    await handle(call("start", { project: A, prompt: "Deeper" }, { session: "kid-b" }));
+    expect(last().error).toBe("A session that another session started cannot start sessions of its own.");
+    // The one carried over is its new caller's, not the folder's.
+    const carried = create(B, "kid-a", "codex", null, null, null, null, null);
+    cameUp(carried.key, "pty-kid-a", "kid-a");
+    expect(startedFor(carried.key)).toBe("codex-a");
     // Carried once: a second look changes nothing.
     carryOver([{ project: A, id: "codex-a", agent: "codex", startIn: null }]);
     expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid-a"]);
