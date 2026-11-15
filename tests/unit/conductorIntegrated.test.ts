@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, USER_WROTE, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated, send } from "$lib/integrated.svelte";
 import { byKey, create, forProject, reset as resetSessions, sessions, started } from "$lib/sessions.svelte";
 import { defaultWorkflow } from "$lib/workflows.svelte";
@@ -304,14 +304,14 @@ describe("the orchestrator's tools with an integrated session", () => {
       conductor.startedBy[kid.key] = id;
       byKey(kid.key)!.working = true;
       flushSync();
-      return { key: row.key, id, kid: byKey(kid.key)! };
+      return { key: row.key, id, kid: byKey(kid.key)!, handle: handleOf(row.key)! };
     }
 
     const sentTexts = () =>
       fake.calls.flatMap((made) => (made.method === "send" ? [(made as { text: string }).text] : []));
 
-    it("is told with the user's next message what it has not heard, and the thread keeps the user's words apart", async () => {
-      const { key, kid } = await starter();
+    it("is told with the user's next message what it has not heard, once the agent takes it, and the thread keeps the user's words apart", async () => {
+      const { key, kid, handle: core } = await starter();
       kid.note = "the scan is done";
       kid.working = false;
       flushSync();
@@ -320,16 +320,67 @@ describe("the orchestrator's tools with an integrated session", () => {
       expect(text).toBe(
         `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: the scan is done\n\nHow is it going?`,
       );
-      expect(spoken(text)).toEqual({
+      expect(spoken(text, true)).toEqual({
         text: "How is it going?",
         instructions: null,
         reports: "Session kid-1 stopped working. Its last line: the scan is done",
       });
       // The row is named by the user's words, not the note.
       expect(byKey(key)!.title).toBe("How is it going?");
-      // Told once.
+      // Told once the agent takes the message: the next goes without it.
+      fake.startTurn(core);
+      flushSync();
+      fake.endTurn(core);
+      flushSync();
+      expect(unheard(byKey(key)!)).toEqual([]);
       send(key, "And now?");
       expect(sentTexts().at(-1)).toBe("And now?");
+    });
+
+    it("leaves what the note said untold when the message never reaches the agent", async () => {
+      const { key, kid, handle: core } = await starter();
+      kid.working = false;
+      flushSync();
+      // The core refuses it.
+      const failing = (window as unknown as { __WORKBENCH_CORE__: { integratedSend: unknown } }).__WORKBENCH_CORE__;
+      const sendAsUsual = failing.integratedSend;
+      failing.integratedSend = async () => {
+        throw new Error("the session is gone");
+      };
+      send(key, "First");
+      await settle();
+      failing.integratedSend = sendAsUsual;
+      expect(conversationOf(key).messages[Object.keys(conversationOf(key).messages).at(-1)!].state).toBe("failed");
+      // The agent drops it.
+      send(key, "Second");
+      const dropped = fake.calls.filter((made) => made.method === "send").at(-1) as { message: string; text: string };
+      expect(dropped.text.startsWith(REPORTS_HEAD)).toBe(true);
+      fake.drop(core, dropped.message);
+      flushSync();
+      // Still not heard, so the next message carries it again.
+      send(key, "Third");
+      expect(sentTexts().at(-1)).toContain("Session kid-1 stopped working.");
+    });
+
+    it("answers a wait at once with the user's message while the agent has not taken it", async () => {
+      const { key, id, kid, handle: core } = await starter();
+      fake.startTurn(core);
+      send(key, "Hold on");
+      const asked = { ...call("wait", { seconds: 5 }), session: id };
+      await handle(asked);
+      expect(answerTo(asked)?.content).toBe(USER_WROTE);
+      // Taken, a wait waits for its sessions again.
+      fake.endTurn(core);
+      fake.startTurn(core);
+      flushSync();
+      const later = { ...call("wait", { seconds: 60 }), session: id };
+      const waited = handle(later);
+      await settle();
+      expect(answerTo(later)).toBeUndefined();
+      kid.working = false;
+      flushSync();
+      await waited;
+      expect(answerTo(later)?.content).toBe("Session kid-1 stopped working. It has left no line.");
     });
 
     it("ends a wait it holds, so the user's message is not held behind it, and says what is still out", async () => {

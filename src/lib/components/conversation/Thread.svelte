@@ -2,8 +2,8 @@
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
   import { clock, nowDoing, speaker, startedIds, tokens } from "$lib/thread";
-  import { spoken } from "$lib/instructions";
-  import { timeOf, type Sender } from "$lib/senders.svelte";
+  import { reportsShown, spoken } from "$lib/instructions";
+  import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { goTo } from "$lib/workspace.svelte";
   import Icon from "./Icon.svelte";
@@ -386,7 +386,7 @@
 {#snippet userMessage(said: Message)}
   {@const from = sender?.(said) ?? null}
   {@const at = said.at ?? timeOf(said.id)}
-  {@const words = spoken(said.text)}
+  {@const words = spoken(said.text, from === null)}
   <article
     class="msg you"
     class:from={from !== null}
@@ -427,7 +427,9 @@
         aria-expanded={unfolded[shown] === true}
         data-testid="workbench-reports">Reports from the workbench</button
       >
-      {#if unfolded[shown]}<p class="state reports" data-testid="workbench-reports-text">{words.reports}</p>{/if}
+      {#if unfolded[shown]}<p class="state reports" data-testid="workbench-reports-text"
+          >{reportsShown(words.reports, sessionName)}</p
+        >{/if}
     {/if}
     {#if words.instructions !== null}
       <button
