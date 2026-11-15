@@ -795,7 +795,7 @@ fn version_of(agent: &str) -> Option<String> {
 }
 
 /// A version's three numbers, with anything after a dash left out.
-fn numbers(version: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn numbers(version: &str) -> Option<(u64, u64, u64)> {
     let core = version.split(['-', '+']).next()?;
     let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
     Some((

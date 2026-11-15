@@ -341,6 +341,31 @@ fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
 /// through the command interpreter loses every line of them after the first.
 pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex takes a workflow's instructions only on its command line, which Windows cuts short, so a session on Codex cannot follow a workflow here. Choose Claude Code for the workflow's orchestrator, or pick Codex to start it alone.";
 
+/// The first Codex that passes a server the variables its entry names,
+/// which is how a session on Codex names itself to the workbench's tools.
+pub const CODEX_NAMES_ITSELF: (u64, u64, u64) = (0, 47, 0);
+
+/// Why a session on an older Codex does not follow a workflow: its calls
+/// would name no session, so it could not direct one.
+pub const CODEX_TOO_OLD: &str = "This Codex is older than 0.47.0, which passes the workbench's tool server none of the session's variables, so its calls cannot say which session they come from and it cannot direct a workflow. Update Codex, or choose Claude Code for the workflow's orchestrator.";
+
+/// The version of the Codex at `binary`, from what `codex --version`
+/// prints: `codex-cli 0.169.0`. None when it cannot be run or prints no
+/// version.
+fn codex_version(
+    binary: &Path,
+    project: &Path,
+    vars: &HashMap<String, String>,
+) -> Option<(u64, u64, u64)> {
+    let mut command = process(binary, vars);
+    prepare_process(&mut command, project, vars);
+    let output = command.arg("--version").output().ok()?;
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .rev()
+        .find_map(crate::codex_app_server::numbers)
+}
+
 /// The same for Codex, which takes each as a setting of its configuration:
 /// the instructions as developer instructions, its own subagent tools taken
 /// away, and the tool server as one of its servers. Codex has no setting
@@ -508,6 +533,23 @@ impl Codex {
         Ok(Surface::Pty(command))
     }
 
+    /// Refuses a session that follows a workflow on a Codex too old to name
+    /// itself to its tools. A Codex whose version cannot be read is let
+    /// through: its calls naming no session cost it its starts and sends,
+    /// nothing more.
+    fn names_itself(&self, ctx: &LaunchCtx) -> Result<(), String> {
+        if ctx.instructions.is_none() {
+            return Ok(());
+        }
+        let Some(binary) = self.detect(ctx.env) else {
+            return Ok(());
+        };
+        match codex_version(&binary, ctx.project, ctx.env) {
+            Some(version) if version < CODEX_NAMES_ITSELF => Err(CODEX_TOO_OLD.into()),
+            _ => Ok(()),
+        }
+    }
+
     /// Whether the Codex found is a script, which Windows runs through the
     /// command interpreter.
     fn script(&self, ctx: &LaunchCtx) -> bool {
@@ -527,12 +569,14 @@ impl AgentAdapter for Codex {
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
         let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
+        self.names_itself(ctx)?;
         let args = workflow.iter().map(String::as_str).collect();
         self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
         let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
+        self.names_itself(ctx)?;
         let mut args = vec!["resume", session];
         args.extend(workflow.iter().map(String::as_str));
         self.command(ctx, &with_prompt(ctx, args))
@@ -1224,6 +1268,63 @@ mod tests {
             .get_argv()
             .iter()
             .all(|arg| !arg.to_string_lossy().contains("mcp")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_workflow_on_a_codex_too_old_to_name_its_session() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Scratch::new("adapter-codex-version");
+        let bin = dir.join("codex");
+        let vars = vars_with_path(&dir);
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: None,
+            token: Some("token-1"),
+            prompt: None,
+            model: None,
+            orchestrator: true,
+            instructions: Some("Direct the work."),
+            instructions_file: None,
+            start_only: false,
+            server: None,
+            server_file: None,
+            configured: None,
+            afresh: false,
+        };
+        let says = |text: &str| {
+            std::fs::write(&bin, format!("#!/bin/sh\necho '{text}'\n")).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        says("codex-cli 0.46.0");
+        assert_eq!(
+            Codex.launch(&ctx, "").err(),
+            Some(CODEX_TOO_OLD.to_string())
+        );
+        assert_eq!(
+            Codex.resume(&ctx, "abc").err(),
+            Some(CODEX_TOO_OLD.to_string())
+        );
+        // Without a workflow it starts, its calls naming no session.
+        let plain = LaunchCtx {
+            instructions: None,
+            orchestrator: false,
+            ..ctx
+        };
+        assert!(Codex.launch(&plain, "").is_ok());
+        for version in [
+            "codex-cli 0.47.0",
+            "codex-cli 0.169.0",
+            "codex-cli 1.0.0-alpha.1",
+        ] {
+            says(version);
+            assert!(Codex.launch(&ctx, "").is_ok(), "{version}");
+        }
+        // A version it cannot read lets it through.
+        says("");
+        assert!(Codex.launch(&ctx, "").is_ok());
     }
 
     #[test]

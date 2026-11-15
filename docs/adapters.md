@@ -49,6 +49,15 @@ session without the tool server is told nothing of it. On Windows a Codex
 installed as a script is not told the server either; see [under a
 workflow](#under-a-workflow).
 
+Codex passes a server the variables its entry names from 0.47.0 on. An
+older Codex takes the entry without a word and passes the server none of
+them, so every call its sessions make names no session, and is taken for
+one from [an agent the workbench did not
+start](orchestrator.md#who-is-calling). A session under a workflow could
+then direct nothing, so one on a Codex older than 0.47.0 is refused,
+saying to update; the version is what `codex --version` prints, and a
+Codex whose version cannot be read is started all the same.
+
 ## Under a workflow
 
 A session that follows a workflow is told the workflow's instructions on
