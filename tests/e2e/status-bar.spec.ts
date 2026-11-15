@@ -486,9 +486,10 @@ test.describe("the model and the effort", () => {
     });
     await expect(page.getByTestId("composer-input")).toBeFocused();
 
-    // Haiku takes no effort, so there is none to choose; Sonnet does.
-    await expect(page.getByTestId("effort-readout")).toHaveText("high");
-    expect(await page.getByTestId("effort-readout").evaluate((node) => node.tagName)).toBe("SPAN");
+    // The agent offers Haiku with no efforts, so the bar names none; Sonnet
+    // takes them.
+    await expect(page.getByTestId("effort-readout")).toHaveCount(0);
+    await expect(page.getByTestId("session-settings")).toHaveText("Haiku");
     await model.click();
     await sonnet.click();
     const effort = page.getByTestId("effort-readout");

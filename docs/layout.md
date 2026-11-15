@@ -73,8 +73,10 @@ session on screen only the focus, the mode and those two remain.
 For an integrated session the model and the effort are what the agent last
 said it runs on. Each opens a small menu of the choices the agent offers,
 the same menu the composer opens for the model, and a choice there changes
-the session as it does from the composer. A model with no efforts to choose
-from shows its effort as plain text. A terminal session's model is the one
+the session as it does from the composer. A model the agent offers with no
+efforts shows no effort at all; where nothing says which efforts the model
+takes, the effort the agent last named shows as plain text. A terminal
+session's model is the one
 the workbench started it on, as plain text, since the agent owns any change
 in its terminal; one started on the agent's own default shows none, and its
 effort is not known.

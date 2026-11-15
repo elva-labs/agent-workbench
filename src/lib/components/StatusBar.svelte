@@ -18,7 +18,7 @@
   } from "$lib/limits.svelte";
   import { hostOf } from "$lib/remote.svelte";
   import { activeSession, modelLabel, unreadCount } from "$lib/sessions.svelte";
-  import { choose, effortChoices, effortName, modelChoices, modelInUse } from "$lib/settingChoices";
+  import { choose, effortChoices, effortInUse, effortName, modelChoices, modelInUse } from "$lib/settingChoices";
   import ChoiceMenu from "./ChoiceMenu.svelte";
 
   /**
@@ -73,7 +73,7 @@
     const named = conversation === null ? null : modelInUse(conversation);
     return named ?? (session.model === null ? null : modelLabel(session.model));
   });
-  let effort = $derived(conversation?.settings.effort ?? null);
+  let effort = $derived(conversation === null ? null : effortInUse(conversation));
   let modelMenu = $derived(live && conversation !== null && (conversation.ready?.models.length ?? 0) > 0);
   let effortMenu = $derived(live && conversation !== null && conversation.efforts.length > 0);
 

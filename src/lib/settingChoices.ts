@@ -88,6 +88,17 @@ export function effortChoices(conversation: Conversation): Choice[] {
   }));
 }
 
+/** The effort the session runs at, or null where there is none: before the
+    agent has said, or where it offers the model in use with no efforts to
+    take. Where nothing says which efforts the model takes, the effort is
+    the one the agent last named. */
+export function effortInUse(conversation: Conversation): string | null {
+  const effort = conversation.settings.effort;
+  if (effort === null || conversation.efforts.length > 0) return effort;
+  const offered = offeredModel(conversation, conversation.settings.model);
+  return offered !== null && offered.efforts.length === 0 ? null : effort;
+}
+
 /** The model the session runs on as it is named, or null before the agent
     has said. */
 export function modelInUse(conversation: Conversation): string | null {
