@@ -3,6 +3,8 @@ import { spoken } from "$lib/instructions";
 import { readsAsYou } from "$lib/unseen";
 import { sentAt, sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
+import { heardLimits } from "$lib/limits.svelte";
+import { hostOf } from "$lib/remote.svelte";
 import {
   core,
   isUntrusted,
@@ -40,7 +42,8 @@ import {
  * carry before the start that hands it back has answered. Those events are
  * kept until the id is known and played then. A window that comes to a
  * session late, after a reload, keeps the events it hears while it asks for
- * the session's snapshot, plays them, and lays the snapshot over them.
+ * the session's snapshot, plays them, and lays the snapshot over them. The
+ * account's limits go to the store that keeps them by account.
  */
 
 /** What runs behind one row. */
@@ -164,6 +167,9 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       break;
     case "configured":
       session.model = body.model;
+      break;
+    case "limits":
+      heardLimits(hostOf(session.project), session.account, body);
       break;
     case "state":
       settle(session, body.state, before, link);
@@ -386,6 +392,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       for (const body of held) deliver(key, link, body);
       const before = link.conversation.state;
       link.conversation.restore(snapshot);
+      if (snapshot.limits !== null) heardLimits(hostOf(session.project), session.account, snapshot.limits);
       // Only a session that was spoken to has earlier messages to point at.
       link.conversation.late = spoken;
       // The same session goes on, not one resumed from its transcript: it
