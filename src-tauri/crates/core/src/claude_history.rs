@@ -7,8 +7,10 @@
 //! line that is not whole, such as the last of a transcript still being
 //! written, is skipped; a line past a size limit is passed over without
 //! being held; nothing past the file's length when it was opened is read,
-//! so a transcript that grows meanwhile never holds the reader; and only the
-//! end of a very long transcript is read.
+//! so a transcript that grows meanwhile never holds the reader; only the end
+//! of a very long transcript is read; and it is read twice, once for where
+//! each line stands in the conversation and once for what the lines it keeps
+//! say, so that no more than what is kept is held at once.
 //!
 //! What it reads comes out as the events a live session sends, each with the
 //! time it happened, so that a window draws a past conversation the way it
@@ -73,14 +75,16 @@ pub fn read_session(
 /// folder it ran in, which is the project or a folder under it, and a
 /// session resumed in another folder is written there again under the same
 /// id: the copy that moved last is the one read. Only a plain file is read,
-/// so nothing that would wait to be opened is.
+/// so nothing that would wait to be opened is, and a project with no path
+/// names none.
 pub fn find(
     claude_dir: &Path,
     project: &Path,
     cwd: Option<&Path>,
     session: &str,
 ) -> Option<PathBuf> {
-    if session.is_empty()
+    if project.as_os_str().is_empty()
+        || session.is_empty()
         || !session
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -107,23 +111,43 @@ pub fn find(
         .map(|(_, path)| path)
 }
 
-/// What one transcript says was said and done.
+/// What one transcript says was said and done. The first reading finds
+/// which lines make up the conversation from their ids alone; the second
+/// reads those lines, each made into its events and let go before the next.
 pub fn read(path: &Path) -> History {
-    let read = entries(path, false);
-    let kept = conversation(read.entries, &read.parents, read.partial);
+    let found = survey(path);
+    let Some(span) = found.span else {
+        return History::default();
+    };
+    let partial = span.start > 0;
+    let kept = conversation(&found.placed, &found.parents, partial);
     let mut reader = Reader::new(Subagents::beside(path));
-    reader.main(&kept);
+    let mut index = 0;
+    lines(path, Some(span), |line| {
+        let at = index;
+        index += 1;
+        let Some(&only_results) = kept.get(&at) else {
+            return;
+        };
+        let Ok(value) = serde_json::from_slice::<Value>(line) else {
+            return;
+        };
+        if only_results && results(&value).next().is_none() {
+            return;
+        }
+        reader.main(&value);
+    });
     let mut history = reader.finish(modified_millis(path));
-    history.cut |= read.partial;
+    history.cut |= partial;
     history
 }
 
-/// One entry of a transcript that may say something, whole, with the two
-/// ids that place it in the conversation.
-struct Entry {
+/// A line of a transcript that may say something, by where it stands among
+/// the lines read, with the two ids that place it in the conversation.
+struct Placed {
+    index: usize,
     uuid: Option<String>,
     parent: Option<String>,
-    value: Value,
 }
 
 /// What every line is read for first, without holding the rest of it.
@@ -184,21 +208,25 @@ impl Link {
 }
 
 struct Found {
-    entries: Vec<Entry>,
+    /// The lines that can say something: the user's, the agent's, the
+    /// system's and attachments, the side chain left out.
+    placed: Vec<Placed>,
     /// Every line's parent by its id, entries or not, so the conversation
     /// can be followed through lines that say nothing.
     parents: HashMap<String, Link>,
-    /// Only the end of the file was read.
-    partial: bool,
+    /// What was read, none for a file that could not be.
+    span: Option<Span>,
 }
 
-/// The entries of a transcript that can say something: the user's, the
-/// agent's, the system's and attachments. A subagent's own transcript is
-/// all side chain; the main one's side chain is left out.
-fn entries(path: &Path, sidechain: bool) -> Found {
+/// Where each line of a transcript stands, from what every line is read for
+/// first, with nothing else of it held.
+fn survey(path: &Path) -> Found {
     let mut parents = HashMap::new();
-    let mut entries = Vec::new();
-    let partial = lines(path, |line| {
+    let mut placed = Vec::new();
+    let mut index = 0;
+    let span = lines(path, None, |line| {
+        let at = index;
+        index += 1;
         let Ok(head) = serde_json::from_slice::<Head>(line) else {
             return;
         };
@@ -217,48 +245,52 @@ fn entries(path: &Path, sidechain: bool) -> Found {
         ) {
             return;
         }
-        if !sidechain && head.sidechain.0 == Some(Value::Bool(true)) {
+        if head.sidechain.0 == Some(Value::Bool(true)) {
             return;
         }
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            return;
-        };
-        entries.push(Entry {
+        placed.push(Placed {
+            index: at,
             uuid,
             parent,
-            value,
         });
     });
     Found {
-        entries,
+        placed,
         parents,
-        partial,
+        span,
     }
 }
 
-/// Hands each whole line of the file to `each`, up to the length the file
-/// had when it was opened, and past a line too long to hold. Answers
-/// whether only the end of the file was read. A file that is not a plain
-/// file is not opened.
-fn lines(path: &Path, mut each: impl FnMut(&[u8])) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return false;
-    };
+/// The bytes of a file that are read: of a very long file, its end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Span {
+    start: u64,
+    end: u64,
+}
+
+/// Hands each whole line of the file to `each`, past a line too long to
+/// hold: of `span`, or of the length the file had when it was opened, or
+/// of the end of that. Answers what was read, so a second reading reads the
+/// same lines; none for a file that is not a plain file, which is not
+/// opened, or that could not be read.
+fn lines(path: &Path, span: Option<Span>, mut each: impl FnMut(&[u8])) -> Option<Span> {
+    let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() {
-        return false;
+        return None;
     }
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let length = meta.len();
-    let start = length.saturating_sub(FILE_KEEP);
-    if start > 0 && file.seek(SeekFrom::Start(start)).is_err() {
-        return false;
+    let mut file = std::fs::File::open(path).ok()?;
+    let span = span.unwrap_or_else(|| Span {
+        start: meta.len().saturating_sub(FILE_KEEP),
+        end: meta.len(),
+    });
+    if span.start > 0 && file.seek(SeekFrom::Start(span.start)).is_err() {
+        return None;
     }
-    let mut reader = BufReader::with_capacity(256 * 1024, file.take(length - start));
+    let mut reader =
+        BufReader::with_capacity(256 * 1024, file.take(span.end.saturating_sub(span.start)));
     let mut line = Vec::new();
     // Read from the middle, the first line is the end of one.
-    let mut piece = start > 0;
+    let mut piece = span.start > 0;
     let mut over = false;
     loop {
         let (ended, used) = {
@@ -297,7 +329,7 @@ fn lines(path: &Path, mut each: impl FnMut(&[u8])) -> bool {
     if !over && !piece && !line.is_empty() {
         each(&line);
     }
-    start > 0
+    Some(span)
 }
 
 /// The entries that make up the conversation as it stands. A transcript
@@ -306,13 +338,19 @@ fn lines(path: &Path, mut each: impl FnMut(&[u8])) -> bool {
 /// parent to the first, with the results of the calls the agent made at
 /// once, which each hang off their call. Where that line breaks off, at a
 /// parent the transcript does not hold, every entry is kept in the order
-/// written.
-fn conversation(entries: Vec<Entry>, parents: &HashMap<String, Link>, partial: bool) -> Vec<Entry> {
+/// written. Answers the lines kept by where they stand, each saying whether
+/// it is kept only if it holds tool results, which its ids cannot tell.
+fn conversation(
+    placed: &[Placed],
+    parents: &HashMap<String, Link>,
+    partial: bool,
+) -> HashMap<usize, bool> {
+    let every = || placed.iter().map(|entry| (entry.index, false)).collect();
     if partial {
-        return entries;
+        return every();
     }
-    let Some(leaf) = entries.iter().rev().find_map(|entry| entry.uuid.clone()) else {
-        return entries;
+    let Some(leaf) = placed.iter().rev().find_map(|entry| entry.uuid.clone()) else {
+        return every();
     };
     let mut line = HashSet::new();
     let mut at = Some(leaf);
@@ -331,19 +369,17 @@ fn conversation(entries: Vec<Entry>, parents: &HashMap<String, Link>, partial: b
         };
     }
     if !whole {
-        return entries;
+        return every();
     }
-    entries
-        .into_iter()
-        .filter(|entry| match &entry.uuid {
-            Some(uuid) if line.contains(uuid) => true,
-            _ => {
-                entry
-                    .parent
-                    .as_ref()
-                    .is_some_and(|parent| line.contains(parent))
-                    && results(&entry.value).next().is_some()
-            }
+    placed
+        .iter()
+        .filter_map(|entry| match &entry.uuid {
+            Some(uuid) if line.contains(uuid) => Some((entry.index, false)),
+            _ => entry
+                .parent
+                .as_ref()
+                .filter(|parent| line.contains(*parent))
+                .map(|_| (entry.index, true)),
         })
         .collect()
 }
@@ -480,19 +516,17 @@ impl Reader {
         }
     }
 
-    /// The main conversation: turns, the user's messages and what the agent
-    /// said and did in each.
-    fn main(&mut self, entries: &[Entry]) {
-        for entry in entries {
-            let value = &entry.value;
-            self.when(value);
-            match value["type"].as_str() {
-                Some("user") => self.user(value, entry.uuid.as_deref()),
-                Some("assistant") => self.assistant(value, None, 0, &mut Vec::new()),
-                Some("system") => self.system(value),
-                Some("attachment") => self.attachment(value, entry.uuid.as_deref()),
-                _ => {}
-            }
+    /// An entry of the main conversation: a turn, a message of the user's,
+    /// or what the agent said and did in one.
+    fn main(&mut self, value: &Value) {
+        self.when(value);
+        let uuid = value["uuid"].as_str();
+        match value["type"].as_str() {
+            Some("user") => self.user(value, uuid),
+            Some("assistant") => self.assistant(value, None, 0, &mut Vec::new()),
+            Some("system") => self.system(value),
+            Some("attachment") => self.attachment(value, uuid),
+            _ => {}
         }
     }
 
@@ -778,18 +812,19 @@ impl Reader {
         let Some(path) = self.subagents.of(call) else {
             return;
         };
-        let read = entries(&path, true);
         let at = self.at;
         let mut open = Vec::new();
-        for entry in &read.entries {
-            let value = &entry.value;
-            self.when(value);
+        lines(&path, None, |line| {
+            let Ok(value) = serde_json::from_slice::<Value>(line) else {
+                return;
+            };
+            self.when(&value);
             match value["type"].as_str() {
-                Some("assistant") => self.assistant(value, Some(call), depth, &mut open),
-                Some("user") => self.finished(value, Some(call), &mut open),
+                Some("assistant") => self.assistant(&value, Some(call), depth, &mut open),
+                Some("user") => self.finished(&value, Some(call), &mut open),
                 _ => {}
             }
-        }
+        });
         for left in open {
             self.push(failed(left, Some(call)));
         }
@@ -1113,7 +1148,12 @@ fn millis(text: &str) -> Option<u64> {
     {
         return None;
     }
+    // What follows the seconds is read by byte, so only plain characters
+    // are taken there.
     let mut rest = &text[19..];
+    if !rest.is_ascii() {
+        return None;
+    }
     let mut fraction = 0;
     if let Some(after) = rest.strip_prefix('.') {
         let digits = after.bytes().take_while(u8::is_ascii_digit).count();

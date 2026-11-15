@@ -2,6 +2,7 @@ use super::*;
 use crate::integrated::ChangeKind;
 use crate::scratch::Scratch;
 use crate::transcripts::directory_for;
+use std::io::Write;
 
 const PROJECT: &str = "/projects/demo";
 const SESSION: &str = "5f0c2b1e-7a4d-4c1b-9e3f-2a6b8c0d1e2f";
@@ -360,6 +361,54 @@ fn finds_the_session_under_its_project_or_a_folder_under_it() {
 }
 
 #[test]
+fn skips_an_entry_whose_time_cannot_be_read_and_reads_the_rest() {
+    let body = concat!(
+        r#"{"type":"user","uuid":"u-1","parentUuid":null,"timestamp":"2026-03-04T10:00:00Z","message":{"role":"user","content":"One"}}"#,
+        "\n",
+        r#"{"type":"assistant","uuid":"a-1","parentUuid":"u-1","timestamp":"2026-03-04T10:00:01é1234","message":{"id":"m","content":[{"type":"text","text":"First"}],"stop_reason":"end_turn"}}"#,
+        "\n",
+    );
+    let (_home, path) = transcript("odd-time", PROJECT, body);
+    let history = read(&path);
+    let text = history
+        .items
+        .iter()
+        .find(|said| matches!(said.event, Event::Text { .. }))
+        .unwrap();
+    // The odd time is no time: the entry keeps the last one read.
+    assert_eq!(text.at, millis("2026-03-04T10:00:00Z").unwrap());
+}
+
+#[test]
+fn finds_nothing_for_a_project_with_no_path() {
+    let (home, _) = transcript("no-project", PROJECT, REWOUND);
+    assert_eq!(find(&home, Path::new(""), None, SESSION), None);
+    assert!(read_session(&home, Path::new(""), None, SESSION)
+        .items
+        .is_empty());
+}
+
+#[test]
+fn reads_the_same_lines_again_though_the_file_grew() {
+    let (_home, path) = transcript("grew", PROJECT, "one\ntwo\n");
+    let mut first = Vec::new();
+    let span = lines(&path, None, |line| first.push(line.to_vec())).unwrap();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"three\n")
+        .unwrap();
+    let mut again = Vec::new();
+    assert_eq!(
+        lines(&path, Some(span), |line| again.push(line.to_vec())),
+        Some(span)
+    );
+    assert_eq!(first, again);
+    assert_eq!(again, [b"one".to_vec(), b"two".to_vec()]);
+}
+
+#[test]
 fn finds_nothing_for_an_id_that_is_not_one() {
     let (home, _) = transcript("bad-id", PROJECT, REWOUND);
     for id in ["", "../x", "a/b", "a b", "."] {
@@ -491,6 +540,10 @@ fn reads_the_times_a_transcript_writes() {
         "2026-03-04T10:00:00.Z",
         "2026-03-04T10:00:00+0200",
         "1969-12-31T23:59:59Z",
+        // Characters of more than one byte after the seconds.
+        "2026-03-04T10:00:01é1234",
+        "2026-03-04T10:00:01+0é:00",
+        "2026-03-04T10:00:01.5ü",
     ] {
         assert_eq!(millis(bad), None, "{bad}");
     }
