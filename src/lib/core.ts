@@ -306,6 +306,21 @@ export interface IntegratedQuestion {
   other: boolean;
 }
 
+/** One window of an account's usage limits. `session` is the five hours
+    a session of work is metered by, `weekly` the week over every model,
+    and `weeklyScoped` the week for the one model `model` names. `percent`
+    is how much of the window is used, 0 to 100; `resetsAt` when it starts
+    over, in seconds since the epoch, where the agent says; `severity` how
+    near its end the agent reads it, where it gives a reading. The core
+    passes a window whose reset time has gone by as the agent said it. */
+export interface IntegratedLimitWindow {
+  kind: "session" | "weekly" | "weeklyScoped";
+  model: string | null;
+  percent: number;
+  resetsAt: number | null;
+  severity: "normal" | "warning" | "reached" | null;
+}
+
 /** A session's news, by `type`. Text, thinking, tool calls, plans and
     requests carry `parent`: the tool call that started the subagent they
     belong to, or null in the main conversation. */
@@ -487,6 +502,26 @@ export type IntegratedEventBody =
   /** How much of the context window the conversation takes, and how big
       the window is, in tokens, where the agent reports either. */
   | { type: "context"; used: number | null; size: number | null }
+  /** The usage limits of the account the session runs under, whole, as the
+      agent last reported them, with the plan where it names one. `agent`
+      is the agent's id, as a start names it; the account is the
+      session's, which the core does not name. Sent when the agent answers
+      a read of them, once it is ready and after a turn once the last read
+      is five minutes old, and when what it pushes during a turn changes
+      them. A read gives every window and the plan, and a push moves only
+      the windows it names: `readAt` is when the last read was taken, null
+      before one, and `takenAt` when a figure last moved, so every figure
+      was taken between the two, and the oldest is as old as `readAt`, or
+      `takenAt` where no read was answered. Both are in seconds since the
+      epoch. */
+  | {
+      type: "limits";
+      agent: string;
+      plan: string | null;
+      windows: IntegratedLimitWindow[];
+      readAt: number | null;
+      takenAt: number;
+    }
   /** Something the agent says that is neither an error nor part of a
       turn. */
   | { type: "notice"; level: "info" | "warning"; message: string }
@@ -526,7 +561,8 @@ export type IntegratedEvent = IntegratedEventBody & { id: string };
     ready; `requests` the permissions and questions still waiting for an
     answer, each as it was asked; `messages` those sent and not yet taken
     into a turn, in the order sent, each as its first message event told
-    it, with its text and images. */
+    it, with its text and images; `limits` the account's limits as the
+    last limits event told them, null before one went out. */
 export interface IntegratedSnapshot {
   state: IntegratedState;
   turn: boolean;
@@ -535,6 +571,7 @@ export interface IntegratedSnapshot {
   ready: Extract<IntegratedEventBody, { type: "ready" }> | null;
   requests: Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>[];
   messages: Extract<IntegratedEventBody, { type: "message" }>[];
+  limits: Extract<IntegratedEventBody, { type: "limits" }> | null;
 }
 
 /** A transition reported by an agent hook or session log, by session id:
