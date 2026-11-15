@@ -9,7 +9,7 @@ let popover: HTMLDivElement;
 let link: HTMLAnchorElement;
 let composer: HTMLTextAreaElement;
 let interrupted: number;
-let close: ReturnType<typeof vi.fn>;
+let close: ReturnType<typeof vi.fn<() => void>>;
 let stop: () => void;
 
 const escape = (target: Element, init: KeyboardEventInit = {}) => {
@@ -31,7 +31,7 @@ beforeEach(() => {
   composer.addEventListener("keydown", (event) => {
     if (event.key === "Escape") interrupted += 1;
   });
-  close = vi.fn();
+  close = vi.fn<() => void>();
   stop = putAway({ inside: () => [control, popover], close, control: () => control });
 });
 
