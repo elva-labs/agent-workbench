@@ -419,9 +419,13 @@ impl Core {
         // Where the agent's own configuration already points at the server,
         // an agent that passes its servers only the variables it is told to
         // is told the server again, with the session's token to pass on.
-        let found = self.home.as_deref().map(|home| {
-            hook::tool_server(home, project, agent, config_dir, &env::environment().vars)
-        });
+        // Nothing else needs to know where the server is.
+        let found = match self.home.as_deref() {
+            Some(home) if instructions.is_some() || adapter.names_server_vars() => Some(
+                hook::tool_server(home, project, agent, config_dir, &environment.vars),
+            ),
+            _ => None,
+        };
         let server = match (instructions, &found) {
             (None, _) => None,
             (Some(_), Some(hook::ToolServer::Configured)) => None,

@@ -167,6 +167,14 @@ pub trait AgentAdapter: Send + Sync {
     fn reads_files(&self) -> bool {
         false
     }
+
+    /// Whether the agent passes its tool server only the variables the
+    /// server's entry names, so a session's server that its configuration
+    /// names is named again on the command line with the session's
+    /// variables.
+    fn names_server_vars(&self) -> bool {
+        false
+    }
 }
 
 /// Variables that identify the *parent* Claude Code session rather than the
@@ -530,6 +538,10 @@ impl AgentAdapter for Codex {
 
     fn takes_id(&self) -> bool {
         false
+    }
+
+    fn names_server_vars(&self) -> bool {
+        true
     }
 }
 
