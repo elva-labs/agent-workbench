@@ -45,7 +45,9 @@ server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
 those two variables to pass on. An entry that named only the variables,
 for a server no configuration names, would stop Codex from starting, so a
-session without the tool server is told nothing of it.
+session without the tool server is told nothing of it. On Windows a Codex
+installed as a script is not told the server either; see [under a
+workflow](#under-a-workflow).
 
 ## Under a workflow
 
@@ -97,7 +99,14 @@ interpreter, which ends a command at its first line break. Claude Code's
 command line holds only file names there. Codex would lose all but the
 first line of the instructions, so a Codex session under a workflow is
 refused on Windows, saying so. A session with no workflow starts as the
-table above says.
+table above says. The interpreter also takes the first and the last quote
+off a line with more than two, which cuts short a script path with a space
+in it, and the settings that name the tool server to Codex hold quotes. So
+a Codex installed as a script is not told the server on Windows: it starts
+the server from its own configuration, which passes the server none of
+the session's variables, and every call the session makes names no
+session. The workbench takes such a call for one from [an agent it did
+not start](orchestrator.md#who-is-calling).
 
 ## Detection
 

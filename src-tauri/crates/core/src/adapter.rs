@@ -352,15 +352,23 @@ pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex takes a workflow's instructio
 /// that say which session it serves among those passed on: an entry that
 /// named only the variables, where no configuration Codex reads names the
 /// server, would stop Codex from starting.
-fn codex_workflow(ctx: &LaunchCtx, windows: bool) -> Result<Vec<String>, String> {
+///
+/// A Codex the command interpreter runs, a script on Windows, is not told
+/// the server its configuration already names. Each setting of the server
+/// holds quotes, and the interpreter takes the first and the last quote off
+/// a line that has more than two, which cuts a script path with a space in
+/// it short. Codex then starts the server from its configuration alone, and
+/// the session's calls name no session.
+fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<String>, String> {
     if windows && ctx.instructions.is_some() {
         return Err(CODEX_WORKFLOW_ON_WINDOWS.into());
     }
     // A JSON string is a TOML basic string as well: quoted, on one line,
     // with the same escapes.
     let text = |value: &str| serde_json::Value::from(value).to_string();
+    let configured = ctx.configured.filter(|_| !(windows && script));
     let mut settings = Vec::new();
-    if let Some(server) = ctx.server.or(ctx.configured) {
+    if let Some(server) = ctx.server.or(configured) {
         settings.push(format!(
             "mcp_servers.{CODEX_SERVER_KEY}.command={}",
             text(&server.to_string_lossy())
@@ -499,6 +507,13 @@ impl Codex {
 
         Ok(Surface::Pty(command))
     }
+
+    /// Whether the Codex found is a script, which Windows runs through the
+    /// command interpreter.
+    fn script(&self, ctx: &LaunchCtx) -> bool {
+        self.detect(ctx.env)
+            .is_some_and(|binary| is_shell_script(&binary))
+    }
 }
 
 impl AgentAdapter for Codex {
@@ -511,13 +526,13 @@ impl AgentAdapter for Codex {
     }
 
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
-        let workflow = codex_workflow(ctx, cfg!(windows))?;
+        let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
         let args = workflow.iter().map(String::as_str).collect();
         self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
-        let workflow = codex_workflow(ctx, cfg!(windows))?;
+        let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
         let mut args = vec!["resume", session];
         args.extend(workflow.iter().map(String::as_str));
         self.command(ctx, &with_prompt(ctx, args))
@@ -937,7 +952,7 @@ mod tests {
             "-c".to_string(),
             r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#.to_string(),
         ];
-        assert_eq!(codex_workflow(&ctx, false).unwrap(), codex_settings);
+        assert_eq!(codex_workflow(&ctx, false, false).unwrap(), codex_settings);
         let tail = ["--model", "fable", "--", "Fix the flaky test"].map(str::to_string);
         if !cfg!(windows) {
             assert_eq!(
@@ -956,7 +971,7 @@ mod tests {
         }
         // On Windows the instructions would be cut at their first line.
         assert_eq!(
-            codex_workflow(&ctx, true).unwrap_err(),
+            codex_workflow(&ctx, true, false).unwrap_err(),
             CODEX_WORKFLOW_ON_WINDOWS
         );
 
@@ -981,7 +996,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            codex_workflow(&ctx, false).unwrap(),
+            codex_workflow(&ctx, false, false).unwrap(),
             [
                 "-c",
                 r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#
@@ -1014,7 +1029,7 @@ mod tests {
             instructions_file: None,
             ..ctx
         };
-        assert!(codex_workflow(&plain, true).unwrap().is_empty());
+        assert!(codex_workflow(&plain, true, false).unwrap().is_empty());
         // Resumed with no workflow where its conversation was first given
         // one, Claude Code is told to let go of what it recorded, and given
         // nothing in its place.
@@ -1170,7 +1185,7 @@ mod tests {
         };
         // No server anywhere: nothing is said of one, since an entry Codex
         // cannot start would stop the session from starting.
-        assert!(codex_workflow(&ctx, false).unwrap().is_empty());
+        assert!(codex_workflow(&ctx, false, false).unwrap().is_empty());
         // The project's configuration names it: it is named again, whole,
         // with the variables Codex is to pass on.
         let configured = LaunchCtx {
@@ -1189,8 +1204,13 @@ mod tests {
             "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
                 .to_string(),
         ];
-        assert_eq!(codex_workflow(&configured, false).unwrap(), whole);
-        assert_eq!(codex_workflow(&configured, true).unwrap(), whole);
+        assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
+        assert_eq!(codex_workflow(&configured, true, false).unwrap(), whole);
+        // A script on Windows is told nothing of it: the interpreter would
+        // cut the script's path short at the settings' quotes.
+        assert!(codex_workflow(&configured, true, true).unwrap().is_empty());
+        // Elsewhere a script is run as itself and takes the settings.
+        assert_eq!(codex_workflow(&configured, false, true).unwrap(), whole);
         // Claude Code passes its servers its whole environment, so it is
         // told nothing more.
         let dir = fake_claude("adapter-configured");
