@@ -115,6 +115,12 @@ such session runs or several do, or the call names a session the window
 does not have, the starter cannot be placed and the session runs under the
 project's account.
 
+The one-level rule and the cap of eight are held to the same placement: a
+call with no id from the one session running there that was not told its
+id is refused as that session's own call would be, so a session that was
+started by another cannot start sessions through a missing id. A call that
+cannot be placed is the caller's own, counted by the directory it comes from.
+
 ## Following a workflow
 
 A session runs one of two ways: under a workflow, as its orchestrator, or

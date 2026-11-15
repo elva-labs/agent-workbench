@@ -666,10 +666,7 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
 /** Keeps a refused start where the user can see it, for a caller that
     follows a workflow, and clears it once a start goes through. */
 function noteRefusal(request: ConductRequest, error: string | null) {
-  const row =
-    request.session !== null
-      ? byId(request.session)
-      : (untoldHere(request.cwd).at(0) ?? null);
+  const row = callingSession(request);
   if (row === null) return;
   if (error === null) delete conductor.refusals[row.key];
   else if (row.workflow !== null) conductor.refusals[row.key] = error;
@@ -1423,7 +1420,8 @@ function roomFor(request: ConductRequest): Answered | null {
     return refused(
       `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
     );
-  if (startedFor(callerKey(request)) !== null)
+  const calling = callingSession(request);
+  if (calling !== null && startedFor(calling.key) !== null)
     return refused(
       "A session that another session started cannot start sessions of its own.",
     );
@@ -1949,13 +1947,6 @@ function notMine(id: string): Answered {
 /** Who is calling: the session it runs as, else the directory it runs in. */
 function callerOf(request: ConductRequest): string {
   return request.session ?? request.cwd;
-}
-
-/** The calling session's row key, when the call names a session this
-    window has. */
-function callerKey(request: ConductRequest): string | null {
-  if (request.session === null) return null;
-  return byId(request.session)?.key ?? null;
 }
 
 function byId(sessionId: string): Session | null {

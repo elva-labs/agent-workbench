@@ -610,6 +610,42 @@ describe("starting a session", () => {
     expect(conductor.asking).toBeNull();
   });
 
+  describe("a session that was not told its id", () => {
+    /** A session the caller started that makes its calls without an id, as
+        a Codex one that was not resumed does. */
+    function untoldChild(caller: string, project: string = A) {
+      const row = create(project, null, "codex", null);
+      started(row.key, `pty-untold-${row.key}`, null);
+      conductor.startedBy[row.key] = caller;
+      return row;
+    }
+
+    it("is refused as a told one is, and its starter's count holds", async () => {
+      for (let n = 0; n < CAP - 1; n += 1) own(A, `pty-${n}`, `sid-${n}`, "caller-1");
+      const child = untoldChild("caller-1");
+      expect(startedBy("caller-1").filter((row) => row.status !== "exited")).toHaveLength(CAP);
+      await handle(call("start", { project: A, prompt: "Deeper" }));
+      const told = answers[answers.length - 1].error;
+      expect(told).toContain("cannot start sessions of its own");
+      expect(conductor.asking).toBeNull();
+      // The same words a told one gets.
+      child.id = "child-1";
+      await handle(call("start", { project: A, prompt: "Deeper" }, { session: "child-1" }));
+      expect(last().error).toBe(told);
+      expect(startedBy("caller-1")).toHaveLength(CAP);
+    });
+
+    it("is not placed where two untold sessions run", async () => {
+      untoldChild("caller-1");
+      untoldChild("caller-1");
+      const answering = handle(call("start", { project: A, prompt: "Fix it" }));
+      expect(conductor.asking).not.toBeNull();
+      refuse();
+      await answering;
+      expect(last().error).toContain("did not allow");
+    });
+  });
+
   it("refuses when the user says no", async () => {
     const answering = handle(
       call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }),
