@@ -319,6 +319,7 @@ export interface Run {
 
 const STARTED_KEY = "workbench.started";
 const RUNS_KEY = "workbench.runs";
+const CARRIED_KEY = "workbench.carried";
 
 export const conductor = $state({
   asking: null as Ask | null,
@@ -612,13 +613,24 @@ export interface WasOpen {
  * A folder where none ran, or several did, is left as it was: what it
  * holds was started by another session, and no call acts on it. The
  * folder's own copy stays, for that earlier version to go on reading.
+ *
+ * Each folder is looked at once, carried or not, and the folders looked at
+ * are kept: which sessions were open at a later quit says nothing of which
+ * one kept the folder's list, so a folder left as it was stays so. A folder
+ * that earlier version first writes after a downgrade is looked at on the
+ * next start of this one.
  */
 export function carryOver(open: WasOpen[]) {
   let moved = false;
+  const looked = lookedAt();
   const folders = new Set(
-    [...Object.keys(conductor.started), ...Object.keys(conductor.runs)].filter(byFolder),
+    [...Object.keys(conductor.started), ...Object.keys(conductor.runs)].filter(
+      (caller) => byFolder(caller) && !looked.has(caller),
+    ),
   );
+  if (folders.size === 0) return;
   for (const folder of folders) {
+    looked.add(folder);
     const ran = open.filter(
       (entry) => entry.agent === "codex" && (entry.startIn ?? entry.project) === folder,
     );
@@ -637,9 +649,25 @@ export function carryOver(open: WasOpen[]) {
       moved = true;
     }
   }
+  try {
+    localStorage.setItem(CARRIED_KEY, JSON.stringify([...looked]));
+  } catch {
+    // Non-fatal: the folders are looked at again at the next start.
+  }
   if (!moved) return;
   saveStarted();
   saveRuns();
+}
+
+/** The folders the carry-over has looked at. */
+function lookedAt(): Set<string> {
+  try {
+    const raw = localStorage.getItem(CARRIED_KEY);
+    const stored: unknown = raw === null ? [] : JSON.parse(raw);
+    return new Set(Array.isArray(stored) ? stored.filter((folder) => typeof folder === "string") : []);
+  } catch {
+    return new Set();
+  }
 }
 
 /** The caller that started a session, by its id, when one is remembered. */

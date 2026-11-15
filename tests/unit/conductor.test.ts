@@ -281,6 +281,7 @@ beforeEach(() => {
   localStorage.removeItem("workbench.started");
   localStorage.removeItem("workbench.runs");
   localStorage.removeItem("workbench.tokens");
+  localStorage.removeItem("workbench.carried");
   workspace.open.push(repo(A), repo(B));
 });
 
@@ -3580,5 +3581,35 @@ describe("sessions told apart by their tokens", () => {
     // Carried once: a second look changes nothing.
     carryOver([{ project: A, id: "codex-a", agent: "codex", startIn: null }]);
     expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid-a"]);
+  });
+
+  it("looks at a folder once: one left as it was is not carried to the session open there at a later quit", async () => {
+    const entry = (id: string) => ({ id, project: B, worktree: null, agent: "codex", name: null });
+    localStorage.setItem("workbench.started", JSON.stringify({ [A]: [entry("kid-a")] }));
+    localStorage.setItem(
+      "workbench.runs",
+      JSON.stringify({ [A]: { places: { "kid-a": { step: "Work", kind: "work", piece: "kid-a", round: null, work: null } }, rounds: {} } }),
+    );
+    restartedWithTokens();
+    // Two Codex sessions were open in the folder at the first start.
+    carryOver([
+      { project: A, id: "codex-x", agent: "codex", startIn: null },
+      { project: A, id: "codex-y", agent: "codex", startIn: null },
+    ]);
+    expect(conductor.started["codex-x"]).toBeUndefined();
+    expect(conductor.started["codex-y"]).toBeUndefined();
+    // The user closed one of them and quit; the next start has the other
+    // alone open there.
+    restartedWithTokens();
+    carryOver([{ project: A, id: "codex-y", agent: "codex", startIn: null }]);
+    expect(conductor.started["codex-y"]).toBeUndefined();
+    expect(conductor.runs["codex-y"]).toBeUndefined();
+    const y = create(A, "codex-y", "codex", null, null, null, null, null);
+    cameUp(y.key, "pty-y", "codex-y");
+    const kid = create(B, "kid-a", "codex", null, null, null, null, null);
+    cameUp(kid.key, "pty-kid-a", "kid-a");
+    expect(startedFor(kid.key)).toBe(A);
+    await handle(call("read", { session: "kid-a" }, { session: "codex-y" }));
+    expect(last().error).toContain("Session kid-a was not started by you.");
   });
 });
