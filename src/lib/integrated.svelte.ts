@@ -19,6 +19,7 @@ import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import {
   nameTaken,
   adopt,
+  beganTurn,
   byKey,
   failed,
   keepToken,
@@ -193,6 +194,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       break;
     case "turnStarted":
       session.turnEnd = null;
+      beganTurn(session);
       break;
     case "turnEnded":
       // Interrupted is the user's stop; a turn that failed ended neither

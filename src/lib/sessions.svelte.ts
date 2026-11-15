@@ -1879,6 +1879,19 @@ export function onWaiting(handler: ((session: Session) => void) | null) {
   waiting = handler;
 }
 
+let turning: (session: Session) => void = () => {};
+
+/** Who is told when a session's agent begins a turn, as its hooks or its
+    events say. */
+export function onTurn(handler: ((session: Session) => void) | null) {
+  turning = handler ?? (() => {});
+}
+
+/** A session's agent began a turn. */
+export function beganTurn(session: Session) {
+  turning(session);
+}
+
 let directed: (session: Session) => boolean = () => false;
 
 /** Who says whether another session answers for a session: one an
@@ -1988,6 +2001,7 @@ export function exact(
       // A new turn: whatever line the last one left is stale.
       session.note = null;
       changed(session);
+      beganTurn(session);
       break;
     case "stop":
       session.working = false;

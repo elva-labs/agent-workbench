@@ -67,6 +67,7 @@ import {
   label,
   onDirected,
   onForgotten,
+  onTurn,
   runningByToken,
   sessions,
   statusMessage,
@@ -1060,7 +1061,6 @@ export function watchStops(): () => void {
   const stop = $effect.root(() => {
     $effect(observeAll);
     $effect(planWakes);
-    $effect(followTurns);
   });
   return () => {
     stop();
@@ -1206,9 +1206,6 @@ const wakes = new Map<string, ReturnType<typeof setTimeout>>();
 const waking = new Set<string>();
 /** Starters whose next turn is the one their wake began. */
 const wakeTurns = new Set<string>();
-/** How each woken starter's last turn ended, as last seen, so a turn
-    beginning is seen. */
-const turnsSeen = new Map<string, Session["turnEnd"]>();
 
 /** Whether a session is idle in the way a wake asks. */
 function wakeable(starter: Session): boolean {
@@ -1233,6 +1230,10 @@ function wakeNews(starter: Session): Session[] {
     hear, and calls back the ones whose starter is no longer so. */
 function planWakes() {
   void heard.version;
+  // The mark of a row that has gone goes with it.
+  untrack(() => {
+    for (const key of Object.keys(conductor.woken)) if (byKey(key) === null) delete conductor.woken[key];
+  });
   const due = new Set(
     sessions.all
       .filter((starter) => wakeable(starter) && wakeNews(starter).length > 0)
@@ -1295,7 +1296,6 @@ async function wake(starter: Session, news: Session[]) {
     at: Date.now(),
   };
   wakeTurns.add(starter.key);
-  turnsSeen.set(starter.key, starter.turnEnd);
   if (starter.kind === "integrated") {
     if (sendAsWorkbench(starter.key, [REPORTS_HEAD, ...lines].join("\n"), lost) === null) lost();
     return;
@@ -1322,31 +1322,17 @@ function untell(key: string, rest: Rest | null, before: Rest | null) {
 function gaveUp(key: string) {
   delete conductor.woken[key];
   wakeTurns.delete(key);
-  turnsSeen.delete(key);
   const row = byKey(key);
   if (row !== null) row.turnEnd = null;
 }
 
-/** Keeps a woken starter's mark while the turn its wake began runs and
-    after, and lets it go once a turn begins that the workbench did not
-    start: the user's. */
-function followTurns() {
-  for (const key of Object.keys(conductor.woken)) {
-    const row = byKey(key);
-    if (row === null) {
-      delete conductor.woken[key];
-      wakeTurns.delete(key);
-      turnsSeen.delete(key);
-      continue;
-    }
-    const before = turnsSeen.get(key) ?? null;
-    turnsSeen.set(key, row.turnEnd);
-    if (before === null || row.turnEnd !== null) continue;
-    if (wakeTurns.delete(key)) continue;
-    delete conductor.woken[key];
-    turnsSeen.delete(key);
-  }
-}
+// A woken starter's mark stays while the turn its wake began runs and
+// after, and goes once a turn begins that the workbench did not start: the
+// user's.
+onTurn((session) => {
+  if (wakeTurns.delete(session.key)) return;
+  delete conductor.woken[session.key];
+});
 
 /** The starter's mark: the sessions it was woken for, while it is kept. */
 export function wokenBy(session: Session): Woken | null {
@@ -2726,6 +2712,5 @@ export function resetConductor() {
   wakes.clear();
   waking.clear();
   wakeTurns.clear();
-  turnsSeen.clear();
   conductor.woken = {};
 }
