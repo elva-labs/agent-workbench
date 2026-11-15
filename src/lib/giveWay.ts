@@ -67,3 +67,63 @@ export function keeps(node: HTMLElement) {
     },
   };
 }
+
+/**
+ * Lets a row's parts go, a step at a time and in the order given, until
+ * what is left fits: each step's name joins the row's `data-fit`, which its
+ * style reads to hide or fold a part. The row is measured with every part
+ * at its whole width, so the steps go before anything is cut short, and
+ * again whenever its width, its text or a part's class changes. All of it
+ * happens before the row is painted, so no step is ever seen coming and
+ * going. Each measure ends with a `fit` event on the row, once its parts
+ * stand where they will be drawn.
+ */
+export function fits(node: HTMLElement, steps: string[]) {
+  /** The row's parts run past its inner edge. `scrollWidth` is a whole
+      number, so a part over by a fraction of a pixel, which would still
+      cut a part short, is found by the parts' own edges. */
+  function over(): boolean {
+    if (node.scrollWidth > node.clientWidth) return true;
+    const style = getComputedStyle(node);
+    const inner =
+      node.getBoundingClientRect().right -
+      (parseFloat(style.paddingRight) || 0) -
+      (parseFloat(style.borderRightWidth) || 0);
+    return [...node.children].some((part) => part.getBoundingClientRect().right > inner + 0.01);
+  }
+
+  function measure() {
+    node.dataset.measuring = "";
+    const taken: string[] = [];
+    node.dataset.fit = "";
+    while (over() && taken.length < steps.length) {
+      taken.push(steps[taken.length]);
+      node.dataset.fit = taken.join(" ");
+    }
+    delete node.dataset.measuring;
+    node.dispatchEvent(new Event("fit"));
+  }
+
+  const sizes = new ResizeObserver(measure);
+  const content = new MutationObserver(measure);
+  sizes.observe(node);
+  content.observe(node, {
+    subtree: true,
+    childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  measure();
+  void document.fonts?.ready.then(measure);
+  return {
+    update(next: string[]) {
+      steps = next;
+      measure();
+    },
+    destroy() {
+      sizes.disconnect();
+      content.disconnect();
+    },
+  };
+}

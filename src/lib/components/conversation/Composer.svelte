@@ -3,9 +3,11 @@
   import { core, type IntegratedImage } from "$lib/core";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
-  import { configure, interrupt, linkFor, send } from "$lib/integrated.svelte";
+  import { interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
-  import { modelName, offeredModel, tokens } from "$lib/thread";
+  import { choose, modeChoices, modelChoices } from "$lib/settingChoices";
+  import { modelName, tokens } from "$lib/thread";
+  import ChoiceMenu from "../ChoiceMenu.svelte";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
   import { shown } from "$lib/unseen";
@@ -44,6 +46,8 @@
   let picker = $state<HTMLInputElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
   let menu = $state<"model" | "mode" | null>(null);
+  /** It was opened with the pointer rather than a key. */
+  let byPointer = $state(false);
   let reading = $state(0);
 
   let running = $derived(conversation.current !== null || conversation.working);
@@ -230,7 +234,6 @@
 
   let models = $derived(conversation.ready?.models ?? []);
   let current = $derived(conversation.settings.model);
-  let currentOffered = $derived(offeredModel(conversation, current)?.value ?? null);
   let name = $derived(modelName(conversation, current));
   /** The model as the chip says it: which one a default is, once known. */
   let modelLabel = $derived(name === null ? "Default model" : defaultModel ? `Default · ${name}` : name);
@@ -239,52 +242,24 @@
 
   let modes = $derived(conversation.ready?.modes ?? []);
   let mode = $derived(conversation.settings.mode);
-  /** A mode the agent runs in from its own configuration, which it does
-      not offer: shown as it is, and not to be come back to once left. */
-  let ownMode = $derived(mode !== null && !modes.some((known) => known.value === mode) ? mode : null);
   let modeLabel = $derived(modes.find((known) => known.value === mode)?.name ?? mode ?? "Mode");
 
-  function chooseModel(value: string) {
+  function pick(setting: "model" | "mode", value: string) {
     menu = null;
-    if (value !== currentOffered && value !== current) void configure(sessionKey, { model: value });
+    choose(sessionKey, conversation, setting, value);
     field?.focus();
   }
 
-  function chooseMode(value: string) {
+  function closeMenu(how: "escape" | "tab" | "away") {
+    const which = menu;
     menu = null;
-    if (value !== mode) void configure(sessionKey, { mode: value });
-    field?.focus();
+    if (how === "escape")
+      void tick().then(() => box?.querySelector<HTMLButtonElement>(`[data-testid='${which}-chip']`)?.focus());
   }
 
-  function onMenuKey(e: KeyboardEvent) {
-    const items = [...((e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>("[role='menuitemradio']"))];
-    const at = items.indexOf(document.activeElement as HTMLButtonElement);
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      items[(at + step + items.length) % items.length]?.focus();
-    } else if (e.key === "Home" || e.key === "End") {
-      e.preventDefault();
-      items[e.key === "Home" ? 0 : items.length - 1]?.focus();
-    } else if (e.key === "Escape" || e.key === "Tab") {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      const which = menu;
-      menu = null;
-      if (e.key === "Escape")
-        void tick().then(() => box?.querySelector<HTMLButtonElement>(`[data-testid='${which}-chip']`)?.focus());
-    }
-  }
-
-  function openMenu(which: "model" | "mode") {
+  function openMenu(which: "model" | "mode", e: MouseEvent) {
+    byPointer = e.detail > 0;
     menu = menu === which ? null : which;
-    if (menu !== null)
-      void tick().then(() =>
-        (box?.querySelector<HTMLButtonElement>(".menu [aria-checked='true']") ??
-          box?.querySelector<HTMLButtonElement>(".menu [role='menuitemradio']"))?.focus(),
-      );
   }
 
   // A press anywhere outside the open menu and its chip puts it away.
@@ -363,7 +338,7 @@
       <button
         class="chip"
         tabindex="0"
-        onclick={() => openMenu("model")}
+        onclick={(e) => openMenu("model", e)}
         disabled={models.length === 0 || !ready}
         aria-haspopup="menu"
         aria-expanded={menu === "model"}
@@ -371,20 +346,16 @@
         data-testid="model-chip"><Plain text={modelLabel} /><Icon name="down" size={12} /></button
       >
       {#if menu === "model"}
-        <!-- svelte-ignore a11y_interactive_supports_focus -->
-        <div class="menu" role="menu" aria-label="Model" onkeydown={onMenuKey} data-testid="model-menu">
-          {#each models as model (model.value)}
-            {@const on = model.value === (currentOffered ?? current)}
-            <button role="menuitemradio" aria-checked={on} class:on onclick={() => chooseModel(model.value)} data-testid="model-option">
-              <span class="name"><Plain text={model.name ?? model.value} /></span>
-              {#if model.description}<span class="about"><Plain text={model.description} /></span>{/if}
-              {#if on}<span class="tick"><Icon name="check" size={12} /></span>{/if}
-            </button>
-          {/each}
-          {#if conversation.current !== null}
-            <p class="menu-note">A model chosen now is used from the next turn.</p>
-          {/if}
-        </div>
+        <ChoiceMenu
+          label="Model"
+          choices={modelChoices(conversation)}
+          note={conversation.current !== null ? "A model chosen now is used from the next turn." : null}
+          onpick={(value) => pick("model", value)}
+          onclose={closeMenu}
+          pointer={byPointer}
+          testid="model-menu"
+          optionTestid="model-option"
+        />
       {/if}
     </div>
     {#if after !== null}
@@ -395,7 +366,7 @@
         <button
           class="chip"
           tabindex="0"
-          onclick={() => openMenu("mode")}
+          onclick={(e) => openMenu("mode", e)}
           disabled={modes.length === 0 || !ready}
           aria-haspopup="menu"
           aria-expanded={menu === "mode"}
@@ -403,24 +374,15 @@
           data-testid="mode-chip"><Plain text={modeLabel} /><Icon name="down" size={12} /></button
         >
         {#if menu === "mode"}
-          <!-- svelte-ignore a11y_interactive_supports_focus -->
-          <div class="menu" role="menu" aria-label="Mode" onkeydown={onMenuKey} data-testid="mode-menu">
-            {#if ownMode !== null}
-              <button role="menuitemradio" aria-checked="true" class="on" onclick={() => (menu = null)} data-testid="mode-option">
-                <span class="name"><Plain text={ownMode} /></span>
-                <span class="about">From the agent's own configuration. Once another mode is chosen, this one cannot be chosen again here.</span>
-                <span class="tick"><Icon name="check" size={12} /></span>
-              </button>
-            {/if}
-            {#each modes as known (known.value)}
-              {@const on = known.value === mode}
-              <button role="menuitemradio" aria-checked={on} class:on onclick={() => chooseMode(known.value)} data-testid="mode-option">
-                <span class="name"><Plain text={known.name} /></span>
-                {#if known.description}<span class="about"><Plain text={known.description} /></span>{/if}
-                {#if on}<span class="tick"><Icon name="check" size={12} /></span>{/if}
-              </button>
-            {/each}
-          </div>
+          <ChoiceMenu
+            label="Mode"
+            choices={modeChoices(conversation)}
+            onpick={(value) => pick("mode", value)}
+            onclose={closeMenu}
+            pointer={byPointer}
+            testid="mode-menu"
+            optionTestid="mode-option"
+          />
         {/if}
       </div>
     {/if}
@@ -590,72 +552,6 @@
     font-size: var(--conv-meta);
     color: var(--ink-2);
     white-space: nowrap;
-  }
-
-  .menu-note {
-    margin: 4px 8px 2px;
-    font-size: var(--conv-fine);
-    color: var(--ink-2);
-  }
-
-  .menu {
-    position: absolute;
-    left: 0;
-    bottom: calc(100% + 6px);
-    z-index: 5;
-    min-width: 220px;
-    max-width: 320px;
-    display: flex;
-    flex-direction: column;
-    padding: 4px;
-    border-radius: calc(var(--radius) + 2px);
-    background: var(--surface);
-    box-shadow:
-      0 0 0 1px var(--divider, var(--rule)),
-      0 12px 32px color-mix(in srgb, black 24%, transparent);
-  }
-
-  .menu button {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 16px;
-    align-items: center;
-    column-gap: 8px;
-    padding: 5px 8px;
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    font: inherit;
-    font-size: var(--conv-small);
-    color: var(--ink-2);
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .menu button:hover,
-  .menu button:focus-visible {
-    background: var(--accent-soft);
-    color: var(--ink);
-    outline: none;
-  }
-
-  .menu .on {
-    color: var(--ink);
-  }
-
-  .name {
-    grid-column: 1;
-  }
-
-  .about {
-    grid-column: 1;
-    font-size: var(--conv-fine);
-    color: var(--ink-2);
-  }
-
-  .tick {
-    grid-column: 2;
-    grid-row: 1;
-    color: var(--accent);
   }
 
   .error {

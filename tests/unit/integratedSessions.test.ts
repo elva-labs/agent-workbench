@@ -28,6 +28,7 @@ import {
   sessions,
 } from "$lib/sessions.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
+import { limitsOf, resetLimits } from "$lib/limits.svelte";
 import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from "../fakeIntegrated";
 
 const PROJECT = "/home/ada/dev/demo";
@@ -84,6 +85,7 @@ beforeEach(async () => {
   resetSessions();
   resetIntegrated();
   resetAttention();
+  resetLimits();
   await install();
 });
 
@@ -307,6 +309,46 @@ describe("an integrated session behind its row", () => {
     await launch(session.key);
     expect(byKey(session.key)).toMatchObject({ status: "failed", error: "claude was not found on your PATH" });
     expect(linkFor(session.key).untrusted).toBe(false);
+  });
+});
+
+describe("the account's limits", () => {
+  it("are kept for the account the session runs under, as the newest report", async () => {
+    const session = create(PROJECT, null, "claude-code", null, null, null, "Work", undefined, "integrated");
+    await launch(session.key);
+    const handle = handleOf(session.key)!;
+    fake.limits(handle, [{ kind: "session", percent: 11 }], { plan: "team", takenAt: 1_000 });
+    expect(limitsOf(null, "claude-code", "Work")).toMatchObject({ plan: "team", windows: [{ percent: 11 }] });
+    expect(limitsOf(null, "claude-code", null)).toBeNull();
+    // Another session on the account reports later figures; an earlier
+    // report arriving after them is let go.
+    const other = create(PROJECT, null, "claude-code", null, null, null, "Work", undefined, "integrated");
+    await launch(other.key);
+    fake.limits(handleOf(other.key)!, [{ kind: "session", percent: 40 }], { takenAt: 2_000 });
+    fake.limits(handle, [{ kind: "session", percent: 12 }], { takenAt: 1_500 });
+    expect(limitsOf(null, "claude-code", "Work")?.windows[0].percent).toBe(40);
+  });
+
+  it("are kept apart for a session on another machine", async () => {
+    const remote = "ssh://ada@build/home/ada/dev/demo";
+    const session = create(remote, null, "claude-code", null, null, null, "Work", undefined, "integrated");
+    await launch(session.key);
+    fake.limits(handleOf(session.key)!, [{ kind: "weekly", percent: 70 }]);
+    expect(limitsOf("ada@build", "claude-code", "Work")?.windows[0].kind).toBe("weekly");
+    expect(limitsOf(null, "claude-code", "Work")).toBeNull();
+  });
+
+  it("come from the snapshot when the window comes to a session late", async () => {
+    const before = await started();
+    fake.limits(before.handle, [{ kind: "session", percent: 64 }], { takenAt: 3_000 });
+    resetSessions();
+    resetIntegrated();
+    resetLimits();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
+    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(limitsOf(null, "claude-code", null)).toMatchObject({ takenAt: 3_000, windows: [{ percent: 64 }] });
   });
 });
 
