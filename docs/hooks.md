@@ -137,7 +137,8 @@ closes a file.
 
 ![The agent draws the request flow: a Mermaid diagram and a latency chart open in the viewer, one under the other, with the caption above and the call on the media list under the tree.](tools-present.gif) A link in a document opens outside the app; HTML written
 into a document shows as the text it is. What was presented stays on the media
-list of the session it came from, a section under the file tree with a
+list of the session whose token the call names, or of the project when the
+call names no session the window knows, a section under the file tree with a
 divider to drag and a header that folds it away, one row per set of files
 under its caption, to open again after a restart too. The same files
 presented again take their row to the top with the new caption rather than

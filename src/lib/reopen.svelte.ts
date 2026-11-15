@@ -1,5 +1,5 @@
 import type { AgentId } from "$lib/core";
-import { startedFor } from "$lib/conductor.svelte";
+import { carryOver, startedFor } from "$lib/conductor.svelte";
 import { handleOf, reattach } from "$lib/integrated.svelte";
 import {
   activeSession,
@@ -141,6 +141,9 @@ export function reopen(
   conductor: Promise<string | null> | null = null,
 ): () => void {
   const { open, active } = read();
+  // What an earlier version kept of an open session's starts under the
+  // folder it called from is that session's from here.
+  carryOver(open);
   let conductorDir: string | null = null;
   const here = (project: string) => isOpen(project) || (conductorDir !== null && project === conductorDir);
   const bring = (entry: Open) => {

@@ -41,7 +41,7 @@ function stage(projects: number) {
   for (let p = 0; p < projects; p++) {
     const kid = create(`/work/project-${p}`, null, "claude-code", null, null, "sonnet");
     started(kid.key, `pty-kid-${p}`, `kid-${p}`);
-    conductor.startedBy[kid.key] = starter.id!;
+    conductor.startedBy[kid.key] = starter.token;
   }
 }
 

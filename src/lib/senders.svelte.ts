@@ -12,7 +12,8 @@ const KEY = "workbench.senders";
 const KEEP = 1000;
 
 /** The session that sent each message another session sent, by the id
-    the message was sent under: a session's id, or the folder an agent
+    the message was sent under: the token the sending session's tools name
+    it by, or, sent before there were tokens, its id or the folder an agent
     outside the workbench called from. Kept between runs, so a message
     reads as its sender's after a restart too. A message is told to be
     another session's by its id alone, never by its words. */
@@ -66,8 +67,9 @@ export function starterOf(key: string): string | null {
 }
 
 export interface Sender {
-  /** The sending session's id, or the folder an outside agent called from. */
-  id: string;
+  /** The sending session's id, as the tools name it, where the window
+      knows it. */
+  id: string | null;
   name: string;
   /** Its row, when the window has one to go to. */
   key: string | null;
@@ -80,16 +82,50 @@ export function sessionName(id: string): string | null {
   return row === undefined ? null : label(row);
 }
 
-/** Who sent a message: null for the user. */
+/** Who sent a message: null for the user. A sender the window has no row
+    for is named by the id the tools know it by, where the window still
+    keeps it, and otherwise as another session: what the message was sent
+    under may be a token, which no one is shown. */
 export function senderOf(message: { id: string }): Sender | null {
   const from = senders.byMessage[message.id] ?? null;
   if (from === null) return null;
-  const row = sessions.all.find((candidate) => candidate.id === from) ?? null;
+  const row =
+    sessions.all.find((candidate) => candidate.token === from) ??
+    sessions.all.find((candidate) => candidate.id === from) ??
+    null;
+  const id =
+    row?.id ?? Object.entries(sessions.tokens).find(([, kept]) => kept.token === from)?.[0] ?? null;
+  // An agent the workbench did not start, by the folder it called from;
+  // an earlier version kept the folder bare.
+  const folder = outsideFolder(from) ?? (from.startsWith("/") ? from : null);
   return {
-    id: from,
+    id,
     key: row?.key ?? null,
-    name: row !== null ? label(row) : from.startsWith("/") ? `an agent in ${lastSegment(from)}` : `session ${from}`,
+    name:
+      row !== null
+        ? label(row)
+        : folder !== null
+          ? `an agent in ${lastSegment(folder)}`
+          : id !== null
+            ? `session ${id}`
+            : "another session",
   };
+}
+
+const OUTSIDE_MARK = "outside:";
+
+/** What a call that names no session is kept under as its caller: an agent
+    the workbench did not start, by the folder it calls from, marked so that
+    no token can be it, and no list an earlier version kept under the bare
+    folder either. */
+export function outsideCaller(cwd: string): string {
+  return `${OUTSIDE_MARK}${cwd}`;
+}
+
+/** The folder an agent the workbench did not start calls from, for a
+    caller kept under one; null for a session's token. */
+export function outsideFolder(caller: string): string | null {
+  return caller.startsWith(OUTSIDE_MARK) ? caller.slice(OUTSIDE_MARK.length) : null;
 }
 
 /** Test seam. */

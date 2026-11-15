@@ -125,7 +125,9 @@ From the app to the plugin: a greeting with the app's version and the
 projects open; a project opened or closed; a session started or ended;
 the tree moved; an action taken, with its row and any
 input given; a tool called, with its arguments and the session that
-called it; a message from the plugin's view; a request to stop.
+called it, by the agent's own id as the session events give it, or none
+where that is not known yet; a message from the plugin's view; a request
+to stop.
 
 From the plugin to the app: a greeting with its name and version and the
 full shape of what the manifest declared, the tools with their

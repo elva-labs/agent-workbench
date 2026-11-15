@@ -25,8 +25,8 @@ import {
   syncOwner,
 } from "$lib/browser.svelte";
 import { showBrowser } from "$lib/files.svelte";
-import { byKey, sessions } from "$lib/sessions.svelte";
-import { held, projectOf, sessionFor } from "$lib/show.svelte";
+import { byKey, runningByToken } from "$lib/sessions.svelte";
+import { held, projectOf } from "$lib/show.svelte";
 
 /** The ids of the calls handled lately, so a call delivered twice is
     handled once. */
@@ -147,7 +147,7 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
   if (sameOwner(owner, ownerOnScreen())) await reveal();
   else if (owner.kind === "session") {
     const row = byKey(owner.key);
-    if (row !== null) held(request, row.project, reveal);
+    if (row !== null) held(request, reveal);
   }
   return arrived("Opened", await settled(tab.id), tab.id);
 }
@@ -163,18 +163,13 @@ function ownerFor(
 ): { owner: BrowserOwner } | { refusal: string } {
   const project = projectOf(request.cwd);
   if (project === null) return { refusal: noOwner };
-  // A session id names a row anywhere in the window, so a session working
-  // in a project nested inside another open one is found too.
-  const named =
-    request.session === null
-      ? null
-      : (sessions.all.find((session) => session.id === request.session) ??
-        null);
+  // A session's token names its running row anywhere in the window, so a
+  // session working in a project nested inside another open one is found
+  // too, and a process left over from a stopped one is not.
+  const named = runningByToken(request.session);
   if (request.session !== null && named === null)
     return { refusal: "That session is not open in the workbench." };
-  const session = named ?? sessionFor(request, project);
-  if (session !== null)
-    return { owner: { kind: "session", key: session.key } };
+  if (named !== null) return { owner: { kind: "session", key: named.key } };
   return { owner: { kind: "project", path: project } };
 }
 

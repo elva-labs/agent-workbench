@@ -3,13 +3,13 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated, send } from "$lib/integrated.svelte";
-import { byKey, create, forProject, reset as resetSessions, sessions, started } from "$lib/sessions.svelte";
+import { byKey, create, forProject, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
 import { defaultWorkflow } from "$lib/workflows.svelte";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
-import { resetSenders, senderOf } from "$lib/senders.svelte";
+import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
 import { OUTCOME_ASK, REPORTS_HEAD, spoken } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 
@@ -26,8 +26,28 @@ let unwatch = () => {};
 const answers: { id: string; content: string | null; error: string | null }[] = [];
 let calls = 0;
 
+/** The orchestrator's own directory, where the caller runs. */
+const C = "/home/ada/.agent-workbench/orchestrator";
+
+/** The session the calls come from unless a test says otherwise, made
+    when the first call is: a terminal session named Planner, whose tools
+    name it by its token. */
+let caller: Session | null = null;
+
+function callerToken(): string {
+  if (caller === null) {
+    const looking = sessions.active;
+    const row = create(C, null, "claude-code", null, null, null, null, null, "terminal");
+    started(row.key, "pty-planner", "planner");
+    row.title = "Planner";
+    sessions.active = looking;
+    caller = row;
+  }
+  return caller.token;
+}
+
 function call(tool: ConductRequest["tool"], args: Record<string, unknown> = {}): ConductRequest {
-  return { id: `c${++calls}`, tool, arguments: args, cwd: A, session: null };
+  return { id: `c${++calls}`, tool, arguments: args, cwd: C, session: callerToken() };
 }
 
 const answerTo = (request: ConductRequest) => answers.find((answer) => answer.id === request.id);
@@ -36,12 +56,13 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 /** An integrated session the caller started, up and running. */
 async function own() {
   const row = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
-  conductor.startedBy[row.key] = A;
+  conductor.startedBy[row.key] = callerToken();
   await launch(row.key);
   return { key: row.key, id: byKey(row.key)!.id!, handle: handleOf(row.key)! };
 }
 
 beforeEach(async () => {
+  caller = null;
   resetSessions();
   resetIntegrated();
   resetConductor();
@@ -105,11 +126,11 @@ describe("the orchestrator's tools with an integrated session", () => {
     const session = byKey(row.key)!;
     expect(session.title).toBe("Scan the history");
     const message = Object.values(conversationOf(row.key).messages)[0];
-    expect(senderOf(message)?.name).toBe("an agent in one");
+    expect(senderOf(message)?.name).toBe("Planner");
     fake.turn(handleOf(row.key)!, "On it.");
     const read = call("read", { session: session.id });
     await handle(read);
-    expect(answerTo(read)?.content).toContain("An agent in one said: Scan the history");
+    expect(answerTo(read)?.content).toContain("Planner said: Scan the history");
     expect(answerTo(read)?.content).not.toContain("notify");
   });
 
@@ -136,8 +157,8 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(orchestrator.kind).toBe("terminal");
     started(orchestrator.key, "pty-orchestrator", "orchestrator");
     const { key, id } = await own();
-    conductor.startedBy[key] = "orchestrator";
-    const asked = (text: string): ConductRequest => ({ ...call("send", { session: id, text }), session: "orchestrator" });
+    conductor.startedBy[key] = orchestrator.token;
+    const asked = (text: string): ConductRequest => ({ ...call("send", { session: id, text }), session: orchestrator.token });
     const command = asked("/model opus");
     await handle(command);
     expect(answerTo(command)?.error).toContain("You follow a workflow, so the workbench gives the sessions you reach no command but /compact");
@@ -157,8 +178,19 @@ describe("the orchestrator's tools with an integrated session", () => {
     const [theirs, mine] = Object.values(conversationOf(key).messages);
     expect(theirs.text).toBe("yes");
     expect(mine.text).toBe("yes");
-    expect(senderOf(theirs)?.id).toBe(A);
+    expect(senderOf(theirs)?.id).toBe("planner");
     expect(senderOf(mine)).toBeNull();
+  });
+
+  it("names a sender the window has no row for by its kept id, else as another session, never by its token", () => {
+    sentBy("m-gone", "token-of-no-row");
+    expect(senderOf({ id: "m-gone" })).toEqual({ id: null, key: null, name: "another session" });
+    sessions.tokens["kept-id"] = { token: "token-kept", project: A };
+    sentBy("m-kept", "token-kept");
+    expect(senderOf({ id: "m-kept" })).toEqual({ id: "kept-id", key: null, name: "session kept-id" });
+    // An agent the workbench did not start is named by its folder.
+    sentBy("m-outside", outsideCaller("/home/ada/dev/one"));
+    expect(senderOf({ id: "m-outside" })).toEqual({ id: null, key: null, name: "an agent in one" });
   });
 
   it("does not name a session by a first line that is another live session's name", async () => {
@@ -184,7 +216,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     await handle(read);
     const lines = answerTo(read)!.content!.split("\n");
     expect(lines.filter((line) => line.includes("waits for the turn"))).toEqual([
-      "A message from an agent in one waits for the turn: yes",
+      "A message from Planner waits for the turn: yes",
       "A message from the user waits for the turn: yes",
     ]);
   });
@@ -202,7 +234,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     const read = call("read", { session: id });
     await handle(read);
     expect(answerTo(read)?.content).toBe(
-      `Session ${id}, what its agent last said and did:\nAn agent in one said: Fix the scan\n- Ran npm test\nFixed.\nThe tests pass.`,
+      `Session ${id}, what its agent last said and did:\nPlanner said: Fix the scan\n- Ran npm test\nFixed.\nThe tests pass.`,
     );
     fake.startTurn(core);
     fake.ask(core, "Bash", { command: "rm -rf build" });
@@ -241,7 +273,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     /** A start from the caller the user allows, once its session is up:
         what the user was told of the account, the row, the directory the
         agent was started on and the answer. */
-    async function startFrom(session: string | null, project: string) {
+    async function startFrom(session: string, project: string) {
       const request = { ...call("start", { project, prompt: "Fix it" }), session };
       const answering = handle(request);
       const named = conductor.asking?.named ?? null;
@@ -265,7 +297,7 @@ describe("the orchestrator's tools with an integrated session", () => {
       // under another account.
       const caller = create(A, null, "claude-code", null, null, null, "Work", undefined, "terminal");
       started(caller.key, "pty-caller", "caller-1");
-      const { named, row, configDir, answer } = await startFrom("caller-1", A);
+      const { named, row, configDir, answer } = await startFrom(caller.token, A);
       expect(named).toMatchObject({ label: "Work", projects: false, bare: null });
       expect(row.kind).toBe("integrated");
       expect(row.account).toBe("Work");
@@ -273,10 +305,10 @@ describe("the orchestrator's tools with an integrated session", () => {
       expect(answer.content).toContain(`in ${A}, under the Work account. It has the prompt.`);
     });
 
-    it("is the account chosen for an integrated caller, placed by its id", async () => {
+    it("is the account chosen for an integrated caller, placed by its token", async () => {
       const caller = create(A, null, "claude-code", null, null, null, "Work", undefined, "integrated");
       await launch(caller.key);
-      const { row, configDir } = await startFrom(byKey(caller.key)!.id!, A);
+      const { row, configDir } = await startFrom(byKey(caller.key)!.token, A);
       expect(row.account).toBe("Work");
       expect(configDir).toBe("~/.claude-work");
     });
@@ -285,7 +317,7 @@ describe("the orchestrator's tools with an integrated session", () => {
       accounts.overrides[B] = "Home";
       const caller = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
       await launch(caller.key);
-      const { named, row, configDir, answer } = await startFrom(byKey(caller.key)!.id!, B);
+      const { named, row, configDir, answer } = await startFrom(byKey(caller.key)!.token, B);
       expect(named).toBeNull();
       expect(row.account).toBe("Home");
       expect(configDir).toBe("~/.claude-home");
@@ -298,13 +330,13 @@ describe("the orchestrator's tools with an integrated session", () => {
     async function starter() {
       const row = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
       await launch(row.key);
-      const id = byKey(row.key)!.id!;
+      const token = byKey(row.key)!.token;
       const kid = create(A, null, "claude-code", null);
       started(kid.key, "pty-kid", "kid-1");
-      conductor.startedBy[kid.key] = id;
+      conductor.startedBy[kid.key] = token;
       byKey(kid.key)!.working = true;
       flushSync();
-      return { key: row.key, id, kid: byKey(kid.key)!, handle: handleOf(row.key)! };
+      return { key: row.key, token, kid: byKey(kid.key)!, handle: handleOf(row.key)! };
     }
 
     const sentTexts = () =>
@@ -363,17 +395,17 @@ describe("the orchestrator's tools with an integrated session", () => {
     });
 
     it("answers a wait at once with the user's message while the agent has not taken it", async () => {
-      const { key, id, kid, handle: core } = await starter();
+      const { key, token, kid, handle: core } = await starter();
       fake.startTurn(core);
       send(key, "Hold on");
-      const asked = { ...call("wait", { seconds: 5 }), session: id };
+      const asked = { ...call("wait", { seconds: 5 }), session: token };
       await handle(asked);
       expect(answerTo(asked)?.content).toBe(USER_WROTE);
       // Taken, a wait waits for its sessions again.
       fake.endTurn(core);
       fake.startTurn(core);
       flushSync();
-      const later = { ...call("wait", { seconds: 60 }), session: id };
+      const later = { ...call("wait", { seconds: 60 }), session: token };
       const waited = handle(later);
       await settle();
       expect(answerTo(later)).toBeUndefined();
@@ -384,8 +416,8 @@ describe("the orchestrator's tools with an integrated session", () => {
     });
 
     it("ends a wait it holds, so the user's message is not held behind it, and says what is still out", async () => {
-      const { key, id } = await starter();
-      const waiting = { ...call("wait", {}), session: id };
+      const { key, token } = await starter();
+      const waiting = { ...call("wait", {}), session: token };
       const waited = handle(waiting);
       await settle();
       send(key, "Stop for a moment");
@@ -415,6 +447,6 @@ describe("the orchestrator's tools with an integrated session", () => {
     await handle(stopped);
     expect(answerTo(stopped)?.content).toBe(`Stopped session ${id}.`);
     expect(byKey(key)).toBeNull();
-    expect(sessions.all).toHaveLength(0);
+    expect(forProject(A)).toHaveLength(0);
   });
 });

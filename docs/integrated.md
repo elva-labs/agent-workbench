@@ -101,12 +101,10 @@ The workbench's tool server is attached to each thread through the
 thread's own configuration, under the name the hooks install it by, with
 its tools allowed without asking, so it needs no entry in the account's
 configuration. Codex gives the servers it starts an environment of its own
-choosing, so the session's id and role go into the server's entry. For a
-fresh thread there is no id to give, since Codex makes it when it starts
-the thread and the server with it: the tools that need to know which
-session calls them, the browser and the waits, refuse a fresh Codex
-session's calls, as they do a Codex terminal session's. A resumed thread's
-server knows its session.
+choosing, so the session's token and role go into the server's entry, for
+a fresh thread as for a resumed one: the token is the workbench's, chosen
+before Codex makes the thread's id, so the server knows its session from
+the first call. See [who is calling](orchestrator.md#who-is-calling).
 
 The account is the home Codex reads from `CODEX_HOME`. An account that
 needs an OpenAI login and has none says so with the same error as for
@@ -629,8 +627,8 @@ has to do itself:
   Its state comes from these events, and the hooks' are left alone.
 - **The sessions pane and the tools.** The browser tools and the
   orchestrator's waits act only for a session the window shows as a
-  running row whose id is the conversation's id, so an integrated session
-  needs such a row for its agent's tools to work. The orchestrator's send
+  running row whose token the call names, so an integrated session needs
+  such a row for its agent's tools to work. The orchestrator's send
   reaches an integrated session as a message, and its read answers with
   what the agent last said and did. A message the user sends a session
   that started others can carry the workbench's note on them ahead of the
