@@ -470,14 +470,28 @@ trust is recorded where the agent's own question records it and the session
 starts. Under an account that is not signed in, the pane says so and gives
 the command to sign in with in a terminal; the workbench never signs in. A
 session that ended or could not start says why, and Resume starts it again
-on the same conversation, the thread drawn so far staying above what comes.
-A resumed session's earlier messages are in its transcript and are not drawn.
+on the same conversation, the thread drawn so far staying above what comes,
+with a quiet line saying when it resumed.
+
+A Claude Code session opened from the past sessions, or brought back after a
+restart, draws its earlier messages, read from its transcript, above what
+this run says, in the same look, with that line between them. What the
+session says live waits a few seconds for them, so that it is drawn under
+them rather than pushed down when they come; the thread says it is starting
+meanwhile, and earlier messages that take longer are still drawn above. A
+conversation too long to hold whole leaves out its start and says so.
+[Integrated sessions](integrated.md#history) has what is read and how.
+
 A window reloaded while the core still runs a session takes it up where it
-is, its open requests and waiting messages included, with its own name,
-who sent each message and when; it says it has earlier messages only when it was
-spoken to. That holds for an orchestrator's sessions and for an integrated
+is: its earlier messages read again, its open requests and waiting messages,
+its own name, who sent each message and when, and the line where a resumed
+run began. That holds for an orchestrator's sessions and for an integrated
 session another session started, which comes back under its starter, as
 after a restart, when it waits to be resumed like any other.
+
+A Codex session's earlier messages are not read: a resumed one says they are
+in its transcript and not shown, and after a reload so does one that was
+spoken to.
 
 ## Dropping files
 
