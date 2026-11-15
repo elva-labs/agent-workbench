@@ -1053,7 +1053,7 @@ test.describe("a workflow the file cannot use", () => {
     await page.getByTestId("workflow-unread-remove").click();
     await page.getByTestId("workflow-unread-confirm-confirm").click();
     await expect(notice).toHaveCount(0);
-    await expect(page.locator('[data-testid="workflow-chip"][aria-pressed="true"]')).toBeFocused();
+    await expect(page.locator('[data-testid="workflow-chip"][aria-selected="true"]')).toBeFocused();
     await expect.poll(async () => (await file(page)).workflows.unread).toBeUndefined();
   });
 

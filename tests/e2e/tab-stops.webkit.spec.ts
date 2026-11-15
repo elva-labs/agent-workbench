@@ -173,6 +173,7 @@ test("walks the settings, every section and its controls, and never leaves them"
   expect(await walk(page, "Tab", 2)).toEqual(["hooks-everywhere-off", "hooks-overrides"]);
   for (const [tab, first] of [
     ["sessions", "session-kind-terminal"],
+    ["workflows", "workflow-chip"],
     ["accounts", "account-add-open"],
     ["plugins", "plugin-off"],
     ["keys", "preset-default"],
@@ -181,6 +182,8 @@ test("walks the settings, every section and its controls, and never leaves them"
     await page.getByTestId(`settings-tab-${tab}`).focus();
     await page.keyboard.press("Enter");
     expect(await walk(page, "Tab", 1), tab).toEqual([first]);
+    // The workflows are one stop, and New workflow one after them.
+    if (tab === "workflows") expect(await walk(page, "Tab", 1)).toEqual(["workflow-new"]);
   }
   expect(await walk(page, "Tab", 2)).toEqual(["chime-off", "settings-close"]);
   // Enter on a button presses it.
@@ -241,6 +244,7 @@ test("walks editor mode: the tree, the tab row and the views as one stop each", 
   await tree(page, "README.md").dblclick();
   await tree(page, "Cargo.toml").dblclick();
   await expect(page.getByTestId("editor-tab")).toHaveCount(2);
+  await expect(page.locator("[data-testid='editor-tab'][data-path='Cargo.toml']")).toHaveAttribute("aria-selected", "true");
   await page.locator(TREE).focus();
   expect(await walk(page, "Shift+Tab", 7)).toEqual([
     "changes-menu",

@@ -146,6 +146,8 @@ the pane that has the focus.
 - **<kbd>Tab</kbd> does not move focus between panes.** It is completion
   inside the TUI, and <kbd>Shift</kbd><kbd>Tab</kbd> is Claude Code's mode
   switch. Pane focus moves on <kbd>Cmd</kbd><kbd>1/2/3/4</kbd> or a click.
+  Outside a terminal Tab walks the controls, as
+  [Tab and the controls](#tab-and-the-controls) says.
 - **<kbd>Ctrl</kbd> chords belong to the agent** on macOS, where the app
   modifier is <kbd>Cmd</kbd>. On Windows and Linux the modifier is
   <kbd>Ctrl</kbd>, so the bound chords are taken from the terminal there,
@@ -172,6 +174,46 @@ the pane that has the focus.
   <kbd>Cmd</kbd>+click (<kbd>Ctrl</kbd> elsewhere), bare URLs and links the
   program marked up alike. A plain click is left to the TUI.
 
+## Tab and the controls
+
+Outside a terminal and the editor, <kbd>Tab</kbd> and
+<kbd>Shift</kbd><kbd>Tab</kbd> walk the window's controls in reading order,
+as on any page, and they do so in WebKit, the app's own webview on macOS,
+as everywhere else. WebKit passes over a button, a link or a popup on Tab
+unless the system's full keyboard access is on, so the app makes every
+control a stop as it is drawn, by one rule for the whole window:
+
+- **A single control is a stop of its own**: a header's buttons, a dialog's
+  buttons, the fields, the folded sessions column.
+- **A list is one stop**: the sessions pane, the tree, a segmented choice,
+  a row of tabs, the settings' sections, the shells in the terminal panel,
+  the folders on another machine. Tab lands on the item chosen, or the
+  first. The arrow keys walk the list, <kbd>Home</kbd> and <kbd>End</kbd>
+  jump, and <kbd>Enter</kbd> or <kbd>Space</kbd> does what a click on the
+  item does; moving picks nothing, except that the settings' sections show
+  as the arrows reach them. <kbd>Delete</kbd> closes the tab or the shell
+  under the keyboard, as its × does, and the keyboard stays on the row.
+- **A menu** opens with the keyboard on the choice in force, or its first
+  item. The arrows walk it, <kbd>Enter</kbd> picks, <kbd>Esc</kbd> closes it
+  back to its button, and <kbd>Tab</kbd> closes it on the way on. A list
+  walked from a field, the palette's or the sessions to resume, is walked
+  from the field and is no stop of its own.
+- **A terminal keeps Tab**, and so does the editor, where it indents. The
+  terminal panel's list and its tools come before its shells, so they are
+  reached first.
+- **A dialog, the palette and a question in a strip keep Tab inside**: past
+  the last stop it comes round to the first. A pane that is narrowed away,
+  hidden, or under a dialog takes no Tab, and a peeked sessions pane goes
+  back when Tab leaves it rather than let Tab reach the pane under it.
+- **Wherever Tab lands is drawn** in the look's own way: a ring in the
+  accent, a list's cursor on its row, a splitter's line lit, a field's
+  caret.
+
+A control added anywhere in the window, the status bar included, follows
+the rule without any work of its own. A list that walks its own items, as
+the sessions pane and the conversation's dock do, keeps the stops it gives
+them.
+
 ## An integrated session
 
 The agent pane of an integrated session is a composer, a thread and, while
@@ -192,12 +234,11 @@ run, which is read before its buttons are reached.
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
 
-Every control of the view is reached by keyboard alone in WebKit, the
-app's own webview on macOS, which passes over a button on Tab unless it is
-made a stop. Groups that are lists are one stop for Tab, walked with the
-arrows, as the app's other lists are: the thread, where the arrows move
-through its folds, steps and links from what is in view and
-<kbd>Enter</kbd> opens one, and the dock's choices. The composer's
+Every control of the view is reached by keyboard alone, by the rule in
+[Tab and the controls](#tab-and-the-controls). The lists in it are one stop
+each: the thread, where the arrows move through its folds, steps and links
+from what is in view and <kbd>Enter</kbd> opens one, and the dock's
+choices. The composer's
 controls, attach, the model and the mode, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
 of their own in reading order. Focus is always drawn where the keyboard
