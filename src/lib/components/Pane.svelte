@@ -352,6 +352,12 @@
     text-align: end;
   }
 
+  /* Beside a head the meta keeps to its own width, so the room left over
+     is the head's, which decides for itself what of its own gives way. */
+  header > .head ~ .meta {
+    flex: 0 1 auto;
+  }
+
   header.cornered > .meta {
     text-align: center;
   }
