@@ -2719,6 +2719,89 @@ describe("starting in a workflow's shape", () => {
     expect(byKey(plain.key)?.account).toBeNull();
   });
 
+  describe("the account a step's session runs under", () => {
+    beforeEach(() => {
+      accounts.list = {
+        Work: { claude: "~/.claude-work", codex: null },
+        Home: { claude: "~/.claude-home", codex: "~/.codex-home" },
+      };
+    });
+
+    /** An orchestrator running under an account. */
+    function orchestratingAs(account: string | null, workflow = defaultWorkflow()) {
+      const row = create(A, null, "claude-code", null, null, null, account, workflow);
+      started(row.key, "pty-orch", "orch");
+      return row;
+    }
+
+    /** A start for a step the user allows, with what its question said of
+        the account and the row it made. */
+    async function asked(args: Record<string, unknown>, id: string) {
+      const answering = handle(from(args));
+      const named = conductor.asking?.named ?? null;
+      allow();
+      await settle();
+      const row = forProject(B).at(-1)!;
+      started(row.key, `pty-${id}`, id);
+      flushSync();
+      await answering;
+      expect(last().error).toBeNull();
+      return { words: named === null ? null : accountWords(named), row };
+    }
+
+    it("is a caller's chosen account, named in the question and the answer", async () => {
+      accounts.overrides[B] = "Home";
+      orchestratingAs("Work");
+      const { words, row } = await asked({ step: "Work" }, "w1");
+      expect(words).toBe("Under the Work account, not the project's own.");
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(
+        `Started session w1 for step "Work" in ${B}, under the Work account. It has the prompt.`,
+      );
+    });
+
+    it("is the project's when the caller runs under its own project's", async () => {
+      accounts.overrides[A] = "Work";
+      accounts.overrides[B] = "Home";
+      orchestratingAs("Work");
+      const { words, row } = await asked({ step: "Work" }, "w1");
+      expect(words).toBeNull();
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(
+        `Started session w1 for step "Work" in ${B}. It has the prompt.`,
+      );
+    });
+
+    it("is the one the start names, whatever the caller's", async () => {
+      orchestratingAs("Work");
+      const { words, row } = await asked({ step: "Work", account: "Home" }, "w1");
+      expect(words).toBe("Under the Home account, not the project's own.");
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(
+        `Started session w1 for step "Work" in ${B}, under the Home account.`,
+      );
+    });
+
+    it("is checked against the agent the step chooses", async () => {
+      // The step runs Codex, which Work keeps no directory for, while the
+      // project's own agent is Claude Code. Work is the project's account
+      // too, so only the missing directory has the question name it.
+      accounts.overrides[B] = "Work";
+      const workflow = defaultWorkflow();
+      workflow.steps[0].models = [{ agent: "codex", model: "default" }];
+      orchestratingAs("Work", workflow);
+      const { words, row } = await asked({ step: "Work" }, "w1");
+      expect(row.agent).toBe("codex");
+      expect(row.account).toBe("Work");
+      expect(words).toBe(
+        "Under the project's account, Work. Work has no Codex directory, so Codex uses the Default one.",
+      );
+      expect(last().content).toContain(
+        `Started session w1 for step "Work" in ${B}, under the project's account, Work.`,
+      );
+    });
+  });
+
   it("reads a line as a command after characters that draw nothing, and a wide slash as a slash", () => {
     expect(mayChangeModel("\u200b/model opus")).toBe(true);
     expect(mayChangeModel("\ufeff /model opus")).toBe(true);
