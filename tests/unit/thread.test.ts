@@ -13,6 +13,7 @@ import {
   revealed,
   place,
   phraseText,
+  replyMarkdown,
   address,
   nowDoing,
   runningCall,
@@ -576,5 +577,32 @@ describe("what a read says of the messages a session was sent", () => {
     const said = lastRun(c, 10, (message) => (message.id === "s1" ? "session 1" : null));
     expect(said).toContain("A message from the user waits for the turn: How is it going?");
     expect(said).toContain(`A message from session 1 waits for the turn: ${note}`);
+  });
+});
+
+describe("a reply copied as Markdown", () => {
+  const text = (block: string, said: string, kind: "text" | "thinking" = "text"): TextPart => ({
+    kind,
+    block,
+    text: said,
+    done: true,
+    gap: false,
+    at: 0,
+    until: 0,
+  });
+
+  it("is what the agent said, its text parts joined, without its thinking or its work", () => {
+    const tool = { kind: "tool", call: "c1", tool: "command" } as unknown as ToolCall;
+    const parts: Part[] = [
+      text("a", "\n\nThe cache lives in memory.\n"),
+      text("b", "I should check the version.", "thinking"),
+      tool,
+      text("c", "    indented code\n\nDone.  \n"),
+    ];
+    expect(replyMarkdown(parts)).toBe("The cache lives in memory.\n\n    indented code\n\nDone.");
+  });
+
+  it("is empty for a run that only worked", () => {
+    expect(replyMarkdown([text("a", "", "text"), text("b", "hmm", "thinking")])).toBe("");
   });
 });

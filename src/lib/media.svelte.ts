@@ -267,6 +267,32 @@ export function renderSaid(markdown: string): string {
   return marked.parse(markdown, { async: false, gfm: true, renderer: said }) as string;
 }
 
+/** A block of what an agent wrote, as `renderSaid` draws it, and for a
+    code block its code as written, without the fences. */
+export interface SaidBlock {
+  html: string;
+  code: string | null;
+}
+
+/** Markdown an agent wrote, rendered as `renderSaid` does, one top-level
+    block at a time: a block that is done is drawn once while the words
+    after it still come, and a code block can be copied as its code. */
+export function saidBlocks(markdown: string): SaidBlock[] {
+  const tokens = marked.lexer(markdown, { gfm: true });
+  const out: SaidBlock[] = [];
+  for (const token of tokens) {
+    if (token.type === "space") continue;
+    // Each block is parsed with the whole text's link definitions, so a
+    // reference link finds its address wherever it is defined.
+    const one = Object.assign([token], { links: tokens.links });
+    out.push({
+      html: marked.parser(one, { async: false, gfm: true, renderer: said }),
+      code: token.type === "code" ? (token.text as string) : null,
+    });
+  }
+  return out;
+}
+
 function decode(base64: string): string {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);

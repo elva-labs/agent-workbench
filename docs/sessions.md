@@ -381,6 +381,22 @@ where it happened. The sessions an agent started with the workbench's start
 tool show under its run as rows, each with its state, name and model and a
 way to open it.
 
+Five things in the thread can be copied whole, each with a quiet Copy that
+shows while the pointer is over it or the keyboard is on the Copy: the
+user's message, a reply as Markdown, a code block, a command and a
+command's output. A message is copied as its words, without what the
+workbench added to it. A reply is everything the agent said in that run,
+its text joined, without its work or the sessions it started. A code block
+is its code without the fences, and a command is the command alone, from a
+Copy beside its step's row. A click, Enter or Space copies what is there at
+that moment, so a reply still coming is copied as far as it has come, and
+the word turns to Copied for a moment, which a screen reader is told as
+well. Copying leaves the scroll and the keyboard where they were, and a
+Copy takes its room whether it shows or not, so nothing moves when it
+appears. The text reaches the system clipboard through the app rather than
+the page, the same on macOS, Linux and Windows. Selecting text and the Edit
+menu's Copy work as they do anywhere else.
+
 A permission the agent asks for docks over the composer rather than in the
 thread: who asks, the agent or one of its subagents, and what for, with the
 choices the core offers. It says the agent asks to run a command only for a

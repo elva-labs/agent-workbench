@@ -350,6 +350,16 @@ export function modelName(conversation: Conversation, model: string | null): str
   return name === "" ? null : name;
 }
 
+/** What the agent said in a run, as the Markdown it wrote: its text parts
+    joined, without its work, its plans or the sessions it started. */
+export function replyMarkdown(parts: Part[]): string {
+  return parts
+    .filter((part): part is TextPart => part.kind === "text")
+    .map((part) => part.text.replace(/^\n+|\s+$/g, ""))
+    .filter((text) => text !== "")
+    .join("\n\n");
+}
+
 /** The ids of the sessions a run started with the workbench's `start`
     tool, read off what each call answered. */
 export function startedIds(parts: Part[]): string[] {

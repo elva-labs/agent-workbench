@@ -1,14 +1,17 @@
 <script lang="ts">
   import { core } from "$lib/core";
-  import { renderSaid } from "$lib/media.svelte";
+  import { saidBlocks } from "$lib/media.svelte";
   import { tick } from "svelte";
+  import Copy from "./Copy.svelte";
 
   /**
    * What the agent wrote, as a reader sees it: the same Markdown the viewer
    * renders for a presented document, links opening outside the window and
    * an image from an address shown as a link to it rather than fetched.
-   * While it streams it is drawn again at most once a frame, and a caret
-   * stands where the next words will come, so the text grows in place.
+   * While it streams it is drawn again at most once a frame, a block at a
+   * time so the blocks before the last stay as they are, and a caret
+   * stands where the next words will come, so the text grows in place. A
+   * code block has a Copy in its top corner that copies its code.
    */
   interface Props {
     text: string;
@@ -39,14 +42,14 @@
     if (frame !== null) cancelAnimationFrame(frame);
   });
 
-  let html = $derived(renderSaid(shown));
+  let blocks = $derived(saidBlocks(shown));
 
   let box = $state<HTMLDivElement | null>(null);
 
   // A link is walked with the arrows in the thread, which is one stop for
   // Tab, rather than being a stop of its own.
   $effect(() => {
-    html;
+    blocks;
     const node = box;
     // After the text is drawn again, which can be a turn after this runs.
     void tick().then(() => {
@@ -65,7 +68,18 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown">{@html html}</div>
+<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown">
+  {#each blocks as block, at (at)}
+    {#if block.code === null}
+      {@html block.html}
+    {:else}
+      <div class="code" data-copy-host="code">
+        {@html block.html}
+        <Copy label="Copy" name="Copy the code" text={() => block.code ?? ""} host="code" place="corner" testid="copy-code" />
+      </div>
+    {/if}
+  {/each}
+</div>
 
 <style>
   .md {
@@ -135,6 +149,15 @@
     line-height: 1.5;
   }
 
+  .code {
+    position: relative;
+    margin: 0 0 0.7em;
+  }
+
+  .code > :global(pre) {
+    margin: 0;
+  }
+
   .md :global(pre code) {
     padding: 0;
     background: none;
@@ -188,7 +211,7 @@
 
   /* Where the next words will come. Inside the last paragraph or line
      while there is one, so the text does not move when it arrives. */
-  .streaming > :global(:last-child:not(ul):not(ol):not(table):not(pre))::after,
+  .streaming > :global(:last-child:not(ul):not(ol):not(table):not(pre):not(.code))::after,
   .streaming > :global(:is(ul, ol):last-child > li:last-child)::after {
     content: "";
     display: inline-block;

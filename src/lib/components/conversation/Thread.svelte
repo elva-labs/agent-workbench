@@ -1,11 +1,12 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, nowDoing, speaker, startedIds, tokens } from "$lib/thread";
+  import { clock, nowDoing, replyMarkdown, speaker, startedIds, tokens } from "$lib/thread";
   import { reportsShown, spoken } from "$lib/instructions";
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { goTo } from "$lib/workspace.svelte";
+  import Copy from "./Copy.svelte";
   import Icon from "./Icon.svelte";
   import Parts from "./Parts.svelte";
   import Plain from "./Plain.svelte";
@@ -335,10 +336,13 @@
         {@const turn = conversation.turns[entry.turn]}
         {@const live = entry.key === liveKey}
         {@const doing = live ? nowDoing(conversation, entry.parts) : null}
-        <article class="msg agent" data-testid="agent-run" data-turn={entry.turn}>
+        <article class="msg agent" data-testid="agent-run" data-turn={entry.turn} data-copy-host="message">
           <header class="who">
             <i class="mark"></i><b><Plain text={speaker(conversation, turn?.model ?? null, agent)} /></b>
             {#if entry.at !== null}<time class="num">{clock(entry.at)}</time>{/if}
+            {#if entry.parts.some((part) => part.kind === "text" && part.text.trim() !== "")}
+              <Copy label="Copy as Markdown" text={() => replyMarkdown(entry.parts)} host="message" place="end" testid="copy-reply" />
+            {/if}
           </header>
           <Parts parts={entry.parts} {root} />
           <Started ids={startedIds(entry.parts)} />
@@ -395,8 +399,12 @@
     data-testid="user-message"
     data-state={said.state}
     data-from={from?.id}
+    data-copy-host="message"
   >
     <header class="who">
+      {#if words.text !== ""}
+        <Copy label="Copy" name="Copy the message" text={() => words.text} host="message" testid="copy-message" />
+      {/if}
       {#if from === null}
         <b>You</b>
       {:else}

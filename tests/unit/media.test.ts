@@ -11,6 +11,7 @@ import {
   render,
   renderSaid,
   resetMedia,
+  saidBlocks,
 } from "$lib/media.svelte";
 import { closeViewer, files } from "$lib/files.svelte";
 import { layout } from "$lib/layout.svelte";
@@ -267,6 +268,31 @@ describe("what an agent says in a conversation", () => {
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img");
     expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
+  });
+
+  it("is drawn a block at a time as it is drawn whole, reference links and raw HTML included", () => {
+    const md = [
+      "## The plan\n\nRead [the docs][d] first, then <b>this</b>:",
+      "- one\n- two\n\n  still two",
+      "```rust\nlet x = 1;\n```",
+      "| a | b |\n| - | - |\n| 1 | 2 |",
+      "> quoted ![chart](https://example.com/c.png)",
+      "    indented code",
+      "[d]: https://example.com/docs",
+    ].join("\n\n");
+    const blocks = saidBlocks(md);
+    expect(blocks.map((block) => block.html).join("")).toBe(renderSaid(md));
+    expect(blocks.map((block) => block.html).join("")).toContain('<a href="https://example.com/docs"');
+    expect(blocks.filter((block) => block.code !== null).map((block) => block.code)).toEqual([
+      "let x = 1;",
+      "indented code",
+    ]);
+  });
+
+  it("gives a code block its code as written, without the fences, while it is still coming", () => {
+    expect(saidBlocks("Run:\n\n```sh\nnpm test\nnpm run check\n```\n")[1].code).toBe("npm test\nnpm run check");
+    expect(saidBlocks("Run:\n\n```sh\nnpm te")[1].code).toBe("npm te");
+    expect(saidBlocks("No code here.")).toEqual([{ html: renderSaid("No code here."), code: null }]);
   });
 });
 
