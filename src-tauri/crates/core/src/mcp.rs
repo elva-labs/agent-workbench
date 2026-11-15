@@ -1181,18 +1181,27 @@ fn await_answer_unless(
     let path = show::answer_path(home, id);
     let until = Instant::now() + wait;
     loop {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            let _ = std::fs::remove_file(&path);
-            return serde_json::from_str(&text).ok().or(Some(Answer {
-                content: None,
-                error: Some("the plugin answered with something unreadable".to_string()),
-            }));
+        if let Some(answer) = take_answer(&path) {
+            return Some(answer);
         }
         if Instant::now() >= until || cancelled.load(Ordering::SeqCst) {
-            return None;
+            // An answer left between the read above and the clock is still
+            // one this call reads, so whoever left it is right to count it
+            // read.
+            return take_answer(&path);
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// The answer at `path`, taken away once read, if one is there.
+fn take_answer(path: &Path) -> Option<Answer> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::remove_file(path);
+    serde_json::from_str(&text).ok().or(Some(Answer {
+        content: None,
+        error: Some("the plugin answered with something unreadable".to_string()),
+    }))
 }
 
 /// Media, checked to be there and to be a kind the window shows, so the
@@ -2549,6 +2558,26 @@ mod tests {
         );
         assert_eq!(unanswered, None);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    // An answer that is there when the time is up is still read, and read
+    // once: a reader that stops waiting reads one last time first.
+    #[test]
+    fn an_answer_there_when_the_wait_is_over_is_read_once() {
+        let home = home("answer-at-the-end");
+        show::write_answer(
+            &home,
+            "late",
+            &Answer {
+                content: Some("in time".to_string()),
+                error: None,
+            },
+        )
+        .unwrap();
+        let read = await_answer(&home, "late", Duration::ZERO).unwrap();
+        assert_eq!(read.content.as_deref(), Some("in time"));
+        assert!(!show::answer_path(&home, "late").exists());
+        assert!(await_answer(&home, "late", Duration::ZERO).is_none());
     }
 
     #[test]
