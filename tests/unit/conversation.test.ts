@@ -623,3 +623,155 @@ describe("the order of events that could leave something running", () => {
     expect(conversation.interrupting).toBe(false);
   });
 });
+
+describe("what a conversation said before, read back", () => {
+  type Items = Parameters<Conversation["lay"]>[0]["items"];
+  const ended = {
+    type: "turnEnded" as const,
+    outcome: "done" as const,
+    error: null,
+    totalCostUsd: null,
+    durationMs: null,
+    usage: null,
+  };
+  /** A turn as it reads back: the message, its start on a model, a call
+      left open or finished, and what the agent said. */
+  function turn(at: number, message: string, options: { open?: boolean; call?: string } = {}): Items {
+    const call = options.call ?? `c-${message}`;
+    const items: Items = [
+      { at, event: { type: "message", message, state: "sent", error: null, text: `asked ${message}`, images: [] } },
+      { at, model: "claude-haiku-5-5", event: { type: "turnStarted", messages: [message] } },
+      { at: at + 1, event: { type: "toolStarted", call, parent: null, name: "Bash", kind: "command" } },
+      { at: at + 1, event: { type: "toolInput", call, parent: null, delta: null, input: { command: "ls" }, truncated: false } },
+    ];
+    if (options.open) return items;
+    return [
+      ...items,
+      {
+        at: at + 2,
+        event: { type: "toolFinished", call, parent: null, output: "ok", error: false, truncated: false, changes: [] },
+      },
+      { at: at + 3, event: { type: "text", block: `b-${message}`, parent: null, text: `answered ${message}`, done: true } },
+      { at: at + 3, event: ended },
+    ];
+  }
+
+  it("draws each event at the time it happened, under the model its turn ran on", () => {
+    const conversation = new Conversation(() => 99_000);
+    conversation.lay({ items: turn(5_000, "one"), cut: false }, null);
+    expect(outline(conversation.entries)).toEqual(["you:one", "agent:1:tool,text"]);
+    expect(conversation.messages.one).toMatchObject({ text: "asked one", at: 5_000, placed: true, state: "taken" });
+    expect(conversation.turns[1]).toMatchObject({ model: "claude-haiku-5-5", startedAt: 5_000, endedAt: 5_003, outcome: "done" });
+    const [call, text] = agentParts(conversation);
+    expect(call).toMatchObject({ at: 5_001, until: 5_002, done: true, result: "ok" });
+    expect(text).toMatchObject({ at: 5_003, text: "answered one" });
+    expect(conversation.current).toBeNull();
+    expect(conversation.earlier).toBe("read");
+  });
+
+  it("marks this run after all of it when all of it is from before, and nothing when there is nothing", () => {
+    const conversation = new Conversation(() => 99_000);
+    conversation.lay({ items: [...turn(1_000, "one"), ...turn(2_000, "two")], cut: false }, { at: 9_000, since: null });
+    expect(conversation.began).toEqual({ after: conversation.entries.at(-1)!.key, at: 9_000 });
+    const empty = new Conversation(() => 99_000);
+    empty.lay({ items: [], cut: false }, { at: 9_000, since: null });
+    expect(empty.began).toBeNull();
+  });
+
+  it("marks this run before the first of the main thread's events from when it began", () => {
+    const conversation = new Conversation(() => 99_000);
+    conversation.lay({ items: [...turn(1_000, "one"), ...turn(5_000, "two")], cut: false }, { at: 4_000, since: 4_000 });
+    expect(outline(conversation.entries)).toEqual(["you:one", "agent:1:tool,text", "you:two", "agent:2:tool,text"]);
+    expect(conversation.began).toEqual({ after: conversation.entries[1].key, at: 4_000 });
+    // A run that began before anything was said has nothing before it.
+    const all = new Conversation(() => 99_000);
+    all.lay({ items: turn(5_000, "two"), cut: false }, { at: 4_000, since: 4_000 });
+    expect(all.began).toBeNull();
+  });
+
+  it("is laid above what the thread already holds, the turn that runs left running", () => {
+    const { fake, conversation, id, send } = played();
+    send(M1, "hi");
+    fake.startTurn(id);
+    fake.emit(id, { type: "text", block: "live", parent: null, text: "work", done: false });
+    const running = conversation.current;
+    conversation.lay({ items: [...turn(1_000, "one"), ...turn(2_000, "two", { open: true })], cut: false }, null);
+    expect(outline(conversation.entries)).toEqual([
+      "you:one",
+      "agent:2:tool,text",
+      "you:two",
+      "agent:3:tool",
+      `you:${M1}`,
+      "agent:1:text",
+    ]);
+    expect(conversation.current).toBe(running);
+    // The turn that was read with no end is over, its call left as it was.
+    expect(conversation.turns[3].endedAt).not.toBeNull();
+    fake.emit(id, { type: "text", block: "live", parent: null, text: "work done", done: true });
+    fake.endTurn(id);
+    expect(agentParts(conversation).map((part) => (part.kind === "text" ? part.text : part.kind))).toEqual(["work done"]);
+  });
+
+  it("draws once what it both read and heard, by its id", () => {
+    const { fake, conversation, id, send } = played();
+    send(M1, "hi");
+    fake.startTurn(id);
+    fake.emit(id, { type: "toolStarted", call: "c-1", parent: null, name: "Bash", kind: "command" });
+    fake.emit(id, { type: "text", block: "b-1", parent: null, text: "said", done: true });
+    conversation.lay(
+      {
+        items: [
+          { at: 1, event: { type: "message", message: M1, state: "sent", error: null, text: "hi", images: [] } },
+          { at: 1, event: { type: "turnStarted", messages: [M1] } },
+          { at: 2, event: { type: "toolStarted", call: "c-1", parent: null, name: "Bash", kind: "command" } },
+          { at: 3, event: { type: "text", block: "b-1", parent: null, text: "said", done: true } },
+        ],
+        cut: false,
+      },
+      null,
+    );
+    const drawn = conversation.entries.filter((entry) => entry.kind === "user" || (entry.kind === "agent" && entry.parts.length > 0));
+    expect(outline(drawn)).toEqual([`you:${M1}`, "agent:1:tool,text"]);
+  });
+
+  it("leaves a last turn with no end to the snapshot, and ends it with its calls failed when all of it is from before", () => {
+    const reloaded = new Conversation(() => 99_000);
+    reloaded.lay({ items: turn(1_000, "one", { open: true }), cut: false }, null);
+    expect(reloaded.current).toBe(1);
+    expect(reloaded.call("c-one")?.done).toBe(false);
+    reloaded.restore({
+      state: "idle",
+      turn: false,
+      settings: { model: null, mode: null, effort: null },
+      efforts: [],
+      ready: null,
+      requests: [],
+      messages: [],
+      limits: null,
+    });
+    expect(reloaded.current).toBeNull();
+
+    const resumed = new Conversation(() => 99_000);
+    resumed.lay({ items: turn(1_000, "one", { open: true }), cut: false }, { at: 9_000, since: null });
+    expect(resumed.current).toBeNull();
+    expect(resumed.call("c-one")).toMatchObject({ done: true, error: true });
+  });
+
+  it("says when the start of the conversation was left out, and no longer that it was not read", () => {
+    const conversation = new Conversation(() => 99_000);
+    conversation.late = true;
+    conversation.lay({ items: turn(1_000, "one"), cut: true }, null);
+    expect(conversation.earlierCut).toBe(true);
+    expect(conversation.late).toBe(false);
+  });
+
+  it("marks where a run began after what the thread holds, and not in an empty thread", () => {
+    const { fake, conversation, id, send } = played();
+    conversation.beganHere(5);
+    expect(conversation.began).toBeNull();
+    send(M1, "hi");
+    fake.turn(id, "hello");
+    conversation.beganHere(7);
+    expect(conversation.began).toEqual({ after: conversation.entries.at(-1)!.key, at: 7 });
+  });
+});

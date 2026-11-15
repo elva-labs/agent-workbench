@@ -625,6 +625,8 @@ export async function installFakeCore(
           settings: Parameters<FakeIntegrated["configure"]>[1],
         ) => integrated().configure(id, settings),
         integratedSnapshot: async (id: string) => integrated().snapshot(id),
+        integratedHistory: async (options: Parameters<FakeIntegrated["history"]>[0]) =>
+          integrated().history(options),
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],

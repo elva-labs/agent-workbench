@@ -319,7 +319,10 @@
   tabindex="0"
 >
   <div class="col" bind:this={col}>
-    {#if conversation.late || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0)}
+    {#if conversation.earlierCut}
+      <p class="intro" data-testid="earlier-cut">The start of this conversation is too long to show here.</p>
+    {/if}
+    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0)}
       <p class="intro" data-testid="thread-intro">
         {conversation.late ? "Earlier messages of this session are in its transcript and are not shown here." : intro}
       </p>
@@ -366,6 +369,11 @@
               Conversation compacted{entry.reason === "full" ? ", the context was full" : ""}{#if entry.tokensBefore !== null && entry.tokensAfter !== null}<span class="num"> · {tokens(entry.tokensBefore)} → {tokens(entry.tokensAfter)} tokens</span>{/if}
             {/if}
           </span>
+        </div>
+      {/if}
+      {#if conversation.began !== null && entry.key === conversation.began.after}
+        <div class="divider" data-testid="run-began">
+          <span>Resumed at <time class="num">{clock(conversation.began.at)}</time></span>
         </div>
       {/if}
     {/each}
