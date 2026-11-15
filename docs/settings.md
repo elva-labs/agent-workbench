@@ -115,11 +115,13 @@ text holds that, quiet text included. A hovered or chosen row on a tinted part l
 accent through rather than laying a solid patch over the tint, and is
 judged the same way.
 
-Every line the window draws stays. With a background each one is the
-text colour let through at one amount for the whole window, so it takes
-the colour of what it crosses, stands off a tinted part as far as the
-plain line stands off the plain chrome, and lines that meet are one
-paint. A splitter under the pointer, while it is focused or dragged, the
+Every line the window draws stays. With a background each line on or
+beside a tinted part is the text colour let through at one amount for the
+whole window, so it takes the colour of what it crosses, stands off a
+tinted part as far as the plain line stands off the plain chrome, and
+lines that meet are one paint. In the terminal look the boxes stay as they
+are: their outline, the gap between them and the status rule take the
+background, and the rules inside them keep their colour. A splitter under the pointer, while it is focused or dragged, the
 focus rings, the focused pane's mark and a chosen row stay in the accent.
 
 The system's increase-contrast setting sets the background aside, with

@@ -29,8 +29,10 @@
  * themselves.
  */
 
-/* Every line follows the background: the ink let through, so it takes the
-   colour of whatever it crosses. */
+/* A line on or beside a tinted part follows the background: the ink let
+   through, so it takes the colour of whatever it crosses. The terminal
+   look's boxes keep the rules inside them as they are; their outline, the
+   gap between them and the status rule lie on the ground. */
 :root[data-background][data-look="modern"] {
   --divider: var(--tint-line);
 }
@@ -38,7 +40,6 @@
 :root[data-background]:not([data-look]) {
   --pane-border: var(--tint-line);
   --splitter: var(--tint-line);
-  --head-rule: var(--tint-line);
   --status-rule: var(--tint-line);
 }
 

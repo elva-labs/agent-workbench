@@ -75,6 +75,21 @@ test("in the terminal look tints only the ground between the boxes and the statu
   const inside = await pixel(page, ...(await at(page, SESSIONS, 0.5, 0.8)));
   expect(blueish(ground)).toBeGreaterThan(4);
   expect(inside).toEqual([255, 255, 255]);
+  // The boxes stay as they are: the rule under a box's header lies between
+  // two solid surfaces and keeps its colour, while the box's outline lies on
+  // the ground and takes the background's.
+  const rules = () =>
+    page.evaluate((agent) => {
+      const box = document.querySelector<HTMLElement>(agent)!;
+      return {
+        head: getComputedStyle(box.querySelector(":scope > header")!).borderBottomColor,
+        outline: getComputedStyle(box).borderTopColor,
+      };
+    }, AGENT);
+  const tinted = await rules();
+  await page.emulateMedia({ contrast: "more" });
+  await expect.poll(async () => (await rules()).outline).not.toBe(tinted.outline);
+  expect((await rules()).head).toBe(tinted.head);
 });
 
 test("each palette keeps its own background, and one without has the plain chrome", async ({ page }) => {
