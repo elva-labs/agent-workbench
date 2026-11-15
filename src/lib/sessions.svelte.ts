@@ -28,7 +28,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
-import { bareName, mixesScripts, readsAsYou, shown } from "$lib/unseen";
+import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 
 /**
  * Every session this window has, live or finished.
@@ -889,8 +889,8 @@ export function outsideFor(
  */
 export function historyLabel(transcript: Transcript): string {
   const known = sessions.names[transcript.id];
-  if (known !== undefined && !readsAsYou(known)) return shown(known);
-  if (transcript.title !== null && transcript.title !== "" && !readsAsYou(transcript.title))
+  if (known !== undefined && !reservedName(known)) return shown(known);
+  if (transcript.title !== null && transcript.title !== "" && !reservedName(transcript.title))
     return shown(transcript.title);
   return `session from ${ago(transcript.modified)}`;
 }
@@ -1014,20 +1014,21 @@ export function liveCount(project: string): number {
 
 /** A short label for the row: its name, the resumed id, or its number in
     the project. A name is the agent's or a caller's text, so what it holds
-    that cannot be seen is written out; and a name that reads as "You",
-    which is the user's alone, is not taken. */
+    that cannot be seen is written out; and a name that reads as "You" or
+    "Workbench", which are the user's and the workbench's alone, is not
+    taken. */
 export function label(session: Session): string {
-  if (session.title !== null && !readsAsYou(session.title)) return shown(session.title);
+  if (session.title !== null && !reservedName(session.title)) return shown(session.title);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
 }
 
 /** Whether a name reads as the name of another live session, `except`
-    aside, or mixes scripts, as a name made to pass for another's often
-    does: a session never takes one, so no message or row can pass for
-    another session's. */
+    aside, or as the workbench's own, or mixes scripts, as a name made to
+    pass for another's often does: a session never takes one, so no
+    message or row can pass for another session's or the workbench's. */
 export function nameTaken(name: string, except: string | null = null): boolean {
-  if (mixesScripts(name)) return true;
+  if (mixesScripts(name) || readsAsWorkbench(name)) return true;
   const bare = bareName(name);
   return sessions.all.some(
     (session) => session.key !== except && isLive(session) && bareName(label(session)) === bare,

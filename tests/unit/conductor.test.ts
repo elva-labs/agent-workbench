@@ -535,6 +535,19 @@ describe("starting a session", () => {
     }
   });
 
+  it("does not call a session Workbench, which the workbench's own messages show under, and says so", async () => {
+    for (const name of ["Workbench", "workbench", " WORKBENCH\u200b"]) {
+      const row = await startAllowed(
+        call("start", { project: A, prompt: "Fix the flaky test", name }, { session: "caller-1" }),
+        "pty-1",
+        "sid-new",
+      );
+      expect(row.title).toBeNull();
+      expect(last().content).toContain("a conversation shows the workbench's own messages under that name");
+      close(row.key);
+    }
+  });
+
   it("does not give a session the name another live session has, and says so", async () => {
     // The reviewer's case: a session named "Session 1" beside session 1.
     const other = create(A);

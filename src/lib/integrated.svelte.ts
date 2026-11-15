@@ -1,6 +1,6 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
-import { readsAsYou } from "$lib/unseen";
+import { reservedName } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
 import { heardLimits } from "$lib/limits.svelte";
@@ -555,7 +555,7 @@ export function send(
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
     const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
-    if (title !== null && !nameTaken(title, key) && !readsAsYou(title)) named(key, title);
+    if (title !== null && !nameTaken(title, key) && !reservedName(title)) named(key, title);
   }
   core()
     .integratedSend(link.handle, id, text, images)

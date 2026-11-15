@@ -2035,16 +2035,22 @@ describe("a name the agent or a caller gave", () => {
     expect(byKey(row.key)!.note).toBe("done ⟨U+200B⟩⟨U+2066⟩now");
   });
 
-  it("is never You, which the thread keeps for the user", () => {
+  it("is never You or Workbench, which the thread keeps for the user and the workbench", () => {
     const row = create("/p");
-    for (const title of ["You", "you", " YOU ", "\u200byou\u200b", "“You”"]) {
+    for (const title of ["You", "you", " YOU ", "\u200byou\u200b", "“You”", "Workbench", " workbench ", "\u200bWORKBENCH"]) {
       row.title = title;
       expect(label(row)).toBe(`session ${row.ordinal}`);
     }
     row.title = "Young";
     expect(label(row)).toBe("Young");
+    row.title = "Workbench docs";
+    expect(label(row)).toBe("Workbench docs");
     const past = { id: "abc12345-0000", title: "you", modified: 0 } as Transcript;
     expect(historyLabel(past)).toBe("session from " + ago(0));
+    expect(historyLabel({ ...past, title: "Workbench" })).toBe("session from " + ago(0));
+    // Nor is it a name a session can take.
+    expect(nameTaken("Workbench")).toBe(true);
+    expect(nameTaken("Workbench docs", row.key)).toBe(false);
   });
 });
 

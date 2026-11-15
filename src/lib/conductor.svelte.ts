@@ -93,7 +93,7 @@ import {
 import { lastRun } from "$lib/thread";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
-import { mixesScripts, readsAsYou } from "$lib/unseen";
+import { mixesScripts, readsAsWorkbench, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -1567,9 +1567,9 @@ async function startFitted(
     fit.hold();
   }
   // The name the caller gave is the row's, until the agent names it. One
-  // that reads as "You" is the user's alone, and one another live session
-  // has is that session's: neither is taken, and the row is named by the
-  // prompt instead.
+  // that reads as "You" is the user's alone, one that reads as "Workbench"
+  // the workbench's, and one another live session has is that session's:
+  // none is taken, and the row is named by the prompt instead.
   // Weighed as it would be stored.
   const candidate = name === null ? null : oneLine(name);
   const you = candidate !== null && readsAsYou(candidate);
@@ -1601,7 +1601,9 @@ async function startFitted(
     : taken
       ? mixesScripts(candidate!)
         ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
-        : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
+        : readsAsWorkbench(candidate!)
+          ? ` It is not called ${oneLine(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
+          : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
       : "";
   if (fit === null)
     return said(
