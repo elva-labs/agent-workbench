@@ -26,7 +26,7 @@ import {
 } from "$lib/browser.svelte";
 import { showBrowser } from "$lib/files.svelte";
 import { byKey, byToken } from "$lib/sessions.svelte";
-import { held, projectOf, sessionFor } from "$lib/show.svelte";
+import { held, projectOf } from "$lib/show.svelte";
 
 /** The ids of the calls handled lately, so a call delivered twice is
     handled once. */
@@ -147,7 +147,7 @@ async function openBrowserTool(request: BrowserRequest): Promise<Answered> {
   if (sameOwner(owner, ownerOnScreen())) await reveal();
   else if (owner.kind === "session") {
     const row = byKey(owner.key);
-    if (row !== null) held(request, row.project, reveal);
+    if (row !== null) held(request, reveal);
   }
   return arrived("Opened", await settled(tab.id), tab.id);
 }
@@ -168,9 +168,7 @@ function ownerFor(
   const named = byToken(request.session);
   if (request.session !== null && named === null)
     return { refusal: "That session is not open in the workbench." };
-  const session = named ?? sessionFor(request, project);
-  if (session !== null)
-    return { owner: { kind: "session", key: session.key } };
+  if (named !== null) return { owner: { kind: "session", key: named.key } };
   return { owner: { kind: "project", path: project } };
 }
 

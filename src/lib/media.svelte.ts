@@ -166,7 +166,7 @@ export function presented(request: PresentRequest, now = Date.now()) {
     if (workspace.active !== project) activate(project);
     showMedia(item);
   };
-  if (held(request, project, open)) return;
+  if (held(request, open)) return;
   open();
 }
 

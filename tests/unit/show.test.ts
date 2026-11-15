@@ -257,7 +257,26 @@ describe("a call from a session the user is not looking at", () => {
     expect(workspace.active).toBe("/one");
   });
 
-  it("holds a call from a session known only by where it runs", async () => {
+  it("holds a call from a session by its token, in whichever open project it works", async () => {
+    workspace.open.push(repo("/one"), repo("/one/sub"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    await located(a.key, "/one/sub");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    await showRequested({ ...place(a.token, "/one/sub/src/a.rs"), cwd: "/one/sub" });
+    expect(shown).toEqual([]);
+    select(a.key);
+    switched(a.key);
+    await Promise.resolve();
+    expect(shown).toHaveLength(1);
+  });
+
+  // A token no row answers to, stale or made up, is from no session the
+  // window knows, wherever the call runs: its line lands on no row and what
+  // it asks to open opens at once.
+  it("places a call naming a token no row has on no session, and opens it at once", async () => {
     workspace.open.push(repo("/one"));
     workspace.active = "/one";
     const a = create("/one");
@@ -265,15 +284,16 @@ describe("a call from a session the user is not looking at", () => {
     await located(a.key, "/one/.claude/worktrees/w");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
+    notified({ text: "Done", cwd: "/one", session: "stale-or-forged-token" });
+    notified({ text: "Done", cwd: "/one/.claude/worktrees/w", session: "stale-or-forged-token" });
+    expect(sessions.all.map((session) => session.note)).toEqual([null, null]);
     await showRequested({
-      ...place("unknown", "/one/.claude/worktrees/w/src/a.rs"),
+      ...place("stale-or-forged-token", "/one/.claude/worktrees/w/src/a.rs"),
       cwd: "/one/.claude/worktrees/w",
     });
-    expect(shown).toEqual([]);
-    select(a.key);
-    switched(a.key);
-    await Promise.resolve();
     expect(shown).toHaveLength(1);
+    terminalRequested({ command: "ls", cwd: "/one", session: "stale-or-forged-token" });
+    expect(shells).toHaveLength(1);
   });
 
   it("opens at once from no session the window knows", async () => {
