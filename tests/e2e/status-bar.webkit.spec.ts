@@ -101,10 +101,30 @@ test("opens the allowance on Enter, and Escape gives the keyboard back", async (
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
   expect(await focused(page)).toBe("account-group");
+  // Enter and Space put it away again, as on the control.
   await page.keyboard.press("Space");
   await expect(popover).toBeVisible();
-  await page.keyboard.press("Escape");
+  await page.keyboard.press("Enter");
   await expect(popover).toHaveCount(0);
+  expect(await focused(page)).toBe("account-group");
+  await page.keyboard.press("Enter");
+  await expect(popover).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(popover).toHaveCount(0);
+  expect(await focused(page)).toBe("account-group");
+});
+
+test("stops on the allowance on Tab from its popover", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("composer-input").fill("a draft");
+  await page.getByTestId("account-group").click();
+  const popover = page.getByTestId("allowance-popover");
+  await expect(popover).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(popover).toHaveCount(0);
+  expect(await focused(page)).toBe("account-group");
+  await page.keyboard.press("Shift+Tab");
+  expect(await focused(page)).toBe("effort-readout");
 });
 
 test("hands the keyboard back to the composer when a menu opened by a press is put away", async ({ page }) => {
@@ -121,3 +141,41 @@ test("hands the keyboard back to the composer when a menu opened by a press is p
   // the keyboard was in named as focused.
   await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
 });
+
+const current = (page: Page) => page.evaluate(() => document.activeElement?.querySelector(".name")?.textContent?.trim() ?? null);
+const marked = (page: Page, testid: string) =>
+  page.evaluate(
+    (testid) =>
+      [...document.querySelectorAll<HTMLElement>(`[data-testid='${testid}']`)]
+        .filter((item) => getComputedStyle(item).backgroundColor !== "rgba(0, 0, 0, 0)")
+        .map((item) => item.querySelector(".name")?.textContent?.trim()),
+    testid,
+  );
+
+for (const [control, option] of [
+  ["model-readout", "status-model-option"],
+  ["model-chip", "model-option"],
+])
+  test(`moves one mark with the pointer and the arrows in a menu opened by a press: ${control}`, async ({ page }) => {
+    await open(page);
+    await page.getByTestId(control).click();
+    const options = page.getByTestId(option);
+    await expect(options).toHaveCount(3);
+    // Opened by a press, the menu marks nothing, though the keyboard is on
+    // the model in use; the first arrow marks that one rather than moving
+    // past it.
+    expect(await current(page)).toBe("Sonnet");
+    expect(await marked(page, option)).toEqual([]);
+    await page.keyboard.press("ArrowDown");
+    expect(await current(page)).toBe("Sonnet");
+    expect(await marked(page, option)).toEqual(["Sonnet"]);
+    // The choice under the pointer takes the keyboard, and the arrows go on
+    // from there.
+    await options.first().hover();
+    expect(await current(page)).toBe("Default (recommended)");
+    expect(await marked(page, option)).toEqual(["Default (recommended)"]);
+    await page.keyboard.press("ArrowDown");
+    expect(await current(page)).toBe("Haiku");
+    expect(await marked(page, option)).toEqual(["Haiku"]);
+    await page.keyboard.press("Escape");
+  });

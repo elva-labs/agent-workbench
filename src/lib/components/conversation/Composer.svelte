@@ -250,7 +250,7 @@
     field?.focus();
   }
 
-  function closeMenu(how: "escape" | "tab") {
+  function closeMenu(how: "escape" | "tab" | "away") {
     const which = menu;
     menu = null;
     if (how === "escape")

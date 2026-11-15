@@ -90,6 +90,13 @@ async function whole(page: Page, testid: string): Promise<boolean> {
   }, testid);
 }
 
+/** Sets the window's width and waits for the bar to be measured at it,
+    which happens before the frame after next is drawn. */
+async function settled(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 800 });
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+}
+
 test.describe("the session on screen", () => {
   test("says its model and effort, then the account with its three windows as text", async ({ page }) => {
     await open(page, { accounts: WORK });
@@ -347,8 +354,7 @@ test.describe("a narrow window", () => {
     await expect(page.getByTestId("flash-readout")).not.toHaveText("");
     const seen: string[] = [];
     for (let width = 1440; width >= 380; width -= 20) {
-      await page.setViewportSize({ width, height: 800 });
-      await expect.poll(() => bar(page).evaluate((node) => node.clientWidth)).toBeLessThanOrEqual(width);
+      await settled(page, width);
       const fit = (await bar(page).getAttribute("data-fit")) ?? "";
       const taken = fit.split(" ").filter(Boolean);
       // Steps are only ever taken in order.
@@ -506,5 +512,68 @@ test.describe("the model and the effort", () => {
     await expect(page.getByTestId("status-effort-menu")).toBeVisible();
     await page.getByTestId("thread").click({ position: { x: 20, y: 20 } });
     await expect(page.getByTestId("status-effort-menu")).toHaveCount(0);
+  });
+});
+
+test.describe("what the bar opens", () => {
+  for (const which of ["model-readout", "account-group"])
+    test(`stays open above its control as the window changes size, and keeps the keyboard: ${which}`, async ({ page }) => {
+      await open(page, { accounts: WORK });
+      await report(page, THREE);
+      const input = page.getByTestId("composer-input");
+      await input.fill("draft");
+      const control = page.getByTestId(which);
+      await control.click();
+      const opened = page.getByTestId(which === "model-readout" ? "status-model-menu" : "allowance-popover");
+      await expect(opened).toBeVisible();
+      const owner = await page.evaluate(() => document.activeElement?.closest("[data-testid]")?.getAttribute("data-testid"));
+      for (const width of [1300, 1160, 900]) {
+        await settled(page, width);
+        await expect(opened).toBeVisible();
+        // Above the bar, from its control, inside the window.
+        const box = (await opened.boundingBox())!;
+        const from = (await control.boundingBox())!;
+        expect(box.y + box.height).toBeLessThanOrEqual((await bar(page).boundingBox())!.y);
+        expect(box.x, `at ${width}`).toBeLessThanOrEqual(from.x);
+        expect(box.x + box.width, `at ${width}`).toBeGreaterThan(from.x + 12);
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+        // The keyboard is where it was, in what is open.
+        expect(
+          await page.evaluate(() => document.activeElement?.closest("[data-testid]")?.getAttribute("data-testid")),
+        ).toBe(owner);
+      }
+      await page.keyboard.press("Escape");
+      await expect(opened).toHaveCount(0);
+      await expect(input).toBeFocused();
+      await page.keyboard.type("x");
+      await expect(input).toHaveValue("draftx");
+    });
+
+  test("goes when a chord takes the keyboard elsewhere, and leaves it there", async ({ page }) => {
+    await open(page, { accounts: WORK });
+    await report(page, THREE);
+    await page.getByTestId("model-readout").click();
+    await expect(page.getByTestId("status-model-menu")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect(page.getByTestId("status-model-menu")).toHaveCount(0);
+    await expect(page.getByTestId("model-readout")).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    expect(await page.evaluate(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane"))).toBe(
+      "sessions",
+    );
+
+    // The composer's menus go the same way.
+    await page.getByTestId("composer-input").focus();
+    await page.getByTestId("model-chip").click();
+    await expect(page.getByTestId("model-menu")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect(page.getByTestId("model-menu")).toHaveCount(0);
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    // A press on the chip that opened it still closes it.
+    await page.getByTestId("model-chip").click();
+    await expect(page.getByTestId("model-menu")).toBeVisible();
+    await page.getByTestId("model-chip").click();
+    await expect(page.getByTestId("model-menu")).toHaveCount(0);
   });
 });

@@ -75,7 +75,8 @@ export function keeps(node: HTMLElement) {
  * at its whole width, so the steps go before anything is cut short, and
  * again whenever its width, its text or a part's class changes. All of it
  * happens before the row is painted, so no step is ever seen coming and
- * going.
+ * going. Each measure ends with a `fit` event on the row, once its parts
+ * stand where they will be drawn.
  */
 export function fits(node: HTMLElement, steps: string[]) {
   function measure() {
@@ -87,6 +88,7 @@ export function fits(node: HTMLElement, steps: string[]) {
       node.dataset.fit = taken.join(" ");
     }
     delete node.dataset.measuring;
+    node.dispatchEvent(new Event("fit"));
   }
 
   const sizes = new ResizeObserver(measure);

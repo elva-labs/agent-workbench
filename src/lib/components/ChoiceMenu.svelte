@@ -10,7 +10,10 @@
    * model, the mode or the effort of an integrated session, wherever it is
    * offered. It opens with the keyboard on the choice in use, and is walked
    * with the arrows, Home and End; Enter picks, and Escape or Tab puts it
-   * away, with the owner saying where the keyboard goes then.
+   * away, with the owner saying where the keyboard goes then. The choice
+   * under the pointer takes the keyboard, so the pointer and the keyboard
+   * are one mark. The keyboard going anywhere outside what holds the menu,
+   * by a chord or a press, puts it away and leaves the keyboard there.
    *
    * It opens above what holds it, or at a place the owner gives, where
    * what holds it cuts off what overflows it.
@@ -21,12 +24,14 @@
     /** A line under the choices. */
     note?: string | null;
     onpick: (value: string) => void;
-    onclose: (how: "escape" | "tab") => void;
+    /** Escape or Tab put it away, or the keyboard went elsewhere. */
+    onclose: (how: "escape" | "tab" | "away") => void;
     /** Where it stands in the window, by its left edge and its foot. */
     at?: { left: number; bottom: number } | null;
     /** Opened with the pointer: the choice the keyboard is on is marked
-        only once a key is pressed, so the one under the pointer is the
-        only one marked. */
+        only while the pointer is on it or once a key is pressed, so a
+        menu opened by a press marks nothing until the pointer or a key
+        says where. */
     pointer?: boolean;
     testid: string;
     optionTestid: string;
@@ -47,11 +52,15 @@
   });
 
   function onkeydown(e: KeyboardEvent) {
-    pointing = false;
     const all = items();
     const index = all.indexOf(document.activeElement as HTMLButtonElement);
+    // Where nothing is marked, the first arrow marks the choice the
+    // keyboard is on rather than moving past it unseen.
+    const unmarked = pointing && !(all[index]?.matches(":hover") ?? false);
+    pointing = false;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
+      if (unmarked && index >= 0) return;
       const step = e.key === "ArrowDown" ? 1 : -1;
       all[(index + step + all.length) % all.length]?.focus();
     } else if (e.key === "Home" || e.key === "End") {
@@ -65,6 +74,18 @@
       onclose("tab");
     }
   }
+
+  function onpointermove(e: PointerEvent) {
+    pointing = true;
+    const choice = (e.target as Element | null)?.closest<HTMLButtonElement>("[role='menuitemradio']");
+    if (choice != null && choice !== document.activeElement) choice.focus({ preventScroll: true });
+  }
+
+  function onfocusout(e: FocusEvent) {
+    const next = e.relatedTarget as Node | null;
+    const holder = menu?.parentElement ?? menu;
+    if (next !== null && holder !== null && !holder.contains(next)) onclose("away");
+  }
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -73,7 +94,8 @@
   class="menu"
   class:placed={at !== null}
   class:pointing
-  onpointermove={() => (pointing = true)}
+  {onpointermove}
+  {onfocusout}
   style:left={at === null ? undefined : `${at.left}px`}
   style:bottom={at === null ? undefined : `${at.bottom}px`}
   role="menu"
@@ -142,20 +164,22 @@
     cursor: pointer;
   }
 
-  button:hover,
-  button:focus-visible {
+  /* The one mark: the choice with the keyboard, which the pointer moves
+     too. Opened by a press, it shows only while the pointer is on it,
+     until a key is pressed. */
+  button:focus {
     background: var(--accent-soft);
     color: var(--ink);
     outline: none;
   }
 
-  .pointing button:focus-visible:not(:hover) {
+  .pointing button:focus:not(:hover) {
     background: none;
     color: var(--ink-2);
   }
 
   .on,
-  .pointing .on:focus-visible:not(:hover) {
+  .pointing .on:focus:not(:hover) {
     color: var(--ink);
   }
 

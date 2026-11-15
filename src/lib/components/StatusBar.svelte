@@ -32,9 +32,11 @@
    * The model and the effort of an integrated session each open a menu of
    * what the agent offers, and the allowance opens a popover with every
    * window in full. A press opens one, Escape or a press elsewhere puts it
-   * away, and the keyboard goes back where it was. A terminal session's
-   * model is what it was started on, as plain text, since the agent owns
-   * any change there.
+   * away, and the keyboard goes back where it was; the keyboard going
+   * elsewhere by a chord puts it away too and stays where it went. What is
+   * open stays above its control as the window changes size. A terminal
+   * session's model is what it was started on, as plain text, since the
+   * agent owns any change there.
    *
    * Short of room, the bar lets its parts go in order: the focus and the
    * mode, then the word "account:", then every figure but the one nearest
@@ -121,7 +123,7 @@
     const width = Math.min(POPOVER_WIDTH, window.innerWidth - 2 * EDGE);
     const wide = which === "allowance" ? width : MENU_WIDTH;
     const left = Math.max(EDGE, Math.min(box.left - (which === "allowance" ? 10 : 4), window.innerWidth - EDGE - wide));
-    at = { left, bottom, width };
+    if (left !== at.left || bottom !== at.bottom || width !== at.width) at = { left, bottom, width };
   }
 
   function toggle(which: Opened, e: MouseEvent) {
@@ -154,17 +156,25 @@
     else returnFocus();
   }
 
-  /** Tab goes on from the control what is open came from. */
-  function tabAway() {
-    trigger?.focus();
+  /** Puts away what is open and leaves the keyboard where it is. */
+  function drop() {
     open = null;
     before = null;
     trigger = null;
   }
 
-  function menuClosed(how: "escape" | "tab") {
+  /** The keyboard goes to the control what is open came from, for Tab to
+      go on from there. */
+  function tabAway() {
+    const control = trigger;
+    drop();
+    control?.focus();
+  }
+
+  function menuClosed(how: "escape" | "tab" | "away") {
     if (how === "tab") tabAway();
-    else close(true);
+    else if (how === "escape") close(true);
+    else drop();
   }
 
   function pick(setting: "model" | "effort", value: string) {
@@ -176,23 +186,23 @@
       popover away and leaves it there. */
   function onPopoverBlur(e: FocusEvent) {
     const next = e.relatedTarget as Node | null;
-    if (next !== null && !layer?.contains(next) && open === "allowance") {
-      open = null;
-      before = null;
-      trigger = null;
-    }
+    if (next !== null && !layer?.contains(next) && open === "allowance") drop();
   }
 
+  /** Escape, Enter and Space put the popover away as its control does,
+      and Tab stops on the control. */
   function onPopoverKey(e: KeyboardEvent) {
-    if (e.key === "Escape") {
+    if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       e.stopPropagation();
       close(true);
-    } else if (e.key === "Tab") tabAway();
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      tabAway();
+    }
   }
 
-  // A press anywhere but on what is open and its control puts it away, as
-  // does the window changing size under it.
+  // A press anywhere but on what is open and its control puts it away.
   $effect(() => {
     if (open === null) return;
     const away = (e: PointerEvent) => {
@@ -200,13 +210,20 @@
       if (target !== null && (trigger?.contains(target) || layer?.contains(target))) return;
       close(true);
     };
-    const resized = () => close(false);
     window.addEventListener("pointerdown", away, true);
-    window.addEventListener("resize", resized);
-    return () => {
-      window.removeEventListener("pointerdown", away, true);
-      window.removeEventListener("resize", resized);
+    return () => window.removeEventListener("pointerdown", away, true);
+  });
+
+  // What is open stays above its control whenever the bar is laid out
+  // again: as the window changes size, or a part of the bar changes.
+  $effect(() => {
+    const node = bar;
+    if (node === null) return;
+    const again = () => {
+      if (open !== null && trigger !== null && trigger.isConnected) place(open, trigger);
     };
+    node.addEventListener("fit", again);
+    return () => node.removeEventListener("fit", again);
   });
 
   // What is open belongs to the session on screen and goes with it, and
