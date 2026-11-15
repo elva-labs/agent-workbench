@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 /**
  * Editor mode: the file tree and an editor in the middle, the agent on the
@@ -2013,3 +2013,112 @@ test.describe("an integrated session beside the editor", () => {
     await expect.poll(() => controls(page)).toEqual(["quit"]);
   });
 });
+
+/** What of the agent's header shows: each part drawn or not, and cut
+    short or whole. A part hidden at a letter or two is not drawn. */
+function headerOrder(page: Page) {
+  return page.evaluate((AGENT) => {
+    const header = document.querySelector(`${AGENT} header`)!;
+    const drawn = (el: Element | null) =>
+      el !== null && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().width > 0.5;
+    const cut = (el: HTMLElement | null) => el !== null && el.scrollWidth > el.clientWidth + 0.5;
+    const tag = header.querySelector<HTMLElement>("[data-testid='workflow-tag']");
+    const role = header.querySelector<HTMLElement>("[data-testid='workflow-tag-role']");
+    const flow = header.querySelector<HTMLElement>("[data-testid='workflow-tag-flow']");
+    const meta = header.querySelector<HTMLElement>(".meta");
+    const title = header.querySelector<HTMLElement>(".title")!;
+    const tagBox = tag?.getBoundingClientRect();
+    const roleBox = role?.getBoundingClientRect();
+    return {
+      title: { cut: cut(title) },
+      name: {
+        on: flow !== null && tagBox !== undefined && drawn(tag) && flow.getBoundingClientRect().top < tagBox.bottom - 1,
+      },
+      crumbs: [...header.querySelectorAll<HTMLElement>(".crumb")].map((crumb) => ({
+        drawn: drawn(crumb),
+        cut: cut(crumb.querySelector<HTMLElement>(".crumb-text")),
+        // The room its text has, in letters of its own type.
+        letters: crumb.querySelector<HTMLElement>(".crumb-text")!.clientWidth / parseFloat(getComputedStyle(crumb).fontSize),
+      })),
+      status: { drawn: drawn(meta), cut: cut(meta) },
+      role:
+        role === null || roleBox === undefined || tagBox === undefined
+          ? null
+          : {
+              drawn: drawn(role) && drawn(tag),
+              cut: cut(role) || roleBox.right > tagBox.right + 0.5,
+            },
+    };
+  }, AGENT);
+}
+
+for (const linux of [false, true]) {
+  const platform = linux ? "as Linux" : "as the platform it runs on";
+  for (const look of ["modern", "terminal"]) {
+    test.describe(`the agent's header short of room, ${look} look, ${platform}`, () => {
+      for (const kind of ["orchestrator", "integrated"] as const) {
+        test(`gives way in turn with ${kind === "orchestrator" ? "a workflow tag" : "a project and a branch"}, the title last`, async ({ page }) => {
+          if (linux) await asLinux(page);
+          await installFakeCore(page, {
+            open: [PROJECT],
+            settings: kind === "orchestrator" ? { ...WITH_WORKFLOW, look } : { integrated: ["claude-code"], look },
+          });
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await page.goto("/");
+          await page.getByTestId("start-agent").click();
+          if (kind === "orchestrator") await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+          else await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+
+          const check = async (where: string) => {
+            const at = await headerOrder(page);
+            const crumbsGone = at.crumbs.every((crumb) => !crumb.drawn);
+            // A crumb shows a few letters with its icon, or is not drawn.
+            for (const crumb of at.crumbs) if (crumb.drawn && crumb.cut) expect(crumb.letters, where).toBeGreaterThanOrEqual(2.5);
+            // The name and the crumbs go before the status is cut short.
+            if (at.status.cut || !at.status.drawn) {
+              expect(at.name.on, where).toBe(false);
+              expect(crumbsGone, where).toBe(true);
+            }
+            // The status goes before the role is cut short.
+            if (at.role !== null && (at.role.cut || !at.role.drawn)) {
+              expect(at.status.drawn, where).toBe(false);
+              expect(at.name.on, where).toBe(false);
+            }
+            // The title is cut short only once the rest has gone.
+            if (at.title.cut) {
+              expect(at.status.drawn, where).toBe(false);
+              expect(at.role?.drawn ?? false, where).toBe(false);
+            }
+            return at;
+          };
+
+          // Where everything fits, everything shows whole.
+          const wide = await check("agent mode at 1440");
+          expect(wide.title.cut).toBe(false);
+          expect(wide.status).toEqual({ drawn: true, cut: false });
+          if (kind === "orchestrator") {
+            expect(wide.role).toEqual({ drawn: true, cut: false });
+            expect(wide.name.on).toBe(true);
+          } else expect(wide.crumbs.every((crumb) => crumb.drawn && !crumb.cut)).toBe(true);
+
+          for (const width of [1200, 1100, 1000, 900]) {
+            await page.setViewportSize({ width, height: 900 });
+            await settled(page);
+            const at = await check(`agent mode at ${width}`);
+            // In agent mode the agent is never narrower than its least
+            // width, and the place and the status both have room there.
+            expect(at.role?.cut ?? false, `agent mode at ${width}`).toBe(false);
+            expect(at.status, `agent mode at ${width}`).toEqual({ drawn: true, cut: false });
+          }
+
+          await page.setViewportSize({ width: 1440, height: 900 });
+          await settled(page);
+          await page.getByTestId("mode-editor").click();
+          await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+          await settled(page);
+          await check("editor mode at 1440");
+        });
+      }
+    });
+  }
+}

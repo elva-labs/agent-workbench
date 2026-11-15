@@ -49,7 +49,14 @@ never goes below 320, so the corner and the window controls never cover
 each other, and the agent opens at 480 while editing. A width dragged by
 hand stays as dragged, and a double-click on the splitter gives the
 default back. Short of room, a header's status gives way before its name,
-and goes once it would show no more than a letter or two. A click on the
+and goes once it would show no more than a letter or two. The agent's header
+gives way in this order: a workflow's name and a session's project and
+branch, then the status, then the session's place in the workflow, and its
+title last. Each is cut short and then goes at a letter or two, its icon or
+its tag with it. In editor mode on Windows and Linux the window controls and
+the corner leave no room for the place in the workflow beside the title, so
+it goes there, and on macOS in the terminal look it is cut a few letters
+short. A click on the
 corner leaves the keyboard where it was, and neither a click nor Tab moves
 the pane focus.
 

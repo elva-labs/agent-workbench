@@ -331,7 +331,9 @@ brought back after a restart and resumed the same way.
 
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,
-asking the user or waiting for a permission. A session another session
+asking the user or waiting for a permission. Short of room the project and
+the branch give way before what the session is doing, and each goes with
+its icon once it would show no more than a letter or two. A session another session
 started is named by the name its start gave, or by the first line of its
 prompt; a name that reads as You, in any case or with anything unseen
 around it, is never taken, since the thread says You for the user alone,

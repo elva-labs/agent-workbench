@@ -247,8 +247,10 @@ place in it, quietly beside the title and in the header's own type: the
 workflow and orchestrator for the session following it, the workflow
 marked deleted where it follows the copy it kept, or the workflow, the step
 and the round for a session started for a step. Where the header is short
-of room, the workflow's name is cut short and then left out, and the place
-stays whole. The rules for that place open in a popover under the tag when
+of room, the workflow's name is cut short and then left out, then the
+header's status, and the place stays whole until both have gone; only
+then is it cut short, and it goes with its tag at a letter or two, before
+the title gives way (see [layout](layout.md)). The rules for that place open in a popover under the tag when
 the pointer rests on it, or on a click, Enter or Space, and Escape puts
 them away. For the orchestrator they are its instructions. For a session
 started for a step they are what the step allows, in the words of its

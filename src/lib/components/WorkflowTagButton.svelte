@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { WorkflowTag } from "$lib/conductor.svelte";
+  import { letters } from "$lib/giveWay";
 
   /**
    * The workflow a session is part of and its place in it, quietly beside
@@ -8,7 +9,9 @@
    * Enter or Space on it. Escape, or a press anywhere else, puts it away.
    *
    * Where the header is short of room, the workflow's name gives way first,
-   * cut short and then gone, and the place stands whole.
+   * cut short and then gone, and the place stands whole: it is what the
+   * header keeps until its status has gone, and only then is cut short
+   * itself, and gone at a letter or two.
    */
   let { tag }: { tag: WorkflowTag } = $props();
 
@@ -123,7 +126,7 @@
     aria-label="{tag.workflow === null ? '' : `${tag.workflow}, `}{tag.role}. Show the rules"
     data-testid="workflow-tag"
   >
-    <span class="role" data-testid="workflow-tag-role">{tag.role}</span>
+    <span class="role" use:letters={tag.role} data-keep data-testid="workflow-tag-role">{tag.role}</span>
     {#if tag.workflow !== null}
       <span class="flow" data-testid="workflow-tag-flow"><span class="name">{tag.workflow}</span><span class="sep">·</span></span>
     {/if}
@@ -154,8 +157,10 @@
 </span>
 
 <style>
+  /* From its own width, so what stands beside it in the header's head
+     gives way before the tag does. */
   .holder {
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
     display: flex;
   }
@@ -164,9 +169,11 @@
      right that wraps, one line tall, so the workflow's name, which shrinks
      to a few letters before it gives way, is what leaves the line when the
      two do not fit. */
+  /* Its padding is the hover's, and its margins bleed it into the gaps
+     around: the text has all of the room the tag is given. */
   .tag {
     min-width: 0;
-    max-width: 100%;
+    max-width: calc(100% + 8px);
     height: calc(var(--meta-size) * 1.6);
     overflow: hidden;
     display: flex;
@@ -202,7 +209,16 @@
   }
 
   .role {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* A place cut to a letter or two goes, and the tag with it: no empty
+     button to hover or to stop on. */
+  .tag:has(.role:global(.cut)) {
+    visibility: hidden;
   }
 
   .flow {

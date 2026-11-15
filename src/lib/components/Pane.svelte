@@ -3,6 +3,7 @@
   import Corner from "$lib/components/Corner.svelte";
   import { core } from "$lib/core";
   import { isMac } from "$lib/keymap";
+  import { keeps, letters } from "$lib/giveWay";
   import {
     WINDOW_CONTROLS,
     layout,
@@ -58,22 +59,6 @@
   // lights: the native popup that stands in for a menu bar.
   let appMenu = $derived(!mac && !bare && leftmost() === id);
 
-  /** A status cut to less than a few letters says nothing, so it is not
-      drawn. Its box keeps its place, so hiding it moves nothing. */
-  function letters(node: HTMLElement, _text: string) {
-    const check = () => {
-      const least = parseFloat(getComputedStyle(node).fontSize) * 3;
-      node.classList.toggle("cut", node.scrollWidth > node.clientWidth && node.clientWidth < least);
-    };
-    const observer = new ResizeObserver(check);
-    observer.observe(node);
-    check();
-    return {
-      update: check,
-      destroy: () => observer.disconnect(),
-    };
-  }
-
   function openAppMenu() {
     core()
       .openAppMenu()
@@ -124,7 +109,7 @@
       {:else}
         {#if appMenu}{@render menuButton()}{/if}
         <span class="title" data-tauri-drag-region>{title}</span>
-        {#if head}<div class="head">{@render head()}</div>{/if}
+        {#if head}<div class="head" use:keeps>{@render head()}</div>{/if}
         {#if meta}<span class="meta" use:letters={meta} data-tauri-drag-region>{meta}</span>{/if}
       {/if}
       {#if corner}<Corner />{/if}
@@ -352,10 +337,19 @@
     text-align: end;
   }
 
-  /* Beside a head the meta keeps to its own width, so the room left over
-     is the head's, which decides for itself what of its own gives way. */
+  /* Beside a head, short of room, the parts give way in turn: what the
+     head holds beyond what it keeps (a workflow's name, a session's
+     project and branch), then the meta, then what the head keeps (the
+     place in the workflow), and the title last. The head starts from what
+     it keeps and has the room left over; the meta keeps its own width; and
+     the shrink factors are so far apart that each gives way to nothing
+     before the one before it has gone. */
+  header:not(.columns) > .head {
+    flex: 1 1000000 var(--keep, 0px);
+  }
+
   header > .head ~ .meta {
-    flex: 0 1 auto;
+    flex: 0 1000000000000 auto;
   }
 
   header.cornered > .meta {
