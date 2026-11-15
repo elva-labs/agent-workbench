@@ -80,7 +80,13 @@
     readWorktrees,
     removable,
   } from "$lib/orchestrator.svelte";
-  import { elapsed, processes, stop as stopProcess, type ProcessRow } from "$lib/processes.svelte";
+  import {
+    elapsed,
+    emptyText as emptyProcesses,
+    processes,
+    stop as stopProcess,
+    type ProcessRow,
+  } from "$lib/processes.svelte";
   import {
     askFor,
     grouped as groupedSections,
@@ -1184,7 +1190,7 @@
               </button>
               {#if layout.processesOpen}
                 {#if processes.rows.length === 0}
-                  <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
+                  <p class="section-empty" data-testid="processes-empty">{emptyProcesses()}</p>
                 {:else}
                   <ul class="rows">
                     {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}

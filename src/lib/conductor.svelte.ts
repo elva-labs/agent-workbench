@@ -99,7 +99,7 @@ import { OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
-import { printable } from "$lib/terminals.svelte";
+import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
 
 /** How many sessions one caller may have running at a time. */
@@ -1989,9 +1989,10 @@ async function resumeSession(
       );
 
     // A row that ended is its transcript again; the resumed session takes
-    // its place rather than sitting beside it.
+    // its place rather than sitting beside it, with the shells opened
+    // beside it.
     const now = byId(id);
-    if (now !== null) close(now.key);
+    if (now !== null) close(now.key, true);
     const looking = sessions.active;
     const session = create(
       project,
@@ -2009,6 +2010,7 @@ async function resumeSession(
       hold();
     }
     if (session.title === null && entry.name !== null) session.title = entry.name;
+    if (now !== null) handOver(now.key, { project, session: session.key });
     if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 
     const trouble = await cameUp(session.key);

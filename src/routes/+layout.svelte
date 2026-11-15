@@ -33,7 +33,7 @@
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
-  import { reopen } from "$lib/reopen.svelte";
+  import { reopen, settleWhen } from "$lib/reopen.svelte";
   import { dirKnown } from "$lib/orchestrator.svelte";
   import { listenIntegrated } from "$lib/integrated.svelte";
   import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
@@ -86,6 +86,9 @@
     });
     const startHooks = () => startChecks(open, arrivals);
     void restored.then(startHooks, startHooks);
+    // The start is settled however the restore ends, so the terminal panel
+    // never waits on it for good.
+    void settleWhen(restored);
     const stopOpening = followOpenRequests(restored);
     return () => {
       closed = true;

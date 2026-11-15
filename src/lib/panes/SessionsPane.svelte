@@ -12,6 +12,8 @@
   import { agentLabel, installed, isReady } from "$lib/agent.svelte";
   import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
   import type { AgentId, ProjectInfo } from "$lib/core";
+  import { busyGoing, closingAside, closingQuestion, type BusyShell, type Closed } from "$lib/leaving.svelte";
+  import { closeOwner as closeShells } from "$lib/terminals.svelte";
   import {
     byChange,
     byKey,
@@ -393,7 +395,7 @@
         label: "Close project",
         destructive: true,
         disabled: false,
-        run: () => closeProjectAsking(path),
+        run: () => void closeProjectAsking(path),
       },
     ];
   });
@@ -754,12 +756,12 @@
       or a live session, archive on a past one. */
   function remove(id: string) {
     if (id.startsWith("idle:")) {
-      closeProjectAsking(id.slice("idle:".length));
+      void closeProjectAsking(id.slice("idle:".length));
     } else if (id.startsWith("project:")) {
       // The orchestrator's own project has no close button, and nothing
       // here closes it either.
       const path = id.slice("project:".length);
-      if (path !== orchestrator.dir) closeProjectAsking(path);
+      if (path !== orchestrator.dir) void closeProjectAsking(path);
     } else if (id.startsWith("session:")) {
       // A session another started hangs quietly on its rail: the cursor
       // walks through those rows, and a key pressed on the way past is no
@@ -767,7 +769,7 @@
       // stops it.
       const key = id.slice("session:".length);
       const session = byKey(key);
-      if (startedFor(key) === null && session !== null) closeSessionAsking(session);
+      if (startedFor(key) === null && session !== null) void closeSessionAsking(session);
     } else if (id.startsWith("past:") && screenProject !== null) {
       disown(screenProject, id.slice("past:".length));
     }
@@ -792,18 +794,55 @@
     return same ? `${name} in ${projectLabel(session.project)}` : name;
   }
 
+  /** The sessions and projects whose shells are being read before the
+      close asked for goes ahead, so a second click meanwhile asks nothing
+      twice. */
+  const reading = new Set<string>();
+
+  /** Reads what a close would stop, once at a time for each thing closed. */
+  function readBusy(id: string, closed: Closed): Promise<BusyShell[]> | null {
+    if (reading.has(id)) return null;
+    reading.add(id);
+    const read = busyGoing(closed);
+    void read.finally(() => reading.delete(id));
+    return read;
+  }
+
   /** Closes a session, asking first when tabs beside it hold the only
-      copy of unsaved edits. */
-  function closeSessionAsking(session: Session) {
-    closeAsking(closingName(session), [session.key], () => closeSession(session.key));
+      copy of unsaved edits or one of its shells is busy. Once the user has
+      said to, its shells close with it, whatever runs in them. */
+  async function closeSessionAsking(session: Session) {
+    const { key, project } = session;
+    const read = readBusy(`session:${key}`, { session: key });
+    if (read === null) return;
+    const busy = await read;
+    closeAsking(
+      closingName(session),
+      [key],
+      () => {
+        closeShells({ project, session: key });
+        closeSession(key);
+      },
+      "session",
+      busy,
+    );
   }
 
   /** Closes a project, asking first when tabs beside it or beside one of
-      its sessions hold the only copy of unsaved edits. */
-  function closeProjectAsking(path: string) {
+      its sessions hold the only copy of unsaved edits, or a shell that
+      started in it is busy. */
+  async function closeProjectAsking(path: string) {
     const owners = [...forProject(path).map((session) => session.key), `project:${path}`];
-    closeAsking(projectLabel(path), owners, () => closeProject(path));
+    const read = readBusy(`project:${path}`, { project: path });
+    if (read === null) return;
+    const busy = await read;
+    closeAsking(projectLabel(path), owners, () => closeProject(path), "project", busy);
   }
+
+  /** The question about busy shells, when nothing is unsaved as well. */
+  let busyAsk = $derived(
+    editor.closing === null ? null : closingQuestion(editor.closing.kind, editor.closing.what, editor.closing.busy),
+  );
 
   /** The pane the focus state named last time this was looked at, so an
       arrival from another pane can be told from the keyboard coming back. */
@@ -1212,7 +1251,7 @@
       <button
         class="icon"
         tabindex="-1"
-        onclick={() => closeSessionAsking(session)}
+        onclick={() => void closeSessionAsking(session)}
         aria-label="Close {label(session)}"
         title="Stop"
         data-testid="close-session">×</button
@@ -1299,7 +1338,7 @@
             <button
               class="icon"
               tabindex="-1"
-              onclick={() => closeSessionAsking(kid)}
+              onclick={() => void closeSessionAsking(kid)}
               aria-label="Close {label(kid)}"
               title="Stop"
               data-testid="close-session">×</button
@@ -1682,18 +1721,30 @@
 
   {#if editor.closing !== null}
     <!-- Closing a session or a project whose tabs hold the only copy of
-         unsaved edits asks first, here where it was closed. -->
+         unsaved edits, or whose shells are busy, asks first, here where it
+         was closed. -->
     <div class="closing" class:folded inert={folded} bind:this={closingStrip}>
-      <ConfirmStrip
-        question="Close {editor.closing.what} with unsaved edits?"
-        detail="{editor.closing.keys.length === 1 ? '1 file' : `${editor.closing.keys.length} files`} open beside it {editor.closing.keys.length === 1 ? 'has' : 'have'} edits not yet saved: {unsavedNames(editor.closing.keys).join(', ')}."
-        action="Close without saving"
-        alternative={{ label: "Save and close", onClick: () => void closingSave() }}
-        safe
-        onConfirm={closingDrop}
-        onCancel={closingCancel}
-        testid="close-owner"
-      />
+      {#if editor.closing.keys.length > 0}
+        <ConfirmStrip
+          question="Close {editor.closing.what} with unsaved edits?"
+          detail="{editor.closing.keys.length === 1 ? '1 file' : `${editor.closing.keys.length} files`} open beside it {editor.closing.keys.length === 1 ? 'has' : 'have'} edits not yet saved: {unsavedNames(editor.closing.keys).join(', ')}.{closingAside(editor.closing.kind, editor.closing.busy)}"
+          action="Close without saving"
+          alternative={{ label: "Save and close", onClick: () => void closingSave() }}
+          safe
+          onConfirm={closingDrop}
+          onCancel={closingCancel}
+          testid="close-owner"
+        />
+      {:else if busyAsk !== null}
+        <ConfirmStrip
+          question={busyAsk.question}
+          detail={busyAsk.detail}
+          action={busyAsk.action}
+          onConfirm={closingDrop}
+          onCancel={closingCancel}
+          testid="close-owner"
+        />
+      {/if}
     </div>
   {/if}
 
