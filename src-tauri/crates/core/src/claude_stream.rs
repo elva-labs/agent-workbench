@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde_json::{json, Value};
 
@@ -23,10 +24,11 @@ use crate::adapter::{
 use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
-    now_seconds, percent, ChangeKind, Choice, CommandInfo, CompactReason, Control, Driver,
-    ErrorKind, Event, FileChange, Hunk, Image, Launch, LimitKind, LimitSeverity, LimitWindow,
-    MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep, Prepared, Protocol,
-    Question, QuestionOption, Reading, Sending, StepStatus, TaskKind, TaskStatus, ToolKind, Usage,
+    kept_windows, limits_due, now_seconds, percent, ChangeKind, Choice, CommandInfo, CompactReason,
+    Control, Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch, LimitKind, LimitSeverity,
+    LimitWindow, MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep,
+    Prepared, Protocol, Question, QuestionOption, Reading, Sending, StepStatus, TaskKind,
+    TaskStatus, ToolKind, Usage,
 };
 
 pub struct ClaudeStream;
@@ -453,10 +455,10 @@ struct Stream {
     /// The account's plan and the windows of its limits, as last told.
     plan: Option<String>,
     windows: Vec<LimitWindow>,
-    /// A read of the limits is out, and another is wanted once it is
-    /// answered.
-    usage_asked: bool,
-    usage_again: bool,
+    /// When the last read of the limits was asked, and when the last one
+    /// answered was taken, in seconds since the epoch.
+    usage_asked: Option<Instant>,
+    read_at: Option<u64>,
 }
 
 /// What names the tool call a result belongs to, in a line from the agent.
@@ -619,11 +621,9 @@ fn questions(input: &Value) -> Vec<Question> {
         .collect()
 }
 
-/// Whether the account the agent reported at the start has no way to sign
-/// in: no token, no key, and the agent's own API to reach.
-/// The window a name of the agent's for one stands for. The windows of
-/// one model are not among them: their names say nothing of the model the
-/// server shows.
+/// The window one of the agent's names for a window stands for. The
+/// windows of one model are not among them: their names say nothing of the
+/// model the server shows.
 fn window_kind(name: &str) -> Option<LimitKind> {
     match name {
         "five_hour" => Some(LimitKind::Session),
@@ -633,53 +633,56 @@ fn window_kind(name: &str) -> Option<LimitKind> {
 }
 
 /// The plan and the windows of a reply to a read of the usage, from the
-/// server's own rows of limits. A row of a kind not known here, or of one
-/// model with no model named, is left out. None for a reply with no rows.
+/// server's own rows of limits, kept as an event may carry them. A row of a
+/// kind not known here, or of one model with no model named, is left out.
+/// None for a reply with no rows.
 fn usage_limits(body: &Value) -> Option<(Option<String>, Vec<LimitWindow>)> {
     let rows = body["rate_limits"]["limits"].as_array()?;
-    let windows = rows
-        .iter()
-        .filter_map(|row| {
-            let (kind, model) = match row["kind"].as_str()? {
-                "session" => (LimitKind::Session, None),
-                "weekly_all" => (LimitKind::Weekly, None),
-                "weekly_scoped" => (
-                    LimitKind::WeeklyScoped,
-                    Some(text(&row["scope"]["model"]["display_name"])?),
-                ),
-                _ => return None,
-            };
-            Some(LimitWindow {
-                kind,
-                model,
-                percent: percent(row["percent"].as_f64()?)?,
-                resets_at: moment(&row["resets_at"]),
-                severity: match row["severity"].as_str() {
-                    Some("normal") => Some(LimitSeverity::Normal),
-                    // The server reads a window as critical close to its
-                    // end as well as past it; only the percent says which.
-                    Some("warning" | "critical") => Some(LimitSeverity::Warning),
-                    _ => None,
-                },
-            })
+    let windows = rows.iter().filter_map(|row| {
+        let (kind, model) = match row["kind"].as_str()? {
+            "session" => (LimitKind::Session, None),
+            "weekly_all" => (LimitKind::Weekly, None),
+            "weekly_scoped" => (
+                LimitKind::WeeklyScoped,
+                Some(text(&row["scope"]["model"]["display_name"])?),
+            ),
+            _ => return None,
+        };
+        Some(LimitWindow {
+            kind,
+            model,
+            percent: percent(row["percent"].as_f64()?)?,
+            resets_at: moment(&row["resets_at"]),
+            severity: match row["severity"].as_str() {
+                Some("normal") => Some(LimitSeverity::Normal),
+                // The server reads a window as critical close to its end
+                // as well as past it; only the percent says which.
+                Some("warning" | "critical") => Some(LimitSeverity::Warning),
+                _ => None,
+            },
         })
-        .collect();
-    Some((text(&body["subscription_type"]), windows))
+    });
+    Some((text(&body["subscription_type"]), kept_windows(windows)))
 }
 
 /// Seconds since the epoch of a time the agent gave: a number of them, or
-/// an ISO 8601 time with its offset, such as `2026-11-19T18:00:00.4+00:00`.
+/// an ISO 8601 time with its offset, such as `2030-01-02T03:04:05.5+00:00`.
+/// Text that is not ASCII, or a year past 9999, is no time.
 fn moment(value: &Value) -> Option<u64> {
     if let Some(seconds) = value.as_u64() {
         return Some(seconds);
     }
-    let text = value.as_str()?;
+    let text = value.as_str().filter(|text| text.is_ascii())?;
     let (date, time) = text.split_once(['T', 't', ' '])?;
     let mut date = date.split('-');
     let year: i64 = date.next()?.parse().ok()?;
     let month: i64 = date.next()?.parse().ok()?;
     let day: i64 = date.next()?.parse().ok()?;
-    if date.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    if date.next().is_some()
+        || !(0..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+    {
         return None;
     }
     let (clock, offset) = match time.strip_suffix(['Z', 'z']) {
@@ -722,6 +725,8 @@ fn moment(value: &Value) -> Option<u64> {
     u64::try_from(seconds).ok()
 }
 
+/// Whether the account the agent reported at the start has no way to sign
+/// in: no token, no key, and the agent's own API to reach.
 fn signed_out(account: &Value) -> bool {
     account["tokenSource"] == "none"
         && account.get("apiKeySource").is_none()
@@ -765,8 +770,8 @@ impl Stream {
             signed_out: false,
             plan: None,
             windows: Vec::new(),
-            usage_asked: false,
-            usage_again: false,
+            usage_asked: None,
+            read_at: None,
         }
     }
 
@@ -888,18 +893,13 @@ impl Stream {
         self.ask_usage(out);
     }
 
-    /// Asks the agent for the account's limits. The agent answers its
-    /// control requests one at a time, and a read can take it seconds, so
-    /// none is asked while another is out, nor while a message waits for
-    /// the agent to take it: whatever the window sends next would wait
-    /// behind it. One asked for while another is out goes once that one is
-    /// answered.
+    /// Asks the agent for the account's limits, once it is ready and then
+    /// after a turn once the last read is old enough. The agent answers its
+    /// control requests one at a time, and a read can take it seconds, with
+    /// whatever the window sends next waiting behind it, so none is asked
+    /// while a message waits for the agent to take it.
     fn ask_usage(&mut self, out: &mut Reading) {
-        if self.signed_out {
-            return;
-        }
-        if self.usage_asked {
-            self.usage_again = true;
+        if self.signed_out || !limits_due(self.usage_asked) {
             return;
         }
         if self
@@ -909,7 +909,7 @@ impl Stream {
         {
             return;
         }
-        self.usage_asked = true;
+        self.usage_asked = Some(Instant::now());
         // The behaviours a full read adds come from a scan of the past
         // week's transcripts, which the limits do not need.
         let (line, _) = self.request(
@@ -919,21 +919,23 @@ impl Stream {
         out.writes.push(line);
     }
 
-    /// The limits as they now stand, taken now.
-    fn limits(&self) -> Event {
+    /// The limits as they now stand, the last figure of them taken at
+    /// `taken_at`.
+    fn limits(&self, taken_at: u64) -> Event {
         Event::Limits {
             agent: AGENT.to_string(),
             plan: self.plan.clone(),
             windows: self.windows.clone(),
-            taken_at: now_seconds(),
+            read_at: self.read_at,
+            taken_at,
         }
     }
 
     /// What the agent says of the limits as each response of the model
-    /// comes: the window that limits it now, and every window at once
-    /// where it gives them all, each as a fraction used. Told when it changes
-    /// what was told before. A window of one model is left out, since only
-    /// a read names the model as the server does.
+    /// comes: the window that limits it now, and every window at once where
+    /// it gives them all, each as a fraction used. Told when it changes what
+    /// was told before. A window of one model is left out, since only a
+    /// read names the model as the server does.
     fn rate_limited(&mut self, info: &Value, out: &mut Reading) {
         let mut changed = false;
         if let Some(kind) = info["rateLimitType"].as_str().and_then(window_kind) {
@@ -955,7 +957,7 @@ impl Stream {
             }
         }
         if changed {
-            out.events.push(self.limits());
+            out.events.push(self.limits(now_seconds()));
         }
     }
 
@@ -1704,16 +1706,14 @@ impl Stream {
         if sent == Sent::Usage {
             // Nothing waits on it, and a read that fails or answers in a
             // shape not known here leaves the limits as they were.
-            self.usage_asked = false;
             if response["subtype"] == "success" {
                 if let Some((plan, windows)) = usage_limits(&response["response"]) {
                     self.plan = plan;
                     self.windows = windows;
-                    out.events.push(self.limits());
+                    let now = now_seconds();
+                    self.read_at = Some(now);
+                    out.events.push(self.limits(now));
                 }
-            }
-            if std::mem::take(&mut self.usage_again) {
-                self.ask_usage(out);
             }
             return;
         }
@@ -3624,7 +3624,7 @@ mod tests {
             &mut stream,
             &[
                 json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-1","response":{
-                    "account":{"apiProvider":"firstParty","subscriptionType":"team"},"models":[]}}}),
+                    "account":{"apiProvider":"firstParty","subscriptionType":"max"},"models":[]}}}),
                 json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-2","response":{"applied":{}}}}),
             ],
         );
@@ -3634,35 +3634,53 @@ mod tests {
         (stream, reads[0].clone())
     }
 
-    /// A reply to a read of the usage, shaped as Claude Code 2.1.323
+    /// Makes the last read asked as old as a read stands for. A clock that
+    /// cannot go back that far forgets the read, which is older still.
+    fn aged(stream: &mut Stream) {
+        stream.usage_asked = stream
+            .usage_asked
+            .and_then(|asked| asked.checked_sub(crate::integrated::LIMITS_AGE));
+    }
+
+    /// A turn of a message, from its start to its end.
+    fn turn_of(stream: &mut Stream, message: &str) -> Reading {
+        sent(stream, message);
+        readings(stream, &[lifecycle(message, "started"), init(), result()])
+    }
+
+    /// A reply to a read of the usage, in the shape Claude Code 2.1.323
     /// answers one, with the rows given.
     fn usage_reply(request: &str, limits: Value) -> Value {
         json!({"type":"control_response","response":{"subtype":"success","request_id":request,"response":{
             "session":{"total_cost_usd":0,"model_usage":{}},
-            "subscription_type":"team","rate_limits_available":true,"behaviors":null,
+            "subscription_type":"max","rate_limits_available":true,"behaviors":null,
             "rate_limits":{
-                "five_hour":{"utilization":28,"resets_at":"2026-11-15T10:20:00.333747+00:00"},
+                "five_hour":{"utilization":20,"resets_at":"2030-01-01T05:00:00.5+00:00"},
                 "seven_day_opus":null,"something_new":{"a":1},
                 "limits":limits}}}})
     }
 
     fn rows() -> Value {
         json!([
-            {"kind":"session","group":"session","percent":28,"severity":"normal",
-             "resets_at":"2026-11-15T10:20:00.333747+00:00","scope":null,"is_active":false},
+            {"kind":"session","group":"session","percent":20,"severity":"normal",
+             "resets_at":"2030-01-01T05:00:00.5+00:00","scope":null,"is_active":false},
             {"kind":"weekly_all","group":"weekly","percent":40,"severity":"warning",
-             "resets_at":"2026-11-19T18:00:00.333764+00:00","scope":null,"is_active":false},
-            {"kind":"weekly_scoped","group":"weekly","percent":48,"severity":"critical",
-             "resets_at":"2026-11-19T18:00:00+00:00",
+             "resets_at":"2030-01-05T00:00:00+00:00","scope":null,"is_active":false},
+            {"kind":"weekly_scoped","group":"weekly","percent":60,"severity":"critical",
+             "resets_at":"2030-01-05T00:00:00Z",
              "scope":{"model":{"id":null,"display_name":"Fable"},"surface":null},"is_active":true},
             {"kind":"weekly_scoped","group":"weekly","percent":5,"severity":"normal",
-             "resets_at":null,"scope":{"model":null,"surface":{"display_name":"Cowork"}}},
-            {"kind":"monthly_spend","percent":12,"severity":"normal"},
+             "resets_at":null,"scope":{"model":null,"surface":{"display_name":"Elsewhere"}}},
+            {"kind":"monthly_spend","percent":10,"severity":"normal"},
             {"kind":"session","percent":"lots"}
         ])
     }
 
-    fn limits_of(events: &[Event]) -> Vec<(Option<String>, Vec<LimitWindow>, u64)> {
+    /// The limits told: the plan, the windows, when the last read was
+    /// taken and when the last figure moved.
+    type Told = (Option<String>, Vec<LimitWindow>, Option<u64>, u64);
+
+    fn limits_of(events: &[Event]) -> Vec<Told> {
         events
             .iter()
             .filter_map(|event| match event {
@@ -3670,10 +3688,13 @@ mod tests {
                     agent,
                     plan,
                     windows,
+                    read_at,
                     taken_at,
                 } => {
                     assert_eq!(agent, "claude-code");
-                    Some((plan.clone(), windows.clone(), *taken_at))
+                    assert!(taken_at.abs_diff(now_seconds()) < 60);
+                    assert!(read_at.is_none_or(|read_at| read_at <= *taken_at));
+                    Some((plan.clone(), windows.clone(), *read_at, *taken_at))
                 }
                 _ => None,
             })
@@ -3697,30 +3718,30 @@ mod tests {
     }
 
     #[test]
-    fn the_limits_are_read_once_ready_and_after_each_turn() {
+    fn the_limits_are_read_once_ready_and_after_a_turn_once_the_last_read_is_old() {
         let (mut stream, read) = ready_reading();
         let reading = readings(&mut stream, &[usage_reply(&read, rows())]);
         assert!(reading.replies.is_empty(), "nothing waits on the read");
         let told = limits_of(&reading.events);
         assert_eq!(told.len(), 1, "{:?}", reading.events);
-        let (plan, windows, taken_at) = &told[0];
-        assert_eq!(plan.as_deref(), Some("team"));
-        assert!(taken_at.abs_diff(now_seconds()) < 60);
+        let (plan, windows, read_at, taken_at) = &told[0];
+        assert_eq!(plan.as_deref(), Some("max"));
+        assert_eq!(*read_at, Some(*taken_at), "a read gives every figure");
         assert_eq!(
             windows,
             &[
                 window(
                     LimitKind::Session,
                     None,
-                    28.0,
-                    Some(1_794_738_000),
+                    20.0,
+                    Some(1_893_474_000),
                     Some(LimitSeverity::Normal)
                 ),
                 window(
                     LimitKind::Weekly,
                     None,
                     40.0,
-                    Some(1_795_111_200),
+                    Some(1_893_801_600),
                     Some(LimitSeverity::Warning)
                 ),
                 // The server's critical is near the end as well as past
@@ -3728,18 +3749,23 @@ mod tests {
                 window(
                     LimitKind::WeeklyScoped,
                     Some("Fable"),
-                    48.0,
-                    Some(1_795_111_200),
+                    60.0,
+                    Some(1_893_801_600),
                     Some(LimitSeverity::Warning)
                 ),
             ],
             "a row of no model, of a kind not known or with no percent is left out"
         );
 
-        // After a turn, the limits are read again, and told again whole
-        // even where nothing moved.
-        sent(&mut stream, M1);
-        let reading = readings(&mut stream, &[lifecycle(M1, "started"), init(), result()]);
+        // A turn that ends soon after asks nothing: what the agent pushed
+        // during it moved the session window and the week.
+        let reading = turn_of(&mut stream, M1);
+        assert!(usage_reads(&reading.writes).is_empty());
+
+        // Once the last read is old, the end of a turn reads again, and
+        // the figures are told again whole even where nothing moved.
+        aged(&mut stream);
+        let reading = turn_of(&mut stream, M2);
         let reads = usage_reads(&reading.writes);
         assert_eq!(reads.len(), 1, "{:?}", reading.writes);
         let told = limits_of(&readings(&mut stream, &[usage_reply(&reads[0], rows())]).events);
@@ -3748,28 +3774,49 @@ mod tests {
     }
 
     #[test]
-    fn one_read_at_a_time_and_none_while_a_message_waits() {
+    fn two_turns_in_quick_succession_ask_once() {
         let (mut stream, read) = ready_reading();
-        // A turn that ends while the read is out asks for none of its own,
-        // and one goes once the read is answered.
-        sent(&mut stream, M1);
-        let reading = readings(&mut stream, &[lifecycle(M1, "started"), init(), result()]);
-        assert!(usage_reads(&reading.writes).is_empty());
-        let reading = readings(&mut stream, &[usage_reply(&read, rows())]);
-        let again = usage_reads(&reading.writes);
-        assert_eq!(again.len(), 1, "{:?}", reading.writes);
-        readings(&mut stream, &[usage_reply(&again[0], rows())]);
+        readings(&mut stream, &[usage_reply(&read, rows())]);
+        aged(&mut stream);
+        let first = usage_reads(&turn_of(&mut stream, M1).writes);
+        assert_eq!(first.len(), 1);
+        readings(&mut stream, &[usage_reply(&first[0], rows())]);
+        let second = turn_of(&mut stream, M2);
+        assert!(
+            usage_reads(&second.writes).is_empty(),
+            "answered, and too young to ask again"
+        );
+    }
 
+    #[test]
+    fn a_read_never_answered_holds_back_none_past_its_age() {
+        let (mut stream, _) = ready_reading();
+        let reading = turn_of(&mut stream, M1);
+        assert!(usage_reads(&reading.writes).is_empty(), "still young");
+        aged(&mut stream);
+        let reading = turn_of(&mut stream, M2);
+        assert_eq!(
+            usage_reads(&reading.writes).len(),
+            1,
+            "the lost read is gone"
+        );
+    }
+
+    #[test]
+    fn no_read_while_a_message_waits() {
+        let (mut stream, read) = ready_reading();
+        readings(&mut stream, &[usage_reply(&read, rows())]);
+        aged(&mut stream);
         // A message sent during a turn waits for the next one, which the
         // agent starts as soon as this one ends: nothing is read before
         // it, so nothing the window sends waits behind the read.
+        sent(&mut stream, M1);
+        let reading = readings(&mut stream, &[lifecycle(M1, "started"), init()]);
+        assert_eq!(started(&reading.events), [vec![M1.to_string()]]);
         sent(&mut stream, M2);
-        let reading = readings(&mut stream, &[lifecycle(M2, "started"), init()]);
-        assert_eq!(started(&reading.events), [vec![M2.to_string()]]);
-        sent(&mut stream, M3);
         let reading = readings(&mut stream, &[result()]);
         assert!(usage_reads(&reading.writes).is_empty());
-        let reading = readings(&mut stream, &[lifecycle(M3, "started"), init(), result()]);
+        let reading = readings(&mut stream, &[lifecycle(M2, "started"), init(), result()]);
         assert_eq!(usage_reads(&reading.writes).len(), 1);
     }
 
@@ -3790,8 +3837,7 @@ mod tests {
             );
             assert!(reading.events.is_empty(), "{:?}", reading.events);
             assert!(reading.replies.is_empty());
-            sent(&mut stream, M1);
-            let reading = readings(&mut stream, &[lifecycle(M1, "started"), init(), result()]);
+            let reading = turn_of(&mut stream, M1);
             assert!(reading.events.iter().any(|event| matches!(
                 event,
                 Event::TurnEnded {
@@ -3799,17 +3845,50 @@ mod tests {
                     ..
                 }
             )));
-            assert_eq!(
-                usage_reads(&reading.writes).len(),
-                1,
-                "a failed read is not out any more"
+            assert!(
+                usage_reads(&reading.writes).is_empty(),
+                "a read that failed counts towards the next one's age"
             );
+            aged(&mut stream);
+            assert_eq!(usage_reads(&turn_of(&mut stream, M2).writes).len(), 1);
         }
         // A server with no rows to give has no windows to tell.
         let (mut stream, read) = ready_reading();
         let told = limits_of(&readings(&mut stream, &[usage_reply(&read, json!([]))]).events);
         assert_eq!(told.len(), 1);
         assert!(told[0].1.is_empty());
+    }
+
+    #[test]
+    fn the_windows_told_are_one_of_each_and_few_with_short_names() {
+        let (mut stream, read) = ready_reading();
+        let mut rows = vec![
+            json!({"kind":"weekly_scoped","percent":10,"scope":{"model":{"display_name":"Fable"}}}),
+            json!({"kind":"session","percent":20}),
+            json!({"kind":"session","percent":30}),
+            json!({"kind":"weekly_scoped","percent":40,"scope":{"model":{"display_name":"Fable"}}}),
+            json!({"kind":"weekly_scoped","percent":50,"scope":{"model":{"display_name":"é".repeat(100)}}}),
+        ];
+        for model in 0..12 {
+            rows.push(json!({"kind":"weekly_scoped","percent":1,
+                "scope":{"model":{"display_name":format!("Model {model}")}}}));
+        }
+        let told = limits_of(&readings(&mut stream, &[usage_reply(&read, json!(rows))]).events);
+        let windows = &told[0].1;
+        assert_eq!(windows.len(), 8, "{windows:?}");
+        assert_eq!(windows[0].kind, LimitKind::Session, "kinds in order");
+        assert_eq!(windows[0].percent, 20.0, "the first of a kind is kept");
+        assert_eq!(windows[1].model.as_deref(), Some("Fable"));
+        assert_eq!(windows[1].percent, 10.0);
+        let long = windows[2].model.as_deref().unwrap();
+        assert_eq!(long, "é".repeat(32), "cut short on a character's edge");
+        assert!(
+            windows
+                .iter()
+                .filter(|window| window.model.as_deref() == Some("Fable"))
+                .count()
+                == 1
+        );
     }
 
     #[test]
@@ -3836,23 +3915,23 @@ mod tests {
     #[test]
     fn what_each_response_says_of_the_limits_moves_the_windows_it_names() {
         let (mut stream, read) = ready_reading();
-        readings(&mut stream, &[usage_reply(&read, rows())]);
+        let read_at = limits_of(&readings(&mut stream, &[usage_reply(&read, rows())]).events)[0].2;
         let out = events(
             &mut stream,
             &[
                 // The window that limits the agent now, as a fraction.
-                rate_limit(json!({"status":"allowed_warning","resetsAt":1_794_740_000,
+                rate_limit(json!({"status":"allowed_warning","resetsAt":1_893_480_000,
                     "rateLimitType":"five_hour","utilization":0.5,"isUsingOverage":false})),
                 // The same again moves nothing.
-                rate_limit(json!({"status":"allowed_warning","resetsAt":1_794_740_000,
+                rate_limit(json!({"status":"allowed_warning","resetsAt":1_893_480_000,
                     "rateLimitType":"five_hour","utilization":0.5})),
                 // Every window at once; one of a model, and one past its
                 // end, which is held at a hundred.
                 rate_limit(
                     json!({"status":"allowed","rateLimitType":"seven_day_opus","utilization":0.9,
                     "unifiedWindows":{
-                        "seven_day":{"utilization":1.25,"resetsAt":1_795_327_200,"status":"rejected","surpassedThreshold":1},
-                        "seven_day_overage_included":{"utilization":0.1,"resetsAt":1_795_327_200}}}),
+                        "seven_day":{"utilization":1.25,"resetsAt":1_893_900_000,"status":"rejected","surpassedThreshold":1},
+                        "seven_day_overage_included":{"utilization":0.1,"resetsAt":1_893_900_000}}}),
                 ),
                 // Nothing it can read.
                 rate_limit(json!({"status":"allowed"})),
@@ -3862,14 +3941,15 @@ mod tests {
         );
         let told = limits_of(&out);
         assert_eq!(told.len(), 2, "{out:?}");
-        assert_eq!(told[0].0.as_deref(), Some("team"), "the plan stays");
+        assert_eq!(told[0].0.as_deref(), Some("max"), "the plan stays");
+        assert_eq!(told[0].2, read_at, "the read is as old as it was");
         assert_eq!(
             told[0].1[0],
             window(
                 LimitKind::Session,
                 None,
                 50.0,
-                Some(1_794_740_000),
+                Some(1_893_480_000),
                 Some(LimitSeverity::Warning)
             )
         );
@@ -3880,7 +3960,7 @@ mod tests {
                 LimitKind::Weekly,
                 None,
                 100.0,
-                Some(1_795_327_200),
+                Some(1_893_900_000),
                 Some(LimitSeverity::Reached)
             )
         );
@@ -3889,8 +3969,8 @@ mod tests {
             window(
                 LimitKind::WeeklyScoped,
                 Some("Fable"),
-                48.0,
-                Some(1_795_111_200),
+                60.0,
+                Some(1_893_801_600),
                 Some(LimitSeverity::Warning)
             ),
             "a window of one model moves only with a read"
@@ -3905,16 +3985,17 @@ mod tests {
             &mut stream,
             &[rate_limit(
                 json!({"status":"allowed","rateLimitType":"seven_day","utilization":0.25,
-                "unifiedWindows":{"five_hour":{"utilization":0.75,"resetsAt":1_794_740_000}}}),
+                "unifiedWindows":{"five_hour":{"utilization":0.75,"resetsAt":1_893_480_000}}}),
             )],
         );
         let told = limits_of(&out);
         assert_eq!(told.len(), 1);
         assert_eq!(told[0].0, None);
+        assert_eq!(told[0].2, None, "no read yet");
         assert_eq!(
             told[0].1,
             [
-                window(LimitKind::Session, None, 75.0, Some(1_794_740_000), None),
+                window(LimitKind::Session, None, 75.0, Some(1_893_480_000), None),
                 window(
                     LimitKind::Weekly,
                     None,
@@ -3931,20 +4012,23 @@ mod tests {
         let at = |value: Value| moment(&value);
         assert_eq!(at(json!("1970-01-01T00:00:00Z")), Some(0));
         assert_eq!(
-            at(json!("2026-11-19T18:00:00.407394+00:00")),
-            Some(1_795_111_200)
+            at(json!("2030-01-02T03:04:05.123456+00:00")),
+            Some(1_893_553_445)
         );
-        assert_eq!(at(json!("2026-11-19T20:00:00+02:00")), Some(1_795_111_200));
-        assert_eq!(at(json!("2026-11-19T13:30:00-0430")), Some(1_795_111_200));
+        assert_eq!(at(json!("2030-01-02T05:04:05+02:00")), Some(1_893_553_445));
+        assert_eq!(at(json!("2030-01-01T22:34:05-0430")), Some(1_893_553_445));
         assert_eq!(at(json!("2024-02-29T00:00:00Z")), Some(1_709_164_800));
         assert_eq!(at(json!("2000-03-01T00:00:00Z")), Some(951_868_800));
-        assert_eq!(at(json!(1_795_111_200)), Some(1_795_111_200));
+        assert_eq!(at(json!(1_893_553_445)), Some(1_893_553_445));
         for wrong in [
-            json!("2026-11-19T18:00:00"),
-            json!("2026-13-19T18:00:00Z"),
-            json!("2026-11-19 25:00:00Z"),
+            json!("2030-01-02T03:04:05"),
+            json!("2030-13-02T03:04:05Z"),
+            json!("2030-01-02 25:00:00Z"),
             json!("soon"),
             json!("1969-12-31T23:59:59Z"),
+            json!("2026-11-19T18:00:00+1é1"),
+            json!("999999999999-01-01T00:00:00Z"),
+            json!("10000-01-01T00:00:00Z"),
             json!(-5),
             Value::Null,
         ] {

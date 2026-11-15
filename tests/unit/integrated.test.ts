@@ -284,11 +284,15 @@ describe("the scripted integrated session", () => {
   it("tells the account's limits as the agent reports them, and the snapshot holds the last", () => {
     const { fake, heard, id } = started();
     expect(fake.snapshot(id).limits).toBeNull();
-    fake.limits(id, [{ kind: "session", percent: 11, resetsAt: 1_794_738_000 }], { plan: "max", takenAt: 100 });
-    fake.limits(id, [
-      { kind: "session", percent: 80, severity: "warning" },
-      { kind: "weeklyScoped", model: "Fable", percent: 100, severity: "reached" },
-    ]);
+    fake.limits(id, [{ kind: "session", percent: 10, resetsAt: 1_900_000_000 }], { plan: "max", takenAt: 100 });
+    fake.limits(
+      id,
+      [
+        { kind: "session", percent: 80, severity: "warning" },
+        { kind: "weeklyScoped", model: "Fable", percent: 100, severity: "reached" },
+      ],
+      { readAt: 100 },
+    );
     const told = heard.filter((event) => event.type === "limits");
     expect(told).toEqual([
       {
@@ -296,10 +300,11 @@ describe("the scripted integrated session", () => {
         type: "limits",
         agent: "claude-code",
         plan: "max",
-        windows: [{ kind: "session", model: null, percent: 11, resetsAt: 1_794_738_000, severity: null }],
+        windows: [{ kind: "session", model: null, percent: 10, resetsAt: 1_900_000_000, severity: null }],
+        readAt: 100,
         takenAt: 100,
       },
-      expect.objectContaining({ plan: null }),
+      expect.objectContaining({ plan: null, readAt: 100 }),
     ]);
     const { id: _id, ...last } = told[1];
     expect(fake.snapshot(id).limits).toEqual(last);
@@ -314,8 +319,12 @@ describe("the scripted integrated session", () => {
     expect(states(heard)).toEqual(["idle"]);
 
     const codex = fake.start({ agent: "codex", project: "/repo" });
-    fake.limits(codex.id, [{ kind: "weekly", percent: 3 }]);
-    expect(fake.snapshot(codex.id).limits).toMatchObject({ agent: "codex", windows: [{ kind: "weekly" }] });
+    fake.limits(codex.id, [{ kind: "weekly", percent: 3 }], { readAt: null });
+    expect(fake.snapshot(codex.id).limits).toMatchObject({
+      agent: "codex",
+      readAt: null,
+      windows: [{ kind: "weekly" }],
+    });
   });
 
   it("tells no window a secret answer, and takes only options where it takes no words", () => {
