@@ -1,7 +1,7 @@
 <script lang="ts">
   import { core } from "$lib/core";
   import { saidBlocks } from "$lib/media.svelte";
-  import { tick } from "svelte";
+  import { mount, tick, unmount } from "svelte";
   import Copy from "./Copy.svelte";
 
   /**
@@ -10,8 +10,10 @@
    * an image from an address shown as a link to it rather than fetched.
    * While it streams it is drawn again at most once a frame, a block at a
    * time so the blocks before the last stay as they are, and a caret
-   * stands where the next words will come, so the text grows in place. A
-   * code block has a Copy in its top corner that copies its code.
+   * stands where the next words will come, so the text grows in place.
+   * Every code block, at the top or in a list or a quote, has a Copy in its
+   * top corner that copies its code; one in a block that is done keeps its
+   * Copy, and the keyboard on it, while the words after it still come.
    */
   interface Props {
     text: string;
@@ -46,15 +48,45 @@
 
   let box = $state<HTMLDivElement | null>(null);
 
+  /** The Copy put in each code block's box, by the box. A box goes when
+      its block is drawn again, and its Copy with it. */
+  const copies = new Map<HTMLElement, ReturnType<typeof mount>>();
+
+  /** The code a block's box holds, as written. */
+  function codeIn(code: HTMLElement): string {
+    return (code.querySelector("pre code")?.textContent ?? "").replace(/\n$/, "");
+  }
+
   // A link is walked with the arrows in the thread, which is one stop for
-  // Tab, rather than being a stop of its own.
+  // Tab, rather than being a stop of its own; and each code block gets its
+  // Copy.
   $effect(() => {
     blocks;
     const node = box;
     // After the text is drawn again, which can be a turn after this runs.
     void tick().then(() => {
       for (const link of node?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) link.tabIndex = -1;
+      for (const [code, copy] of copies)
+        if (!code.isConnected || node === null || !node.contains(code)) {
+          void unmount(copy);
+          copies.delete(code);
+        }
+      for (const code of node?.querySelectorAll<HTMLElement>("div.code[data-copy-host='code']") ?? []) {
+        if (copies.has(code)) continue;
+        copies.set(
+          code,
+          mount(Copy, {
+            target: code,
+            props: { label: "Copy", name: "Copy the code", text: () => codeIn(code), host: "code", place: "corner", testid: "copy-code" },
+          }),
+        );
+      }
     });
+  });
+
+  $effect(() => () => {
+    for (const copy of copies.values()) void unmount(copy);
+    copies.clear();
   });
 
   function onclick(e: MouseEvent) {
@@ -70,14 +102,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown">
   {#each blocks as block, at (at)}
-    {#if block.code === null}
-      {@html block.html}
-    {:else}
-      <div class="code" data-copy-host="code">
-        {@html block.html}
-        <Copy label="Copy" name="Copy the code" text={() => block.code ?? ""} host="code" place="corner" testid="copy-code" />
-      </div>
-    {/if}
+    {@html block}
   {/each}
 </div>
 
@@ -149,12 +174,12 @@
     line-height: 1.5;
   }
 
-  .code {
+  .md :global(.code) {
     position: relative;
     margin: 0 0 0.7em;
   }
 
-  .code > :global(pre) {
+  .md :global(.code > pre) {
     margin: 0;
   }
 
