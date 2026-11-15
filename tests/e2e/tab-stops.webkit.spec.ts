@@ -342,6 +342,98 @@ test("reaches the terminal panel's own controls before its shell", async ({ page
   await expect(page.getByTestId("terminal-row")).toBeHidden();
 });
 
+/** What each pty was sent from the `from`th write on, by its id. */
+function sent(page: Page, from: number) {
+  return page.evaluate((from) => {
+    const out: Record<string, string> = {};
+    for (const [id, data] of ((window as unknown as { __written?: [string, string][] }).__written ?? []).slice(from))
+      out[id] = (out[id] ?? "") + data;
+    return out;
+  }, from);
+}
+
+const writes = (page: Page) =>
+  page.evaluate(() => ((window as unknown as { __written?: unknown[] }).__written ?? []).length);
+
+/** Types `text` and names the one pty it reached. */
+async function typeInto(page: Page, text: string) {
+  const from = await writes(page);
+  await page.keyboard.type(text);
+  await expect.poll(async () => Object.values(await sent(page, from)).join("")).toBe(text);
+  const reached = Object.keys(await sent(page, from));
+  expect(reached).toHaveLength(1);
+  return reached[0];
+}
+
+/** The panel with two shells, the second in front with the keyboard; the
+    ptys of the two, in order. */
+async function twoShells(page: Page) {
+  await open(page);
+  await page.keyboard.press(`${MOD}+J`);
+  await expect(page.getByTestId("terminal-row")).toHaveCount(1);
+  await expect.poll(() => holder(page)).toBe("Terminal input");
+  const first = await typeInto(page, "a");
+  await page.getByTestId("new-terminal").click();
+  await expect(page.getByTestId("terminal-row")).toHaveCount(2);
+  await expect.poll(() => holder(page)).toBe("Terminal input");
+  const second = await typeInto(page, "b");
+  expect(second).not.toBe(first);
+  return [first, second];
+}
+
+const row = (page: Page, at: number) => page.getByTestId("terminal-row").nth(at);
+
+test("a click on a shell's row puts the keyboard in that shell", async ({ page }) => {
+  const [first, second] = await twoShells(page);
+  await row(page, 0).click();
+  await expect(row(page, 0)).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => holder(page)).toBe("Terminal input");
+  expect(await typeInto(page, "echo hi")).toBe(first);
+  // Backspace is the shell's, and closes nothing.
+  const from = await writes(page);
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => sent(page, from)).toEqual({ [first]: "\x7f" });
+  await expect(page.getByTestId("terminal-row")).toHaveCount(2);
+  await row(page, 1).click();
+  await expect.poll(() => holder(page)).toBe("Terminal input");
+  expect(await typeInto(page, "ls")).toBe(second);
+});
+
+test("Enter on a shell's row puts the keyboard in that shell", async ({ page }) => {
+  const [first] = await twoShells(page);
+  await page.getByTestId("hide-terminal").focus();
+  expect(await walk(page, "Tab", 1)).toEqual(["terminal-row"]);
+  await expect(row(page, 1)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(row(page, 0)).toBeFocused();
+  await expect(row(page, 1)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Enter");
+  await expect(row(page, 0)).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => holder(page)).toBe("Terminal input");
+  expect(await typeInto(page, "ls")).toBe(first);
+  await expect(page.getByTestId("terminal-row")).toHaveCount(2);
+});
+
+test("Delete on a shell's row closes it only once the arrows have walked the rows", async ({ page }) => {
+  await twoShells(page);
+  await page.getByTestId("hide-terminal").focus();
+  expect(await walk(page, "Tab", 1)).toEqual(["terminal-row"]);
+  // Tab onto the rows alone closes nothing.
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("Backspace");
+  await expect(page.getByTestId("terminal-row")).toHaveCount(2);
+  await expect(row(page, 1)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Delete");
+  await expect(page.getByTestId("terminal-row")).toHaveCount(1);
+  // The keyboard stays on the rows, and the next Delete closes the last.
+  await expect(row(page, 0)).toBeFocused();
+  await page.keyboard.press("Backspace");
+  await expect(page.getByTestId("terminal-row")).toHaveCount(0);
+  await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  await expect.poll(() => holder(page)).not.toBeNull();
+});
+
 test("takes no Tab into a pane narrowed away or under a dialog", async ({ page }) => {
   await open(page, 660);
   await expect(page.locator("section[data-pane='changes']")).toHaveCount(0);

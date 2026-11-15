@@ -9,8 +9,10 @@
     DEFAULT,
     MIN,
     applyLayout,
+    focusPane,
     hideTerminal,
     layout,
+    returnFocus,
     saveLayout,
     terminalVisible,
   } from "$lib/layout.svelte";
@@ -65,16 +67,45 @@
 
   let rows = $state<HTMLDivElement | null>(null);
 
-  /** Delete on a row closes its shell, and the keyboard stays on the rows. */
+  /** Whether the arrows have walked the rows since the keyboard came onto
+      them. Only then does Delete close a shell, so a key meant for a shell
+      never closes one. */
+  let walked = false;
+
+  /** A row picks its shell and puts the keyboard in it, by a click as by
+      Enter or Space. A row that had the keyboard lets it go, since the
+      shell yields to a control of its own pane. */
+  function choose(key: string) {
+    select(key);
+    const holder = document.activeElement;
+    if (holder instanceof HTMLElement && rows?.contains(holder)) holder.blur();
+    focusPane("terminal");
+  }
+
+  /** The arrows walk the rows, and Delete then closes the shell under the
+      keyboard, which stays on the rows; with the last shell gone, it goes
+      back to the pane the panel hands the focus to. */
   async function onRowKeydown(e: KeyboardEvent, key: string) {
+    if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") {
+      walked = true;
+      return;
+    }
     if (e.key !== "Delete" && e.key !== "Backspace") return;
     e.preventDefault();
+    if (!walked) return;
     close(key);
     await tick();
-    (
+    const next =
       rows?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]') ??
-      rows?.querySelector<HTMLElement>('[role="option"]')
-    )?.focus();
+      rows?.querySelector<HTMLElement>('[role="option"]');
+    if (next) {
+      next.focus();
+      walked = true;
+    } else returnFocus();
+  }
+
+  function onRowFocusout(e: FocusEvent) {
+    if (!(e.relatedTarget instanceof Node && rows?.contains(e.relatedTarget))) walked = false;
   }
 
   /** Whether this shell has a neighbour on its left in the shown group. */
@@ -128,7 +159,8 @@
 
       <!-- One row per shell, grouped: the rows under the first of a group are
            the shells beside it. The rows are one stop, walked with the
-           arrows; Enter goes to the shell and Delete closes it. -->
+           arrows. A click, Enter or Space on a row goes to its shell, and
+           Delete closes the shell once the arrows have walked the rows. -->
       <div class="rows" role="listbox" aria-label="Shells" bind:this={rows}>
       {#each groups as group (group[0].group)}
         <div class="group" class:on={group[0].group === shown} role="group" data-testid="terminal-group">
@@ -137,8 +169,10 @@
               <button
                 class="name"
                 role="option"
-                onclick={() => select(shell.key)}
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => choose(shell.key)}
                 onkeydown={(e) => onRowKeydown(e, shell.key)}
+                onfocusout={onRowFocusout}
                 aria-selected={shell.key === terminals.active}
                 aria-current={shell.key === terminals.active ? "true" : undefined}
                 data-testid="terminal-row"
