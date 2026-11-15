@@ -127,18 +127,23 @@ never had or one that has stopped, cannot come from one of its sessions,
 and every one of the seven tools refuses it, with the reason, asking
 nothing.
 
-A call that names no session comes from an agent the workbench did not
-start, such as one run by hand in a project whose hooks are on, which has
-the same tools. It is never taken for a session running where it calls
-from. It is a starter of its own, known by the directory it calls from: it
-lists, directs and resumes the sessions it started from there and no
-others, with a cap of its own, and follows no workflow. Every session it
-asks to start is put to the user, and the question says that an agent the
-workbench did not start, running in that directory, is asking, and offers
-Allow once or No: the workbench cannot tell which agent it is, so no
-standing answer is used or given. A session started by another that calls
-with its token taken out of its environment is such an agent too, and is
-asked about each time. The sessions such an agent starts run under the
+A call that names no session is taken for one from an agent the workbench
+did not start, such as one run by hand in a project whose hooks are on,
+which has the same tools. That is all the workbench knows of it: a session
+whose tools do not pass its token on makes such calls too, one that took
+the token out of its environment, or a Codex installed as a script on
+Windows, which is not told how to pass it on (see
+[adapters](adapters.md#under-a-workflow)). It is never taken for a session
+running where it calls from. It is a starter of its own, known by the
+directory it calls from: it lists, directs and resumes the sessions it
+started from there and no others, with a cap of its own, and follows no
+workflow. Every session it asks to start is put to the user. The question
+says only what is known: an unnamed agent running in that directory is
+asking, one run outside the workbench or a session that left its name out.
+It offers Allow once or No: the workbench cannot tell which agent it is,
+so no standing answer is used or given. A session started by another that
+calls with its token taken out of its environment is asked about each time
+in the same way. The sessions such an agent starts run under the
 project's account, which the question and the answer name, and start none
 of their own. While any session follows a workflow it may list and look but
 not start, resume or send, since it cannot be held to the workflow. Two
@@ -288,8 +293,8 @@ see which process made the call. A tool server run by hand from a
 session's shell has that session's token, or can be given another running
 session's, and is then taken for that session: held to its workflow when
 it follows one, and its starts asked about as that session's are. One
-given no token is an agent the workbench did not start, which may not start
-or send while a session follows a workflow. This is no wider than the shell
+given no token is taken for an agent the workbench did not start, which may
+not start or send while a session follows a workflow. This is no wider than the shell
 itself: from it an agent can run another copy of itself, on any model,
 with no tool server and no question at all.
 

@@ -747,7 +747,7 @@ describe("starting a session", () => {
       expect(byKey(kid.key)).not.toBeNull();
       const outside = handle(raw("start", { project: A, prompt: "Fix it" }, { cwd: A }));
       expect(conductor.asking?.outside).toBe(A);
-      expect(conductor.asking?.caller).toBe("An agent the workbench did not start");
+      expect(conductor.asking?.caller).toBe("An unnamed agent");
       refuse();
       await outside;
       expect(last().error).toBe("The user did not allow the session to be started.");
@@ -3735,20 +3735,35 @@ describe("an agent the workbench did not start", () => {
     expect(last().error).toBe("The user did not allow the session to be started.");
   });
 
-  it("says in the question what asks, and offers Allow once and No only", async () => {
+  it("says in the question only what is known of what asks, and offers Allow once and No only", async () => {
     const asked = handle(outside("start", { project: B, prompt: "Fix it" }));
     const card = render(ConductAsk);
-    expect(card.getByTestId("conduct-ask")).toHaveTextContent("An agent the workbench did not start wants to start a session");
+    const ask = card.getByTestId("conduct-ask");
+    expect(ask).toHaveTextContent("An unnamed agent wants to start a session");
+    expect(ask).not.toHaveTextContent("did not start");
     expect(card.getByTestId("conduct-outside")).toHaveTextContent(
-      `An agent running in ${A} is asking, one the workbench did not start, so it cannot tell which agent that is.`,
+      `It runs in ${A} and does not say which session it is: an agent run outside the workbench, or a session that left its name out. Each new session it asks for is put to you.`,
+    );
+    expect(ask).toHaveTextContent(`In ${B}.`);
+    expect(ask).toHaveAccessibleDescription(
+      expect.stringContaining("An unnamed agent wants to start a session It runs in"),
     );
     expect(card.queryByTestId("conduct-allow")).toBeNull();
     expect(card.getByTestId("conduct-once")).toHaveTextContent("Allow once");
     expect(card.getByTestId("conduct-no")).toHaveTextContent("No");
     refuse();
     flushSync();
-    card.unmount();
     await asked;
+    // Started in the folder it runs in, the folder is said once.
+    const here = handle(outside("start", { project: A, prompt: "Fix it" }));
+    flushSync();
+    const again = card.getByTestId("conduct-ask");
+    expect(again).toHaveTextContent(`It runs in ${A}`);
+    expect(again).not.toHaveTextContent(`In ${A}.`);
+    refuse();
+    flushSync();
+    card.unmount();
+    await here;
   });
 
   it("directs the sessions it started and no others, and they start none of their own", async () => {
@@ -3799,11 +3814,11 @@ describe("an agent the workbench did not start", () => {
     expect(startedFor(kid.key)).toBe(tok(ME));
     expect(allowedProjects(tok(ME))).toEqual([A]);
     // The session, its variable cleared, calls from where it runs: it is an
-    // agent the workbench did not start, asked about every time.
+    // unnamed agent, asked about every time.
     for (const [n, prompt] of ["Deeper", "Deeper still"].entries()) {
       const asked = handle(outside("start", { project: A, prompt }));
       expect(conductor.asking?.outside).toBe(A);
-      expect(conductor.asking?.caller).toBe("An agent the workbench did not start");
+      expect(conductor.asking?.caller).toBe("An unnamed agent");
       allow();
       await settle();
       started(forProject(A).at(-1)!.key, `pty-deep-${n}`, `deep-${n}`);

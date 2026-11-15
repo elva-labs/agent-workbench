@@ -824,11 +824,11 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
 export type Placed = ConductRequest & { caller: string };
 
 /** What a call that names no session is told when it would start or send
-    while a session follows a workflow: each session the workbench starts
-    names itself in every call its tools make, so such a call is from an
-    agent it did not start, and it cannot be held to the workflow. */
+    while a session follows a workflow: such a call may come from an agent
+    run outside the workbench or from a session that left its name out, and
+    it cannot be held to the workflow. */
 export const OUTSIDE =
-  "This call names no session, so it comes from an agent the workbench did not start: each session the workbench starts names itself in every call its tools make. A session the workbench runs follows a workflow, and a call that names no session cannot be held to it, so starting and sending are for the sessions the workbench runs until none follows one. Start the agent from the workbench to use them.";
+  "This call names no session. Each session the workbench starts is given a name its tools pass on in every call, so this call comes from an agent run outside the workbench or from a session whose tools left its name out. A session the workbench runs follows a workflow, and a call that names no session cannot be held to it, so starting and sending are refused to such calls until none follows one. An agent run outside the workbench can be started from it instead.";
 
 /** What a call is told that names a session the workbench is not running:
     one it never had, or one that has stopped and so cannot be calling. */
@@ -2265,9 +2265,10 @@ function agentOf(request: ConductRequest, project: string): AgentId {
 /**
  * Puts the question to the user, unless this caller already has a
  * standing answer for the project and what the session would run on. A
- * round past a review's limit is always asked, and so is every start an
- * agent the workbench did not start asks for: the workbench cannot tell
- * which agent that is, so it neither uses nor gives a standing answer. A
+ * round past a review's limit is always asked, and so is every start a
+ * call that names no session asks for: the workbench cannot tell which
+ * agent makes it, one run outside the workbench or a session that left its
+ * name out, so it neither uses nor gives a standing answer. A
  * question that arrives while another is up waits behind it.
  */
 function askUser(
@@ -2293,7 +2294,7 @@ function askUser(
     outside,
     caller:
       outside !== null
-        ? "An agent the workbench did not start"
+        ? "An unnamed agent"
         : session === null
           ? "A session"
           : label(session),

@@ -354,18 +354,19 @@ test.describe("a session started by a session under another account", () => {
     await expect(page.getByTestId("started-account")).toHaveText("as Work");
   });
 
-  test("names the project's account to an agent the workbench did not start, one session at a time", async ({
-    page,
-  }) => {
+  test("names the project's account to an unnamed agent, one session at a time", async ({ page }) => {
     await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
 
-    // A call that names no session is from an agent the workbench did not
-    // start: the question says so, and offers no standing answer.
+    // A call that names no session is from an agent the workbench cannot
+    // name: the question says so, and offers no standing answer.
     await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, null);
     const ask = page.getByTestId("conduct-ask");
-    await expect(ask.getByTestId("conduct-outside")).toBeVisible();
+    await expect(ask).toContainText("An unnamed agent wants to start a session");
+    await expect(ask.getByTestId("conduct-outside")).toContainText(
+      "does not say which session it is: an agent run outside the workbench, or a session that left its name out.",
+    );
     await expect(ask.getByTestId("conduct-allow")).toHaveCount(0);
     await expect(ask.getByTestId("conduct-account")).toHaveText(
       "Under the project's account, Work.",
