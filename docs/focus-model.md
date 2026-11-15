@@ -195,9 +195,8 @@ control a stop as it is drawn, by one rule for the whole window:
   keyboard, as its × does, and the keyboard stays on the row.
 - **A shell's row** in the terminal panel goes to its shell: a click,
   <kbd>Enter</kbd> or <kbd>Space</kbd> on it shows the shell and puts the
-  keyboard in it. <kbd>Delete</kbd> closes a shell only once the arrows
-  have walked the rows, so a key meant for a shell never closes one, and
-  the keyboard then stays on the rows.
+  keyboard in it. <kbd>Delete</kbd> closes the shell under the keyboard,
+  as its × does, and the keyboard stays on the rows.
 - **A menu** opens with the keyboard on the choice in force, or its first
   item. The arrows walk it, <kbd>Enter</kbd> picks, <kbd>Esc</kbd> closes it
   back to its button, and <kbd>Tab</kbd> closes it on the way on. A list
