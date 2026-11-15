@@ -84,14 +84,31 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:unit
+
+  # The browser tests take a quarter of an hour on one runner, so they run
+  # as four parts side by side, each a share of the same suite.
+  browser:
+    name: Browser tests (${{ matrix.part }} of 4)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- --shard=${{ matrix.part }}/4
         env:
           CI: true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.part }}
           path: playwright-report
           retention-days: 7
 

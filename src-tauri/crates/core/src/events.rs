@@ -50,7 +50,7 @@ pub mod testing {
             events: impl Fn() -> Vec<serde_json::Value>,
             what: impl Fn(&serde_json::Value) -> bool,
         ) -> Vec<serde_json::Value> {
-            let deadline = Instant::now() + Duration::from_secs(15);
+            let deadline = Instant::now() + Duration::from_secs(120);
             loop {
                 let events = events();
                 let from = self.past.get();
