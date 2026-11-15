@@ -23,12 +23,16 @@ import {
   adopt,
   byKey,
   failed,
+  followsAgain,
   keepToken,
   loadHistory,
   named,
   noted,
   onIntegratedClose,
   rang,
+  rejoined,
+  rememberWorkflow,
+  toldAtStart,
   type Session,
 } from "$lib/sessions.svelte";
 
@@ -200,6 +204,8 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
   switch (body.type) {
     case "ready":
       identify(session, body.sessionId);
+      // This run started on the workflow the row follows now.
+      rememberWorkflow(session);
       break;
     case "configured":
       session.model = body.model;
@@ -292,8 +298,9 @@ function ended(session: Session, link: Link, code: number | null, clean: boolean
 
 /**
  * Starts the agent behind a row whose status is starting: a new session,
- * or the one the row resumes. In a folder the agent does not trust yet the
- * start is refused, and the row waits for the user's answer.
+ * or the one the row resumes, told the workflow it follows as a terminal
+ * session is. In a folder the agent does not trust yet the start is
+ * refused, and the row waits for the user's answer.
  */
 export async function launch(key: string): Promise<void> {
   const session = byKey(key);
@@ -306,15 +313,24 @@ export async function launch(key: string): Promise<void> {
   // What a resumed session said before goes above what this run says.
   earlierAtStart(session, link.conversation);
   try {
+    // A resumed row finds out here what it follows, and a lost workflow
+    // fails it with the question for the user.
+    const told = await toldAtStart(key);
+    const starting = byKey(key);
+    if (told === null || starting === null) {
+      link.busy = false;
+      return;
+    }
     const started = await core().integratedStart({
-      agent: session.agent,
-      project: session.project,
-      cwd: session.startIn ?? undefined,
-      session: session.resumedFrom ?? undefined,
-      token: session.token,
-      model: session.model ?? undefined,
-      mode: startMode(session, link),
-      configDir: dirFor(session.account, session.agent),
+      agent: starting.agent,
+      project: starting.project,
+      cwd: starting.startIn ?? undefined,
+      session: starting.resumedFrom ?? undefined,
+      token: starting.token,
+      model: starting.model ?? undefined,
+      mode: startMode(starting, link),
+      configDir: dirFor(starting.account, starting.agent),
+      ...told,
     });
     link.busy = false;
     const row = byKey(key);
@@ -335,6 +351,10 @@ export async function launch(key: string): Promise<void> {
     row.changedAt = Date.now();
     for (const body of claim(started.id)) deliver(key, link, body);
     if (started.sessionId !== null) identify(row, started.sessionId);
+    // Every start and resume keeps the copy of the workflow this run was
+    // started on, which a reload goes on with; an agent that makes its own
+    // id is kept once ready names it.
+    rememberWorkflow(row);
     if (row.prompt !== null && !link.prompted && link.handle !== null) {
       link.prompted = true;
       send(key, row.prompt, [], starterOf(key));
@@ -391,7 +411,10 @@ export async function resume(key: string): Promise<void> {
   if (session === null || session.kind !== "integrated") return;
   const link = linkFor(key);
   if (link.handle !== null || link.busy) return;
-  if (session.id !== null) session.resumedFrom = session.id;
+  if (session.id !== null) {
+    session.resumedFrom = session.id;
+    followsAgain(key);
+  }
   link.conversation.resumed();
   again(session);
   await launch(key);
@@ -449,6 +472,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       session.resumedFrom = null;
       if (snapshot.ready !== null) identify(session, snapshot.ready.sessionId);
       settle(session, snapshot.state, before, link);
+      void rejoined(key);
       return true;
     } catch {
       link.held = null;

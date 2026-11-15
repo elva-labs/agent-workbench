@@ -178,9 +178,16 @@ export interface IntegratedStartOptions {
   effort?: string;
   /** The account's configuration directory, as for `spawn`. */
   configDir?: string;
-  /** A workflow's instructions. An integrated session cannot be given
-      them, so a start that carries any is refused. */
+  /** A workflow's instructions, for a session that follows one, as for
+      `spawn`: it is started where a tool server can reach it or not at
+      all. */
   instructions?: string;
+  /** With instructions, whether the agent's own subagent tools are taken
+      away, as for `spawn`. */
+  startOnly?: boolean;
+  /** For a resumed session, whether what it is told now differs from what
+      its conversation was first given, as for `spawn`. */
+  afresh?: boolean;
 }
 
 /** What starting an integrated session hands back: the id every other
