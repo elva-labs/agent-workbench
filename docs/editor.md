@@ -101,11 +101,12 @@ tree's cursor was in when the file was started, then its name, selected so
 that typing replaces it. <kbd>Enter</kbd> or Save writes it, slashes making
 the folders on the way, and <kbd>Esc</kbd> or Cancel puts the field away
 with the file still untitled. The field refuses what the tree's name field
-refuses, and a path that leaves the project: an absolute one, one from the
-home folder, or one that steps up out of the top. A path that holds a file
-already asks whether to replace it, and one open with unsaved edits is
-refused until they are saved or dropped. The field is the same on every
-platform and for a project on another machine.
+refuses, a path with no name after its last slash, and a path that leaves
+the project: an absolute one, one from the home folder, or one that steps
+up out of the top. A path that holds a file already asks whether to
+replace it, and one open with unsaved edits is refused until they are
+saved or dropped. The field is the same on every platform and for a
+project on another machine.
 
 Once written it is that file: an ordinary tab on it, with its text, its
 cursor and its undo history, the tree showing it and the foot naming its

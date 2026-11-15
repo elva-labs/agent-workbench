@@ -131,13 +131,15 @@ export function newUntitled() {
 }
 
 /** A path from the top of the tree as the field naming an untitled file
-    takes it: the tree's own refusals, and nothing that leaves the tree. */
+    takes it: the tree's own refusals, nothing that leaves the tree, and a
+    name after the last slash. */
 export function savePathFor(value: string): { path: string } | { problem: string } {
   const text = value.trim();
   const outside = /^([\\/]|~([\\/]|$)|[A-Za-z]:[\\/])/.test(text) || /(^|[\\/])\.\.([\\/]|$)/.test(text);
   if (outside) {
     return { problem: "The file is saved inside the project: give a path from its top." };
   }
+  if (/[\\/]$/.test(text)) return { problem: "A name is needed." };
   return pathFor(null, text);
 }
 

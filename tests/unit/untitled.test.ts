@@ -333,6 +333,8 @@ describe("saving an untitled file", () => {
       ["~/notes.md", "The file is saved inside the project: give a path from its top."],
       ["C:\\notes.md", "The file is saved inside the project: give a path from its top."],
       [".git/notes", "Nothing is made inside .git."],
+      ["src/", "A name is needed."],
+      ["notes\\", "A name is needed."],
     ]) {
       setSaveAsName(value);
       await commitSaveAs();

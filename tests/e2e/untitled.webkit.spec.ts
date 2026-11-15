@@ -217,6 +217,10 @@ test.describe("saving an untitled file", () => {
       "The file is saved inside the project: give a path from its top.",
     );
     await expect(field).toBeFocused();
+    // A path ending in a slash has no name.
+    await field.fill("docs/");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("save-as-problem")).toHaveText("A name is needed.");
     await field.fill("README.md");
     await expect(page.getByTestId("save-as-problem")).toHaveCount(0);
     await page.keyboard.press("Enter");
