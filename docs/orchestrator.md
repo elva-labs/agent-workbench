@@ -115,6 +115,14 @@ such session runs or several do, or the call names a session the window
 does not have, the starter cannot be placed and the session runs under the
 project's account.
 
+A call with no id that is taken for a session another session started is
+refused as that session's own call would be, with the session named. Where
+several sessions in the directory were not told their id, the call is
+refused when all of them were started by another, and when only some were it
+is asked about every time, with the question saying so, and no standing
+answer is used or given. The cap counts a call with no id by the directory
+it comes from.
+
 ## Following a workflow
 
 A session runs one of two ways: under a workflow, as its orchestrator, or
