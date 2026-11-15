@@ -129,4 +129,21 @@
   .splitter:focus-visible {
     outline: none;
   }
+
+  /* With a background, a bar in the modern look is its own line, drawn over
+     what it runs beside: the headers' tint along the header row and the
+     surface below it, or the headers' tint across the top of the terminal
+     panel. Under the pointer it is the accent as always. */
+  :global(:root[data-background][data-look="modern"]) .splitter {
+    background:
+      linear-gradient(
+        var(--tint-surf) calc(var(--head-h, 0px) + 1px),
+        var(--surface) calc(var(--head-h, 0px) + 1px)
+      ),
+      var(--tint-backdrop);
+  }
+
+  :global(:root[data-background][data-look="modern"]) .splitter.horizontal {
+    background: linear-gradient(var(--tint-surf), var(--tint-surf)), var(--tint-backdrop);
+  }
 </style>

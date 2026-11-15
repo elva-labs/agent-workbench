@@ -922,6 +922,7 @@
   style:--controls-inset="{CONTROLS_INSET}px"
   style:--sessions-col={sessionsColumn}
   style:--folded="{FOLDED}px"
+  style:--head-h="{sessionsHead}px"
 >
   <div class="stack" bind:clientHeight={stack}>
   <main
@@ -941,7 +942,6 @@
       class:peeking={layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
       style:--peek-w={peekWidth}
-      style:--head-h="{sessionsHead}px"
     >
       <SessionsPane />
       {#if sessionsVisible()}
@@ -1048,6 +1048,11 @@
     background: var(--bg);
   }
 
+  /* The terminal look's ground between the boxes carries a background. */
+  :global(:root[data-background]:not([data-look])) .frame {
+    background: linear-gradient(var(--tint-frame), var(--tint-frame)), var(--tint-backdrop);
+  }
+
   .stack {
     display: flex;
     flex-direction: column;
@@ -1140,6 +1145,26 @@
     background: var(--surface);
   }
 
+  :global(:root[data-background][data-look="modern"])
+    .sessions-slot.folded
+    :global([data-pane="sessions"] > header) {
+    background: linear-gradient(var(--tint-surf), var(--tint-surf)), var(--tint-backdrop);
+  }
+
+  :global(:root[data-background][data-look="modern"]) .sessions-slot.folded :global([data-pane="sessions"]) {
+    background:
+      var(--edge-rule),
+      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px))
+        border-box,
+      var(--tint-backdrop);
+  }
+
+  /* The line between the sessions pane and the agent belongs to the
+     sessions pane, so with a background it is drawn over that pane's tint. */
+  :global(:root[data-background][data-look="modern"]) .sessions-slot > :global(.splitter) {
+    background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
+  }
+
   .sessions-slot.folded :global([data-pane="sessions"] > header > *) {
     visibility: hidden;
   }
@@ -1150,6 +1175,14 @@
     flex: none;
     width: var(--splitter-w);
     background: linear-gradient(var(--surface) var(--head-h), transparent var(--head-h));
+  }
+
+  /* With a background the edge is drawn over the tint beside it: the
+     headers' beside the header row, the sessions pane's below it. */
+  :global(:root[data-background][data-look="modern"]) .fold-edge {
+    background:
+      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px)),
+      var(--tint-backdrop);
   }
 
   .fold-edge::after {

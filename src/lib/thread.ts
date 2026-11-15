@@ -576,6 +576,42 @@ export function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** The day a time falls on, as the thread names it beside the time: today,
+    the day of the week within the six days before, and the date further
+    back, with the year when it is not this one. */
+export function dayName(at: number, now: number = Date.now()): string {
+  const day = new Date(at);
+  const today = new Date(now);
+  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const back = Math.round((midnight(today) - midnight(day)) / 86_400_000);
+  if (back === 0) return "today";
+  if (back > 0 && back < 7) return day.toLocaleDateString([], { weekday: "short" });
+  return day.toLocaleDateString([], {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(day.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/** The times a thread shows, in the order it shows them, as it writes
+    them: the first time of each day with the day's name, unless every one
+    is today's, and a time marked `day` with it whatever comes before. */
+export function stamps(times: { at: number; day?: boolean }[], now: number = Date.now()): string[] {
+  const dayOf = (at: number) => new Date(at).toDateString();
+  const today = dayOf(now);
+  const earlier = times.some((time) => dayOf(time.at) !== today);
+  const named = new Set<string>();
+  return times.map((time) => {
+    const day = dayOf(time.at);
+    const first = !named.has(day);
+    named.add(day);
+    return time.day === true || (first && (earlier || day !== today))
+      ? `${dayName(time.at, now)} ${clock(time.at)}`
+      : clock(time.at);
+  });
+}
+
 /** What the agent last said and did, as plain text for another agent to
     read: its last run with the messages it answered, a line per step, and
     what it is doing or waiting for now. At most `lines` lines, the latest

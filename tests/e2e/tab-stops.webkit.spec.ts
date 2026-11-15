@@ -274,10 +274,14 @@ test("walks the settings, every section and its controls, and never leaves them"
     "mono-system",
     "sans-system",
     "palette-teal",
+    "background-pad",
+    "background-add",
+    "harmony-single",
+    "ready-none",
     "styles-off",
   ];
   expect(await walk(page, "Tab", appearance.length + 1)).toEqual([...appearance, "settings-close"]);
-  expect(await walk(page, "Shift+Tab", 2)).toEqual(["styles-off", "palette-teal"]);
+  expect(await walk(page, "Shift+Tab", 2)).toEqual(["styles-off", "ready-none"]);
 
   // A radio group is one stop: the arrows walk it, and Space picks.
   await page.getByTestId("theme-system").focus();

@@ -21,10 +21,24 @@ test("the fake core runs a scripted integrated session behind the seam", async (
     ).__integrated;
     integrated.turn(id, "hi there");
     const snapshot = await seam.integratedSnapshot(id);
+    const conversation = (events.find((event) => event.type === "ready") as unknown as { sessionId: string }).sessionId;
+    const history = await seam.integratedHistory({ agent: "claude-code", project, session: conversation });
+    const codex = await seam.integratedHistory({ agent: "codex", project, session: conversation });
     await seam.integratedStop(id);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    return { id, message, events, snapshot };
+    return { id, message, events, snapshot, history, codex };
   }, PROJECT);
+  // What the agent wrote down reads back as the events that drew it, in
+  // whole: the message it took, the turn, the text and the end.
+  expect(heard.history?.items.map((item) => item.event.type)).toEqual([
+    "message",
+    "turnStarted",
+    "text",
+    "turnEnded",
+  ]);
+  expect(heard.history?.items[0].event).toMatchObject({ message: heard.message, text: "hello" });
+  expect(heard.history?.items.every((item) => typeof item.at === "number")).toBe(true);
+  expect(heard.codex).toBeNull();
   expect(heard.snapshot).toMatchObject({ state: "idle", turn: false, messages: [] });
   expect(heard.snapshot.ready?.type).toBe("ready");
   const types = heard.events.map((event) => event.type);

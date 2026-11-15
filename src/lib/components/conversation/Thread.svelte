@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, nowDoing, replyMarkdown, speaker, startedIds, tokens } from "$lib/thread";
+  import { clock, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
   import { reportsShown, spoken } from "$lib/instructions";
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
@@ -295,6 +295,35 @@
     const turn = conversation.turns[entry.turn];
     return lastOfTurn.has(entry.key) && (turn?.outcome === "interrupted" || turn?.outcome === "failed");
   }
+
+  /** Where this run began, when its line stands at the top: nothing
+      before it is drawn yet, or nothing was found. */
+  let beganAtTop = $derived(conversation.began !== null && conversation.began.after === null);
+
+  /** Every time the thread shows, as it writes it, by what it is shown
+      on: a message by its id, a run by its key, and the line where this
+      run began, which always names its day. */
+  let written = $derived.by(() => {
+    const keys: string[] = [];
+    const times: { at: number; day?: boolean }[] = [];
+    const add = (key: string, at: number | null, day = false) => {
+      if (at === null) return;
+      keys.push(key);
+      times.push({ at, day });
+    };
+    const began = conversation.began;
+    if (began !== null && began.after === null) add("began", began.at, true);
+    for (const entry of conversation.entries) {
+      if (entry.kind === "user") {
+        const said = conversation.messages[entry.message];
+        if (said !== undefined) add(`m:${said.id}`, said.at ?? timeOf(said.id));
+      } else if (entry.kind === "agent" && visible(entry)) add(`e:${entry.key}`, entry.at);
+      if (began !== null && began.after === entry.key) add("began", began.at, true);
+    }
+    for (const said of conversation.waiting) add(`m:${said.id}`, said.at ?? timeOf(said.id));
+    const shown = stamps(times);
+    return new Map(keys.map((key, at) => [key, shown[at]]));
+  });
 </script>
 
 <div class="frame">
@@ -304,6 +333,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="thread"
+  class:foot={conversation.earlier === "loading" || conversation.earlier === "read"}
   bind:this={scroller}
   {onscroll}
   onpointerdown={(e) => {
@@ -320,10 +350,23 @@
   tabindex="0"
 >
   <div class="col" bind:this={col}>
-    {#if conversation.late || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0)}
+    {#if conversation.earlierCut}
+      <p class="intro" data-testid="earlier-cut">The start of this conversation is too long to show here.</p>
+    {/if}
+    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")}
       <p class="intro" data-testid="thread-intro">
         {conversation.late ? "Earlier messages of this session are in its transcript and are not shown here." : intro}
       </p>
+    {/if}
+    {#if conversation.earlier === "loading"}
+      <p class="now reading" data-testid="earlier-reading"><span class="caret"></span>Reading the earlier messages</p>
+    {:else if conversation.earlier === "read" && beganAtTop}
+      <p class="note" data-testid="earlier-none">
+        <Icon name="info" size={13} />No earlier messages were found for this session.
+      </p>
+    {/if}
+    {#if beganAtTop}
+      {@render runBegan()}
     {/if}
 
     {#each conversation.entries as entry (entry.key)}
@@ -339,7 +382,7 @@
         <article class="msg agent" data-testid="agent-run" data-turn={entry.turn} data-copy-host="message">
           <header class="who">
             <i class="mark"></i><b><Plain text={speaker(conversation, turn?.model ?? null, agent)} /></b>
-            {#if entry.at !== null}<time class="num">{clock(entry.at)}</time>{/if}
+            {#if entry.at !== null}<time class="num">{written.get(`e:${entry.key}`) ?? clock(entry.at)}</time>{/if}
             {#if entry.parts.some((part) => part.kind === "text" && part.text.trim() !== "")}
               <Copy label="Copy as Markdown" text={() => replyMarkdown(entry.parts)} host="message" place="end" testid="copy-reply" />
             {/if}
@@ -372,6 +415,9 @@
           </span>
         </div>
       {/if}
+      {#if conversation.began !== null && entry.key === conversation.began.after}
+        {@render runBegan()}
+      {/if}
     {/each}
 
     {#each conversation.waiting as said (said.id)}
@@ -386,6 +432,14 @@
   </button>
 {/if}
 </div>
+
+{#snippet runBegan()}
+  {#if conversation.began !== null}
+    <div class="divider" data-testid="run-began">
+      <span>Resumed here, <time class="num">{written.get("began") ?? clock(conversation.began.at)}</time></span>
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet userMessage(said: Message)}
   {@const from = sender?.(said) ?? null}
@@ -413,7 +467,7 @@
             >Go to it</button
           >{/if}
       {/if}
-      {#if at !== null}<time class="num">{clock(at)}</time>{/if}
+      {#if at !== null}<time class="num">{written.get(`m:${said.id}`) ?? clock(at)}</time>{/if}
     </header>
     <div class="bubble">
       {#if said.images.length > 0}
@@ -498,6 +552,14 @@
     }
   }
 
+  /* A thread that has earlier messages coming or read sits at the pane's
+     foot while it is shorter than the pane, so what is read and laid above
+     moves nothing under it. */
+  .thread.foot {
+    display: flex;
+    flex-direction: column;
+  }
+
   .col {
     max-width: 740px;
     margin: 0 auto;
@@ -507,6 +569,11 @@
     font-size: var(--conv-size);
     line-height: 1.58;
     color: var(--ink);
+  }
+
+  .thread.foot .col {
+    width: 100%;
+    margin-top: auto;
   }
 
   .intro {
@@ -663,6 +730,10 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  .now.reading {
+    justify-content: center;
   }
 
   .caret {

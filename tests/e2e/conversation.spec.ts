@@ -1195,15 +1195,240 @@ test("takes up a session the core still runs when the window is reloaded", async
   // the request it asked still open, and starts nothing.
   // The call that asked is not in the snapshot, so its kind is not known
   // and the tool is named.
-  await expect(page.getByTestId("permission-dock")).toContainText("Claude asks to use Bash to run npm test");
-  await expect(page.getByTestId("thread-intro")).toContainText("Earlier messages of this session are in its transcript");
+  await expect(page.getByTestId("permission-dock")).toContainText("npm test");
+  // What it said before is read back from its transcript and drawn again:
+  // the message and the call that asked, with nothing said twice.
+  await expect(page.getByTestId("user-message")).toHaveText(/Run the tests/);
+  await expect(page.getByTestId("step-row")).toHaveCount(0);
+  await expect(page.getByTestId("work-line")).toHaveCount(1);
+  await expect(page.getByTestId("thread-intro")).toHaveCount(0);
+  await expect(page.getByTestId("run-began")).toHaveCount(0);
   await expect(page.locator(`${AGENT} header .meta`)).toHaveText("waits for permission");
-  expect((await calls(page)).map((call) => call.method)).toEqual(["snapshot"]);
+  expect((await calls(page)).map((call) => call.method)).toEqual(["snapshot", "history"]);
   await page.getByTestId("choice-allow").click();
   expect((await calls(page)).at(-1)).toMatchObject({ method: "answer", id: H, choice: "allow" });
   await agent(page, `f.emit("${H}", { type: "text", block: "c", parent: null, text: "All 12 pass.", done: true }); f.endTurn("${H}");`);
   await expect(page.getByTestId("agent-text").last()).toHaveText("All 12 pass.");
   await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+});
+
+test.describe("a resumed conversation", () => {
+  const PAST = "past-1";
+  /** The past conversation as its transcript reads back, an hour ago: a
+      question answered with a command, and a change answered with an
+      edit, on Sonnet. */
+  const earlier = (at: number) => {
+    const ended = { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 5000, usage: null };
+    return [
+      { at, event: { type: "message", message: "m-1", state: "sent", error: null, text: "Count the files in src", images: [] } },
+      { at, model: "claude-sonnet-5-5", event: { type: "turnStarted", messages: ["m-1"] } },
+      { at: at + 2000, event: { type: "toolStarted", call: "c-1", parent: null, name: "Bash", kind: "command" } },
+      { at: at + 2000, event: { type: "toolInput", call: "c-1", parent: null, delta: null, input: { command: "ls src | wc -l" }, truncated: false } },
+      { at: at + 3000, event: { type: "toolFinished", call: "c-1", parent: null, output: "12", error: false, truncated: false, changes: [] } },
+      { at: at + 5000, event: { type: "text", block: "b-1", parent: null, text: "There are **12** files in `src`.", done: true } },
+      { at: at + 5000, event: ended },
+      { at: at + 60_000, event: { type: "message", message: "m-2", state: "sent", error: null, text: "Rename the counter to total", images: [] } },
+      { at: at + 60_000, model: "claude-sonnet-5-5", event: { type: "turnStarted", messages: ["m-2"] } },
+      { at: at + 62_000, event: { type: "toolStarted", call: "c-2", parent: null, name: "Edit", kind: "edit" } },
+      {
+        at: at + 62_000,
+        event: {
+          type: "toolInput", call: "c-2", parent: null, delta: null, truncated: false,
+          input: { file_path: `${PROJECT}/src/count.ts`, old_string: "let counter = 0;", new_string: "let total = 0;" },
+        },
+      },
+      {
+        at: at + 63_000,
+        event: {
+          type: "toolFinished", call: "c-2", parent: null, output: "The file has been updated.", error: false, truncated: false,
+          changes: [{
+            path: `${PROJECT}/src/count.ts`, kind: "update", to: null, content: null, truncated: false,
+            hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-let counter = 0;", "+let total = 0;"] }],
+          }],
+        },
+      },
+      { at: at + 65_000, event: { type: "text", block: "b-2", parent: null, text: "Renamed it to `total`.", done: true } },
+      { at: at + 65_000, event: ended },
+    ];
+  };
+
+  /** Three days ago, at 14:03 where the tests run. */
+  const threeDaysAgo = () => {
+    const day = new Date();
+    day.setDate(day.getDate() - 3);
+    day.setHours(14, 3, 0, 0);
+    return day.getTime();
+  };
+
+  /** The weekday of a time, as the page names it. */
+  const weekday = (page: Page, at: number) =>
+    page.evaluate((time) => new Date(time).toLocaleDateString([], { weekday: "short" }), at);
+
+  /** The project with the past conversation on disk, ours to resume. */
+  async function withPast(page: Page, options: { keep?: boolean; hold?: boolean } = {}) {
+    const now = Date.now();
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { integrated: ["claude-code"] },
+      keepIntegrated: options.keep,
+      transcripts: [{ id: PAST, modified: Math.floor(now / 1000) - 3600, size: 100, title: "Count the files in src" }],
+    });
+    await page.addInitScript(
+      ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
+      { project: PROJECT, past: PAST },
+    );
+    await page.goto("/");
+    await agent(page, `f.transcript("${PAST}", ${JSON.stringify(earlier(threeDaysAgo()))});${options.hold ? " f.holdHistory();" : ""}`);
+  }
+
+  const box = async (page: Page, testid: string, at: number) =>
+    (await page.getByTestId(testid).nth(at).boundingBox())!;
+
+  test("copies from what it said before as from what it says now", async ({ page }) => {
+    await withPast(page);
+    await page.getByTestId("past-session").click();
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await page.getByTestId("user-message").first().hover();
+    await page.getByTestId("copy-message").first().click();
+    await page.getByTestId("agent-run").first().locator("header").hover();
+    await page.getByTestId("copy-reply").first().click();
+    await page.getByTestId("work-line").first().click();
+    await page.getByTestId("step-row").first().click();
+    await page.getByTestId("step-row").first().hover();
+    await page.getByTestId("copy-command").click();
+    await page.getByTestId("step-output").hover();
+    await page.getByTestId("copy-output").click();
+    await expect(page.getByTestId("copy-output")).toHaveAttribute("data-copied", "true");
+    const copied = await page.evaluate(() => (window as unknown as { __copied?: string[] }).__copied ?? []);
+    expect(copied).toEqual(["Count the files in src", "There are **12** files in `src`.", "ls src | wc -l", "12"]);
+  });
+
+  test("draws what it said before above what it says now, with a line where it resumed", async ({ page }) => {
+    await withPast(page, { keep: true });
+    await page.getByTestId("past-session").click();
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await expect(page.getByTestId("user-message").first()).toContainText("Count the files in src");
+    // The first time of a day other than today names the day; the rest of
+    // that day's do not.
+    const day = await weekday(page, threeDaysAgo());
+    await expect(page.getByTestId("user-message").first().locator("time")).toHaveText(new RegExp(`^${day} \\d{1,2}:\\d{2}`));
+    await expect(page.getByTestId("agent-run").first().locator("time")).toHaveText(/^\d{1,2}:\d{2}/);
+    await expect(page.getByTestId("user-message").nth(1).locator("time")).toHaveText(/^\d{1,2}:\d{2}/);
+    await expect(page.getByTestId("agent-run").first().locator("header")).toContainText("Sonnet");
+    await expect(page.getByTestId("agent-text").first()).toHaveText("There are 12 files in src.");
+    await expect(page.getByTestId("work-line").nth(1)).toContainText("changed 1 file");
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+    await expect(page.getByText("are not shown here")).toHaveCount(0);
+    expect((await calls(page)).find((call) => call.method === "start")).toMatchObject({
+      options: { session: PAST },
+    });
+
+    await page.getByTestId("composer-input").fill("And the tests?");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.turn("${H}", "Four of them pass.");`);
+    await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+    // The line named today, so this run's times do not again.
+    await expect(page.getByTestId("user-message").nth(2).locator("time")).toHaveText(/^\d{1,2}:\d{2}/);
+    // The line stands between the last run read and the first message of
+    // this run.
+    const line = await box(page, "run-began", 0);
+    expect((await box(page, "agent-run", 1)).y + (await box(page, "agent-run", 1)).height).toBeLessThanOrEqual(line.y);
+    expect(line.y + line.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
+
+    // A reload takes the session up where the core runs it, and the line
+    // stays where this run began.
+    await page.reload();
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+    const after = await box(page, "run-began", 0);
+    expect((await box(page, "user-message", 1)).y).toBeLessThan(after.y);
+    expect(after.y + after.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
+  });
+
+  test("draws the line at once and keeps the live part in place while the earlier messages are read", async ({ page }) => {
+    await withPast(page, { hold: true });
+    await page.getByTestId("past-session").click();
+    await expect(page.getByTestId("earlier-reading")).toHaveText("Reading the earlier messages");
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+    await expect(page.getByTestId("thread-intro")).toHaveCount(0);
+    // The composer works meanwhile, and what is said goes under the line.
+    await expect(page.getByTestId("composer-input")).toBeEditable();
+    await page.getByTestId("composer-input").fill("And the tests?");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.turn("${H}", "Four of them pass.");`);
+    await expect(page.getByTestId("agent-text")).toHaveText(["Four of them pass."]);
+    const reading = await box(page, "earlier-reading", 0);
+    const line = await box(page, "run-began", 0);
+    const live = await box(page, "user-message", 0);
+    expect(reading.y + reading.height).toBeLessThanOrEqual(line.y);
+    expect(line.y + line.height).toBeLessThanOrEqual(live.y);
+
+    // What was said before fills in above the line, and nothing under it
+    // moves.
+    await agent(page, "f.releaseHistory();");
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
+    expect((await box(page, "user-message", 2)).y).toBeCloseTo(live.y, 0);
+    expect((await box(page, "run-began", 0)).y).toBeCloseTo(line.y, 0);
+    expect((await box(page, "agent-run", 1)).y).toBeLessThan(line.y);
+  });
+
+  test("comes back after a restart with what it said before, its unfinished turn over, and the line where this run began", async ({ page }) => {
+    const at = threeDaysAgo();
+    // The app quit in the middle of a turn: its edit has no result and the
+    // turn no end.
+    const open = [
+      ...earlier(at),
+      { at: at + 120_000, event: { type: "message", message: "m-3", state: "sent", error: null, text: "Now the docs", images: [] } },
+      { at: at + 120_000, model: "claude-sonnet-5-5", event: { type: "turnStarted", messages: ["m-3"] } },
+      { at: at + 121_000, event: { type: "toolStarted", call: "c-3", parent: null, name: "Edit", kind: "edit" } },
+      {
+        at: at + 121_000,
+        event: { type: "toolInput", call: "c-3", parent: null, delta: null, truncated: false, input: { file_path: `${PROJECT}/README.md`, old_string: "a", new_string: "b" } },
+      },
+    ];
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { integrated: ["claude-code"] },
+      transcripts: [{ id: PAST, modified: Math.floor(at / 1000), size: 100, title: "Count the files in src" }],
+    });
+    // On record from before the restart, on screen, under the handle the
+    // core it ran in gave it; that core is gone.
+    await page.addInitScript(
+      ({ project, past, items }) => {
+        localStorage.setItem(
+          "workbench.open",
+          JSON.stringify({
+            open: [{ project, id: past, agent: "claude-code", startIn: null, model: null, account: null, kind: "integrated", handle: "int-7", spoken: true }],
+            active: past,
+          }),
+        );
+        const fake = (window as unknown as { __integrated: { transcript(id: string, items: unknown[]): void; holdHistory(): void } }).__integrated;
+        fake.transcript(past, items);
+        fake.holdHistory();
+      },
+      { project: PROJECT, past: PAST, items: open },
+    );
+    await page.goto("/");
+    // The session in front starts while what it said before is still read.
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+    await expect(page.getByTestId("earlier-reading")).toBeVisible();
+    await expect.poll(async () => (await calls(page)).find((call) => call.method === "start")).toMatchObject({
+      options: { session: PAST },
+    });
+    await agent(page, "f.releaseHistory();");
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
+    // The turn the quit cut short is over: nothing in it is still at work.
+    await expect(page.getByTestId("work-line").last()).toContainText("Worked for");
+    await expect(page.getByTestId("now")).toHaveCount(0);
+    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+    await expect(page.getByTestId("send")).toBeVisible();
+    // The line stands under all of it, where this run began.
+    const line = await box(page, "run-began", 0);
+    expect((await box(page, "agent-run", 2)).y).toBeLessThan(line.y);
+  });
 });
 
 test("lays out the composer's bar in a narrow pane with nothing drawn over another", async ({ page }) => {
@@ -1825,7 +2050,7 @@ test.describe("after a reload, an orchestrated session", () => {
     await row.click();
     const view = page.locator("[data-testid='conversation']:visible");
     await expect(view.getByTestId("user-message")).toHaveAttribute("data-from", "integrated-session-1");
-    await expect(view.getByTestId("thread-intro")).toContainText("Earlier messages of this session are in its transcript");
+    await expect(view.getByText("are not shown here")).toHaveCount(0);
     // The message keeps the time it was sent at.
     await expect(view.getByTestId("user-message").locator("time")).toHaveText(/\d{1,2}:\d{2}/);
     expect((await calls(page)).filter((call) => call.method === "start")).toHaveLength(0);

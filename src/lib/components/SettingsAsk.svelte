@@ -52,7 +52,7 @@
           <div
             class="preview"
             data-appearance={appearance}
-            style:background={tone(shown, appearance, "bg")}
+            style:background={ask.ground?.[appearance] ?? tone(shown, appearance, "bg")}
             style:border-radius={shown.shape.radius ?? "var(--radius)"}
           >
             <div
@@ -195,7 +195,7 @@
   }
 
   /* The theme as it would paint, one small card on its ground for each
-     appearance. */
+     appearance, the ground carrying the background it keeps. */
   .previews {
     display: grid;
     grid-template-columns: 1fr 1fr;

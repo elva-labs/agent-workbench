@@ -5,7 +5,7 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 at once.
 
 The settings are in eight tabs down the left. Appearance carries the
-appearance, theme, font, colour and custom styles sections; live updates,
+appearance, theme, font, colour, background and custom styles sections; live updates,
 sessions, workflows, accounts, plugins, keys and notifications each carry
 the section of that name. Opening the settings again lands on the tab last used, for as long as
 the window is open. The dialog follows the look the panes are drawn in. It
@@ -62,6 +62,72 @@ deleted with the cross beside it; deleting the one in use goes back to
 teal. An agent can make one for you, as the next section describes, and the
 file described under [where they are kept](#where-they-are-kept) holds them
 for editing by hand.
+
+## Background
+
+A colour or a gradient of up to three colours of your own behind the
+window's chrome. It tints the chrome only: in the modern look the sessions
+pane, the pane headers, the status bar and the settings' title row and tab
+column. Every surface that holds text to read stays solid: the terminal,
+the conversation, the diff, the editor, the viewer and the palette. In the
+terminal look it shows only in the ground between the boxes and in the
+status bar, at half strength at most and with no grain, and the boxes stay
+as they are.
+
+Each palette and each theme of your own keeps a background of its own, so
+choosing another colour brings its background with it, and one that has
+none shows the plain chrome. A theme taken away takes its background with
+it.
+
+The section has a colour pad. A colour's angle on the pad is its hue and
+its distance from the centre how much colour it has. A click places the
+first colour, and dragging a colour repaints the window as it moves; what
+is let go of is kept. A harmony keeps the colours a fixed turn of the hue
+apart: single holds one, complementary two opposite each other, analogous
+three close together and triad three evenly spread. Dragging the first
+colour carries the others with it, and dragging another sets them free.
+The plus and minus under the pad add a colour, up to three, and take one
+away: the minus shows the colour it takes, which is the one last moved or
+focused and has a white centre on the pad. Taking the last leaves none. A row of ready-made
+backgrounds sets the colours and keeps the strength and grain, and None
+goes back to the plain chrome. Strength is how far the background shows
+through the chrome's own ground, from a tenth to all of it, and grain lays
+a fine speckle over it. Two small windows show the choice in light and in
+dark.
+
+By keyboard each colour on the pad is a stop. The left and right arrows
+turn its hue and the up and down arrows give it more or less colour, by
+more with <kbd>Shift</kbd>; <kbd>+</kbd> adds a colour and
+<kbd>Delete</kbd> takes the focused one away. With no colour on the pad,
+the pad itself is the stop and <kbd>Enter</kbd> places one in the hue of
+the palette's accent. The harmonies and the ready-made row are one stop
+each, walked with the arrows.
+
+One choice serves light and dark. The pad sets the hue and how much
+colour, and the chrome it lies on sets how light it paints: light on a
+light chrome and dark on a dark one, read from the palette's own colours,
+so a theme that is dark in both appearances is painted dark in both.
+Switching between them cannot leave anything hard to read, and the rim of
+the pad is held where the strongest choice is still a tint. Text on a
+tinted part is judged at the worst point of the gradient behind it, grain
+included, and drawn a step stronger, darker on a light chrome and lighter
+on a dark one, where it would fall under a contrast of 4.5 to 1, so every
+text holds that, quiet text included. A hovered or chosen row on a tinted part lets the ink or the
+accent through rather than laying a solid patch over the tint, and is
+judged the same way.
+
+Every line the window draws stays. With a background each line on or
+beside a tinted part is the text colour let through at one amount for the
+whole window, so it takes the colour of what it crosses, stands off a
+tinted part as far as the plain line stands off the plain chrome, and
+lines that meet are one paint. In the terminal look the boxes stay as they
+are: their outline, the gap between them and the status rule take the
+background, and the rules inside them keep their colour. A splitter under the pointer, while it is focused or dragged, the
+focus rings, the focused pane's mark and a chosen row stay in the accent.
+
+The system's increase-contrast setting, or a contrast theme that forces
+the system's own colours, sets the background aside, with every line and
+text as they are without one, and the section says so.
 
 ## Custom styles
 
@@ -413,6 +479,14 @@ short. The user sees the theme as a small card on its ground for each
 appearance before allowing it, and undoing takes the theme away again with
 the palette it replaced.
 
+An agent can give the palette in use a [background](#background), or the
+palette the same change switches to, or take it away, and can save one
+with a theme. It writes the colours as hues and how much colour each has,
+with the harmony, the strength and the grain, and the window works out how
+light it paints. The user sees the palette's cards standing on the
+background before allowing it, and undoing puts back the one it replaced.
+A theme saved again without a background keeps the one it had.
+
 An agent can write the stylesheet too, for a change the settings and a
 theme cannot make. It replaces the sheet whole, is held to the same rules
 before the user is troubled, and is shown to the user as the sheet itself;
@@ -428,7 +502,7 @@ on, whichever machine the agent runs on.
 The appearance, the look, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
 how long past sessions stay listed, how long a project stays active, the
-notifications and your own themes are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
+notifications, your own themes and the backgrounds are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
@@ -437,10 +511,11 @@ know is passed over and the default stands for it in the window, and the file
 keeps it as written until that setting is chosen. A field that is not a
 setting at all is kept in the file as written and not shown.
 
-The keys, the hooks, the accounts, the themes and the workflows are read one
+The keys, the hooks, the accounts, the themes, the backgrounds and the workflows are read one
 entry at a time. An entry that does not read, a chord that is not a key, a
 choice that is neither on nor off, an account with a directory that is not a
-path, a theme with a colour that is not hex, a workflow that breaks a rule, is
+path, a theme with a colour that is not hex, a background with a colour past the
+rim of the pad, a workflow that breaks a rule, is
 not used and costs nothing else. The file keeps it as written through every
 save, until a change names that entry again or replaces the whole setting it
 belongs to. A choice that names such an entry is kept with it: the palette
@@ -448,8 +523,9 @@ naming a theme that is not used, or the account every project uses naming an
 account that is not used. The window shows the default in its place, and the
 file keeps the choice until another is made. The tab of the setting says
 which entry is not used and the rule it breaks: the keys tab for a chord, live
-updates for a hook choice, accounts for an account, and the colour section of
-appearance for a theme or the palette. A value that is not used is named in
+updates for a hook choice, accounts for an account, the colour section of
+appearance for a theme or the palette, and its background section for a
+background. A value that is not used is named in
 the section of its setting. Workflows say so in their own tab, as
 [workflows](#workflows) describes. A setting that is not the shape it should
 be at all is kept whole in the same way.

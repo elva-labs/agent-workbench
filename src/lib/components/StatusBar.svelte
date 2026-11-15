@@ -527,6 +527,10 @@
     pointer-events: none;
   }
 
+  :global(:root[data-background]) .flash {
+    background: linear-gradient(var(--tint-status), var(--tint-status)), var(--tint-backdrop);
+  }
+
   .flash.on {
     padding-left: 14px;
   }

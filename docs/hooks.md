@@ -197,7 +197,7 @@ script in its page. See
 [browser](browser.md).
 
 Four more read and change the workbench's own settings, the appearance,
-look, palette, fonts, chords and workflows, save a theme of the user's own and write
+look, palette and its background, fonts, chords and workflows, save a theme of the user's own and write
 the user's own stylesheet, for when the user asks an agent for that: every
 change is put to the user first. See [settings](settings.md).
 
