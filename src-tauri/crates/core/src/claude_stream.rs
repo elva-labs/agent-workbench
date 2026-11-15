@@ -410,6 +410,16 @@ struct Stream {
     /// What the agent said of itself at the start, held until the
     /// settings it runs on are known too.
     introduced: Option<Value>,
+    /// The slash commands and skills as the agent last listed them.
+    listed: Vec<CommandInfo>,
+    /// The names of those that are skills, once a turn's start has said.
+    skills: Option<Vec<String>>,
+    /// The names a message can start with, once a turn's start has said.
+    typeable: Option<Vec<String>>,
+    /// The names of those that work only in the agent's own terminal.
+    terminal_only: Vec<String>,
+    /// The commands as last told.
+    commands_told: Vec<CommandInfo>,
     settings_known: bool,
     ready: bool,
     next: u64,
@@ -493,6 +503,101 @@ fn strings(value: &Value) -> Vec<String> {
         .flatten()
         .filter_map(|item| item.as_str().map(str::to_string))
         .collect()
+}
+
+/// Where Claude Code says a command that is not its own comes from, in
+/// brackets at the end of its description.
+const SOURCES: &[&str] = &["project", "user", "claude.ai sync"];
+
+/// How Claude Code names an MCP server's prompt in a message: this, the
+/// server's name, two underscores and the prompt's name, each with what is
+/// not a letter, a digit, an underscore or a dash made an underscore.
+const MCP_PREFIX: &str = "mcp__";
+
+/// What Claude Code lists after an MCP server's prompt, whose listed name
+/// is the server's and the prompt's joined by a colon.
+const MCP_SUFFIX: &str = " (MCP)";
+
+fn mcp_part(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// The slash commands and skills as the agent lists them, with where each
+/// comes from taken out of its description: a plugin's name in brackets
+/// before it, or one of [`SOURCES`] after it. An MCP server's prompt takes
+/// the name a message gives it, with the server as its source. One whose
+/// name begins with an underscore is the agent's own business, and one
+/// whose name holds a space cannot be typed, so both are left out. Of two
+/// by one name, the agent's own is kept, or else the first.
+fn listed_commands(value: &Value) -> Vec<CommandInfo> {
+    let mut kept: Vec<CommandInfo> = Vec::new();
+    for command in value.as_array().into_iter().flatten() {
+        let Some(info) = listed_command(command) else {
+            continue;
+        };
+        match kept.iter_mut().find(|known| known.name == info.name) {
+            Some(known) if info.builtin && !known.builtin => *known = info,
+            Some(_) => {}
+            None => kept.push(info),
+        }
+    }
+    kept
+}
+
+fn listed_command(command: &Value) -> Option<CommandInfo> {
+    let listed = command["name"].as_str()?.trim();
+    let mut source = None;
+    let name = match listed
+        .strip_suffix(MCP_SUFFIX)
+        .and_then(|prompt| prompt.split_once(':'))
+    {
+        Some((server, prompt)) => {
+            source = Some(server.trim().to_string());
+            format!(
+                "{MCP_PREFIX}{}__{}",
+                mcp_part(server.trim()),
+                mcp_part(prompt.trim())
+            )
+        }
+        None => listed.to_string(),
+    };
+    if name.is_empty() || name.starts_with('_') || name.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut description = command["description"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if let Some((plugin, _)) = name.split_once(':') {
+        if let Some(rest) = description.strip_prefix(&format!("({plugin})")) {
+            description = rest.trim_start().to_string();
+            source = Some(plugin.to_string());
+        }
+    }
+    for known in SOURCES {
+        if let Some(rest) = description.strip_suffix(&format!("({known})")) {
+            description = rest.trim_end().to_string();
+            source.get_or_insert_with(|| known.to_string());
+            break;
+        }
+    }
+    Some(CommandInfo {
+        name,
+        description: Some(description).filter(|d| !d.is_empty()),
+        hint: text(&command["argumentHint"]).filter(|h| !h.trim().is_empty()),
+        skill: false,
+        builtin: command["builtin"] == true,
+        source,
+    })
 }
 
 /// The tokens the model read: the agent counts those it read from its
@@ -746,6 +851,11 @@ impl Stream {
             effort: effort.map(str::to_string),
             models: Vec::new(),
             introduced: None,
+            listed: Vec::new(),
+            skills: None,
+            typeable: None,
+            terminal_only: Vec::new(),
+            commands_told: Vec::new(),
             settings_known: false,
             ready: false,
             next: 0,
@@ -826,6 +936,53 @@ impl Stream {
         }
     }
 
+    /// The commands and skills as now known: which are skills by the last
+    /// turn's word, or until one has said, those that are not the agent's
+    /// own; without those that work only in its own terminal, nor an MCP
+    /// server's prompt that the last turn's start did not name. A prompt is
+    /// never a skill.
+    fn commands(&self) -> Vec<CommandInfo> {
+        self.listed
+            .iter()
+            .filter(|command| !self.terminal_only.contains(&command.name))
+            .filter(|command| {
+                !command.name.starts_with(MCP_PREFIX)
+                    || self
+                        .typeable
+                        .as_ref()
+                        .is_none_or(|names| names.contains(&command.name))
+            })
+            .map(|command| CommandInfo {
+                skill: match &self.skills {
+                    _ if command.name.starts_with(MCP_PREFIX) => false,
+                    // A skill of the user's synced from elsewhere is listed
+                    // under a plugin's prefix there, and without it here.
+                    Some(skills) => skills.iter().any(|skill| {
+                        *skill == command.name
+                            || (!command.builtin
+                                && skill
+                                    .rsplit_once(':')
+                                    .is_some_and(|(_, name)| name == command.name))
+                    }),
+                    None => !command.builtin,
+                },
+                ..command.clone()
+            })
+            .collect()
+    }
+
+    /// Tells the commands, once the agent is ready, when they changed.
+    fn tell_commands(&mut self, out: &mut Reading) {
+        if !self.ready {
+            return;
+        }
+        let commands = self.commands();
+        if commands != self.commands_told {
+            self.commands_told = commands.clone();
+            out.events.push(Event::Commands { commands });
+        }
+    }
+
     /// Says the agent is ready, once it has said both what it is and what
     /// it runs on.
     fn introduce(&mut self, out: &mut Reading) {
@@ -871,18 +1028,11 @@ impl Stream {
                 })
                 .collect(),
             efforts: self.efforts(),
-            commands: body["commands"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|command| {
-                    Some(CommandInfo {
-                        name: command["name"].as_str()?.to_string(),
-                        description: text(&command["description"]),
-                        hint: text(&command["argumentHint"]).filter(|h| !h.is_empty()),
-                    })
-                })
-                .collect(),
+            commands: {
+                self.listed = listed_commands(&body["commands"]);
+                self.commands_told = self.commands();
+                self.commands_told.clone()
+            },
         });
         if signed_out(&body["account"]) {
             self.signed_out = true;
@@ -1313,11 +1463,29 @@ impl Stream {
                     None,
                     out,
                 );
+                // Only a turn's start says which commands are skills.
+                if line["skills"].is_array() {
+                    self.skills = Some(strings(&line["skills"]));
+                }
+                if line["slash_commands"].is_array() {
+                    self.typeable = Some(strings(&line["slash_commands"]));
+                }
+                self.terminal_only = strings(&line["terminal_slash_commands"]);
+                self.tell_commands(out);
+            }
+            Some("commands_changed") => {
+                self.listed = listed_commands(&line["commands"]);
+                self.tell_commands(out);
             }
             Some("status") => {
                 if line["status"] == "compacting" {
                     self.begin(out);
                     out.events.push(Event::Compacting);
+                }
+                if line["compact_result"] == "failed" {
+                    out.events.push(Event::CompactFailed {
+                        error: text(&line["compact_error"]).filter(|e| !e.trim().is_empty()),
+                    });
                 }
                 for message in strings(&line["user_message_uuids"]) {
                     self.took(&message, out);
@@ -1945,10 +2113,14 @@ impl Driver for Stream {
         let (line, key) = match control {
             // The agent compacts when told so in a message of its own, which
             // starts a turn that names no message of the window's.
-            Control::Compact => {
+            Control::Compact { instructions } => {
+                let content = match instructions {
+                    Some(words) => format!("/compact {words}"),
+                    None => "/compact".to_string(),
+                };
                 let line = json!({
                     "type": "user",
-                    "message": { "role": "user", "content": "/compact" },
+                    "message": { "role": "user", "content": content },
                     "parent_tool_use_id": null,
                     "uuid": uuid::Uuid::new_v4().to_string(),
                 });
@@ -2334,7 +2506,10 @@ mod tests {
     #[test]
     fn compacting_is_asked_for_in_a_message_that_names_no_turn_of_the_window_s() {
         let mut stream = stream();
-        let Sending::Line { line } = stream.control(&Control::Compact).unwrap() else {
+        let Sending::Line { line } = stream
+            .control(&Control::Compact { instructions: None })
+            .unwrap()
+        else {
             panic!("the agent answers with events alone");
         };
         let line: Value = serde_json::from_str(&line).unwrap();
@@ -3182,6 +3357,278 @@ mod tests {
         assert!(!modes.iter().any(|mode| mode.value == "bypassPermissions"));
         assert_eq!(commands[0].hint, None);
         assert_eq!(out.len(), 1, "signed in: {out:?}");
+    }
+
+    /// The commands a stream is ready with, after an initialize listing
+    /// these.
+    fn ready_with(stream: &mut Stream, commands: Value) -> Vec<CommandInfo> {
+        stream.opening();
+        let out = events(
+            stream,
+            &[
+                json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-1","response":{
+                    "account":{"apiProvider":"firstParty","subscriptionType":"pro"},"commands":commands}}}),
+                json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-2","response":{"applied":{}}}}),
+            ],
+        );
+        let Some(Event::Ready { commands, .. }) = out.first() else {
+            panic!("{out:?}");
+        };
+        commands.clone()
+    }
+
+    fn told_commands(out: &[Event]) -> Vec<Vec<CommandInfo>> {
+        out.iter()
+            .filter_map(|event| match event {
+                Event::Commands { commands } => Some(commands.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn commands_say_where_they_come_from() {
+        let mut stream = stream();
+        let commands = ready_with(
+            &mut stream,
+            json!([
+                {"name":"compact","description":"Free up context","argumentHint":"<instructions>","builtin":true},
+                {"name":"release","description":"Bump and tag a release (project)","argumentHint":"<version>"},
+                {"name":"tidy","description":"Tidy up (user)","argumentHint":" "},
+                {"name":"kit:deploy","description":"(kit) Ship it to production","argumentHint":""},
+                {"name":"pdf","description":"Read a PDF. (claude.ai sync)\n"},
+                {"name":"plain","description":"Says (something) in brackets"},
+                {"name":"__internal","description":"Not for people","builtin":true},
+                {"description":"No name"},
+            ]),
+        );
+        let seen: Vec<_> = commands
+            .iter()
+            .map(|c| {
+                (
+                    c.name.as_str(),
+                    c.description.as_deref(),
+                    c.hint.as_deref(),
+                    c.builtin,
+                    c.source.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (
+                    "compact",
+                    Some("Free up context"),
+                    Some("<instructions>"),
+                    true,
+                    None
+                ),
+                (
+                    "release",
+                    Some("Bump and tag a release"),
+                    Some("<version>"),
+                    false,
+                    Some("project")
+                ),
+                ("tidy", Some("Tidy up"), None, false, Some("user")),
+                (
+                    "kit:deploy",
+                    Some("Ship it to production"),
+                    None,
+                    false,
+                    Some("kit")
+                ),
+                (
+                    "pdf",
+                    Some("Read a PDF."),
+                    None,
+                    false,
+                    Some("claude.ai sync")
+                ),
+                (
+                    "plain",
+                    Some("Says (something) in brackets"),
+                    None,
+                    false,
+                    None
+                ),
+            ]
+        );
+        assert_eq!(
+            commands.iter().map(|c| c.skill).collect::<Vec<_>>(),
+            [false, true, true, true, true, true],
+            "until a turn says, those that are not the agent's own are skills"
+        );
+    }
+
+    #[test]
+    fn a_turn_s_start_says_which_commands_are_skills() {
+        let mut stream = stream();
+        ready_with(
+            &mut stream,
+            json!([
+                {"name":"compact","description":"Compact","builtin":true},
+                {"name":"code-review","description":"Review the diff","builtin":true},
+                {"name":"color","description":"Colour the prompt","builtin":true},
+                {"name":"release","description":"Release (project)"},
+                {"name":"pdf","description":"Read a PDF (claude.ai sync)"},
+            ]),
+        );
+        let start = json!({"type":"system","subtype":"init","model":"haiku","permissionMode":"default",
+            "skills":["code-review","anthropic-skills:pdf"],
+            "slash_commands":["compact","code-review","color","release","anthropic-skills:pdf"],
+            "terminal_slash_commands":["color"]});
+        let out = events(&mut stream, std::slice::from_ref(&start));
+        let told = told_commands(&out);
+        assert_eq!(told.len(), 1, "{out:?}");
+        assert_eq!(
+            told[0]
+                .iter()
+                .map(|c| (c.name.as_str(), c.skill))
+                .collect::<Vec<_>>(),
+            [
+                ("compact", false),
+                ("code-review", true),
+                ("release", false),
+                ("pdf", true)
+            ],
+            "a skill of the agent's own, a command of a project's, and one \
+             listed under a prefix are told apart; one for the terminal goes"
+        );
+        let out = events(&mut stream, &[result(), start]);
+        assert!(told_commands(&out).is_empty(), "the same again is no news");
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"commands_changed","commands":[
+                    {"name":"compact","description":"Compact","builtin":true},
+                    {"name":"new-skill","description":"Found in a folder (project)"},
+                ]}),
+            ],
+        );
+        assert_eq!(
+            told_commands(&out)[0]
+                .iter()
+                .map(|c| (c.name.as_str(), c.skill))
+                .collect::<Vec<_>>(),
+            [("compact", false), ("new-skill", false)],
+            "a list the agent pushes takes the place of the last, marked by \
+             the skills the last turn named"
+        );
+    }
+
+    #[test]
+    fn a_turn_s_start_before_the_agent_is_ready_tells_nothing_of_commands() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[json!({"type":"system","subtype":"init","model":"haiku","skills":["review"]})],
+        );
+        assert!(told_commands(&out).is_empty(), "{out:?}");
+        let commands = ready_with(
+            &mut stream,
+            json!([{"name":"review","description":"Review","builtin":true}]),
+        );
+        assert!(commands[0].skill, "the ready event says what was heard");
+    }
+
+    #[test]
+    fn a_compaction_that_fails_says_why() {
+        // As Claude Code 2.1.325 answers `/compact` with too little to
+        // compact.
+        let mut stream = stream();
+        stream
+            .control(&Control::Compact {
+                instructions: Some("keep the notes".into()),
+            })
+            .unwrap();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"status","status":"compacting"}),
+                json!({"type":"system","subtype":"status","status":null,"compact_result":"failed","compact_error":"Not enough messages to compact."}),
+                json!({"type":"assistant","message":{"id":"s1","model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"Error: Not enough messages to compact."}]},"parent_tool_use_id":null}),
+                json!({"type":"result","subtype":"success","is_error":false,"num_turns":0,"result":""}),
+            ],
+        );
+        assert_eq!(out[1], Event::Compacting);
+        assert_eq!(
+            out[2],
+            Event::CompactFailed {
+                error: Some("Not enough messages to compact.".into())
+            }
+        );
+        assert!(!out.iter().any(|e| matches!(e, Event::Compacted { .. })));
+        assert!(matches!(
+            out.last(),
+            Some(Event::TurnEnded {
+                outcome: Outcome::Done,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_mcp_server_s_prompt_takes_the_name_a_message_gives_it() {
+        let mut stream = stream();
+        let commands = ready_with(
+            &mut stream,
+            json!([
+                {"name":"probe:greet (MCP)","description":"Greets someone","argumentHint":""},
+                {"name":"claude.ai Home Assistant:automation_review (MCP)","description":"Reviews an automation","argumentHint":""},
+                {"name":"has space","description":"Cannot be typed"},
+                {"name":"ship","description":"Ship it (project)"},
+                {"name":"ship","description":"Ship it","builtin":true},
+                {"name":"ship","description":"Ship it again (user)"},
+            ]),
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .map(|c| (c.name.as_str(), c.source.as_deref(), c.skill, c.builtin))
+                .collect::<Vec<_>>(),
+            [
+                ("mcp__probe__greet", Some("probe"), false, false),
+                (
+                    "mcp__claude_ai_Home_Assistant__automation_review",
+                    Some("claude.ai Home Assistant"),
+                    false,
+                    false
+                ),
+                ("ship", None, false, true),
+            ],
+            "a prompt is a command under its server; a name with a space goes; \
+             of two by one name the agent's own stays"
+        );
+        let out = events(
+            &mut stream,
+            &[json!({"type":"system","subtype":"init","model":"haiku",
+                "skills":[],"slash_commands":["ship","mcp__probe__greet"]})],
+        );
+        assert_eq!(
+            told_commands(&out)[0]
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            ["mcp__probe__greet", "ship"],
+            "a prompt the turn's start does not name cannot be typed"
+        );
+    }
+
+    #[test]
+    fn compacting_takes_what_the_summary_should_keep() {
+        let mut stream = stream();
+        let Sending::Line { line } = stream
+            .control(&Control::Compact {
+                instructions: Some("keep the API notes".into()),
+            })
+            .unwrap()
+        else {
+            panic!("the agent answers with events alone");
+        };
+        let line: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(line["message"]["content"], "/compact keep the API notes");
     }
 
     #[test]

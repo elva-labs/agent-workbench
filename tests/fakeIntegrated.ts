@@ -1,4 +1,5 @@
 import type {
+  IntegratedCommand,
   IntegratedEvent,
   IntegratedEventBody,
   IntegratedFileChange,
@@ -24,7 +25,7 @@ export type IntegratedCall =
   | { method: "trust"; options: IntegratedTrustOptions }
   | { method: "send"; id: string; message: string; text: string; images: IntegratedImage[] }
   | { method: "interrupt"; id: string }
-  | { method: "compact"; id: string }
+  | { method: "compact"; id: string; instructions: string | null }
   | {
       method: "answer";
       id: string;
@@ -87,14 +88,19 @@ export interface FakeIntegrated {
   untrusted: Set<string>;
   /** The messages handed over to a holding agent, in order. */
   handed: string[];
+  /** Sessions started while this holds say they are ready only when the
+      test says so, through `ready`. */
+  holdReady: boolean;
+  /** A compaction asked for is refused with this, while it is set. */
+  compactRefusal: string | null;
 
   start(options: IntegratedStartOptions): IntegratedStarted;
   trust(options: IntegratedTrustOptions): void;
   send(id: string, message: string, text: string, images?: IntegratedImage[]): void;
   interrupt(id: string): void;
   /** Asks the agent to compact: once no turn runs, it compacts in a turn
-      that names no message. */
-  compact(id: string): void;
+      that names no message. Codex takes no instructions for it. */
+  compact(id: string, instructions?: string): void;
   answer(id: string, request: string, choice: PermissionChoice, message?: string): void;
   reply(id: string, request: string, answers: string[][] | null): void;
   configure(
@@ -120,6 +126,12 @@ export interface FakeIntegrated {
 
   /** Says anything at all for a session, under the core's rules. */
   emit(id: string, event: IntegratedEventBody): void;
+  /** The agent of a session started while `holdReady` held says it is
+      ready. */
+  ready(id: string): void;
+  /** The agent's commands and skills change, or it says more of which is
+      which. */
+  commands(id: string, commands: IntegratedCommand[]): void;
   /** Hands events the real core emitted to the window as they are, with
       none of this fake's own rules: a replay of what a driver said. */
   replay(id: string, events: IntegratedEventBody[]): void;
@@ -260,6 +272,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     settings: IntegratedSettings;
     efforts: string[];
     ready: Extract<IntegratedEventBody, { type: "ready" }> | null;
+    /** The ready event, held until the test says the agent is ready. */
+    heldReady: Extract<IntegratedEventBody, { type: "ready" }> | null;
     pending: string[];
     /** The first message event of each pending message. */
     told: Map<string, Told>;
@@ -306,6 +320,23 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   ];
   /** What the agent says it runs on when no model was asked for. */
   const RESOLVED = "claude-sonnet-5-5";
+  const command = (
+    name: string,
+    description: string,
+    hint: string | null,
+    source: string | null = null,
+    skill = false,
+  ): IntegratedCommand => ({ name, description, hint, skill, builtin: source === null, source });
+  const COMMANDS = [
+    command("compact", "Compact the conversation, keeping a summary", "[instructions]"),
+    command("context", "Show what fills the context", null),
+    command("init", "Write a CLAUDE.md for this project", null),
+    command("review", "Review a pull request", "[pr]"),
+    command("security-review", "Review the branch for security issues", null),
+    command("release", "Bump, tag and push a release", "<version>", "project"),
+    command("code-review", "Review the current diff for bugs", "[level]", "user", true),
+    command("run", "Launch the app to see a change working", null, "project", true),
+  ];
   const CODEX_MODES = [
     { value: "read-only", name: "Read only", description: "Reads, and asks before it changes anything" },
     { value: "auto", name: "Auto", description: "Works in the project, and asks before going outside it" },
@@ -395,6 +426,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     events: [],
     untrusted: new Set(),
     handed: [],
+    holdReady: false,
+    compactRefusal: null,
 
     start(startOptions) {
       const folder = startOptions.cwd ?? startOptions.project;
@@ -415,6 +448,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         settings,
         efforts: [],
         ready: null,
+        heldReady: null,
         pending: [],
         told: new Map(),
         used: new Set(),
@@ -436,8 +470,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       });
       fake.calls.push({ method: "start", options: startOptions, id });
       // Before the caller has the id, as the core's own may arrive. An
-      // agent that makes its own id says it here.
-      fake.emit(id, {
+      // agent that makes its own id says it here. Codex lists no commands.
+      const ready: Extract<IntegratedEventBody, { type: "ready" }> = {
         type: "ready",
         sessionId: sessionId ?? `agent-thread-${count}`,
         ...settings,
@@ -445,8 +479,10 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         models: codex ? CODEX_MODELS : MODELS,
         modes: codex ? CODEX_MODES : MODES,
         efforts: efforts(settings.model),
-        commands: [{ name: "compact", description: "Compact the conversation", hint: null }],
-      });
+        commands: codex ? [] : COMMANDS,
+      };
+      if (fake.holdReady) sessions.get(id)!.heldReady = ready;
+      else fake.emit(id, ready);
       return { id, sessionId };
     },
 
@@ -497,9 +533,12 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       });
     },
 
-    compact(id) {
+    compact(id, instructions) {
       const session = live(id);
-      fake.calls.push({ method: "compact", id });
+      const words = instructions?.trim() ? instructions.trim() : null;
+      if (session.codex && words !== null) throw new Error("Codex compacts without instructions");
+      if (fake.compactRefusal !== null) throw new Error(fake.compactRefusal);
+      fake.calls.push({ method: "compact", id, instructions: words });
       session.compactAsked = true;
       // The agent takes it once no turn runs, after the call answers.
       later(() => {
@@ -637,6 +676,18 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       }
     },
 
+    ready(id) {
+      const session = live(id);
+      const ready = session.heldReady;
+      if (ready === null) throw new Error("the agent said it was ready already");
+      session.heldReady = null;
+      fake.emit(id, ready);
+    },
+
+    commands(id, commands) {
+      fake.emit(id, { type: "commands", commands });
+    },
+
     emit(id, body) {
       const session = sessions.get(id);
       if (!session || session.ended) return;
@@ -647,6 +698,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.settings = { model: body.model, mode: body.mode, effort: body.effort };
           session.efforts = body.efforts;
           if (body.type === "ready") session.ready = body;
+          break;
+        case "commands":
+          if (session.ready !== null) session.ready = { ...session.ready, commands: body.commands };
           break;
         case "turnStarted": {
           const messages = body.messages.filter((m) => session.pending.includes(m));
@@ -756,6 +810,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.compacting = true;
           break;
         case "compacted":
+        case "compactFailed":
           session.compacting = false;
           break;
         case "limits":

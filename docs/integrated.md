@@ -175,11 +175,11 @@ the same way.
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
-| Compact | Compacts the conversation, the way the agent does it. Claude Code is sent a compact command as a message of its own, and Codex is asked to compact its thread; either way the turn it starts names no message of the window's. |
+| Compact | Compacts the conversation, the way the agent does it, with what the summary should keep where the agent takes that. Claude Code is sent a compact command as a message of its own, with those words after it, and Codex is asked to compact its thread, refusing words since it takes none; either way the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
-| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, the messages no turn has taken yet, the account's limits as they were last told, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
+| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready with its commands as they now are, every permission request and question still waiting for an answer, the messages no turn has taken yet, the account's limits as they were last told, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
 | History | Reads what a conversation said and did before, from where its agent keeps it, as described under history. It is addressed by the project's path and the conversation's id rather than by a session, so it needs no session running, and answers with none for an agent whose history is not read, which Codex's is not. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
@@ -251,8 +251,24 @@ naming the session and its kind:
 - **ready**, once, before anything else: the conversation's id, the model,
   mode and effort, the agent's version, and what it offers: models (each
   with the efforts it takes), modes, the efforts of the model it runs on,
-  and its slash commands. A mode can be one the list does not hold, when it
-  comes from the user's own configuration.
+  and its slash commands and skills. A mode can be one the list does not
+  hold, when it comes from the user's own configuration.
+- **commands**: the slash commands and skills changed, or the agent said
+  more of which is which; all of them as they now are. Each has its name,
+  what it does, the hint of what it takes after its name, whether it is a
+  skill, whether it is the agent's own, and where one that is not comes
+  from. Claude Code lists them together when it starts, with where one
+  comes from written into its description, which the core takes out; the
+  start of each turn names which are skills, and until the first does,
+  those that are not the agent's own count as skills. Commands that work
+  only in the agent's own terminal are left out, as are those whose name
+  begins with an underscore or holds a space, and of two by one name the
+  agent's own is kept. An MCP server's prompt, which Claude Code lists as
+  the server and the prompt joined by a colon, is given the name a message
+  calls it by, `mcp__`, the server and the prompt joined by two
+  underscores, each with what is not a letter, a digit, an underscore or a
+  dash made an underscore; it counts as a command with the server as its
+  source, and goes once a turn's start does not name it. Codex lists none.
 - **configured**: the model, the mode or the effort changed.
 - **message**: a sent message went to the agent with nothing ahead of it,
   is queued behind a running turn, was taken into the running turn, or
@@ -288,7 +304,9 @@ naming the session and its kind:
   work as a whole, was over. A finished task says whether the agent
   reports it in a turn of its own.
 - **compacting** and **compacted**, which says whether it was asked for or
-  the context window was full.
+  the context window was full, or **compact failed**, with the agent's
+  reason where it gives one, when the conversation is left as it was. A
+  compaction is over with the turn it runs in either way.
 - **context**: how much of the model's context window the conversation
   takes, and how big the window is, where the agent says.
 - **limits**: the usage limits of the account the session runs under,
