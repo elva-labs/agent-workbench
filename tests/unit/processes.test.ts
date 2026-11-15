@@ -67,7 +67,7 @@ describe("what is looked under", () => {
     started(session.key, "pty-1", "s1");
     const other = create("/two");
     started(other.key, "pty-2", "s2");
-    const shell = createShell("/one");
+    const shell = createShell({ project: "/one", session: null });
     shellStarted(shell.key, "pty-3");
     const starting = create("/one");
     expect(starting.ptyId).toBeNull();
@@ -84,7 +84,7 @@ describe("the list", () => {
   it("gathers what runs under each, named for its owner, and skips a pty that went", async () => {
     const session = create("/one");
     started(session.key, "pty-1", "s1");
-    const shell = createShell("/one");
+    const shell = createShell({ project: "/one", session: null });
     shellStarted(shell.key, "pty-gone");
     under["pty-1"] = [
       process(10, "node server.js"),

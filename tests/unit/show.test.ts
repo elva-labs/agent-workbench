@@ -253,8 +253,27 @@ describe("a call from a session the user is not looking at", () => {
     expect(workspace.active).toBe("/two");
     select(a.key);
     switched(a.key);
-    expect(shells).toEqual([["/one", "npm run dev"]]);
+    expect(shells).toEqual([[{ project: "/one", session: a.key }, "npm run dev"]]);
     expect(workspace.active).toBe("/one");
+  });
+
+  it("gives the terminal to the calling session, and one from no session the window knows to what is on screen", () => {
+    workspace.open.push(repo("/one"), repo("/two"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    a.told = true;
+    terminalRequested({ command: "npm run dev", cwd: "/one", session: "s1" });
+    expect(shells).toEqual([[{ project: "/one", session: a.key }, "npm run dev"]]);
+    shells.length = 0;
+    // An agent run outside the app, in the project with a session on
+    // screen, and in one with none.
+    terminalRequested({ command: "make", cwd: "/one", session: null });
+    expect(shells).toEqual([[{ project: "/one", session: a.key }, "make"]]);
+    shells.length = 0;
+    terminalRequested({ command: "vite", cwd: "/two", session: null });
+    expect(workspace.active).toBe("/two");
+    expect(shells).toEqual([[{ project: "/two", session: null }, "vite"]]);
   });
 
   it("holds a call from a session known only by where it runs", async () => {

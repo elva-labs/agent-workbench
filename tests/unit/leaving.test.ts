@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { editor } from "$lib/editor.svelte";
-import { leaveAsked, leaving, running, runningAside, runningQuestion } from "$lib/leaving.svelte";
+import {
+  busyGoing,
+  busyShells,
+  closingAside,
+  closingQuestion,
+  leaveAsked,
+  leaving,
+  running,
+  runningAside,
+  runningQuestion,
+} from "$lib/leaving.svelte";
 import { sessions, type Session } from "$lib/sessions.svelte";
 import { create, reset as resetShells, started } from "$lib/terminals.svelte";
 import { workspace } from "$lib/workspace.svelte";
@@ -22,7 +32,7 @@ const NBSP = "\u00a0";
 
 /** A shell of the project on screen, running on `ptyId`. */
 function shell(ptyId: string) {
-  const made = create(workspace.active ?? "/p");
+  const made = create({ project: workspace.active ?? "/p", session: null });
   started(made.key, ptyId);
   return made;
 }
@@ -44,7 +54,9 @@ beforeEach(() => {
   resetShells();
   leaving.busy = [];
   workspace.active = "/p";
+  workspace.open = [];
   sessions.all = [];
+  sessions.active = null;
   editor.asking = null;
   editor.buffers = {};
 });
@@ -104,6 +116,81 @@ describe("what closing the window takes", () => {
     expect(runningAside({ count: 2, waiting: 0 })).toBe(` 2${NBSP}sessions are running, and stop with the app.`);
     expect(runningAside({ count: 0, waiting: 0 }, [{ label: "shell 1", running: ["make"] }])).toBe(
       ` 1${NBSP}busy shell is running, and stops with the app.`,
+    );
+  });
+});
+
+describe("naming a busy shell", () => {
+  /** A row with a title, in a project, with only what a name reads. */
+  function titled(key: string, title: string, project = "/p") {
+    const session = { key, project, title, resumedFrom: null, ordinal: 1 } as unknown as Session;
+    sessions.all.push(session);
+    return session;
+  }
+
+  function busy(owner: { project: string; session: string | null }, ptyId: string, command: string) {
+    const made = create(owner);
+    started(made.key, ptyId);
+    under[ptyId] = [{ pid: 20, parent: 10, name: command.split(" ")[0], command, started: 1 }];
+    return made;
+  }
+
+  it("says whose a shell not on screen is, for the window's question", async () => {
+    titled("s1", "fix login");
+    titled("s2", "docs");
+    sessions.active = "s1";
+    busy({ project: "/p", session: "s1" }, "pty-1", "npm run dev");
+    busy({ project: "/p", session: "s2" }, "pty-2", "make watch");
+    busy({ project: "/p", session: null }, "pty-3", "sleep 600");
+    busy({ project: "/q", session: null }, "pty-4", "vite");
+    expect((await busyShells()).map((shell) => shell.label)).toEqual([
+      "shell 1",
+      "shell 1 of docs",
+      "shell 1 in p",
+      "shell 1 in q",
+    ]);
+  });
+
+  it("reads only the shells a session or a project takes with it", async () => {
+    titled("s1", "fix login");
+    titled("s2", "docs");
+    busy({ project: "/p", session: "s1" }, "pty-1", "npm run dev");
+    busy({ project: "/p", session: "s2" }, "pty-2", "make watch");
+    busy({ project: "/p", session: null }, "pty-3", "sleep 600");
+    busy({ project: "/q", session: null }, "pty-4", "vite");
+    const idle = create({ project: "/p", session: "s1" });
+    started(idle.key, "pty-idle");
+    expect(await busyGoing({ session: "s1" })).toEqual([{ label: "shell 1", running: ["npm run dev"] }]);
+    expect(await busyGoing({ session: "gone" })).toEqual([]);
+    expect(await busyGoing({ project: "/p" })).toEqual([
+      { label: "shell 1 of fix login", running: ["npm run dev"] },
+      { label: "shell 1 of docs", running: ["make watch"] },
+      { label: "shell 1", running: ["sleep 600"] },
+    ]);
+  });
+
+  it("asks before a session or a project goes in the window's words", () => {
+    expect(closingQuestion("session", "fix login", [{ label: "shell 2", running: ["npm run dev"] }])).toEqual({
+      question: `Close fix login with 1${NBSP}busy shell running?`,
+      detail: "“npm run dev” is running in shell 2. Closing the session stops it.",
+      action: "Close session",
+    });
+    expect(
+      closingQuestion("project", "demo", [
+        { label: "shell 1", running: ["sleep 600"] },
+        { label: "shell 1 of docs", running: ["make watch", "tsc -w"] },
+      ]),
+    ).toEqual({
+      question: `Close demo with 2${NBSP}busy shells running?`,
+      detail: "“sleep 600” is running in shell 1, and “make watch” in shell 1 of docs. Closing the project stops them.",
+      action: "Close project",
+    });
+    expect(closingAside("session", [])).toBe("");
+    expect(closingAside("session", [{ label: "shell 1", running: ["make"] }])).toBe(
+      ` 1${NBSP}busy shell is running, and stops with the session.`,
+    );
+    expect(closingAside("project", [{ label: "shell 1", running: ["a"] }, { label: "shell 2", running: ["b"] }])).toBe(
+      ` 2${NBSP}busy shells are running, and stop with the project.`,
     );
   });
 });

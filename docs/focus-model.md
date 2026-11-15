@@ -181,10 +181,20 @@ in it, a dev server say, comes to the front and asks first, by the chord,
 its row's <kbd>Delete</kbd> or its ×: the question names what runs and
 holds the keyboard on Cancel, <kbd>Escape</kbd> cancels, and either answer
 gives the keyboard back where it was, the shell or its row. The question
-goes, closing nothing, when the panel is hidden, and the chord pressed
-again while the keyboard is elsewhere puts it back on Cancel. What a shell's
-prompt keeps running for itself, such as a git status daemon, does not
-count, and a shell started inside the shell counts for what it runs.
+goes, closing nothing, when the panel is hidden or the session or project
+on screen changes, and the chord pressed again while the keyboard is
+elsewhere puts it back on Cancel. What a shell's prompt keeps running for
+itself, such as a git status daemon, does not count, and a shell started
+inside the shell counts for what it runs.
+
+Closing a session from its row closes the shells that belong to it, and
+closing a project every shell that started in it, so either asks first
+while one of those has something running. The question goes up at the top
+of the sessions pane, in the words of the window's below: how many busy
+shells, what runs in each, and that closing stops them, with Cancel
+holding the keyboard. Asked together with unsaved edits, the edits'
+question adds a line about the busy shells. Idle shells go without a
+question.
 
 Closing the window ends the app, and every session and shell running in it.
 So the window's close, by the chord, by Close Window on
@@ -193,7 +203,8 @@ controls the app draws, and the app's quit, ask first while a session runs,
 a shell has something running in it, by the rule above, or the editor
 holds unsaved edits. The question goes over the whole window. It says how
 many sessions run and how many of them wait on you, what runs in each busy
-shell, that the sessions come back as rows next time to resume, and names
+shell and, for one not on screen, the session or project it belongs to,
+that the sessions come back as rows next time to resume, and names
 every unsaved file, with Cancel holding the keyboard, so <kbd>Return</kbd>
 keeps everything. A row left from the last quit runs nothing and counts
 for nothing, and a window with nothing running, idle shells included,

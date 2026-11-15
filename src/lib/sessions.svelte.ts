@@ -24,6 +24,7 @@ import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
+import { sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
@@ -1481,11 +1482,15 @@ export function close(key: string) {
   if (session.id !== null) loadHistory(session.project);
   ownerGone(key);
 
-  if (sessions.active !== key) return;
-  // Prefer another session in the same project, so closing one does not throw
-  // you into a different project's work.
-  const sibling = forProject(session.project)[0] ?? sessions.all[0] ?? null;
-  sessions.active = sibling?.key ?? null;
+  if (sessions.active === key) {
+    // Prefer another session in the same project, so closing one does not
+    // throw you into a different project's work.
+    const sibling = forProject(session.project)[0] ?? sessions.all[0] ?? null;
+    sessions.active = sibling?.key ?? null;
+  }
+  // The shells opened beside the session go with the row, once whoever is
+  // shown next is chosen.
+  void closeShells(key);
 }
 
 export function closeProject(project: string) {

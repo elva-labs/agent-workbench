@@ -29,7 +29,7 @@ import { openFile } from "$lib/editor.svelte";
 import { showDiff, showRange } from "$lib/files.svelte";
 import { focusPane, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
 import { byKey, forProject, noted, sessions } from "$lib/sessions.svelte";
-import { create as createShell } from "$lib/terminals.svelte";
+import { create as createShell, ownerOnScreen as shellOwner } from "$lib/terminals.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
 
 /** Whether `path` is `root` or under it. */
@@ -120,7 +120,9 @@ export function projectOf(cwd: string): string | null {
 }
 
 /** Opens a terminal in the project with the command typed at the prompt,
-    from the directory the agent runs in when that is not the project. */
+    from the directory the agent runs in when that is not the project. The
+    shell belongs to the calling session; a call from no session the window
+    knows opens it beside what is on screen, as one opened by hand. */
 export function terminalRequested(request: TerminalRequest) {
   const project = projectOf(request.cwd);
   if (project === null) return;
@@ -131,12 +133,21 @@ export function terminalRequested(request: TerminalRequest) {
       inside === null || inside === ""
         ? request.command
         : `cd '${inside.replace(/'/g, "'\\''")}' && ${request.command}`;
-    createShell(project, command);
+    const caller = callerOf(request, project);
+    const owner = caller === null ? shellOwner() : { project: caller.project, session: caller.key };
+    if (owner === null) return;
+    createShell(owner, command);
     if (!terminalVisible()) toggleTerminal();
     else focusPane("terminal");
   };
   if (held(request, project, open)) return;
   open();
+}
+
+/** The session a call is from, as the tools that act for their caller
+    find it, or null when it is from none the window knows. */
+function callerOf(request: { cwd: string; session: string | null }, project: string) {
+  return sessionFor(request, project);
 }
 
 /** The session a request is from: the one it names, else the one running

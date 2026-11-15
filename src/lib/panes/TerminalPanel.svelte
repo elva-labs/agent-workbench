@@ -25,12 +25,13 @@
     closeAsking,
     create,
     equalize,
-    forProject,
+    forOwner,
     groupOf,
     groupsFor,
     keepAsked,
     label,
     launch,
+    ownerOnScreen,
     resizeSplit,
     select,
     share,
@@ -41,30 +42,47 @@
     terminals,
     type Shell,
   } from "$lib/terminals.svelte";
-  import { workspace } from "$lib/workspace.svelte";
+  import { byKey as sessionByKey, label as sessionLabel } from "$lib/sessions.svelte";
+  import { projectLabel } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
   let current = $derived(activeShell());
   let shown = $derived(shownGroup());
   let focused = $derived(layout.focus === "terminal");
-  let groups = $derived(workspace.active === null ? [] : groupsFor(workspace.active));
+  /** Whose shells are listed: the session on screen, else the project. */
+  let owner = $derived(ownerOnScreen());
+  let groups = $derived(groupsFor(owner));
+  /** The owner as the list names it. */
+  let ownerName = $derived.by(() => {
+    if (owner === null) return "";
+    if (owner.session === null) return projectLabel(owner.project);
+    const session = sessionByKey(owner.session);
+    return session === null ? "" : sessionLabel(session);
+  });
 
   /** What the shown group divides between its shells. */
   let shellsWidth = $state(0);
 
-  // Asking for the panel is asking for a shell: it opens with one when the
-  // project has none. Only on showing it or on changing project, never as a
+  /** Whether anyone is on screen to have shells: false until a project is. */
+  let someone = $derived(owner !== null);
+
+  // Asking for the panel is asking for a shell: it opens with one when
+  // whoever is on screen has none. Only on showing it, or on a project
+  // coming on screen under it as the window starts, never on switching
+  // session or project, where the panel offers one instead, and never as a
   // reaction to a shell going, or one that exits at once would be a loop.
   $effect(() => {
     const visible = terminalVisible();
-    const project = workspace.active;
+    const anyone = someone;
     untrack(() => {
-      if (visible && project !== null && forProject(project).length === 0) create(project);
+      const now = ownerOnScreen();
+      if (visible && anyone && now !== null && forOwner(now).length === 0) create(now);
     });
   });
 
   function another() {
-    if (workspace.active !== null) create(workspace.active);
+    const now = ownerOnScreen();
+    if (now !== null) create(now);
   }
 
   function beside() {
@@ -175,7 +193,7 @@
         <button
           class="tool"
           onclick={another}
-          disabled={workspace.active === null}
+          disabled={owner === null}
           aria-label="New shell"
           title="New shell ({describe(chordFor("terminal.new"))})"
           data-testid="new-terminal">+</button
@@ -190,12 +208,15 @@
         >
         <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
       </div>
+      {#if owner !== null}
+        <p class="owner" title="Shells of {ownerName}" data-testid="terminal-owner">Shells of {ownerName}</p>
+      {/if}
 
       <!-- One row per shell, grouped: the rows under the first of a group are
            the shells beside it. The rows are one stop, walked with the
            arrows. A click, Enter or Space on a row goes to its shell, and
            Delete closes it, as its × does. -->
-      <div class="rows" role="listbox" aria-label="Shells" bind:this={rows}>
+      <div class="rows" role="listbox" aria-label="Shells of {ownerName}" bind:this={rows}>
       {#each groups as group (group[0].group)}
         <div class="group" class:on={group[0].group === shown} role="group" data-testid="terminal-group">
           {#each group as shell, i (shell.key)}
@@ -273,13 +294,13 @@
         </div>
       {/each}
 
-      {#if workspace.active === null}
+      {#if owner === null}
         <div class="overlay" data-testid="terminal-status">
           <p class="message">Open a project to start a shell in.</p>
         </div>
       {:else if current === null}
         <div class="overlay" data-testid="terminal-status">
-          <p class="message">No shell open in this project.</p>
+          <p class="message">{owner.session === null ? "No shell open for this project." : "No shell open for this session."}</p>
           <button onclick={another} data-testid="start-terminal">New shell</button>
         </div>
       {:else if current.status !== "running"}
@@ -403,6 +424,18 @@
     overflow-y: auto;
     padding-bottom: 6px;
     border-left: 1px solid var(--rule);
+  }
+
+  .owner {
+    margin: 0;
+    padding: 7px var(--row-pad-x) 3px;
+    font-family: var(--chrome);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: none;
   }
 
   .top + .rows > .group:first-child {

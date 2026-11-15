@@ -119,6 +119,8 @@
     create as createShell,
     cycle as cycleShell,
     ended as shellEnded,
+    followOwner as followShells,
+    ownerOnScreen as shellOwner,
     terminals,
   } from "$lib/terminals.svelte";
   import { goTo, workspace } from "$lib/workspace.svelte";
@@ -173,9 +175,10 @@
   // section under the tree.
   watchSelection();
   watchViewed();
-  // Each session's tabs in the editor, swapped in as the session on screen
-  // changes.
+  // Each session's tabs in the editor, and its shells in the terminal
+  // panel, swapped in as the session on screen changes.
   followOwner();
+  followShells();
   watchProcesses();
   // Whether sessions run, for the core to ask before the window goes.
   watchRunning();
@@ -664,10 +667,11 @@
     }
   }
 
-  /** A new shell in the project on screen, the panel opened for it, with
-      the keyboard in it. */
+  /** A new shell beside the session on screen, or the project's own with
+      none, the panel opened for it, with the keyboard in it. */
   function newShell() {
-    if (workspace.active === null) {
+    const owner = shellOwner();
+    if (owner === null) {
       say("Open a project to start a shell in");
       return;
     }
@@ -676,7 +680,7 @@
       return;
     }
     // Made before the panel opens, so opening it starts no second one.
-    createShell(workspace.active);
+    createShell(owner);
     if (!terminalVisible()) toggleTerminal();
     focusPane("terminal");
   }
@@ -829,7 +833,7 @@
         // Shells when the keyboard is in the panel, sessions anywhere else,
         // and the keyboard lands in what was switched to.
         if (workspace.active === null) break;
-        if (layout.focus === "terminal") cycleShell(workspace.active, action.direction);
+        if (layout.focus === "terminal") cycleShell(action.direction);
         else if (cycleSession(workspace.active, action.direction)) focusPane("agent");
         break;
       case "exitReview":

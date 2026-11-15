@@ -61,6 +61,7 @@ import {
   setEditing,
   toggleRightPane,
 } from "$lib/layout.svelte";
+import type { BusyShell } from "$lib/leaving.svelte";
 import { lineEdits } from "$lib/lineDiff";
 import { lastSegment } from "$lib/paths";
 import { pathOn } from "$lib/remote.svelte";
@@ -119,15 +120,19 @@ export type Ask =
   | { kind: "leave"; leave: "window" | "quit"; generation: number };
 
 /** A session or a project being closed while tabs beside it hold the only
-    copy of unsaved edits: the question in the sessions pane. */
+    copy of unsaved edits, or shells that go with it are busy: the question
+    in the sessions pane. */
 export interface Closing {
   /** What is being closed, as the pane names it. */
   what: string;
+  kind: "session" | "project";
   /** The owners that go with it: the session, or the project's sessions
       and the project's own tabs. */
   owners: string[];
   /** The buffers whose edits would go. */
   keys: string[];
+  /** The shells that go with it with something running in them. */
+  busy: BusyShell[];
   close: () => void;
 }
 
@@ -928,16 +933,24 @@ function unsavedOnlyIn(gone: string[]): string[] {
 
 /**
  * Closes a session or a project as the user asked, after asking first when
- * tabs beside it hold the only copy of unsaved edits: the question goes in
- * the sessions pane, with Save and close, Close without saving and Cancel.
+ * tabs beside it hold the only copy of unsaved edits, or shells that go
+ * with it are busy: the question goes in the sessions pane, with Save and
+ * close, Close without saving and Cancel for the edits, and the close and
+ * Cancel for the shells alone.
  */
-export function closeAsking(what: string, gone: string[], close: () => void) {
+export function closeAsking(
+  what: string,
+  gone: string[],
+  close: () => void,
+  kind: "session" | "project" = "session",
+  busy: BusyShell[] = [],
+) {
   const keys = unsavedOnlyIn(gone);
-  if (keys.length === 0) {
+  if (keys.length === 0 && busy.length === 0) {
     close();
     return;
   }
-  editor.closing = { what, owners: gone, keys, close };
+  editor.closing = { what, kind, owners: gone, keys, busy, close };
 }
 
 export async function closingSave() {

@@ -72,6 +72,12 @@ import {
   workflowFor,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import {
+  byKey as shellByKey,
+  create as createShell,
+  reset as resetShells,
+  started as shellStarted,
+} from "$lib/terminals.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 
 const A = "/home/ada/dev/one";
@@ -155,6 +161,7 @@ beforeEach(() => {
   resetWorkflows();
   spawned.length = 0;
   reset();
+  resetShells();
   resetAttention();
   resetAccounts();
   resetZoom();
@@ -374,6 +381,22 @@ describe("closing", () => {
     const session = live(A, "pty-1");
     close(session.key);
     expect(tabsClosed).toEqual([{ kind: "session", key: session.key }]);
+  });
+
+  it("closes the shells opened beside the session, and keeps those of a session that only stopped", async () => {
+    const stopped = live(A, "pty-1");
+    const keep = createShell({ project: A, session: stopped.key });
+    shellStarted(keep.key, "pty-s1");
+    ended({ id: "pty-1", code: 0, clean: true });
+    const session = live(A, "pty-2");
+    const shell = createShell({ project: A, session: session.key });
+    shellStarted(shell.key, "pty-s2");
+    const own = createShell({ project: A, session: null });
+    close(session.key);
+    await vi.waitFor(() => expect(killed).toContain("pty-s2"));
+    expect(shellByKey(shell.key)).toBeNull();
+    expect(shellByKey(keep.key)).not.toBeNull();
+    expect(shellByKey(own.key)).not.toBeNull();
   });
 
   it("closes the tabs of every session when its project is closed, and keeps those of a session that only stopped", () => {

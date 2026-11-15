@@ -253,18 +253,35 @@ of content height and comes back at its height when there is room, hidden
 shells keep running, and it never squeezes the panes below 240px or drops
 below 120px itself.
 
-Each shell belongs to the project it was opened in and starts there with the
-environment the agent gets. A list down the right of the panel names the
-active project's shells; switching project switches the list and kills
-nothing, and opening the panel on a project with no shell starts one. Typing
-`exit` closes the shell, and the project's last shell takes the panel with
-it. A shell that dies any other way keeps its place, with its exit code.
+A shell starts in the project it was opened in, with the environment the
+agent gets, and belongs to the session that was on screen when it was
+opened, or to the project when no session was, the way a browser tab does.
+One the agent's `terminal` tool opens belongs to the agent's session. The
+panel shows the shells of the session on screen, or of the project while no
+session is on screen: a list down the right names them under a line saying
+whose they are, numbered from one for each, and each keeps its own shell in
+front. Switching session or project switches the list and kills nothing,
+and every shell comes back as it was left, scrollback and all. Opening the
+panel with no shell to show starts one; switching to a session or project
+with none leaves the panel saying so, with a New shell button. Typing
+`exit` closes the shell, and the last one shown takes the panel with it. A
+shell that dies any other way keeps its place, with its exit code.
 
-The + at the head of the list is New shell: another shell in a group of its
-own, with the keyboard in it. <kbd>Cmd</kbd><kbd>T</kbd> does the same from
-anywhere in the window, <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd> on
-Windows and Linux, and opens the panel for it when it is closed; the +
-names the chord the table gives it. A row's × closes its shell, and
+Closing a session closes its shells, and closing a project every shell
+that started in it. While one of them has something running, either asks
+first, in the sessions pane, in the words the window uses before it
+closes; see [focus](focus-model.md#closing-what-is-in-front). A session
+closed without the user being asked, as when the session that started it
+stops it, closes its idle shells and gives a busy one to the session or
+project on screen, so what runs in it is never stopped unasked. A session
+that has only stopped, and sits as a row, keeps its shells.
+
+The + at the head of the list is New shell: another shell for whoever is on
+screen, in a group of its own, with the keyboard in it.
+<kbd>Cmd</kbd><kbd>T</kbd> does the same from anywhere in the window,
+<kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd> on Windows and Linux, and opens
+the panel for it when it is closed; the + names the chord the table gives
+it. A row's × closes its shell, and
 <kbd>Cmd</kbd><kbd>W</kbd> closes the shell in front while the panel has the
 keyboard. A shell with something still running in it asks first, as
 [focus](focus-model.md#closing-what-is-in-front) describes.
