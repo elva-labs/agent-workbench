@@ -65,6 +65,7 @@ import {
   label,
   onDirected,
   onForgotten,
+  runningByToken,
   sessions,
   statusMessage,
   typed,
@@ -846,8 +847,7 @@ function unplaced(request: ConductRequest): string | null {
 
 /** The running session a call's token names, the caller. */
 function callerRow(request: ConductRequest): Session | null {
-  const row = byToken(request.session);
-  return row !== null && isLive(row) ? row : null;
+  return runningByToken(request.session);
 }
 
 /** Keeps a refused start where the user can see it, for a caller that

@@ -731,6 +731,16 @@ describe("a call that has no owner", () => {
   });
 });
 
+describe("a call from a session that has stopped", () => {
+  it("is refused, not credited to that session's tabs", async () => {
+    const { a, ownerA } = twoSessions();
+    browser.tabs = [tab(2, "https://a.example/", { owner: ownerA })];
+    sessions.all.find((session) => session.key === a.key)!.status = "exited";
+    await handle(call("browser_tabs", {}, { session: a.token }));
+    expect(last().error).toBe("That session is not open in the workbench.");
+  });
+});
+
 describe("the user switching while a tab opens", () => {
   it("does not show the browser in the session they moved to", async () => {
     const { a, b, ownerA } = twoSessions();

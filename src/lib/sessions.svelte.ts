@@ -817,6 +817,14 @@ export function byToken(token: string | null): Session | null {
   return found;
 }
 
+/** The running row whose tools name it by this token. Null for a token no
+    running row has: a stopped session is not calling, so what a process
+    left over from it asks for is done for none of the rows. */
+export function runningByToken(token: string | null): Session | null {
+  const row = byToken(token);
+  return row !== null && isLive(row) ? row : null;
+}
+
 function rememberName(id: string, name: string) {
   if (sessions.names[id] === name) return;
   sessions.names[id] = name;

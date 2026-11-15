@@ -28,7 +28,7 @@ import type {
 import { openFile } from "$lib/editor.svelte";
 import { showDiff, showRange } from "$lib/files.svelte";
 import { focusPane, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
-import { byKey, byToken, isLive, noted, sessions, type Session } from "$lib/sessions.svelte";
+import { byKey, isLive, noted, runningByToken, sessions, type Session } from "$lib/sessions.svelte";
 import { create as createShell } from "$lib/terminals.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
 
@@ -139,19 +139,19 @@ export function terminalRequested(request: TerminalRequest) {
   open();
 }
 
-/** The session a request is from: the one whose token it names, the live
-    one where a row that has stopped holds it too, in whichever project, or
-    the one whose id a plugin names. A request that names no session, or
-    one no row answers to, is from none of the workbench's: each session it
-    starts names itself in every call, so an agent started outside it in
-    the project's directory, with the same tools, is not one of its rows,
-    and nor is a call naming a token the window never gave out. */
+/** The session a request is from: the running row whose token it names, in
+    whichever project, or the running row whose id a plugin names. A
+    request that names no session, or one no running row answers to, is
+    from none of the workbench's: each session it starts names itself in
+    every call, so an agent started outside it in the project's directory,
+    with the same tools, is not one of its rows, nor is a call naming a
+    token the window never gave out, nor one left over from a session that
+    has stopped. */
 export function sessionFor(request: { session: string | null }): Session | null {
   if (request.session === null) return null;
   return (
-    byToken(request.session) ??
+    runningByToken(request.session) ??
     sessions.all.find((session) => session.id === request.session && isLive(session)) ??
-    sessions.all.find((session) => session.id === request.session) ??
     null
   );
 }

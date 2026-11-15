@@ -296,6 +296,21 @@ describe("a call from a session the user is not looking at", () => {
     expect(shells).toHaveLength(1);
   });
 
+  it("places a call from a session that has stopped on no session, and opens it at once", async () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    const stopped = sessions.all.find((session) => session.key === a.key)!;
+    stopped.status = "exited";
+    notified({ text: "Done", cwd: "/one", session: a.token });
+    expect(stopped.note).toBeNull();
+    await showRequested({ ...place(a.token), cwd: "/one" });
+    expect(shown).toHaveLength(1);
+  });
+
   it("opens at once from no session the window knows", async () => {
     workspace.open.push(repo("/one"), repo("/two"));
     workspace.active = "/two";

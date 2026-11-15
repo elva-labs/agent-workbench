@@ -25,7 +25,7 @@ import {
   syncOwner,
 } from "$lib/browser.svelte";
 import { showBrowser } from "$lib/files.svelte";
-import { byKey, byToken } from "$lib/sessions.svelte";
+import { byKey, runningByToken } from "$lib/sessions.svelte";
 import { held, projectOf } from "$lib/show.svelte";
 
 /** The ids of the calls handled lately, so a call delivered twice is
@@ -163,9 +163,10 @@ function ownerFor(
 ): { owner: BrowserOwner } | { refusal: string } {
   const project = projectOf(request.cwd);
   if (project === null) return { refusal: noOwner };
-  // A session's token names its row anywhere in the window, so a session
-  // working in a project nested inside another open one is found too.
-  const named = byToken(request.session);
+  // A session's token names its running row anywhere in the window, so a
+  // session working in a project nested inside another open one is found
+  // too, and a process left over from a stopped one is not.
+  const named = runningByToken(request.session);
   if (request.session !== null && named === null)
     return { refusal: "That session is not open in the workbench." };
   if (named !== null) return { owner: { kind: "session", key: named.key } };
