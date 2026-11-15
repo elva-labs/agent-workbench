@@ -273,17 +273,32 @@ describe("an integrated session behind its row", () => {
     const link = linkFor(session.key);
     send(session.key, "go");
     fake.startTurn(handle);
-    expect(compact(session.key, "  keep the API notes ")).toBe(true);
+    const asked = compact(session.key, "  keep the API notes ");
     expect(link.compactAsked).toBe(true);
-    await settled();
+    expect(await asked).toBe(true);
     expect(fake.calls.at(-1)).toEqual({ method: "compact", id: handle, instructions: "keep the API notes" });
     expect(link.compactAsked).toBe(true);
     fake.endTurn(handle);
-    await settled();
-    await settled();
-    expect(conversationOf(session.key).entries.at(-1)).toMatchObject({ kind: "compaction", done: true });
     expect(link.compactAsked).toBe(false);
-    expect(compact("no-such-row")).toBe(false);
+    await settled();
+    await settled();
+    expect(conversationOf(session.key).entries.at(-1)).toMatchObject({ kind: "compaction", done: true, failed: false });
+    expect(await compact("no-such-row")).toBe(false);
+  });
+
+  it("waits for nothing when no turn runs, and stops waiting when the turn ends with no compaction", async () => {
+    const { session, handle } = await started();
+    const link = linkFor(session.key);
+    const idle = compact(session.key);
+    expect(link.compactAsked).toBe(false);
+    await idle;
+    send(session.key, "go");
+    fake.startTurn(handle);
+    void compact(session.key);
+    expect(link.compactAsked).toBe(true);
+    // An agent that answers a compaction of too little with a reply alone.
+    fake.endTurn(handle);
+    expect(link.compactAsked).toBe(false);
   });
 
   it("says why a compaction was refused", async () => {
@@ -291,8 +306,7 @@ describe("an integrated session behind its row", () => {
     const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
     await launch(session.key);
     const link = linkFor(session.key);
-    compact(session.key, "keep it");
-    await settled();
+    expect(await compact(session.key, "keep it")).toBe(false);
     expect(link.compactAsked).toBe(false);
     expect(link.compactError).toBe("Codex compacts without instructions");
   });

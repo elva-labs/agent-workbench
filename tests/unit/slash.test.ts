@@ -87,10 +87,11 @@ describe("slash commands", () => {
 
   it("say which command a message names, and the words after it", () => {
     expect(named("/compact", COMMANDS)).toMatchObject({ command: { name: "compact" }, rest: "" });
-    expect(named("  /compact keep the API\nnotes ", COMMANDS)).toMatchObject({
+    expect(named("/compact keep the API\nnotes ", COMMANDS)).toMatchObject({
       command: { name: "compact" },
       rest: "keep the API\nnotes",
     });
+    expect(named("  /compact", COMMANDS)).toBeNull();
     expect(named("/compacted", COMMANDS)).toBeNull();
     expect(named("compact", COMMANDS)).toBeNull();
   });

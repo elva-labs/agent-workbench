@@ -405,6 +405,8 @@
           <span>
             {#if !entry.done}
               Compacting the conversation…
+            {:else if entry.failed}
+              Not compacted{#if entry.error !== null}: <Plain text={entry.error} />{/if}
             {:else}
               Conversation compacted{entry.reason === "full" ? ", the context was full" : ""}{#if entry.tokensBefore !== null && entry.tokensAfter !== null}<span class="num"> · {tokens(entry.tokensBefore)} → {tokens(entry.tokensAfter)} tokens</span>{/if}
             {/if}

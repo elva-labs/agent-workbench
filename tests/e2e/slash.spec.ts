@@ -48,8 +48,8 @@ async function listed(page: Page): Promise<string[]> {
         const head = group.querySelector("p")?.textContent?.trim() ?? "";
         return [...group.querySelectorAll("[data-testid='slash-name']")].map((name) => {
           const bare = name.cloneNode(true) as HTMLElement;
-          bare.querySelector(".cmd-hint")?.remove();
-          return `${head} ${bare.textContent}`;
+          for (const part of bare.querySelectorAll(".cmd-hint, .sep")) part.remove();
+          return `${head} ${bare.textContent?.trim()}`;
         });
       }),
     );
@@ -177,6 +177,41 @@ test.describe("the slash menu", () => {
     await expect(page.getByTestId("thread").getByTestId("compaction")).toContainText("Conversation compacted");
   });
 
+  test("goes back to Send when the agent fails to compact", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("/compact ");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await calls(page)).filter((call) => call.method === "compact").length).toBe(1);
+    // As Claude Code answers a compaction of too little.
+    await agent(
+      page,
+      `f.startTurn("${H}", []);
+       f.emit("${H}", { type: "compacting" });
+       f.emit("${H}", { type: "compactFailed", error: "Not enough messages to compact." });
+       f.emit("${H}", { type: "text", block: "s", parent: null, text: "Error: Not enough messages to compact.", done: true });
+       f.endTurn("${H}");`,
+    );
+    const divider = page.getByTestId("thread").getByTestId("compaction").last();
+    await expect(divider).toHaveText("Not compacted: Not enough messages to compact.");
+    await expect(page.getByTestId("stop")).toHaveCount(0);
+    await expect(page.getByTestId("send")).toBeVisible();
+    // A compaction its turn ends without a word on is over too.
+    await agent(page, `f.startTurn("${H}", []); f.emit("${H}", { type: "compacting" }); f.endTurn("${H}");`);
+    await expect(page.getByTestId("thread").getByTestId("compaction").last()).toHaveText("Not compacted");
+    await expect(page.getByTestId("stop")).toHaveCount(0);
+  });
+
+  test("puts the words back when a compaction cannot be asked for", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, `f.compactRefusal = "no such session";`);
+    await input(page).click();
+    await page.keyboard.type("/compact keep the API notes");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("compact-error")).toHaveText("Not compacted: no such session");
+    await expect(input(page)).toHaveValue("/compact keep the API notes");
+  });
+
   test("says a compaction waits while a turn runs", async ({ page }) => {
     await openIntegrated(page);
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");`);
@@ -209,6 +244,43 @@ test.describe("the slash menu", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await expect.poll(async () => (await calls(page)).filter((call) => call.method === "interrupt").length).toBe(1);
+  });
+
+  test("puts the menu away until the word changes, not until the same words come again", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("/re");
+    await page.keyboard.press("Escape");
+    await expect(menu(page)).toHaveCount(0);
+    await page.keyboard.press("Backspace");
+    await expect(menu(page)).toBeVisible();
+    await page.keyboard.type("e");
+    await expect(menu(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.keyboard.type(" now");
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toHaveValue("");
+    await page.keyboard.type("/re");
+    await expect(menu(page)).toBeVisible();
+  });
+
+  test("tells a screen reader what each row is and how many there are", async ({ page }) => {
+    await openIntegrated(page, { holdReady: true });
+    await input(page).click();
+    const said = page.getByTestId("slash-announce");
+    await expect(said).toHaveAttribute("role", "status");
+    await expect(said).toHaveText("");
+    await page.keyboard.type("/");
+    await expect(said).toHaveText("Claude is still starting. Its commands show here once it is ready.");
+    await agent(page, `f.ready("${H}");`);
+    await expect(said).toHaveText("8 commands and skills");
+    await page.keyboard.type("rev");
+    await expect(said).toHaveText("3 matches");
+    await expect(rows(page).first()).toHaveAccessibleName("/review, [pr], Review a pull request, built in");
+    await page.keyboard.type("x");
+    await expect(said).toHaveText("No command or skill is called /revx. Enter sends it as a message.");
+    await page.keyboard.press("Escape");
+    await expect(said).toHaveText("");
   });
 
   test("opens only for a slash first in the message, and goes with focus", async ({ page }) => {
@@ -250,8 +322,14 @@ test.describe("the slash menu", () => {
     );
     await page.keyboard.press("Enter");
     await expect(input(page)).toHaveValue("/");
+    // Send waits too, though a press on it takes the keyboard from the field.
+    await expect(page.getByTestId("send")).toBeDisabled();
+    await page.getByTestId("send").click({ force: true });
     expect((await calls(page)).filter((call) => call.method === "send")).toEqual([]);
+    await expect(input(page)).toHaveValue("/");
     await agent(page, `f.ready("${H}");`);
+    await expect(page.getByTestId("send")).toBeEnabled();
+    await input(page).click();
     await expect(rows(page)).toHaveCount(8);
     await expect(rows(page).first()).toHaveAttribute("aria-selected", "true");
   });

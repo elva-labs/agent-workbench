@@ -91,6 +91,8 @@ export interface FakeIntegrated {
   /** Sessions started while this holds say they are ready only when the
       test says so, through `ready`. */
   holdReady: boolean;
+  /** A compaction asked for is refused with this, while it is set. */
+  compactRefusal: string | null;
 
   start(options: IntegratedStartOptions): IntegratedStarted;
   trust(options: IntegratedTrustOptions): void;
@@ -425,6 +427,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     untrusted: new Set(),
     handed: [],
     holdReady: false,
+    compactRefusal: null,
 
     start(startOptions) {
       const folder = startOptions.cwd ?? startOptions.project;
@@ -534,6 +537,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       const session = live(id);
       const words = instructions?.trim() ? instructions.trim() : null;
       if (session.codex && words !== null) throw new Error("Codex compacts without instructions");
+      if (fake.compactRefusal !== null) throw new Error(fake.compactRefusal);
       fake.calls.push({ method: "compact", id, instructions: words });
       session.compactAsked = true;
       // The agent takes it once no turn runs, after the call answers.
@@ -806,6 +810,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.compacting = true;
           break;
         case "compacted":
+        case "compactFailed":
           session.compacting = false;
           break;
         case "limits":

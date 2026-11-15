@@ -62,13 +62,13 @@ export function complete(draft: string, word: SlashWord, name: string): { text: 
   return { text: `${head}${rest}`, caret: head.length };
 }
 
-/** The command a message begins with, and the words after it, when the
-    agent takes one by that name. */
+/** The command a message begins with, its slash first of all, and the
+    words after it, when the agent takes one by that name. */
 export function named(
   draft: string,
   commands: readonly IntegratedCommand[],
 ): { command: IntegratedCommand; rest: string } | null {
-  const found = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(draft.trim());
+  const found = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(draft.trimEnd());
   if (found === null) return null;
   const command = commands.find((known) => known.name === found[1]);
   return command === undefined ? null : { command, rest: (found[2] ?? "").trim() };

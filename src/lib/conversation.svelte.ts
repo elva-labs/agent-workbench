@@ -193,6 +193,9 @@ export type Entry =
       kind: "compaction";
       key: string;
       done: boolean;
+      /** It ended without compacting: it failed, or its turn ended first. */
+      failed: boolean;
+      error: string | null;
       reason: "asked" | "full" | null;
       tokensBefore: number | null;
       tokensAfter: number | null;
@@ -663,6 +666,8 @@ export class Conversation {
           kind: "compaction",
           key: "",
           done: false,
+          failed: false,
+          error: null,
           reason: null,
           tokensBefore: null,
           tokensAfter: null,
@@ -684,6 +689,8 @@ export class Conversation {
             kind: "compaction",
             key: "",
             done: true,
+            failed: false,
+            error: null,
             reason: event.reason,
             tokensBefore: event.tokensBefore,
             tokensAfter: event.tokensAfter,
@@ -691,6 +698,9 @@ export class Conversation {
           });
         break;
       }
+      case "compactFailed":
+        this.#compactionOver(event.error, now);
+        break;
       case "context":
         this.context = { used: event.used, size: event.size };
         break;
@@ -875,7 +885,33 @@ export class Conversation {
     this.#push({ kind: "agent", key: "", turn: id, parts: [], at: now });
   }
 
+  /** A compaction ends without compacting: the open one says so, or one
+      that never said it began. */
+  #compactionOver(error: string | null, now: number) {
+    this.compacting = false;
+    const open = this.entries.findLast((entry) => entry.kind === "compaction" && !entry.done);
+    if (open !== undefined && open.kind === "compaction") {
+      open.done = true;
+      open.failed = true;
+      open.error = error;
+    } else
+      this.#push({
+        kind: "compaction",
+        key: "",
+        done: true,
+        failed: true,
+        error,
+        reason: null,
+        tokensBefore: null,
+        tokensAfter: null,
+        at: now,
+      });
+  }
+
   #endTurn(event: Extract<IntegratedEventBody, { type: "turnEnded" }>, now: number) {
+    // A compaction is over with its turn, as the core counts it, whether
+    // or not the agent said how it went.
+    if (this.compacting) this.#compactionOver(null, now);
     if (this.current === null) this.#startTurn([], now);
     const turn = this.turn!;
     turn.outcome = event.outcome;

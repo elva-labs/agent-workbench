@@ -424,6 +424,31 @@ describe("a conversation, from the core's events", () => {
     expect(conversation.context).toEqual({ used: 10, size: 200_000 });
   });
 
+  it("says a compaction that failed, or that its turn ended, did not compact", () => {
+    const { fake, conversation, id } = played();
+    fake.startTurn(id, []);
+    fake.emit(id, { type: "compacting" });
+    fake.emit(id, { type: "compactFailed", error: "Not enough messages to compact." });
+    expect(conversation.compacting).toBe(false);
+    expect(conversation.entries.at(-1)).toMatchObject({
+      kind: "compaction",
+      done: true,
+      failed: true,
+      error: "Not enough messages to compact.",
+    });
+    fake.endTurn(id);
+    expect(conversation.working).toBe(false);
+    fake.startTurn(id, []);
+    fake.emit(id, { type: "compacting" });
+    fake.endTurn(id);
+    expect(conversation.compacting).toBe(false);
+    expect(conversation.working).toBe(false);
+    expect(conversation.entries.filter((entry) => entry.kind === "compaction")).toMatchObject([
+      { failed: true, error: "Not enough messages to compact." },
+      { done: true, failed: true, error: null },
+    ]);
+  });
+
   it("keeps the agent's commands as the last word on them says, a late window's too", () => {
     const { fake, conversation, id } = played();
     expect(conversation.ready?.commands.map((command) => command.name)).toContain("compact");

@@ -17,9 +17,10 @@
    * or Enter. A click takes a row, and the pointer moving over one marks it.
    * A press on the list never takes the keyboard from the field.
    *
-   * With nothing to list it says why in one line instead. It is never
-   * taller than the room above the composer in the pane, and scrolls the
-   * marked row into view.
+   * With nothing to list it says why in one line instead; the owner says
+   * what it holds to a screen reader, from a live region that stays while
+   * the menu comes and goes. It is never taller than the room above the
+   * composer in the pane, and scrolls the marked row into view.
    */
   interface Props {
     /** The list's id; a row's is the list's and its place. */
@@ -90,7 +91,7 @@
   data-testid={testid}
 >
   {#if count === 0}
-    <p class="empty" role="status" data-testid="{testid}-empty">{@render empty?.()}</p>
+    <p class="empty" data-testid="{testid}-empty">{@render empty?.()}</p>
   {:else}
     <div class="rows" {id} role="listbox" aria-label={label} bind:this={list}>
       {#each sections as section (section.label)}

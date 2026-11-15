@@ -516,6 +516,9 @@ export type IntegratedEventBody =
       tokensBefore: number | null;
       tokensAfter: number | null;
     }
+  /** Compacting failed and the conversation is as it was, with why where
+      the agent says. */
+  | { type: "compactFailed"; error: string | null }
   /** How much of the context window the conversation takes, and how big
       the window is, in tokens, where the agent reports either. */
   | { type: "context"; used: number | null; size: number | null }

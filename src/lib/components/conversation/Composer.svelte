@@ -71,6 +71,10 @@
   /** The message as it stood when Escape put the menu away: the menu stays
       away until the message changes. */
   let dismissed = $state<string | null>(null);
+
+  $effect(() => {
+    if (dismissed !== null && link.draft !== dismissed) dismissed = null;
+  });
   /** The row marked by a key or the pointer, for the word it was marked in;
       a new word marks its best match. */
   let marked = $state({ query: "", index: 0 });
@@ -97,6 +101,20 @@
   );
   /** The argument hint after a command just put in the field. */
   let ghost = $derived(slash && slashMenu === null ? waitingHint(link.draft, commands) : null);
+  /** A message that begins with a slash waits for the agent's list, so
+      nothing it would take as a command goes as text before it can. */
+  let unlisted = $derived(slash && conversation.ready === null && link.draft.startsWith("/"));
+  /** What the menu holds, for a screen reader, said as it opens and
+      changes. */
+  let announced = $derived.by(() => {
+    if (slashMenu === "starting") return `${agent} is still starting. Its commands show here once it is ready.`;
+    if (slashMenu === "none")
+      return `No command or skill is called ${link.draft.slice(0, word?.end ?? 0)}. Enter sends it as a message.`;
+    if (slashMenu !== "list") return "";
+    const count = matches.length;
+    if (word?.query === "") return `${count} ${count === 1 ? "command or skill" : "commands and skills"}`;
+    return `${count} ${count === 1 ? "match" : "matches"}`;
+  });
   let menuId = $derived(`slash-${sessionKey.replace(/[^\w-]/g, "_")}`);
 
   function seen() {
@@ -179,7 +197,7 @@
   });
 
   function submit() {
-    if (!ready || !hasWords) return;
+    if (!ready || !hasWords || unlisted) return;
     if (reading > 0) {
       held = true;
       return;
@@ -192,10 +210,14 @@
     digit = null;
     const asked = slash && link.images.length === 0 ? named(link.draft, commands) : null;
     if (asked?.command.name === "compact") {
-      if (compact(sessionKey, asked.rest)) {
-        link.draft = "";
-        void tick().then(grow);
-      }
+      // The words come back if the compaction could not be asked for.
+      const typed = link.draft;
+      const held = link;
+      link.draft = "";
+      void tick().then(grow);
+      void compact(sessionKey, asked.rest).then((done) => {
+        if (!done && held.draft === "") held.draft = typed;
+      });
       return;
     }
     const id = send(sessionKey, link.draft, link.images);
@@ -408,14 +430,21 @@
       testid="slash-menu"
     >
       {#snippet row(match)}
+        {@const source = sourceOf(match.item)}
+        <!-- A screen reader hears the parts apart, by commas drawn at no
+             size at the end of each. -->
         <span class="cmd-name" data-testid="slash-name"
           >/{#each pieces(match.item.name, match.marks) as piece, at (at)}{#if piece.hit}<b><Plain text={piece.text} /></b
-              >{:else}<Plain text={piece.text} />{/if}{/each}{#if match.item.hint !== null}<span class="cmd-hint"
-              ><Plain text={match.item.hint} /></span
-            >{/if}</span
+              >{:else}<Plain text={piece.text} />{/if}{/each}{#if match.item.hint !== null}<span class="sep">,</span> <span
+                class="cmd-hint"><Plain text={match.item.hint} /></span
+              >{/if}{#if match.item.description !== null || source !== ""}<span class="sep">,</span>{/if}</span
         >
-        <span class="cmd-about"><Plain text={match.item.description ?? ""} /></span>
-        <span class="cmd-source"><Plain text={sourceOf(match.item)} /></span>
+        <span class="cmd-about"
+          >{#if match.item.description !== null}<Plain text={match.item.description} />{#if source !== ""}<span class="sep"
+                >,</span
+              >{/if}{/if}</span
+        >
+        <span class="cmd-source"><Plain text={source} /></span>
       {/snippet}
       {#snippet empty()}
         {#if slashMenu === "starting"}
@@ -427,6 +456,7 @@
       {/snippet}
     </CompletionMenu>
   {/if}
+  <p class="sr" role="status" data-testid="slash-announce">{announced}</p>
   {#if link.images.length > 0 || reading > 0}
     <div class="attached" data-testid="attachments">
       {#each link.images as image, at (at)}
@@ -569,9 +599,13 @@
         class="round send"
         tabindex="0"
         onclick={submit}
-        disabled={!ready || !hasWords || reading > 0}
+        disabled={!ready || !hasWords || reading > 0 || unlisted}
         aria-label={running ? "Send, to wait for the agent" : "Send"}
-        title={running ? "Send; it waits until the agent is done (Enter)" : "Send (Enter)"}
+        title={unlisted
+          ? `Sends once ${agent} has listed its commands`
+          : running
+            ? "Send; it waits until the agent is done (Enter)"
+            : "Send (Enter)"}
         data-testid="send"><Icon name="up" size={14} /></button
       >
     {/if}
@@ -662,8 +696,8 @@
     color: var(--accent);
   }
 
+  /* Set apart from the name by a space. */
   .cmd-hint {
-    margin-left: 6px;
     color: var(--ink-3);
   }
 
@@ -675,8 +709,25 @@
   }
 
   .cmd-source {
+    max-width: 14em;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: calc(var(--meta-size) - 0.5px);
     color: var(--ink-3);
+    white-space: nowrap;
+  }
+
+  .sep {
+    font-size: 0;
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
     white-space: nowrap;
   }
 
