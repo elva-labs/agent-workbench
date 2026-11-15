@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { Conversation, type Part, type TextPart, type ToolCall } from "$lib/conversation.svelte";
 import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
+import { REPORTS_HEAD } from "$lib/instructions";
 import {
   asks,
   choiceLabel,
   choiceMeans,
   inputPath,
+  lastRun,
   mcpName,
   requestPaths,
   revealed,
@@ -560,5 +562,19 @@ describe("an address", () => {
       other: "evil.example",
       warnings: ["it names a user before the host", "it holds a backslash"],
     });
+  });
+});
+
+describe("what a read says of the messages a session was sent", () => {
+  it("gives the user's own words without the workbench's note, and another session's words as sent", () => {
+    const c = new Conversation(() => 0);
+    const note = `${REPORTS_HEAD}\nSession sid-1 stopped working. It has left no line.`;
+    c.sending("u1", `${note}\n\nHow is it going?`);
+    c.sending("s1", `${note}\n\nFrom the starter`);
+    c.apply({ type: "message", message: "u1", state: "queued", error: null, text: null, images: [] });
+    c.apply({ type: "message", message: "s1", state: "queued", error: null, text: null, images: [] });
+    const said = lastRun(c, 10, (message) => (message.id === "s1" ? "session 1" : null));
+    expect(said).toContain("A message from the user waits for the turn: How is it going?");
+    expect(said).toContain(`A message from session 1 waits for the turn: ${note}`);
   });
 });

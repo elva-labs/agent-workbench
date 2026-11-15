@@ -217,7 +217,10 @@ keyboard goes to the next request, or back to the composer, and so it does
 when the request with the keyboard goes by itself: a question that settles
 itself, or a permission the agent withdraws. The model's menu
 opens from its button and is walked with the arrows, <kbd>Enter</kbd>
-picking and <kbd>Esc</kbd> closing it.
+picking and <kbd>Esc</kbd> closing it. The choice under the pointer takes
+the keyboard, so the pointer and the arrows move one mark, and the keyboard
+going anywhere else, by a chord or a press, puts the menu away and stays
+where it went.
 
 Every chord the app claims works from the composer as from anywhere else.
 <kbd>Cmd</kbd><kbd>F</kbd> stays the page's, as it is a terminal's.
@@ -322,9 +325,28 @@ menu, <kbd>Enter</kbd> picks or makes, <kbd>Esc</kbd> backs out, and the
 strips start on Cancel. When they go, the keyboard goes back to the tree or
 the editor it came from.
 
+## The status bar
+
+The model, the effort and the allowance in the [status
+bar](layout.md#the-status-bar) are window chrome: a press on one leaves the
+pane focus where it was. What it opens holds the keyboard while it is up: a
+menu starts on the choice in use and is walked with the arrows,
+<kbd>Home</kbd> and <kbd>End</kbd>, <kbd>Enter</kbd> picking, the choice
+under the pointer taking the keyboard as the composer's do, and the popover
+takes the keyboard itself. <kbd>Escape</kbd>, a pick, or a press elsewhere
+puts either away, and the keyboard goes back where it was before it opened,
+the composer or a terminal included; so do <kbd>Enter</kbd> and
+<kbd>Space</kbd> in the popover, as on its control. A chord that moves the
+keyboard elsewhere, such as one to another pane, puts either away and
+leaves the keyboard where the chord sent it. A change of the window's size
+leaves either open, above its control. <kbd>Tab</kbd> from a menu goes on
+to the next control of the bar, and from the popover stops on the
+allowance. The three are stops of their own after the rest of the window,
+WebKit included, and open on <kbd>Enter</kbd> or <kbd>Space</kbd>.
+
 ## What focus looks like
 
 The focused pane is marked in the accent, its title with it, and the status
-bar names it; which part of the pane carries the mark is the look's, in
+bar names it when there is room; which part of the pane carries the mark is the look's, in
 [settings](settings.md#theme). An unfocused agent pane shows a hollow cursor,
 the terminal convention.

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated, send } from "$lib/integrated.svelte";
 import { byKey, create, forProject, reset as resetSessions, sessions, started } from "$lib/sessions.svelte";
 import { defaultWorkflow } from "$lib/workflows.svelte";
@@ -10,7 +10,7 @@ import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 import { resetSenders, senderOf } from "$lib/senders.svelte";
-import { OUTCOME_ASK } from "$lib/instructions";
+import { OUTCOME_ASK, REPORTS_HEAD, spoken } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 
 // The orchestrator's tools with a session that runs integrated: it is
@@ -290,6 +290,116 @@ describe("the orchestrator's tools with an integrated session", () => {
       expect(row.account).toBe("Home");
       expect(configDir).toBe("~/.claude-home");
       expect(answer.content).toContain(`in ${B}. It has the prompt.`);
+    });
+  });
+
+  describe("a starter that runs integrated", () => {
+    /** An integrated starter and a terminal session it started, at work. */
+    async function starter() {
+      const row = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
+      await launch(row.key);
+      const id = byKey(row.key)!.id!;
+      const kid = create(A, null, "claude-code", null);
+      started(kid.key, "pty-kid", "kid-1");
+      conductor.startedBy[kid.key] = id;
+      byKey(kid.key)!.working = true;
+      flushSync();
+      return { key: row.key, id, kid: byKey(kid.key)!, handle: handleOf(row.key)! };
+    }
+
+    const sentTexts = () =>
+      fake.calls.flatMap((made) => (made.method === "send" ? [(made as { text: string }).text] : []));
+
+    it("is told with the user's next message what it has not heard, once the agent takes it, and the thread keeps the user's words apart", async () => {
+      const { key, kid, handle: core } = await starter();
+      kid.note = "the scan is done";
+      kid.working = false;
+      flushSync();
+      send(key, "How is it going?");
+      const text = sentTexts().at(-1)!;
+      expect(text).toBe(
+        `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: the scan is done\n\nHow is it going?`,
+      );
+      expect(spoken(text, true)).toEqual({
+        text: "How is it going?",
+        instructions: null,
+        reports: "Session kid-1 stopped working. Its last line: the scan is done",
+      });
+      // The row is named by the user's words, not the note.
+      expect(byKey(key)!.title).toBe("How is it going?");
+      // Told once the agent takes the message: the next goes without it.
+      fake.startTurn(core);
+      flushSync();
+      fake.endTurn(core);
+      flushSync();
+      expect(unheard(byKey(key)!)).toEqual([]);
+      send(key, "And now?");
+      expect(sentTexts().at(-1)).toBe("And now?");
+    });
+
+    it("leaves what the note said untold when the message never reaches the agent", async () => {
+      const { key, kid, handle: core } = await starter();
+      kid.working = false;
+      flushSync();
+      // The core refuses it.
+      const failing = (window as unknown as { __WORKBENCH_CORE__: { integratedSend: unknown } }).__WORKBENCH_CORE__;
+      const sendAsUsual = failing.integratedSend;
+      failing.integratedSend = async () => {
+        throw new Error("the session is gone");
+      };
+      send(key, "First");
+      await settle();
+      failing.integratedSend = sendAsUsual;
+      expect(conversationOf(key).messages[Object.keys(conversationOf(key).messages).at(-1)!].state).toBe("failed");
+      // The agent drops it.
+      send(key, "Second");
+      const dropped = fake.calls.filter((made) => made.method === "send").at(-1) as { message: string; text: string };
+      expect(dropped.text.startsWith(REPORTS_HEAD)).toBe(true);
+      fake.drop(core, dropped.message);
+      flushSync();
+      // Still not heard, so the next message carries it again.
+      send(key, "Third");
+      expect(sentTexts().at(-1)).toContain("Session kid-1 stopped working.");
+    });
+
+    it("answers a wait at once with the user's message while the agent has not taken it", async () => {
+      const { key, id, kid, handle: core } = await starter();
+      fake.startTurn(core);
+      send(key, "Hold on");
+      const asked = { ...call("wait", { seconds: 5 }), session: id };
+      await handle(asked);
+      expect(answerTo(asked)?.content).toBe(USER_WROTE);
+      // Taken, a wait waits for its sessions again.
+      fake.endTurn(core);
+      fake.startTurn(core);
+      flushSync();
+      const later = { ...call("wait", { seconds: 60 }), session: id };
+      const waited = handle(later);
+      await settle();
+      expect(answerTo(later)).toBeUndefined();
+      kid.working = false;
+      flushSync();
+      await waited;
+      expect(answerTo(later)?.content).toBe("Session kid-1 stopped working. It has left no line.");
+    });
+
+    it("ends a wait it holds, so the user's message is not held behind it, and says what is still out", async () => {
+      const { key, id } = await starter();
+      const waiting = { ...call("wait", {}), session: id };
+      const waited = handle(waiting);
+      await settle();
+      send(key, "Stop for a moment");
+      await waited;
+      expect(answerTo(waiting)?.content).toBe(USER_WROTE);
+      expect(sentTexts().at(-1)).toBe(
+        `${REPORTS_HEAD}\nStill at work when the user wrote: kid-1. Call wait to hear from them once you have answered.\n\nStop for a moment`,
+      );
+    });
+
+    it("goes with nothing of the workbench's when there is nothing to tell", async () => {
+      const { key } = await starter();
+      send(key, "Hello");
+      expect(sentTexts().at(-1)).toBe("Hello");
     });
   });
 

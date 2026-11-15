@@ -1,7 +1,10 @@
 //! The daemon as the desktop app meets it: a process, lines in, lines out.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
+
+use workbench_core::scratch::Scratch;
 
 #[cfg(unix)]
 use serde_json::json;
@@ -9,11 +12,13 @@ use serde_json::Value;
 
 /// The daemon under test, told to use the system shell. A login shell with a
 /// framework on it can greet an interactive session with a question, and a
-/// question reads the keys meant for the command.
-fn daemon() -> std::process::Child {
+/// question reads the keys meant for the command. It runs in a home of its
+/// own, so nothing it keeps, its heartbeat among it, lands in the real one.
+fn daemon(home: &Path) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
         .arg("serve")
         .env("SHELL", "/bin/sh")
+        .env("HOME", home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -35,7 +40,8 @@ fn prints_its_version() {
 
 #[test]
 fn answers_requests_by_id_and_ends_with_its_stdin() {
-    let mut child = daemon();
+    let home = Scratch::new("serve-home");
+    let mut child = daemon(&home);
     let mut stdin = child.stdin.take().unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
 
@@ -65,7 +71,8 @@ fn answers_requests_by_id_and_ends_with_its_stdin() {
 #[cfg(unix)]
 #[test]
 fn streams_a_shell_s_output_and_its_end() {
-    let mut child = daemon();
+    let home = Scratch::new("serve-home");
+    let mut child = daemon(&home);
     let mut stdin = child.stdin.take().unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
 
@@ -109,6 +116,7 @@ fn streams_a_shell_s_output_and_its_end() {
 }
 
 mod client {
+    use std::path::Path;
     use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -121,11 +129,13 @@ mod client {
     #[cfg(unix)]
     use workbench_core::Output;
 
-    fn connect(events: Arc<Mutex<Vec<(String, Value)>>>) -> Arc<Connection> {
+    /// The daemon behind a connection, in a home of its own, as above.
+    fn connect(home: &Path, events: Arc<Mutex<Vec<(String, Value)>>>) -> Arc<Connection> {
         Connection::open(
             Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
                 .arg("serve")
-                .env("SHELL", "/bin/sh"),
+                .env("SHELL", "/bin/sh")
+                .env("HOME", home),
             Box::new(move |event, payload| {
                 events.lock().unwrap().push((event.to_string(), payload))
             }),
@@ -136,7 +146,8 @@ mod client {
     #[test]
     fn calls_come_back_answered_in_any_order() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let connection = connect(events);
+        let home = workbench_core::scratch::Scratch::new("serve-home");
+        let connection = connect(&home, events);
         let ping = connection.call("ping", Value::Null).unwrap();
         assert_eq!(ping["version"], env!("CARGO_PKG_VERSION"));
         let error = connection.call("no_such", Value::Null).unwrap_err();
@@ -151,7 +162,8 @@ mod client {
     #[test]
     fn a_remote_shell_s_bytes_reach_the_attached_output_and_its_end_is_an_event() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let connection = connect(Arc::clone(&events));
+        let home = workbench_core::scratch::Scratch::new("serve-home");
+        let connection = connect(&home, Arc::clone(&events));
         let id = connection
             .call(
                 "pty_shell",
@@ -331,7 +343,8 @@ while read -r line; do :; done
     #[test]
     fn the_far_end_going_away_fails_the_waiting_and_says_so() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let connection = connect(Arc::clone(&events));
+        let home = workbench_core::scratch::Scratch::new("serve-home");
+        let connection = connect(&home, Arc::clone(&events));
         assert!(connection.call("ping", Value::Null).is_ok());
         connection.close();
         let deadline = std::time::Instant::now() + Duration::from_secs(120);

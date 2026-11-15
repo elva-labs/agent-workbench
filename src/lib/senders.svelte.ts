@@ -73,6 +73,13 @@ export interface Sender {
   key: string | null;
 }
 
+/** What the user knows a session by, by its id, while the window has its
+    row. */
+export function sessionName(id: string): string | null {
+  const row = sessions.all.find((candidate) => candidate.id === id);
+  return row === undefined ? null : label(row);
+}
+
 /** Who sent a message: null for the user. */
 export function senderOf(message: { id: string }): Sender | null {
   const from = senders.byMessage[message.id] ?? null;
