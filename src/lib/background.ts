@@ -416,6 +416,16 @@ export function padColour(dot: Dot, appearance: Appearance): string {
   return rgbToHex(labToRgb(fitLch(appearance === "light" ? 0.8 : 0.6, clamp(dot.chroma, 0, 1) * 0.15, dot.hue)));
 }
 
+/** A background as a small swatch shows it: its colours laid over a
+    ground at its strength, run corner to corner. */
+export function swatchOf(background: Background, appearance: Appearance, ground: string): string {
+  const under = hexToRgb(ground);
+  const colours = background.dots.map((dot) =>
+    rgbToHex(mix(under, labToRgb(dotColour(dot, appearance)), background.strength)),
+  );
+  return colours.length === 1 ? colours[0] : `linear-gradient(135deg, ${colours.join(", ")})`;
+}
+
 /** The colour the window gets at (u, v), each 0 to 1 across and down. One
     colour is flat. Two run from the top left down to the foot, steeply, so
     the sessions pane carries the whole run. A third glows from the top

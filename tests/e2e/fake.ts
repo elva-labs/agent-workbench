@@ -515,6 +515,7 @@ export async function installFakeCore(
         integrated: [],
         inactiveAfter: "week",
         themes: {},
+        backgrounds: {},
         userStyles: false,
         notifications: true,
         chime: false,
@@ -1492,6 +1493,9 @@ export async function installFakeCore(
                 throw new Error(`only ${integrable.join(", ")} can run integrated, not ${JSON.stringify(value)}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
+            } else if (field === "backgrounds") {
+              if (typeof value !== "object" || value === null || Array.isArray(value))
+                throw new Error("backgrounds is a table of backgrounds by palette or theme");
             } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }

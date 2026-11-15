@@ -1,5 +1,5 @@
 import type { Settings } from "$lib/core";
-import { validBackgrounds, type Background } from "$lib/background";
+import { rounded, validBackgrounds, type Background } from "$lib/background";
 import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
 import { themeCss, validThemes, type CustomTheme } from "$lib/customThemes";
 import { coloursOf } from "$lib/paletteColours";
@@ -234,27 +234,68 @@ export function setTheme(choice: ThemeChoice) {
   persist({ appearance: choice });
 }
 
-/** Keeps a new set of the user's own themes, and the palette with them
-    when it moves: one change, so a theme and the choice of it arrive
-    together. A palette naming a theme the set no longer has goes back to
-    the default. */
-export function setThemes(themes: Record<string, CustomTheme>, palette = theme.palette) {
-  const was = theme.palette;
+/** Keeps a new set of the user's own themes, and the palette and the
+    backgrounds with them when they move: one change, so a theme, its
+    background and the choice of it arrive together. A palette naming a
+    theme the set no longer has goes back to the default, and a theme taken
+    away takes its background with it. */
+export function setThemes(
+  themes: Record<string, CustomTheme>,
+  palette = theme.palette,
+  backgrounds = theme.backgrounds,
+) {
+  const was = { palette: theme.palette, backgrounds: JSON.stringify(theme.backgrounds) };
+  const gone = Object.keys(theme.themes).filter((name) => !Object.hasOwn(themes, name));
   theme.themes = validThemes(themes);
   theme.palette = isPalette(palette) ? palette : "teal";
+  theme.backgrounds = Object.fromEntries(
+    Object.entries(validBackgrounds(backgrounds)).filter(([name]) => !gone.includes(name)),
+  );
   rememberAll();
   applyTheme();
-  persist(
-    theme.palette === was
-      ? { themes: { ...theme.themes } }
-      : { themes: { ...theme.themes }, palette: theme.palette },
-  );
+  persist({
+    themes: { ...theme.themes },
+    ...(theme.palette === was.palette ? {} : { palette: theme.palette }),
+    ...(JSON.stringify(theme.backgrounds) === was.backgrounds
+      ? {}
+      : { backgrounds: { ...theme.backgrounds } }),
+  });
 }
 
 /** Takes one of the user's own themes away. */
 export function deleteTheme(name: string) {
   const { [name]: _gone, ...kept } = theme.themes;
   setThemes(kept);
+}
+
+/** Keeps a new set of backgrounds, by palette and theme, and paints the
+    one the palette in use keeps. */
+export function setBackgrounds(backgrounds: Record<string, Background>) {
+  theme.backgrounds = validBackgrounds(backgrounds);
+  theme.preview = null;
+  remember(BACKGROUNDS_KEY, JSON.stringify(theme.backgrounds));
+  applyTheme();
+  persist({ backgrounds: { ...theme.backgrounds } });
+}
+
+/** Keeps a background with the palette in use, or takes it away. */
+export function setBackground(background: Background | null) {
+  const { [theme.palette]: _was, ...others } = theme.backgrounds;
+  setBackgrounds(background === null ? others : { ...others, [theme.palette]: rounded(background) });
+}
+
+/** Paints a background being picked in place of the one kept, without
+    keeping it: the window follows the pad as a dot moves. Keeping one, or
+    letting go with endPreview, ends it. */
+export function previewBackground(background: Background | null) {
+  theme.preview = { background };
+  applyTheme();
+}
+
+export function endPreview() {
+  if (theme.preview === null) return;
+  theme.preview = null;
+  applyTheme();
 }
 
 type ThemeFields =
