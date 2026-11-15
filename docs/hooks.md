@@ -32,6 +32,17 @@ the app's own directory in the user's home.
 For Codex, entries in the project's `.codex/hooks.json` for prompt
 submitted, stop and permission request, appending to the same log.
 
+Where the daemon is on the machine, both files also get a second entry for
+prompt submitted, which runs the daemon to ask the workbench what the agent
+is told of the sessions it started, and prints it for the agent with the
+user's message; see [orchestrator](orchestrator.md#when-the-user-writes-to-it).
+It asks only for an agent the workbench started, whose environment names its
+session or its role, so an agent run by hand in the project is not held up,
+and it gives up after a few seconds. It never fails a prompt: a daemon that
+cannot ask, or one from a version without it, says nothing. The entries
+already in place are left as they are, so a session that started with them
+goes on as before, and the next install adds the new one.
+
 Neither file turns up in a diff or as untracked: installing adds both to
 the repository's own exclude list, the one git keeps outside the commits,
 under `.git/info/exclude`. Claude Code does the same for its local settings

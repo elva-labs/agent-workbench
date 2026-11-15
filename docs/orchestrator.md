@@ -60,7 +60,8 @@ of a caller's sessions answers first with a stop the caller has not been
 told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
-telling anything. `read` answers with the last lines on a session's screen,
+telling anything; what the user's message says instead is under
+[when the user writes to it](#when-the-user-writes-to-it). `read` answers with the last lines on a session's screen,
 as you would see them, whether or not it has ever been on screen; for an
 integrated session, which has no screen, with what its agent last said and
 did, a line for each step, and what it is doing or waiting for now; each
@@ -114,6 +115,37 @@ for that session too, and its starts get that session's account. Where no
 such session runs or several do, or the call names a session the window
 does not have, the starter cannot be placed and the session runs under the
 project's account.
+
+## When the user writes to it
+
+What the sessions a session started do reaches it when it asks, through
+`wait` and `sessions`; nothing is pushed to it. So that it does not miss
+one when the user writes to it while the work goes on, the user's message
+reaches it with a note ahead of the user's words: a line for each session
+it started that stopped working, asked for permission or ended since it
+last looked, in the words a wait answers with. Being told there counts as
+being told, as a wait's answer does, so the next wait or listing does not
+say it again. When the user's message cuts a wait short, or comes while one
+is held, the note also names the sessions still at work and tells it to
+wait for them once it has answered. A message with nothing to tell goes as
+it is. Nothing is typed into its terminal, and no turn is started for it.
+
+A session in a terminal is given the note by its prompt hook, which asks
+the workbench as the message goes in, with the project's hooks on (see
+[hooks](hooks.md)), for Claude Code and Codex alike. Codex asks the user,
+once, to trust a hook that is new or changed before it runs it. While a
+wait is held, the hook tells nothing that the wait itself answers. A
+Codex session started afresh that is not an orchestrator is not given its
+id, so its hook cannot say which session it is, and it gets no note. A session that runs integrated is sent the user's message by the
+window, which puts the note in ahead of the words and shows it in the
+thread folded under them as Reports from the workbench. That message
+also ends a wait the session holds, with an answer that tells it to read
+the message, so the message is not held behind the wait.
+
+A wait the user's message cuts short answers nothing the agent reads:
+Claude Code ends the call itself and records only that it did not
+complete. The note on that message is what says which sessions are still
+out.
 
 ## Following a workflow
 
@@ -316,7 +348,14 @@ stands in its own project like any other.
 
 A starter's second line says in words what the sessions it started are
 doing, each counted once, `2 running, 1 asking, 1 done`, unless its agent
-has left a line there. A starter can be folded, from the chevron at the end
+has left a line there. While the starter is idle and holds no wait, the
+line also says how many of them stopped, asked or ended since it last
+looked, `1 new report` where the model stands, in the line's own colour
+with a small mark in the accent, and the line of each such session carries
+the same mark beside its time. The pointer resting on it says which. It is
+the starter's to read, not yours to answer, so it marks nothing unread,
+and it goes once the starter is told, by a wait, a listing or the note
+with your next message. A starter can be folded, from the chevron at the end
 of its second line or with Left on the keyboard, and Right lets them out
 again: folded, its second line says what they are doing whatever the agent
 left, with a small dot for each where the model stands otherwise. Left on a
