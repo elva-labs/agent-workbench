@@ -1,8 +1,8 @@
 # The orchestrator
 
 An orchestrator is a session that starts and steers other sessions. It is a
-session like any other, an agent in a pty with a terminal of its own, and
-you talk to it the way you talk to any agent. What it has that the others
+session like any other, in a terminal or integrated, and you talk to it
+the way you talk to any agent. What it has that the others
 do not is a set of tools for the sessions around it: it can see the open
 projects, start a session in one of them with a prompt, send a running
 session a line, wait until one of them stops or asks for something, read
@@ -223,11 +223,16 @@ orchestrator runs on an agent that is not installed is refused on the row,
 and so is a session under a workflow on a machine with no tool server to
 give it the `start` tool.
 
-An orchestrator is told the workflow's instructions and, unless the
-workflow says otherwise, has its agent's own ways of handing work to
-agents the user cannot see taken away, so every piece it hands out is a
-session of its own started with `start`. [Agents](adapters.md#under-a-workflow)
-says what each agent loses and what remains.
+An orchestrator runs in a terminal or integrated, as its agent is set, and
+is held to its workflow the same way in either. It is told the workflow's
+instructions and, unless the workflow says otherwise, has its agent's own
+ways of handing work to agents the user cannot see taken away, so every
+piece it hands out is a session of its own started with `start`.
+[Agents](adapters.md#under-a-workflow) says what each agent loses and what
+remains. What a session is held to comes from the workbench's own record of
+it, found by its token. Nothing a call says, such as a step, a workflow or
+a role in its arguments, changes that, and a session another started
+cannot start one of its own however it runs.
 
 Each start from such a session names the step of the workflow it is for,
 and is held to that step before the user is asked anything. A start that

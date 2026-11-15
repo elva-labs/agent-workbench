@@ -17,7 +17,7 @@ and an id to resume by.
 | Past sessions | Its transcripts under its configuration directory                  | Its SQLite index under its home                          |
 | Account       | `CLAUDE_CONFIG_DIR`, its configuration directory                   | `CODEX_HOME`, its home                                   |
 | Session name  | The terminal title, stripped of the glyph and the agent's own name | The thread's name, else its title, else the first prompt |
-| Workflow      | `--append-system-prompt-file`, `--disallowedTools`                 | `-c developer_instructions=…`, `-c features.multi_agent=false`, `-c features.multi_agent_v2.disable_native_tools=true` |
+| Workflow      | `--append-system-prompt-file`, `--disallowedTools`                 | `-c developer_instructions=…`, `-c features.multi_agent=false`, `-c features.multi_agent_v2.disable_native_tools=true`; integrated, the same in the thread's start |
 
 ## Accounts
 
@@ -54,18 +54,23 @@ older Codex takes the entry without a word and passes the server none of
 them, so every call its sessions make names no session, and is taken for
 one from [an agent the workbench did not
 start](orchestrator.md#who-is-calling). A session under a workflow could
-then direct nothing, so one on a Codex older than 0.47.0 is refused,
-saying to update; the version is what `codex --version` prints, and a
-Codex whose version cannot be read is started all the same.
+then direct nothing, so one on a Codex older than 0.47.0 is refused in a
+terminal, saying to update; the version is what `codex --version` prints,
+and a Codex whose version cannot be read is started all the same. An
+integrated Codex session gives the server the two variables' values in the
+thread's own configuration rather than their names, and runs only on a
+Codex far newer than that, so it needs no such check.
 
 ## Under a workflow
 
 A session that follows a workflow is told the workflow's instructions on
-every start and every resume. Claude Code adds them to
-its own system prompt, reading them from a file the workbench writes for
-the session; Codex takes them as developer instructions, the nearest
-setting it has, and has no setting that reads them from a file, so they go
-on its command line. The file is made new for each session, readable by
+every start and every resume, in a terminal or integrated alike. Claude
+Code adds them to its own system prompt, reading them from a file the
+workbench writes for the session, with the same flags either way; Codex
+takes them as developer instructions, the nearest setting it has. In a
+terminal Codex has no setting that reads them from a file, so they go on
+its command line; integrated, they go in the message that starts or
+resumes its thread. The file is made new for each session, readable by
 its owner alone, and removed when the session's process ends. Each
 workbench process keeps its sessions' files in a folder of its own, beside
 a lock it holds for as long as it runs; the folder of a process that ended
@@ -80,6 +85,14 @@ sends that on every resume. A resumed session told something other than
 what its conversation began with, a changed workflow or no workflow where
 it had one, is started with that record turned off, so it reads what it is
 told now.
+
+Codex keeps what a thread began with. Resumed, in a terminal or
+integrated, it reads the instructions its first turn was given, whatever
+it is told now, and its subagent tools stay as they were then: a thread
+started under a workflow that took them away is without them for good,
+and one resumed under a changed workflow does not read the change.
+Resuming it under no workflow, or with its subagent tools asked for, undoes
+neither.
 
 Where the workflow delegates only through the workbench, each agent loses
 its own ways of handing work to agents the user cannot see. Claude Code is
@@ -97,18 +110,21 @@ subagent of their own; the instructions tell the orchestrator to hand out
 every piece with `start`.
 
 Such a session has the workbench's tools whatever its project was told
-about live updates. Where the agent's configuration for the directory does
-not already point at the tool server, the server is named when the session
-starts: to Claude Code in a configuration file of the session's own, to
-Codex as one of its servers on the command line. A machine with no tool
+about live updates. In a terminal, where the agent's configuration for the
+directory does not already point at the tool server, the server is named
+when the session starts: to Claude Code in a configuration file of the
+session's own, to Codex as one of its servers on the command line. An
+integrated session is given the server whatever its configuration says, as
+[integrated sessions](integrated.md) describes. A machine with no tool
 server does not start a session under a workflow, and says why.
 
 On Windows an agent installed as a script runs through the command
 interpreter, which ends a command at its first line break. Claude Code's
 command line holds only file names there. Codex would lose all but the
 first line of the instructions, so a Codex session under a workflow is
-refused on Windows, saying so. A session with no workflow starts as the
-table above says. The interpreter also takes the first and the last quote
+refused in a terminal on Windows, saying so, and runs integrated, where
+nothing of the workflow is on its command line. A session with no workflow
+starts as the table above says. The interpreter also takes the first and the last quote
 off a line with more than two, which cuts short a script path with a space
 in it, and the settings that name the tool server to Codex hold quotes. So
 a Codex installed as a script is not told the server on Windows: it starts

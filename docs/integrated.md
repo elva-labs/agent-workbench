@@ -24,6 +24,8 @@ claude -p --input-format stream-json --output-format stream-json --verbose
   --permission-prompt-tool stdio
   [--permission-mode <mode>] [--model <model>] [--effort <effort>]
   --session-id <id> | --resume <id>
+  [--disallowedTools <tools>] [--append-system-prompt-file <file>]
+  [--system-prompt-snapshot off]
   [--mcp-config <file>]
 ```
 
@@ -56,10 +58,14 @@ signs in is passed: no token and no key. A session under an account that is
 not signed in says so as an error, and the user signs in by running `claude`
 in a terminal; the workbench never drives a sign-in.
 
-An integrated session is not given a workflow's instructions. A start that
-carries them is refused with an error saying so, before anything runs, so a
-workflow is never dropped without the caller knowing. A session that follows
-a workflow runs in a terminal.
+A session that follows a workflow is started as a terminal one is, with
+the same flags: its subagent tools disallowed where the workflow delegates
+only through the workbench, the instructions added to its system prompt
+from a file of the session's own, and, resumed with other instructions than
+its conversation began with, the system prompt it recorded turned off. See
+[agents](adapters.md#under-a-workflow). Such a session is not started where
+the workbench has no tool server to attach, and the start says so before
+the folder is asked about.
 
 ## How Codex is started
 
@@ -78,7 +84,12 @@ starts a thread in that folder, or resumes the one asked for without its
 past turns, which the window does not draw. The thread starts
 with the model, the effort and the mode the session asked for, and with
 approvals sent to the window whoever the user's own configuration names to
-review them. A start that names no mode runs in the mode the user's
+review them. A session that follows a workflow gives the workflow's
+instructions as the thread's developer instructions, in the message that
+starts or resumes it, and where the workflow delegates only through the
+workbench the thread's configuration turns Codex's own subagent tools off
+with the settings a terminal session is given. None of it goes on a command
+line, so on Windows too a Codex session can follow a workflow this way. A start that names no mode runs in the mode the user's
 configuration sets, which can be full access. The thread's id is Codex's
 own, known once the thread has started, so the start answers with none and
 ready carries it.
@@ -171,7 +182,7 @@ the same way.
 
 | Command | What it does |
 | --- | --- |
-| Start | Starts or resumes a session in a project, with a model, a mode, an effort and an account. Answers with the session's id and the conversation's id where the workbench knows it then, or fails because the folder is not trusted. |
+| Start | Starts or resumes a session in a project, with a model, a mode, an effort, an account and, for a session that follows a workflow, its instructions. Answers with the session's id and the conversation's id where the workbench knows it then, or fails because the folder is not trusted or no tool server can reach a session under a workflow. |
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
@@ -494,9 +505,9 @@ Codex that is killed outright, or that dies, leaves them running. Every
 integrated session is stopped when the app exits, and when the daemon's
 stdin ends on another machine. A connection to another machine that goes
 away ends its sessions for the window, once each, with an error saying
-why. The tool server's configuration for a session is a file only its
-owner can read, under a name that cannot be guessed, removed when the
-session ends.
+why. The tool server's configuration for a Claude Code session, and a
+workflow's instructions for one, are each a file only its owner can read,
+under a name that cannot be guessed, removed when the session ends.
 
 Events go out in order through a thread of their own, so a slow window or
 connection never holds up a command. While too many wait for it, streamed

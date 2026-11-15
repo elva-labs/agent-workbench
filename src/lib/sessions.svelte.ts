@@ -478,10 +478,12 @@ export function defaultAgent(project: string): AgentId {
   return installed()[0] ?? "claude-code";
 }
 
-/** How New session in the project runs: in a terminal under the project's
-    workflow, otherwise the way the agent's setting says. */
+/** How New session in the project runs: the way the setting of the agent
+    it starts says, the workflow's orchestrator's under the project's
+    workflow. */
 export function newSessionKind(project: string): SessionKind {
-  return workflowOf(project) !== null ? "terminal" : kindFor(defaultAgent(project));
+  const workflow = workflowOf(project);
+  return kindFor(workflow !== null ? workflow.orchestrator.agent : defaultAgent(project));
 }
 
 /** The other way to start one session in the project, for the agent New
@@ -632,7 +634,7 @@ export function storedWorkflow(value: unknown): Workflow | null {
 /** Keeps the workflow a session follows by its id, now that it has one:
     the version this run started on, and the instructions the conversation
     was first given, which stay those of its first run. */
-function rememberWorkflow(session: Session) {
+export function rememberWorkflow(session: Session) {
   if (session.id === null || session.workflow === null) return;
   const before = sessions.workflows[session.id];
   const workflow = $state.snapshot(session.workflow) as Workflow;
@@ -1187,13 +1189,12 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * new one follows its project's workflow when nothing was picked: the agent
  * left out, or nothing there to pick between, one agent installed and no
  * accounts. An agent picked from several starts alone, and so does one
- * started integrated by name. A workflow whose orchestrator runs on an agent
- * that is not installed is refused on the row.
+ * started the other way by name. A workflow whose orchestrator runs on an
+ * agent that is not installed is refused on the row.
  *
- * It runs the way the agent's setting says, unless started the other way. A
- * session under a workflow runs in a terminal, the one way its orchestrator
- * is told the workflow, and so does a resumed one that was ever told one,
- * with or without it now.
+ * It runs the way the agent's setting says, unless started the other way,
+ * under a workflow as under none: either way of running tells the
+ * orchestrator its workflow as it starts.
  */
 export function create(
   project: string,
@@ -1206,17 +1207,12 @@ export function create(
   workflow?: Workflow | null,
   kind?: SessionKind,
 ): Session {
-  // A resumed session that was ever told a workflow runs in a terminal: it
-  // follows one again, is asked about one that is gone, or is told to let
-  // go of the instructions it recorded, and only a terminal session's start
-  // carries any of that.
-  const followed = resumedFrom !== null && sessions.workflows[resumedFrom] !== undefined;
-  // Started integrated by name is a pick, as an agent picked is: it runs
+  // Started the other way by name is a pick, as an agent picked is: it runs
   // alone, whatever the project follows.
   const following =
     workflow !== undefined
       ? workflow
-      : resumedFrom !== null || kind === "integrated"
+      : resumedFrom !== null || kind !== undefined
         ? null
         : agent === undefined || nothingToPick()
           ? workflowOf(project)
@@ -1227,12 +1223,10 @@ export function create(
     if (model === null && runs === following.orchestrator.agent)
       model = orchestratorModel(following);
   }
-  // An orchestrator is told its workflow as its process starts, which only
-  // a terminal session's start carries.
-  const runsAs: SessionKind = following !== null || followed ? "terminal" : (kind ?? kindFor(runs));
-  // A resumed terminal session left to follow what it followed before finds
-  // out what that is when it starts, once the window has the workflows.
-  const resolving = workflow === undefined && resumedFrom !== null && runsAs === "terminal";
+  const runsAs: SessionKind = kind ?? kindFor(runs);
+  // A resumed session left to follow what it followed before finds out what
+  // that is when it starts, once the window has the workflows.
+  const resolving = workflow === undefined && resumedFrom !== null;
   const missing =
     following !== null && resumedFrom === null && !installed().includes(runs)
       ? `The workflow "${following.name}" runs its orchestrator on ${agentLabel(runs)}, which is not installed here. Pick an agent to start one alone, or choose another workflow for this project in the settings.`
@@ -1283,6 +1277,78 @@ function takeUp(session: Session, id: string) {
     session.model = orchestratorModel(workflow);
 }
 
+/** What a start tells the agent of the workflow its session follows. */
+export interface Told {
+  /** The workflow's instructions, for a session that follows one. */
+  instructions?: string;
+  /** Whether the agent's own subagent tools are taken away. */
+  startOnly?: boolean;
+  /** Whether a resumed session lets go of what its conversation was
+      first told. */
+  afresh?: boolean;
+}
+
+/**
+ * What the agent behind a starting row is told of its workflow, the same
+ * for a terminal and an integrated start: a resumed row left to follow what
+ * it followed before finds out what that is first, once the window has the
+ * workflows. Null when the row is gone or no longer starting, as when the
+ * workflow it followed is lost and the user is asked.
+ */
+export async function toldAtStart(key: string): Promise<Told | null> {
+  let session = byKey(key);
+  if (session === null || session.status !== "starting") return null;
+  const resumed = session.resumedFrom;
+  if (pending.delete(key) && resumed !== null) {
+    await workflowsKnown();
+    session = byKey(key);
+    if (session === null || session.status !== "starting") return null;
+    takeUp(session, resumed);
+    if (session.status !== "starting") return null;
+  }
+  // Resumed with other instructions than its conversation was first given,
+  // or with none where it was given some, the agent lets go of the ones it
+  // recorded.
+  const afresh =
+    session.resumedFrom !== null && toldAfresh(session.resumedFrom, session.workflow);
+  return {
+    ...(session.workflow === null
+      ? {}
+      : {
+          instructions: orchestratorPrompt(session.workflow),
+          startOnly: startsOnly(session.workflow),
+        }),
+    ...(afresh ? { afresh: true } : {}),
+  };
+}
+
+/** A row started again in place, resuming its conversation, finds out what
+    it follows as a row resumed from the past sessions does: by the name
+    of the workflow it followed, as the settings have it now. */
+export function followsAgain(key: string) {
+  const session = byKey(key);
+  if (session !== null && session.resumedFrom !== null) pending.add(key);
+}
+
+/**
+ * A row taken up again while its agent still runs, after the window was
+ * reloaded: it follows what its run was started on, the copy of the
+ * workflow kept for it then, so the calls it makes are held to the
+ * workflow it was told. A row that followed none follows none.
+ */
+export async function rejoined(key: string) {
+  if (!pending.delete(key)) return;
+  await workflowsKnown();
+  const session = byKey(key);
+  if (session === null || session.id === null) return;
+  const kept = sessions.workflows[session.id];
+  if (kept === undefined || kept.workflow === null) return;
+  const copy = storedWorkflow(kept.workflow);
+  if (copy === null) return;
+  session.workflow = copy;
+  session.workflowGone = workflowNamed(copy.name) === undefined;
+}
+
 /** Resumes a session whose workflow was lost, with no workflow, in place
     of the row that asked. The user's word is kept, so the session is not
     asked about again, along with what its conversation was first told, so
@@ -1290,7 +1356,7 @@ function takeUp(session: Session, id: string) {
 export function resumeWithout(key: string): Session | null {
   const session = byKey(key);
   if (session === null || session.workflowLost === null || session.id === null) return null;
-  const { project, id, agent, startIn, model, account } = session;
+  const { project, id, agent, startIn, model, account, kind } = session;
   const before = sessions.workflows[id];
   sessions.workflows[id] = {
     workflow: null,
@@ -1299,7 +1365,7 @@ export function resumeWithout(key: string): Session | null {
   };
   saveKept();
   close(key);
-  return create(project, id, agent, startIn, null, model, account, null);
+  return create(project, id, agent, startIn, null, model, account, null, kind);
 }
 
 /** Whether a new session has nothing to pick between: one agent to run
@@ -1328,9 +1394,7 @@ export function reopened(
   const live = added(
     row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind),
   );
-  // Only a terminal session is told a workflow, so only one finds out what
-  // it follows.
-  if (resolve && kind === "terminal") pending.add(live.key);
+  if (resolve) pending.add(live.key);
   return live;
 }
 
@@ -1419,21 +1483,10 @@ export async function launch(
   rows: number,
   onOutput: (bytes: Uint8Array) => void,
 ): Promise<boolean> {
-  let session = byKey(key);
+  const told = await toldAtStart(key);
+  const session = byKey(key);
   // A row refused before it started has no process to start.
-  if (session === null || session.status !== "starting") return false;
-  if (pending.delete(key) && session.resumedFrom !== null) {
-    await workflowsKnown();
-    session = byKey(key);
-    if (session === null || session.status !== "starting") return false;
-    takeUp(session, session.resumedFrom!);
-    if (session.status !== "starting") return false;
-  }
-  // Resumed with other instructions than its conversation was first given,
-  // or with none where it was given some, the agent lets go of the ones it
-  // recorded.
-  const afresh =
-    session.resumedFrom !== null && toldAfresh(session.resumedFrom, session.workflow);
+  if (told === null || session === null) return false;
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -1445,13 +1498,7 @@ export async function launch(
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
         configDir: dirFor(session.account, session.agent),
-        ...(session.workflow === null
-          ? {}
-          : {
-              instructions: orchestratorPrompt(session.workflow),
-              startOnly: startsOnly(session.workflow),
-            }),
-        ...(afresh ? { afresh: true } : {}),
+        ...told,
         cols,
         rows,
       },

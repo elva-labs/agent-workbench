@@ -21,6 +21,37 @@ function calls(page: Page): Promise<{ method: string; [field: string]: unknown }
   );
 }
 
+interface Answer {
+  id: string;
+  content: string | null;
+  error: string | null;
+}
+
+/** A call on one of the conductor's tools, as the core delivers one. */
+function conduct(
+  page: Page,
+  request: { id: string; tool: string; arguments?: Record<string, unknown>; session: string },
+) {
+  return page.evaluate(
+    ({ project, request }) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id: request.id,
+        tool: request.tool,
+        arguments: request.arguments ?? {},
+        cwd: project,
+        session: request.session,
+      }),
+    { project: PROJECT, request },
+  );
+}
+
+async function answerTo(page: Page, id: string): Promise<Answer | null> {
+  const answers = await page.evaluate(
+    () => (window as unknown as { __conductAnswers?: Answer[] }).__conductAnswers ?? [],
+  );
+  return answers.find((answer) => answer.id === id) ?? null;
+}
+
 async function openIntegrated(page: Page, options: { untrusted?: boolean } = {}) {
   await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
   if (options.untrusted)
@@ -747,73 +778,158 @@ test.describe("a session of an agent shaped as Codex is", () => {
 });
 
 test.describe("under a workflow, with Claude Code set to run integrated", () => {
-  // New session follows the project's workflow, and so runs in a terminal:
-  // the other way offered is the integrated session the setting asks for,
+  // New session starts the workflow's orchestrator, which runs the way its
+  // agent is set: as a conversation. The other way offered is a terminal,
   // alone.
   const UNDER = { open: [PROJECT], settings: { ...WITH_WORKFLOW, integrated: ["claude-code"] } };
+  const spawns = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __spawns?: unknown[] }).__spawns ?? []);
 
-  test("the agent pane offers an integrated session beside a New session that is the workflow's terminal", async ({ page }) => {
+  test("New session starts the workflow's orchestrator as a conversation, told its workflow", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await expect(page.getByTestId("start-agent")).toHaveText("New session");
-    await expect(page.getByTestId("start-other")).toHaveText("New integrated session");
-    await page.getByTestId("start-other").click();
+    await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
-    // Started the other way, it is a pick: it follows no workflow.
-    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
-    // New session is the workflow's orchestrator, in a terminal: the
-    // choice it opens stands on the workflow.
-    await page.getByTestId("new-session").click();
-    await page.keyboard.press("Enter");
-    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
-    await expect(page.getByTestId("workflow-tag")).toBeVisible();
-    await expect(page.getByTestId("conversation")).toBeHidden();
+    await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
+    await expect(page.getByTestId("workflow-tag-flow")).toHaveText("Build and review·");
+    await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+    const [start] = await calls(page);
+    expect(start).toMatchObject({
+      method: "start",
+      options: { agent: "claude-code", model: "fable", startOnly: true },
+    });
+    const told = (start.options as { instructions?: string }).instructions ?? "";
+    expect(told).toContain('workflow "Build and review"');
+    expect(told).toContain('2. For the step "Work"');
+    expect(await spawns(page)).toEqual([]);
   });
 
-  test("the agent pane's New session starts the workflow's orchestrator in a terminal", async ({ page }) => {
+  test("the agent pane offers a terminal session beside New session, alone", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
-    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("start-other")).toHaveText("New session in a terminal");
+    await page.getByTestId("start-other").click();
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
+    // Started the other way, it is a pick: it follows no workflow.
+    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    expect(await spawns(page)).toEqual([expect.not.objectContaining({ instructions: expect.anything() })]);
+    // New session is the workflow's orchestrator, integrated: the choice it
+    // opens stands on the workflow.
+    await page.getByTestId("new-session").click();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toBeVisible();
-    await expect(page.getByTestId("conversation")).toHaveCount(0);
   });
 
-  test("the palette offers an integrated session, never a terminal beside New session", async ({ page }) => {
+  test("the palette offers a terminal session, alone, beside New session", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await page.getByTestId("go-to").click();
     await page.getByTestId("palette-field").fill(">new");
     const rows = page.getByTestId("palette-label");
     await expect(rows.filter({ hasText: "New session in demo" })).toHaveCount(1);
-    await expect(rows.filter({ hasText: "in a terminal" })).toHaveCount(0);
-    await rows.filter({ hasText: "New integrated session in demo" }).click();
-    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(rows.filter({ hasText: "New integrated session" })).toHaveCount(0);
+    await rows.filter({ hasText: "New session in a terminal in demo" }).click();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
   });
 
-  test("the project menu offers an integrated session", async ({ page }) => {
+  test("the project menu offers a terminal session", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await page.locator(`[data-row="project:${PROJECT}"]`).hover();
     await page.getByTestId("project-more").click();
     await expect(page.getByTestId("project-menu-new")).toHaveText("New session");
-    await expect(page.getByTestId("project-menu-other")).toHaveText("New integrated session");
+    await expect(page.getByTestId("project-menu-other")).toHaveText("New session in a terminal");
     await page.getByTestId("project-menu-other").click();
-    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
   });
 
-  test("the settings say once that a session under a workflow runs in a terminal", async ({ page }) => {
+  test("the settings no longer say a session under a workflow runs in a terminal", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await expect(page.getByTestId("agent-status")).toBeVisible();
     await page.keyboard.press("ControlOrMeta+,");
     await page.getByTestId("settings-tab-sessions").click();
-    await expect(page.getByTestId("session-kind-workflow")).toHaveText(
-      "A session that follows a workflow runs in a terminal, whichever is chosen here, since that is how its orchestrator is told the workflow.",
+    await expect(page.getByTestId("session-kind")).toHaveCount(1);
+    await expect(page.getByTestId("session-kind-workflow")).toHaveCount(0);
+    await expect(page.getByText("follows a workflow")).toHaveCount(0);
+  });
+
+  test("the orchestrator runs the workflow in its conversation, with its worker under it", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("composer-input")).toBeEnabled();
+    await page.getByTestId("composer-input").fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await agent(
+      page,
+      `f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "b-plan", parent: null, text: "I'll hand the fix to a session for the Work step.", done: true });
+       window.__startCall = f.startTool("${H}", "mcp__agent-workbench__start", { project: "${PROJECT}", prompt: "Fix the flaky cache test", step: "Work" }, { kind: "mcp" });`,
     );
-    await expect(page.getByText("follows a workflow runs in a terminal")).toHaveCount(1);
+
+    // A start the workflow refuses is said over the conversation too, and
+    // leaves the composer clear.
+    await conduct(page, { id: "c-bare", tool: "start", arguments: { project: PROJECT, prompt: "Fix it" }, session: "integrated-session-1" });
+    await expect.poll(() => answerTo(page, "c-bare")).not.toBeNull();
+    expect((await answerTo(page, "c-bare"))!.error).toContain('You follow the workflow "Build and review"');
+    const refused = page.getByTestId("workflow-refused");
+    await expect(refused).toBeVisible();
+    const line = (await refused.boundingBox())!;
+    const composer = (await page.getByTestId("composer-input").boundingBox())!;
+    expect(line.y + line.height).toBeLessThanOrEqual(composer.y);
+    await page.getByTestId("workflow-refused-dismiss").click();
+    await expect(refused).toHaveCount(0);
+
+    // A start for a step is asked about once, and its worker runs the way
+    // its agent is set, told no workflow.
+    await conduct(page, {
+      id: "c-work",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky cache test", step: "Work", name: "Fix the cache" },
+      session: "integrated-session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-work")).not.toBeNull();
+    const started = (await answerTo(page, "c-work"))!;
+    expect(started.error).toBeNull();
+    expect(started.content).toContain('Started session integrated-session-2 for step "Work"');
+    const worker = (await calls(page)).filter((call) => call.method === "start").at(-1)!;
+    expect(worker).toMatchObject({ options: { model: "sonnet" } });
+    expect((worker.options as { instructions?: string }).instructions).toBeUndefined();
+    expect(await spawns(page)).toEqual([]);
+
+    // The call finishes, and the thread hangs the worker under it.
+    await page.evaluate(
+      (content) => {
+        const f = (window as unknown as { __integrated: { finishTool(id: string, call: string, output: string): void; endTurn(id: string): void } }).__integrated;
+        f.finishTool("int-1", (window as unknown as { __startCall: string }).__startCall, content);
+        f.endTurn("int-1");
+      },
+      started.content!,
+    );
+    const rows = page.getByTestId("conversation").getByTestId("started-session");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("Fix the cache");
+    // On the rail it hangs under the orchestrator with its step.
+    await expect(page.locator("section[data-pane='sessions']").getByTestId("started-role")).toHaveText("Work");
+
+    // The worker may not start one of its own, whatever it says it is.
+    await conduct(page, {
+      id: "c-claim",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Split it", step: "Work", role: "orchestrator" },
+      session: "integrated-session-2",
+    });
+    await expect.poll(() => answerTo(page, "c-claim")).not.toBeNull();
+    expect((await answerTo(page, "c-claim"))!.error).toBe(
+      "A session that another session started cannot start sessions of its own.",
+    );
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
   });
 });
 

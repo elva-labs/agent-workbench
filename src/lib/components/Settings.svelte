@@ -691,10 +691,6 @@
                 </div>
               {/each}
             </div>
-            <p class="note" data-testid="session-kind-workflow">
-              A session that follows a workflow runs in a terminal, whichever is chosen here, since
-              that is how its orchestrator is told the workflow.
-            </p>
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
             <p class="note">
