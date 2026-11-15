@@ -289,9 +289,9 @@ naming the session and its kind:
   whole each time, as described under account limits: each limit window
   with its kind, the model it counts alone where it counts one, the
   percent used, when it resets and how near its end the agent reads it,
-  where the agent says; the plan, where the agent names it; and when the
-  figures were taken. It names the agent but not the account, which the
-  window knows from the session.
+  where the agent says; the plan, where the agent names it; when the last
+  read of the limits was taken; and when a figure last moved. It names the
+  agent but not the account, which the window knows from the session.
 - **notice**: something the agent says that is neither an error nor part
   of a turn, such as that it fell back to another model, as information or
   as a warning.
@@ -393,11 +393,23 @@ read the figures, so an account with no integrated session running has
 none to show.
 
 The limits event carries every limit window the session knows of, each
-time. It goes out when the agent answers a read of the limits, which the
-session makes once the agent is ready and again after each turn ends, and
-when what the agent pushes during a turn changes the figures. A limit
-window of a kind the workbench does not know is left out, and one whose
-reset time has passed is passed on as the agent last told it.
+time, one of each kind and model and at most eight, with a model's name
+cut short past a few dozen characters. It goes out when the agent answers
+a read of the limits, and when what the agent pushes during a turn
+changes the figures. The session reads the limits once the agent is
+ready, and after a turn once the last read it asked for is five minutes
+old: what the agent pushes during a turn moves the session window and
+the week in between, and a read that is never answered holds back none
+for longer than that. A limit window of a kind the workbench does not
+know is left out, and one whose reset time has passed is passed on as the
+agent last told it.
+
+A read gives every limit window and the plan, and a push moves only the
+windows it names, so the figures of one event can be of different ages.
+The event says when the last read the agent answered was taken, and when
+a figure last moved. Every figure was taken between the two, and the
+oldest is as old as the read, or, where no read was answered, as the
+event's own time.
 
 Claude Code is read with a usage control request. Its answer holds the
 server's rows of limits, each with the percent used, when it resets, and
@@ -409,19 +421,22 @@ the agent also reports, with each response of the model, the fraction
 used of the session window and the week, and whether either is near or
 at its end, which moves those two between reads. Claude Code answers its
 control requests one at a time, and a read can take it a few seconds,
-during which a line sent after it waits. So only one read is out at a
-time, none is made while a message waits for the agent to take it, and a
-read leaves out the scan of past transcripts that a full usage report
-makes.
+during which any line sent after it waits, a message or an interrupt
+among them. So besides waiting its five minutes, no read is made while a
+message waits for the agent to take it, and a read leaves out the scan of
+past transcripts that a full usage report makes.
 
 Codex is read with its rate limits request, which holds up nothing it is
-asked after it, since Codex answers each request as it is done. During a turn it pushes what changed and leaves
-out what it does not know then, which is merged into the last answer. It
-calls its limit windows primary and secondary, which says nothing of how
-long each is, so each is named by its length: 300 minutes is the session
-window and 10,080 the week, and one of another length is left out, as is
-a push for a meter other than the one read. Codex gives no reading of how
-near its end a limit window is.
+asked after it, since Codex answers each request as it is done. During a
+turn it pushes what changed and leaves out what it does not know then,
+which is merged into the last answer. Only a push for the meter the last
+answer named is merged: one before any answer, or after an answer that
+named no meter, could be another meter's, such as a quota of one model,
+and is left out. Codex calls its limit windows primary and secondary,
+which says nothing of how long each is, so each is named by its length:
+300 minutes is the session window and 10,080 the week. One of another
+length is left out, and of two of one length the primary is kept. Codex
+gives no reading of how near its end a limit window is.
 
 The usage request Claude Code answers is not a documented interface, and
 either agent may refuse a read or answer in a shape the workbench does not
@@ -534,10 +549,11 @@ has to do itself:
   then asks for a snapshot, and draws from it what no transcript holds:
   the state, the settings and what the agent offers, the requests waiting
   for an answer, which it can still answer, the messages that wait for a
-  turn, and the account's limits. Every turn the agent has begun, and what was said in it, is
-  read from the agent's transcript, as are a resumed session's past turns.
-  The part of a turn still running that the transcript does not hold yet,
-  such as a block still streaming, comes in the events that follow.
+  turn, and the account's limits. Every turn the agent has begun, and
+  what was said in it, is read from the agent's transcript, as are a
+  resumed session's past turns. The part of a turn still running that the
+  transcript does not hold yet, such as a block still streaming, comes in
+  the events that follow.
 - **Content.** Images in a tool's result and a command's output kept apart
   from its errors or its exit code arrive as plain text. Long content is
   cut down and flagged.
