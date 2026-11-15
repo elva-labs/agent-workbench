@@ -26,6 +26,7 @@
       {/if}
       <span data-testid="conduct-round">{roundQuestion(ask.round)}</span>
     </p>
+    {#if ask.unsure}<p class="where" data-testid="conduct-unsure">This call may come from a session another session started.</p>{/if}
     {#if ask.prompt !== ""}<p class="prompt">{ask.prompt}</p>{/if}
     <div class="actions">
       <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow one more round</button>
@@ -41,10 +42,15 @@
         <span data-testid="conduct-account">{accountWords(ask.named)}</span>
       {/if}
     </p>
+    {#if ask.unsure}<p class="where" data-testid="conduct-unsure">This call may come from a session another session started.</p>{/if}
     <p class="prompt"><Plain text={ask.prompt} /></p>
     <div class="actions">
-      <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>
-      <button class="later" onclick={() => answer(once)} data-testid="conduct-once">Once</button>
+      {#if ask.unsure}
+        <button class="go" onclick={() => answer(once)} data-testid="conduct-once">Allow once</button>
+      {:else}
+        <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>
+        <button class="later" onclick={() => answer(once)} data-testid="conduct-once">Once</button>
+      {/if}
       <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">No</button>
     </div>
   </div>
