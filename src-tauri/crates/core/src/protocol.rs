@@ -718,6 +718,10 @@ pub fn dispatch(
             let p: PathParams = parse(params)?;
             value(core.read_media(&p.path)?)
         }
+        "file_info" => {
+            let p: PathParams = parse(params)?;
+            value(core.file_info(&p.path)?)
+        }
         "set_selection" => {
             let p: SelectionParams = parse(params)?;
             core.set_selection(p.selection)?;

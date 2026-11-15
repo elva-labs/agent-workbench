@@ -915,6 +915,24 @@ async fn read_media(
     .await
 }
 
+/// How big a file given to the agent by its path is, read where it is.
+#[tauri::command]
+async fn file_info(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    path: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&path),
+        "file_info",
+        |rest| json!({ "path": rest }),
+        |core, path| core.file_info(Path::new(path)),
+    )
+    .await
+}
+
 /// What the user is looking at, put on record on the project's machine
 /// for the agent's tool server to read. The paths carry no host: the
 /// window strips it, and the project names the machine.
@@ -1734,6 +1752,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
+            file_info,
             set_selection,
             project_info,
             sessions_list,

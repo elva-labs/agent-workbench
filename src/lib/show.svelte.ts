@@ -214,17 +214,49 @@ export function notified(request: NotifyRequest) {
   noted(session.key, request.text);
 }
 
+/** A path as the agent reads it, taken against where it runs. */
+function taken(path: string, base: string): string {
+  return /^(?:[A-Za-z]:[\\/]|[\\/]|ssh:\/\/)/.test(path)
+    ? path
+    : path.startsWith("~/")
+      ? path
+      : `${base.replace(/[\\/]+$/, "")}/${path.replace(/^\.\//, "")}`;
+}
+
+/** A path with its `.` and `..` parts walked, so what it names is what
+    is checked, its parts joined by the separator it starts with. */
+function resolved(path: string): string {
+  const head = /^(?:ssh:\/\/[^/]*|[A-Za-z]:)?/.exec(path)?.[0] ?? "";
+  const kept: string[] = [];
+  for (const part of path.slice(head.length).split(/[\\/]/)) {
+    if (part === "..") kept.pop();
+    else if (part !== "." && part !== "") kept.push(part);
+  }
+  const sep = /[\\/]/.exec(path.slice(head.length))?.[0] ?? "/";
+  return `${head}${sep}${kept.join(sep)}`;
+}
+
+/** What opens a file a session's message mentions, by the path its agent
+    was told: the file's changes in the viewer when it has some, the file
+    as it is when not. Null for a folder, or a file outside the session's
+    project and worktree, which the viewer does not show. */
+export function mentionOpener(key: string, path: string): (() => void) | null {
+  const session = byKey(key);
+  if (session === null || path.endsWith("/")) return null;
+  const base = session.cwd ?? session.startIn ?? session.project;
+  const absolute = resolved(taken(path, base));
+  const homes = [session.worktree, session.project].filter((home) => home !== null);
+  if (!homes.some((home) => within(absolute, home))) return null;
+  return () => void diffRequested({ path: absolute, note: null, cwd: base, session: session.token });
+}
+
 /** A reference in a session's output was clicked: a path the agent wrote,
     taken against where the agent runs. */
 export function referenced(key: string, path: string, line: number) {
   const session = byKey(key);
   if (session === null) return;
   const base = session.cwd ?? session.startIn ?? session.project;
-  const absolute = /^(?:[A-Za-z]:[\\/]|[\\/]|ssh:\/\/)/.test(path)
-    ? path
-    : path.startsWith("~/")
-      ? path
-      : `${base.replace(/[\\/]+$/, "")}/${path.replace(/^\.\//, "")}`;
+  const absolute = taken(path, base);
   void showPlace({
     path: absolute,
     from: line,

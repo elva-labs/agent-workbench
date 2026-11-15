@@ -971,6 +971,10 @@ impl Core {
         crate::show::read_media(path)
     }
 
+    pub fn file_info(&self, path: &Path) -> Result<crate::show::FileInfo, String> {
+        crate::show::file_info(path)
+    }
+
     /// The answer to a call on one of the conductor's tools, left where
     /// the tool server that made the call is waiting for it. A prompt call
     /// whose hook has stopped waiting gets none, and the window hears so:
