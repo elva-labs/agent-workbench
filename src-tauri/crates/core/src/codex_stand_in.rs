@@ -1541,7 +1541,7 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
     let environment = crate::env::environment();
     let sessions = Arc::new(Sessions::default());
     let told = "1. Direct the work. WORKFLOW-MARKER\n2. Say \"done\" when it is.";
-    let given = |session: Option<&str>, workflow: bool| -> (Value, String) {
+    let given = |session: Option<&str>, workflow: bool, start_only: bool| -> (Value, String) {
         let recorder = Arc::new(Recorder::default());
         let launch = Launch {
             project: &work,
@@ -1556,7 +1556,7 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
             tool_server: None,
             orchestrator: workflow,
             instructions: workflow.then_some(told),
-            start_only: workflow,
+            start_only,
             afresh: false,
         };
         let started = super::start(
@@ -1610,17 +1610,17 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
         "followup_task",
     ];
 
-    let (plain, _) = given(None, false);
+    let (plain, _) = given(None, false, false);
     println!("under no workflow: {plain}");
     assert_eq!(plain["told"], false);
     assert!(has(&plain, "spawn_agent"), "{plain}");
-    let (fresh, thread) = given(None, true);
+    let (fresh, thread) = given(None, true, true);
     println!("under a workflow: {fresh}");
     assert_eq!(fresh["told"], true);
     for tool in subagent_tools {
         assert!(!has(&fresh, tool), "{tool} is gone under a workflow");
     }
-    let (resumed, _) = given(Some(&thread), true);
+    let (resumed, _) = given(Some(&thread), true, true);
     println!("resumed under it: {resumed}");
     assert_eq!(resumed["told"], true);
     for tool in subagent_tools {
@@ -1628,13 +1628,22 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
     }
     // Codex keeps what a thread began with: resumed under no workflow, it
     // still reads the instructions and has none of its subagent tools, as
-    // `codex resume` does in a terminal.
-    let (left, _) = given(Some(&thread), false);
+    // `codex resume` does in a terminal, which the window tells the user.
+    let (left, _) = given(Some(&thread), false, false);
     println!("resumed under none: {left}");
     assert_eq!(left["told"], true);
     for tool in subagent_tools {
         assert!(!has(&left, tool), "{tool} stays gone");
     }
+
+    // The other way round: a thread that began under a workflow that left
+    // it its own tools keeps them when resumed under one that takes them.
+    let (own, keeping) = given(None, true, false);
+    println!("under a workflow that leaves its tools: {own}");
+    assert!(has(&own, "spawn_agent"), "{own}");
+    let (taken, _) = given(Some(&keeping), true, true);
+    println!("resumed under one that takes them: {taken}");
+    assert!(has(&taken, "spawn_agent"), "{taken}");
 }
 
 /// One session through the real driver that holds what a window drawing a

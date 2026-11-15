@@ -15,6 +15,7 @@ import {
   byKey,
   close,
   create,
+  dismissKept,
   exact,
   newSessionKind,
   onIntegratedClose,
@@ -325,6 +326,43 @@ describe("a session under a workflow", () => {
     const plain = reopened(PROJECT, "plain", "claude-code", null, null, null, "integrated");
     await rejoined(plain.key);
     expect(byKey(plain.key)!.workflow).toBeNull();
+  });
+
+  it("resumed on Codex under other instructions than it began with, tells the user what Codex keeps", async () => {
+    followed();
+    const first = { workflow: defaultWorkflow(), told: "1. Direct the work as it was.", project: PROJECT };
+    sessions.workflows["codex-changed"] = first;
+    const changed = create(PROJECT, "codex-changed", "codex");
+    expect(await toldAtStart(changed.key)).toMatchObject({ afresh: true });
+    expect(byKey(changed.key)!.keptFromStart).toBe(
+      'Codex goes on with the instructions and the subagent tools this session began with, not those of "Build and review" as it is now. Start a new session for those.',
+    );
+    dismissKept(changed.key);
+    expect(byKey(changed.key)!.keptFromStart).toBeNull();
+
+    // Resumed without the workflow it began under.
+    sessions.workflows["codex-left"] = { workflow: null, told: "1. Direct the work.", project: PROJECT };
+    const left = create(PROJECT, "codex-left", "codex");
+    expect(await toldAtStart(left.key)).toEqual({ afresh: true });
+    expect(byKey(left.key)!.keptFromStart).toBe(
+      "Codex goes on with the instructions and the subagent tools this session began with under its workflow. Start a new session to work without one.",
+    );
+
+    // Told what it began with, there is nothing to say.
+    sessions.workflows["codex-same"] = {
+      workflow: defaultWorkflow(),
+      told: orchestratorPrompt(defaultWorkflow()),
+      project: PROJECT,
+    };
+    const same = create(PROJECT, "codex-same", "codex");
+    expect((await toldAtStart(same.key))?.afresh).toBeUndefined();
+    expect(byKey(same.key)!.keptFromStart).toBeNull();
+
+    // Claude Code lets go of what it began with, so nothing is said.
+    sessions.workflows["claude-changed"] = { ...first };
+    const claude = create(PROJECT, "claude-changed", "claude-code");
+    expect(await toldAtStart(claude.key)).toMatchObject({ afresh: true });
+    expect(byKey(claude.key)!.keptFromStart).toBeNull();
   });
 
   it("makes the other way from New session the other kind, alone", () => {

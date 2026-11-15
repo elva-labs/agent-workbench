@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
+import { BUILD_AND_REVIEW, PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 // An integrated session as the user meets it: the conversation the agent
 // pane draws in place of a terminal, driven by the fake core's scripted
@@ -943,6 +943,49 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
       "A session that another session started cannot start sessions of its own.",
     );
     await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+  });
+});
+
+test.describe("a Codex orchestrator, integrated", () => {
+  const CODEX_FLOW = { ...BUILD_AND_REVIEW, orchestrator: { agent: "codex", model: "default" } };
+
+  test("resumed under a changed workflow, says that Codex goes on as it began", async ({ page }) => {
+    await installFakeCore(page, {
+      open: [PROJECT],
+      agents: ["codex"],
+      integrable: ["claude-code", "codex"],
+      settings: {
+        workflows: { list: [CODEX_FLOW], default: "Build and review", overrides: {} },
+        integrated: ["codex"],
+      },
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+    const [first] = await calls(page);
+    expect(first).toMatchObject({ method: "start", options: { agent: "codex", startOnly: true } });
+    await agent(page, `f.end("${H}", true);`);
+    await expect(page.getByTestId("resume-session")).toHaveText("Resume");
+
+    // The workflow gives the orchestrator its own subagents from now on.
+    await page.keyboard.press("ControlOrMeta+,");
+    await page.getByTestId("settings-tab-workflows").click();
+    await page.getByTestId("workflow-start-only").uncheck();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("settings")).toHaveCount(0);
+
+    await page.getByTestId("resume-session").click();
+    const kept = page.getByTestId("session-kept");
+    await expect(kept).toBeVisible();
+    await expect(kept).toContainText("Resumed as it began");
+    await expect(kept).toContainText(
+      'Codex goes on with the instructions and the subagent tools this session began with, not those of "Build and review" as it is now. Start a new session for those.',
+    );
+    const resumed = (await calls(page)).filter((call) => call.method === "start").at(-1)!;
+    expect(resumed).toMatchObject({ options: { session: "agent-thread-1", startOnly: false, afresh: true } });
+    await page.getByTestId("session-kept-dismiss").click();
+    await expect(kept).toHaveCount(0);
   });
 });
 

@@ -106,6 +106,12 @@ export interface Session {
       whose kept copy no longer reads: the user says whether it goes on
       without one. Null otherwise. */
   workflowLost: string | null;
+  /** What the user is told of a Codex session resumed under other
+      instructions than it began with: Codex keeps what a thread began
+      with, so neither the instructions nor its own subagent tools are what
+      the workflow says now. Said over the session until put away. Null
+      otherwise. */
+  keptFromStart: string | null;
   /** The repository root of `cwd`: the worktree the session is in, which
       is the project's own unless the agent has moved. */
   worktree: string | null;
@@ -1309,9 +1315,10 @@ export async function toldAtStart(key: string): Promise<Told | null> {
   }
   // Resumed with other instructions than its conversation was first given,
   // or with none where it was given some, the agent lets go of the ones it
-  // recorded.
+  // recorded. Codex cannot, and the user is told.
   const afresh =
     session.resumedFrom !== null && toldAfresh(session.resumedFrom, session.workflow);
+  session.keptFromStart = afresh && session.agent === "codex" ? keptBy(session.workflow) : null;
   return {
     ...(session.workflow === null
       ? {}
@@ -1321,6 +1328,21 @@ export async function toldAtStart(key: string): Promise<Told | null> {
         }),
     ...(afresh ? { afresh: true } : {}),
   };
+}
+
+/** What a Codex session resumed under other instructions than it began
+    with does: it goes on with those it began with, and with its own
+    subagent tools as they were then. */
+function keptBy(workflow: Workflow | null): string {
+  return workflow === null
+    ? "Codex goes on with the instructions and the subagent tools this session began with under its workflow. Start a new session to work without one."
+    : `Codex goes on with the instructions and the subagent tools this session began with, not those of "${workflow.name}" as it is now. Start a new session for those.`;
+}
+
+/** Puts away what is said over a session of what Codex kept. */
+export function dismissKept(key: string) {
+  const session = byKey(key);
+  if (session !== null) session.keptFromStart = null;
 }
 
 /** A row started again in place, resuming its conversation, finds out what
@@ -1450,6 +1472,7 @@ function row(
       workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow),
     workflowGone: false,
     workflowLost: null,
+    keptFromStart: null,
     worktree: null,
     working: false,
     engaged: prompt !== null,

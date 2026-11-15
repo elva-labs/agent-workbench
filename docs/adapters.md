@@ -92,7 +92,10 @@ it is told now, and its subagent tools stay as they were then: a thread
 started under a workflow that took them away is without them for good,
 and one resumed under a changed workflow does not read the change.
 Resuming it under no workflow, or with its subagent tools asked for, undoes
-neither.
+neither. A Codex session resumed under other instructions than it began
+with, a changed workflow or none, says so over the session in one line,
+Resumed as it began, until it is put away; a new session starts as the
+workflow is now.
 
 Where the workflow delegates only through the workbench, each agent loses
 its own ways of handing work to agents the user cannot see. Claude Code is
@@ -124,14 +127,14 @@ command line holds only file names there. Codex would lose all but the
 first line of the instructions, so a Codex session under a workflow is
 refused in a terminal on Windows, saying so, and runs integrated, where
 nothing of the workflow is on its command line. A session with no workflow
-starts as the table above says. The interpreter also takes the first and the last quote
-off a line with more than two, which cuts short a script path with a space
-in it, and the settings that name the tool server to Codex hold quotes. So
-a Codex installed as a script is not told the server on Windows: it starts
-the server from its own configuration, which passes the server none of
-the session's variables, and every call the session makes names no
-session. The workbench takes such a call for one from [an agent it did
-not start](orchestrator.md#who-is-calling).
+starts as the table above says. The interpreter also takes the first and
+the last quote off a line with more than two, which cuts short a script
+path with a space in it, and the settings that name the tool server to
+Codex hold quotes. So a Codex installed as a script is not told the server
+on Windows: it starts the server from its own configuration, which passes
+the server none of the session's variables, and every call the session
+makes names no session. The workbench takes such a call for one from [an
+agent it did not start](orchestrator.md#who-is-calling).
 
 ## Detection
 
