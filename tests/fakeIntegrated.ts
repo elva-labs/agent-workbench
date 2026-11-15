@@ -113,7 +113,8 @@ export interface FakeIntegrated {
   /** Writes a past conversation into the transcript of `session` ahead
       of anything said in it since. */
   transcript(session: string, items: IntegratedHistory["items"]): void;
-  /** Holds every read of a history until `releaseHistory`. */
+  /** Holds the answer to every read of a history until `releaseHistory`;
+      what is read is what the transcript held when asked. */
   holdHistory(): void;
   releaseHistory(): void;
 
@@ -594,9 +595,10 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     async history(historyOptions) {
       fake.calls.push({ method: "history", options: historyOptions });
       if (historyOptions.agent === "codex") return null;
+      // Read when asked; a held read only answers late.
+      const items = JSON.parse(JSON.stringify(transcripts.get(historyOptions.session) ?? [])) as Written[];
       if (historyHeld !== null) await historyHeld.wait;
-      const items = transcripts.get(historyOptions.session) ?? [];
-      return { items: JSON.parse(JSON.stringify(items)) as Written[], cut: false };
+      return { items, cut: false };
     },
 
     transcript(session, items) {

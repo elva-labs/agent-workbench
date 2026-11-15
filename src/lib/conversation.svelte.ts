@@ -40,11 +40,11 @@ import { asks, phraseText } from "$lib/thread";
  * once, by its id.
  */
 
-/** Where a run of a conversation began: `at`, when, and `since`, the time
-    from which what was read belongs to it, or null where all of it is
-    from before. */
+/** Where a run of a conversation began: `at`, when, or null where no run
+    has begun since, and `since`, the time from which what was read belongs
+    to it, or null where all of it is from before. */
 export interface Run {
-  at: number;
+  at: number | null;
   since: number | null;
 }
 
@@ -258,8 +258,9 @@ export class Conversation {
       too long to hold. */
   earlierCut = $state(false);
   /** Where this run of a conversation it resumed began: after the entry
-      with this key, at this time. */
-  began = $state<{ after: string; at: number } | null>(null);
+      with this key, or at the top while nothing before it is drawn, at
+      this time. */
+  began = $state<{ after: string | null; at: number } | null>(null);
   /** How many messages this window has sent. */
   sentHere = $state(0);
   /** A model chosen while a turn ran, which the turn after it runs on. */
@@ -371,15 +372,28 @@ export class Conversation {
     this.began = last === undefined ? null : { after: last.key, at };
   }
 
+  /** This run begins before what was said before is in: its line stands
+      at the top, what this run says goes under it, and what was said
+      before goes above it once read. */
+  beganAbove(at: number) {
+    this.began = { after: null, at };
+  }
+
+  /** What was said before was not read: no line stands for it. */
+  unread() {
+    this.earlier = "unread";
+    if (this.began?.after === null) this.began = null;
+  }
+
   /**
    * Lays what the conversation said and did before above what the thread
    * holds, each event at the time it happened, and marks where `run`
    * began: before the first of the main thread's events from its `since`
-   * on, or after all of it. A turn left open by what was read is this
-   * run's, which the session's own events and snapshot settle, unless
-   * all of it is from before, or the thread already has a turn running:
-   * then it is over, and with all of it from before its calls with no
-   * finish failed.
+   * on, or after all of it, where a line already stands at the top or the
+   * run has a time. A turn left open by what was read is this run's,
+   * which the session's own events and snapshot settle, unless all of it
+   * is from before, or the thread already has a turn running: then it is
+   * over, and with all of it from before its calls with no finish failed.
    */
   lay(history: IntegratedHistory, run: Run | null) {
     const later = this.entries;
@@ -406,7 +420,12 @@ export class Conversation {
       if (over || running !== null || later.length > 0) this.#endRead(left, over);
       else this.current = left;
     }
-    if (run !== null && after !== null) this.began = { after, at: run.at };
+    if (run !== null && run.since !== null) {
+      if (after !== null) this.began = { after, at: run.at ?? run.since };
+    } else if (run !== null) {
+      const at = this.began?.after === null ? this.began.at : run.at;
+      if (at !== null) this.began = { after, at };
+    }
     this.earlierCut = history.cut;
     this.earlier = "read";
     this.late = false;

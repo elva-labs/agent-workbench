@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   answer,
   configure,
@@ -26,6 +26,7 @@ import {
   reopened,
   reset as resetSessions,
   sessions,
+  wake,
 } from "$lib/sessions.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
@@ -414,7 +415,7 @@ describe("what a resumed session said before", () => {
       options: { agent: "claude-code", project: PROJECT, session: "old-conversation" },
     });
     const conversation = conversationOf(session.key);
-    expect(conversation.earlier).toBe("read");
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
     expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent"]);
     const [said] = Object.values(conversation.messages);
     expect(said).toMatchObject({ text: "Count the files", at: 1_000_000, state: "taken" });
@@ -427,24 +428,61 @@ describe("what a resumed session said before", () => {
     expect(conversation.entries.findIndex((entry) => entry.key === line.after)).toBe(1);
   });
 
-  it("holds what the session says live until what it said before is drawn above it", async () => {
+  it("draws the line at once and goes on under it while what it said before is read, which then goes above", async () => {
     fake.transcript("old-conversation", written(1_000_000, "Count the files", "There are 12."));
     fake.holdHistory();
-    const session = create(PROJECT, "old-conversation", "claude-code", null, null, null, null, undefined, "integrated");
-    const launching = launch(session.key);
-    await settled();
-    const handle = fake.calls.find((call) => call.method === "start")!;
-    expect(handle).toBeDefined();
-    fake.notice("int-1", "Fell back to another model");
+    const before = Date.now();
+    const { session, handle } = await started({ resumedFrom: "old-conversation" });
     const conversation = conversationOf(session.key);
-    expect(conversation.earlier).toBe("loading");
-    expect(conversation.entries).toEqual([]);
-    expect(handleOf(session.key)).toBeNull();
-    fake.releaseHistory();
-    await launching;
-    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent", "note"]);
-    expect(conversation.began!.after).toBe(conversation.entries[1].key);
+    // The session runs and can be written to while the read is out.
     expect(byKey(session.key)!.status).toBe("running");
+    expect(conversation.earlier).toBe("loading");
+    expect(conversation.began).toMatchObject({ after: null });
+    expect(conversation.began!.at).toBeGreaterThanOrEqual(before);
+    send(session.key, "And the tests?");
+    fake.turn(handle, "Four of them.");
+    expect(agentTexts(conversation)).toEqual(["Four of them."]);
+    fake.releaseHistory();
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent", "user", "agent"]);
+    expect(agentTexts(conversation)).toEqual(["There are 12.", "Four of them."]);
+    expect(conversation.began!.after).toBe(conversation.entries[1].key);
+  });
+
+  it("after a restart, lays what it read as all from before, its open turn over and the line where the new run began", async () => {
+    // The app quit in the middle of a turn: its call has no result and the
+    // turn no end.
+    fake.transcript("old-conversation", [
+      ...written(1_000_000, "Count the files", "There are 12."),
+      {
+        at: 2_000_000,
+        event: { type: "message", message: "m-2", state: "sent", error: null, text: "Fix the count", images: [] },
+      },
+      { at: 2_000_000, event: { type: "turnStarted", messages: ["m-2"] } },
+      { at: 2_001_000, event: { type: "toolStarted", call: "c-open", parent: null, name: "Edit", kind: "edit" } },
+    ]);
+    fake.holdHistory();
+    const row = reopened(PROJECT, "old-conversation", "claude-code", null, null, null, "integrated");
+    // The core it ran in is gone, so its old handle answers nothing.
+    expect(await reattach(row.key, "int-9")).toBe(false);
+    const conversation = conversationOf(row.key);
+    expect(conversation.earlier).toBe("loading");
+    // The row in front starts at once, while the read is still out.
+    wake(row.key);
+    const before = Date.now();
+    await launch(row.key);
+    const handle = handleOf(row.key)!;
+    expect(conversation.began).toMatchObject({ after: null });
+    fake.notice(handle, "Fell back to another model");
+    fake.releaseHistory();
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent", "user", "agent", "note"]);
+    expect(conversation.began!.after).toBe(conversation.entries[3].key);
+    expect(conversation.began!.at).toBeGreaterThanOrEqual(before);
+    expect(conversation.call("c-open")).toMatchObject({ done: true, error: true });
+    expect(conversation.current).toBeNull();
+    expect(conversation.working).toBe(false);
+    expect(byKey(row.key)!.working).toBe(false);
   });
 
   it("goes on under the run drawn here when it is resumed again, and is not read again", async () => {
@@ -464,7 +502,7 @@ describe("what a resumed session said before", () => {
     const session = create(PROJECT, "codex-thread", "codex", null, null, null, null, undefined, "integrated");
     await launch(session.key);
     const conversation = conversationOf(session.key);
-    expect(conversation.earlier).toBe("unread");
+    await vi.waitFor(() => expect(conversation.earlier).toBe("unread"));
     expect(conversation.entries).toEqual([]);
     expect(conversation.began).toBeNull();
   });

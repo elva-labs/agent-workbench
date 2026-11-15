@@ -669,13 +669,39 @@ describe("what a conversation said before, read back", () => {
     expect(conversation.earlier).toBe("read");
   });
 
-  it("marks this run after all of it when all of it is from before, and nothing when there is nothing", () => {
+  it("marks this run after all of it when all of it is from before, and at the top when there is nothing", () => {
     const conversation = new Conversation(() => 99_000);
     conversation.lay({ items: [...turn(1_000, "one"), ...turn(2_000, "two")], cut: false }, { at: 9_000, since: null });
     expect(conversation.began).toEqual({ after: conversation.entries.at(-1)!.key, at: 9_000 });
     const empty = new Conversation(() => 99_000);
     empty.lay({ items: [], cut: false }, { at: 9_000, since: null });
-    expect(empty.began).toBeNull();
+    expect(empty.began).toEqual({ after: null, at: 9_000 });
+    // With no run begun, all of it is from before and no line is drawn.
+    const none = new Conversation(() => 99_000);
+    none.lay({ items: turn(1_000, "one"), cut: false }, { at: null, since: null });
+    expect(none.began).toBeNull();
+  });
+
+  it("goes above the line drawn while it was read, all of it from before, the turn it left open over", () => {
+    const { fake, conversation, id, send } = played();
+    conversation.beganAbove(7_000);
+    send(M1, "hi");
+    fake.turn(id, "hello");
+    conversation.lay({ items: turn(1_000, "one", { open: true }), cut: false }, { at: null, since: null });
+    expect(outline(conversation.entries)).toEqual(["you:one", "agent:2:tool", `you:${M1}`, "agent:1:text"]);
+    expect(conversation.began).toEqual({ after: conversation.entries[1].key, at: 7_000 });
+    expect(conversation.call("c-one")).toMatchObject({ done: true, error: true });
+    expect(conversation.current).toBeNull();
+    expect(conversation.working).toBe(false);
+  });
+
+  it("draws no line for a run whose earlier messages were not read", () => {
+    const conversation = new Conversation(() => 99_000);
+    conversation.beganAbove(7_000);
+    conversation.earlier = "loading";
+    conversation.unread();
+    expect(conversation.earlier).toBe("unread");
+    expect(conversation.began).toBeNull();
   });
 
   it("marks this run before the first of the main thread's events from when it began", () => {

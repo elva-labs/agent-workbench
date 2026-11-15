@@ -15,7 +15,7 @@ import {
   type PermissionChoice,
 } from "$lib/core";
 import { Conversation, type Part } from "$lib/conversation.svelte";
-import { earlierAtStart, layEarlier, runOf } from "$lib/earlier";
+import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import {
   nameTaken,
   adopt,
@@ -270,7 +270,7 @@ export async function launch(key: string): Promise<void> {
   link.busy = true;
   link.untrusted = false;
   // What a resumed session said before goes above what this run says.
-  const earlier = earlierAtStart(session, link.conversation);
+  earlierAtStart(session, link.conversation);
   try {
     const started = await core().integratedStart({
       agent: session.agent,
@@ -281,7 +281,6 @@ export async function launch(key: string): Promise<void> {
       mode: startMode(session, link),
       configDir: dirFor(session.account, session.agent),
     });
-    await earlier;
     link.busy = false;
     const row = byKey(key);
     if (row === null) {
@@ -389,7 +388,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       const row = byKey(key);
       const earlier =
         row !== null && link.conversation.earlier === null && link.conversation.entries.length === 0
-          ? layEarlier(row, link.conversation, snapshotting.then(runOf, () => null))
+          ? layEarlier(row, link.conversation, runFrom(snapshotting))
           : null;
       const snapshot = await snapshotting;
       const session = byKey(key);

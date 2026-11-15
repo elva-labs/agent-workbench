@@ -1247,6 +1247,18 @@ test.describe("a resumed conversation", () => {
     ];
   };
 
+  /** Three days ago, at 14:03 where the tests run. */
+  const threeDaysAgo = () => {
+    const day = new Date();
+    day.setDate(day.getDate() - 3);
+    day.setHours(14, 3, 0, 0);
+    return day.getTime();
+  };
+
+  /** The weekday of a time, as the page names it. */
+  const weekday = (page: Page, at: number) =>
+    page.evaluate((time) => new Date(time).toLocaleDateString([], { weekday: "short" }), at);
+
   /** The project with the past conversation on disk, ours to resume. */
   async function withPast(page: Page, options: { keep?: boolean; hold?: boolean } = {}) {
     const now = Date.now();
@@ -1261,7 +1273,7 @@ test.describe("a resumed conversation", () => {
       { project: PROJECT, past: PAST },
     );
     await page.goto("/");
-    await agent(page, `f.transcript("${PAST}", ${JSON.stringify(earlier(now - 3_600_000))});${options.hold ? " f.holdHistory();" : ""}`);
+    await agent(page, `f.transcript("${PAST}", ${JSON.stringify(earlier(threeDaysAgo()))});${options.hold ? " f.holdHistory();" : ""}`);
   }
 
   const box = async (page: Page, testid: string, at: number) =>
@@ -1272,11 +1284,16 @@ test.describe("a resumed conversation", () => {
     await page.getByTestId("past-session").click();
     await expect(page.getByTestId("user-message")).toHaveCount(2);
     await expect(page.getByTestId("user-message").first()).toContainText("Count the files in src");
-    await expect(page.getByTestId("user-message").first().locator("time")).toHaveText(/\d{1,2}:\d{2}/);
+    // The first time of a day other than today names the day; the rest of
+    // that day's do not.
+    const day = await weekday(page, threeDaysAgo());
+    await expect(page.getByTestId("user-message").first().locator("time")).toHaveText(new RegExp(`^${day} \\d{1,2}:\\d{2}`));
+    await expect(page.getByTestId("agent-run").first().locator("time")).toHaveText(/^\d{1,2}:\d{2}/);
+    await expect(page.getByTestId("user-message").nth(1).locator("time")).toHaveText(/^\d{1,2}:\d{2}/);
     await expect(page.getByTestId("agent-run").first().locator("header")).toContainText("Sonnet");
     await expect(page.getByTestId("agent-text").first()).toHaveText("There are 12 files in src.");
     await expect(page.getByTestId("work-line").nth(1)).toContainText("changed 1 file");
-    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed at \d{1,2}:\d{2}/);
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
     await expect(page.getByText("are not shown here")).toHaveCount(0);
     expect((await calls(page)).find((call) => call.method === "start")).toMatchObject({
       options: { session: PAST },
@@ -1286,6 +1303,8 @@ test.describe("a resumed conversation", () => {
     await page.keyboard.press("Enter");
     await agent(page, `f.turn("${H}", "Four of them pass.");`);
     await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+    // The line named today, so this run's times do not again.
+    await expect(page.getByTestId("user-message").nth(2).locator("time")).toHaveText(/^\d{1,2}:\d{2}/);
     // The line stands between the last run read and the first message of
     // this run.
     const line = await box(page, "run-began", 0);
@@ -1297,26 +1316,94 @@ test.describe("a resumed conversation", () => {
     await page.reload();
     await expect(page.getByTestId("user-message")).toHaveCount(3);
     await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
-    await expect(page.getByTestId("run-began")).toHaveCount(1);
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
     const after = await box(page, "run-began", 0);
     expect((await box(page, "user-message", 1)).y).toBeLessThan(after.y);
     expect(after.y + after.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
   });
 
-  test("draws nothing it says live until what it said before is in, so the live part never moves", async ({ page }) => {
+  test("draws the line at once and keeps the live part in place while the earlier messages are read", async ({ page }) => {
     await withPast(page, { hold: true });
     await page.getByTestId("past-session").click();
-    await expect.poll(async () => (await calls(page)).some((call) => call.method === "start")).toBe(true);
-    await agent(page, `f.notice("${H}", "Fell back to another model");`);
-    await expect(page.getByTestId("thread-intro")).toHaveText("Starting Claude Code…");
-    await expect(page.getByTestId("note")).toHaveCount(0);
-    await expect(page.getByTestId("user-message")).toHaveCount(0);
-    await agent(page, "f.releaseHistory();");
-    await expect(page.getByTestId("note")).toContainText("Fell back to another model");
-    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await expect(page.getByTestId("earlier-reading")).toHaveText("Reading the earlier messages");
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+    await expect(page.getByTestId("thread-intro")).toHaveCount(0);
+    // The composer works meanwhile, and what is said goes under the line.
+    await expect(page.getByTestId("composer-input")).toBeEditable();
+    await page.getByTestId("composer-input").fill("And the tests?");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.turn("${H}", "Four of them pass.");`);
+    await expect(page.getByTestId("agent-text")).toHaveText(["Four of them pass."]);
+    const reading = await box(page, "earlier-reading", 0);
     const line = await box(page, "run-began", 0);
-    expect(line.y + line.height).toBeLessThanOrEqual((await box(page, "note", 0)).y);
-    expect((await box(page, "user-message", 1)).y).toBeLessThan(line.y);
+    const live = await box(page, "user-message", 0);
+    expect(reading.y + reading.height).toBeLessThanOrEqual(line.y);
+    expect(line.y + line.height).toBeLessThanOrEqual(live.y);
+
+    // What was said before fills in above the line, and nothing under it
+    // moves.
+    await agent(page, "f.releaseHistory();");
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
+    expect((await box(page, "user-message", 2)).y).toBeCloseTo(live.y, 0);
+    expect((await box(page, "run-began", 0)).y).toBeCloseTo(line.y, 0);
+    expect((await box(page, "agent-run", 1)).y).toBeLessThan(line.y);
+  });
+
+  test("comes back after a restart with what it said before, its unfinished turn over, and the line where this run began", async ({ page }) => {
+    const at = threeDaysAgo();
+    // The app quit in the middle of a turn: its edit has no result and the
+    // turn no end.
+    const open = [
+      ...earlier(at),
+      { at: at + 120_000, event: { type: "message", message: "m-3", state: "sent", error: null, text: "Now the docs", images: [] } },
+      { at: at + 120_000, model: "claude-sonnet-5-5", event: { type: "turnStarted", messages: ["m-3"] } },
+      { at: at + 121_000, event: { type: "toolStarted", call: "c-3", parent: null, name: "Edit", kind: "edit" } },
+      {
+        at: at + 121_000,
+        event: { type: "toolInput", call: "c-3", parent: null, delta: null, truncated: false, input: { file_path: `${PROJECT}/README.md`, old_string: "a", new_string: "b" } },
+      },
+    ];
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { integrated: ["claude-code"] },
+      transcripts: [{ id: PAST, modified: Math.floor(at / 1000), size: 100, title: "Count the files in src" }],
+    });
+    // On record from before the restart, on screen, under the handle the
+    // core it ran in gave it; that core is gone.
+    await page.addInitScript(
+      ({ project, past, items }) => {
+        localStorage.setItem(
+          "workbench.open",
+          JSON.stringify({
+            open: [{ project, id: past, agent: "claude-code", startIn: null, model: null, account: null, kind: "integrated", handle: "int-7", spoken: true }],
+            active: past,
+          }),
+        );
+        const fake = (window as unknown as { __integrated: { transcript(id: string, items: unknown[]): void; holdHistory(): void } }).__integrated;
+        fake.transcript(past, items);
+        fake.holdHistory();
+      },
+      { project: PROJECT, past: PAST, items: open },
+    );
+    await page.goto("/");
+    // The session in front starts while what it said before is still read.
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+    await expect(page.getByTestId("earlier-reading")).toBeVisible();
+    await expect.poll(async () => (await calls(page)).find((call) => call.method === "start")).toMatchObject({
+      options: { session: PAST },
+    });
+    await agent(page, "f.releaseHistory();");
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
+    // The turn the quit cut short is over: nothing in it is still at work.
+    await expect(page.getByTestId("work-line").last()).toContainText("Worked for");
+    await expect(page.getByTestId("now")).toHaveCount(0);
+    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+    await expect(page.getByTestId("send")).toBeVisible();
+    // The line stands under all of it, where this run began.
+    const line = await box(page, "run-began", 0);
+    expect((await box(page, "agent-run", 2)).y).toBeLessThan(line.y);
   });
 });
 
