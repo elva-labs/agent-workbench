@@ -2072,8 +2072,14 @@ describe("following a workflow", () => {
     expect(statusMessage(row)).toContain('followed the workflow "Gone", which is gone');
     // It has not started: it waits on the user's word, and says so.
     expect(statusLabel(row)).toBe("waiting for your choice");
+    // A shell opened beside the row goes on beside the one resumed in its
+    // place, with its number.
+    const shell = createShell({ project: P, session: row.key });
+    shellStarted(shell.key, "pty-beside");
     const without = resumeWithout(row.key)!;
     expect(byKey(row.key)).toBeNull();
+    expect(shellByKey(shell.key)).toMatchObject({ session: without.key, ordinal: 1 });
+    expect(killed).not.toContain("pty-beside");
     await launch(without.key, 80, 24, () => {});
     expect(spawned.at(-1)).toMatchObject({ session: "old" });
     expect(spawned.at(-1)).not.toHaveProperty("instructions");

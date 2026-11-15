@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   elapsed,
+  emptyText,
   owners,
   processes,
   refresh,
@@ -75,15 +76,28 @@ describe("what is looked under", () => {
     const own = createShell({ project: "/one", session: null });
     shellStarted(own.key, "pty-5");
     createShell({ project: "/one", session: session.key });
+    // The project's own shell is listed beside either, named after the
+    // project.
     expect(owners()).toEqual([
       { ptyId: "pty-1", owner: "session 1" },
       { ptyId: "pty-3", owner: "shell 1" },
+      { ptyId: "pty-5", owner: "shell 1 of one" },
     ]);
     select(other.key);
     expect(owners()).toEqual([
       { ptyId: "pty-2", owner: "session 2" },
       { ptyId: "pty-4", owner: "shell 1" },
+      { ptyId: "pty-5", owner: "shell 1 of one" },
     ]);
+  });
+
+  it("says whose processes it means when nothing runs", () => {
+    expect(emptyText()).toBe("Nothing running in the project's shells.");
+    const session = create("/one");
+    select(session.key);
+    expect(emptyText()).toBe("Nothing running under this session or its shells.");
+    createShell({ project: "/one", session: null });
+    expect(emptyText()).toBe("Nothing running under this session, its shells or those of one.");
   });
 
   it("is the project's own shells with no session on screen", () => {

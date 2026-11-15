@@ -2,8 +2,8 @@ import { untrack } from "svelte";
 import { core, type Process, type SessionEnded } from "$lib/core";
 import { claim } from "$lib/exits";
 import { hideTerminal } from "$lib/layout.svelte";
-import { activeSession } from "$lib/sessions.svelte";
-import { workspace } from "$lib/workspace.svelte";
+import { activeSession, byKey as sessionByKey, label as sessionLabel } from "$lib/sessions.svelte";
+import { projectLabel, workspace } from "$lib/workspace.svelte";
 
 /**
  * The shells in the terminal panel.
@@ -13,13 +13,16 @@ import { workspace } from "$lib/workspace.svelte";
  * was opened beside, or to the project itself when it was opened with no
  * session on screen, the way a browser tab does. The panel shows the shells
  * of the session on screen, or of the project on screen with none, and each
- * keeps its own shell in front. Switching session or project kills nothing:
- * every shell stays mounted, and the ones not shown are only hidden.
+ * keeps its own shell in front. A project's own shells stay in reach while
+ * one of its sessions is on screen, listed apart at the foot: a shell keeps
+ * a process running, and one out of sight would be a dev server nobody can
+ * find. Switching session or project kills nothing: every shell stays
+ * mounted, and the ones not shown are only hidden.
  *
  * Shells come in groups. A group is what the panel shows at a time: one shell,
  * or several side by side once one of them has been split. The list beside
- * the shells names every group of the owner on screen, and the active shell
- * decides which group is on screen.
+ * the shells names every group it shows, and the active shell decides which
+ * group is on screen.
  *
  * A shell that exits cleanly takes its slot with it, which is what typing
  * `exit` means. One that dies any other way stays, with the code, because a
@@ -99,10 +102,15 @@ let ordinals: Record<string, number> = {};
     key. */
 let fronts = new Map<string, string>();
 /** The owner whose shells the panel shows, as last followed. */
-let followed: string | null = null;
+let followed: ShellOwner | null = null;
 
 function ownerKey(owner: ShellOwner): string {
   return owner.session ?? `project:${owner.project}`;
+}
+
+function sameOwner(a: ShellOwner | null, b: ShellOwner | null): boolean {
+  if (a === null || b === null) return a === b;
+  return ownerKey(a) === ownerKey(b);
 }
 
 /** Whose shells the panel shows: the session on screen, else the project on
@@ -126,10 +134,38 @@ export function forOwner(owner: ShellOwner | null): Shell[] {
   return terminals.all.filter((shell) => belongsTo(shell, owner));
 }
 
-/** The shells of the owner on screen: what the panel lists, follows and
-    cycles through. */
+/** The shells of the owner on screen: what the panel cycles through and
+    opens beside. */
 export function ownShells(): Shell[] {
   return forOwner(ownerOnScreen());
+}
+
+/** The project's own shells listed beside a session's, at the foot of the
+    panel's list: none for a project, whose own they are. */
+export function besideOf(owner: ShellOwner | null): Shell[] {
+  if (owner === null || owner.session === null) return [];
+  return forOwner({ project: owner.project, session: null });
+}
+
+/** What the panel lists for an owner, in list order: its own shells, then
+    beside a session the project's own. */
+export function shownFor(owner: ShellOwner | null): Shell[] {
+  return [...forOwner(owner), ...besideOf(owner)];
+}
+
+/** What the panel lists now. */
+export function shownShells(): Shell[] {
+  return shownFor(ownerOnScreen());
+}
+
+/** A shell named with whose it is, for where it is not on screen or not
+    the owner's own: the session it belongs to, and the project too when
+    that is not the one in front; or the project, for the project's own. */
+export function withOwner(shell: Shell): string {
+  const session = shell.session === null ? null : sessionByKey(shell.session);
+  if (session === null) return `${label(shell)} of ${projectLabel(shell.project)}`;
+  const elsewhere = shell.project === workspace.active ? "" : ` in ${projectLabel(shell.project)}`;
+  return `${label(shell)} of ${sessionLabel(session)}${elsewhere}`;
 }
 
 /** Every shell that started in the project, whoever it belongs to. */
@@ -139,9 +175,14 @@ export function forProject(project: string): Shell[] {
 
 /** The owner's groups in the order they were opened, each in slot order. */
 export function groupsFor(owner: ShellOwner | null): Shell[][] {
+  return groupsOf(forOwner(owner));
+}
+
+/** These shells' groups in the order they were opened, each in slot order. */
+export function groupsOf(shells: Shell[]): Shell[][] {
   const result: Shell[][] = [];
   const seen = new Map<string, Shell[]>();
-  for (const shell of forOwner(owner)) {
+  for (const shell of shells) {
     let group = seen.get(shell.group);
     if (group === undefined) {
       group = [];
@@ -186,11 +227,13 @@ export function select(key: string) {
 }
 
 /** Steps to the next or previous shell of the owner on screen, in list
-    order and wrapping around. False when there is nothing to step to. */
+    order and wrapping around: the project's own beside a session are not
+    among them. From one of those, it steps to the owner's first. False when
+    there is nothing to step to. */
 export function cycle(direction: 1 | -1): boolean {
   const own = ownShells();
-  if (own.length < 2) return false;
   const at = own.findIndex((shell) => shell.key === terminals.active);
+  if (own.length === 0 || (at !== -1 && own.length < 2)) return false;
   const next = at === -1 ? 0 : (at + direction + own.length) % own.length;
   select(own[next].key);
   return true;
@@ -198,22 +241,24 @@ export function cycle(direction: 1 | -1): boolean {
 
 /**
  * Points the panel at the front shell of the owner on screen: the one it
- * had in front when it was last on screen, else its newest, else nothing.
- * The owner it leaves keeps its own for when it comes back. Nothing is
- * started or stopped, so a switch is only a change of what is shown.
+ * had in front when it was last on screen, else its newest, else the
+ * project's newest listed beside it, else nothing. The owner it leaves
+ * keeps its own for when it comes back. Nothing is started or stopped, so
+ * a switch is only a change of what is shown.
  */
 export function follow() {
   const owner = ownerOnScreen();
-  const next = owner === null ? null : ownerKey(owner);
-  if (next === followed) return;
+  if (sameOwner(owner, followed)) return;
   const front = activeShell();
-  if (front !== null && followed !== null && ownerKey(front) === followed) fronts.set(followed, front.key);
-  followed = next;
+  if (front !== null && followed !== null && shownFor(followed).includes(front)) fronts.set(ownerKey(followed), front.key);
+  followed = owner;
   // A shell opened for the owner as it came on screen is in front already.
   if (front === null || !belongsTo(front, owner)) {
     const own = forOwner(owner);
-    const kept = next === null ? undefined : fronts.get(next);
-    terminals.active = own.find((shell) => shell.key === kept)?.key ?? own[own.length - 1]?.key ?? null;
+    const beside = besideOf(owner);
+    const kept = owner === null ? undefined : fronts.get(ownerKey(owner));
+    terminals.active =
+      shownFor(owner).find((shell) => shell.key === kept)?.key ?? own.at(-1)?.key ?? beside.at(-1)?.key ?? null;
   }
   if (terminals.asking !== null && terminals.asking.key !== terminals.active) terminals.asking = null;
 }
@@ -227,8 +272,8 @@ export function followOwner() {
   });
 }
 
-/** Adds a shell in a group of its own. It is the one shown when its owner is
-    on screen, and its owner's front shell for when it is otherwise. The
+/** Adds a shell in a group of its own. It is the one shown when the panel
+    lists it, and its owner's front shell for when it is otherwise. The
     process starts when the shell's terminal mounts and knows its size. */
 export function create(owner: ShellOwner, typed: string | null = null): Shell {
   const shell = add(owner, `g${++groups}`, terminals.all.length, 1);
@@ -281,7 +326,7 @@ function add(
   };
   terminals.all.splice(at, 0, shell);
   const live = terminals.all[at];
-  if (belongsTo(live, ownerOnScreen())) select(live.key);
+  if (shownShells().includes(live)) select(live.key);
   else fronts.set(ownerKey(owner), live.key);
   return live;
 }
@@ -527,12 +572,31 @@ export function closeOwner(owner: ShellOwner) {
 }
 
 /**
+ * Gives a session's shells to the row that takes its place, as a resume
+ * does: the same shells, numbers and shell in front, nothing closed. The
+ * row they leave must be closed with its shells kept.
+ */
+export function handOver(from: string, to: ShellOwner) {
+  const key = ownerKey(to);
+  for (const shell of terminals.all.filter((candidate) => candidate.session === from)) {
+    shell.project = to.project;
+    shell.session = to.session;
+    ordinals[key] = Math.max(ordinals[key] ?? 0, shell.ordinal);
+  }
+  const shown = activeShell();
+  const front = fronts.get(from) ?? (shown !== null && belongsTo(shown, to) ? shown.key : undefined);
+  fronts.delete(from);
+  if (front !== undefined && !fronts.has(key)) fronts.set(key, front);
+}
+
+/**
  * A session closed, and its shells go with it. A shell with something
  * still running in it, which only happens when the user was not asked, as
- * when the session that started this one stops it, joins the shells on
- * screen rather than stopping what runs: a dev server never goes without
- * the user having said so. What runs is read the way closing a shell reads
- * it, and the rest close at once.
+ * when the session that started this one stops it, joins the project's own
+ * rather than stopping what runs: a dev server never goes without the user
+ * having said so, and the project's own stay listed beside each of its
+ * sessions. What runs is read the way closing a shell reads it, and the
+ * rest close at once.
  */
 export async function sessionClosed(key: string) {
   fronts.delete(key);
@@ -553,27 +617,28 @@ export async function sessionClosed(key: string) {
   });
 }
 
-/** Gives a shell whose owner went to the owner on screen, numbered among its
-    own, or to the project it started in with nothing on screen. It goes in
-    front only where nothing else is. */
+/** Gives a shell whose session went to the project it started in,
+    numbered among the project's own. It goes in front only where nothing
+    shown is. */
 function adopt(shell: Shell) {
-  const owner = ownerOnScreen() ?? { project: shell.project, session: null };
-  shell.project = owner.project;
-  shell.session = owner.session;
+  const owner = { project: shell.project, session: null };
+  shell.session = null;
   shell.ordinal = nextOrdinal(owner);
+  const shown = shownShells();
   const front = activeShell();
-  if (belongsTo(shell, ownerOnScreen()) && (front === null || !belongsTo(front, owner))) terminals.active = shell.key;
+  if (shown.includes(shell) && (front === null || !shown.includes(front))) terminals.active = shell.key;
 }
 
 /**
  * Takes a shell out. Focus stays in the group while it has a shell left,
- * then falls back to its owner's most recent one. The last shell of the
- * owner on screen takes the panel with it: an empty panel is not what
- * closing the shell asked for.
+ * then falls back to its owner's most recent one where that is listed, else
+ * to the newest listed. The last shell listed takes the panel with it: an
+ * empty panel is not what closing the shell asked for.
  */
 function remove(shell: Shell) {
   if (terminals.asking?.key === shell.key) terminals.asking = null;
   const wasActive = terminals.active === shell.key;
+  const wasShown = shownShells().includes(shell);
   const group = groupOf(shell.key);
   const at = group.indexOf(shell);
   terminals.all.splice(terminals.all.indexOf(shell), 1);
@@ -584,13 +649,14 @@ function remove(shell: Shell) {
     terminals.active = neighbour.key;
     return;
   }
-  const own = forOwner(shell);
-  if (own.length > 0) {
-    terminals.active = own[own.length - 1].key;
+  const shown = shownShells();
+  const next = forOwner(shell).filter((other) => shown.includes(other)).at(-1) ?? ownShells().at(-1) ?? shown.at(-1);
+  if (next !== undefined) {
+    terminals.active = next.key;
     return;
   }
   terminals.active = null;
-  if (belongsTo(shell, ownerOnScreen())) hideTerminal();
+  if (wasShown) hideTerminal();
 }
 
 export function statusMessage(shell: Shell): string {

@@ -12,7 +12,7 @@
   import { agentLabel, installed, isReady } from "$lib/agent.svelte";
   import { accountLabel, accountOf, hasAccounts, names } from "$lib/accounts.svelte";
   import type { AgentId, ProjectInfo } from "$lib/core";
-  import { busyGoing, closingAside, closingQuestion } from "$lib/leaving.svelte";
+  import { busyGoing, closingAside, closingQuestion, type BusyShell, type Closed } from "$lib/leaving.svelte";
   import { closeOwner as closeShells } from "$lib/terminals.svelte";
   import {
     byChange,
@@ -794,12 +794,28 @@
     return same ? `${name} in ${projectLabel(session.project)}` : name;
   }
 
+  /** The sessions and projects whose shells are being read before the
+      close asked for goes ahead, so a second click meanwhile asks nothing
+      twice. */
+  const reading = new Set<string>();
+
+  /** Reads what a close would stop, once at a time for each thing closed. */
+  function readBusy(id: string, closed: Closed): Promise<BusyShell[]> | null {
+    if (reading.has(id)) return null;
+    reading.add(id);
+    const read = busyGoing(closed);
+    void read.finally(() => reading.delete(id));
+    return read;
+  }
+
   /** Closes a session, asking first when tabs beside it hold the only
       copy of unsaved edits or one of its shells is busy. Once the user has
       said to, its shells close with it, whatever runs in them. */
   async function closeSessionAsking(session: Session) {
     const { key, project } = session;
-    const busy = await busyGoing({ session: key });
+    const read = readBusy(`session:${key}`, { session: key });
+    if (read === null) return;
+    const busy = await read;
     closeAsking(
       closingName(session),
       [key],
@@ -817,7 +833,9 @@
       started in it is busy. */
   async function closeProjectAsking(path: string) {
     const owners = [...forProject(path).map((session) => session.key), `project:${path}`];
-    const busy = await busyGoing({ project: path });
+    const read = readBusy(`project:${path}`, { project: path });
+    if (read === null) return;
+    const busy = await read;
     closeAsking(projectLabel(path), owners, () => closeProject(path), "project", busy);
   }
 

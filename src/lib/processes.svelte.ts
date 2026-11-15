@@ -1,17 +1,19 @@
 /**
  * What runs under the session on screen and its shells: the dev server the
  * agent typed for you, the test run it started, listed in a section under
- * the tree and stopped from there. With no session on screen it is what
- * runs in the project's own shells, the ones opened with no session on
- * screen. Read from the core on a timer while the changes pane is up,
- * slower while the section is folded since only its count shows then.
+ * the tree and stopped from there. The project's own shells, the ones
+ * opened with no session on screen, are listed too, under the project's
+ * name, as the terminal panel lists them. Read from the core on a timer
+ * while the changes pane is up, slower while the section is folded since
+ * only its count shows then.
  */
 
 import { untrack } from "svelte";
 import { core, type Process } from "$lib/core";
 import { changesVisible, layout } from "$lib/layout.svelte";
 import { activeSession, label as sessionLabel } from "$lib/sessions.svelte";
-import { label as shellLabel, ownShells } from "$lib/terminals.svelte";
+import { besideOf, label as shellLabel, ownerOnScreen, ownShells, withOwner } from "$lib/terminals.svelte";
+import { projectLabel } from "$lib/workspace.svelte";
 
 export interface ProcessRow extends Process {
   /** The pty the process runs under, on whichever machine. */
@@ -28,8 +30,9 @@ export const POLL_OPEN = 2000;
 export const POLL_FOLDED = 6000;
 
 /** The ptys to look under, with what each is called: the session on
-    screen while it runs, and the running shells shown with it, its own or
-    with no session on screen the project's. */
+    screen while it runs, its running shells, and the project's own running
+    shells, named after the project beside a session. With no session on
+    screen, the project's own alone. */
 export function owners(): { ptyId: string; owner: string }[] {
   const list: { ptyId: string; owner: string }[] = [];
   const session = activeSession();
@@ -41,7 +44,20 @@ export function owners(): { ptyId: string; owner: string }[] {
       list.push({ ptyId: shell.ptyId, owner: shellLabel(shell) });
     }
   }
+  for (const shell of besideOf(ownerOnScreen())) {
+    if (shell.ptyId !== null && shell.status === "running") {
+      list.push({ ptyId: shell.ptyId, owner: withOwner(shell) });
+    }
+  }
   return list;
+}
+
+/** What the section says with nothing running: whose processes it lists. */
+export function emptyText(): string {
+  const owner = ownerOnScreen();
+  if (owner === null || owner.session === null) return "Nothing running in the project's shells.";
+  if (besideOf(owner).length === 0) return "Nothing running under this session or its shells.";
+  return `Nothing running under this session, its shells or those of ${projectLabel(owner.project)}.`;
 }
 
 let reading = 0;

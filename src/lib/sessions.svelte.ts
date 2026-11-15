@@ -24,7 +24,7 @@ import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
-import { sessionClosed as closeShells } from "$lib/terminals.svelte";
+import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
@@ -1177,8 +1177,11 @@ export function resumeWithout(key: string): Session | null {
     project,
   };
   saveKept();
-  close(key);
-  return create(project, id, agent, startIn, null, model, account, null);
+  // The row resumed in its place keeps the shells opened beside this one.
+  close(key, true);
+  const next = create(project, id, agent, startIn, null, model, account, null);
+  handOver(key, { project, session: next.key });
+  return next;
 }
 
 /** Whether a new session has nothing to pick between: one agent to run
@@ -1449,7 +1452,9 @@ export function onIntegratedClose(handler: (session: Session) => void) {
   stopIntegrated = handler;
 }
 
-export function close(key: string) {
+/** Closes a row. Its shells go with it, unless they are kept for the row
+    that takes its place: see `handOver`. */
+export function close(key: string, keepShells = false) {
   const session = byKey(key);
   if (session === null) return;
   if (session.kind === "integrated") stopIntegrated(session);
@@ -1490,7 +1495,7 @@ export function close(key: string) {
   }
   // The shells opened beside the session go with the row, once whoever is
   // shown next is chosen.
-  void closeShells(key);
+  if (!keepShells) void closeShells(key);
 }
 
 export function closeProject(project: string) {

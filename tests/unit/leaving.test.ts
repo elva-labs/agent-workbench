@@ -138,16 +138,21 @@ describe("naming a busy shell", () => {
   it("says whose a shell not on screen is, for the window's question", async () => {
     titled("s1", "fix login");
     titled("s2", "docs");
+    // Numbered within its project like any session, so its project is
+    // named too.
+    titled("s3", "docs", "/q");
     sessions.active = "s1";
     busy({ project: "/p", session: "s1" }, "pty-1", "npm run dev");
     busy({ project: "/p", session: "s2" }, "pty-2", "make watch");
     busy({ project: "/p", session: null }, "pty-3", "sleep 600");
     busy({ project: "/q", session: null }, "pty-4", "vite");
+    busy({ project: "/q", session: "s3" }, "pty-5", "cargo watch");
     expect((await busyShells()).map((shell) => shell.label)).toEqual([
       "shell 1",
       "shell 1 of docs",
-      "shell 1 in p",
-      "shell 1 in q",
+      "shell 1 of p",
+      "shell 1 of q",
+      "shell 1 of docs in q",
     ]);
   });
 

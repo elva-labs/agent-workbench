@@ -110,6 +110,11 @@ function write(open: Open[], active: string | null) {
   }
 }
 
+/** Whether the window has settled on what is on screen as it starts: the
+    projects on this machine are back, with the sessions that were open in
+    them, and the one on screen is chosen. */
+export const startup = $state({ settled: false });
+
 /**
  * Brings back the sessions that were open, in the projects that are, and
  * from then on keeps the record current. Call once the projects on this
@@ -172,6 +177,7 @@ export function reopen(
   let held = $state(waiting);
   for (const entry of open) bring(entry);
   front(workspace.active);
+  startup.settled = true;
 
   let stopped = false;
   if (conductor !== null)

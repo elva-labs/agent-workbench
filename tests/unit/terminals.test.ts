@@ -33,6 +33,8 @@ import {
   groupsFor,
   label,
   launch,
+  besideOf,
+  handOver,
   ownShells,
   ownerOnScreen,
   reset,
@@ -40,11 +42,13 @@ import {
   select,
   sessionClosed,
   share,
+  shownShells,
   shownGroup,
   split,
   started,
   statusMessage,
   terminals,
+  withOwner,
 } from "$lib/terminals.svelte";
 
 const A = "/home/ada/dev/one";
@@ -345,6 +349,108 @@ describe("whose shells", () => {
   });
 });
 
+describe("the project's own beside a session", () => {
+  function onScreen(key: string) {
+    if (!sessions.all.some((session) => session.key === key)) {
+      sessions.all.push({ key, project: A } as unknown as (typeof sessions.all)[number]);
+    }
+    sessions.active = key;
+    follow();
+  }
+
+  it("lists them after the session's own, and only beside a session of their project", () => {
+    const own = create(at(A));
+    create(at(B));
+    onScreen("s1");
+    const mine = create(ownerOnScreen()!);
+    expect(besideOf(ownerOnScreen()).map((shell) => shell.key)).toEqual([own.key]);
+    expect(shownShells().map((shell) => shell.key)).toEqual([mine.key, own.key]);
+    sessions.active = null;
+    follow();
+    expect(besideOf(ownerOnScreen())).toEqual([]);
+    expect(shownShells().map((shell) => shell.key)).toEqual([own.key]);
+  });
+
+  it("puts one in front for a session with none of its own, so nothing running is out of sight", () => {
+    const own = create(at(A));
+    onScreen("s1");
+    expect(terminals.active).toBe(own.key);
+    const mine = create(ownerOnScreen()!);
+    expect(terminals.active).toBe(mine.key);
+  });
+
+  it("leaves them out of the session's cycling", () => {
+    const own = create(at(A));
+    onScreen("s1");
+    const one = create(ownerOnScreen()!);
+    const two = create(ownerOnScreen()!);
+    expect(cycle(1)).toBe(true);
+    expect(terminals.active).toBe(one.key);
+    expect(cycle(1)).toBe(true);
+    expect(terminals.active).toBe(two.key);
+    // From the project's own, a step lands on the session's first.
+    select(own.key);
+    expect(cycle(1)).toBe(true);
+    expect(terminals.active).toBe(one.key);
+  });
+
+  it("comes back to one the session had in front, and splits one in its own group", () => {
+    const own = create(at(A));
+    onScreen("s1");
+    create(ownerOnScreen()!);
+    select(own.key);
+    const half = split(own.key)!;
+    expect(half.session).toBeNull();
+    expect(terminals.active).toBe(half.key);
+    onScreen("s2");
+    create(ownerOnScreen()!);
+    onScreen("s1");
+    expect(terminals.active).toBe(half.key);
+  });
+
+  it("closes one by hand like any other, falling back to the session's own", () => {
+    const own = create(at(A));
+    onScreen("s1");
+    const mine = create(ownerOnScreen()!);
+    select(own.key);
+    close(own.key);
+    expect(terminals.active).toBe(mine.key);
+    expect(terminalVisible()).toBe(true);
+    close(mine.key);
+    expect(terminalVisible()).toBe(false);
+  });
+
+  it("names a shell with whose it is", () => {
+    workspace.open = [{ path: A, name: "one" }, { path: B, name: "two" }] as unknown as typeof workspace.open;
+    const own = create(at(A));
+    sessions.all.push({ key: "s9", project: B, title: "docs", resumedFrom: null, ordinal: 1 } as unknown as (typeof sessions.all)[number]);
+    onScreen("s1");
+    const theirs = create({ project: B, session: "s9" });
+    expect(withOwner(own)).toBe("shell 1 of one");
+    expect(withOwner(theirs)).toBe("shell 1 of docs in two");
+  });
+});
+
+describe("a row resumed in place of another", () => {
+  it("takes the shells of the row it replaces, with their numbers and the one in front", () => {
+    sessions.all.push({ key: "s1", project: A } as unknown as (typeof sessions.all)[number]);
+    sessions.active = "s1";
+    follow();
+    const one = create(ownerOnScreen()!);
+    const two = create(ownerOnScreen()!);
+    select(one.key);
+    sessions.all.push({ key: "s2", project: A } as unknown as (typeof sessions.all)[number]);
+    handOver("s1", { project: A, session: "s2" });
+    expect([one.session, two.session]).toEqual(["s2", "s2"]);
+    expect([label(one), label(two)]).toEqual(["shell 1", "shell 2"]);
+    sessions.active = "s2";
+    follow();
+    expect(terminals.active).toBe(one.key);
+    expect(label(create(ownerOnScreen()!))).toBe("shell 3");
+    expect(killed).toEqual([]);
+  });
+});
+
 describe("a session closing", () => {
   function onScreen(key: string) {
     sessions.all.push({ key, project: A } as unknown as (typeof sessions.all)[number]);
@@ -369,7 +475,8 @@ describe("a session closing", () => {
     expect(terminalVisible()).toBe(true);
   });
 
-  it("gives a busy shell to what is on screen instead of stopping what runs, numbered among its shells", async () => {
+  it("gives a busy shell to the project instead of stopping what runs, numbered among its own", async () => {
+    create(at(A));
     onScreen("s1");
     const busy = create(ownerOnScreen()!);
     started(busy.key, "pty-busy");
@@ -378,10 +485,11 @@ describe("a session closing", () => {
     const theirs = create(ownerOnScreen()!);
     await sessionClosed("s1");
     expect(killed).toEqual([]);
-    expect(busy.session).toBe("s2");
+    expect(busy.session).toBeNull();
     expect(label(busy)).toBe("shell 2");
     expect(terminals.active).toBe(theirs.key);
-    expect(ownShells().map((shell) => shell.key)).toEqual([busy.key, theirs.key]);
+    // Listed beside session 2, at the foot.
+    expect(shownShells().map((shell) => shell.key)).toEqual([theirs.key, terminals.all[0].key, busy.key]);
   });
 
   it("puts a taken-in shell in front where nothing else is", async () => {

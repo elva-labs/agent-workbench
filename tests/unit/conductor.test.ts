@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
+import { byKey as shellByKey, create as createShell, reset as resetShells } from "$lib/terminals.svelte";
 import {
   CAP,
   cancelled,
@@ -214,6 +215,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   unwatch = watchStops();
   resetWorkspace();
+  resetShells();
   resetSessions();
   resetConductor();
   resetScreens();
@@ -2423,6 +2425,7 @@ describe("resuming a session", () => {
     const dead = create(A, "sid-1", "claude-code", tree);
     started(dead.key, "pty-4", "sid-1");
     ended({ id: "pty-4", code: 0, clean: true });
+    const shell = createShell({ project: A, session: dead.key });
     expect(sessions.all).toHaveLength(1);
     const row = await resumed(
       call("start", { session: "sid-1" }, { session: "caller-1" }),
@@ -2431,6 +2434,8 @@ describe("resuming a session", () => {
     expect(sessions.all).toHaveLength(1);
     expect(row.key).not.toBe(dead.key);
     expect(row.status).toBe("running");
+    // The shell opened beside the row that ended goes on beside this one.
+    expect(shellByKey(shell.key)?.session).toBe(row.key);
   });
 
   it("refuses a session the caller did not start", async () => {

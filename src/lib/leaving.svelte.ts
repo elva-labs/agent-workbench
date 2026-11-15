@@ -29,9 +29,9 @@ import {
   runningIn,
   shortCommand,
   terminals,
+  withOwner,
   type Shell,
 } from "$lib/terminals.svelte";
-import { projectLabel } from "$lib/workspace.svelte";
 
 /** A shell with something running in it, as the question names it. */
 export interface BusyShell {
@@ -66,19 +66,18 @@ function openShells(): Shell[] {
   return terminals.all.filter(isOpen);
 }
 
-/** A shell named from where the user is: alone when it is one of the shells
-    on screen, else with the session or the project it belongs to. */
+/** A shell named from where the user is: alone when it is one of the
+    owner's on screen, else with whose it is. */
 function fromScreen(shell: Shell): string {
   if (belongsTo(shell, ownerOnScreen())) return label(shell);
-  return elsewhere(shell);
+  return withOwner(shell);
 }
 
-/** A shell named with the session it belongs to, or the project when it is
-    the project's own. */
-function elsewhere(shell: Shell): string {
+/** A shell named for the question about closing its project: alone when
+    it is the project's own, else with its session. */
+function inProject(shell: Shell): string {
   const session = shell.session === null ? null : sessionByKey(shell.session);
-  if (session !== null) return `${label(shell)} of ${sessionLabel(session)}`;
-  return `${label(shell)} in ${projectLabel(shell.project)}`;
+  return session === null ? label(shell) : `${label(shell)} of ${sessionLabel(session)}`;
 }
 
 /** Keeps the core told whether sessions run or shells are open. Runs in an
@@ -118,7 +117,7 @@ export function busyGoing(closed: Closed): Promise<BusyShell[]> {
     if (session === null) return Promise.resolve([]);
     return busyShells(forOwner({ project: session.project, session: session.key }), label);
   }
-  return busyShells(forProject(closed.project), (shell) => (shell.session === null ? label(shell) : elsewhere(shell)));
+  return busyShells(forProject(closed.project), inProject);
 }
 
 /** The core held back the window's close or the app's quit. With sessions

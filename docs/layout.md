@@ -260,21 +260,30 @@ One the agent's `terminal` tool opens belongs to the agent's session. The
 panel shows the shells of the session on screen, or of the project while no
 session is on screen: a list down the right names them under a line saying
 whose they are, numbered from one for each, and each keeps its own shell in
-front. Switching session or project switches the list and kills nothing,
-and every shell comes back as it was left, scrollback and all. Opening the
-panel with no shell to show starts one; switching to a session or project
-with none leaves the panel saying so, with a New shell button. Typing
-`exit` closes the shell, and the last one shown takes the panel with it. A
-shell that dies any other way keeps its place, with its exit code.
+front. Beside a session, the project's own shells stay listed at the foot,
+under a line naming the project, so a dev server started before the first
+session is never out of sight: they can be picked and closed like any
+other, the session's own come first, and stepping through the shells by
+chord stays among the session's own. A session with none of its own shows
+the project's newest in front, with None open under its line. Switching
+session or project switches the list and kills nothing, and every shell
+comes back as it was left, scrollback and all. Opening the panel with no
+shell to list starts one, and as the window starts only once the sessions
+that were open are back, so it lands beside the session on screen;
+switching to a session or project with none leaves the panel saying so,
+with a New shell button. Typing `exit` closes the shell, and the last one
+listed takes the panel with it. A shell that dies any other way keeps its
+place, with its exit code.
 
 Closing a session closes its shells, and closing a project every shell
 that started in it. While one of them has something running, either asks
 first, in the sessions pane, in the words the window uses before it
 closes; see [focus](focus-model.md#closing-what-is-in-front). A session
 closed without the user being asked, as when the session that started it
-stops it, closes its idle shells and gives a busy one to the session or
-project on screen, so what runs in it is never stopped unasked. A session
-that has only stopped, and sits as a row, keeps its shells.
+stops it, closes its idle shells and gives a busy one to the project's own,
+so what runs in it is never stopped unasked. A session that has only
+stopped, and sits as a row, keeps its shells, and a session resumed in its
+place takes them over, with their numbers.
 
 The + at the head of the list is New shell: another shell for whoever is on
 screen, in a group of its own, with the keyboard in it.
@@ -401,9 +410,10 @@ remembered, and the open ones share the height.
 
 **Media** is what the agent has presented for the session on screen, one
 row per set of files under its caption, opening in the viewer. **Processes** is
-what runs under the session on screen and its shells, or with no session
-on screen under the project's own shells: the dev server the agent typed
-for you, the test run it started, each with what it runs under, how long it
+what runs under the session on screen, its shells and the project's own
+shells listed beside them, named after the project, or with no session on
+screen under the project's own shells: the dev server the agent typed for
+you, the test run it started, each with what it runs under, how long it
 has run, its share of a CPU and its memory, read every couple of seconds
 while the section is open and less often while it is folded. Switching
 session switches the list at once. A stop button on the row ends the
