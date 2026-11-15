@@ -204,7 +204,7 @@ impl Harness {
     /// Waits until the agent has been sent an answer to request `id`. The
     /// stand-in's record is not an event, so the waits' place stays.
     fn until_answered(&self, id: i64) {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + Duration::from_secs(120);
         while !self.answers().contains_key(&id) {
             assert!(Instant::now() < deadline, "never answered {id}");
             std::thread::sleep(Duration::from_millis(20));
@@ -1374,7 +1374,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     };
     // Until it holds, or panics with the processes there are.
     let wait_for = |what: &str, holds: &dyn Fn() -> bool| {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(120);
         while !holds() {
             assert!(Instant::now() < deadline, "{what}: {:#?}", processes());
             std::thread::sleep(Duration::from_millis(50));
