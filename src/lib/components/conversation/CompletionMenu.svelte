@@ -10,7 +10,8 @@
 
   /**
    * A list that completes what is being typed in the field beside it, over
-   * the thread and as wide as the composer: rows in groups, one of them
+   * the thread and as wide as the composer, for the slash commands and for
+   * the files an `@` mentions: rows in groups, one of them
    * marked, and a line saying the keys. The field keeps the keyboard and
    * says which row is marked, so the list is one the field controls: its
    * owner moves the mark with the arrows and takes the marked row with Tab
@@ -27,6 +28,8 @@
     id: string;
     /** What the list is, for a screen reader. */
     label: string;
+    /** The rows in groups, each under its label; a group with none is
+        drawn without a head. */
     groups: { label: string; items: T[] }[];
     /** The marked row, by its place among all the rows. */
     active: number;
@@ -95,8 +98,8 @@
   {:else}
     <div class="rows" {id} role="listbox" aria-label={label} bind:this={list}>
       {#each sections as section (section.label)}
-        <div class="group" role="group" aria-labelledby="{id}-group-{section.start}">
-          <p class="head" id="{id}-group-{section.start}" aria-hidden="true">{section.label}</p>
+        <div class="group" role="group" aria-labelledby={section.label === "" ? undefined : `${id}-group-${section.start}`}>
+          {#if section.label !== ""}<p class="head" id="{id}-group-{section.start}" aria-hidden="true">{section.label}</p>{/if}
           {#each section.items as item, offset (key(item))}
             {@const index = section.start + offset}
             <button

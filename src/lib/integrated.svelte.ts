@@ -1,5 +1,7 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
+import { unsent, type Sent } from "$lib/mention";
+import { mentionedIn } from "$lib/mentioned.svelte";
 import { reservedName } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
@@ -22,12 +24,16 @@ import {
   beganTurn,
   byKey,
   failed,
+  followsAgain,
   keepToken,
   loadHistory,
   named,
   noted,
   onIntegratedClose,
   rang,
+  rejoined,
+  rememberWorkflow,
+  toldAtStart,
   type Session,
 } from "$lib/sessions.svelte";
 
@@ -49,6 +55,19 @@ import {
  * account's limits go to the store that keeps them by account.
  */
 
+/** A file going with a message that is not an image: it goes as its path,
+    for the agent to read. */
+export interface Attached {
+  /** As the agent is told of it: from where it works when inside that,
+      else in full. */
+  path: string;
+  name: string;
+  size: number | null;
+  dir: boolean;
+  /** The folder it is in, when that is outside the project. */
+  from: string | null;
+}
+
 /** What runs behind one row. */
 export class Link {
   /** The core's id for the session, while it runs. */
@@ -62,6 +81,10 @@ export class Link {
   draft = $state("");
   /** The images going with it. */
   images = $state<IntegratedImage[]>([]);
+  /** The paths of the files mentioned in it, as picked from the menu. */
+  mentions = $state<string[]>([]);
+  /** The files that are not images going with it, by path. */
+  files = $state<Attached[]>([]);
   /** Why the model could not be changed, until it next is. */
   configureError = $state<string | null>(null);
   /** Why the conversation could not be compacted, until it next is. */
@@ -182,6 +205,8 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
   switch (body.type) {
     case "ready":
       identify(session, body.sessionId);
+      // This run started on the workflow the row follows now.
+      rememberWorkflow(session);
       break;
     case "configured":
       session.model = body.model;
@@ -283,8 +308,9 @@ function ended(session: Session, link: Link, code: number | null, clean: boolean
 
 /**
  * Starts the agent behind a row whose status is starting: a new session,
- * or the one the row resumes. In a folder the agent does not trust yet the
- * start is refused, and the row waits for the user's answer.
+ * or the one the row resumes, told the workflow it follows as a terminal
+ * session is. In a folder the agent does not trust yet the start is
+ * refused, and the row waits for the user's answer.
  */
 export async function launch(key: string): Promise<void> {
   const session = byKey(key);
@@ -297,15 +323,24 @@ export async function launch(key: string): Promise<void> {
   // What a resumed session said before goes above what this run says.
   earlierAtStart(session, link.conversation);
   try {
+    // A resumed row finds out here what it follows, and a lost workflow
+    // fails it with the question for the user.
+    const told = await toldAtStart(key);
+    const starting = byKey(key);
+    if (told === null || starting === null) {
+      link.busy = false;
+      return;
+    }
     const started = await core().integratedStart({
-      agent: session.agent,
-      project: session.project,
-      cwd: session.startIn ?? undefined,
-      session: session.resumedFrom ?? undefined,
-      token: session.token,
-      model: session.model ?? undefined,
-      mode: startMode(session, link),
-      configDir: dirFor(session.account, session.agent),
+      agent: starting.agent,
+      project: starting.project,
+      cwd: starting.startIn ?? undefined,
+      session: starting.resumedFrom ?? undefined,
+      token: starting.token,
+      model: starting.model ?? undefined,
+      mode: startMode(starting, link),
+      configDir: dirFor(starting.account, starting.agent),
+      ...told,
     });
     link.busy = false;
     const row = byKey(key);
@@ -326,6 +361,10 @@ export async function launch(key: string): Promise<void> {
     row.changedAt = Date.now();
     for (const body of claim(started.id)) deliver(key, link, body);
     if (started.sessionId !== null) identify(row, started.sessionId);
+    // Every start and resume keeps the copy of the workflow this run was
+    // started on, which a reload goes on with; an agent that makes its own
+    // id is kept once ready names it.
+    rememberWorkflow(row);
     if (row.prompt !== null && !link.prompted && link.handle !== null) {
       link.prompted = true;
       send(key, row.prompt, [], starterOf(key));
@@ -382,7 +421,10 @@ export async function resume(key: string): Promise<void> {
   if (session === null || session.kind !== "integrated") return;
   const link = linkFor(key);
   if (link.handle !== null || link.busy) return;
-  if (session.id !== null) session.resumedFrom = session.id;
+  if (session.id !== null) {
+    session.resumedFrom = session.id;
+    followsAgain(key);
+  }
   link.conversation.resumed();
   again(session);
   await launch(key);
@@ -440,6 +482,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       session.resumedFrom = null;
       if (snapshot.ready !== null) identify(session, snapshot.ready.sessionId);
       settle(session, snapshot.state, before, link);
+      void rejoined(key);
       return true;
     } catch {
       link.held = null;
@@ -532,6 +575,7 @@ export function send(
   words: string,
   images: IntegratedImage[] = [],
   from: string | null = null,
+  mentions: readonly Sent[] = [],
 ): string | null {
   const link = links.get(key);
   const session = byKey(key);
@@ -540,6 +584,7 @@ export function send(
   const note = from === null ? noteFor(key) : null;
   const text = note === null ? words : `${note.text}\n\n${words}`;
   const id = crypto.randomUUID();
+  mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
   if (note !== null) notes.set(id, { key, taken: note.deliver, lost: () => {} });
   // A message sent is the agent spoken to, by the user or by a session
@@ -551,7 +596,10 @@ export function send(
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt. The workbench's own message names nothing.
   if (session.title === null && from !== WORKBENCH) {
-    const line = spoken(text, from === null).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
+    const line = unsent(spoken(text, from === null).text, mentions)
+      .draft.split("\n")
+      .find((candidate) => candidate.trim() !== "")
+      ?.trim();
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
     const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;

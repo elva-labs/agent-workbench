@@ -178,9 +178,16 @@ export interface IntegratedStartOptions {
   effort?: string;
   /** The account's configuration directory, as for `spawn`. */
   configDir?: string;
-  /** A workflow's instructions. An integrated session cannot be given
-      them, so a start that carries any is refused. */
+  /** A workflow's instructions, for a session that follows one, as for
+      `spawn`: it is started where a tool server can reach it or not at
+      all. */
   instructions?: string;
+  /** With instructions, whether the agent's own subagent tools are taken
+      away, as for `spawn`. */
+  startOnly?: boolean;
+  /** For a resumed session, whether what it is told now differs from what
+      its conversation was first given, as for `spawn`. */
+  afresh?: boolean;
 }
 
 /** What starting an integrated session hands back: the id every other
@@ -939,6 +946,11 @@ export interface Media {
   size: number;
 }
 
+export interface FileInfo {
+  size: number;
+  dir: boolean;
+}
+
 export interface SessionIdentified {
   ptyId: string;
   sessionId: string;
@@ -1239,6 +1251,9 @@ export interface Core {
   detect(agent: string): Promise<DetectReport>;
   /** Opens the native folder picker. Null when the user cancels. */
   pickProject(): Promise<string | null>;
+  /** Opens the native picker for files of any kind, several at once.
+      Empty when the user cancels. */
+  pickFiles(): Promise<string[]>;
   projectInfo(path: string): Promise<ProjectInfo>;
   setWindowTitle(title: string): Promise<void>;
   /** Opens a link in the system browser. */
@@ -1382,6 +1397,8 @@ export interface Core {
   ): Promise<() => void>;
   /** Reads an image or a PDF for the window, wherever the path is. */
   readMedia(path: string): Promise<Media>;
+  /** How big a file is, and whether it is a folder, read where it is. */
+  fileInfo(path: string): Promise<FileInfo>;
   onDiffRequest(handler: (request: DiffRequest) => void): Promise<() => void>;
   onTerminalRequest(
     handler: (request: TerminalRequest) => void,
@@ -1716,6 +1733,12 @@ const tauriCore: Core = {
     return typeof chosen === "string" ? chosen : null;
   },
 
+  async pickFiles() {
+    const chosen = await openDialog({ multiple: true, title: "Attach files" });
+    if (chosen === null) return [];
+    return Array.isArray(chosen) ? chosen : [chosen];
+  },
+
   projectInfo: (path) => invoke<ProjectInfo>("project_info", { path }),
 
   async setWindowTitle(title) {
@@ -1869,6 +1892,7 @@ const tauriCore: Core = {
     );
   },
   readMedia: (path) => invoke<Media>("read_media", { path }),
+  fileInfo: (path) => invoke<FileInfo>("file_info", { path }),
   async onDiffRequest(handler) {
     return listen<DiffRequest>("diff_request", (event) =>
       handler(event.payload),
@@ -2082,6 +2106,9 @@ const detachedCore: Core = {
   async pickProject() {
     return null;
   },
+  async pickFiles() {
+    return [];
+  },
   async projectInfo(path) {
     return { path, name: path, repository: null, isGit: false };
   },
@@ -2195,6 +2222,9 @@ const detachedCore: Core = {
     return () => {};
   },
   async readMedia() {
+    throw new Error("no core");
+  },
+  async fileInfo() {
     throw new Error("no core");
   },
   async onDiffRequest() {

@@ -139,6 +139,10 @@ struct IntegratedStartParams {
     config_dir: Option<String>,
     #[serde(default)]
     instructions: Option<String>,
+    #[serde(default)]
+    start_only: bool,
+    #[serde(default)]
+    afresh: bool,
 }
 
 #[derive(Deserialize)]
@@ -474,6 +478,8 @@ pub fn dispatch(
                 p.effort.as_deref(),
                 p.config_dir.as_deref(),
                 p.instructions.as_deref(),
+                p.start_only,
+                p.afresh,
             )?)
         }
         "integrated_trust" => {
@@ -711,6 +717,10 @@ pub fn dispatch(
         "read_media" => {
             let p: PathParams = parse(params)?;
             value(core.read_media(&p.path)?)
+        }
+        "file_info" => {
+            let p: PathParams = parse(params)?;
+            value(core.file_info(&p.path)?)
         }
         "set_selection" => {
             let p: SelectionParams = parse(params)?;
@@ -1232,14 +1242,21 @@ mod tests {
         )
         .expect_err("codex runs integrated only in a folder it trusts");
         assert!(codex.starts_with(crate::integrated::UNTRUSTED), "{codex}");
+        // A workflow's start reaches the core whole, and is refused there:
+        // for want of a tool server where this machine has none, and else
+        // for a folder no account here has trusted.
+        let claude_dir = Scratch::new("protocol-claude-dir");
         let flow = dispatch(
             &core,
             "integrated_start",
-            json!({ "agent": "claude-code", "project": "/tmp", "instructions": "1. Direct the work." }),
+            json!({ "agent": "claude-code", "project": folder.path(), "configDir": claude_dir.path(), "instructions": "1. Direct the work.", "startOnly": true, "afresh": true }),
             no_output,
         )
-        .expect_err("a workflow's instructions cannot be passed to an integrated session");
-        assert_eq!(flow, crate::api::NO_INTEGRATED_WORKFLOW);
+        .expect_err("a session under a workflow starts nowhere it cannot");
+        assert!(
+            flow == crate::api::NO_TOOLS || flow.starts_with(crate::integrated::UNTRUSTED),
+            "{flow}"
+        );
         for (method, params) in [
             (
                 "integrated_send",

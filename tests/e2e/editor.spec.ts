@@ -2067,18 +2067,29 @@ for (const linux of [false, true]) {
   const platform = linux ? "as Linux" : "as the platform it runs on";
   for (const look of ["modern", "terminal"]) {
     test.describe(`the agent's header short of room, ${look} look, ${platform}`, () => {
-      for (const kind of ["orchestrator", "integrated"] as const) {
-        test(`gives way in turn with ${kind === "orchestrator" ? "a workflow tag" : "a project and a branch"}, the title last`, async ({ page }) => {
+      for (const kind of ["orchestrator", "integrated", "integrated orchestrator"] as const) {
+        const tagged = kind !== "integrated";
+        const crumbed = kind !== "orchestrator";
+        const what = {
+          orchestrator: "a workflow tag",
+          integrated: "a project and a branch",
+          "integrated orchestrator": "a workflow tag, a project and a branch",
+        }[kind];
+        test(`gives way in turn with ${what}, the title last`, async ({ page }) => {
           if (linux) await asLinux(page);
           await installFakeCore(page, {
             open: [PROJECT],
-            settings: kind === "orchestrator" ? { ...WITH_WORKFLOW, look } : { integrated: ["claude-code"], look },
+            settings: {
+              ...(tagged ? WITH_WORKFLOW : {}),
+              ...(crumbed ? { integrated: ["claude-code"] } : {}),
+              look,
+            },
           });
           await page.setViewportSize({ width: 1440, height: 900 });
           await page.goto("/");
           await page.getByTestId("start-agent").click();
-          if (kind === "orchestrator") await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
-          else await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+          if (tagged) await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+          if (crumbed) await expect(page.getByTestId("conversation-branch")).toHaveText("main");
 
           const check = async (where: string) => {
             const at = await headerOrder(page);
@@ -2107,10 +2118,11 @@ for (const linux of [false, true]) {
           const wide = await check("agent mode at 1440");
           expect(wide.title.cut).toBe(false);
           expect(wide.status).toEqual({ drawn: true, cut: false });
-          if (kind === "orchestrator") {
+          if (tagged) {
             expect(wide.role).toEqual({ drawn: true, cut: false });
             expect(wide.name.on).toBe(true);
-          } else expect(wide.crumbs.every((crumb) => crumb.drawn && !crumb.cut)).toBe(true);
+          }
+          if (crumbed) expect(wide.crumbs.every((crumb) => crumb.drawn && !crumb.cut)).toBe(true);
 
           for (const width of [1200, 1100, 1000, 900]) {
             await page.setViewportSize({ width, height: 900 });

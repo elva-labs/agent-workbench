@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
-import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, send, userWaiting } from "$lib/integrated.svelte";
+import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
 import { byKey, create, forProject, label, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
-import { defaultWorkflow } from "$lib/workflows.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -552,3 +553,107 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(forProject(A)).toHaveLength(0);
   });
 });
+
+describe("an orchestrator that runs integrated", () => {
+  beforeEach(() => {
+    resetWorkflows();
+    setKind("claude-code", "integrated");
+  });
+  afterEach(() => resetWorkflows());
+
+  /** A workflow's orchestrator, started integrated and running. */
+  async function orchestrator(): Promise<Session> {
+    const row = create(A, null, "claude-code", null, null, null, null, defaultWorkflow());
+    expect(row.kind).toBe("integrated");
+    await launch(row.key);
+    return byKey(row.key)!;
+  }
+
+  const starts = () =>
+    fake.calls.flatMap((made) => (made.method === "start" ? [made.options] : []));
+
+  it("is started told its workflow, without its agent's own subagent tools", async () => {
+    const row = await orchestrator();
+    expect(row.status).toBe("running");
+    const [options] = starts();
+    expect(options).toMatchObject({
+      agent: "claude-code",
+      token: row.token,
+      instructions: orchestratorPrompt(defaultWorkflow()),
+      startOnly: true,
+    });
+    expect(options.afresh).toBeUndefined();
+  });
+
+  it("is held to its workflow, and a session it starts can start none of its own whatever it claims", async () => {
+    const lead = await orchestrator();
+    const as = (session: Session, tool: ConductRequest["tool"], args: Record<string, unknown>): ConductRequest => ({
+      ...call(tool, args),
+      session: session.token,
+    });
+    const bare = as(lead, "start", { project: A, prompt: "Fix the cache" });
+    await handle(bare);
+    expect(answerTo(bare)?.error).toContain('You follow the workflow "Build and review", so a start names the step it is for');
+
+    const work = as(lead, "start", { project: A, prompt: "Fix the cache", step: "Work" });
+    const answering = handle(work);
+    if (conductor.asking !== null) allow();
+    await settle();
+    const worker = forProject(A).at(-1)!;
+    expect(worker.key).not.toBe(lead.key);
+    expect(worker.kind).toBe("integrated");
+    await launch(worker.key);
+    flushSync();
+    await answering;
+    expect(answerTo(work)?.error).toBeNull();
+    // The worker follows no workflow, is told none and keeps its own tools.
+    expect(byKey(worker.key)!.workflow).toBeNull();
+    const told = starts().at(-1)!;
+    expect(told.instructions).toBeUndefined();
+    expect(told.startOnly).toBeUndefined();
+
+    // What a session says of itself is not who it is: the worker's call
+    // naming a step, the workflow and the orchestrator's role is refused.
+    const claimed = as(worker, "start", {
+      project: A,
+      prompt: "Split it up",
+      step: "Work",
+      role: "orchestrator",
+      workflow: "Build and review",
+    });
+    await handle(claimed);
+    expect(answerTo(claimed)?.error).toBe("A session that another session started cannot start sessions of its own.");
+    expect(forProject(A).filter((row) => row.status !== "exited").length).toBe(2);
+  });
+
+  it("resumed in place, is told the workflow as the settings have it now, afresh where it changed", async () => {
+    const lead = await orchestrator();
+    const id = lead.id!;
+    fake.stop(handleOf(lead.key)!);
+    await settle();
+    expect(byKey(lead.key)!.status).toBe("exited");
+    // Resumed with the workflow as it was, it is told the same again.
+    await resume(lead.key);
+    expect(starts().at(-1)).toMatchObject({
+      session: id,
+      instructions: orchestratorPrompt(defaultWorkflow()),
+      startOnly: true,
+    });
+    expect(starts().at(-1)!.afresh).toBeUndefined();
+    fake.stop(handleOf(lead.key)!);
+    await settle();
+
+    // The workflow changed in the settings since: it is told the new one,
+    // and lets go of what its conversation was first told.
+    const changed = { ...defaultWorkflow(), startOnly: false };
+    adoptWorkflows({ list: [changed], default: "Build and review", overrides: {} });
+    await resume(lead.key);
+    expect(starts().at(-1)).toMatchObject({
+      session: id,
+      instructions: orchestratorPrompt(changed),
+      startOnly: false,
+      afresh: true,
+    });
+  });
+});
+

@@ -22,7 +22,7 @@ export interface Piece {
 
 /** Where a word begins in a name: at its first letter, and after a dash,
     an underscore, a colon, a dot, a slash or a space. */
-function wordStarts(name: string): number[] {
+export function wordStarts(name: string): number[] {
   const starts = [0];
   for (let at = 1; at < name.length; at++) if (/[-_:./\s]/.test(name[at - 1])) starts.push(at);
   return starts;

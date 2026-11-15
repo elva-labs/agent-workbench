@@ -44,11 +44,6 @@ pub struct Spawned {
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
 
-/// Why an integrated session is not started with a workflow's instructions:
-/// an integrated session has no way to be given them, and starting it
-/// without them would drop the workflow unseen.
-pub const NO_INTEGRATED_WORKFLOW: &str = "An integrated session cannot follow a workflow, because it is not given a workflow's instructions. Start a session that follows a workflow in a terminal.";
-
 /// Why a session that follows a workflow is not started: it would have no
 /// start tool to hand its work out with.
 pub const NO_TOOLS: &str = "This session follows a workflow, which hands out its work with the workbench's tools, and this machine has no tool server to give it them. Pick an agent to start one alone instead.";
@@ -520,6 +515,12 @@ impl Core {
     /// folder it does not hold as trusted is refused with an error that
     /// starts with [`crate::integrated::UNTRUSTED`], until
     /// [`Core::integrated_trust`] records the user's yes.
+    ///
+    /// `instructions`, `start_only` and `afresh` are a workflow's, as for
+    /// [`Core::spawn`]: a session that follows one directs the others, is
+    /// not started where no tool server can reach it, and is given the
+    /// instructions, and with `start_only` loses its agent's own subagent
+    /// tools, the same way a terminal session is.
     #[allow(clippy::too_many_arguments)]
     pub fn integrated_start(
         &self,
@@ -533,17 +534,17 @@ impl Core {
         effort: Option<&str>,
         config_dir: Option<&str>,
         instructions: Option<&str>,
+        start_only: bool,
+        afresh: bool,
     ) -> Result<crate::integrated::Started, String> {
-        if instructions.is_some_and(|text| !text.trim().is_empty()) {
-            return Err(NO_INTEGRATED_WORKFLOW.to_string());
-        }
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let protocol = adapter
             .integrated()
             .ok_or_else(|| format!("{agent} cannot run as an integrated session"))?;
         let environment = env::environment();
         let opened = project.to_string_lossy().to_string();
-        let orchestrator = self.is_orchestrator(project);
+        let instructions = instructions.filter(|text| !text.trim().is_empty());
+        let orchestrator = instructions.is_some() || self.is_orchestrator(project);
         self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
         let resume = session.is_some();
@@ -553,6 +554,17 @@ impl Core {
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
+        let tool_server = self
+            .home
+            .as_deref()
+            .map(hook::daemon_path)
+            .filter(|path| path.is_file());
+        // A session that follows a workflow hands its work out with the
+        // workbench's start tool, which only the tool server gives it,
+        // so it is not started, nor its folder asked about, without one.
+        if instructions.is_some() && tool_server.is_none() {
+            return Err(NO_TOOLS.into());
+        }
         let trusted = self.home.as_deref().is_some_and(|home| {
             protocol.trusted(home, expanded.as_deref(), &environment.vars, project)
         });
@@ -568,11 +580,6 @@ impl Core {
             std::fs::create_dir_all(dir)
                 .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
-        let tool_server = self
-            .home
-            .as_deref()
-            .map(hook::daemon_path)
-            .filter(|path| path.is_file());
         let launch = crate::integrated::Launch {
             project,
             env: &environment.vars,
@@ -585,6 +592,9 @@ impl Core {
             config_dir: expanded.as_deref(),
             tool_server: tool_server.as_deref(),
             orchestrator,
+            instructions,
+            start_only: instructions.is_some() && start_only,
+            afresh: resume && afresh,
         };
         let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
         let named = token
@@ -959,6 +969,10 @@ impl Core {
 
     pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {
         crate::show::read_media(path)
+    }
+
+    pub fn file_info(&self, path: &Path) -> Result<crate::show::FileInfo, String> {
+        crate::show::file_info(path)
     }
 
     /// The answer to a call on one of the conductor's tools, left where
@@ -1452,21 +1466,27 @@ mod tests {
     }
 
     #[test]
-    fn an_integrated_session_is_refused_workflow_instructions_it_cannot_be_given() {
+    fn an_integrated_session_under_a_workflow_is_refused_where_no_tool_server_can_reach_it() {
         let home = Scratch::new("api-integrated-workflow");
-        let started = core_at(&home).integrated_start(
-            "claude-code",
-            &home,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("1. Direct the work."),
-        );
-        assert_eq!(started.err().as_deref(), Some(NO_INTEGRATED_WORKFLOW));
+        for agent in ["claude-code", "codex"] {
+            let started = core_at(&home).integrated_start(
+                agent,
+                &home,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("1. Direct the work."),
+                true,
+                false,
+            );
+            // Refused before the folder is asked about, since trusting it
+            // would not let the session start.
+            assert_eq!(started.err().as_deref(), Some(NO_TOOLS), "{agent}");
+        }
     }
 
     #[test]
