@@ -170,9 +170,9 @@ tools they bring the agent, is in [hooks](hooks.md).
 How each agent's sessions run: in a terminal, the agent's own interface,
 or integrated, the conversation drawn by the window, a terminal to begin
 with. An agent the core says it can drive in messages offers the choice,
-and the tab says an agent that runs only in a terminal does. Beneath the
-choice it says that a session following a workflow runs in a terminal
-whichever is chosen. A session that is running keeps the way it started,
+and the tab says an agent that runs only in a terminal does. A session
+that follows a workflow runs the way its orchestrator's agent is set, as
+any other does. A session that is running keeps the way it started,
 and a single new one can be started the other way from a project's ⋯ menu,
 the palette or the agent pane. What an integrated session is like is in
 [sessions](sessions.md#integrated-sessions). It is the user's to change,
@@ -270,7 +270,9 @@ starts that agent at once. An agent picked anywhere starts alone. A
 session under a workflow starts on the workflow's orchestrator, its agent
 and its model, told the workflow's instructions, and keeps the workflow as
 it was for as long as it runs, whatever changes in the settings. Resumed,
-it takes the workflow of the same name as the settings have it then. Where
+it takes the workflow of the same name as the settings have it then; an
+integrated one the window takes up again after a reload, its agent still
+running, goes on with the copy its run was started on. Where
 that workflow was deleted it follows the copy it kept, which its header
 says; where that copy no longer reads either, the session does not start,
 its header says it waits for the user's choice, and the user is asked

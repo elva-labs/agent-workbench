@@ -161,6 +161,9 @@ fn start_in(
         config_dir: None,
         tool_server: None,
         orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
     };
     adjust(&mut launch);
     let started = super::start(
@@ -397,6 +400,121 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
         assert!(Instant::now() < deadline, "{file:?} outlived the session");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// The arguments the stand-in was started with, one a line.
+fn arguments(h: &Harness) -> Vec<String> {
+    std::fs::read_to_string(h.dir.join("args"))
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
+    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let told = "1. Direct the work.\n2. Say \"done\" when it is.";
+    let h = start_with("workflow", &format!("{READY}\ndrain"), |launch| {
+        launch.resume = true;
+        launch.token = Some("token-flow");
+        launch.tool_server = Some(Box::leak(server.clone().into_boxed_path()));
+        launch.orchestrator = true;
+        launch.instructions = Some(told);
+        launch.start_only = true;
+        launch.afresh = true;
+    });
+    h.until_type("ready");
+    let args = arguments(&h);
+    let at = |flag: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .unwrap_or_else(|| panic!("{flag} in {args:?}"))
+    };
+    // Its own ways to hand work out are taken away, as in a terminal, and
+    // a flag of its own ends the list.
+    let listed = at("--disallowedTools");
+    assert_eq!(
+        args[listed + 1..listed + 6],
+        [
+            "Agent",
+            "Workflow",
+            "SendMessage",
+            "ListAgents",
+            "RemoteTrigger"
+        ]
+    );
+    assert!(args[listed + 6].starts_with("--"), "{args:?}");
+    // The instructions are read from a file of the session's own, which
+    // only its owner can read, so nothing on the command line has a line
+    // break or a quote for a command interpreter to cut at.
+    let file = PathBuf::from(&args[at("--append-system-prompt-file") + 1]);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), told);
+    assert!(!file.to_string_lossy().contains(&h.session), "{file:?}");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert!(
+        args.iter().all(|arg| !arg.contains(['\n', '"'])),
+        "{args:?}"
+    );
+    // Resumed with other instructions than it was first given, it reads
+    // these rather than the record it keeps.
+    assert_eq!(args[at("--system-prompt-snapshot") + 1], "off");
+    // The tool server is last, since its flag takes what follows it.
+    assert_eq!(args[args.len() - 2], "--mcp-config");
+    let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
+    let has = |line: &str| env.lines().any(|l| l == line);
+    assert!(has("WORKBENCH_SESSION=token-flow"), "{env}");
+    assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
+    h.stop();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while file.exists() {
+        assert!(Instant::now() < deadline, "{file:?} outlived the session");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn a_session_under_no_workflow_keeps_its_own_tools_and_is_told_nothing() {
+    // A fresh session has no record to let go of, whatever it is told.
+    let h = start_with("no-workflow", &format!("{READY}\ndrain"), |launch| {
+        launch.afresh = true;
+    });
+    h.until_type("ready");
+    let args = arguments(&h);
+    for flag in [
+        "--disallowedTools",
+        "--append-system-prompt-file",
+        "--system-prompt-snapshot",
+    ] {
+        assert!(!args.contains(&flag.to_string()), "{flag} in {args:?}");
+    }
+    let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
+    assert!(
+        !env.lines().any(|l| l.starts_with("WORKBENCH_ROLE=")),
+        "{env}"
+    );
+    h.stop();
+
+    // Resumed without the workflow it was given, it lets go of the record
+    // and is given nothing in its place.
+    let h = start_with("left-workflow", &format!("{READY}\ndrain"), |launch| {
+        launch.resume = true;
+        launch.afresh = true;
+    });
+    h.until_type("ready");
+    let args = arguments(&h);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--system-prompt-snapshot")
+        .unwrap();
+    assert_eq!(args[at + 1], "off");
+    assert!(!args.contains(&"--append-system-prompt-file".to_string()));
+    assert!(!args.contains(&"--disallowedTools".to_string()));
+    h.stop();
 }
 
 #[test]
@@ -1176,6 +1294,9 @@ fn a_missing_agent_explains_itself() {
         config_dir: None,
         tool_server: None,
         orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
     };
     let error = super::start(
         Arc::new(Recorder::default()),
@@ -1212,6 +1333,9 @@ fn real_claude_holds_a_short_turn() {
         config_dir: None,
         tool_server: None,
         orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
     };
     let started = super::start(
         recorder.clone(),

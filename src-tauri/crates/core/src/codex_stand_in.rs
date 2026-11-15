@@ -154,6 +154,9 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         config_dir: None,
         tool_server: None,
         orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
     };
     adjust(&mut launch);
     let started = super::start(
@@ -381,6 +384,88 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
             "default_tools_approval_mode": "approve",
         })
     );
+    h.stop();
+}
+
+#[test]
+fn a_session_under_a_workflow_is_told_it_in_the_thread_and_delegates_only_through_start() {
+    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let told = "1. Direct the work.\n2. Say \"done\" when it is.";
+    let no_subagents = json!({
+        "multi_agent": false,
+        "multi_agent_v2": {"disable_native_tools": true},
+    });
+    for resume in [false, true] {
+        let h = start_with(
+            if resume {
+                "workflow-resumed"
+            } else {
+                "workflow"
+            },
+            &format!("{}\ndrain", ready_scenario()),
+            |launch| {
+                if resume {
+                    launch.session = Some("019a-old");
+                    launch.resume = true;
+                    launch.afresh = true;
+                }
+                launch.token = Some("token-flow");
+                launch.tool_server = Some(Box::leak(server.clone().into_boxed_path()));
+                launch.orchestrator = true;
+                launch.instructions = Some(told);
+                launch.start_only = true;
+            },
+        );
+        h.until_type("ready");
+        let method = if resume {
+            "thread/resume"
+        } else {
+            "thread/start"
+        };
+        let params = &h.sent(method)[0]["params"];
+        // The instructions go in the message that starts the thread, whole,
+        // on every start and every resume.
+        assert_eq!(params["developerInstructions"], told, "{method}");
+        // Codex's own subagent tools are turned off with the settings a
+        // terminal session is started with, as the tables they name.
+        assert_eq!(params["config"]["features"], no_subagents, "{method}");
+        assert_eq!(
+            params["config"]["mcp_servers"]["agent_workbench"]["env"],
+            json!({"WORKBENCH_SESSION": "token-flow", "WORKBENCH_ROLE": "orchestrator"}),
+            "{method}"
+        );
+        // Nothing of the workflow is on the command line, so a command
+        // interpreter on Windows has nothing to cut short.
+        let args = std::fs::read_to_string(h.dir.join("args")).unwrap();
+        assert_eq!(args.trim(), "app-server");
+        let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
+        assert!(
+            env.lines().any(|l| l == "WORKBENCH_ROLE=orchestrator"),
+            "{env}"
+        );
+        h.stop();
+    }
+
+    // With its own tools left alone, it is told the workflow and nothing
+    // else changes; with no workflow, it is told nothing.
+    let h = start_with(
+        "workflow-own-tools",
+        &format!("{}\ndrain", ready_scenario()),
+        |launch| {
+            launch.instructions = Some(told);
+            launch.orchestrator = true;
+        },
+    );
+    h.until_type("ready");
+    let params = &h.sent("thread/start")[0]["params"];
+    assert_eq!(params["developerInstructions"], told);
+    assert!(params["config"].get("features").is_none(), "{params}");
+    h.stop();
+    let h = start("no-workflow", &format!("{}\ndrain", ready_scenario()));
+    h.until_type("ready");
+    let params = &h.sent("thread/start")[0]["params"];
+    assert!(params.get("developerInstructions").is_none(), "{params}");
+    assert!(params.get("config").is_none(), "{params}");
     h.stop();
 }
 
@@ -1176,6 +1261,12 @@ mod model {
             run("touch made.txt", true)
         } else if let Some(seconds) = prompt.split("SLEEP ").nth(1) {
             run(&format!("sleep {}", seconds.trim()), false)
+        } else if prompt.contains("GIVEN") {
+            // What the model was given: the tools by name, and whether a
+            // workflow's instructions are anywhere in what it read.
+            let names: Vec<&str> = tools.iter().map(|(_, name)| name.as_str()).collect();
+            let told = body.to_string().contains("WORKFLOW-MARKER");
+            said(&json!({"tools": names, "told": told}).to_string())
         } else if prompt.contains("MCP") {
             match tools.iter().find(|(_, name)| name.contains("echo")) {
                 Some((namespace, name)) => {
@@ -1250,6 +1341,9 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
             config_dir: Some(&home),
             tool_server: Some(&server),
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            afresh: false,
         };
         let started = super::start(
             recorder.clone(),
@@ -1421,6 +1515,135 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         env.lines().any(|l| l == "WORKBENCH_SESSION=token-real")
     );
     assert_eq!(h.stop()["clean"], true);
+}
+
+/// A workflow's orchestrator on the real `codex app-server`, against the
+/// stand-in for the model: what the model is given with the instructions
+/// and Codex's subagent tools turned off, on a fresh thread and on its
+/// resumes, beside a thread under no workflow. Run by hand:
+/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+#[test]
+#[ignore = "runs the real codex app-server on PATH"]
+fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools() {
+    let port = model::serve();
+    let base = Arc::new(Scratch::new("real-codex-workflow"));
+    let home = base.join("home");
+    let work = base.join("work");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "model = \"mock-1\"\nmodel_provider = \"mock\"\n\n[model_providers.mock]\nname = \"mock\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\nwire_api = \"responses\"\n"
+        ),
+    )
+    .unwrap();
+    let environment = crate::env::environment();
+    let sessions = Arc::new(Sessions::default());
+    let told = "1. Direct the work. WORKFLOW-MARKER\n2. Say \"done\" when it is.";
+    let given = |session: Option<&str>, workflow: bool, start_only: bool| -> (Value, String) {
+        let recorder = Arc::new(Recorder::default());
+        let launch = Launch {
+            project: &work,
+            env: &environment.vars,
+            session,
+            token: Some("token-real"),
+            resume: session.is_some(),
+            model: None,
+            mode: Some("read-only"),
+            effort: None,
+            config_dir: Some(&home),
+            tool_server: None,
+            orchestrator: workflow,
+            instructions: workflow.then_some(told),
+            start_only,
+            afresh: false,
+        };
+        let started = super::start(
+            recorder.clone(),
+            Arc::clone(&sessions),
+            &CODEX_APP_SERVER,
+            &launch,
+            Box::new(|_| {}),
+            Box::new(|_| {}),
+        )
+        .unwrap();
+        let h = Harness {
+            dir: Arc::clone(&base),
+            sessions: Arc::clone(&sessions),
+            recorder,
+            id: started.id,
+            waits: Waits::default(),
+        };
+        let ready = h.until(|e| e["type"] == "ready" || e["type"] == "ended");
+        let ready = ready.last().unwrap().clone();
+        assert_eq!(ready["type"], "ready", "{:#?}", h.events());
+        h.send("GIVEN");
+        let events = h.until_type("turnEnded");
+        let said = events
+            .iter()
+            .rev()
+            .find(|e| e["type"] == "text" && e["done"] == true)
+            .unwrap_or_else(|| panic!("{events:#?}"));
+        let answer: Value = serde_json::from_str(said["text"].as_str().unwrap()).unwrap();
+        h.stop();
+        (answer, ready["sessionId"].as_str().unwrap().to_string())
+    };
+    let has = |answer: &Value, tool: &str| {
+        answer["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == tool)
+    };
+    // Codex's tools for its own agents, on either version of them; which
+    // it offers depends on the model.
+    let subagent_tools = [
+        "spawn_agent",
+        "send_input",
+        "send_message",
+        "wait_agent",
+        "list_agents",
+        "close_agent",
+        "resume_agent",
+        "interrupt_agent",
+        "followup_task",
+    ];
+
+    let (plain, _) = given(None, false, false);
+    println!("under no workflow: {plain}");
+    assert_eq!(plain["told"], false);
+    assert!(has(&plain, "spawn_agent"), "{plain}");
+    let (fresh, thread) = given(None, true, true);
+    println!("under a workflow: {fresh}");
+    assert_eq!(fresh["told"], true);
+    for tool in subagent_tools {
+        assert!(!has(&fresh, tool), "{tool} is gone under a workflow");
+    }
+    let (resumed, _) = given(Some(&thread), true, true);
+    println!("resumed under it: {resumed}");
+    assert_eq!(resumed["told"], true);
+    for tool in subagent_tools {
+        assert!(!has(&resumed, tool), "{tool} is gone on a resume");
+    }
+    // Codex keeps what a thread began with: resumed under no workflow, it
+    // still reads the instructions and has none of its subagent tools, as
+    // `codex resume` does in a terminal, which the window tells the user.
+    let (left, _) = given(Some(&thread), false, false);
+    println!("resumed under none: {left}");
+    assert_eq!(left["told"], true);
+    for tool in subagent_tools {
+        assert!(!has(&left, tool), "{tool} stays gone");
+    }
+
+    // The other way round: a thread that began under a workflow that left
+    // it its own tools keeps them when resumed under one that takes them.
+    let (own, keeping) = given(None, true, false);
+    println!("under a workflow that leaves its tools: {own}");
+    assert!(has(&own, "spawn_agent"), "{own}");
+    let (taken, _) = given(Some(&keeping), true, true);
+    println!("resumed under one that takes them: {taken}");
+    assert!(has(&taken, "spawn_agent"), "{taken}");
 }
 
 /// One session through the real driver that holds what a window drawing a

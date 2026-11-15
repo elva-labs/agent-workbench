@@ -2,6 +2,7 @@
   import Icon from "$lib/components/conversation/Icon.svelte";
   import { letters } from "$lib/giveWay";
   import { focusPane } from "$lib/layout.svelte";
+  import { putAway } from "$lib/popover";
   import type { RunSummary } from "$lib/runSummary";
   import { goTo } from "$lib/workspace.svelte";
 
@@ -14,8 +15,9 @@
    * A popover under it says what stands in each step, each session a way
    * to it, with the rules the orchestrator was given folded at its foot.
    * It shows while the pointer rests on the chip, and is held open by a
-   * click or by Enter or Space. Escape, or a press anywhere else, puts it
-   * away, and Escape gives the keyboard back to the chip.
+   * click or by Enter or Space. Escape, wherever the keyboard is, or a
+   * press anywhere else, puts it away, and Escape gives the keyboard back
+   * to the chip when it was in the popover.
    *
    * Where the header is short of room the words give way, cut short and
    * then gone, taking no room once gone, and the pips stay: the header
@@ -98,15 +100,6 @@
     showRules = false;
   }
 
-  function onkeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      event.preventDefault();
-      close();
-      button?.focus();
-    }
-  }
-
   /** The keyboard leaving the chip and its popover puts the popover away. */
   function onfocusout(event: FocusEvent) {
     const next = event.relatedTarget as Node | null;
@@ -119,21 +112,11 @@
     if (goTo(key)) focusPane("agent");
   }
 
-  // A press outside the chip and its popover puts it away, as does the
-  // window changing size under it.
+  // Escape wherever the keyboard is, a press outside the chip and its
+  // popover, or the window changing size under it puts it away.
   $effect(() => {
     if (!open) return;
-    const away = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target !== null && holder?.contains(target)) return;
-      close();
-    };
-    window.addEventListener("pointerdown", away, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("pointerdown", away, true);
-      window.removeEventListener("resize", close);
-    };
+    return putAway({ inside: () => [button, popover], close, control: () => button });
   });
 
   $effect(() => cancelTimers);
@@ -143,7 +126,6 @@
 <span
   bind:this={holder}
   class="holder"
-  {onkeydown}
   {onfocusout}
   onpointerenter={pointerIn}
   onpointerleave={pointerOut}

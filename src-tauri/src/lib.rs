@@ -177,6 +177,8 @@ async fn integrated_start(
     effort: Option<String>,
     config_dir: Option<String>,
     instructions: Option<String>,
+    start_only: Option<bool>,
+    afresh: Option<bool>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
@@ -196,11 +198,13 @@ async fn integrated_start(
             effort.as_deref(),
             config_dir.as_deref(),
             instructions.as_deref(),
+            start_only.unwrap_or(false),
+            afresh.unwrap_or(false),
         )?),
         Route::Remote { host, rest } => {
             let started = remotes.connection(&host)?.call(
                 "integrated_start",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false) }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
             let id = with_host_id(&host, id);
@@ -907,6 +911,24 @@ async fn read_media(
         "read_media",
         |rest| json!({ "path": rest }),
         |core, path| core.read_media(Path::new(path)),
+    )
+    .await
+}
+
+/// How big a file given to the agent by its path is, read where it is.
+#[tauri::command]
+async fn file_info(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    path: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&path),
+        "file_info",
+        |rest| json!({ "path": rest }),
+        |core, path| core.file_info(Path::new(path)),
     )
     .await
 }
@@ -1730,6 +1752,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
+            file_info,
             set_selection,
             project_info,
             sessions_list,

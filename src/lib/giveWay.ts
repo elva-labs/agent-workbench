@@ -28,13 +28,26 @@ function textWidth(node: HTMLElement): number {
   return range.getBoundingClientRect().width;
 }
 
+/** The room between an element's parts that none of them gives back as it
+    narrows: the gaps between them and their own margins. */
+function between(node: HTMLElement, parts: Element[]): number {
+  const gap = parseFloat(getComputedStyle(node).columnGap) || 0;
+  const margins = parts.reduce((sum, part) => {
+    const style = getComputedStyle(part);
+    return sum + (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0);
+  }, 0);
+  return gap * Math.max(parts.length - 1, 0) + margins;
+}
+
 /** Sets `--keep` on a header's head: the width of what in it is marked
-    `data-keep`, which stays whole until the header's status has given way.
-    A part marked `data-keep-room` keeps the room around the text it holds
-    as well, its icons, gaps and padding. It is marked `data-short` while
-    the head leaves its text less than about three letters, and its style
-    then gives the text and the gap before it no room. What is left is
-    `--least`: the width the head keeps until the title has given way.
+    `data-keep`, with the room between the head's parts, which stays whole
+    until the header's status has given way. A part marked `data-keep-room`
+    keeps the room around the text it holds as well, its icons, gaps and
+    padding. It is marked `data-short` while the head leaves its text less
+    than about three letters, and its style then gives the text and the
+    gap before it no room. What is left, with the room between the parts
+    still drawn, is `--least`: the width the head keeps until the title
+    has given way.
     Measured again when the head or what it keeps changes size, and when
     what it holds changes. */
 export function keeps(node: HTMLElement) {
@@ -86,19 +99,25 @@ export function keeps(node: HTMLElement) {
     const parts = rooms().map(roomOf);
     const room = parts.reduce((sum, part) => sum + part.room, 0);
     const least = parts.reduce((sum, part) => sum + part.least, 0);
+    const all = [...node.children];
     const width = text + room;
-    node.style.setProperty("--keep", width > 0 ? `${Math.ceil(width) + 1}px` : "0px");
-    node.style.setProperty("--least", least > 0 ? `${Math.ceil(least)}px` : "0px");
+    const keep = width > 0 ? width + between(node, all) : 0;
+    node.style.setProperty("--keep", keep > 0 ? `${Math.ceil(keep) + 1}px` : "0px");
     // The text a part keeps takes no room once the head leaves it less
     // than about three letters: decided from the head's width against the
-    // whole room, neither of which hangs on whether the part is short, so
+    // whole room, none of which hangs on whether the part is short, so
     // hiding the text moves nothing back.
-    const free = node.clientWidth - room;
+    const free = node.clientWidth - room - between(node, all);
     for (const part of rooms()) {
-      const text = part.querySelector<HTMLElement>("[data-keep]");
-      const least = text === null ? 0 : parseFloat(getComputedStyle(text).fontSize) * 3;
-      part.toggleAttribute("data-short", free < least);
+      const kept = part.querySelector<HTMLElement>("[data-keep]");
+      const letters = kept === null ? 0 : parseFloat(getComputedStyle(kept).fontSize) * 3;
+      part.toggleAttribute("data-short", free < letters);
     }
+    // Read once the parts are short or not: what has given way whole by
+    // then, such as a project and branch beside a short chip, leaves no
+    // room between the parts either.
+    const shown = all.filter((part) => getComputedStyle(part).display !== "none");
+    node.style.setProperty("--least", least > 0 ? `${Math.ceil(least + between(node, shown))}px` : "0px");
   }
 
   watch();

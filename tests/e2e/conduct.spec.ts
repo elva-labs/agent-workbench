@@ -459,6 +459,28 @@ test.describe("a session that follows a workflow", () => {
         ).__spawns ?? [],
     );
 
+  test("puts the run chip's popover away on Escape with the keyboard in the terminal, which hears nothing", async ({ page }) => {
+    const written = () =>
+      page.evaluate(() =>
+        ((window as unknown as { __written?: [string, string][] }).__written ?? []).map((w) => w[1]).join(""),
+      );
+    const keyboard = page.locator(`${AGENT} .xterm-helper-textarea`);
+    await keyboard.focus();
+    const before = await written();
+    const rules = page.getByTestId("run-popover");
+    // Opened by a click that leaves the keyboard in the terminal, as a
+    // click does in the macOS webview.
+    await page.getByTestId("run-chip").dispatchEvent("click");
+    await expect(rules).toBeVisible();
+    await expect(keyboard).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(rules).toHaveCount(0);
+    expect(await written()).toBe(before);
+    // With no popover open, Escape is the agent's.
+    await page.keyboard.press("Escape");
+    await expect.poll(written).toBe(`${before}\u001b`);
+  });
+
   test("starts on the workflow's orchestrator, told the workflow", async ({ page }) => {
     const [first] = await spawns(page);
     expect(first.agent).toBe("claude-code");

@@ -241,7 +241,12 @@ a terminal keeps <kbd>Ctrl</kbd><kbd>W</kbd> and
   in the tree, and a list pane hands the keyboard back to the agent, or in
   editor mode to the editor. This is the one key whose meaning
   depends on context, so the resolution takes the focus state and lives in one
-  testable place.
+  testable place. The one exception is a popover the user opened from a
+  header, such as a workflow tag's rules or where a run stands: while it
+  is open, Esc puts it away wherever the keyboard is and reaches nothing
+  else, since a click does not move the keyboard on every platform and the
+  key that closes a popover must never also stop the agent's turn. With no popover open, Esc is the
+  terminal's or the composer's again.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
   goes to the agent pane; when editing hides the agent, it goes to the files
@@ -315,21 +320,27 @@ The agent pane of an integrated session is a composer, a thread and, while
 the agent waits on the user, a dock between them; see
 [sessions](sessions.md#integrated-sessions). Focusing the pane by key, or
 the session coming on screen in it, puts the keyboard in its composer,
-unless another control of that same session has it; a session going off
-screen lets the keyboard go. With no composer, the keyboard goes to Resume
-once the session has ended, and to the card that asks before a session can
-run, which is read before its buttons are reached.
+unless another control of that same session has it, or a control of the
+pane's own, such as the workflow tag or a run's chip in its header, as
+for a terminal; a
+session going off screen lets the keyboard go. With no composer, the
+keyboard goes to Resume once the session has ended, and to the card that
+asks before a session can run, which is read before its buttons are
+reached.
 
 | Keys | Does |
 | --- | --- |
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
-| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else |
+| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover is open it puts that away instead, and stops nothing |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
 | <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
 | <kbd>Tab</kbd> or <kbd>Enter</kbd> in the slash menu | Puts the marked one in the composer, a space after it |
 | <kbd>Esc</kbd> in the slash menu | Closes the menu, keeping what is written; it stops nothing |
+| <kbd>@</kbd> at the start or after a space | Opens the project's files, where it has a git repository |
+| <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
+| <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
 
@@ -363,8 +374,9 @@ the keyboard, so the pointer and the arrows move one mark, and the keyboard
 going anywhere else, by a chord or a press, puts the menu away and stays
 where it went.
 
-The slash menu never takes the keyboard: the composer keeps it and names the
-marked row to a screen reader, and the arrows, <kbd>Tab</kbd>,
+The slash menu and the files menu never take the keyboard: the composer
+keeps it and names the marked row to a screen reader, says how many rows
+there are or that none match, and the arrows, <kbd>Tab</kbd>,
 <kbd>Enter</kbd> and <kbd>Esc</kbd> act on the menu only while it is open
 with something in it. A key that is part of a composition, as an input
 method makes one, goes to the composition. While the agent is still

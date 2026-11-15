@@ -336,10 +336,12 @@ fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
     args
 }
 
-/// Why Codex does not start a session that follows a workflow on Windows:
-/// it takes the instructions only on its command line, and an install run
-/// through the command interpreter loses every line of them after the first.
-pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex takes a workflow's instructions only on its command line, which Windows cuts short, so a session on Codex cannot follow a workflow here. Choose Claude Code for the workflow's orchestrator, or pick Codex to start it alone.";
+/// Why Codex does not start a session that follows a workflow in a
+/// terminal on Windows: it takes the instructions only on its command line
+/// there, and an install run through the command interpreter loses every
+/// line of them after the first. Run integrated, it takes them in a
+/// message, so the first way out keeps the workflow on Codex.
+pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex in a terminal takes a workflow's instructions only on its command line, which Windows cuts short, so a Codex session in a terminal cannot follow a workflow here. Set Codex to run integrated in the settings' Sessions tab, choose Claude Code for the workflow's orchestrator, or pick Codex to start it alone.";
 
 /// The first Codex that passes a server the variables its entry names,
 /// which is how a session on Codex names itself to the workbench's tools.
@@ -1013,11 +1015,14 @@ mod tests {
                 .concat()
             );
         }
-        // On Windows the instructions would be cut at their first line.
+        // On Windows the instructions would be cut at their first line, and
+        // the refusal names the way that keeps the workflow on Codex.
         assert_eq!(
             codex_workflow(&ctx, true, false).unwrap_err(),
             CODEX_WORKFLOW_ON_WINDOWS
         );
+        assert!(CODEX_WORKFLOW_ON_WINDOWS
+            .contains("Set Codex to run integrated in the settings' Sessions tab"));
 
         // With its own tools left alone and the server already configured,
         // the session is told the workflow and nothing else changes.

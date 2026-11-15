@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
+import { BUILD_AND_REVIEW, PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 // An integrated session as the user meets it: the conversation the agent
 // pane draws in place of a terminal, driven by the fake core's scripted
@@ -19,6 +19,37 @@ function calls(page: Page): Promise<{ method: string; [field: string]: unknown }
   return page.evaluate(
     () => (window as unknown as { __integrated: { calls: { method: string }[] } }).__integrated.calls,
   );
+}
+
+interface Answer {
+  id: string;
+  content: string | null;
+  error: string | null;
+}
+
+/** A call on one of the conductor's tools, as the core delivers one. */
+function conduct(
+  page: Page,
+  request: { id: string; tool: string; arguments?: Record<string, unknown>; session: string },
+) {
+  return page.evaluate(
+    ({ project, request }) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id: request.id,
+        tool: request.tool,
+        arguments: request.arguments ?? {},
+        cwd: project,
+        session: request.session,
+      }),
+    { project: PROJECT, request },
+  );
+}
+
+async function answerTo(page: Page, id: string): Promise<Answer | null> {
+  const answers = await page.evaluate(
+    () => (window as unknown as { __conductAnswers?: Answer[] }).__conductAnswers ?? [],
+  );
+  return answers.find((answer) => answer.id === id) ?? null;
 }
 
 async function openIntegrated(page: Page, options: { untrusted?: boolean } = {}) {
@@ -426,7 +457,7 @@ test.describe("the composer", () => {
     await expect(input(page)).toBeFocused();
   });
 
-  test("takes an image dropped or pasted with the message, and another file by its path", async ({ page }) => {
+  test("takes an image dropped or pasted with the message, and another file as a card, by its path", async ({ page }) => {
     await openIntegrated(page);
     const box = (await page.getByTestId("composer").boundingBox())!;
     await page.evaluate(
@@ -440,7 +471,8 @@ test.describe("the composer", () => {
       { x: box.x + 40, y: box.y + 20 },
     );
     await expect(page.getByTestId("attachments").locator("img")).toHaveCount(1);
-    await expect(input(page)).toHaveValue("/home/ada/notes.md ");
+    await expect(page.getByTestId("attached-file")).toContainText("notes.md");
+    await expect(input(page)).toHaveValue("");
     await input(page).evaluate((field) => {
       const data = new DataTransfer();
       const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
@@ -454,7 +486,7 @@ test.describe("the composer", () => {
     await page.keyboard.press("Enter");
     const sent = (await calls(page)).find((call) => call.method === "send") as unknown as { images: unknown[]; text: string };
     expect(sent.images).toHaveLength(1);
-    expect(sent.text.trim()).toBe("/home/ada/notes.md");
+    expect(sent.text).toBe("`@/home/ada/notes.md`");
     await expect(page.getByTestId("user-message").locator("img")).toHaveCount(1);
   });
 
@@ -747,76 +779,255 @@ test.describe("a session of an agent shaped as Codex is", () => {
 });
 
 test.describe("under a workflow, with Claude Code set to run integrated", () => {
-  // New session follows the project's workflow, and so runs in a terminal:
-  // the other way offered is the integrated session the setting asks for,
+  // New session starts the workflow's orchestrator, which runs the way its
+  // agent is set: as a conversation. The other way offered is a terminal,
   // alone.
   const UNDER = { open: [PROJECT], settings: { ...WITH_WORKFLOW, integrated: ["claude-code"] } };
+  const spawns = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __spawns?: unknown[] }).__spawns ?? []);
 
-  test("the agent pane offers an integrated session beside a New session that is the workflow's terminal", async ({ page }) => {
+  test("New session starts the workflow's orchestrator as a conversation, told its workflow", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await expect(page.getByTestId("start-agent")).toHaveText("New session");
-    await expect(page.getByTestId("start-other")).toHaveText("New integrated session");
-    await page.getByTestId("start-other").click();
+    await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
-    // Started the other way, it is a pick: it follows no workflow.
-    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
-    await expect(page.getByTestId("run-chip")).toHaveCount(0);
-    // New session is the workflow's orchestrator, in a terminal: the
-    // choice it opens stands on the workflow.
-    await page.getByTestId("new-session").click();
-    await page.keyboard.press("Enter");
-    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
-    await expect(page.getByTestId("run-chip")).toBeVisible();
-    await expect(page.getByTestId("conversation")).toBeHidden();
+    await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    const [start] = await calls(page);
+    expect(start).toMatchObject({
+      method: "start",
+      options: { agent: "claude-code", model: "fable", startOnly: true },
+    });
+    const told = (start.options as { instructions?: string }).instructions ?? "";
+    expect(told).toContain('workflow "Build and review"');
+    expect(told).toContain('2. For the step "Work"');
+    expect(await spawns(page)).toEqual([]);
+    // The run's chip in the header keeps the keyboard it is clicked with,
+    // as it does over a terminal, so Escape puts its popover away.
+    await page.getByTestId("run-chip").click();
+    await expect(page.getByTestId("run-popover")).toBeVisible();
+    await expect(page.getByTestId("run-chip")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("run-popover")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toBeFocused();
+    // Away to another pane and back by key, the composer has it again.
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await page.keyboard.press("ControlOrMeta+2");
+    await expect(page.getByTestId("composer-input")).toBeFocused();
   });
 
-  test("the agent pane's New session starts the workflow's orchestrator in a terminal", async ({ page }) => {
+  test("Escape puts the run chip's popover away wherever the keyboard is, and never stops the turn", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await page.getByTestId("start-agent").click();
-    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
-    await expect(page.getByTestId("run-chip")).toBeVisible();
-    await expect(page.getByTestId("conversation")).toHaveCount(0);
+    const input = page.getByTestId("composer-input");
+    await expect(input).toBeEnabled();
+    await input.fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("${H}");`);
+    const status = page.locator(`${AGENT} header .meta`);
+    await expect(status).toHaveText("working");
+    const rules = page.getByTestId("run-popover");
+    const interrupted = async () => (await calls(page)).some((call) => call.method === "interrupt");
+
+    // Opened by a click that leaves the keyboard in the composer, as a
+    // click does in the macOS webview.
+    await expect(input).toBeFocused();
+    await page.getByTestId("run-chip").dispatchEvent("click");
+    await expect(rules).toBeVisible();
+    await expect(input).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(rules).toHaveCount(0);
+    expect(await interrupted()).toBe(false);
+    await expect(status).toHaveText("working");
+    await expect(input).toBeFocused();
+
+    // Shown by the pointer resting on the chip, the same.
+    await page.getByTestId("run-chip").hover();
+    await expect(rules).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(rules).toHaveCount(0);
+    expect(await interrupted()).toBe(false);
+
+    // With no rules open, Escape is the composer's, and stops the turn.
+    await page.mouse.move(700, 500);
+    await page.keyboard.press("Escape");
+    await expect.poll(interrupted).toBe(true);
   });
 
-  test("the palette offers an integrated session, never a terminal beside New session", async ({ page }) => {
+  test("the agent pane offers a terminal session beside New session, alone", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await expect(page.getByTestId("start-other")).toHaveText("New session in a terminal");
+    await page.getByTestId("start-other").click();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
+    // Started the other way, it is a pick: it follows no workflow.
+    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
+    expect(await spawns(page)).toEqual([expect.not.objectContaining({ instructions: expect.anything() })]);
+    // New session is the workflow's orchestrator, integrated: the choice it
+    // opens stands on the workflow.
+    await page.getByTestId("new-session").click();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.getByTestId("run-chip")).toBeVisible();
+  });
+
+  test("the palette offers a terminal session, alone, beside New session", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await page.getByTestId("go-to").click();
     await page.getByTestId("palette-field").fill(">new");
     const rows = page.getByTestId("palette-label");
     await expect(rows.filter({ hasText: "New session in demo" })).toHaveCount(1);
-    await expect(rows.filter({ hasText: "in a terminal" })).toHaveCount(0);
-    await rows.filter({ hasText: "New integrated session in demo" }).click();
-    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(rows.filter({ hasText: "New integrated session" })).toHaveCount(0);
+    await rows.filter({ hasText: "New session in a terminal in demo" }).click();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
     await expect(page.getByTestId("run-chip")).toHaveCount(0);
   });
 
-  test("the project menu offers an integrated session", async ({ page }) => {
+  test("the project menu offers a terminal session", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await page.locator(`[data-row="project:${PROJECT}"]`).hover();
     await page.getByTestId("project-more").click();
     await expect(page.getByTestId("project-menu-new")).toHaveText("New session");
-    await expect(page.getByTestId("project-menu-other")).toHaveText("New integrated session");
+    await expect(page.getByTestId("project-menu-other")).toHaveText("New session in a terminal");
     await page.getByTestId("project-menu-other").click();
-    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
     await expect(page.getByTestId("run-chip")).toHaveCount(0);
   });
 
-  test("the settings say once that a session under a workflow runs in a terminal", async ({ page }) => {
+  test("the settings no longer say a session under a workflow runs in a terminal", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await expect(page.getByTestId("agent-status")).toBeVisible();
     await page.keyboard.press("ControlOrMeta+,");
     await page.getByTestId("settings-tab-sessions").click();
-    await expect(page.getByTestId("session-kind-workflow")).toHaveText(
-      "A session that follows a workflow runs in a terminal, whichever is chosen here, since that is how its orchestrator is told the workflow.",
+    await expect(page.getByTestId("session-kind")).toHaveCount(1);
+    await expect(page.getByTestId("session-kind-workflow")).toHaveCount(0);
+    await expect(page.getByText("follows a workflow")).toHaveCount(0);
+  });
+
+  test("the orchestrator runs the workflow in its conversation, with its worker under it", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("composer-input")).toBeEnabled();
+    await page.getByTestId("composer-input").fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await agent(
+      page,
+      `f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "b-plan", parent: null, text: "I'll hand the fix to a session for the Work step.", done: true });
+       window.__startCall = f.startTool("${H}", "mcp__agent-workbench__start", { project: "${PROJECT}", prompt: "Fix the flaky cache test", step: "Work" }, { kind: "mcp" });`,
     );
-    await expect(page.getByText("follows a workflow runs in a terminal")).toHaveCount(1);
+
+    // A start the workflow refuses is said over the conversation too, and
+    // leaves the composer clear.
+    await conduct(page, { id: "c-bare", tool: "start", arguments: { project: PROJECT, prompt: "Fix it" }, session: "integrated-session-1" });
+    await expect.poll(() => answerTo(page, "c-bare")).not.toBeNull();
+    expect((await answerTo(page, "c-bare"))!.error).toContain('You follow the workflow "Build and review"');
+    const refused = page.getByTestId("workflow-refused");
+    await expect(refused).toBeVisible();
+    const line = (await refused.boundingBox())!;
+    const composer = (await page.getByTestId("composer-input").boundingBox())!;
+    expect(line.y + line.height).toBeLessThanOrEqual(composer.y);
+    await page.getByTestId("workflow-refused-dismiss").click();
+    await expect(refused).toHaveCount(0);
+
+    // A start for a step is asked about once, and its worker runs the way
+    // its agent is set, told no workflow.
+    await conduct(page, {
+      id: "c-work",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky cache test", step: "Work", name: "Fix the cache" },
+      session: "integrated-session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-work")).not.toBeNull();
+    const started = (await answerTo(page, "c-work"))!;
+    expect(started.error).toBeNull();
+    expect(started.content).toContain('Started session integrated-session-2 for step "Work"');
+    const worker = (await calls(page)).filter((call) => call.method === "start").at(-1)!;
+    expect(worker).toMatchObject({ options: { model: "sonnet" } });
+    expect((worker.options as { instructions?: string }).instructions).toBeUndefined();
+    expect(await spawns(page)).toEqual([]);
+
+    // The call finishes, and the thread hangs the worker under it.
+    await page.evaluate(
+      (content) => {
+        const f = (window as unknown as { __integrated: { finishTool(id: string, call: string, output: string): void; endTurn(id: string): void } }).__integrated;
+        f.finishTool("int-1", (window as unknown as { __startCall: string }).__startCall, content);
+        f.endTurn("int-1");
+      },
+      started.content!,
+    );
+    const rows = page.getByTestId("conversation").getByTestId("started-session");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("Fix the cache");
+    // On the rail it hangs under the orchestrator with its step.
+    await expect(page.locator("section[data-pane='sessions']").getByTestId("started-role")).toHaveText("Work");
+
+    // The worker may not start one of its own, whatever it says it is.
+    await conduct(page, {
+      id: "c-claim",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Split it", step: "Work", role: "orchestrator" },
+      session: "integrated-session-2",
+    });
+    await expect.poll(() => answerTo(page, "c-claim")).not.toBeNull();
+    expect((await answerTo(page, "c-claim"))!.error).toBe(
+      "A session that another session started cannot start sessions of its own.",
+    );
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+  });
+});
+
+test.describe("a Codex orchestrator, integrated", () => {
+  const CODEX_FLOW = { ...BUILD_AND_REVIEW, orchestrator: { agent: "codex", model: "default" } };
+
+  test("resumed under a changed workflow, says that Codex goes on as it began", async ({ page }) => {
+    await installFakeCore(page, {
+      open: [PROJECT],
+      agents: ["codex"],
+      integrable: ["claude-code", "codex"],
+      settings: {
+        workflows: { list: [CODEX_FLOW], default: "Build and review", overrides: {} },
+        integrated: ["codex"],
+      },
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    const [first] = await calls(page);
+    expect(first).toMatchObject({ method: "start", options: { agent: "codex", startOnly: true } });
+    await agent(page, `f.end("${H}", true);`);
+    await expect(page.getByTestId("resume-session")).toHaveText("Resume");
+
+    // The workflow gives the orchestrator its own subagents from now on.
+    await page.keyboard.press("ControlOrMeta+,");
+    await page.getByTestId("settings-tab-workflows").click();
+    await page.getByTestId("workflow-start-only").uncheck();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("settings")).toHaveCount(0);
+
+    await page.getByTestId("resume-session").click();
+    const kept = page.getByTestId("session-kept");
+    await expect(kept).toBeVisible();
+    await expect(kept).toContainText("Resumed as it began");
+    await expect(kept).toContainText(
+      'Codex goes on with the instructions and the subagent tools this session began with, not those of "Build and review" as it is now. Start a new session for those.',
+    );
+    const resumed = (await calls(page)).filter((call) => call.method === "start").at(-1)!;
+    expect(resumed).toMatchObject({ options: { session: "agent-thread-1", startOnly: false, afresh: true } });
+    await page.getByTestId("session-kept-dismiss").click();
+    await expect(kept).toHaveCount(0);
   });
 });
 

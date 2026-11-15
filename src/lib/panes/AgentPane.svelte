@@ -33,6 +33,7 @@
     sessions,
     statusLabel,
     resumeWithout,
+    dismissKept,
     statusMessage,
     titled,
     wake,
@@ -277,6 +278,19 @@
           data-testid="workflow-refused-dismiss">×</button
         >
       </p>
+    {:else if current !== null && current.keptFromStart !== null}
+      <!-- What Codex kept from the session's start, which this start
+           could not change. -->
+      <p class="refused" data-testid="session-kept">
+        <span class="refused-lead">Resumed as it began</span>
+        <span class="refused-text">{current.keptFromStart}</span>
+        <button
+          class="refused-close"
+          onclick={() => dismissKept(current!.key)}
+          aria-label="Dismiss"
+          data-testid="session-kept-dismiss">×</button
+        >
+      </p>
     {/if}
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
@@ -377,6 +391,12 @@
 
   .crumb:has(:global(.crumb-text.cut)) {
     visibility: hidden;
+  }
+
+  /* Gone before a run's chip is cut short, so once it is they leave no
+     gap beside it either. */
+  :global(.head:has([data-short])) .crumb {
+    display: none;
   }
 
   /* Sits over the terminal rather than replacing it: the buffer of a stopped
