@@ -32,8 +32,9 @@ state at a glance, and projects on other machines over ssh.
 - **Orchestrator.** A session that starts and steers other sessions: it
   opens one per piece of work, in any open project and on a worktree of its
   own, waits on them and answers for them. The sessions it starts fold away
-  under their projects until one needs you. See
-  [orchestrator](docs/orchestrator.md).
+  under their projects until one needs you. A workflow, turned on in the
+  settings or picked when starting, holds it to steps, models and rounds of
+  review. See [orchestrator](docs/orchestrator.md).
 - **Plugins.** A plugin adds to the workbench from outside it: tools for the
   agent, a section under the file tree with rows and actions, and a page of
   its own in the changes pane. The settings offer the sources the workbench

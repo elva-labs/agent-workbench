@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { NO_WORKFLOW, PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
 
 const MOD = "ControlOrMeta";
 const AGENT = "section[data-pane='agent']";
@@ -227,7 +227,8 @@ test.describe("a new session from the palette with accounts", () => {
     page.locator("[data-testid='palette-row'][aria-selected='true']");
 
   test.beforeEach(async ({ page }) => {
-    await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
+    // No workflows, so the account is the last question.
+    await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK, ...NO_WORKFLOW } });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.keyboard.press(COMMANDS);

@@ -1704,14 +1704,14 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_machine_has_the_default_workflow_and_marks_it_for_new_sessions() {
+    fn a_fresh_machine_has_the_default_workflow_and_no_workflow_for_new_sessions() {
         let home = home("workflows-fresh");
         let store = Store::new(&home, Arc::new(Recorder::default()));
         let loaded = store.load();
         assert!(!loaded.stored);
         let workflows = &loaded.settings.workflows;
         assert_eq!(workflows.list.len(), 1);
-        assert_eq!(workflows.default.as_deref(), Some(workflow::DEFAULT_NAME));
+        assert_eq!(workflows.default, None);
         assert!(workflows.overrides.is_empty());
     }
 
@@ -1731,7 +1731,11 @@ mod tests {
         store.set(&json!({ "palette": "mono" })).unwrap();
         let text = std::fs::read_to_string(settings_path(&home)).unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(value["workflows"]["default"], workflow::DEFAULT_NAME);
+        assert_eq!(value["workflows"]["default"], Value::Null);
+        assert_eq!(
+            value["workflows"]["list"][0]["name"],
+            workflow::DEFAULT_NAME
+        );
         assert_eq!(value["workflows"]["list"][0]["steps"][1]["kind"], "review");
     }
 

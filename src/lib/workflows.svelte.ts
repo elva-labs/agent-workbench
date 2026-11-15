@@ -11,6 +11,7 @@ import type {
 import { AGENT_ORDER, modelLabel, mostCapable, sameModel } from "$lib/models";
 import { core } from "$lib/core";
 import { persist, recovering } from "$lib/persist";
+import { startsOnly } from "$lib/workflowInstructions";
 
 /**
  * The workflows a session can follow.
@@ -55,8 +56,9 @@ export const workflows = $state({
   /** The workflows in the order they are shown. A window that has heard
       nothing yet has the one a fresh install has. */
   list: [defaultWorkflow()] as Workflow[],
-  /** The one new sessions start with; null is none. */
-  default: defaultWorkflow().name as string | null,
+  /** The one new sessions start with; null is none, which is what a
+      fresh install has. */
+  default: null as string | null,
   /** The projects with a word of their own: a workflow's name, or null
       for none, whatever the default. */
   overrides: {} as Record<string, string | null>,
@@ -66,6 +68,25 @@ export const workflows = $state({
   /** Why the last change in the editor was not kept, while it matters. */
   refused: null as string | null,
 });
+
+let known: () => void = () => {};
+let knowing = new Promise<void>((settle) => (known = settle));
+
+/** Settles once the window has the machine's workflows, or knows it keeps
+    only its own: what a resumed session follows is read after that. */
+export function workflowsKnown(): Promise<void> {
+  return knowing;
+}
+
+/** The window has the workflows it will go on with. */
+export function knowWorkflows() {
+  known();
+}
+
+/** Test seam: the window has not heard what the workflows are. */
+export function unknowWorkflows() {
+  knowing = new Promise<void>((settle) => (known = settle));
+}
 
 /** What the core holds the settings to. */
 export const MOST_WORKFLOWS = 16;
@@ -89,13 +110,15 @@ export function workflowsSettings(): Settings["workflows"] {
 }
 
 /** Takes the core's word for the workflows, which is the machine's. A
-    settings object from before workflows existed gets the default one. A
-    choice naming a workflow the list does not hold is dropped. */
+    settings object from before workflows existed gets the default one,
+    with new sessions following none. A choice naming a workflow the list
+    does not hold is dropped. */
 export function adoptWorkflows(settings: Settings["workflows"] | undefined) {
+  knowWorkflows();
   if (settings === undefined || !Array.isArray(settings.list)) {
     const fresh = defaultWorkflow();
     workflows.list = [fresh];
-    workflows.default = fresh.name;
+    workflows.default = null;
     workflows.overrides = {};
     workflows.unread = [];
     return;
@@ -223,6 +246,18 @@ export function setProblem(set: Settings["workflows"]): string | null {
     if (!there(choice)) return `There is no workflow called ${choice}.`;
   }
   return null;
+}
+
+export { startsOnly };
+
+/** Turns a workflow's own subagents off, so start is the one way it
+    delegates, or back on. */
+export function setStartOnly(name: string, on: boolean): string | null {
+  return edit(name, (draft) => {
+    if (on) delete draft.startOnly;
+    else draft.startOnly = false;
+    return null;
+  });
 }
 
 export function workflowNamed(name: string | null | undefined): Workflow | undefined {
@@ -611,7 +646,10 @@ export function readWorkflow(value: unknown): Workflow {
   if (!isObject(value)) {
     throw new Error("A workflow is an object of a name, an orchestrator and steps.");
   }
-  only(value, ["name", "orchestrator", "steps"], "A workflow");
+  only(value, ["name", "orchestrator", "steps", "startOnly"], "A workflow");
+  if (value.startOnly !== undefined && typeof value.startOnly !== "boolean") {
+    throw new Error("A workflow's startOnly is true or false.");
+  }
   if (typeof value.name !== "string") throw new Error("A workflow has a name.");
   if (!Array.isArray(value.steps)) throw new Error("A workflow's steps are an array.");
   const steps = value.steps.map((raw, at): WorkflowStep => {
@@ -649,6 +687,9 @@ export function readWorkflow(value: unknown): Workflow {
     name: value.name.trim(),
     orchestrator: readModel(value.orchestrator, "The orchestrator"),
     steps,
+    // On is what a workflow is without the field, which is how the
+    // settings file keeps it.
+    ...(value.startOnly === false ? { startOnly: false } : {}),
   };
   const problem = workflowProblem(workflow);
   if (problem !== null) throw new Error(problem);
@@ -670,15 +711,42 @@ export function passesText(step: ReviewStep): string {
   return step.reviewerApproves ? "the reviewer approves" : "the orchestrator agrees";
 }
 
+/** What a step allows, a line each in the words its settings use, for the
+    person reading about a session that runs for it: what it does, the
+    models, and how many sessions at once or when a review passes the work
+    and how often it sends it back. A review names the work it checks when
+    that is known. */
+export function stepFacts(step: WorkflowStep, work: string | null = null): string[] {
+  const [first, ...rest] = step.models;
+  const label = (model: WorkflowModel) => modelLabel(model.agent, model.model);
+  const models =
+    first === undefined
+      ? "any model"
+      : rest.length === 0
+        ? label(first)
+        : `${label(first)}, used first, or ${rest.map(label).join(" or ")}`;
+  if (step.kind === "work")
+    return ["Does work.", `Models it may use: ${models}.`, `Sessions at once: ${step.parallel}.`];
+  const times = step.limit === 1 ? "once" : `${step.limit} times`;
+  return [
+    work === null ? "Reviews work." : `Reviews ${work}.`,
+    `Models it may use: ${models}.`,
+    `The work passes when ${passesText(step)}.`,
+    `Otherwise: go back to ${step.backTo} at most ${times}, then ask me.`,
+    `A piece is reviewed ${step.limit + 1} times at most before that.`,
+  ];
+}
+
 /** A workflow in a line, for showing what a change makes of it: the
     orchestrator, then each step with its models and what bounds it. */
 export function describeWorkflow(workflow: Workflow): string {
   const steps = workflow.steps.map((step) =>
     step.kind === "work"
       ? `${step.name} (${modelsText(step.models)}, ${step.parallel} at once)`
-      : `${step.name} (${modelsText(step.models)}, passes when ${passesText(step)}, else back to ${step.backTo} ${step.limit} times at most)`,
+      : `${step.name} (${modelsText(step.models)}, passes when ${passesText(step)}, else back to ${step.backTo} ${step.limit === 1 ? "once" : `${step.limit} times`} at most)`,
   );
-  return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}`;
+  const own = startsOnly(workflow) ? "" : ", keeping its own subagents";
+  return `${modelLabel(workflow.orchestrator.agent, workflow.orchestrator.model)} directs ${steps.join(", then ")}${own}`;
 }
 
 /** What an agent's change does to the workflows: one written whole,
@@ -817,6 +885,7 @@ function save(): Promise<string | null> {
 
 /** Test seam. */
 export function reset() {
+  knowing = Promise.resolve();
   workflows.list = [];
   workflows.default = null;
   workflows.overrides = {};

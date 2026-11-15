@@ -106,6 +106,12 @@ struct SpawnParams {
     model: Option<String>,
     #[serde(default)]
     config_dir: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
+    #[serde(default)]
+    start_only: bool,
+    #[serde(default)]
+    afresh: bool,
     cols: u16,
     rows: u16,
 }
@@ -127,6 +133,8 @@ struct IntegratedStartParams {
     effort: Option<String>,
     #[serde(default)]
     config_dir: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -397,6 +405,9 @@ pub fn dispatch(
                 p.prompt.as_deref(),
                 p.model.as_deref(),
                 p.config_dir.as_deref(),
+                p.instructions.as_deref(),
+                p.start_only,
+                p.afresh,
                 p.cols,
                 p.rows,
                 make_output,
@@ -413,6 +424,7 @@ pub fn dispatch(
                 p.mode.as_deref(),
                 p.effort.as_deref(),
                 p.config_dir.as_deref(),
+                p.instructions.as_deref(),
             )?)
         }
         "integrated_trust" => {
@@ -659,7 +671,10 @@ mod tests {
     #[cfg(unix)]
     use std::sync::Mutex;
 
+    /// A core made once the test process's environment is settled, so the
+    /// shell it starts is the system's `sh` and reads no startup files.
     fn core() -> Core {
+        crate::scratch::isolate();
         Core::new(Arc::new(Recorder::default()))
     }
 
@@ -972,14 +987,25 @@ mod tests {
         )
         .expect_err("a trust names its project");
         assert!(missing.contains("bad parameters"), "{missing}");
+        // A Codex home of its own, so that no trust the developer gave decides.
+        let folder = Scratch::new("protocol-codex-untrusted");
+        let codex_home = Scratch::new("protocol-codex-home");
         let codex = dispatch(
             &core,
             "integrated_start",
-            json!({ "agent": "codex", "project": "/tmp" }),
+            json!({ "agent": "codex", "project": folder.path(), "configDir": codex_home.path() }),
             no_output,
         )
-        .expect_err("codex has no integrated mode here");
-        assert!(codex.contains("integrated"), "{codex}");
+        .expect_err("codex runs integrated only in a folder it trusts");
+        assert!(codex.starts_with(crate::integrated::UNTRUSTED), "{codex}");
+        let flow = dispatch(
+            &core,
+            "integrated_start",
+            json!({ "agent": "claude-code", "project": "/tmp", "instructions": "1. Direct the work." }),
+            no_output,
+        )
+        .expect_err("a workflow's instructions cannot be passed to an integrated session");
+        assert_eq!(flow, crate::api::NO_INTEGRATED_WORKFLOW);
         for (method, params) in [
             (
                 "integrated_send",
@@ -1106,9 +1132,8 @@ mod tests {
             no_output,
         )
         .unwrap();
-        // The shell reads its own startup files before it reads the line, so
-        // the output comes when it comes; the bound is only for a shell that
-        // never answers.
+        // The shell is the system's `sh`, which reads no startup files before
+        // it reads the line; the bound is only for a shell that never answers.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         let mut text = String::new();
         while std::time::Instant::now() < deadline {
