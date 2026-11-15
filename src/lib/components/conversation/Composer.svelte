@@ -204,8 +204,10 @@
   });
 
   // Focusing the agent pane, or this session coming on screen in it, puts
-  // the keyboard here, unless another control of this same session has it
-  // or a dialog holds it. A control of a session now hidden does not count.
+  // the keyboard here, unless another control of this same session has it,
+  // a control of the pane's own does, such as the workflow tag in its
+  // header, or a dialog holds it. A control of a session now hidden does
+  // not count.
   $effect(() => {
     layout.focusRequest;
     const focused = layout.focus === "agent";
@@ -213,8 +215,12 @@
     untrack(() => {
       if (overlayHoldsKeyboard()) return;
       const owner = document.activeElement;
-      const own = field!.closest("[data-session]");
-      if (owner !== null && owner !== document.body && owner !== field && own?.contains(owner)) return;
+      if (owner !== null && owner !== document.body && owner !== field) {
+        const own = field!.closest("[data-session]");
+        const pane = field!.closest("section[data-pane]");
+        if (own?.contains(owner)) return;
+        if (pane?.contains(owner) && owner.closest("[data-session]") === null) return;
+      }
       field!.focus();
     });
   });

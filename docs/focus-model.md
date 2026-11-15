@@ -304,8 +304,9 @@ The agent pane of an integrated session is a composer, a thread and, while
 the agent waits on the user, a dock between them; see
 [sessions](sessions.md#integrated-sessions). Focusing the pane by key, or
 the session coming on screen in it, puts the keyboard in its composer,
-unless another control of that same session has it; a session going off
-screen lets the keyboard go. With no composer, the keyboard goes to Resume
+unless another control of that same session has it, or a control of the
+pane's own, such as the workflow tag in its header, as for a terminal; a
+session going off screen lets the keyboard go. With no composer, the keyboard goes to Resume
 once the session has ended, and to the card that asks before a session can
 run, which is read before its buttons are reached.
 

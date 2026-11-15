@@ -803,6 +803,19 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     expect(told).toContain('workflow "Build and review"');
     expect(told).toContain('2. For the step "Work"');
     expect(await spawns(page)).toEqual([]);
+    // The tag in the header keeps the keyboard it is clicked with, as it
+    // does over a terminal, so Escape puts its rules away.
+    await page.getByTestId("workflow-tag").click();
+    await expect(page.getByTestId("workflow-rules")).toBeVisible();
+    await expect(page.getByTestId("workflow-tag")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("workflow-rules")).toHaveCount(0);
+    await expect(page.getByTestId("workflow-tag")).toBeFocused();
+    // Away to another pane and back by key, the composer has it again.
+    await page.keyboard.press("ControlOrMeta+1");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
+    await page.keyboard.press("ControlOrMeta+2");
+    await expect(page.getByTestId("composer-input")).toBeFocused();
   });
 
   test("the agent pane offers a terminal session beside New session, alone", async ({ page }) => {

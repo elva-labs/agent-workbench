@@ -28,8 +28,21 @@ function textWidth(node: HTMLElement): number {
   return range.getBoundingClientRect().width;
 }
 
+/** The room between an element's parts that none of them gives back as it
+    narrows: the gaps between them and their own margins. */
+function between(node: HTMLElement): number {
+  const parts = [...node.children];
+  const gap = parseFloat(getComputedStyle(node).columnGap) || 0;
+  const margins = parts.reduce((sum, part) => {
+    const style = getComputedStyle(part);
+    return sum + (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0);
+  }, 0);
+  return gap * Math.max(parts.length - 1, 0) + margins;
+}
+
 /** Sets `--keep` on a header's head: the width of what in it is marked
-    `data-keep`, which stays whole until the header's status has given way.
+    `data-keep`, with the room between the head's parts, which stays whole
+    until the header's status has given way.
     Measured again when the head or what it keeps changes size, and when
     what it holds changes. */
 export function keeps(node: HTMLElement) {
@@ -53,7 +66,8 @@ export function keeps(node: HTMLElement) {
     // A pixel over, so a width laid out to a fraction short of the text
     // never cuts it.
     const width = kept().reduce((sum, part) => sum + textWidth(part), 0);
-    node.style.setProperty("--keep", width > 0 ? `${Math.ceil(width) + 1}px` : "0px");
+    const keep = width > 0 ? width + between(node) : 0;
+    node.style.setProperty("--keep", keep > 0 ? `${Math.ceil(keep) + 1}px` : "0px");
   }
 
   watch();
