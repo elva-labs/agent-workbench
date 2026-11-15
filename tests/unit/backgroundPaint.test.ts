@@ -174,20 +174,22 @@ describe("painting the background the palette keeps", () => {
     expect(document.documentElement.dataset.background).toBe("");
   });
 
-  it("sets the background aside while the system asks for more contrast", () => {
+  it("sets the background aside while the system asks for more contrast or forces its own colours", () => {
     const real = window.matchMedia;
-    window.matchMedia = ((query: string) => ({
-      ...real(query),
-      matches: query === "(prefers-contrast: more)",
-    })) as typeof window.matchMedia;
-    try {
-      adoptTheme({ backgrounds: { teal: LAGOON } });
-      expect(document.documentElement.dataset.background).toBeUndefined();
-      expect(sheet()).toBe("");
-    } finally {
-      window.matchMedia = real;
+    for (const asking of ["(prefers-contrast: more)", "(forced-colors: active)"]) {
+      window.matchMedia = ((query: string) => ({
+        ...real(query),
+        matches: query.split(",").some((part) => part.trim() === asking),
+      })) as typeof window.matchMedia;
+      try {
+        adoptTheme({ backgrounds: { teal: LAGOON } });
+        expect(document.documentElement.dataset.background, asking).toBeUndefined();
+        expect(sheet()).toBe("");
+      } finally {
+        window.matchMedia = real;
+      }
+      adoptTheme({});
+      expect(document.documentElement.dataset.background).toBe("");
     }
-    adoptTheme({});
-    expect(document.documentElement.dataset.background).toBe("");
   });
 });

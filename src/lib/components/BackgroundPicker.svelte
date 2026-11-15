@@ -24,6 +24,7 @@
   } from "$lib/background";
   import { coloursOf } from "$lib/paletteColours";
   import {
+    MORE_CONTRAST,
     PALETTES,
     endPreview,
     previewBackground,
@@ -80,8 +81,7 @@
   let rim = $state(false);
   let keepTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const moreContrast =
-    typeof window.matchMedia === "function" ? window.matchMedia("(prefers-contrast: more)") : null;
+  const moreContrast = typeof window.matchMedia === "function" ? window.matchMedia(MORE_CONTRAST) : null;
   let setAside = $state(moreContrast?.matches ?? false);
   const followContrast = () => (setAside = moreContrast?.matches ?? false);
   moreContrast?.addEventListener?.("change", followContrast);

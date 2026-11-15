@@ -124,8 +124,9 @@ are: their outline, the gap between them and the status rule take the
 background, and the rules inside them keep their colour. A splitter under the pointer, while it is focused or dragged, the
 focus rings, the focused pane's mark and a chosen row stay in the accent.
 
-The system's increase-contrast setting sets the background aside, with
-every line and text as they are without one, and the section says so.
+The system's increase-contrast setting, or a contrast theme that forces
+the system's own colours, sets the background aside, with every line and
+text as they are without one, and the section says so.
 
 ## Custom styles
 

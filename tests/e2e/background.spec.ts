@@ -126,14 +126,20 @@ test("comes back on a reload with no frame of the plain chrome", async ({ page }
   expect(frames.every(Boolean)).toBe(true);
 });
 
-test("is set aside while the system asks for more contrast", async ({ page }) => {
+test("is set aside while the system asks for more contrast or forces its own colours", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
   const point = await at(page, SESSIONS, 0.5, 0.8);
+  const stamped = () => page.evaluate(() => document.documentElement.dataset.background !== undefined);
   expect(blueish(await pixel(page, ...point))).toBeGreaterThan(8);
   await page.emulateMedia({ contrast: "more" });
   await expect.poll(async () => blueish(await pixel(page, ...point))).toBeLessThan(4);
   await page.emulateMedia({ contrast: "no-preference" });
   await expect.poll(async () => blueish(await pixel(page, ...point))).toBeGreaterThan(8);
+  // A contrast theme on Windows forces the system's colours instead.
+  await page.emulateMedia({ forcedColors: "active" });
+  await expect.poll(stamped).toBe(false);
+  await page.emulateMedia({ forcedColors: "none" });
+  await expect.poll(stamped).toBe(true);
 });
 
 test("an agent's background is shown on the palette's swatches, and kept only when allowed", async ({ page }) => {

@@ -357,10 +357,13 @@ function paintThemes() {
   if (sheet.textContent !== css) sheet.textContent = css;
 }
 
-/** Whether the system asks for more contrast, which sets a background
-    aside. */
+/** The system asking for more contrast, by a setting or by forcing its
+    own colours as a contrast theme on Windows does: either sets a
+    background aside. */
+export const MORE_CONTRAST = "(prefers-contrast: more), (forced-colors: active)";
+
 function moreContrast(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-contrast: more)").matches;
+  return typeof window.matchMedia === "function" && window.matchMedia(MORE_CONTRAST).matches;
 }
 
 let contrastFollowed = false;
@@ -369,7 +372,7 @@ let contrastFollowed = false;
 function followContrast() {
   if (contrastFollowed || typeof window.matchMedia !== "function") return;
   contrastFollowed = true;
-  window.matchMedia("(prefers-contrast: more)").addEventListener?.("change", () => applyTheme());
+  window.matchMedia(MORE_CONTRAST).addEventListener?.("change", () => applyTheme());
 }
 
 /** The background the window paints now: the one being picked, else the
