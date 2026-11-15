@@ -142,6 +142,31 @@ describe("the tab stop rule", () => {
     expect(pressed).toBe(2);
   });
 
+  it("moves a Tab the browser left where it was, and nothing that moved since", async () => {
+    document.body.innerHTML = `<button id="one">One</button><button id="two">Two</button>`;
+    await settle();
+    // jsdom lays nothing out, so every stop is taken as drawn.
+    for (const button of document.querySelectorAll("button"))
+      button.getClientRects = () => [{}] as unknown as DOMRectList;
+    const one = document.getElementById("one")!;
+    const two = document.getElementById("two")!;
+    one.focus();
+    // jsdom moves nothing on Tab, as WebKit does after a click in a list.
+    key(one, "Tab");
+    await settle();
+    expect(document.activeElement).toBe(two);
+    // A Tab whose move a later key undid is not moved again.
+    key(two, "Tab");
+    one.focus();
+    two.focus();
+    await settle();
+    expect(document.activeElement).toBe(two);
+    key(two, "Tab", { shiftKey: true });
+    key(two, "ArrowDown");
+    await settle();
+    expect(document.activeElement).toBe(two);
+  });
+
   it("stands down for a key the list's owner handled", async () => {
     document.body.innerHTML = `
       <div role="radiogroup" id="group">

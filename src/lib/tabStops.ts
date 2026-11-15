@@ -125,7 +125,8 @@ function onMutations(records: MutationRecord[]) {
   const groups = new Set<HTMLElement>();
   for (const record of records) {
     const target = record.target;
-    if (!(target instanceof HTMLElement)) continue;
+    // A terminal draws a lot, and nothing in it is the rule's.
+    if (!(target instanceof HTMLElement) || target.closest(TERMINAL) !== null) continue;
     if (record.type === "childList") {
       for (const node of record.addedNodes) if (node instanceof Element) scan(node, groups);
       if (record.removedNodes.length > 0) {
@@ -236,16 +237,24 @@ function onTab(e: KeyboardEvent) {
   }
   // WebKit starts Tab from where the last click landed, so after a click
   // on a row of a list that already has the keyboard, Shift+Tab finds the
-  // list itself and the keyboard stays. A key that moved nothing is moved
-  // here, once the browser has had its turn.
+  // list itself and the keyboard stays. A Tab that moved nothing is moved
+  // here, once the browser has had its turn, unless anything moved or
+  // another key came in the meantime.
   const before = active;
+  const press = presses;
+  const moved = moves;
   setTimeout(() => {
-    if (e.defaultPrevented || document.activeElement !== before) return;
-    if (!(before instanceof HTMLElement) || before === document.body) return;
+    if (presses !== press || moves !== moved || e.defaultPrevented) return;
+    if (document.activeElement !== before || !(before instanceof HTMLElement) || before === document.body) return;
     const stops = stopsIn(document.body);
     if (stops.length > 1) nextStop(stops, before, e.shiftKey).focus();
   });
 }
+
+/** Keys pressed and moves of the keyboard, counted so a Tab that moved
+    nothing is told from one whose move was undone by what came after. */
+let presses = 0;
+let moves = 0;
 
 /** Keeps Tab and Shift+Tab inside `root`, round its ends, for a part that
     holds the keyboard while it is up without being a dialog, such as a
@@ -261,6 +270,7 @@ export function tabWithin(e: KeyboardEvent, root: HTMLElement) {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  presses += 1;
   if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.key === "Tab") {
     onTab(e);
@@ -273,6 +283,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function onFocusIn(e: FocusEvent) {
+  moves += 1;
   const item = e.target instanceof HTMLElement ? e.target : null;
   if (item === null || !item.matches(ITEM)) return;
   const group = rovingGroupOf(item);
