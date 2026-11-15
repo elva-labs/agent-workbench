@@ -1054,8 +1054,9 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * that is not installed is refused on the row.
  *
  * It runs the way the agent's setting says, unless started the other way. A
- * session under a workflow, or resumed from one that followed one, runs in a
- * terminal, the one way its orchestrator is told the workflow.
+ * session under a workflow runs in a terminal, the one way its orchestrator
+ * is told the workflow, and so does a resumed one that was ever told one,
+ * with or without it now.
  */
 export function create(
   project: string,
@@ -1068,12 +1069,11 @@ export function create(
   workflow?: Workflow | null,
   kind?: SessionKind,
 ): Session {
-  // A resumed session that followed a workflow follows one again, or is
-  // asked about it, so it runs in a terminal as an orchestrator does.
-  const followed =
-    workflow === undefined &&
-    resumedFrom !== null &&
-    (sessions.workflows[resumedFrom]?.workflow ?? null) !== null;
+  // A resumed session that was ever told a workflow runs in a terminal: it
+  // follows one again, is asked about one that is gone, or is told to let
+  // go of the instructions it recorded, and only a terminal session's start
+  // carries any of that.
+  const followed = resumedFrom !== null && sessions.workflows[resumedFrom] !== undefined;
   // Started integrated by name is a pick, as an agent picked is: it runs
   // alone, whatever the project follows.
   const following =

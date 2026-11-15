@@ -222,4 +222,13 @@ describe("a session under a workflow", () => {
     expect(create(PROJECT, "followed", "claude-code").kind).toBe("terminal");
     expect(create(PROJECT, "plain", "claude-code").kind).toBe("integrated");
   });
+
+  it("resumed without its workflow, or from history, runs in a terminal to be told to let go of it", () => {
+    // The review's case: resumed without the workflow it followed, the
+    // record says what it was told and follows none.
+    setKind("claude-code", "integrated");
+    sessions.workflows["without"] = { workflow: null, told: "1. Direct the work.", project: PROJECT };
+    expect(create(PROJECT, "without", "claude-code").kind).toBe("terminal");
+    expect(create(PROJECT, "without", "claude-code", null, null, null, null, null).kind).toBe("terminal");
+  });
 });
