@@ -319,6 +319,9 @@ run, which is read before its buttons are reached.
 | <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
 | <kbd>Tab</kbd> or <kbd>Enter</kbd> in the slash menu | Puts the marked one in the composer, a space after it |
 | <kbd>Esc</kbd> in the slash menu | Closes the menu, keeping what is written; it stops nothing |
+| <kbd>@</kbd> at the start or after a space | Opens the project's files, where it has a git repository |
+| <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
+| <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
 
@@ -352,8 +355,9 @@ the keyboard, so the pointer and the arrows move one mark, and the keyboard
 going anywhere else, by a chord or a press, puts the menu away and stays
 where it went.
 
-The slash menu never takes the keyboard: the composer keeps it and names the
-marked row to a screen reader, and the arrows, <kbd>Tab</kbd>,
+The slash menu and the files menu never take the keyboard: the composer
+keeps it and names the marked row to a screen reader, says how many rows
+there are or that none match, and the arrows, <kbd>Tab</kbd>,
 <kbd>Enter</kbd> and <kbd>Esc</kbd> act on the menu only while it is open
 with something in it. A key that is part of a composition, as an input
 method makes one, goes to the composition. While the agent is still
