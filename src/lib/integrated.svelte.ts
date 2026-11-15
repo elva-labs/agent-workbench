@@ -1,6 +1,7 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
-import { unsent } from "$lib/mention";
+import { unsent, type Sent } from "$lib/mention";
+import { mentionedIn } from "$lib/mentioned.svelte";
 import { readsAsYou } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
@@ -519,6 +520,7 @@ export function send(
   words: string,
   images: IntegratedImage[] = [],
   from: string | null = null,
+  mentions: readonly Sent[] = [],
 ): string | null {
   const link = links.get(key);
   const session = byKey(key);
@@ -527,6 +529,7 @@ export function send(
   const note = from === null ? noteFor(key) : null;
   const text = note === null ? words : `${note.text}\n\n${words}`;
   const id = crypto.randomUUID();
+  mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
   if (note !== null) notes.set(id, { key, note });
   // A message sent is the agent spoken to, by the user or by a session
@@ -538,7 +541,7 @@ export function send(
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt.
   if (session.title === null) {
-    const line = unsent(spoken(text, from === null).text)
+    const line = unsent(spoken(text, from === null).text, mentions)
       .draft.split("\n")
       .find((candidate) => candidate.trim() !== "")
       ?.trim();

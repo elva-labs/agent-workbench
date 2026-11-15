@@ -1337,7 +1337,15 @@ export async function installFakeCore(
           events: "",
         }),
         gitStatus: async () => state.fixture.status,
-        gitFiles: async () => state.fixture.files,
+        // As the core does: the index and what is untracked, so a file
+        // deleted from the tree but not from the index is still listed.
+        gitFiles: async () =>
+          [
+            ...new Set([
+              ...state.fixture.files,
+              ...state.fixture.status.filter((file) => file.status === "D").map((file) => file.path),
+            ]),
+          ].sort(),
         // A search over what the fixture's viewer shows: every listed file
         // "contains" the shared header line, and the cache module a struct.
         gitGrep: async (_root: string, query: string, scope: string) => {

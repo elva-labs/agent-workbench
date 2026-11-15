@@ -8,7 +8,8 @@ import { FileIndex, type Found } from "$lib/mention";
  * The files are read the way the changes pane reads them, from git, so
  * they are the working tree's own, ignored files left out, on this machine
  * or another, in a worktree when the session is in one. They are read once
- * each time the menu opens, never on a keystroke. A query against a few
+ * each time the menu opens, never on a keystroke, and until they are in a
+ * query is answered from the listing before. A query against a few
  * thousand files is answered at once; against more it runs in a worker,
  * away from the window's thread, so a repository of tens of thousands of
  * files never holds up typing, and only the best of what it finds comes
@@ -42,6 +43,10 @@ type Heard =
 let worker: Worker | null | undefined;
 /** The listing, when it is kept on the window's thread. */
 let local: FileIndex | null = null;
+/** Every file of the listing, to tell a path typed whole by, and to index
+    here should the worker fail. */
+let known = new Set<string>();
+let files: string[] = [];
 /** The latest listing asked for, and the latest query. */
 let listing = 0;
 let asked = 0;
@@ -55,11 +60,31 @@ function thread(): Worker | null {
       typeof Worker === "undefined"
         ? null
         : new Worker(new URL("./fileFind.worker.ts", import.meta.url), { type: "module" });
-    if (worker !== null) worker.onmessage = (event: MessageEvent<Heard>) => heard(event.data);
+    if (worker !== null) {
+      worker.onmessage = (event: MessageEvent<Heard>) => heard(event.data);
+      worker.onerror = failed;
+      worker.onmessageerror = failed;
+    }
   } catch {
     worker = null;
   }
   return worker;
+}
+
+/** The worker could not load or answer: it is let go, and the listing is
+    kept here from then on. */
+function failed() {
+  worker?.terminate();
+  worker = null;
+  if (finder.root !== null && local === null) here(files);
+}
+
+/** Keeps the listing on the window's thread and answers what waits. */
+function here(paths: string[]) {
+  local = new FileIndex(paths);
+  finder.top = local.top();
+  finder.listed = true;
+  if (wanted !== null) find(wanted);
 }
 
 function heard(said: Heard) {
@@ -74,42 +99,54 @@ function heard(said: Heard) {
   finder.found = { query: said.query, paths: said.found, total: said.total };
 }
 
-/** Reads the files under `root` again: what changed, and every file. */
+/**
+ * Reads the files under `root` again: what changed, and every file. A
+ * file git still lists that is deleted from the tree is left out, since
+ * there is nothing to read. While the same folder is read again, queries
+ * are answered from the listing before.
+ */
 export async function list(root: string): Promise<void> {
   const read = ++listing;
   if (finder.root !== root) {
+    // An answer on its way is for the folder before.
+    asked += 1;
+    local = null;
+    known = new Set();
+    files = [];
     finder.changed = [];
     finder.top = [];
+    finder.listed = false;
     finder.found = { query: null, paths: [], total: 0 };
   }
   finder.root = root;
-  finder.listed = false;
   finder.error = null;
-  const changed = core()
+  const status = core()
     .gitStatus(root)
-    .then((files) => {
-      if (read === listing) finder.changed = files.filter((file) => file.status !== "D");
+    .then((changed) => {
+      if (read === listing) finder.changed = changed.filter((file) => file.status !== "D");
+      return changed;
     })
-    .catch(() => {
-      // The listing below says what went wrong.
-    });
+    .catch(() => null);
   try {
-    const files = await core().gitFiles(root);
+    const [changed, listed] = await Promise.all([status, core().gitFiles(root)]);
     if (read !== listing) return;
+    const gone = new Set((changed ?? []).filter((file) => file.status === "D").map((file) => file.path));
+    files = gone.size === 0 ? listed : listed.filter((path) => !gone.has(path));
+    known = new Set(files);
     const away = files.length > AT_ONCE ? thread() : null;
-    if (away !== null) {
+    if (away === null) here(files);
+    else {
       local = null;
       away.postMessage({ kind: "list", id: read, files });
-    } else {
-      local = new FileIndex(files);
-      finder.top = local.top();
-      finder.listed = true;
-      if (wanted !== null) find(wanted);
     }
   } catch (error) {
     if (read === listing) finder.error = String(error);
   }
-  await changed;
+}
+
+/** Whether a path from the folder listed is a file in the listing. */
+export function isListed(path: string): boolean {
+  return known.has(path);
 }
 
 /** Asks what a query leaves; the answer lands in `finder.found`. */
@@ -126,12 +163,16 @@ export function find(query: string) {
   finder.found = { query, paths: result.found, total: result.total };
 }
 
-/** Forgets the listing, for tests. */
+/** Forgets the listing and the worker, for tests. */
 export function reset() {
+  worker?.terminate();
+  worker = undefined;
   listing += 1;
   asked += 1;
   wanted = null;
   local = null;
+  known = new Set();
+  files = [];
   finder.root = null;
   finder.changed = [];
   finder.top = [];

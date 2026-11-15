@@ -11,11 +11,12 @@ import { wordStarts, type Marks } from "$lib/completion";
  * written between backticks. The word runs to the next space.
  *
  * A mention is the file's path, for the agent to read itself. It goes to
- * the agent between backticks, `` `@src/lib/a.ts` ``: Claude Code reads a
- * bare `@path` in a message and sends the file's content along with it,
- * which a path between backticks it leaves as written. The same form keeps
- * a path with spaces in one piece, and lets the thread find the mentions
- * in a message again, however long ago it was sent.
+ * the agent between backticks, `` `@src/lib/a.ts` ``: Claude Code takes
+ * any word of a message that begins with `@` as a file whose content it
+ * sends along, and a word that begins with a backtick it leaves as
+ * written. The same form keeps a path with spaces in one piece. Where the
+ * mentions stand in a message is kept with it, never read back from its
+ * text, since the same form is what a user writes for code.
  */
 
 /** An `@` word being typed: where its `@` is, what follows it up to the
@@ -110,43 +111,79 @@ export function parts(text: string, spans: readonly Span[]): Part[] {
   return out;
 }
 
-/** A path as it goes to the agent: between backticks, two of them when
-    the path has one of its own. */
-export function wire(path: string): string {
-  return path.includes("`") ? `\`\` @${path} \`\`` : `\`@${path}\``;
+/** Why a path cannot go to the agent as a mention, or null when it can.
+    A line break or another control character would end the mention early
+    and leave the rest standing as the user's own words, and a space
+    before an `@` would start a word the agent takes as a file to send
+    whole. */
+export function unsafe(path: string): string | null {
+  if (/[\n\r\u2028\u2029]/.test(path)) return "its path has a line break in it";
+  if (/\p{Cc}/u.test(path)) return "its path has a control character in it";
+  if (/\s@/.test(path)) return "its path has a space before an @";
+  return null;
 }
 
+/** A path as it goes to the agent: its `@` and the path between backticks,
+    one more of them than the longest run in the path, with nothing before
+    the `@`. A path that ends in a backtick has a space after it, so the
+    run that closes it stays apart. Only for a path `unsafe` passes. */
+export function wire(path: string): string {
+  const longest = Math.max(0, ...(path.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}@${path}${path.endsWith("`") ? " " : ""}${fence}`;
+}
+
+/** A mention where it stands in a message as it went, in its sent form. */
+export type Sent = Span;
+
 /**
- * The message as it goes to the agent: each picked mention in its sent
- * form, and the files attached to it on a line of their own after the
- * words, each in the same form.
+ * The message as it goes to the agent, and where its mentions stand in it:
+ * each picked mention in its sent form, and the files attached to it on a
+ * line of their own after the words, each in the same form. A path
+ * `unsafe` refuses is left as it was typed.
  */
-export function outgoing(draft: string, picked: readonly string[], attached: readonly string[] = []): string {
+export function outgoing(
+  draft: string,
+  picked: readonly string[],
+  attached: readonly string[] = [],
+): { text: string; mentions: Sent[] } {
   let text = "";
   let at = 0;
+  const mentions: Sent[] = [];
+  const put = (path: string) => {
+    const sent = wire(path);
+    mentions.push({ start: text.length, end: text.length + sent.length, path });
+    text += sent;
+  };
   for (const span of mentionSpans(draft, picked)) {
-    text += draft.slice(at, span.start) + wire(span.path);
+    if (unsafe(span.path) !== null) continue;
+    text += draft.slice(at, span.start);
+    put(span.path);
     at = span.end;
   }
   text += draft.slice(at);
-  if (attached.length === 0) return text;
-  const files = attached.map(wire).join(" ");
-  return text.trim() === "" ? files : `${text.replace(/\s+$/, "")}\n\n${files}`;
+  const files = attached.filter((path) => unsafe(path) === null);
+  if (files.length === 0) return { text, mentions };
+  text = text.trim() === "" ? "" : `${text.replace(/\s+$/, "")}\n\n`;
+  files.forEach((path, index) => {
+    if (index > 0) text += " ";
+    put(path);
+  });
+  return { text, mentions };
 }
 
-/** Mentions in their sent form, in a message as it went. */
-const SENT = /``\s@([^\n]+?)\s``|`@([^`\n]+)`/g;
-
-/** A message as it went, cut where its mentions are, each shown as the
-    user wrote it: an `@` and the path. */
-export function sentParts(text: string): Part[] {
+/** A message as it went, cut where the mentions kept with it stand, each
+    shown as the user wrote it: an `@` and the path. A mention kept with
+    it that is not in its sent form there is left as text. */
+export function sentParts(text: string, mentions: readonly Sent[]): Part[] {
   const out: Part[] = [];
   let at = 0;
-  for (const found of text.matchAll(SENT)) {
-    const path = found[1] ?? found[2];
-    if (found.index > at) out.push({ text: text.slice(at, found.index) });
-    out.push({ text: `@${path}`, path });
-    at = found.index + found[0].length;
+  const sorted = [...mentions].sort((a, b) => a.start - b.start);
+  for (const mention of sorted) {
+    if (mention.start < at || text.slice(mention.start, mention.end) !== wire(mention.path)) continue;
+    if (mention.start > at) out.push({ text: text.slice(at, mention.start) });
+    out.push({ text: `@${mention.path}`, path: mention.path });
+    at = mention.end;
   }
   if (at < text.length) out.push({ text: text.slice(at) });
   return out;
@@ -154,12 +191,25 @@ export function sentParts(text: string): Part[] {
 
 /** A message as it went, made a draft again: its mentions as the user
     wrote them, and their paths, picked. */
-export function unsent(text: string): { draft: string; picked: string[] } {
-  const all = sentParts(text);
+export function unsent(text: string, mentions: readonly Sent[]): { draft: string; picked: string[] } {
+  const all = sentParts(text, mentions);
   return {
     draft: all.map((part) => part.text).join(""),
     picked: all.flatMap((part) => (part.path === undefined ? [] : [part.path])),
   };
+}
+
+/** The `@` words in a message that are typed whole rather than picked:
+    each at the start or after a space, outside code, and not the word the
+    caret is in, with a mark of punctuation after it left off. */
+export function typedWords(draft: string, skip: MentionWord | null): string[] {
+  const words: string[] = [];
+  for (const found of draft.matchAll(/(?<=^|\s)@(\S+)/g)) {
+    if (skip !== null && found.index === skip.at) continue;
+    if (inCode(draft, found.index)) continue;
+    words.push(found[1].replace(/[.,;:!?)\]}'"]+$/, ""));
+  }
+  return words;
 }
 
 // ---- the project's files ----

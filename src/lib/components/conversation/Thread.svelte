@@ -4,6 +4,7 @@
   import { clock, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
   import { reportsShown, spoken } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
+  import { mentionsOf } from "$lib/mentioned.svelte";
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { goTo } from "$lib/workspace.svelte";
@@ -463,7 +464,7 @@
   >
     <header class="who">
       {#if words.text !== ""}
-        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text).draft} host="message" testid="copy-message" />
+        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" testid="copy-message" />
       {/if}
       {#if from === null}
         <b>You</b>
@@ -484,7 +485,7 @@
         </div>
       {/if}
       {#if words.text !== ""}<p
-          >{#each sentParts(words.text) as part, at (at)}{#if part.path === undefined}<Plain text={part.text} />{:else}{@const open =
+          >{#each sentParts(words.text, mentionsOf(said.id)) as part, at (at)}{#if part.path === undefined}<Plain text={part.text} />{:else}{@const open =
                 opener?.(part.path) ?? null}{#if open === null}<span class="mention" data-testid="message-mention"
                   ><Plain text={part.text} /></span
                 >{:else}<button

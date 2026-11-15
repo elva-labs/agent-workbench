@@ -12,16 +12,17 @@
   import { complete, named, slashGroups, slashWord, sourceOf, waitingHint } from "$lib/slash";
   import {
     forAgent,
-    insertMention,
     mentionSpans,
     mentionWord,
     outgoing,
     parts,
     size,
     split,
+    typedWords,
+    unsafe,
     type Found,
   } from "$lib/mention";
-  import { finder, find, LIMIT, list } from "$lib/mentionFiles.svelte";
+  import { finder, find, isListed, LIMIT, list } from "$lib/mentionFiles.svelte";
   import { lastSegment } from "$lib/paths";
   import { isRemote } from "$lib/remote.svelte";
   import ChoiceMenu from "../ChoiceMenu.svelte";
@@ -161,8 +162,29 @@
 
   /** An input method is putting a character together in the field. */
   let composing = $state(false);
-  /** Where the picked mentions stand in the message. */
-  let spans = $derived(mentionSpans(link.draft, link.mentions));
+  /** The folder the agent works in, from the project's root, with a slash
+      after it; empty when it works at the root. */
+  let under = $derived.by(() => {
+    if (root === null) return "";
+    const base = root.replaceAll("\\", "/").replace(/\/+$/, "");
+    const own = (dir || root).replaceAll("\\", "/").replace(/\/+$/, "");
+    return own.startsWith(`${base}/`) ? `${own.slice(base.length + 1)}/` : "";
+  });
+  /** The paths typed whole after an `@`, the word done, that are files in
+      the listing: mentions as much as picked ones. */
+  function typedPaths(skip: ReturnType<typeof mentionWord>): string[] {
+    if (root === null || finder.root !== root || !finder.listed) return [];
+    return typedWords(link.draft, skip).filter((path) => isListed(`${under}${path}`) && unsafe(path) === null);
+  }
+  /** The `@` word the caret is in, whatever the menu does. */
+  let typing = $derived(focused && dismissed !== link.draft ? mentionWord(link.draft, caret) : null);
+  let typed = $derived(typedPaths(typing));
+  /** Where the mentions stand in the message: those picked, and those
+      typed whole. */
+  let spans = $derived(mentionSpans(link.draft, [...link.mentions, ...typed]));
+  /** Something about a file that did not go in: said under the field until
+      the message is sent or something else is said. */
+  let notice = $state<string | null>(null);
   let mword = $derived.by(() => {
     if (root === null || !focused || composing || word !== null || dismissed === link.draft) return null;
     const found = mentionWord(link.draft, caret);
@@ -232,13 +254,43 @@
     const item = fileItems[index];
     if (item === undefined || mword === null || root === null) return;
     const path = forAgent(item.path, root, dir || root);
-    const done = insertMention(link.draft, mword, path);
-    link.draft = done.text;
+    const why = unsafe(path);
+    if (why !== null) {
+      notice = `Not mentioned: ${shown(path)}, since ${why}.`;
+      return;
+    }
+    // The word, and the space or tab after it that the mention's own
+    // space stands for.
+    const end = /^[ \t]/.test(link.draft.slice(mword.end)) ? mword.end + 1 : mword.end;
     link.mentions = [...link.mentions.filter((known) => known !== path), path];
-    caret = done.caret;
+    edit(mword.at, end, `@${path} `);
+  }
+
+  /** Puts `text` in place of the field's letters from `from` to `to` as
+      typing would, so undo and redo take it back and bring it again. A
+      field that cannot is given the new message. */
+  function edit(from: number, to: number, text: string) {
+    if (field !== null) {
+      field.focus();
+      field.setSelectionRange(from, to);
+      let done = false;
+      try {
+        done = text === "" ? document.execCommand("delete") : document.execCommand("insertText", false, text);
+      } catch {
+        done = false;
+      }
+      if (done && field.value !== link.draft) link.draft = field.value;
+      if (done) {
+        caret = field.selectionStart;
+        return;
+      }
+    }
+    link.draft = link.draft.slice(0, from) + text + link.draft.slice(to);
+    caret = from + text.length;
+    const at = caret;
     void tick().then(() => {
       field?.focus();
-      field?.setSelectionRange(done.caret, done.caret);
+      field?.setSelectionRange(at, at);
     });
   }
 
@@ -250,11 +302,7 @@
     const span = spans.find((known) => known.end === at);
     if (span === undefined) return false;
     e.preventDefault();
-    link.draft = link.draft.slice(0, span.start) + link.draft.slice(span.end);
-    if (mentionSpans(link.draft, [span.path]).length === 0)
-      link.mentions = link.mentions.filter((known) => known !== span.path);
-    caret = span.start;
-    void tick().then(() => field?.setSelectionRange(span.start, span.start));
+    edit(span.start, span.end, "");
     return true;
   }
 
@@ -345,7 +393,7 @@
     // best of them once they are, rather than sending the word as text.
     if ((e.key === "Enter" || e.key === "Tab") && (fileMenu === "reading" || (fileMenu === "list" && !answered))) {
       e.preventDefault();
-      awaited = link.draft;
+      awaited = { draft: link.draft, key: e.key };
       return true;
     }
     if (fileMenu !== "list") return false;
@@ -367,12 +415,20 @@
   let answered = $derived(mword !== null && (mword.query === "" || finder.found.query === mword.query));
   /** The message as it stood when Tab or Enter came before the files for
       it: the best of them is picked once they are in, unless it changed. */
-  let awaited = $state<string | null>(null);
+  let awaited = $state<{ draft: string; key: string } | null>(null);
 
   $effect(() => {
     if (awaited === null) return;
-    if (link.draft !== awaited || fileMenu === null || fileMenu === "none" || fileMenu === "error") {
+    if (link.draft !== awaited.draft || fileMenu === null) {
       awaited = null;
+      return;
+    }
+    // With nothing to pick, a held Enter sends as it would have, and a
+    // held Tab does nothing.
+    if (fileMenu === "none" || fileMenu === "error") {
+      const key = awaited.key;
+      awaited = null;
+      if (key === "Enter") untrack(submit);
       return;
     }
     if (fileMenu === "list" && answered)
@@ -438,13 +494,14 @@
       });
       return;
     }
-    const text = outgoing(
+    const sent = outgoing(
       link.draft,
-      link.mentions,
+      [...link.mentions, ...typedPaths(null)],
       link.files.map((file) => file.path),
     );
-    const id = send(sessionKey, text, link.images);
+    const id = send(sessionKey, sent.text, link.images, null, sent.mentions);
     if (id === null) return;
+    notice = null;
     link.draft = "";
     link.images = [];
     link.mentions = [];
@@ -491,6 +548,15 @@
     untrack(grow);
   });
 
+  // A pane made narrower can wrap the message again, and give the field a
+  // scroll bar, with no key typed.
+  $effect(() => {
+    if (field === null) return;
+    const watch = new ResizeObserver(() => grow());
+    watch.observe(field.parentElement ?? field);
+    return () => watch.disconnect();
+  });
+
   async function attach(files: File[]) {
     for (const file of files) {
       if (!IMAGES.includes(file.type)) continue;
@@ -520,12 +586,6 @@
 
   /** Files from this machine that an agent on another cannot read: said
       under the field until the message changes. */
-  let unreachable = $state<{ names: string[]; draft: string } | null>(null);
-
-  $effect(() => {
-    if (unreachable !== null && link.draft !== unreachable.draft) unreachable = null;
-  });
-
   /** Files dropped on the conversation or picked with the paper clip: an
       image goes with the message as a picture, anything else as a card,
       for the agent to read by its path. A file outside the project goes
@@ -534,6 +594,7 @@
       this one. */
   async function take(paths: string[]) {
     const away: string[] = [];
+    const refused: string[] = [];
     for (const path of paths) {
       if (IMAGE_FILE.test(path)) {
         reading += 1;
@@ -553,17 +614,26 @@
         away.push(lastSegment(path));
         continue;
       }
-      void card(path);
+      const why = card(path);
+      if (why !== null) refused.push(`Not attached: ${shown(path)}, since ${why}.`);
     }
-    unreachable = away.length > 0 ? { names: away, draft: link.draft } : null;
+    const said = [
+      away.length === 0
+        ? null
+        : `Not attached: ${away.join(", ")}. ${agent} runs on another machine and cannot read files from this one; only pictures go with the message.`,
+      ...refused,
+    ].filter((line) => line !== null);
+    notice = said.length === 0 ? null : said.join(" ");
   }
 
   /** A card for a file that is not an image, its size filled in once
       read. */
-  async function card(local: string) {
+  function card(local: string): string | null {
+    const why = unsafe(local);
+    if (why !== null) return why;
     const base = dir || root || "";
     const told = base === "" ? local : forAgent(local, base, base);
-    if (link.files.some((file) => file.path === told)) return;
+    if (link.files.some((file) => file.path === told)) return null;
     const inside = told !== local || (root !== null && forAgent(local, root, root) !== local);
     const parent = local.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "");
     const attached: Attached = {
@@ -574,6 +644,12 @@
       from: inside ? null : lastSegment(parent) || parent,
     };
     link.files = [...link.files, attached];
+    void sized(local, told);
+    return null;
+  }
+
+  /** Fills in a card's size, or says it is a folder. */
+  async function sized(local: string, told: string) {
     try {
       const info = await core().fileInfo(local);
       link.files = link.files.map((file) =>
@@ -798,7 +874,10 @@
         </span>
       {/each}
       {#each link.files as file (file.path)}
-        {@const about = [file.size === null ? null : size(file.size), file.from === null ? null : `from ${file.from}`]
+        {@const about = [
+          file.dir ? "Folder" : file.size === null ? null : size(file.size),
+          file.from === null ? null : `from ${file.from}`,
+        ]
           .filter((part) => part !== null)
           .join(", ")}
         <span class="card" title={file.path} data-testid="attached-file">
@@ -825,7 +904,7 @@
         >{#each parts(link.draft, accented) as part, at (at)}{#if part.path !== undefined}<span
               class="mention"
               data-testid={part.path === "" ? "composer-typing" : "composer-mention"}>{part.text}</span
-            >{:else}{part.text}{/if}{/each}</div
+            >{:else}{part.text}{/if}{/each}{#if link.draft.endsWith("\n")}{"\u200b"}{/if}</div
       >
     {/if}
     <textarea
@@ -875,11 +954,8 @@
     </p>
   {:else if held}
     <p class="hint" data-testid="composer-held">Sends once the images are read.</p>
-  {:else if unreachable !== null}
-    <p class="hint" data-testid="composer-unreachable">
-      Not attached: <Plain text={unreachable.names.join(", ")} />. {agent} runs on another machine and cannot read files from this one; only
-      pictures go with the message.
-    </p>
+  {:else if notice !== null}
+    <p class="hint" data-testid="composer-notice"><Plain text={notice} /></p>
   {:else if link.compactAsked && running && !conversation.compacting}
     <p class="hint" data-testid="composer-compact">Compacts once {agent} is done with this turn.</p>
   {/if}

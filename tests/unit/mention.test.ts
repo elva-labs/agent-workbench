@@ -10,10 +10,13 @@ import {
   sentParts,
   size,
   split,
+  typedWords,
+  unsafe,
   unsent,
   wire,
 } from "$lib/mention";
-import { finder, find, list, reset } from "$lib/mentionFiles.svelte";
+import { finder, find, isListed, list, reset } from "$lib/mentionFiles.svelte";
+import { mentionedIn, mentionsOf, resetMentioned } from "$lib/mentioned.svelte";
 import type { Core } from "$lib/core";
 
 function setCore(fake: Partial<Core>) {
@@ -75,29 +78,57 @@ describe("where the picked mentions stand", () => {
 });
 
 describe("what goes to the agent", () => {
+  const text = (draft: string, picked: string[], attached: string[] = []) => outgoing(draft, picked, attached).text;
+
   it("is each mention between backticks, so Claude Code does not send the file's content", () => {
-    expect(outgoing("Why does @src/a.ts fill?", ["src/a.ts"])).toBe("Why does `@src/a.ts` fill?");
-    expect(outgoing("@a dir/b.md is it", ["a dir/b.md"])).toBe("`@a dir/b.md` is it");
+    expect(text("Why does @src/a.ts fill?", ["src/a.ts"])).toBe("Why does `@src/a.ts` fill?");
+    expect(text("@a dir/b.md is it", ["a dir/b.md"])).toBe("`@a dir/b.md` is it");
   });
 
   it("leaves an @ that was typed, not picked, as it is", () => {
-    expect(outgoing("ping @ada and @src/a.ts", ["src/a.ts"])).toBe("ping @ada and `@src/a.ts`");
+    expect(text("ping @ada and @src/a.ts", ["src/a.ts"])).toBe("ping @ada and `@src/a.ts`");
   });
 
   it("puts attached files on a line of their own after the words", () => {
-    expect(outgoing("What takes the time?  ", [], ["startup.trace", "/home/ada/Downloads/schema.sql"])).toBe(
+    expect(text("What takes the time?  ", [], ["startup.trace", "/home/ada/Downloads/schema.sql"])).toBe(
       "What takes the time?\n\n`@startup.trace` `@/home/ada/Downloads/schema.sql`",
     );
-    expect(outgoing("", [], ["a.txt"])).toBe("`@a.txt`");
+    expect(text("", [], ["a.txt"])).toBe("`@a.txt`");
   });
 
-  it("uses two backticks for a path with one of its own", () => {
-    expect(wire("odd`name.txt")).toBe("`` @odd`name.txt ``");
+  it("never puts white space before the @, fencing a backtick with a longer run", () => {
+    expect(wire("we`ird.txt")).toBe("``@we`ird.txt``");
+    expect(wire("a``b.md")).toBe("```@a``b.md```");
+    expect(wire("ends`")).toBe("``@ends` ``");
+    for (const path of ["we`ird.txt", "a``b.md", "ends`", "sp ace.md"]) {
+      // Every word of the sent form begins with a backtick, never an @.
+      expect(wire(path).split(/\s+/).every((word) => !word.startsWith("@"))).toBe(true);
+    }
   });
 
-  it("reads back as the user wrote it", () => {
+  it("refuses a path with a line break, a control character or a space before an @", () => {
+    expect(unsafe("src/a.ts")).toBeNull();
+    expect(unsafe("sp ace.md")).toBeNull();
+    expect(unsafe("a\nb.md")).toBe("its path has a line break in it");
+    expect(unsafe("a\u0007b.md")).toBe("its path has a control character in it");
+    expect(unsafe("a @b.md")).toBe("its path has a space before an @");
+    expect(text("see @a @b.md now", ["a @b.md"])).toBe("see @a @b.md now");
+    expect(outgoing("x", [], ["/tmp/a\nb.txt"]).mentions).toEqual([]);
+  });
+
+  it("says where each mention stands in what is sent", () => {
     const sent = outgoing("Why @a b.md and @c.md?", ["a b.md", "c.md"], ["odd`x.txt"]);
-    expect(sentParts(sent)).toEqual([
+    expect(sent.text).toBe("Why `@a b.md` and `@c.md`?\n\n``@odd`x.txt``");
+    expect(sent.mentions.map((mention) => sent.text.slice(mention.start, mention.end))).toEqual([
+      "`@a b.md`",
+      "`@c.md`",
+      "``@odd`x.txt``",
+    ]);
+  });
+
+  it("reads back as the user wrote it from the mentions kept with it", () => {
+    const sent = outgoing("Why @a b.md and @c.md?", ["a b.md", "c.md"], ["odd`x.txt"]);
+    expect(sentParts(sent.text, sent.mentions)).toEqual([
       { text: "Why " },
       { text: "@a b.md", path: "a b.md" },
       { text: " and " },
@@ -105,8 +136,25 @@ describe("what goes to the agent", () => {
       { text: "?\n\n" },
       { text: "@odd`x.txt", path: "odd`x.txt" },
     ]);
-    expect(unsent(sent)).toEqual({ draft: "Why @a b.md and @c.md?\n\n@odd`x.txt", picked: ["a b.md", "c.md", "odd`x.txt"] });
-    expect(sentParts("plain `code` here")).toEqual([{ text: "plain `code` here" }]);
+    expect(unsent(sent.text, sent.mentions)).toEqual({
+      draft: "Why @a b.md and @c.md?\n\n@odd`x.txt",
+      picked: ["a b.md", "c.md", "odd`x.txt"],
+    });
+  });
+
+  it("leaves typed inline code that starts with @ as it was typed", () => {
+    const typed = "Add the `@Override` and `@types/node`";
+    expect(sentParts(typed, [])).toEqual([{ text: typed }]);
+    expect(unsent(typed, [])).toEqual({ draft: typed, picked: [] });
+    // A mention kept with a message whose words do not hold it there is
+    // text too.
+    expect(sentParts(typed, [{ start: 8, end: 19, path: "Overrid" }])).toEqual([{ text: typed }]);
+  });
+
+  it("finds the @ words typed whole, outside code and the word being typed", () => {
+    const draft = "see @README.md, @src/a.ts and `@b` @c";
+    expect(typedWords(draft, null)).toEqual(["README.md", "src/a.ts", "c"]);
+    expect(typedWords(draft, { at: draft.length - 2, query: "c", end: draft.length })).toEqual(["README.md", "src/a.ts"]);
   });
 });
 
@@ -207,8 +255,11 @@ describe("the files for the menu", () => {
     const gitStatus = vi.fn(async () => [
       { path: "src/a.ts", status: "M", add: 1, del: 0, binary: false },
       { path: "gone.ts", status: "D", add: 0, del: 3, binary: false },
+      { path: "old/gone.ts", status: "D", add: 0, del: 3, binary: false },
     ]);
-    const gitFiles = vi.fn(async () => ["README.md", "src/a.ts", "src/b.ts"]);
+    // As the core does, the listing holds a file deleted from the tree
+    // but not from the index.
+    const gitFiles = vi.fn(async () => ["README.md", "gone.ts", "old/gone.ts", "src/a.ts", "src/b.ts"]);
     setCore({ gitStatus, gitFiles });
     find("b");
     await list("/r");
@@ -218,6 +269,10 @@ describe("the files for the menu", () => {
     expect(finder.found.paths.map((found) => found.path)).toEqual(["src/b.ts"]);
     find("a.");
     expect(finder.found.paths.map((found) => found.path)).toEqual(["src/a.ts"]);
+    find("gone");
+    expect(finder.found.paths).toEqual([]);
+    expect(isListed("src/b.ts")).toBe(true);
+    expect(isListed("gone.ts")).toBe(false);
     expect(gitFiles).toHaveBeenCalledTimes(1);
   });
 
@@ -231,5 +286,73 @@ describe("the files for the menu", () => {
     await list("/r");
     expect(finder.listed).toBe(false);
     expect(finder.error).toContain("not a repository");
+  });
+});
+
+describe("the worker for a large listing", () => {
+  class FakeWorker {
+    static last: FakeWorker | null = null;
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    onmessageerror: (() => void) | null = null;
+    posted: { kind: string; id: number; query?: string }[] = [];
+    constructor() {
+      FakeWorker.last = this;
+    }
+    postMessage(message: { kind: string; id: number }) {
+      this.posted.push(message);
+    }
+    terminate() {}
+  }
+  const many = Array.from({ length: 6000 }, (_, at) => `src/file${at}.ts`);
+
+  beforeEach(() => {
+    reset();
+    vi.stubGlobal("Worker", FakeWorker);
+    setCore({ gitStatus: async () => [], gitFiles: async () => many });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    reset();
+    delete window.__WORKBENCH_CORE__;
+  });
+
+  it("keeps the listing here when the worker fails, and answers from it", async () => {
+    await list("/r");
+    const worker = FakeWorker.last!;
+    expect(worker.posted[0].kind).toBe("list");
+    expect(finder.listed).toBe(false);
+    find("file5999");
+    worker.onerror!();
+    expect(finder.listed).toBe(true);
+    expect(finder.found.paths[0].path).toBe("src/file5999.ts");
+  });
+
+  it("drops an answer for the folder listed before", async () => {
+    await list("/a");
+    const worker = FakeWorker.last!;
+    worker.onmessage!({ data: { kind: "listed", id: worker.posted[0].id, top: ["src/"] } });
+    find("file1");
+    const asked = worker.posted.at(-1)!;
+    await list("/b");
+    worker.onmessage!({
+      data: { kind: "found", id: asked.id, query: "file1", found: [{ path: "src/file1.ts", marks: [] }], total: 1 },
+    });
+    expect(finder.root).toBe("/b");
+    expect(finder.found.paths).toEqual([]);
+  });
+});
+
+describe("the mentions kept with a message", () => {
+  beforeEach(() => resetMentioned());
+
+  it("are known by the message's id, and kept between runs", () => {
+    mentionedIn("m-1", [{ start: 4, end: 13, path: "src/a.ts" }]);
+    mentionedIn("m-2", []);
+    expect(mentionsOf("m-1")).toEqual([{ start: 4, end: 13, path: "src/a.ts" }]);
+    expect(mentionsOf("m-2")).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("workbench.mentions")!)).toEqual({
+      "m-1": [{ start: 4, end: 13, path: "src/a.ts" }],
+    });
   });
 });

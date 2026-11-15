@@ -7,7 +7,7 @@ import { DEFAULT_FIXTURE, PROJECT, installFakeCore } from "./fake";
 
 const FIXTURE = {
   status: DEFAULT_FIXTURE.status,
-  files: [...DEFAULT_FIXTURE.files, "docs/release notes.md"].sort(),
+  files: [...DEFAULT_FIXTURE.files, "docs/release notes.md", "docs/we`ird.md", "docs/a @b.md"].sort(),
 };
 
 function calls(page: Page): Promise<{ method: string; [field: string]: unknown }[]> {
@@ -56,7 +56,7 @@ test.describe("mentioning a file with @", () => {
     await page.keyboard.type("Why does @");
     await expect(menu(page)).toBeVisible();
     // The deleted file is not offered: there is nothing left to read.
-    expect(await listed(page)).toEqual([
+    await expect.poll(() => listed(page)).toEqual([
       "Changed src/cache/mod.rs",
       "Changed src/lib.rs",
       "Files Cargo.toml",
@@ -81,7 +81,7 @@ test.describe("mentioning a file with @", () => {
     await page.keyboard.type("@sto");
     await expect(rows(page)).toHaveCount(1);
     await expect(rows(page).first().locator("b")).toHaveText("sto");
-    expect(await listed(page)).toEqual(["src/cache/store.rs"]);
+    await expect.poll(() => listed(page)).toEqual(["src/cache/store.rs"]);
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Backspace");
@@ -134,11 +134,28 @@ test.describe("mentioning a file with @", () => {
     expect(word.y + word.height).toBeLessThanOrEqual(field.y + field.height + 1);
   });
 
+  test("keeps the drawn text on the field's when a scrolled message ends in a line break", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).fill(Array.from({ length: 40 }, (_, at) => `line ${at}`).join("\n") + "\n");
+    await page.keyboard.type("see @sto");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
+    const tops = () =>
+      page.evaluate(() => [
+        document.querySelector<HTMLElement>("[data-testid='composer-input']")!.scrollTop,
+        document.querySelector<HTMLElement>("[data-testid='composer-drawn']")!.scrollTop,
+      ]);
+    await expect.poll(async () => {
+      const [field, drawn] = await tops();
+      return field > 0 && field === drawn;
+    }).toBe(true);
+  });
+
   test("chooses with the arrows and Tab, and keeps a path with spaces in one piece", async ({ page }) => {
     await openIntegrated(page);
     await input(page).click();
     await page.keyboard.type("@notes");
-    expect(await listed(page)).toEqual(["docs/release notes.md"]);
+    await expect.poll(() => listed(page)).toEqual(["docs/release notes.md"]);
     await page.keyboard.press("Tab");
     await expect(input(page)).toHaveValue("@docs/release notes.md ");
     await expect(page.getByTestId("composer-mention")).toHaveText("@docs/release notes.md");
@@ -167,10 +184,92 @@ test.describe("mentioning a file with @", () => {
     await page.keyboard.type("@module29999");
     await page.keyboard.press("Enter");
     await expect(input(page)).toHaveValue("@pkg299/src/module29999.ts ");
+    // Enter held for an answer with nothing in it sends, as it would have.
+    await input(page).fill("");
+    await page.keyboard.type("ping @zzzz");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sent(page)).toBe("ping @zzzz");
+    await expect(input(page)).toHaveValue("");
     await page.keyboard.type("@");
     // The top of the project, as many as the menu shows.
     await expect(rows(page)).toHaveCount(50);
     await expect(rows(page).first()).toContainText("pkg0/");
+  });
+
+  test("never offers a file deleted from the tree, though git still lists it", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("@token");
+    await expect(page.getByTestId("file-menu-empty")).toHaveText("No file in demo matches token.");
+  });
+
+  test("undo brings back a mention Backspace took out, and takes back a pick", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("see @sto");
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toHaveValue("see @src/cache/store.rs ");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Backspace");
+    await expect(input(page)).toHaveValue("see ");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(input(page)).toHaveValue("see @src/cache/store.rs");
+    await expect(page.getByTestId("composer-mention")).toHaveText("@src/cache/store.rs");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(input(page)).toHaveValue("see @src/cache/store.rs ");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(input(page)).toHaveValue("see @sto");
+  });
+
+  test("takes a path typed whole as a mention, sent as one", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("read @README.md and @nothing.md");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("composer-mention")).toHaveText("@README.md");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sent(page)).toBe("read `@README.md` and @nothing.md");
+  });
+
+  test("sends a path with a backtick fenced, nothing before its @, and refuses one with a space before an @", async ({
+    page,
+  }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("@a @");
+    await page.keyboard.press("Escape");
+    await input(page).fill("");
+    await page.keyboard.type("@b.md");
+    await expect.poll(() => listed(page)).toEqual(["docs/a @b.md"]);
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("composer-notice")).toHaveText(
+      "Not mentioned: docs/a @b.md, since its path has a space before an @.",
+    );
+    await expect(input(page)).toHaveValue("@b.md");
+    await input(page).fill("");
+    await page.keyboard.type("@ird");
+    await expect.poll(() => listed(page)).toEqual(["docs/we`ird.md"]);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("is odd");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sent(page)).toBe("``@docs/we`ird.md`` is odd");
+    await expect(page.getByTestId("composer-notice")).toHaveCount(0);
+    await expect(page.getByTestId("user-message").getByTestId("message-mention")).toHaveText("@docs/we`ird.md");
+  });
+
+  test("keeps typed inline code that starts with @ as typed, in the message and the row's name", async ({ page }) => {
+    await openIntegrated(page);
+    await input(page).click();
+    await page.keyboard.type("Add the `@Override` and `@types/node`, see @sto");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sent(page)).toBe("Add the `@Override` and `@types/node`, see `@src/cache/store.rs` ");
+    const message = page.getByTestId("user-message");
+    await expect(message.locator(".bubble p")).toHaveText("Add the `@Override` and `@types/node`, see @src/cache/store.rs");
+    await expect(message.getByTestId("message-mention")).toHaveCount(1);
+    await expect(message.getByTestId("message-mention")).toHaveText("@src/cache/store.rs");
+    // Its row is named by the words as typed.
+    await expect(page.getByTestId("session-row").first()).toContainText("Add the `@Override`");
   });
 
   test("Escape closes the menu without stopping the agent", async ({ page }) => {
@@ -258,6 +357,26 @@ test.describe("attaching any file", () => {
     const mention = page.getByTestId("user-message").getByTestId("message-mention");
     await expect(mention).toHaveText("@/home/ada/Downloads/schema.sql");
     expect(await mention.evaluate((element) => element.tagName)).toBe("SPAN");
+  });
+
+  test("refuses a file whose path has a line break, saying why", async ({ page }) => {
+    await openIntegrated(page);
+    await page.evaluate(() => {
+      (window as unknown as { __picked: string[] }).__picked = ["/home/ada/odd\nname.txt", "/home/ada/fine.txt"];
+    });
+    await page.getByTestId("attach").click();
+    await expect(page.getByTestId("attached-file")).toHaveCount(1);
+    await expect(page.getByTestId("attached-file")).toContainText("fine.txt");
+    await expect(page.getByTestId("composer-notice")).toHaveText(
+      "Not attached: /home/ada/odd name.txt, since its path has a line break in it.",
+    );
+    // It stays said while the user types on.
+    await input(page).click();
+    await page.keyboard.type("look");
+    await expect(page.getByTestId("composer-notice")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => sent(page)).toBe("look\n\n`@/home/ada/fine.txt`");
+    await expect(page.getByTestId("composer-notice")).toHaveCount(0);
   });
 
   test("takes a file dropped inside the project by its path from the project", async ({ page }) => {

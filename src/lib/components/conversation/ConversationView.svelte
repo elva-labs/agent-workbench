@@ -8,6 +8,7 @@
   import { projectLabel, sessionRoot } from "$lib/workspace.svelte";
   import { mentionOpener } from "$lib/show.svelte";
   import { unsent } from "$lib/mention";
+  import { mentionsOf } from "$lib/mentioned.svelte";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
@@ -46,7 +47,7 @@
       agent dropped stays in the thread, where it happened; one that never
       reached it leaves the thread for the composer. */
   function putBack(message: Message) {
-    const back = unsent(spoken(message.text, senderOf(message) === null).text);
+    const back = unsent(spoken(message.text, senderOf(message) === null).text, mentionsOf(message.id));
     const text = back.draft;
     link.draft = link.draft.trim() === "" ? text : `${text}\n${link.draft}`;
     link.mentions = [...new Set([...link.mentions, ...back.picked])];

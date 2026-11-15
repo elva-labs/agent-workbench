@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   notified,
   projectFor,
+  mentionOpener,
   referenced,
   relativeTo,
   resetHeld,
@@ -176,6 +177,20 @@ describe("showing a place", () => {
     referenced(session.key, "src/b.rs", 12);
     await Promise.resolve();
     expect(shown).toEqual([["src/b.rs", 12, 12, null]]);
+  });
+
+  // A mention opens only what is in the session's project, its `..`
+  // walked first.
+  it("opens a mentioned file inside the project, and none outside it or a folder", () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    const session = create("/one");
+    started(session.key, "pty-1", "s1");
+    expect(mentionOpener(session.key, "src/b.rs")).not.toBeNull();
+    expect(mentionOpener(session.key, "src/../b.rs")).not.toBeNull();
+    expect(mentionOpener(session.key, "../../.ssh/config")).toBeNull();
+    expect(mentionOpener(session.key, "/elsewhere/a.rs")).toBeNull();
+    expect(mentionOpener(session.key, "docs/")).toBeNull();
   });
 });
 
