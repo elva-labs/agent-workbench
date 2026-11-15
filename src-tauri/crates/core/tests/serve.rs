@@ -199,8 +199,8 @@ mod client {
     }
 
     /// An integrated session on the far side, against a stand-in for
-    /// `claude` that answers the opening, holds one turn and waits for its
-    /// stdin to close.
+    /// `claude` that answers the opening and the read of the account's
+    /// limits, holds one turn and waits for its stdin to close.
     #[cfg(unix)]
     #[test]
     fn an_integrated_session_runs_through_the_daemon() {
@@ -210,10 +210,14 @@ mod client {
         std::fs::write(
             &claude,
             r#"#!/bin/sh
-for request in initialize get_settings; do
+for request in initialize get_settings get_usage; do
   read -r line
   id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
-  printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{}}}\n' "$id"
+  case "$request" in
+    get_usage) body='{"subscription_type":"pro","rate_limits":{"limits":[{"kind":"session","percent":20,"severity":"normal","resets_at":"2030-01-01T05:00:00+00:00"}]}}' ;;
+    *) body='{}' ;;
+  esac
+  printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":%s}}\n' "$id" "$body"
 done
 read -r line
 printf '%s\n' '{"type":"system","subtype":"init","model":"m"}'
@@ -284,6 +288,12 @@ while read -r line; do :; done
             panic!("no {kind}: {:?}", events.lock().unwrap());
         };
         seen("ready");
+        seen("limits");
+        assert!(events.lock().unwrap().iter().any(|(_, payload)| {
+            payload["type"] == "limits"
+                && payload["agent"] == "claude-code"
+                && payload["windows"][0]["percent"] == 20.0
+        }));
         connection
             .call(
                 "integrated_send",
@@ -305,6 +315,11 @@ while read -r line; do :; done
         assert_eq!(snapshot["turn"], false);
         assert_eq!(snapshot["ready"]["type"], "ready");
         assert_eq!(snapshot["messages"][0]["text"], "hello");
+        assert_eq!(snapshot["limits"]["plan"], "pro");
+        assert_eq!(
+            snapshot["limits"]["windows"][0]["resetsAt"],
+            1_893_474_000_u64
+        );
         connection
             .call("integrated_stop", json!({ "id": id }))
             .unwrap();
