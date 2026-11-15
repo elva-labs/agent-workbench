@@ -963,8 +963,9 @@ impl Core {
 
     /// The answer to a call on one of the conductor's tools, left where
     /// the tool server that made the call is waiting for it. A prompt call
-    /// whose hook has stopped waiting gets none, and the window hears so:
-    /// nothing in it reached the agent.
+    /// whose hook has stopped waiting gets none, nor does a wait whose
+    /// tool server has, and the window hears so: nothing in it reached the
+    /// agent.
     pub fn conduct_answer(
         &self,
         id: &str,
@@ -973,7 +974,7 @@ impl Core {
     ) -> Result<(), String> {
         let home = self.home.as_deref().ok_or("no home directory")?;
         if !self.deadlines.open(id) {
-            return Err("the prompt hook stopped waiting for this answer".to_string());
+            return Err("the call stopped waiting for this answer".to_string());
         }
         crate::show::write_answer(home, id, &crate::show::Answer { content, error })
     }
@@ -1354,11 +1355,11 @@ mod tests {
     use crate::scratch::Scratch;
     use std::collections::HashMap;
 
-    // A prompt hook stops waiting at the deadline its call carries: an
-    // answer past it is not left, and the window hears it was not, so it
-    // tells nothing that did not reach the agent.
+    // A prompt hook, and a wait's tool server, stop waiting at the deadline
+    // the call carries: an answer past it is not left, and the window hears
+    // it was not, so it tells nothing that did not reach the agent.
     #[test]
-    fn leaves_no_answer_to_a_prompt_call_whose_hook_stopped_waiting() {
+    fn leaves_no_answer_to_a_call_that_stopped_waiting() {
         let home = Scratch::new("api-prompt-deadline");
         let core = Core::at_home(Arc::new(Recorder::default()), Some(home.to_path_buf()));
         let call = |id: &str, deadline: u64| crate::show::ConductRequest {
@@ -1379,10 +1380,26 @@ mod tests {
         core.conduct_answer("in-time", Some("note".into()), None)
             .unwrap();
         assert!(crate::show::answer_path(&home, "in-time").exists());
-        // A wait's answer has no deadline.
+        // A wait's answer has the deadline the tool server gave it.
+        let wait = |id: &str, deadline: u64| crate::show::ConductRequest {
+            tool: crate::show::CONDUCT_WAIT.to_string(),
+            ..call(id, deadline)
+        };
+        core.deadlines
+            .note(&wait("a-wait-given-up", crate::show::now_ms() - 1));
+        core.deadlines
+            .note(&wait("a-wait", crate::show::now_ms() + 60_000));
+        assert!(core
+            .conduct_answer("a-wait-given-up", Some("stopped".into()), None)
+            .is_err());
+        assert!(!crate::show::answer_path(&home, "a-wait-given-up").exists());
         core.conduct_answer("a-wait", Some("stopped".into()), None)
             .unwrap();
         assert!(crate::show::answer_path(&home, "a-wait").exists());
+        // Any other call's answer is always left.
+        core.conduct_answer("a-send", Some("sent".into()), None)
+            .unwrap();
+        assert!(crate::show::answer_path(&home, "a-send").exists());
     }
 
     /// A core made once the test process's environment is settled, so the

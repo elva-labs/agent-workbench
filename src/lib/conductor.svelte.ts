@@ -108,9 +108,9 @@ export const WAIT_MAX = 1800;
     Inside the minute the core gives the window to answer. */
 export const START_WAIT = 30_000;
 /** How much sooner than the seconds it was given a wait answers that
-    nothing happened: the core counts them from before the window heard
-    of the call, and a stop told after the core gave up would reach no
-    one. A wait never answers sooner than halfway through its seconds. */
+    nothing happened: the tool server counts them from before the window
+    heard of the call, and stops reading at their end. A wait never
+    answers sooner than halfway through its seconds. */
 export const WAIT_EARLY = 2000;
 /** How long after a session comes to rest the session that started it is
     woken, when it is idle: the sessions that come to rest meanwhile go in
@@ -2345,12 +2345,17 @@ async function holdWait(
   waiting.delete(request.id);
   if (abandoned) return said("");
   if (interrupted !== null) return said(interrupted);
-  if (reported !== null) tell(reported);
   if (happened === null)
     return said(
       `Nothing happened within ${seconds} seconds: no session stopped and none asked anything.`,
     );
-  return said(happened);
+  // The stop is told once the answer is left where the call reads it, and
+  // only as it was now: the core leaves none once the tool server has
+  // stopped reading, and then the next wait answers with it.
+  const key: string | null = reported;
+  if (key === null) return said(happened);
+  const rest = stops.get(key)?.rest ?? null;
+  return { ...said(happened), delivered: () => tellAs(key, rest) };
 }
 
 /**

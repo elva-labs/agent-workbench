@@ -891,6 +891,10 @@ fn call(
     }
 }
 
+/// How long before a wait stops reading the window's answer must be left,
+/// which the core holds it to: the rest is for the answer to land.
+const WAIT_GRACE: Duration = Duration::from_millis(300);
+
 /// How long a wait call waits: what it asked for, no longer than the most
 /// on offer, and the usual wait when it asked for nothing.
 fn waiting_for(arguments: &Value, waits: &Waits) -> Duration {
@@ -912,22 +916,11 @@ fn conduct_call(
     waits: Waits,
     cancelled: &AtomicBool,
 ) -> Result<Value, String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    show::append(
-        home,
-        &Request::Conduct(ConductRequest {
-            id: id.clone(),
-            tool: name.to_string(),
-            arguments: arguments.clone(),
-            cwd: cwd.to_string_lossy().to_string(),
-            session: session.map(str::to_string),
-        }),
-    )?;
     // A wait sits for as long as it asked. A start is put to the user, who
     // may take a while to answer, and is given as long as a wait gets by
     // default: a start that gave up while the user was still deciding
     // started the session anyway, late, and the caller started another.
-    let watching = name == "wait";
+    let watching = name == show::CONDUCT_WAIT;
     let asked = name == "start";
     let wait = if watching {
         waiting_for(arguments, &waits)
@@ -936,6 +929,27 @@ fn conduct_call(
     } else {
         waits.answer
     };
+    // A wait carries the time it stops reading, less a moment for the
+    // answer to land, and the core leaves no answer past it: what the
+    // window tells in one is told only once it is read.
+    let mut arguments = arguments.clone();
+    if watching {
+        if let Some(given) = arguments.as_object_mut() {
+            let deadline = show::now_ms() + wait.saturating_sub(WAIT_GRACE).as_millis() as u64;
+            given.insert("deadline".to_string(), json!(deadline));
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    show::append(
+        home,
+        &Request::Conduct(ConductRequest {
+            id: id.clone(),
+            tool: name.to_string(),
+            arguments,
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
     let Some(answer) = await_answer_unless(home, &id, wait, cancelled) else {
         if cancelled.load(Ordering::SeqCst) {
             // The window is told so it does not report to a call no one is
@@ -2401,7 +2415,9 @@ mod tests {
         };
         // Half an hour asked for, and the cap is what it waits.
         let started = Instant::now();
-        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"wait","arguments":{"seconds":1800}}}"#, waits).unwrap();
+        let asked = show::now_ms();
+        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"wait","arguments":{"seconds":1800,"deadline":1}}}"#, waits).unwrap();
+        let answered = show::now_ms();
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(answer["result"]["isError"], true);
         let text = answer["result"]["content"][0]["text"].as_str().unwrap();
@@ -2414,6 +2430,15 @@ mod tests {
         };
         assert_eq!(call.tool, "wait");
         assert_eq!(call.arguments["seconds"], 1800);
+        // The time past which no answer is read, the tool server's own and
+        // not one the agent gave: what it waits less the margin for the
+        // answer to land, from when the call was made.
+        let deadline = call.arguments["deadline"].as_u64().unwrap();
+        let short = waits.longest.saturating_sub(WAIT_GRACE).as_millis() as u64;
+        assert!(
+            deadline >= asked + short && deadline <= answered + short,
+            "{deadline}"
+        );
 
         // Asked for nothing, and the default is what it waits.
         let home = self::home("conduct-wait-default");

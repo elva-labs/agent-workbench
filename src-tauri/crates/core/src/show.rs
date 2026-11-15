@@ -339,20 +339,26 @@ pub fn now_ms() -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// How long a prompt call whose answer never came is remembered.
+/// How long past its deadline a call whose answer never came is
+/// remembered.
 const DEADLINE_KEPT: u64 = 60_000;
 
-/// The prompt calls the window has not answered yet, each with the time,
-/// in milliseconds since the epoch on this machine's clock, after which
-/// its hook no longer reads an answer. The hook and this core share the
-/// machine, and so the clock.
+/// The conductor's tool whose call carries a deadline as a prompt call
+/// does: a wait, which the tool server stops reading at the end of the
+/// seconds it asked for.
+pub const CONDUCT_WAIT: &str = "wait";
+
+/// The prompt and wait calls the window has not answered yet, each with
+/// the time, in milliseconds since the epoch on this machine's clock,
+/// after which whoever made it no longer reads an answer. The hook, the
+/// tool server and this core share the machine, and so the clock.
 #[derive(Default)]
 pub struct Deadlines(Mutex<HashMap<String, u64>>);
 
 impl Deadlines {
-    /// Keeps the deadline a prompt call carries.
+    /// Keeps the deadline a prompt or wait call carries.
     pub fn note(&self, request: &ConductRequest) {
-        if request.tool != CONDUCT_PROMPT {
+        if request.tool != CONDUCT_PROMPT && request.tool != CONDUCT_WAIT {
             return;
         }
         let Some(deadline) = request
@@ -371,8 +377,9 @@ impl Deadlines {
         kept.insert(request.id.clone(), deadline);
     }
 
-    /// Whether an answer to this call may still be left: it is no prompt
-    /// call, or its hook is still waiting. The call is forgotten either way.
+    /// Whether an answer to this call may still be left: it carries no
+    /// deadline, or whoever made it is still waiting. The call is forgotten
+    /// either way.
     pub fn open(&self, id: &str) -> bool {
         let mut kept = self
             .0
@@ -774,18 +781,26 @@ mod tests {
         }
     }
 
-    // An answer to a prompt call may be left only while its hook still
-    // waits; any other call's answer may always be left.
+    // An answer to a prompt or wait call may be left only while whoever
+    // made it still waits; any other call's answer may always be left.
     #[test]
     fn a_prompt_call_takes_an_answer_only_before_its_deadline() {
         let deadlines = Deadlines::default();
         deadlines.note(&prompt_call("waiting", Some(now_ms() + 60_000)));
         deadlines.note(&prompt_call("gone", Some(now_ms() - 1)));
         deadlines.note(&prompt_call("undated", None));
+        let tool = |id: &str, tool: &str| ConductRequest {
+            tool: tool.to_string(),
+            ..prompt_call(id, Some(now_ms() - 1))
+        };
+        deadlines.note(&tool("a-wait-given-up", CONDUCT_WAIT));
+        deadlines.note(&tool("a-send", "send"));
         assert!(deadlines.open("waiting"));
         assert!(!deadlines.open("gone"));
         assert!(deadlines.open("undated"));
-        assert!(deadlines.open("a-wait-or-a-browser-call"));
+        assert!(!deadlines.open("a-wait-given-up"));
+        assert!(deadlines.open("a-send"));
+        assert!(deadlines.open("a-browser-call"));
         // Forgotten once answered.
         assert!(deadlines.open("gone"));
     }
