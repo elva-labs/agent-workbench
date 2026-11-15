@@ -185,6 +185,11 @@ pub const CONDUCT_TOOLS: &[&str] = &[
     "projects", "sessions", "start", "send", "stop", "wait", "read",
 ];
 
+/// The conductor's call that is no tool of the agent's: a session's prompt
+/// hook asks it as the user's message goes in, for what the sessions that
+/// session started did since it last looked.
+pub const CONDUCT_PROMPT: &str = "prompt";
+
 /// A call the agent made on one of the conductor's tools. The window
 /// answers it, and the answer goes where the tool server waits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -192,7 +197,7 @@ pub const CONDUCT_TOOLS: &[&str] = &[
 pub struct ConductRequest {
     /// What the answer file is named after, unique to this call.
     pub id: String,
-    /// One of [`CONDUCT_TOOLS`].
+    /// One of [`CONDUCT_TOOLS`], or [`CONDUCT_PROMPT`].
     pub tool: String,
     #[serde(default)]
     pub arguments: serde_json::Value,
@@ -394,7 +399,8 @@ pub fn classify(line: &str) -> Option<Request> {
         }
         Request::Conduct(conduct) => {
             if !valid_id(&conduct.id)
-                || !CONDUCT_TOOLS.contains(&conduct.tool.as_str())
+                || !(CONDUCT_TOOLS.contains(&conduct.tool.as_str())
+                    || conduct.tool == CONDUCT_PROMPT)
                 || conduct.cwd.is_empty()
             {
                 return None;
@@ -663,7 +669,7 @@ mod tests {
         assert_eq!(request.arguments["prompt"], "Fix the flake");
         assert_eq!(request.cwd, "/p");
         assert_eq!(request.session.as_deref(), Some("s-1"));
-        for tool in CONDUCT_TOOLS {
+        for tool in CONDUCT_TOOLS.iter().chain([&CONDUCT_PROMPT]) {
             let line = format!(r#"{{"kind":"conduct","id":"c-1","tool":"{tool}","cwd":"/p"}}"#);
             assert!(classify(&line).is_some(), "{tool}");
         }

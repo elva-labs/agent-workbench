@@ -933,6 +933,91 @@ fn conduct_call(
     Ok(json!({ "content": [{ "type": "text", "text": answer.content.unwrap_or_default() }] }))
 }
 
+/// How long a prompt hook waits for the window to say what the agent is
+/// told. The user's message waits with it, so it is short: a window that
+/// is there answers at once.
+pub const PROMPT_WAIT: Duration = Duration::from_secs(5);
+
+/// The most of the hook's input that is read.
+const PROMPT_INPUT: u64 = 1024 * 1024;
+
+/// `agent-workbench-remote reports`, run by a session's prompt hook as the
+/// user's message goes in: prints what the sessions it started did since
+/// it last looked, for the agent to read ahead of the user's words, or
+/// nothing. Only an agent the workbench started has a window to ask: its
+/// environment names its session or its role. Any other agent, such as
+/// one run by hand in the project while the app is closed, is not held
+/// up waiting for an answer that cannot come.
+pub fn prompt_hook(home: &Path) {
+    let named = |var: &str| {
+        std::env::var(var)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    };
+    let session = named(crate::adapter::SESSION_VAR);
+    let role = named(crate::adapter::ROLE_VAR);
+    let mut input = String::new();
+    let _ = std::io::Read::read_to_string(
+        &mut std::io::Read::take(std::io::stdin(), PROMPT_INPUT),
+        &mut input,
+    );
+    if session.is_none() && role.is_none() {
+        return;
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Some(output) = prompt_reports(home, &cwd, &input, session.as_deref(), PROMPT_WAIT) {
+        println!("{output}");
+    }
+}
+
+/// Asks the window what the session is told as the user's message goes
+/// in, and answers with what the hook prints: the note as context for the
+/// prompt, in the shape both agents read from a prompt hook's output. None
+/// when there is nothing to tell or no answer came in time. `input` is
+/// what the agent gave the hook, which says where it runs; `cwd` stands in
+/// where it does not say.
+pub fn prompt_reports(
+    home: &Path,
+    cwd: &Path,
+    input: &str,
+    session: Option<&str>,
+    wait: Duration,
+) -> Option<String> {
+    let given: Value = serde_json::from_str(input).unwrap_or(Value::Null);
+    let cwd = given
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| cwd.to_path_buf());
+    // The directory as the window names it, as for a tool call.
+    let cwd = dunce::canonicalize(&cwd).unwrap_or(cwd);
+    let id = uuid::Uuid::new_v4().to_string();
+    show::append(
+        home,
+        &Request::Conduct(ConductRequest {
+            id: id.clone(),
+            tool: show::CONDUCT_PROMPT.to_string(),
+            arguments: json!({}),
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )
+    .ok()?;
+    let note = await_answer(home, &id, wait)?
+        .content
+        .filter(|note| !note.trim().is_empty())?;
+    Some(
+        json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": note,
+            }
+        })
+        .to_string(),
+    )
+}
+
 /// One of the browser's tools: the browser is the window's, so the call
 /// goes in the log for the window to answer, the same way a conductor's
 /// call does.
@@ -2265,6 +2350,91 @@ mod tests {
             answer["result"]["content"][0]["text"],
             "s-2 is asking: which branch?"
         );
+    }
+
+    // The prompt hook asks with a call of its own, as the session and from
+    // where the agent says it runs, and gives the note back in the shape a
+    // prompt hook's output takes.
+    #[test]
+    fn the_prompt_hook_asks_the_window_and_hands_the_agent_its_note() {
+        let home = home("prompt-note");
+        let project = Scratch::new("mcp-prompt-project");
+        answer_the_conduct_call(
+            &home,
+            Answer {
+                content: Some("From the workbench: one line".to_string()),
+                error: None,
+            },
+        );
+        let input = json!({
+            "session_id": "s-1",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "how is it going?",
+            "cwd": project.to_string_lossy(),
+        })
+        .to_string();
+        let output = prompt_reports(
+            &home,
+            Path::new("/elsewhere"),
+            &input,
+            Some("s-1"),
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        let Request::Conduct(call) = first(&home) else {
+            panic!("not a conduct call");
+        };
+        assert_eq!(call.tool, show::CONDUCT_PROMPT);
+        assert_eq!(call.session.as_deref(), Some("s-1"));
+        assert_eq!(
+            call.cwd,
+            dunce::canonicalize(&project).unwrap().to_string_lossy()
+        );
+        let output: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            output,
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": "From the workbench: one line",
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn the_prompt_hook_says_nothing_when_there_is_nothing_to_tell() {
+        let home = home("prompt-nothing");
+        answer_the_conduct_call(
+            &home,
+            Answer {
+                content: Some(String::new()),
+                error: None,
+            },
+        );
+        let silent = prompt_reports(&home, Path::new("/p"), "", None, Duration::from_secs(10));
+        assert_eq!(silent, None);
+        let Request::Conduct(call) = first(&home) else {
+            panic!("not a conduct call");
+        };
+        // Input that says nowhere leaves the directory the hook runs in.
+        assert_eq!(call.cwd, "/p");
+        assert_eq!(call.session, None);
+    }
+
+    #[test]
+    fn the_prompt_hook_lets_the_prompt_go_when_no_one_answers() {
+        let home = home("prompt-unanswered");
+        let started = Instant::now();
+        let unanswered = prompt_reports(
+            &home,
+            Path::new("/p"),
+            "{}",
+            Some("s-1"),
+            Duration::from_millis(200),
+        );
+        assert_eq!(unanswered, None);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
