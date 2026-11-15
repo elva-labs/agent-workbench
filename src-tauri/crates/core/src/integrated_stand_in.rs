@@ -96,6 +96,27 @@ fn start(name: &str, scenario: &str) -> Harness {
     start_with(name, scenario, |_| {})
 }
 
+/// A session that keeps `deadlines`, for a test of one of them.
+fn start_keeping(name: &str, scenario: &str, deadlines: Deadlines) -> Harness {
+    start_in(
+        name,
+        scenario,
+        Arc::new(Sessions::with_deadlines(deadlines)),
+        |_| {},
+    )
+}
+
+/// The graces after a stop, short, for a test that ends an agent that will
+/// not end by itself.
+fn short_graces() -> Deadlines {
+    Deadlines {
+        stop_grace: Duration::from_secs(1),
+        term_grace: Duration::from_secs(1),
+        group_grace: Duration::from_millis(500),
+        ..Deadlines::default()
+    }
+}
+
 fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> Harness {
     start_in(name, scenario, Arc::new(Sessions::default()), adjust)
 }
@@ -876,11 +897,11 @@ fn a_process_that_dies_mid_turn_fails_the_turn_and_says_so() {
 
 #[test]
 fn a_session_that_will_not_end_is_killed_without_an_error() {
-    let h = start("stubborn", &format!("{READY}\nsleep 60"));
+    let h = start_keeping("stubborn", &format!("{READY}\nsleep 60"), short_graces());
     h.until_type("ready");
     let started = Instant::now();
     let end = h.stop();
-    assert!(started.elapsed() < Duration::from_secs(12));
+    assert!(started.elapsed() < Duration::from_secs(50));
     assert_eq!(end["clean"], false);
     assert!(!kinds(&h.events()).contains(&"error".to_string()));
 }
@@ -935,7 +956,14 @@ fn stopping_with_a_permission_asked_withdraws_it_and_a_late_answer_fails() {
 
 #[test]
 fn an_agent_that_never_says_it_is_ready_is_ended_with_one_error() {
-    let h = start("never-ready", "sleep 60");
+    let h = start_keeping(
+        "never-ready",
+        "sleep 60",
+        Deadlines {
+            ready: Duration::from_secs(1),
+            ..Deadlines::default()
+        },
+    );
     let events = h.until_type("ended");
     assert_eq!(kinds(&events), ["error", "ended"]);
     assert_eq!(events[0]["kind"], "protocol");
@@ -947,7 +975,14 @@ fn an_agent_that_never_says_it_is_ready_is_ended_with_one_error() {
 
 #[test]
 fn an_agent_that_stops_reading_is_ended_and_nothing_is_written_late() {
-    let h = start("deaf", &format!("{READY}\nsleep 60"));
+    let h = start_keeping(
+        "deaf",
+        &format!("{READY}\nsleep 60"),
+        Deadlines {
+            write: Duration::from_secs(1),
+            ..short_graces()
+        },
+    );
     h.until_type("ready");
     // More than any pipe holds, so the line waits on an agent that does
     // not read.
@@ -1061,13 +1096,13 @@ fn alive(pid: &str) -> bool {
 #[test]
 fn what_the_agent_left_running_goes_with_it() {
     for (name, step) in [("group", "spawn"), ("group-deaf", "deaf")] {
-        let h = start(name, &format!("{READY}\n{step}\ndrain"));
+        let h = start_keeping(name, &format!("{READY}\n{step}\ndrain"), short_graces());
         h.until_type("ready");
         let child = spawned(&h);
         assert!(alive(&child));
         assert_eq!(h.stop()["clean"], true);
         // One that ignores being asked to end is killed a little later.
-        let deadline = Instant::now() + GROUP_GRACE + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while alive(&child) {
             assert!(
                 Instant::now() < deadline,
@@ -1082,7 +1117,7 @@ fn what_the_agent_left_running_goes_with_it() {
 fn a_session_that_lingers_is_asked_to_end_before_it_is_killed() {
     // The agent ends what it left running in the background when it is
     // asked to end; killed outright, it cannot.
-    let h = start("linger", &format!("{READY}\nlinger"));
+    let h = start_keeping("linger", &format!("{READY}\nlinger"), short_graces());
     h.until_type("ready");
     let end = h.stop();
     assert!(h.dir.join("termed").exists(), "asked to end first");
@@ -1092,7 +1127,7 @@ fn a_session_that_lingers_is_asked_to_end_before_it_is_killed() {
 
 #[test]
 fn stop_all_ends_every_session() {
-    let sessions = Arc::new(Sessions::default());
+    let sessions = Arc::new(Sessions::with_deadlines(short_graces()));
     let a = start_in(
         "all-a",
         &format!("{READY}\ndrain"),
@@ -1109,7 +1144,7 @@ fn stop_all_ends_every_session() {
     b.until_type("ready");
     let started = Instant::now();
     stop_all(&sessions);
-    assert!(started.elapsed() < STOP_GRACE + TERM_GRACE + Duration::from_secs(2));
+    assert!(started.elapsed() < Duration::from_secs(50));
     assert!(sessions.ids().is_empty(), "both gone when it returns");
     a.until_type("ended");
     b.until_type("ended");

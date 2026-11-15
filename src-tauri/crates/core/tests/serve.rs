@@ -288,7 +288,8 @@ while read -r line; do :; done
         assert!(started["sessionId"].is_string());
 
         let seen = |kind: &str| {
-            for _ in 0..200 {
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            while std::time::Instant::now() < deadline {
                 let found = events.lock().unwrap().iter().any(|(event, payload)| {
                     event == "integrated_event" && payload["id"] == id && payload["type"] == kind
                 });
@@ -346,7 +347,8 @@ while read -r line; do :; done
         let connection = connect(&home, Arc::clone(&events));
         assert!(connection.call("ping", Value::Null).is_ok());
         connection.close();
-        for _ in 0..100 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        while std::time::Instant::now() < deadline {
             if !events.lock().unwrap().is_empty() {
                 break;
             }

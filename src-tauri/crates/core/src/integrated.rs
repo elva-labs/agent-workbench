@@ -36,61 +36,55 @@ use crate::events::{self, Sink};
 /// The one event name every integrated session's news goes out under.
 pub const INTEGRATED_EVENT: &str = "integrated_event";
 
-/// How long the agent has to say what it is after it starts. It loads its
-/// MCP servers first, which can take a while over a slow network.
-#[cfg(not(test))]
-const READY_TIMEOUT: Duration = Duration::from_secs(90);
-#[cfg(test)]
-const READY_TIMEOUT: Duration = Duration::from_secs(3);
+/// The deadlines a session keeps, taken when it starts. The default holds
+/// the real values; a test of a deadline starts its sessions with that one
+/// short.
+#[derive(Clone, Copy, Debug)]
+pub struct Deadlines {
+    /// How long the agent has to say what it is after it starts. It loads
+    /// its MCP servers first, which can take a while over a slow network.
+    pub ready: Duration,
+    /// How long a line may wait to be taken by the agent before the session
+    /// is taken to be stuck. A pipe holds tens of kilobytes, so a line waits
+    /// only when the agent has stopped reading.
+    pub write: Duration,
+    /// How long the agent has to answer a control request: an interrupt, a
+    /// model or a permission mode.
+    pub control: Duration,
+    /// How long a change of settings has in all, however many requests it
+    /// takes: less than a call to another machine is given, so that one
+    /// answers before the call gives up on it.
+    pub configure: Duration,
+    /// How long an agent that takes one message at a time has to name the
+    /// one handed to it, in a turn's start or as dropped. A message it has
+    /// not named by then is dropped, so that one request it never answers
+    /// does not hold every message after it.
+    pub handover: Duration,
+    /// How long a stopped session has to end once its stdin is closed
+    /// before it is asked to end.
+    pub stop_grace: Duration,
+    /// How long an agent asked to end has before it is killed with its
+    /// group.
+    pub term_grace: Duration,
+    /// How long what the agent left in its process group has, once asked to
+    /// end with the agent gone, before it is killed.
+    pub group_grace: Duration,
+}
 
-/// How long a line may wait to be taken by the agent before the session is
-/// taken to be stuck. A pipe holds tens of kilobytes, so a line waits only
-/// when the agent has stopped reading.
-#[cfg(not(test))]
-const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(test)]
-const WRITE_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// How long the agent has to answer a control request: an interrupt, a
-/// model or a permission mode.
-#[cfg(not(test))]
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(test)]
-const CONTROL_TIMEOUT: Duration = Duration::from_millis(2500);
-
-/// How long a change of settings has in all, however many requests it
-/// takes: less than a call to another machine is given, so that one
-/// answers before the call gives up on it.
-#[cfg(not(test))]
-const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(45);
-#[cfg(test)]
-const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// How long an agent that takes one message at a time has to name the one
-/// handed to it, in a turn's start or as dropped. A message it has not named
-/// by then is dropped, so that one request it never answers does not hold
-/// every message after it.
-#[cfg(not(test))]
-const HANDOVER_TIMEOUT: Duration = Duration::from_secs(30);
-#[cfg(test)]
-const HANDOVER_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// How long a stopped session has to end once its stdin is closed before it
-/// is asked to end.
-const STOP_GRACE: Duration = Duration::from_secs(5);
-
-/// How long an agent asked to end has before it is killed with its group.
-#[cfg(not(test))]
-const TERM_GRACE: Duration = Duration::from_secs(3);
-#[cfg(test)]
-const TERM_GRACE: Duration = Duration::from_secs(1);
-
-/// How long what the agent left in its process group has, once asked to
-/// end with the agent gone, before it is killed.
-#[cfg(not(test))]
-const GROUP_GRACE: Duration = Duration::from_secs(1);
-#[cfg(test)]
-const GROUP_GRACE: Duration = Duration::from_millis(500);
+impl Default for Deadlines {
+    fn default() -> Self {
+        Self {
+            ready: Duration::from_secs(90),
+            write: Duration::from_secs(30),
+            control: Duration::from_secs(30),
+            configure: Duration::from_secs(45),
+            handover: Duration::from_secs(30),
+            stop_grace: Duration::from_secs(5),
+            term_grace: Duration::from_secs(3),
+            group_grace: Duration::from_secs(1),
+        }
+    }
+}
 
 /// How often the waiter looks at the child between kill requests.
 const POLL: Duration = Duration::from_millis(50);
@@ -1462,6 +1456,7 @@ struct Machine {
     replies: HashMap<String, Sender<Result<Value, String>>>,
     /// Told when the agent is ready, for the watchdog that bounds the wait.
     ready: Option<Sender<()>>,
+    deadlines: Deadlines,
     ended: bool,
 }
 
@@ -1470,13 +1465,14 @@ impl Machine {
     /// or the time it has to do so runs out.
     fn hand(&mut self, message: String) {
         if let Some(handovers) = &self.handovers {
-            let _ = handovers.send((message.clone(), Instant::now() + HANDOVER_TIMEOUT));
+            let _ = handovers.send((message.clone(), Instant::now() + self.deadlines.handover));
         }
         self.handed = Some(message);
     }
 
-    fn new(driver: Box<dyn Driver>, ready: Option<Sender<()>>) -> Self {
+    fn new(driver: Box<dyn Driver>, ready: Option<Sender<()>>, deadlines: Deadlines) -> Self {
         Self {
+            deadlines,
             driver,
             tracker: Tracker::default(),
             held: VecDeque::new(),
@@ -1502,6 +1498,7 @@ struct Live {
     /// Set when the session is ended on purpose: by a stop, or by the core
     /// after saying why.
     stopping: AtomicBool,
+    deadlines: Deadlines,
 }
 
 impl Live {
@@ -1514,6 +1511,7 @@ impl Live {
     ) -> Self {
         Self {
             id,
+            deadlines: machine.deadlines,
             machine: Mutex::new(machine),
             outbox,
             writer: Mutex::new(Some(writer)),
@@ -1600,8 +1598,9 @@ impl Live {
                 out.push(Event::Error { kind, message });
                 self.writer.lock().expect("writer lock").take();
                 let kill = self.kill.lock().expect("kill lock").clone();
+                let grace = self.deadlines.stop_grace;
                 std::thread::spawn(move || {
-                    std::thread::sleep(STOP_GRACE);
+                    std::thread::sleep(grace);
                     let _ = kill.send(());
                 });
             }
@@ -1701,7 +1700,7 @@ impl Live {
     /// in time means it has stopped reading, and the session ends, so that
     /// nothing queued behind it is written late.
     fn written(&self, went: Receiver<Result<(), String>>) -> Result<(), String> {
-        match went.recv_timeout(WRITE_TIMEOUT) {
+        match went.recv_timeout(self.deadlines.write) {
             Ok(result) => result,
             Err(RecvTimeoutError::Timeout) => {
                 let error = "the agent stopped reading its input".to_string();
@@ -1792,9 +1791,19 @@ fn bounded(mut event: Event) -> Event {
 #[derive(Default)]
 pub struct Sessions {
     inner: Mutex<HashMap<String, Arc<Live>>>,
+    /// The deadlines each session started here keeps.
+    deadlines: Deadlines,
 }
 
 impl Sessions {
+    /// Sessions that keep `deadlines` rather than the real ones.
+    pub fn with_deadlines(deadlines: Deadlines) -> Self {
+        Self {
+            inner: Mutex::default(),
+            deadlines,
+        }
+    }
+
     fn get(&self, id: &str) -> Result<Arc<Live>, String> {
         self.inner
             .lock()
@@ -1884,7 +1893,7 @@ pub fn start(
     let opening = driver.opening();
     let live = Arc::new(Live::new(
         id.clone(),
-        Machine::new(driver, Some(ready)),
+        Machine::new(driver, Some(ready), sessions.deadlines),
         Arc::clone(&outbox),
         lines,
         kill,
@@ -1939,8 +1948,9 @@ pub fn start(
     std::thread::spawn({
         let live = Arc::clone(&live);
         let name = protocol.name();
+        let deadlines = live.deadlines;
         move || {
-            if let Err(RecvTimeoutError::Timeout) = readied.recv_timeout(READY_TIMEOUT) {
+            if let Err(RecvTimeoutError::Timeout) = readied.recv_timeout(deadlines.ready) {
                 live.abandon(
                     ErrorKind::Protocol,
                     format!("{name} did not say it was ready in time"),
@@ -2100,7 +2110,7 @@ fn kill_tree(child: &mut Child) {
 /// Ends what the agent left running in its process group once it is gone
 /// itself: asked to end, and killed if any of it is still there a little
 /// later.
-fn end_group(child: &Child) {
+fn end_group(child: &Child, grace: Duration) {
     #[cfg(unix)]
     if let Ok(group) = i32::try_from(child.id()) {
         // The group lives as long as one of its members does, so its id is
@@ -2109,7 +2119,7 @@ fn end_group(child: &Child) {
         unsafe {
             libc::killpg(group, libc::SIGTERM);
         }
-        let deadline = std::time::Instant::now() + GROUP_GRACE;
+        let deadline = std::time::Instant::now() + grace;
         while left() && std::time::Instant::now() < deadline {
             std::thread::sleep(POLL);
         }
@@ -2120,7 +2130,7 @@ fn end_group(child: &Child) {
         }
     }
     #[cfg(not(unix))]
-    let _ = child;
+    let _ = (child, grace);
 }
 
 /// Asks the agent alone to end, as a terminal's close would. Claude Code
@@ -2156,7 +2166,7 @@ fn wait(
                 let asked = killed.recv_timeout(POLL).is_ok();
                 if asked && deadline.is_none() {
                     if ask_to_end(&child) {
-                        deadline = Some(std::time::Instant::now() + TERM_GRACE);
+                        deadline = Some(std::time::Instant::now() + live.deadlines.term_grace);
                     } else {
                         kill_tree(&mut child);
                     }
@@ -2171,7 +2181,7 @@ fn wait(
             }
         }
     };
-    end_group(&child);
+    end_group(&child, live.deadlines.group_grace);
     let _ = read_done.recv_timeout(DRAIN);
     live.outbox.close();
     live.writer.lock().expect("writer lock").take();
@@ -2389,12 +2399,8 @@ fn settle(
 
 /// Sends a control request and waits for the agent's reply.
 pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value, String> {
-    request(
-        sessions,
-        id,
-        control,
-        std::time::Instant::now() + CONTROL_TIMEOUT,
-    )
+    let by = std::time::Instant::now() + sessions.get(id)?.deadlines.control;
+    request(sessions, id, control, by)
 }
 
 /// Sends a control request and waits for the agent's reply, for as long
@@ -2454,7 +2460,7 @@ fn request(
     let Some((key, reply)) = waiting else {
         return Ok(Value::Null);
     };
-    let by = by.min(std::time::Instant::now() + CONTROL_TIMEOUT);
+    let by = by.min(std::time::Instant::now() + live.deadlines.control);
     match reply.recv_timeout(by.saturating_duration_since(std::time::Instant::now())) {
         Ok(result) => result,
         Err(RecvTimeoutError::Timeout) => match key {
@@ -2480,7 +2486,7 @@ pub fn snapshot(sessions: &Sessions, id: &str) -> Result<Snapshot, String> {
         live.put(Out::Reply(passed, Ok(Value::Null)));
         (machine.tracker.snapshot(), out)
     };
-    match out.recv_timeout(CONTROL_TIMEOUT) {
+    match out.recv_timeout(live.deadlines.control) {
         Ok(_) => Ok(snapshot),
         Err(RecvTimeoutError::Timeout) => Err("the session's news did not go out in time".into()),
         Err(RecvTimeoutError::Disconnected) => Err("the agent ended".into()),
@@ -2488,7 +2494,7 @@ pub fn snapshot(sessions: &Sessions, id: &str) -> Result<Snapshot, String> {
 }
 
 /// Switches what the session runs on: each of the model, the mode and the
-/// effort that is given, in that order, all within [`CONFIGURE_TIMEOUT`].
+/// effort that is given, in that order, all within [`Deadlines::configure`].
 /// Answers with the settings as the session's events now say them.
 pub fn configure(
     sessions: &Sessions,
@@ -2497,7 +2503,7 @@ pub fn configure(
     mode: Option<&str>,
     effort: Option<&str>,
 ) -> Result<Settings, String> {
-    let by = std::time::Instant::now() + CONFIGURE_TIMEOUT;
+    let by = std::time::Instant::now() + sessions.get(id)?.deadlines.configure;
     if let Some(model) = model {
         request(sessions, id, &Control::SetModel(model.to_string()), by)?;
     }
@@ -2526,7 +2532,7 @@ pub fn stop(sessions: &Arc<Sessions>, id: &str) -> Result<(), String> {
     let sessions = Arc::clone(sessions);
     let id = id.to_string();
     std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + STOP_GRACE;
+        let deadline = std::time::Instant::now() + live.deadlines.stop_grace;
         while sessions.holds(&id) && std::time::Instant::now() < deadline {
             std::thread::sleep(POLL);
         }
@@ -2544,8 +2550,12 @@ pub fn stop_all(sessions: &Arc<Sessions>) {
     for id in sessions.ids() {
         let _ = stop(sessions, &id);
     }
-    let deadline =
-        std::time::Instant::now() + STOP_GRACE + TERM_GRACE + GROUP_GRACE + Duration::from_secs(1);
+    let d = sessions.deadlines;
+    let deadline = std::time::Instant::now()
+        + d.stop_grace
+        + d.term_grace
+        + d.group_grace
+        + Duration::from_secs(1);
     while !sessions.ids().is_empty() && std::time::Instant::now() < deadline {
         std::thread::sleep(POLL);
     }
@@ -3185,23 +3195,29 @@ mod tests {
 
     impl Bench {
         fn new(driver: Box<dyn Driver>) -> Self {
-            Self::with(driver, None, None)
+            Self::with(driver, None, None, Deadlines::default())
         }
 
         /// A session whose agent has not said it is ready yet.
         fn starting(driver: Box<dyn Driver>) -> Self {
-            Self::with(driver, Some(mpsc::channel().0), None)
+            Self::with(driver, Some(mpsc::channel().0), None, Deadlines::default())
         }
 
         /// A session whose news goes to `sink` rather than the recorder.
         fn into(driver: Box<dyn Driver>, sink: Arc<dyn Sink>) -> Self {
-            Self::with(driver, None, Some(sink))
+            Self::with(driver, None, Some(sink), Deadlines::default())
+        }
+
+        /// A session that keeps `deadlines`.
+        fn keeping(driver: Box<dyn Driver>, deadlines: Deadlines) -> Self {
+            Self::with(driver, None, None, deadlines)
         }
 
         fn with(
             driver: Box<dyn Driver>,
             ready: Option<Sender<()>>,
             sink: Option<Arc<dyn Sink>>,
+            deadlines: Deadlines,
         ) -> Self {
             let recorder = Arc::new(crate::events::testing::Recorder::default());
             let outbox = Arc::new(Outbox::default());
@@ -3221,13 +3237,13 @@ mod tests {
             });
             let live = Arc::new(Live::new(
                 "int-bench".into(),
-                Machine::new(driver, ready),
+                Machine::new(driver, ready, deadlines),
                 outbox,
                 lines,
                 kill,
             ));
             watch_handovers(&live);
-            let sessions = Arc::new(Sessions::default());
+            let sessions = Arc::new(Sessions::with_deadlines(deadlines));
             sessions
                 .inner
                 .lock()
@@ -3289,13 +3305,20 @@ mod tests {
 
     #[test]
     fn a_message_the_agent_never_names_is_dropped_and_the_next_goes() {
-        let bench = Bench::new(fake());
+        let handover = Duration::from_secs(1);
+        let bench = Bench::keeping(
+            fake(),
+            Deadlines {
+                handover,
+                ..Deadlines::default()
+            },
+        );
         bench.send(M1, "one");
         assert!(bench.next().is_some());
         // The agent never answers the line that hands M1 over.
         bench.send(M2, "two");
         assert_eq!(bench.next(), None, "held behind the first");
-        let deadline = Instant::now() + HANDOVER_TIMEOUT * 3;
+        let deadline = Instant::now() + handover + Duration::from_secs(30);
         let dropped = loop {
             let events = bench.events();
             if let Some(dropped) = events
@@ -3449,16 +3472,24 @@ mod tests {
             live,
             written,
             ..
-        } = Bench::new(fake());
-        // The agent answers each request, but slowly: each in time on its
-        // own, the two together not.
-        let slow = CONFIGURE_TIMEOUT.mul_f64(0.66);
-        assert!(slow < CONTROL_TIMEOUT);
+        } = Bench::keeping(
+            fake(),
+            Deadlines {
+                configure: Duration::from_secs(2),
+                ..Deadlines::default()
+            },
+        );
+        // The agent answers the first request and never the second. Each
+        // request is allowed far longer than the change is, so the change
+        // gives up on the time it has in all, not on the request's.
         std::thread::spawn(move || {
+            let mut answered = false;
             for line in written {
                 if let Some(key) = line.strip_prefix("ask ") {
-                    std::thread::sleep(slow);
-                    live.take(&format!("answer {key}"));
+                    if !answered {
+                        answered = true;
+                        live.take(&format!("answer {key}"));
+                    }
                 }
             }
         });
@@ -3466,10 +3497,7 @@ mod tests {
         let changed = configure(&sessions, "int-bench", None, Some("plan"), Some("high"));
         assert!(changed.is_err(), "{changed:?}");
         let took = started.elapsed();
-        assert!(
-            took < CONFIGURE_TIMEOUT + Duration::from_millis(500),
-            "{took:?}"
-        );
+        assert!(took < Deadlines::default().control / 2, "{took:?}");
     }
 
     #[test]
