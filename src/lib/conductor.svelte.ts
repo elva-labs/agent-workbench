@@ -607,9 +607,9 @@ interface Held {
   caller: string;
   abandon: () => void;
   interrupt: (answer: string) => void;
-  /** A note went with the user's message while it was held, saying what
-      was still out, so the wait given up on for that message says it
-      again to no one. */
+  /** A note went with the user's message while it was held and named
+      what was still out, so giving the wait up for that message leaves
+      nothing more to say. */
   noted?: boolean;
 }
 
