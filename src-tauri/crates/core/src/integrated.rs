@@ -347,6 +347,9 @@ pub enum Event {
         tokens_before: Option<u64>,
         tokens_after: Option<u64>,
     },
+    /// Compacting failed and the conversation is as it was, with why where
+    /// the agent says.
+    CompactFailed { error: Option<String> },
     /// How much of the model's context window the conversation takes, in
     /// tokens, and how big the window is, where the agent reports either.
     /// Sent when either changes.
@@ -1277,7 +1280,7 @@ impl Tracker {
                 }
             }
             Event::Compacting => self.compacting = true,
-            Event::Compacted { .. } => self.compacting = false,
+            Event::Compacted { .. } | Event::CompactFailed { .. } => self.compacting = false,
             Event::Limits { .. } => self.limits = Some(event.clone()),
             _ => {}
         }
@@ -2946,6 +2949,17 @@ mod tests {
             },
         ]);
         assert_eq!(states(&out), [SessionState::Working, SessionState::Idle]);
+        let (_, out) = tracked(vec![
+            Event::Compacting,
+            Event::CompactFailed {
+                error: Some("Not enough messages to compact.".into()),
+            },
+        ]);
+        assert_eq!(
+            states(&out),
+            [SessionState::Working, SessionState::Idle],
+            "a compaction that fails is over too"
+        );
     }
 
     #[test]
