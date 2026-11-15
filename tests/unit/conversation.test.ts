@@ -587,6 +587,7 @@ describe("the order of events that could leave something running", () => {
       ready: null,
       requests: [],
       messages: [],
+      limits: null,
     });
     expect(late.current).not.toBeNull();
     expect(late.entries.filter((entry) => entry.kind === "agent")).toHaveLength(1);
@@ -608,6 +609,7 @@ describe("the order of events that could leave something running", () => {
       ready: null,
       requests: [],
       messages: [],
+      limits: null,
     });
     const entry = late.entries.find((known) => known.kind === "agent");
     expect(entry?.kind === "agent" && entry.parts[0]).toMatchObject({ done: true });

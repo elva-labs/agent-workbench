@@ -281,6 +281,43 @@ describe("the scripted integrated session", () => {
     expect(fake.snapshot(id)).toMatchObject({ state: "working", requests: [], messages: [] });
   });
 
+  it("tells the account's limits as the agent reports them, and the snapshot holds the last", () => {
+    const { fake, heard, id } = started();
+    expect(fake.snapshot(id).limits).toBeNull();
+    fake.limits(id, [{ kind: "session", percent: 11, resetsAt: 1_794_738_000 }], { plan: "max", takenAt: 100 });
+    fake.limits(id, [
+      { kind: "session", percent: 80, severity: "warning" },
+      { kind: "weeklyScoped", model: "Fable", percent: 100, severity: "reached" },
+    ]);
+    const told = heard.filter((event) => event.type === "limits");
+    expect(told).toEqual([
+      {
+        id,
+        type: "limits",
+        agent: "claude-code",
+        plan: "max",
+        windows: [{ kind: "session", model: null, percent: 11, resetsAt: 1_794_738_000, severity: null }],
+        takenAt: 100,
+      },
+      expect.objectContaining({ plan: null }),
+    ]);
+    const { id: _id, ...last } = told[1];
+    expect(fake.snapshot(id).limits).toEqual(last);
+    expect(fake.snapshot(id).limits?.windows[1]).toEqual({
+      kind: "weeklyScoped",
+      model: "Fable",
+      percent: 100,
+      resetsAt: null,
+      severity: "reached",
+    });
+    expect(Math.abs((last.type === "limits" ? last.takenAt : 0) - Date.now() / 1000)).toBeLessThan(60);
+    expect(states(heard)).toEqual(["idle"]);
+
+    const codex = fake.start({ agent: "codex", project: "/repo" });
+    fake.limits(codex.id, [{ kind: "weekly", percent: 3 }]);
+    expect(fake.snapshot(codex.id).limits).toMatchObject({ agent: "codex", windows: [{ kind: "weekly" }] });
+  });
+
   it("tells no window a secret answer, and takes only options where it takes no words", () => {
     const { fake, heard, id } = started();
     fake.startTurn(id);
