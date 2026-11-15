@@ -46,12 +46,22 @@ describe("a Copy in the thread", () => {
     await fireEvent.click(button);
     expect(copied).toEqual(["cargo test -p core"]);
     expect(button).toHaveAttribute("data-copied", "true");
-    expect(button).toHaveAccessibleName("Copied");
+    // The status alone says it, once: the button's own name stays.
+    expect(button).toHaveAccessibleName("Copy command");
     expect(screen.getByRole("status")).toHaveTextContent("Copied");
     await vi.advanceTimersByTimeAsync(FLASH_MS);
     expect(button).toHaveAttribute("data-copied", "false");
     expect(button).toHaveAccessibleName("Copy command");
     expect(screen.getByRole("status")).toHaveTextContent("");
+  });
+
+  it("keeps a name a screen reader is not told twice, given or drawn", async () => {
+    render(Copy, { label: "Copy", name: "Copy the code", text: () => "x", host: "code", place: "corner", testid: "copy-code" });
+    const button = screen.getByTestId("copy-code");
+    expect(button).toHaveAccessibleName("Copy the code");
+    await fireEvent.click(button);
+    expect(button).toHaveAccessibleName("Copy the code");
+    for (const face of button.querySelectorAll(".face")) expect(face).toHaveAttribute("aria-hidden", "true");
   });
 
   it("keeps the focus where it was when pressed", async () => {

@@ -12,7 +12,8 @@
    *
    * A click copies what is there at that moment, so a reply still coming
    * is copied as far as it has come. The word turns to "Copied" for a
-   * moment and a screen reader hears it. The button keeps one width
+   * moment, and a screen reader hears it from a status beside the button,
+   * whose own name stays the same throughout. The button keeps one width
    * through both words and takes no focus from a press, so nothing moves.
    */
   interface Props {
@@ -24,8 +25,9 @@
     text: () => string;
     /** Which `data-copy-host` around it shows it on hover. */
     host: "message" | "code" | "command" | "output";
-    /** In the line, at the line's end, or over the top corner of a block. */
-    place?: "inline" | "end" | "corner";
+    /** In the line, at the line's end, over the top corner of a block, or
+        drawn over the end of a row, just before what stands after it. */
+    place?: "inline" | "end" | "corner" | "overlay";
     testid: string;
   }
 
@@ -62,14 +64,14 @@
   tabindex="-1"
   data-thread-item
   data-copy={host}
-  aria-label={copied ? undefined : name}
+  aria-label={name ?? label}
   onmousedown={(e) => e.preventDefault()}
   onclick={copy}
   data-testid={testid}
   data-copied={copied}
 >
-  <span class="face" class:off={copied} aria-hidden={copied}><Icon name="copy" size={12} />{label}</span>
-  <span class="face" class:off={!copied} aria-hidden={!copied}><Icon name="check" size={12} />Copied</span>
+  <span class="face" class:off={copied} aria-hidden="true"><Icon name="copy" size={12} />{label}</span>
+  <span class="face" class:off={!copied} aria-hidden="true"><Icon name="check" size={12} />Copied</span>
 </button>
 <span class="heard" role="status">{copied ? "Copied" : ""}</span>
 
@@ -95,7 +97,6 @@
     user-select: none;
     -webkit-user-select: none;
     opacity: 0;
-    transition: opacity 0.12s;
   }
 
   /* Both words in one cell, so the button is as wide for one as for the
@@ -168,6 +169,38 @@
     background: var(--surface);
   }
 
+  /* Over the end of a row, the whole of its height, on the row's hover
+     ground with a short fade into the title it covers, and a shade of its
+     own under the pointer so it is told from the row. Shown only while the
+     row is hovered or the keyboard is on it, so at rest the title has the
+     whole row. */
+  .overlay {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    right: 100%;
+    z-index: 1;
+    height: auto;
+    padding: 0 8px;
+    background: var(--surface-2);
+    pointer-events: auto;
+  }
+
+  .overlay::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: 12px;
+    background: linear-gradient(to right, transparent, var(--surface-2));
+    pointer-events: none;
+  }
+
+  .overlay:hover {
+    background: var(--rule);
+  }
+
   .heard {
     position: absolute;
     width: 1px;
@@ -175,11 +208,5 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .copy {
-      transition: none;
-    }
   }
 </style>

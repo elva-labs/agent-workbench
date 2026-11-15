@@ -2137,9 +2137,11 @@ test.describe("copying from the conversation", () => {
     await expect(page.getByTestId("copy-command")).toHaveCSS("opacity", "0");
     await page.locator("[data-testid='markdown'] pre").hover();
     await code.click();
-    await expect(code).toHaveAccessibleName("Copied");
     await expect(code).toHaveAttribute("data-copied", "true");
+    await expect(code.locator(".face").last()).toBeVisible();
+    // The status says Copied, once; the button keeps its name throughout.
     await expect(page.getByRole("status").filter({ hasText: "Copied" })).toHaveCount(1);
+    await expect(code).toHaveAccessibleName("Copy the code");
     await expect(code).toHaveAttribute("data-copied", "false");
     await expect(code).toHaveAccessibleName("Copy the code");
   });
@@ -2164,7 +2166,7 @@ test.describe("copying from the conversation", () => {
     await expect(page.getByTestId("copy-command")).toHaveCSS("opacity", "1");
     expect(await where()).toEqual(before);
     await page.getByTestId("copy-command").click();
-    await expect(page.getByTestId("copy-command")).toHaveAccessibleName("Copied");
+    await expect(page.getByTestId("copy-command")).toHaveAttribute("data-copied", "true");
     expect(await where()).toEqual(before);
     await expect(input).toBeFocused();
   });
@@ -2186,6 +2188,98 @@ test.describe("copying from the conversation", () => {
     await page.getByTestId("copy-command").click();
     await expect(page.getByTestId("step-detail")).toHaveCount(1);
     expect(await copied(page)).toEqual(["cargo build"]);
+  });
+
+  test("gives a command's title the whole row at rest, and draws Copy command over its end", async ({ page }) => {
+    await openIntegrated(page);
+    const long = "cargo test -p workbench-core claude_history -- --nocapture --test-threads 1 reads_back_a_rewound_conversation_whole";
+    await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "${long}" }, { kind: "command" });`);
+    await page.getByTestId("work-line").click();
+    const head = page.getByTestId("step-head");
+    const row = page.getByTestId("step-row");
+    const status = page.getByTestId("step-status");
+    const copy = page.getByTestId("copy-command");
+    await page.getByTestId("composer-input").hover();
+    await expect(copy).toHaveCSS("opacity", "0");
+    const rest = { row: (await row.boundingBox())!, status: (await status.boundingBox())!, title: (await row.locator("code").boundingBox())! };
+    // At rest the row's button, and the command in it, reach the status:
+    // nothing is held for a Copy that is not shown.
+    expect(rest.status.x - (rest.row.x + rest.row.width)).toBeLessThan(16);
+    expect(rest.status.x - (rest.title.x + rest.title.width)).toBeLessThan(24);
+    await row.hover();
+    await expect(copy).toHaveCSS("opacity", "1");
+    const shown = (await copy.boundingBox())!;
+    const ground = (await head.boundingBox())!;
+    // Drawn over the end of the row, before the status, the row's height.
+    expect(shown.x).toBeLessThan(rest.row.x + rest.row.width);
+    expect(shown.x + shown.width).toBeLessThanOrEqual(rest.status.x);
+    expect(shown.y).toBeCloseTo(ground.y, 0);
+    expect(shown.height).toBeCloseTo(ground.height, 0);
+    // Nothing under it moved.
+    expect((await row.boundingBox())!).toEqual(rest.row);
+    expect((await status.boundingBox())!).toEqual(rest.status);
+    expect((await row.locator("code").boundingBox())!).toEqual(rest.title);
+    // On the row's own hover ground, so the title's tail is covered.
+    const colour = (locator: typeof head) => locator.evaluate((node) => getComputedStyle(node).backgroundColor);
+    expect(await colour(copy)).toBe(await colour(head));
+  });
+
+  test("tells its Copy from the row under the pointer, with a shade of its own", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "npm test" }, { kind: "command" });`);
+    await page.getByTestId("work-line").click();
+    const head = page.getByTestId("step-head");
+    const copy = page.getByTestId("copy-command");
+    await page.getByTestId("step-row").hover();
+    await expect(copy).toHaveCSS("opacity", "1");
+    const colour = (locator: typeof head) => locator.evaluate((node) => getComputedStyle(node).backgroundColor);
+    const row = await colour(head);
+    await copy.hover();
+    await expect.poll(() => colour(copy)).not.toBe(row);
+    expect(await colour(head)).toBe(row);
+  });
+
+  test("copies a code block inside a list or a quote, as it copies one at the top", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.turn("${H}", "Two steps:\\n\\n1. Run this:\\n\\n   \`\`\`sh\\n   npm run check\\n   \`\`\`\\n\\n2. Then:\\n\\n   \`\`\`sh\\n   npm test\\n   \`\`\`\\n\\n> \`\`\`\\n> quoted\\n> \`\`\`");`,
+    );
+    const text = page.getByTestId("agent-text");
+    await expect(text.locator("pre")).toHaveCount(3);
+    const copies = page.getByTestId("copy-code");
+    await expect(copies).toHaveCount(3);
+    for (let at = 0; at < 3; at++) {
+      await text.locator("pre").nth(at).hover();
+      await expect(copies.nth(at)).toHaveCSS("opacity", "1");
+      await copies.nth(at).click();
+    }
+    expect(await copied(page)).toEqual(["npm run check", "npm test", "quoted"]);
+    // Each in its own block's top corner.
+    for (let at = 0; at < 3; at++) {
+      const block = (await text.locator("pre").nth(at).boundingBox())!;
+      const copy = (await copies.nth(at).boundingBox())!;
+      expect(copy.y).toBeGreaterThanOrEqual(block.y);
+      expect(copy.x + copy.width).toBeLessThanOrEqual(block.x + block.width);
+      expect(copy.y + copy.height).toBeLessThanOrEqual(block.y + block.height);
+    }
+  });
+
+  test("keeps the keyboard on an earlier code block's Copy while the reply still comes", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "s", parent: null, text: "1. Run:\\n\\n   \`\`\`sh\\n   npm test\\n   \`\`\`\\n\\nThen", done: false });`,
+    );
+    const copy = page.getByTestId("copy-code");
+    await expect(copy).toHaveCount(1);
+    await copy.focus();
+    const before = await copy.elementHandle();
+    await agent(page, `f.emit("${H}", { type: "text", block: "s", parent: null, text: " more words come.", done: false });`);
+    await expect(page.getByTestId("agent-text")).toContainText("Then more words come.");
+    await expect(copy).toBeFocused();
+    expect(await page.evaluate(([a]) => a === document.activeElement, [before])).toBe(true);
   });
 
   test("copies a reply while it is still coming, as far as it has come", async ({ page }) => {

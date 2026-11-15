@@ -12,8 +12,8 @@
    * One step of the agent's work: a tool call, or a stretch of thinking.
    * The row says what it did to what, and how it went; opened, it shows
    * the input, the output as it came, the files it changed, and for a
-   * subagent what that subagent said and did. A command has a Copy beside
-   * its row and another on its output.
+   * subagent what that subagent said and did. A command has a Copy drawn
+   * over its row's end and another on its output.
    */
   interface Props {
     part: ToolCall | TextPart;
@@ -78,8 +78,8 @@
 
 <div class="step" class:open data-testid="step" data-tool={part.kind === "tool" ? part.tool : "thinking"}>
   <!-- The row's button reaches over the whole line, its status too, so a
-       click anywhere on it folds, but on the Copy, which stands above. -->
-  <div class="head" data-copy-host="command">
+       click anywhere on it folds, but on the Copy, which stands above it. -->
+  <div class="head" data-copy-host="command" data-testid="step-head">
     <button
       class="row"
       tabindex="-1"
@@ -99,11 +99,17 @@
         {#if part.kind === "tool" && part.inputTruncated}<span class="cut-mark" data-testid="step-cut">cut short</span>{/if}
       </span>
     </button>
-    {#if command !== null}
-      <Copy label="Copy command" text={() => command ?? ""} host="command" testid="copy-command" />
-    {/if}
-    {#if status !== null}
-      <span class="status {status.tone}" id="{id}-status" data-testid="step-status">{status.text}</span>
+    {#if command !== null || status !== null}
+      <!-- The status at the row's end, and the Copy drawn over the end of
+           the title just before it, so at rest the title has the row. -->
+      <span class="end">
+        {#if command !== null}
+          <Copy label="Copy command" text={() => command ?? ""} host="command" place="overlay" testid="copy-command" />
+        {/if}
+        {#if status !== null}
+          <span class="status {status.tone}" id="{id}-status" data-testid="step-status">{status.text}</span>
+        {/if}
+      </span>
     {/if}
   </div>
 
@@ -237,6 +243,16 @@
     outline-offset: -2px;
   }
 
+  /* Clicks pass through to the row's button under it, but on the Copy. */
+  .end {
+    position: relative;
+    flex: none;
+    pointer-events: none;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+  }
+
   .glyph {
     color: var(--ink-3);
   }
@@ -279,6 +295,7 @@
 
   .status {
     flex: none;
+    margin-left: 4px;
     font-size: var(--conv-fine);
     color: var(--ink-2);
     font-variant-numeric: tabular-nums;
