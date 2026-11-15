@@ -743,3 +743,73 @@ export function address(text: string): Address | null {
   else if (latin === 0 && letters.length > 0) warnings.push("its host is not in Latin letters");
   return { host, other, warnings };
 }
+
+/** The key a fold of the thread is kept open by: a stretch of work by the
+    call or block it starts with, a step by its own. */
+export function foldKey(kind: "work" | "step", part: ToolCall | TextPart): string {
+  return `${kind}:${part.kind === "tool" ? part.call : part.block}`;
+}
+
+/** Something the thread holds that can be looked for and brought into
+    view: a message, a block of text or thinking, a call, a plan, a
+    question or a note, by its id; the entry it stands in; and the folds
+    that must open for it to show, outermost first. */
+export interface Held {
+  id: string;
+  entry: string;
+  folds: string[];
+  text: string;
+}
+
+/** Everything the thread holds, in the order it is drawn, folded work and
+    a subagent's run under its call included. */
+export function held(conversation: Conversation): Held[] {
+  const out: Held[] = [];
+  const walk = (parts: Part[], entry: string, around: string[]) => {
+    for (const segment of segments(parts)) {
+      if (segment.kind === "text") out.push({ id: segment.part.block, entry, folds: around, text: segment.part.text });
+      else if (segment.kind === "plan") {
+        const plan = segment.part;
+        const text = [...plan.steps.map((step) => step.text), plan.text ?? ""].join("\n");
+        out.push({ id: `plan-${plan.at}`, entry, folds: around, text });
+      } else if (segment.kind === "question") {
+        const asked = segment.part;
+        const text = [...asked.questions.map((question) => question.question), ...(asked.answers ?? []).flat()].join("\n");
+        out.push({ id: asked.request, entry, folds: around, text });
+      } else {
+        const work = [...around, foldKey("work", segment.parts[0])];
+        for (const part of segment.parts) {
+          if (part.kind !== "tool") {
+            out.push({ id: part.block, entry, folds: work, text: part.text });
+            continue;
+          }
+          const input = part.inputDone ? JSON.stringify(part.input ?? "") : part.inputText;
+          out.push({ id: part.call, entry, folds: work, text: [part.name, input, part.result ?? part.output].join("\n") });
+          walk(part.parts, entry, [...work, foldKey("step", part)]);
+        }
+      }
+    }
+  };
+  for (const entry of conversation.entries) {
+    if (entry.kind === "user") {
+      const message = conversation.messages[entry.message];
+      if (message !== undefined) out.push({ id: message.id, entry: entry.key, folds: [], text: spoken(message.text, true).text });
+    } else if (entry.kind === "agent") walk(entry.parts, entry.key, []);
+    else if (entry.kind === "note") out.push({ id: entry.key, entry: entry.key, folds: [], text: entry.text });
+  }
+  return out;
+}
+
+/** Where the thread holds a message, block or call: its entry and the
+    folds around it. */
+export function locate(conversation: Conversation, id: string): Held | null {
+  return held(conversation).find((one) => one.id === id) ?? null;
+}
+
+/** What the thread holds that has `query` in it, case aside, in the
+    order it is drawn. */
+export function matches(conversation: Conversation, query: string): Held[] {
+  const looked = query.toLocaleLowerCase();
+  if (looked === "") return [];
+  return held(conversation).filter((one) => one.text.toLocaleLowerCase().includes(looked));
+}

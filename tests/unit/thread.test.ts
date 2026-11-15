@@ -6,6 +6,10 @@ import {
   asks,
   clock,
   dayName,
+  foldKey,
+  held,
+  locate,
+  matches,
   stamps,
   choiceLabel,
   choiceMeans,
@@ -623,3 +627,51 @@ describe("the times a thread shows", () => {
   });
 });
 
+
+describe("what the thread holds, drawn or not", () => {
+  /** A turn that answers a question with a command, then a subagent that
+      reads a file, then says what it found. */
+  const conversation = () => {
+    const c = new Conversation(() => 0);
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "Where is the Counter?", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "toolStarted", call: "c-1", parent: null, name: "Bash", kind: "command" },
+      { type: "toolInput", call: "c-1", parent: null, delta: null, input: { command: "grep -rn counter src" }, truncated: false },
+      { type: "toolFinished", call: "c-1", parent: null, output: "src/count.ts:1", error: false, truncated: false, changes: [] },
+      { type: "toolStarted", call: "c-2", parent: null, name: "Task", kind: "agent" },
+      { type: "toolStarted", call: "c-3", parent: "c-2", name: "Read", kind: "read" },
+      { type: "toolFinished", call: "c-3", parent: "c-2", output: "let counter = 0;", error: false, truncated: false, changes: [] },
+      { type: "toolFinished", call: "c-2", parent: null, output: "done", error: false, truncated: false, changes: [] },
+      { type: "text", block: "b-1", parent: null, text: "The counter is in `src/count.ts`.", done: true },
+      { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 1000, usage: null },
+    ];
+    for (const event of events) c.apply(event);
+    return c;
+  };
+
+  it("finds every message, block and call, with the entry it is in and the folds around it", () => {
+    const c = conversation();
+    const run = c.entries.find((entry) => entry.kind === "agent")!.key;
+    const user = c.entries.find((entry) => entry.kind === "user")!.key;
+    const work = foldKey("work", c.call("c-1")!);
+    expect(held(c).map((one) => one.id)).toEqual(["m-1", "c-1", "c-2", "c-3", "b-1"]);
+    expect(locate(c, "m-1")).toMatchObject({ entry: user, folds: [] });
+    expect(locate(c, "b-1")).toMatchObject({ entry: run, folds: [] });
+    expect(locate(c, "c-1")).toMatchObject({ entry: run, folds: [work] });
+    // A subagent's call is behind the work's fold, the step of the call
+    // that started it, and its own run's fold of work.
+    expect(locate(c, "c-3")).toMatchObject({
+      entry: run,
+      folds: [work, foldKey("step", c.call("c-2")!), foldKey("work", c.call("c-3")!)],
+    });
+    expect(locate(c, "nothing")).toBeNull();
+  });
+
+  it("matches words wherever they are, folded or not, case aside, in the order drawn", () => {
+    const c = conversation();
+    expect(matches(c, "COUNTER").map((one) => one.id)).toEqual(["m-1", "c-1", "c-3", "b-1"]);
+    expect(matches(c, "count.ts").map((one) => one.id)).toEqual(["c-1", "b-1"]);
+    expect(matches(c, "")).toEqual([]);
+  });
+});

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { TextPart, ToolCall } from "$lib/conversation.svelte";
-  import { answered, glyph, inputPath, span, stepTitle } from "$lib/thread";
+  import { openFolds, toggle } from "$lib/folds";
+  import { answered, foldKey, glyph, inputPath, span, stepTitle } from "$lib/thread";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
   import Markdown from "./Markdown.svelte";
@@ -20,7 +21,9 @@
 
   let { part, root }: Props = $props();
 
-  let open = $state(false);
+  const folds = openFolds();
+  let fold = $derived(foldKey("step", part));
+  let open = $derived(folds().has(fold));
 
   let title = $derived(
     part.kind === "tool"
@@ -75,7 +78,7 @@
     class="row"
     tabindex="-1"
     data-thread-item
-    onclick={() => (open = !open)}
+    onclick={() => toggle(folds(), fold)}
     aria-expanded={open}
     data-testid="step-row"
   >

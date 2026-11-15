@@ -12,6 +12,7 @@ import type {
   IntegratedUsage,
   PermissionChoice,
 } from "$lib/core";
+import { SvelteSet } from "svelte/reactivity";
 import { asks, phraseText } from "$lib/thread";
 
 /**
@@ -263,6 +264,9 @@ export class Conversation {
   began = $state<{ after: string | null; at: number } | null>(null);
   /** How many messages this window has sent. */
   sentHere = $state(0);
+  /** The folds of the thread that stand open, by `foldKey`. Kept with the
+      conversation, so a fold stays open while the thread does not draw it. */
+  opened = new SvelteSet<string>();
   /** A model chosen while a turn ran, which the turn after it runs on. */
   nextModel = $state<{ model: string | null; turn: number } | null>(null);
 
