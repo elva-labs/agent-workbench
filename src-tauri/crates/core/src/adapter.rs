@@ -41,11 +41,14 @@ pub enum Surface {
 pub struct LaunchCtx<'a> {
     pub project: &'a Path,
     pub env: &'a HashMap<String, String>,
-    /// The session's id when the workbench knows it before the process is
-    /// up: given to the agent's environment as `WORKBENCH_SESSION`, which
-    /// the agent passes on to the MCP server it starts, so a request the
-    /// server logs names the session it came from.
+    /// The agent's id for the session when the workbench knows it before
+    /// the process is up: one it chose, or the one it resumes.
     pub session: Option<&'a str>,
+    /// The token the workbench chose for the session: given to the agent's
+    /// environment as `WORKBENCH_SESSION`, which the agent passes on to the
+    /// tool server it starts, so every call the server makes names the
+    /// session it came from.
+    pub token: Option<&'a str>,
     /// The first thing the user, or the session that started this one,
     /// has to say: given on the command line, so the agent has it from
     /// the start rather than typed at it while it is still coming up.
@@ -80,6 +83,11 @@ pub struct LaunchCtx<'a> {
     /// A file naming the same server, for an agent that reads its server
     /// configuration from one.
     pub server_file: Option<&'a Path>,
+    /// The workbench's tool server when the agent's own configuration for
+    /// the directory already points at it. An agent that passes its servers
+    /// only the variables it is told to is told the server again here, with
+    /// the session's variables to pass on.
+    pub configured: Option<&'a Path>,
     /// For a resumed session, whether what it is told now differs from what
     /// its conversation was first given, no instructions at all among
     /// them. Claude Code records what it was first told and gives that on
@@ -113,7 +121,8 @@ pub const CODEX_NO_SUBAGENTS: &[&str] = &[
 pub const SERVER_NAME: &str = "agent-workbench";
 pub const CODEX_SERVER_KEY: &str = "agent_workbench";
 
-/// The variable that names the session to the tools the agent starts.
+/// The variable that names the session to the tools the agent starts: the
+/// token the workbench chose for it.
 pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
 
 /// The variable that says what the session is for, when it is for anything
@@ -172,7 +181,7 @@ pub trait AgentAdapter: Send + Sync {
 /// `CLAUDECODE` marks a process as running inside Claude Code, and the
 /// agent refuses or misbehaves under it. `WORKBENCH_SESSION` names the
 /// parent's own session to its tools; a session of the workbench's gets its
-/// own instead.
+/// own token instead.
 ///
 /// Configuration variables under the same prefix are deliberately kept, since
 /// those are the user's and are meant to be inherited.
@@ -329,6 +338,12 @@ pub const CODEX_WORKFLOW_ON_WINDOWS: &str = "Codex takes a workflow's instructio
 /// away, and the tool server as one of its servers. Codex has no setting
 /// that reads developer instructions from a file, so they go on the command
 /// line, which is refused on Windows.
+///
+/// Codex starts a server with only the variables its entry names, so the
+/// server is named whole wherever the session has it, with the variables
+/// that say which session it serves among those passed on: an entry that
+/// named only the variables, where no configuration Codex reads names the
+/// server, would stop Codex from starting.
 fn codex_workflow(ctx: &LaunchCtx, windows: bool) -> Result<Vec<String>, String> {
     if windows && ctx.instructions.is_some() {
         return Err(CODEX_WORKFLOW_ON_WINDOWS.into());
@@ -337,12 +352,17 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool) -> Result<Vec<String>, String>
     // with the same escapes.
     let text = |value: &str| serde_json::Value::from(value).to_string();
     let mut settings = Vec::new();
-    if let Some(server) = ctx.server {
+    if let Some(server) = ctx.server.or(ctx.configured) {
         settings.push(format!(
             "mcp_servers.{CODEX_SERVER_KEY}.command={}",
             text(&server.to_string_lossy())
         ));
         settings.push(format!("mcp_servers.{CODEX_SERVER_KEY}.args=[\"mcp\"]"));
+        settings.push(format!(
+            "mcp_servers.{CODEX_SERVER_KEY}.env_vars=[{}, {}]",
+            text(SESSION_VAR),
+            text(ROLE_VAR)
+        ));
     }
     if ctx.start_only {
         settings.extend(CODEX_NO_SUBAGENTS.iter().map(|setting| setting.to_string()));
@@ -396,12 +416,12 @@ pub const CLAUDE_CONFIG_VAR: &str = "CLAUDE_CONFIG_DIR";
 /// The variable Codex reads its home from.
 pub const CODEX_HOME_VAR: &str = "CODEX_HOME";
 
-/// Puts the session's id in the agent's environment when it is known, and
-/// its role when it has one. The agent passes both on to the tool server it
-/// starts, which is where they are read.
+/// Puts the session's token in the agent's environment, and its role when
+/// it has one. The agent passes both on to the tool server it starts, which
+/// is where they are read.
 fn name_session(command: &mut CommandBuilder, ctx: &LaunchCtx) {
-    if let Some(session) = ctx.session {
-        command.env(SESSION_VAR, session);
+    if let Some(token) = ctx.token {
+        command.env(SESSION_VAR, token);
     }
     if ctx.orchestrator {
         command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
@@ -596,6 +616,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -604,6 +625,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
@@ -643,6 +665,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: Some("abc"),
+            token: None,
             prompt: Some("--dangerously-skip-permissions and fix it"),
             model: None,
             orchestrator: false,
@@ -651,6 +674,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let argv = |surface: Surface| {
@@ -697,6 +721,7 @@ mod tests {
             env: &vars,
             config_dir: Some(own),
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -705,6 +730,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
@@ -741,6 +767,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: Some("abc"),
+            token: None,
             prompt: Some("Go on with the cache test"),
             model: Some("sonnet"),
             orchestrator: false,
@@ -749,6 +776,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let argv = |surface: Surface| {
@@ -819,6 +847,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: Some("abc"),
+            token: None,
             prompt: Some("Fix the flaky test"),
             model: Some("fable"),
             orchestrator: true,
@@ -827,6 +856,7 @@ mod tests {
             start_only: true,
             server: Some(server),
             server_file: Some(named),
+            configured: None,
             afresh: false,
         };
         let argv = |surface: Surface| {
@@ -886,6 +916,9 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
             "-c".to_string(),
+            "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
+                .to_string(),
+            "-c".to_string(),
             "features.multi_agent=false".to_string(),
             "-c".to_string(),
             "features.multi_agent_v2.disable_native_tools=true".to_string(),
@@ -921,6 +954,7 @@ mod tests {
             start_only: false,
             server: None,
             server_file: None,
+            configured: None,
             model: None,
             prompt: None,
             ..ctx
@@ -976,6 +1010,7 @@ mod tests {
             afresh: true,
             start_only: false,
             server_file: None,
+            configured: None,
             ..plain
         };
         assert_eq!(
@@ -1032,14 +1067,22 @@ mod tests {
     }
 
     #[test]
-    fn names_the_session_to_the_agent_when_it_is_known() {
+    fn names_the_session_to_its_tools_by_the_workbench_s_token() {
         let dir = fake_claude("adapter-session");
+        let codex = dir.join("codex");
+        std::fs::write(&codex, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
             config_dir: None,
             session: Some("abc-123"),
+            token: Some("token-1"),
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1048,6 +1091,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
@@ -1055,13 +1099,27 @@ mod tests {
             command
                 .get_env(SESSION_VAR)
                 .map(|v| v.to_string_lossy().to_string()),
-            Some("abc-123".to_string())
+            Some("token-1".to_string())
+        );
+        // An agent that mints its own id has the token all the same, from
+        // the start.
+        let fresh = LaunchCtx {
+            session: None,
+            ..ctx
+        };
+        let Surface::Pty(command) = Codex.launch(&fresh, "").unwrap();
+        assert_eq!(
+            command
+                .get_env(SESSION_VAR)
+                .map(|v| v.to_string_lossy().to_string()),
+            Some("token-1".to_string())
         );
         let unnamed = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
             config_dir: None,
-            session: None,
+            session: Some("abc-123"),
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1070,10 +1128,70 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
-        let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "").unwrap();
+        let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "abc-123").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
+    }
+
+    #[test]
+    fn codex_passes_the_session_s_variables_to_the_tool_server_it_has() {
+        let vars = HashMap::new();
+        let daemon = Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote");
+        let ctx = LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: None,
+            token: Some("token-1"),
+            prompt: None,
+            model: None,
+            orchestrator: false,
+            instructions: None,
+            instructions_file: None,
+            start_only: false,
+            server: None,
+            server_file: None,
+            configured: None,
+            afresh: false,
+        };
+        // No server anywhere: nothing is said of one, since an entry Codex
+        // cannot start would stop the session from starting.
+        assert!(codex_workflow(&ctx, false).unwrap().is_empty());
+        // The project's configuration names it: it is named again, whole,
+        // with the variables Codex is to pass on.
+        let configured = LaunchCtx {
+            configured: Some(daemon),
+            ..ctx
+        };
+        let whole = [
+            "-c".to_string(),
+            format!(
+                "mcp_servers.agent_workbench.command=\"{}\"",
+                daemon.display()
+            ),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
+                .to_string(),
+        ];
+        assert_eq!(codex_workflow(&configured, false).unwrap(), whole);
+        assert_eq!(codex_workflow(&configured, true).unwrap(), whole);
+        // Claude Code passes its servers its whole environment, so it is
+        // told nothing more.
+        let dir = fake_claude("adapter-configured");
+        let path = vars_with_path(&dir);
+        let claude = LaunchCtx {
+            env: &path,
+            ..configured
+        };
+        let Surface::Pty(command) = ClaudeCode.launch(&claude, "abc").unwrap();
+        assert!(command
+            .get_argv()
+            .iter()
+            .all(|arg| !arg.to_string_lossy().contains("mcp")));
     }
 
     #[test]
@@ -1095,6 +1213,7 @@ mod tests {
                 env: &vars,
                 config_dir: None,
                 session: Some("abc"),
+                token: None,
                 prompt: None,
                 model: None,
                 orchestrator,
@@ -1103,6 +1222,7 @@ mod tests {
                 server: None,
                 instructions_file: None,
                 server_file: None,
+                configured: None,
                 afresh: false,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
@@ -1129,6 +1249,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1137,6 +1258,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
@@ -1153,6 +1275,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1161,6 +1284,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1183,6 +1307,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1191,6 +1316,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1219,6 +1345,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1227,6 +1354,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1252,6 +1380,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1260,6 +1389,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 
@@ -1280,6 +1410,7 @@ mod tests {
             env: &vars,
             config_dir: None,
             session: None,
+            token: None,
             prompt: None,
             model: None,
             orchestrator: false,
@@ -1288,6 +1419,7 @@ mod tests {
             server: None,
             instructions_file: None,
             server_file: None,
+            configured: None,
             afresh: false,
         };
 

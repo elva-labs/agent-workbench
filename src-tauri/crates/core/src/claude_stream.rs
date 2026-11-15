@@ -186,7 +186,9 @@ impl Protocol for ClaudeStream {
         command.env(SESSION_STATE_VAR, "1");
         // The tool server the agent starts reads which session it serves,
         // and whether that session directs the others, from these.
-        command.env(SESSION_VAR, session);
+        if let Some(token) = launch.token {
+            command.env(SESSION_VAR, token);
+        }
         if launch.orchestrator {
             command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
         }

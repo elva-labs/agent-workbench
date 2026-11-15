@@ -101,6 +101,8 @@ struct SpawnParams {
     #[serde(default)]
     session: Option<String>,
     #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
     model: Option<String>,
@@ -125,6 +127,8 @@ struct IntegratedStartParams {
     cwd: Option<PathBuf>,
     #[serde(default)]
     session: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -426,6 +430,7 @@ pub fn dispatch(
                 &p.project,
                 p.cwd.as_deref(),
                 p.session,
+                p.token.as_deref(),
                 p.prompt.as_deref(),
                 p.model.as_deref(),
                 p.config_dir.as_deref(),
@@ -444,6 +449,7 @@ pub fn dispatch(
                 &p.project,
                 p.cwd.as_deref(),
                 p.session,
+                p.token.as_deref(),
                 p.model.as_deref(),
                 p.mode.as_deref(),
                 p.effort.as_deref(),

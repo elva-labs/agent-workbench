@@ -197,8 +197,8 @@ impl Protocol for CodexAppServer {
         // The hooks read which session they serve from these; the tool
         // server is given them in the thread's configuration, since Codex
         // passes its servers only an environment of its own choosing.
-        if let Some(session) = launch.session {
-            command.env(SESSION_VAR, session);
+        if let Some(token) = launch.token {
+            command.env(SESSION_VAR, token);
         }
         if launch.orchestrator {
             command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
@@ -645,7 +645,9 @@ struct AppServer {
     start_mode: Option<String>,
     start_effort: Option<String>,
     tool_server: Option<PathBuf>,
-    session: Option<String>,
+    /// The token the workbench chose for the session, which the tool
+    /// server is given.
+    token: Option<String>,
     orchestrator: bool,
 
     next: i64,
@@ -1068,7 +1070,7 @@ impl AppServer {
             start_mode: launch.mode.map(str::to_string),
             start_effort: launch.effort.map(str::to_string),
             tool_server: launch.tool_server.map(Path::to_path_buf),
-            session: launch.session.map(str::to_string),
+            token: launch.token.map(str::to_string),
             orchestrator: launch.orchestrator,
             next: 0,
             sent: HashMap::new(),
@@ -1201,8 +1203,8 @@ impl AppServer {
         }
         if let Some(server) = &self.tool_server {
             let mut env = Map::new();
-            if let Some(session) = &self.session {
-                env.insert(SESSION_VAR.into(), json!(session));
+            if let Some(token) = &self.token {
+                env.insert(SESSION_VAR.into(), json!(token));
             }
             if self.orchestrator {
                 env.insert(ROLE_VAR.into(), json!(ORCHESTRATOR_ROLE));

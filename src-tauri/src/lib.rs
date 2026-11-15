@@ -106,6 +106,7 @@ async fn pty_spawn(
     project: String,
     cwd: Option<String>,
     session: Option<String>,
+    token: Option<String>,
     prompt: Option<String>,
     model: Option<String>,
     config_dir: Option<String>,
@@ -131,6 +132,7 @@ async fn pty_spawn(
                 Path::new(&project),
                 cwd.as_deref().map(Path::new),
                 session,
+                token.as_deref(),
                 prompt.as_deref(),
                 model.as_deref(),
                 config_dir.as_deref(),
@@ -147,7 +149,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "prompt": prompt, "model": model, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));
@@ -169,6 +171,7 @@ async fn integrated_start(
     project: String,
     cwd: Option<String>,
     session: Option<String>,
+    token: Option<String>,
     model: Option<String>,
     mode: Option<String>,
     effort: Option<String>,
@@ -187,6 +190,7 @@ async fn integrated_start(
             Path::new(&project),
             cwd.as_deref().map(Path::new),
             session,
+            token.as_deref(),
             model.as_deref(),
             mode.as_deref(),
             effort.as_deref(),
@@ -196,7 +200,7 @@ async fn integrated_start(
         Route::Remote { host, rest } => {
             let started = remotes.connection(&host)?.call(
                 "integrated_start",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
             let id = with_host_id(&host, id);
