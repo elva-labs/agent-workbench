@@ -71,6 +71,11 @@ test("walks the thread as one stop, with the arrows", async ({ page }) => {
   await page.keyboard.press("Shift+Tab");
   expect(await focused(page)).toBe("thread");
   expect(await visiblyFocused(page)).toBe(true);
+  // Each message's Copy is on the walk, before what the message holds.
+  await page.keyboard.press("ArrowDown");
+  expect(await focused(page)).toBe("copy-message");
+  await page.keyboard.press("ArrowDown");
+  expect(await focused(page)).toBe("copy-reply");
   await page.keyboard.press("ArrowDown");
   expect(await focused(page)).toBe("work-line");
   expect(await visiblyFocused(page)).toBe(true);
@@ -90,6 +95,48 @@ test("walks the thread as one stop, with the arrows", async ({ page }) => {
   // Tab leaves the thread for the composer: the thread is one stop.
   await page.keyboard.press("Tab");
   await expect(page.getByTestId("composer-input")).toBeFocused();
+});
+
+test("reaches each Copy on the thread's walk, shows it there and copies with Enter or Space", async ({ page }) => {
+  await open(page);
+  await agent(
+    page,
+    `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");
+     f.emit("${H}", { type: "text", block: "a", parent: null, text: "Run this:\\n\\n\`\`\`sh\\nnpm test\\n\`\`\`", done: true });
+     f.tool("${H}", "Bash", { command: "npm test" }, "12 passed", { kind: "command" });
+     f.endTurn("${H}");`,
+  );
+  const input = page.getByTestId("composer-input");
+  await input.focus();
+  await page.keyboard.press("Shift+Tab");
+  expect(await focused(page)).toBe("thread");
+  const walk = async (to: string) => {
+    await page.keyboard.press("ArrowDown");
+    expect(await focused(page)).toBe(to);
+  };
+  await walk("copy-message");
+  await expect(page.getByTestId("copy-message")).toHaveCSS("opacity", "1");
+  await walk("copy-reply");
+  await expect(page.getByTestId("copy-message")).toHaveCSS("opacity", "0");
+  await walk("copy-code");
+  expect(await visiblyFocused(page)).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("copy-code")).toHaveAttribute("data-copied", "true");
+  // The keyboard stays on the Copy, which stays in sight while it says so.
+  expect(await focused(page)).toBe("copy-code");
+  await walk("work-line");
+  await page.keyboard.press("Enter");
+  await walk("step-row");
+  await page.keyboard.press("Enter");
+  await walk("copy-command");
+  await page.keyboard.press(" ");
+  await walk("copy-output");
+  await page.keyboard.press("Enter");
+  const copied = await page.evaluate(() => (window as unknown as { __copied?: string[] }).__copied ?? []);
+  expect(copied).toEqual(["npm test", "npm test", "12 passed"]);
+  // Tab leaves the thread from a Copy as from any of its items.
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
 });
 
 test("reaches the dock's folds and choices by Tab, and opens the whole request", async ({ page }) => {
@@ -130,4 +177,18 @@ test("reaches the sign-in card's button by Tab, and Resume once a session ends",
   await expect(page.getByTestId("login-gate")).toHaveCount(0);
   await agent(page, `f.end("int-2", true);`);
   await expect(page.getByTestId("resume-session")).toBeFocused();
+});
+
+test("completes a slash command with Tab, and Tab moves on once the menu is away", async ({ page }) => {
+  await open(page);
+  const input = page.getByTestId("composer-input");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("/ru");
+  await expect(page.getByTestId("slash-menu")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(input).toHaveValue("/run ");
+  await expect(input).toBeFocused();
+  await expect(page.getByTestId("slash-menu")).toHaveCount(0);
+  await page.keyboard.press("Tab");
+  expect(await focused(page)).toBe("attach");
 });

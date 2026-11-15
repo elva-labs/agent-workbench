@@ -11,6 +11,7 @@ import {
   render,
   renderSaid,
   resetMedia,
+  saidBlocks,
 } from "$lib/media.svelte";
 import { closeViewer, files } from "$lib/files.svelte";
 import { layout } from "$lib/layout.svelte";
@@ -282,6 +283,41 @@ describe("what an agent says in a conversation", () => {
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img");
     expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
+  });
+
+  it("is drawn a block at a time as it is drawn whole, reference links and raw HTML included", () => {
+    const md = [
+      "## The plan\n\nRead [the docs][d] first, then <b>this</b>:",
+      "- one\n- two\n\n  still two",
+      "```rust\nlet x = 1;\n```",
+      "| a | b |\n| - | - |\n| 1 | 2 |",
+      "> quoted ![chart](https://example.com/c.png)",
+      "    indented code",
+      "[d]: https://example.com/docs",
+    ].join("\n\n");
+    const blocks = saidBlocks(md);
+    expect(blocks.join("")).toBe(renderSaid(md));
+    expect(blocks.join("")).toContain('<a href="https://example.com/docs"');
+  });
+
+  it("puts every code block in a box of its own, at the top, in a list and in a quote", () => {
+    const box = document.createElement("div");
+    box.innerHTML = renderSaid("```sh\nnpm test\n```\n\n1. Run this:\n\n   ```sh\n   npm run check\n   ```\n\n> ```\n> quoted\n> ```\n\n    indented");
+    const codes = [...box.querySelectorAll("div.code[data-copy-host='code']")];
+    expect(codes.map((code) => code.querySelector("pre code")?.textContent)).toEqual([
+      "npm test\n",
+      "npm run check\n",
+      "quoted\n",
+      "indented\n",
+    ]);
+    expect(box.querySelectorAll("pre")).toHaveLength(4);
+    expect(codes.map((code) => code.closest("li, blockquote")?.tagName ?? null)).toEqual([null, "LI", "BLOCKQUOTE", null]);
+  });
+
+  it("draws a code block whose fence is still open as far as it has come", () => {
+    const box = document.createElement("div");
+    box.innerHTML = saidBlocks("Run:\n\n```sh\nnpm te").join("");
+    expect(box.querySelector("div.code pre code")?.textContent).toBe("npm te\n");
   });
 });
 

@@ -1558,9 +1558,21 @@ fn model_effort_and_mode_are_settled_here_and_go_with_the_next_turn() {
 }
 
 #[test]
+fn compaction_with_instructions_is_refused() {
+    let mut driver = ready();
+    let refused = driver.control(&Control::Compact {
+        instructions: Some("keep the notes".into()),
+    });
+    assert!(refused.is_err(), "Codex's compaction takes none");
+}
+
+#[test]
 fn compaction_asked_for_is_a_turn_of_the_agent_s_own() {
     let mut driver = ready();
-    let Sending::Request { line, key } = driver.control(&Control::Compact).unwrap() else {
+    let Sending::Request { line, key } = driver
+        .control(&Control::Compact { instructions: None })
+        .unwrap()
+    else {
         panic!("a request");
     };
     let line: Value = serde_json::from_str(&line).unwrap();

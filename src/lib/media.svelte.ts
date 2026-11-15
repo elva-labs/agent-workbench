@@ -207,6 +207,13 @@ said.image = ({ href, title, text }) => {
   return `<a href="${escapeAttribute(href)}" rel="noopener noreferrer">${escapeText(text || href)}</a>`;
 };
 
+/** Every code block the agent wrote, at the top or in a list or a quote,
+    stands in a box of its own that the conversation puts its Copy in. */
+const drawCode = said.code;
+said.code = function (this: typeof said, token) {
+  return `<div class="code" data-copy-host="code">${drawCode.call(this, token)}</div>`;
+};
+
 /** Raw HTML in a document is shown as the text it is, never drawn. Text is
     always escaped here: marked leaves text unescaped once it believes a raw
     block such as `<code>` has opened, and since raw HTML is never drawn, no
@@ -250,6 +257,22 @@ export function render(markdown: string): string {
     with an image from anywhere but the text itself shown as a link. */
 export function renderSaid(markdown: string): string {
   return marked.parse(markdown, { async: false, gfm: true, renderer: said }) as string;
+}
+
+/** Markdown an agent wrote, rendered as `renderSaid` does, one top-level
+    block at a time, so a block that is done is drawn once while the words
+    after it still come. */
+export function saidBlocks(markdown: string): string[] {
+  const tokens = marked.lexer(markdown, { gfm: true });
+  const out: string[] = [];
+  for (const token of tokens) {
+    if (token.type === "space") continue;
+    // Each block is parsed with the whole text's link definitions, so a
+    // reference link finds its address wherever it is defined.
+    const one = Object.assign([token], { links: tokens.links });
+    out.push(marked.parser(one, { async: false, gfm: true, renderer: said }));
+  }
+  return out;
 }
 
 function decode(base64: string): string {

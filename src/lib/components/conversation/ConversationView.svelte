@@ -204,6 +204,7 @@
           {active}
           onDock={toDock}
           defaultModel={session.model === null}
+          slash={profile.commands}
         />
       {/if}
     </div>

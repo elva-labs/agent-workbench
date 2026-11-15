@@ -1,5 +1,6 @@
 /**
- * What closing the window takes with it.
+ * What closing the window takes with it, and the shells closing a session
+ * or a project takes.
  *
  * Closing the window ends the app, and every session and shell running in
  * it with it. So the core holds the window's close, by any way it is asked
@@ -9,14 +10,28 @@
  * editor tells it about the edits. A row left from the last quit runs
  * nothing until it is woken, so it is not counted, and a shell counts only
  * while something started at its prompt still runs in it.
+ *
+ * Closing a session closes the shells that belong to it, and closing a
+ * project every shell that started in it, so either asks first while one of
+ * those is busy, in the same words.
  */
 
 import { untrack } from "svelte";
 import { core } from "$lib/core";
 import { anyUnsaved, editor, leaveRequested } from "$lib/editor.svelte";
-import { groupOf, isLive, sessions } from "$lib/sessions.svelte";
-import { label, runningIn, shortCommand, terminals, type Shell } from "$lib/terminals.svelte";
-import { projectLabel, workspace } from "$lib/workspace.svelte";
+import { byKey as sessionByKey, groupOf, isLive, label as sessionLabel, sessions } from "$lib/sessions.svelte";
+import {
+  belongsTo,
+  forOwner,
+  forProject,
+  label,
+  ownerOnScreen,
+  runningIn,
+  shortCommand,
+  terminals,
+  withOwner,
+  type Shell,
+} from "$lib/terminals.svelte";
 
 /** A shell with something running in it, as the question names it. */
 export interface BusyShell {
@@ -41,9 +56,28 @@ export function running(): { count: number; waiting: number } {
   return { count: live.length, waiting: live.filter((session) => groupOf(session) === "needs").length };
 }
 
+/** Whether a shell has a process behind it. */
+function isOpen(shell: Shell): boolean {
+  return shell.ptyId !== null && shell.status === "running";
+}
+
 /** The shells with a process behind them, in every project. */
 function openShells(): Shell[] {
-  return terminals.all.filter((shell) => shell.ptyId !== null && shell.status === "running");
+  return terminals.all.filter(isOpen);
+}
+
+/** A shell named from where the user is: alone when it is one of the
+    owner's on screen, else with whose it is. */
+function fromScreen(shell: Shell): string {
+  if (belongsTo(shell, ownerOnScreen())) return label(shell);
+  return withOwner(shell);
+}
+
+/** A shell named for the question about closing its project: alone when
+    it is the project's own, else with its session. */
+function inProject(shell: Shell): string {
+  const session = shell.session === null ? null : sessionByKey(shell.session);
+  return session === null ? label(shell) : `${label(shell)} of ${sessionLabel(session)}`;
 }
 
 /** Keeps the core told whether sessions run or shells are open. Runs in an
@@ -55,20 +89,35 @@ export function watchRunning() {
   });
 }
 
-/** The shells with something still running in them, each named for the
-    question, in every project: one outside the project on screen says
-    which project it is in. A shell whose processes are not read in time
-    counts as idle. */
-export async function busyShells(): Promise<BusyShell[]> {
+/** Of these shells, the ones with something still running in them, each
+    named for the question: by default every open shell, one not on screen
+    saying which session or project it belongs to. A shell whose processes
+    are not read in time counts as idle. */
+export async function busyShells(shells: Shell[] = openShells(), name: (shell: Shell) => string = fromScreen): Promise<BusyShell[]> {
   const read = await Promise.all(
-    openShells().map(async (shell) => {
+    shells.filter(isOpen).map(async (shell) => {
       const late = new Promise<string[]>((done) => setTimeout(() => done([]), READ_WITHIN));
       const running = await Promise.race([runningIn(shell.ptyId!), late]);
-      const name = shell.project === workspace.active ? label(shell) : `${label(shell)} in ${projectLabel(shell.project)}`;
-      return { label: name, running };
+      return { label: name(shell), running };
     }),
   );
   return read.filter((shell) => shell.running.length > 0);
+}
+
+/** What is being closed from the sessions pane: a session, by its key, or
+    a project, by its path. */
+export type Closed = { session: string } | { project: string };
+
+/** The busy shells closing a session or a project would stop: the
+    session's own, or every shell that started in the project. A session's
+    are named alone; a project's own are too, and a session's say which. */
+export function busyGoing(closed: Closed): Promise<BusyShell[]> {
+  if ("session" in closed) {
+    const session = sessionByKey(closed.session);
+    if (session === null) return Promise.resolve([]);
+    return busyShells(forOwner({ project: session.project, session: session.key }), label);
+  }
+  return busyShells(forProject(closed.project), inProject);
 }
 
 /** The core held back the window's close or the app's quit. With sessions
@@ -165,4 +214,27 @@ export function runningAside({ count }: { count: number; waiting: number }, busy
   const total = count + busy.length;
   if (total === 0) return "";
   return ` ${what(count, busy.length)} ${total === 1 ? "is" : "are"} running, and ${total === 1 ? "stops" : "stop"} with the app.`;
+}
+
+/** The question before a session or a project closes while shells that go
+    with it are busy, and nothing is unsaved: the window's words, for what
+    is closed. */
+export function closingQuestion(
+  kind: "session" | "project",
+  name: string,
+  busy: BusyShell[],
+): { question: string; detail: string; action: string } {
+  const them = busy.length === 1 ? "it" : "them";
+  return {
+    question: `Close ${name} with ${what(0, busy.length)} running?`,
+    detail: `${shellsSentence(busy)} Closing the ${kind} stops ${them}.`,
+    action: kind === "session" ? "Close session" : "Close project",
+  };
+}
+
+/** What the unsaved question about closing a session or a project adds
+    about the busy shells that go with it, if any. */
+export function closingAside(kind: "session" | "project", busy: BusyShell[]): string {
+  if (busy.length === 0) return "";
+  return ` ${what(0, busy.length)} ${busy.length === 1 ? "is" : "are"} running, and ${busy.length === 1 ? "stops" : "stop"} with the ${kind}.`;
 }

@@ -24,47 +24,78 @@
     closeAsked,
     closeAsking,
     create,
+    besideOf,
     equalize,
-    forProject,
     groupOf,
     groupsFor,
+    groupsOf,
     keepAsked,
     label,
     launch,
+    ownerOnScreen,
     resizeSplit,
     select,
     share,
     shortCommand,
+    shownFor,
     shownGroup,
     split,
     statusMessage,
     terminals,
+    withOwner,
     type Shell,
   } from "$lib/terminals.svelte";
-  import { workspace } from "$lib/workspace.svelte";
+  import { startup } from "$lib/reopen.svelte";
+  import { byKey as sessionByKey, label as sessionLabel } from "$lib/sessions.svelte";
+  import { projectLabel } from "$lib/workspace.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
   let current = $derived(activeShell());
   let shown = $derived(shownGroup());
   let focused = $derived(layout.focus === "terminal");
-  let groups = $derived(workspace.active === null ? [] : groupsFor(workspace.active));
+  /** Whose shells are listed: the session on screen, else the project. */
+  let owner = $derived(ownerOnScreen());
+  let groups = $derived(groupsFor(owner));
+  /** The project's own groups, listed apart beside a session's. */
+  let besideGroups = $derived(groupsOf(besideOf(owner)));
+  /** The project on screen, as its own shells' heading names it. */
+  let projectName = $derived(owner === null ? "" : projectLabel(owner.project));
+
+  /** The owner as the list names it. */
+  let ownerName = $derived.by(() => {
+    if (owner === null) return "";
+    if (owner.session === null) return projectLabel(owner.project);
+    const session = sessionByKey(owner.session);
+    return session === null ? "" : sessionLabel(session);
+  });
 
   /** What the shown group divides between its shells. */
   let shellsWidth = $state(0);
 
-  // Asking for the panel is asking for a shell: it opens with one when the
-  // project has none. Only on showing it or on changing project, never as a
-  // reaction to a shell going, or one that exits at once would be a loop.
+  /** Whether anyone is on screen to have shells: false until a project is. */
+  let someone = $derived(owner !== null);
+
+  // Asking for the panel is asking for a shell: it opens with one when it
+  // has none to list. Only on showing it, or on a project coming on screen
+  // under it, and as the window starts only once the sessions that were
+  // open are back and the one on screen is chosen, or the shell would go to
+  // the project a moment before its session came on screen. Never on
+  // switching session or project, where the panel offers one instead, and
+  // never as a reaction to a shell going, or one that exits at once would
+  // be a loop.
   $effect(() => {
     const visible = terminalVisible();
-    const project = workspace.active;
+    const anyone = someone;
+    const settled = startup.settled;
     untrack(() => {
-      if (visible && project !== null && forProject(project).length === 0) create(project);
+      const now = ownerOnScreen();
+      if (visible && anyone && settled && now !== null && shownFor(now).length === 0) create(now);
     });
   });
 
   function another() {
-    if (workspace.active !== null) create(workspace.active);
+    const now = ownerOnScreen();
+    if (now !== null) create(now);
   }
 
   function beside() {
@@ -158,10 +189,53 @@
     saveLayout();
   }
 
+  /** A shell as its row and its question name it: the project's own
+      beside a session with the project's name. */
+  function rowName(shell: Shell): string {
+    return besideOf(owner).includes(shell) ? withOwner(shell) : label(shell);
+  }
+
   function dot(shell: Shell) {
     return shell.status === "running" ? "live" : shell.status === "starting" ? "" : "dead";
   }
 </script>
+
+{#snippet groupRows(group: Shell[], name: (shell: Shell) => string)}
+  <div class="group" class:on={group[0].group === shown} role="group" data-testid="terminal-group">
+    {#each group as shell, i (shell.key)}
+      <div class="row" class:beside={i > 0} class:on={shell.key === terminals.active}>
+        <button
+          class="name"
+          role="option"
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={() => choose(shell.key)}
+          onkeydown={(e) => onRowKeydown(e, shell.key)}
+          aria-selected={shell.key === terminals.active}
+          aria-current={shell.key === terminals.active ? "true" : undefined}
+          aria-label={name(shell)}
+          data-testid="terminal-row"
+        >
+          <span class="dot {dot(shell)}"></span>
+          <span class="label">{label(shell)}</span>
+        </button>
+        <button
+          class="icon"
+          onclick={() => split(shell.key)}
+          aria-label="Split {name(shell)}"
+          title="Split"
+          data-testid="split-row">⫿</button
+        >
+        <button
+          class="icon"
+          onclick={() => void closeAsking(shell.key)}
+          aria-label="Close {name(shell)}"
+          title="Close"
+          data-testid="close-terminal">×</button
+        >
+      </div>
+    {/each}
+  </div>
+{/snippet}
 
 <!-- Bare: the header row goes to the shells, and the title sits over the
      list, where the tools are anyway. -->
@@ -175,7 +249,7 @@
         <button
           class="tool"
           onclick={another}
-          disabled={workspace.active === null}
+          disabled={owner === null}
           aria-label="New shell"
           title="New shell ({describe(chordFor("terminal.new"))})"
           data-testid="new-terminal">+</button
@@ -190,47 +264,30 @@
         >
         <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
       </div>
+      {#if owner !== null}
+        <p class="owner" title="Shells of {ownerName}" data-testid="terminal-owner">Shells of {ownerName}</p>
+      {/if}
 
       <!-- One row per shell, grouped: the rows under the first of a group are
            the shells beside it. The rows are one stop, walked with the
            arrows. A click, Enter or Space on a row goes to its shell, and
-           Delete closes it, as its × does. -->
-      <div class="rows" role="listbox" aria-label="Shells" bind:this={rows}>
-      {#each groups as group (group[0].group)}
-        <div class="group" class:on={group[0].group === shown} role="group" data-testid="terminal-group">
-          {#each group as shell, i (shell.key)}
-            <div class="row" class:beside={i > 0} class:on={shell.key === terminals.active}>
-              <button
-                class="name"
-                role="option"
-                onpointerdown={(e) => e.preventDefault()}
-                onclick={() => choose(shell.key)}
-                onkeydown={(e) => onRowKeydown(e, shell.key)}
-                aria-selected={shell.key === terminals.active}
-                aria-current={shell.key === terminals.active ? "true" : undefined}
-                data-testid="terminal-row"
-              >
-                <span class="dot {dot(shell)}"></span>
-                <span class="label">{label(shell)}</span>
-              </button>
-              <button
-                class="icon"
-                onclick={() => split(shell.key)}
-                aria-label="Split {label(shell)}"
-                title="Split"
-                data-testid="split-row">⫿</button
-              >
-              <button
-                class="icon"
-                onclick={() => void closeAsking(shell.key)}
-                aria-label="Close {label(shell)}"
-                title="Close"
-                data-testid="close-terminal">×</button
-              >
-            </div>
-          {/each}
-        </div>
-      {/each}
+           Delete closes it, as its × does. Beside a session the project's
+           own shells follow at the foot, under the project's name. -->
+      <div class="rows" role="listbox" aria-label={ownerName === "" ? "Shells" : `Shells of ${ownerName}`} bind:this={rows}>
+        {#if groups.length === 0 && besideGroups.length > 0}
+          <p class="none" data-testid="terminal-none">None open.</p>
+        {/if}
+        {#each groups as group (group[0].group)}
+          {@render groupRows(group, label)}
+        {/each}
+        {#if besideGroups.length > 0}
+          <div class="foot" role="group" aria-labelledby="terminal-foot" data-testid="terminal-project-shells">
+            <p class="owner" id="terminal-foot" title="Shells of {projectName}">Shells of {projectName}</p>
+            {#each besideGroups as group (group[0].group)}
+              {@render groupRows(group, withOwner)}
+            {/each}
+          </div>
+        {/if}
       </div>
     </nav>
 
@@ -273,13 +330,13 @@
         </div>
       {/each}
 
-      {#if workspace.active === null}
+      {#if owner === null}
         <div class="overlay" data-testid="terminal-status">
           <p class="message">Open a project to start a shell in.</p>
         </div>
       {:else if current === null}
         <div class="overlay" data-testid="terminal-status">
-          <p class="message">No shell open in this project.</p>
+          <p class="message">{owner.session === null ? "No shell open for this project." : "No shell open for this session."}</p>
           <button onclick={another} data-testid="start-terminal">New shell</button>
         </div>
       {:else if current.status !== "running"}
@@ -296,7 +353,7 @@
       {#if asked !== null && askedShell !== null}
         <div class="ask" bind:this={askStrip} data-testid="close-shell-ask">
           <ConfirmStrip
-            question="Close {label(askedShell)}?"
+            question="Close {rowName(askedShell)}?"
             detail={askDetail}
             action="Close shell"
             onConfirm={() => void answered(true)}
@@ -405,8 +462,28 @@
     border-left: 1px solid var(--rule);
   }
 
-  .top + .rows > .group:first-child {
+  .owner {
+    margin: 0;
+    padding: 7px var(--row-pad-x) 3px;
+    font-family: var(--chrome);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: none;
+  }
+
+  .foot {
     margin-top: 6px;
+  }
+
+  .none {
+    margin: 0;
+    padding: var(--row-pad-y) var(--row-pad-x);
+    font-family: var(--chrome);
+    font-size: var(--row-size);
+    color: var(--ink-3);
   }
 
   .group {

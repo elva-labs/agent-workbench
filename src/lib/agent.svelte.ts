@@ -13,14 +13,16 @@ export const AGENTS: AgentId[] = ["claude-code", "codex"];
 /** What the window says of an agent, in one place: what it is called as a
     product and as the one speaking in a conversation, how the user signs
     in to it in a terminal, the variable that names its account's
-    directory, and the mode a session of it starts in unless the user picks
-    another, the one that asks before it acts. */
+    directory, the mode a session of it starts in unless the user picks
+    another, the one that asks before it acts, and whether it lists slash
+    commands once ready. */
 export interface AgentProfile {
   product: string;
   name: string;
   signIn: string;
   configVar: string;
   safeMode: string;
+  commands: boolean;
 }
 
 const PROFILES: Record<AgentId, AgentProfile> = {
@@ -30,6 +32,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     signIn: "claude",
     configVar: "CLAUDE_CONFIG_DIR",
     safeMode: "default",
+    commands: true,
   },
   codex: {
     product: "Codex",
@@ -37,6 +40,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     signIn: "codex login",
     configVar: "CODEX_HOME",
     safeMode: "read-only",
+    commands: false,
   },
 };
 

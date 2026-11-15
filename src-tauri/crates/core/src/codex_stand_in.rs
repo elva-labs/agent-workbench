@@ -927,7 +927,7 @@ fn compaction_notices_and_a_retry() {
 }
 
 fn integrated_compact(h: &Harness) {
-    control(&h.sessions, &h.id, &Control::Compact).unwrap();
+    control(&h.sessions, &h.id, &Control::Compact { instructions: None }).unwrap();
 }
 
 #[test]

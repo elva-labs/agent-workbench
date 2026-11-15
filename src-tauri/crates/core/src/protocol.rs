@@ -179,6 +179,13 @@ struct IntegratedSendParams {
 }
 
 #[derive(Deserialize)]
+struct IntegratedCompactParams {
+    id: String,
+    #[serde(default)]
+    instructions: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct IntegratedAnswerParams {
     id: String,
     request: String,
@@ -496,8 +503,8 @@ pub fn dispatch(
             Ok(Value::Null)
         }
         "integrated_compact" => {
-            let p: IdParams = parse(params)?;
-            core.integrated_compact(&p.id)?;
+            let p: IntegratedCompactParams = parse(params)?;
+            core.integrated_compact(&p.id, p.instructions.as_deref())?;
             Ok(Value::Null)
         }
         "integrated_answer" => {
